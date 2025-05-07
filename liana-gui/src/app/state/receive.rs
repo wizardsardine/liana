@@ -28,6 +28,8 @@ use crate::daemon::{
     Daemon,
 };
 
+const PREV_ADDRESSES_PAGE_SIZE: usize = 20;
+
 pub enum Modal {
     VerifyAddress(VerifyAddressModal),
     ShowQrCode(ShowQrCodeModal),
@@ -39,6 +41,12 @@ pub struct Addresses {
     list: Vec<Address>,
     derivation_indexes: Vec<ChildNumber>,
     labels: HashMap<String, String>,
+}
+
+impl Addresses {
+    pub fn is_empty(&self) -> bool {
+        self.list.is_empty() && self.derivation_indexes.is_empty() && self.labels.is_empty()
+    }
 }
 
 impl Labelled for Addresses {
@@ -57,9 +65,14 @@ pub struct ReceivePanel {
     data_dir: LianaDirectory,
     wallet: Arc<Wallet>,
     addresses: Addresses,
+    prev_addresses: Addresses,
+    prev_continue_from: Option<ChildNumber>,
+    show_prev_addresses: bool,
+    selected: HashSet<Address>,
     labels_edited: LabelsEdited,
     modal: Modal,
     warning: Option<Error>,
+    processing: bool,
 }
 
 impl ReceivePanel {
@@ -68,9 +81,34 @@ impl ReceivePanel {
             data_dir,
             wallet,
             addresses: Addresses::default(),
+            prev_addresses: Addresses::default(),
+            prev_continue_from: None,
+            show_prev_addresses: false,
+            selected: HashSet::new(),
             labels_edited: LabelsEdited::default(),
             modal: Modal::None,
             warning: None,
+            processing: false,
+        }
+    }
+
+    pub fn address(&self, i: usize) -> Option<&Address> {
+        if i < self.addresses.list.len() {
+            self.addresses.list.get(i)
+        } else {
+            // i >= self.addresses.list.len()
+            self.prev_addresses.list.get(i - self.addresses.list.len())
+        }
+    }
+
+    pub fn derivation_index(&self, i: usize) -> Option<&ChildNumber> {
+        if i < self.addresses.list.len() {
+            self.addresses.derivation_indexes.get(i)
+        } else {
+            // i >= self.addresses.list.len()
+            self.prev_addresses
+                .derivation_indexes
+                .get(i - self.addresses.list.len())
         }
     }
 }
@@ -84,7 +122,13 @@ impl State for ReceivePanel {
             view::receive::receive(
                 &self.addresses.list,
                 &self.addresses.labels,
+                &self.prev_addresses.list,
+                &self.prev_addresses.labels,
+                self.show_prev_addresses,
+                &self.selected,
                 self.labels_edited.cache(),
+                self.prev_continue_from.is_none(),
+                self.processing,
             ),
         );
 
@@ -118,7 +162,9 @@ impl State for ReceivePanel {
                 match self.labels_edited.update(
                     daemon,
                     message,
-                    std::iter::once(&mut self.addresses).map(|a| a as &mut dyn LabelsLoader),
+                    std::iter::once(&mut self.addresses)
+                        .chain(std::iter::once(&mut self.prev_addresses))
+                        .map(|a| a as &mut dyn LabelsLoader),
                 ) {
                     Ok(cmd) => cmd,
                     Err(e) => {
@@ -143,16 +189,16 @@ impl State for ReceivePanel {
                 Task::none()
             }
             Message::View(view::Message::Select(i)) => {
+                let (address, index) = (
+                    self.address(i).expect("Must be present"),
+                    self.derivation_index(i).expect("Must be present"),
+                );
                 self.modal = Modal::VerifyAddress(VerifyAddressModal::new(
                     self.data_dir.clone(),
                     self.wallet.clone(),
                     cache.network,
-                    self.addresses.list.get(i).expect("Must be present").clone(),
-                    *self
-                        .addresses
-                        .derivation_indexes
-                        .get(i)
-                        .expect("Must be present"),
+                    address.clone(),
+                    *index,
                 ));
                 Task::none()
             }
@@ -169,11 +215,74 @@ impl State for ReceivePanel {
                     Message::ReceiveAddress,
                 )
             }
+            Message::View(view::Message::ToggleShowPreviousAddresses) => {
+                self.show_prev_addresses = !self.show_prev_addresses;
+                Task::none()
+            }
+            Message::View(view::Message::SelectAddress(addr)) => {
+                if self.selected.contains(&addr) {
+                    self.selected.remove(&addr);
+                } else {
+                    self.selected.insert(addr);
+                }
+                Task::none()
+            }
+            Message::RevealedAddresses(res, start_index) => {
+                self.processing = false;
+                match res {
+                    Ok(revealed) => {
+                        self.warning = None;
+                        // Make sure these results are for the expected continuation.
+                        // The start index can only be None for the first request when there are no prev addresses saved.
+                        if self.prev_continue_from == start_index
+                            && (start_index.is_some() || self.prev_addresses.is_empty())
+                        {
+                            for entry in revealed.addresses.iter() {
+                                self.prev_addresses.list.push(entry.address.clone());
+                                self.prev_addresses.derivation_indexes.push(entry.index);
+                                if let Some(label) = &entry.label {
+                                    self.prev_addresses.labels.insert(
+                                        LabelItem::from(entry.address.clone()).to_string(),
+                                        label.clone(),
+                                    );
+                                }
+                            }
+                            self.prev_continue_from = revealed.continue_from;
+                        }
+                    }
+                    Err(e) => {
+                        self.warning = Some(e);
+                    }
+                };
+                Task::none()
+            }
+            Message::View(view::Message::Next) => {
+                if self.prev_continue_from.is_some() {
+                    self.processing = true;
+                    let start_index = self.prev_continue_from;
+                    Task::perform(
+                        async move {
+                            (
+                                daemon
+                                    .list_revealed_addresses(
+                                        false,
+                                        true,
+                                        PREV_ADDRESSES_PAGE_SIZE,
+                                        start_index,
+                                    )
+                                    .await
+                                    .map_err(|e| e.into()),
+                                start_index,
+                            )
+                        },
+                        |(res, start_index)| Message::RevealedAddresses(res, start_index),
+                    )
+                } else {
+                    Task::none()
+                }
+            }
             Message::View(view::Message::ShowQrCode(i)) => {
-                if let (Some(address), Some(index)) = (
-                    self.addresses.list.get(i),
-                    self.addresses.derivation_indexes.get(i),
-                ) {
+                if let (Some(address), Some(index)) = (self.address(i), self.derivation_index(i)) {
                     if let Some(modal) = ShowQrCodeModal::new(address, *index) {
                         self.modal = Modal::ShowQrCode(modal);
                     }
@@ -192,12 +301,20 @@ impl State for ReceivePanel {
 
     fn reload(
         &mut self,
-        _daemon: Arc<dyn Daemon + Sync + Send>,
+        daemon: Arc<dyn Daemon + Sync + Send>,
         wallet: Arc<Wallet>,
     ) -> Task<Message> {
-        self.wallet = wallet;
-        self.addresses = Addresses::default();
-        Task::none()
+        let data_dir = self.data_dir.clone();
+        *self = Self::new(data_dir, wallet);
+        Task::perform(
+            async move {
+                daemon
+                    .list_revealed_addresses(false, true, PREV_ADDRESSES_PAGE_SIZE, None)
+                    .await
+                    .map_err(|e| e.into())
+            },
+            |res| Message::RevealedAddresses(res, None),
+        )
     }
 }
 
@@ -348,13 +465,24 @@ mod tests {
             Address::from_str("tb1qkldgvljmjpxrjq2ev5qxe8dvhn0dph9q85pwtfkjeanmwdue2akqj4twxj")
                 .unwrap()
                 .assume_checked();
-        let daemon = Daemon::new(vec![(
-            Some(json!({"method": "getnewaddress", "params": Option::<Request>::None})),
-            Ok(json!(GetAddressResult::new(
-                addr.clone(),
-                ChildNumber::from_normal_idx(0).unwrap()
-            ))),
-        )]);
+        let daemon = Daemon::new(vec![
+            (
+                Some(
+                    json!({"method": "listrevealedaddresses", "params": [false, true, 20, Option::<ChildNumber>::None]}),
+                ),
+                Ok(json!(ListRevealedAddressesResult {
+                    addresses: vec![],
+                    continue_from: None,
+                })),
+            ),
+            (
+                Some(json!({"method": "getnewaddress", "params": Option::<Request>::None})),
+                Ok(json!(GetAddressResult::new(
+                    addr.clone(),
+                    ChildNumber::from_normal_idx(0).unwrap()
+                ))),
+            ),
+        ]);
         let wallet = Arc::new(Wallet::new(LianaDescriptor::from_str(DESC).unwrap()));
         let sandbox: Sandbox<ReceivePanel> = Sandbox::new(ReceivePanel::new(
             LianaDirectory::new(PathBuf::new()),
