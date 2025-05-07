@@ -43,10 +43,15 @@ pub fn receive<'a>(
             Row::new()
                 .align_y(Alignment::Center)
                 .push(Container::new(h3("Receive")).width(Length::Fill))
-                .push(
-                    button::primary(Some(icon::plus_icon()), "Generate address")
-                        .on_press(Message::Next),
-                ),
+                .push({
+                    let (icon, label) = (Some(icon::plus_icon()), "Generate address");
+                    if addresses.is_empty() {
+                        button::primary(icon, label)
+                    } else {
+                        button::secondary(icon, label)
+                    }
+                    .on_press(Message::Next)
+                }),
         )
         .push(p1_bold("New and never used reception addresses"))
         .push(
