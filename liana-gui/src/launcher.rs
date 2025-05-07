@@ -28,7 +28,10 @@ const NETWORKS: [Network; 4] = [
 #[derive(Debug, Clone)]
 pub enum State {
     Unchecked,
-    Wallets(Vec<WalletSettings>),
+    Wallets {
+        wallets: Vec<WalletSettings>,
+        add_wallet: bool,
+    },
     NoWallet,
 }
 
@@ -115,6 +118,7 @@ impl Launcher {
                 self.state = State::NoWallet;
                 Task::none()
             }
+
             Message::View(ViewMessage::DeleteWallet(DeleteWalletMessage::CloseModal)) => {
                 self.delete_wallet_modal = None;
                 Task::none()
@@ -129,8 +133,14 @@ impl Launcher {
                     Task::none()
                 }
             },
+            Message::View(ViewMessage::AddWalletToList(add)) => {
+                if let State::Wallets { add_wallet, .. } = &mut self.state {
+                    *add_wallet = add;
+                }
+                Task::none()
+            }
             Message::View(ViewMessage::Run(index)) => {
-                if let State::Wallets(wallets) = &self.state {
+                if let State::Wallets { wallets, .. } = &self.state {
                     if let Some(settings) = wallets.get(index) {
                         let datadir_path = self.datadir_path.clone();
                         let mut path = self
@@ -172,6 +182,21 @@ impl Launcher {
                             Container::new(image::liana_brand_grey().width(Length::Fixed(200.0)))
                                 .width(Length::Fill),
                         )
+                        .push_maybe(if let State::Wallets { add_wallet, .. } = &self.state {
+                            if *add_wallet {
+                                Some(
+                                    button::secondary(
+                                        Some(icon::previous_icon()),
+                                        "Back to wallet list",
+                                    )
+                                    .on_press(ViewMessage::AddWalletToList(false)),
+                                )
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        })
                         .push(
                             button::secondary(None, "Share Xpubs")
                                 .on_press(ViewMessage::ShareXpubs),
@@ -201,73 +226,39 @@ impl Launcher {
                             .push_maybe(self.error.as_ref().map(|e| card::simple(text(e))))
                             .push(match &self.state {
                                 State::Unchecked => Column::new(),
-                                State::Wallets(wallets) => {
-                                    Column::new().push(wallets.iter().enumerate().fold(
-                                        Column::new().spacing(20),
-                                        |col, (i, settings)| {
-                                            col.push(wallets_list_item(self.network, settings, i))
-                                        },
-                                    ))
-                                }
-                                State::NoWallet => Column::new()
-                                    .push(
-                                        Row::new()
-                                            .align_y(Alignment::End)
-                                            .spacing(20)
-                                            .push(
-                                                Container::new(
-                                                    Column::new()
-                                                        .spacing(20)
-                                                        .align_x(Alignment::Center)
-                                                        .push(
-                                                            image::create_new_wallet_icon()
-                                                                .width(Length::Fixed(100.0)),
-                                                        )
-                                                        .push(
-                                                            p1_regular("Create a new Liana wallet")
-                                                                .style(theme::text::secondary),
-                                                        )
-                                                        .push(
-                                                            button::secondary(None, "Select")
-                                                                .width(Length::Fixed(200.0))
-                                                                .on_press(
-                                                                    ViewMessage::CreateWallet,
-                                                                ),
-                                                        )
-                                                        .align_x(Alignment::Center),
+                                State::Wallets {
+                                    wallets,
+                                    add_wallet,
+                                } => {
+                                    if *add_wallet {
+                                        Column::new().push(add_wallet_menu())
+                                    } else {
+                                        let col = wallets.iter().enumerate().fold(
+                                            Column::new().spacing(20),
+                                            |col, (i, settings)| {
+                                                col.push(wallets_list_item(
+                                                    self.network,
+                                                    settings,
+                                                    i,
+                                                ))
+                                            },
+                                        );
+                                        col.push(
+                                            Column::new().push(
+                                                button::secondary(
+                                                    Some(icon::plus_icon()),
+                                                    "Add wallet",
                                                 )
-                                                .padding(20),
-                                            )
-                                            .push(
-                                                Container::new(
-                                                    Column::new()
-                                                        .spacing(20)
-                                                        .align_x(Alignment::Center)
-                                                        .push(
-                                                            image::restore_wallet_icon()
-                                                                .width(Length::Fixed(100.0)),
-                                                        )
-                                                        .push(
-                                                            p1_regular(
-                                                                "Add an existing Liana wallet",
-                                                            )
-                                                            .style(theme::text::secondary),
-                                                        )
-                                                        .push(
-                                                            button::secondary(None, "Select")
-                                                                .width(Length::Fixed(200.0))
-                                                                .on_press(
-                                                                    ViewMessage::ImportWallet,
-                                                                ),
-                                                        )
-                                                        .align_x(Alignment::Center),
-                                                )
-                                                .padding(20),
+                                                .on_press(ViewMessage::AddWalletToList(true))
+                                                .padding(10)
+                                                .width(Length::Fixed(500.0)),
                                             ),
-                                    )
-                                    .align_x(Alignment::Center),
+                                        )
+                                    }
+                                }
+                                State::NoWallet => Column::new().push(add_wallet_menu()),
                             })
-                            .max_width(500),
+                            .align_x(Alignment::Center),
                     )
                     .center_x(Length::Fill),
                 )
@@ -289,6 +280,45 @@ impl Launcher {
             content
         }
     }
+}
+
+fn add_wallet_menu<'a>() -> Element<'a, ViewMessage> {
+    Row::new()
+        .align_y(Alignment::End)
+        .spacing(20)
+        .push(
+            Container::new(
+                Column::new()
+                    .spacing(20)
+                    .align_x(Alignment::Center)
+                    .push(image::create_new_wallet_icon().width(Length::Fixed(100.0)))
+                    .push(p1_regular("Create a new Liana wallet").style(theme::text::secondary))
+                    .push(
+                        button::secondary(None, "Select")
+                            .width(Length::Fixed(200.0))
+                            .on_press(ViewMessage::CreateWallet),
+                    )
+                    .align_x(Alignment::Center),
+            )
+            .padding(20),
+        )
+        .push(
+            Container::new(
+                Column::new()
+                    .spacing(20)
+                    .align_x(Alignment::Center)
+                    .push(image::restore_wallet_icon().width(Length::Fixed(100.0)))
+                    .push(p1_regular("Add an existing Liana wallet").style(theme::text::secondary))
+                    .push(
+                        button::secondary(None, "Select")
+                            .width(Length::Fixed(200.0))
+                            .on_press(ViewMessage::ImportWallet),
+                    )
+                    .align_x(Alignment::Center),
+            )
+            .padding(20),
+        )
+        .into()
 }
 
 fn wallets_list_item(
@@ -327,7 +357,7 @@ fn wallets_list_item(
                     .on_press(ViewMessage::Run(i))
                     .padding(15)
                     .style(theme::button::container_border)
-                    .width(Length::Fill),
+                    .width(Length::Fixed(500.0)),
                 )
                 .style(theme::card::simple),
             )
@@ -354,6 +384,7 @@ pub enum Message {
 pub enum ViewMessage {
     ImportWallet,
     CreateWallet,
+    AddWalletToList(bool),
     ShareXpubs,
     SelectNetwork(Network),
     StartInstall(Network),
@@ -518,6 +549,9 @@ async fn check_network_datadir(path: NetworkDirectory) -> Result<State, String> 
     }
 
     app::settings::Settings::from_file(&path)
-        .map(|s| State::Wallets(s.wallets))
+        .map(|s| State::Wallets {
+            wallets: s.wallets,
+            add_wallet: false,
+        })
         .map_err(|e| e.to_string())
 }
