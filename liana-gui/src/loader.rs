@@ -59,7 +59,7 @@ pub struct Loader {
     pub internal_bitcoind: Option<Bitcoind>,
     pub waiting_daemon_bitcoind: bool,
     pub backup: Option<Backup>,
-    pub wallet_setting: Option<WalletSettings>,
+    pub wallet_settings: WalletSettings,
     step: Step,
 }
 
@@ -119,7 +119,7 @@ impl Loader {
         network: bitcoin::Network,
         internal_bitcoind: Option<Bitcoind>,
         backup: Option<Backup>,
-        wallet_setting: Option<WalletSettings>,
+        wallet_settings: WalletSettings,
     ) -> (Self, Task<Message>) {
         let path = socket_path(&datadir_path, network);
         (
@@ -131,7 +131,7 @@ impl Loader {
                 daemon_started: false,
                 internal_bitcoind,
                 waiting_daemon_bitcoind: false,
-                wallet_setting,
+                wallet_settings,
                 backup,
             },
             Task::perform(connect(path), Message::Loaded),
@@ -141,11 +141,7 @@ impl Loader {
     fn start_bitcoind(&self) -> bool {
         if self.internal_bitcoind.is_some() {
             false
-        } else if let Some(start) = self
-            .wallet_setting
-            .as_ref()
-            .and_then(|setting| setting.start_internal_bitcoind)
-        {
+        } else if let Some(start) = self.wallet_settings.start_internal_bitcoind {
             start
         } else {
             self.gui_config.start_internal_bitcoind
@@ -162,6 +158,7 @@ impl Loader {
         if info.block_height > 0 {
             return Task::perform(
                 load_application(
+                    self.wallet_settings.clone(),
                     daemon,
                     info,
                     self.datadir_path.clone(),
@@ -256,6 +253,7 @@ impl Loader {
                         if (info.sync - 1.0_f64).abs() < f64::EPSILON {
                             return Task::perform(
                                 load_application(
+                                    self.wallet_settings.clone(),
                                     daemon.clone(),
                                     info,
                                     self.datadir_path.clone(),
@@ -309,7 +307,7 @@ impl Loader {
                     self.network,
                     self.internal_bitcoind.clone(),
                     self.backup.clone(),
-                    self.wallet_setting.clone(),
+                    self.wallet_settings.clone(),
                 );
                 *self = loader;
                 cmd
@@ -406,6 +404,7 @@ fn get_bitcoind_log(log_path: PathBuf) -> impl Stream<Item = Option<String>> {
 }
 
 pub async fn load_application(
+    wallet_settings: WalletSettings,
     daemon: Arc<dyn Daemon + Sync + Send>,
     info: GetInfoResult,
     datadir_path: LianaDirectory,
@@ -422,9 +421,8 @@ pub async fn load_application(
     ),
     Error,
 > {
-    let network_dir = datadir_path.network_directory(network);
     let wallet = Wallet::new(info.descriptors.main)
-        .load_from_settings(&network_dir)?
+        .load_from_settings(wallet_settings)?
         .load_hotsigners(&datadir_path, network)?;
 
     let coins = coins_to_cache(daemon.clone()).await.map(|res| res.coins)?;

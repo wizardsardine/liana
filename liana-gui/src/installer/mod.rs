@@ -668,6 +668,7 @@ pub async fn extract_remote_gui_settings(ctx: &Context, backend: &BackendWalletC
         wallets: vec![WalletSettings {
             name: wallet_name(descriptor),
             descriptor_checksum,
+            pinned_at: Some(chrono::Utc::now().timestamp()),
             keys: Vec::new(),
             hardware_wallets: Vec::new(),
             remote_backend_auth: Some(AuthConfig::new(
@@ -704,6 +705,7 @@ pub fn extract_local_gui_settings(ctx: &Context) -> Settings {
     Settings {
         wallets: vec![WalletSettings {
             name: wallet_name(descriptor),
+            pinned_at: Some(chrono::Utc::now().timestamp()),
             descriptor_checksum,
             keys: ctx.keys.values().cloned().collect(),
             hardware_wallets,

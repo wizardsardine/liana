@@ -26,6 +26,24 @@ pub struct Settings {
     pub wallets: Vec<WalletSettings>,
 }
 
+impl Settings {
+    pub fn from_file(network_dir: &NetworkDirectory) -> Result<Settings, SettingsError> {
+        let mut path = network_dir.path().to_path_buf();
+        path.push(DEFAULT_FILE_NAME);
+
+        std::fs::read(path)
+            .map_err(|e| match e.kind() {
+                std::io::ErrorKind::NotFound => SettingsError::NotFound,
+                _ => SettingsError::ReadingFile(format!("Reading settings file: {}", e)),
+            })
+            .and_then(|file_content| {
+                serde_json::from_slice::<Settings>(&file_content).map_err(|e| {
+                    SettingsError::ReadingFile(format!("Parsing settings file: {}", e))
+                })
+            })
+    }
+}
+
 pub async fn update_settings_file<F>(
     network_dir: &NetworkDirectory,
     updater: F,
@@ -107,6 +125,7 @@ impl AuthConfig {
 pub struct WalletSettings {
     pub name: String,
     pub descriptor_checksum: String,
+    pub pinned_at: Option<i64>,
     // if wallet is using remote backend, then this information is stored on the remote backend
     // wallet metadata
     #[serde(default)]
@@ -129,20 +148,7 @@ impl WalletSettings {
     where
         F: FnMut(&WalletSettings) -> bool,
     {
-        let mut path = network_dir.path().to_path_buf();
-        path.push(DEFAULT_FILE_NAME);
-
-        std::fs::read(path)
-            .map_err(|e| match e.kind() {
-                std::io::ErrorKind::NotFound => SettingsError::NotFound,
-                _ => SettingsError::ReadingFile(format!("Reading settings file: {}", e)),
-            })
-            .and_then(|file_content| {
-                serde_json::from_slice::<Settings>(&file_content).map_err(|e| {
-                    SettingsError::ReadingFile(format!("Parsing settings file: {}", e))
-                })
-            })
-            .map(|cache| cache.wallets.into_iter().find(selecter))
+        Settings::from_file(network_dir).map(|cache| cache.wallets.into_iter().find(selecter))
     }
 
     pub fn keys_aliases(&self) -> HashMap<Fingerprint, String> {
@@ -181,6 +187,14 @@ impl WalletSettings {
                     }
                 })
                 .collect();
+        }
+    }
+
+    pub fn wallet_id(&self) -> String {
+        if let Some(t) = self.pinned_at {
+            format!("{}-{}", self.descriptor_checksum, t)
+        } else {
+            self.descriptor_checksum.clone()
         }
     }
 }
