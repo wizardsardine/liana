@@ -1,8 +1,12 @@
 //! Settings is the module to handle the GUI settings file.
 //! The settings file is used by the GUI to store useful information.
 use std::collections::HashMap;
-use std::fs::OpenOptions;
-use std::io::Write;
+
+use async_fd_lock::LockWrite;
+use std::io::SeekFrom;
+use tokio::fs::OpenOptions;
+use tokio::io::AsyncSeekExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use liana::miniscript::bitcoin::bip32::Fingerprint;
 use liana_ui::component::form;
@@ -17,49 +21,65 @@ use crate::{
 
 pub const DEFAULT_FILE_NAME: &str = "settings.json";
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct Settings {
-    pub wallets: Vec<WalletSetting>,
+    pub wallets: Vec<WalletSettings>,
 }
 
-impl Settings {
-    pub fn from_file(network_dir: &NetworkDirectory) -> Result<Self, SettingsError> {
-        let mut path = network_dir.path().to_path_buf();
-        path.push(DEFAULT_FILE_NAME);
+pub async fn update_settings_file<F>(
+    network_dir: &NetworkDirectory,
+    updater: F,
+) -> Result<(), SettingsError>
+where
+    F: FnOnce(Settings) -> Settings,
+{
+    let path = network_dir.path().join(DEFAULT_FILE_NAME);
+    let file_exists = tokio::fs::try_exists(&path).await.unwrap_or(false);
 
-        let config = std::fs::read(path)
-            .map_err(|e| match e.kind() {
-                std::io::ErrorKind::NotFound => SettingsError::NotFound,
-                _ => SettingsError::ReadingFile(format!("Reading settings file: {}", e)),
-            })
-            .and_then(|file_content| {
-                serde_json::from_slice::<Settings>(&file_content).map_err(|e| {
-                    SettingsError::ReadingFile(format!("Parsing settings file: {}", e))
-                })
-            })?;
-        Ok(config)
-    }
+    let mut file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&path)
+        .await
+        .map_err(|e| SettingsError::ReadingFile(format!("Opening file: {}", e)))?
+        .lock_write()
+        .await
+        .map_err(|e| SettingsError::ReadingFile(format!("Locking file: {:?}", e)))?;
 
-    pub fn to_file(&self, network_dir: &NetworkDirectory) -> Result<(), SettingsError> {
-        let mut path = network_dir.path().to_path_buf();
-        path.push(DEFAULT_FILE_NAME);
+    let settings = if file_exists {
+        let mut file_content = Vec::new();
+        file.read_to_end(&mut file_content)
+            .await
+            .map_err(|e| SettingsError::ReadingFile(format!("Reading file content: {}", e)))?;
 
-        let content = serde_json::to_string_pretty(&self).map_err(|e| {
-            SettingsError::WritingFile(format!("Failed to serialize settings: {}", e))
-        })?;
+        serde_json::from_slice::<Settings>(&file_content)
+            .map_err(|e| SettingsError::ReadingFile(e.to_string()))?
+    } else {
+        Settings::default()
+    };
 
-        let mut settings_file = OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .open(path)
-            .map_err(|e| SettingsError::WritingFile(e.to_string()))?;
+    let settings = updater(settings);
 
-        settings_file.write_all(content.as_bytes()).map_err(|e| {
-            tracing::warn!("failed to write to file: {:?}", e);
-            SettingsError::WritingFile(e.to_string())
-        })
-    }
+    let content = serde_json::to_vec_pretty(&settings)
+        .map_err(|e| SettingsError::WritingFile(format!("Failed to serialize settings: {}", e)))?;
+
+    file.seek(SeekFrom::Start(0)).await.map_err(|e| {
+        SettingsError::WritingFile(format!("Failed to seek to start of file: {}", e))
+    })?;
+
+    file.write_all(&content).await.map_err(|e| {
+        tracing::warn!("failed to write to file: {:?}", e);
+        SettingsError::WritingFile(e.to_string())
+    })?;
+
+    file.inner_mut()
+        .set_len(content.len() as u64)
+        .await
+        .map_err(|e| SettingsError::WritingFile(format!("Failed to truncate file: {}", e)))?;
+
+    Ok(())
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -84,7 +104,7 @@ impl AuthConfig {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct WalletSetting {
+pub struct WalletSettings {
     pub name: String,
     pub descriptor_checksum: String,
     // if wallet is using remote backend, then this information is stored on the remote backend
@@ -101,7 +121,30 @@ pub struct WalletSetting {
     pub start_internal_bitcoind: Option<bool>,
 }
 
-impl WalletSetting {
+impl WalletSettings {
+    pub fn from_file<F>(
+        network_dir: &NetworkDirectory,
+        selecter: F,
+    ) -> Result<Option<Self>, SettingsError>
+    where
+        F: FnMut(&WalletSettings) -> bool,
+    {
+        let mut path = network_dir.path().to_path_buf();
+        path.push(DEFAULT_FILE_NAME);
+
+        std::fs::read(path)
+            .map_err(|e| match e.kind() {
+                std::io::ErrorKind::NotFound => SettingsError::NotFound,
+                _ => SettingsError::ReadingFile(format!("Reading settings file: {}", e)),
+            })
+            .and_then(|file_content| {
+                serde_json::from_slice::<Settings>(&file_content).map_err(|e| {
+                    SettingsError::ReadingFile(format!("Parsing settings file: {}", e))
+                })
+            })
+            .map(|cache| cache.wallets.into_iter().find(selecter))
+    }
+
     pub fn keys_aliases(&self) -> HashMap<Fingerprint, String> {
         let mut map = HashMap::new();
         for key in self.keys.iter().filter(|k| !k.name.is_empty()) {

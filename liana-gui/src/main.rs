@@ -208,10 +208,12 @@ impl GUI {
                             .unwrap_or_else(|| cfg.log_level().unwrap_or(LevelFilter::INFO)),
                     );
                     let network_dir = datadir_path.network_directory(network);
-                    if let Ok(settings) = app::settings::Settings::from_file(&network_dir) {
-                        let setting = settings.wallets.into_iter().next();
-                        if let Some(setting) =
-                            setting.as_ref().and_then(|w| w.remote_backend_auth.clone())
+                    if let Ok(settings) =
+                        app::settings::WalletSettings::from_file(&network_dir, |_w| true)
+                    {
+                        if let Some(setting) = settings
+                            .as_ref()
+                            .and_then(|w| w.remote_backend_auth.clone())
                         {
                             let (login, command) =
                                 login::LianaLiteLogin::new(datadir_path, network, setting);
@@ -219,7 +221,7 @@ impl GUI {
                             command.map(|msg| Message::Login(Box::new(msg)))
                         } else {
                             let (loader, command) =
-                                Loader::new(datadir_path, cfg, network, None, None, setting);
+                                Loader::new(datadir_path, cfg, network, None, None, settings);
                             self.state = State::Loader(Box::new(loader));
                             command.map(|msg| Message::Load(Box::new(msg)))
                         }
@@ -279,11 +281,11 @@ impl GUI {
             (State::Installer(i), Message::Install(msg)) => {
                 if let installer::Message::Exit(path, internal_bitcoind, remove_log) = *msg {
                     let network_dir = i.datadir.network_directory(i.network);
-                    let settings = app::settings::Settings::from_file(&network_dir)
+                    let settings = app::settings::WalletSettings::from_file(&network_dir, |_| true)
                         .expect("A settings file was created");
-                    let setting = settings.wallets.into_iter().next();
-                    if let Some(setting) =
-                        setting.as_ref().and_then(|w| w.remote_backend_auth.clone())
+                    if let Some(setting) = settings
+                        .as_ref()
+                        .and_then(|w| w.remote_backend_auth.clone())
                     {
                         let (login, command) =
                             login::LianaLiteLogin::new(i.datadir.clone(), i.network, setting);
@@ -308,7 +310,7 @@ impl GUI {
                             i.network,
                             internal_bitcoind,
                             i.context.backup.take(),
-                            setting,
+                            settings,
                         );
                         self.state = State::Loader(Box::new(loader));
                         command.map(|msg| Message::Load(Box::new(msg)))

@@ -23,7 +23,7 @@ use std::sync::{Arc, Mutex};
 use crate::{
     app::{
         config as gui_config,
-        settings::{self as gui_settings, AuthConfig, Settings, SettingsError, WalletSetting},
+        settings::{self as gui_settings, AuthConfig, Settings, SettingsError, WalletSettings},
         wallet::wallet_name,
     },
     backup,
@@ -665,7 +665,7 @@ pub async fn extract_remote_gui_settings(ctx: &Context, backend: &BackendWalletC
         .to_string();
 
     Settings {
-        wallets: vec![WalletSetting {
+        wallets: vec![WalletSettings {
             name: wallet_name(descriptor),
             descriptor_checksum,
             keys: Vec::new(),
@@ -702,7 +702,7 @@ pub fn extract_local_gui_settings(ctx: &Context) -> Settings {
         })
         .collect();
     Settings {
-        wallets: vec![WalletSetting {
+        wallets: vec![WalletSettings {
             name: wallet_name(descriptor),
             descriptor_checksum,
             keys: ctx.keys.values().cloned().collect(),
