@@ -141,10 +141,7 @@ impl BackendClient {
             .send()
             .await?;
         if !response.status().is_success() {
-            return Err(DaemonError::Http(
-                Some(response.status().into()),
-                response.text().await?,
-            ));
+            return response.to_http_error().await;
         }
 
         let list: api::ListWallets = response.json().await?;
@@ -168,10 +165,7 @@ impl BackendClient {
             .send()
             .await?;
         if !response.status().is_success() {
-            return Err(DaemonError::Http(
-                Some(response.status().into()),
-                response.text().await?,
-            ));
+            return response.to_http_error().await;
         }
 
         let wallet: api::Wallet = response.json().await?;
@@ -219,10 +213,7 @@ impl BackendClient {
                     .await?;
 
                 if !response.status().is_success() {
-                    return Err(DaemonError::Http(
-                        Some(response.status().into()),
-                        response.text().await?,
-                    ));
+                    return response.to_http_error().await;
                 }
             }
         }
@@ -259,10 +250,7 @@ impl BackendClient {
                 .await?;
 
             if !response.status().is_success() {
-                return Err(DaemonError::Http(
-                    Some(response.status().into()),
-                    response.text().await?,
-                ));
+                return response.to_http_error().await;
             }
         }
 
@@ -282,10 +270,7 @@ impl BackendClient {
             .send()
             .await?;
         if !response.status().is_success() {
-            return Err(DaemonError::Http(
-                Some(response.status().into()),
-                response.text().await?,
-            ));
+            return response.to_http_error().await;
         }
 
         Ok(response.json().await?)
@@ -301,10 +286,7 @@ impl BackendClient {
             .send()
             .await?;
         if !response.status().is_success() {
-            return Err(DaemonError::Http(
-                Some(response.status().into()),
-                response.text().await?,
-            ));
+            return response.to_http_error().await;
         }
 
         Ok(())
@@ -373,10 +355,7 @@ impl BackendWalletClient {
             .await?;
 
         if !response.status().is_success() {
-            return Err(DaemonError::Http(
-                Some(response.status().into()),
-                response.text().await?,
-            ));
+            return response.to_http_error().await;
         }
 
         response.json().await.map_err(DaemonError::from)
@@ -416,10 +395,7 @@ impl BackendWalletClient {
             .await?;
 
         if !response.status().is_success() {
-            return Err(DaemonError::Http(
-                Some(response.status().into()),
-                response.text().await?,
-            ));
+            return response.to_http_error().await;
         }
 
         response.json().await.map_err(DaemonError::from)
@@ -452,10 +428,7 @@ impl BackendWalletClient {
             .await?;
 
         if !response.status().is_success() {
-            return Err(DaemonError::Http(
-                Some(response.status().into()),
-                response.text().await?,
-            ));
+            return response.to_http_error().await;
         }
 
         response.json().await.map_err(DaemonError::from)
@@ -499,10 +472,7 @@ impl BackendWalletClient {
             .await?;
 
         if !response.status().is_success() {
-            return Err(DaemonError::Http(
-                Some(response.status().into()),
-                response.text().await?,
-            ));
+            return response.to_http_error().await;
         }
 
         let res: api::ListCoins = response.json().await?;
@@ -597,10 +567,7 @@ impl Daemon for BackendWalletClient {
             .await?;
 
         if !response.status().is_success() {
-            return Err(DaemonError::Http(
-                Some(response.status().into()),
-                response.text().await?,
-            ));
+            return response.to_http_error().await;
         }
 
         let res: api::Address = response.json().await?;
@@ -748,6 +715,10 @@ impl Daemon for BackendWalletClient {
             .send()
             .await?;
 
+        if !response.status().is_success() {
+            return response.to_http_error().await;
+        }
+
         let res: api::DraftPsbtResult = response.json().await?;
         match res {
             api::DraftPsbtResult::Success(draft) => Ok(CreateSpendResult::Success {
@@ -788,6 +759,10 @@ impl Daemon for BackendWalletClient {
             .send()
             .await?;
 
+        if !response.status().is_success() {
+            return response.to_http_error().await;
+        }
+
         let res: api::DraftPsbtResult = response.json().await?;
         match res {
             api::DraftPsbtResult::Success(draft) => Ok(CreateSpendResult::Success {
@@ -818,10 +793,7 @@ impl Daemon for BackendWalletClient {
             .await?;
 
         if !response.status().is_success() {
-            return Err(DaemonError::Http(
-                Some(response.status().into()),
-                response.text().await?,
-            ));
+            return response.to_http_error().await;
         }
 
         Ok(())
@@ -850,10 +822,7 @@ impl Daemon for BackendWalletClient {
             .await?;
 
         if !response.status().is_success() {
-            return Err(DaemonError::Http(
-                Some(response.status().into()),
-                response.text().await?,
-            ));
+            return response.to_http_error().await;
         }
 
         Ok(())
@@ -879,10 +848,7 @@ impl Daemon for BackendWalletClient {
             .await?;
 
         if !response.status().is_success() {
-            return Err(DaemonError::Http(
-                Some(response.status().into()),
-                response.text().await?,
-            ));
+            return response.to_http_error().await;
         }
 
         Ok(())
@@ -920,6 +886,10 @@ impl Daemon for BackendWalletClient {
             .send()
             .await?;
 
+        if !response.status().is_success() {
+            return response.to_http_error().await;
+        }
+
         let res: api::DraftPsbt = response.json().await?;
         Ok(res.raw)
     }
@@ -946,10 +916,7 @@ impl Daemon for BackendWalletClient {
                 .await?;
 
             if !response.status().is_success() {
-                return Err(DaemonError::Http(
-                    Some(response.status().into()),
-                    response.text().await?,
-                ));
+                return response.to_http_error().await;
             }
 
             let wallet_labels: api::WalletLabels = response.json().await?;
@@ -983,10 +950,7 @@ impl Daemon for BackendWalletClient {
             .await?;
 
         if !response.status().is_success() {
-            return Err(DaemonError::Http(
-                Some(response.status().into()),
-                response.text().await?,
-            ));
+            return response.to_http_error().await;
         }
 
         Ok(())
@@ -1102,11 +1066,9 @@ impl Daemon for BackendWalletClient {
             .json(&api::payload::CreateWalletInvitation { email })
             .send()
             .await?;
+
         if !response.status().is_success() {
-            return Err(DaemonError::Http(
-                Some(response.status().into()),
-                response.text().await?,
-            ));
+            return response.to_http_error().await;
         }
 
         Ok(())
@@ -1236,4 +1198,19 @@ fn spend_tx_from_api(
     );
     tx.load_labels(&labels);
     tx
+}
+
+#[async_trait]
+pub trait ResponseExt {
+    async fn to_http_error<T>(self) -> Result<T, DaemonError>;
+}
+
+#[async_trait]
+impl ResponseExt for Response {
+    async fn to_http_error<T>(self) -> Result<T, DaemonError> {
+        Err(DaemonError::Http(
+            Some(self.status().into()),
+            self.text().await?,
+        ))
+    }
 }
