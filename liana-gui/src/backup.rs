@@ -199,10 +199,9 @@ impl Backup {
         let keys = wallet.keys();
 
         let network_dir = datadir.network_directory(network);
-        if let Some(settings) = WalletSettings::from_file(&network_dir, |settings| {
-            wallet.descriptor_checksum() == settings.descriptor_checksum
-        })
-        .map_err(|_| Error::SettingsFromFile)?
+        if let Some(settings) =
+            WalletSettings::from_file(&network_dir, |settings| wallet.id() == settings.wallet_id())
+                .map_err(|_| Error::SettingsFromFile)?
         {
             if let Ok(settings) = serde_json::to_value(settings) {
                 proprietary.insert(SETTINGS_KEY.to_string(), settings);

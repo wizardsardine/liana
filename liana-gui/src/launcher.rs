@@ -13,7 +13,7 @@ use liana_ui::{
 use lianad::config::ConfigError;
 
 use crate::{
-    app,
+    app::{self, settings::WalletSettings},
     dir::{LianaDirectory, NetworkDirectory},
     installer::UserFlow,
 };
@@ -28,11 +28,7 @@ const NETWORKS: [Network; 4] = [
 #[derive(Debug, Clone)]
 pub enum State {
     Unchecked,
-    Wallet {
-        name: Option<String>,
-        email: Option<String>,
-        checksum: Option<String>,
-    },
+    Wallets(Vec<WalletSettings>),
     NoWallet,
 }
 
@@ -133,20 +129,26 @@ impl Launcher {
                     Task::none()
                 }
             },
-            Message::View(ViewMessage::Run) => {
-                if matches!(self.state, State::Wallet { .. }) {
-                    let datadir_path = self.datadir_path.clone();
-                    let mut path = self
-                        .datadir_path
-                        .network_directory(self.network)
-                        .path()
-                        .to_path_buf();
-                    path.push(app::config::DEFAULT_FILE_NAME);
-                    let cfg = app::Config::from_file(&path).expect("Already checked");
-                    let network = self.network;
-                    Task::perform(async move { (datadir_path.clone(), cfg, network) }, |m| {
-                        Message::Run(m.0, m.1, m.2)
-                    })
+            Message::View(ViewMessage::Run(index)) => {
+                if let State::Wallets(wallets) = &self.state {
+                    if let Some(settings) = wallets.get(index) {
+                        let datadir_path = self.datadir_path.clone();
+                        let mut path = self
+                            .datadir_path
+                            .network_directory(self.network)
+                            .path()
+                            .to_path_buf();
+                        path.push(app::config::DEFAULT_FILE_NAME);
+                        let cfg = app::Config::from_file(&path).expect("Already checked");
+                        let network = self.network;
+                        let settings = settings.clone();
+                        Task::perform(
+                            async move { (datadir_path.clone(), cfg, network, settings) },
+                            |m| Message::Run(m.0, m.1, m.2, m.3),
+                        )
+                    } else {
+                        Task::none()
+                    }
                 } else {
                     Task::none()
                 }
@@ -191,7 +193,7 @@ impl Launcher {
                         Column::new()
                             .align_x(Alignment::Center)
                             .spacing(30)
-                            .push(if matches!(self.state, State::Wallet { .. }) {
+                            .push(if matches!(self.state, State::Wallets { .. }) {
                                 text("Welcome back").size(50).bold()
                             } else {
                                 text("Welcome").size(50).bold()
@@ -199,63 +201,14 @@ impl Launcher {
                             .push_maybe(self.error.as_ref().map(|e| card::simple(text(e))))
                             .push(match &self.state {
                                 State::Unchecked => Column::new(),
-                                State::Wallet {
-                                    email, checksum, ..
-                                } => Column::new().push(
-                                    Row::new()
-                                        .align_y(Alignment::Center)
-                                        .spacing(20)
-                                        .push(
-                                            Container::new(
-                                                Button::new(
-                                                    Column::new()
-                                                        .push(p1_bold(format!(
-                                                            "My Liana {} wallet",
-                                                            match self.network {
-                                                                Network::Bitcoin => "Bitcoin",
-                                                                Network::Signet => "Signet",
-                                                                Network::Testnet => "Testnet",
-                                                                Network::Regtest => "Regtest",
-                                                                _ => "",
-                                                            }
-                                                        )))
-                                                        .push_maybe(checksum.as_ref().map(
-                                                            |checksum| {
-                                                                p1_regular(format!(
-                                                                    "Liana-{}",
-                                                                    checksum
-                                                                ))
-                                                                .style(theme::text::secondary)
-                                                            },
-                                                        ))
-                                                        .push_maybe(email.as_ref().map(|email| {
-                                                            Row::new()
-                                                                .push(Space::with_width(
-                                                                    Length::Fill,
-                                                                ))
-                                                                .push(
-                                                                    p1_regular(email).style(
-                                                                        theme::text::secondary,
-                                                                    ),
-                                                                )
-                                                        })),
-                                                )
-                                                .on_press(ViewMessage::Run)
-                                                .padding(15)
-                                                .style(theme::button::container_border)
-                                                .width(Length::Fill),
-                                            )
-                                            .style(theme::card::simple),
-                                        )
-                                        .push(
-                                            Button::new(icon::trash_icon())
-                                                .style(theme::button::secondary)
-                                                .padding(10)
-                                                .on_press(ViewMessage::DeleteWallet(
-                                                    DeleteWalletMessage::ShowModal,
-                                                )),
-                                        ),
-                                ),
+                                State::Wallets(wallets) => {
+                                    Column::new().push(wallets.iter().enumerate().fold(
+                                        Column::new().spacing(20),
+                                        |col, (i, settings)| {
+                                            col.push(wallets_list_item(self.network, settings, i))
+                                        },
+                                    ))
+                                }
                                 State::NoWallet => Column::new()
                                     .push(
                                         Row::new()
@@ -338,12 +291,63 @@ impl Launcher {
     }
 }
 
+fn wallets_list_item(
+    network: Network,
+    settings: &WalletSettings,
+    i: usize,
+) -> Element<ViewMessage> {
+    Container::new(
+        Row::new()
+            .align_y(Alignment::Center)
+            .spacing(20)
+            .push(
+                Container::new(
+                    Button::new(
+                        Column::new()
+                            .push(p1_bold(format!(
+                                "My Liana {} wallet",
+                                match network {
+                                    Network::Bitcoin => "Bitcoin",
+                                    Network::Signet => "Signet",
+                                    Network::Testnet => "Testnet",
+                                    Network::Regtest => "Regtest",
+                                    _ => "",
+                                }
+                            )))
+                            .push(
+                                p1_regular(format!("Liana-{}", settings.descriptor_checksum))
+                                    .style(theme::text::secondary),
+                            )
+                            .push_maybe(settings.remote_backend_auth.as_ref().map(|auth| {
+                                Row::new()
+                                    .push(Space::with_width(Length::Fill))
+                                    .push(p1_regular(&auth.email).style(theme::text::secondary))
+                            })),
+                    )
+                    .on_press(ViewMessage::Run(i))
+                    .padding(15)
+                    .style(theme::button::container_border)
+                    .width(Length::Fill),
+                )
+                .style(theme::card::simple),
+            )
+            .push(
+                Button::new(icon::trash_icon())
+                    .style(theme::button::secondary)
+                    .padding(10)
+                    .on_press(ViewMessage::DeleteWallet(DeleteWalletMessage::ShowModal)),
+            ),
+    )
+    .into()
+}
+
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone)]
 pub enum Message {
     View(ViewMessage),
     Install(LianaDirectory, Network, UserFlow),
     Checked(Result<State, String>),
-    Run(LianaDirectory, app::config::Config, Network),
+    Run(LianaDirectory, app::config::Config, Network, WalletSettings),
 }
 
 #[derive(Debug, Clone)]
@@ -354,7 +358,7 @@ pub enum ViewMessage {
     SelectNetwork(Network),
     StartInstall(Network),
     Check,
-    Run,
+    Run(usize),
     DeleteWallet(DeleteWalletMessage),
 }
 
@@ -513,16 +517,7 @@ async fn check_network_datadir(path: NetworkDirectory) -> Result<State, String> 
     })?;
     }
 
-    if let Ok(Some(wallet)) = app::settings::WalletSettings::from_file(&path, |_w| true) {
-        return Ok(State::Wallet {
-            name: Some(wallet.name),
-            checksum: Some(wallet.descriptor_checksum),
-            email: wallet.remote_backend_auth.map(|auth| auth.email),
-        });
-    }
-    Ok(State::Wallet {
-        name: None,
-        checksum: None,
-        email: None,
-    })
+    app::settings::Settings::from_file(&path)
+        .map(|s| State::Wallets(s.wallets))
+        .map_err(|e| e.to_string())
 }
