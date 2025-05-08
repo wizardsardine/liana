@@ -12,6 +12,7 @@ use serde_json::Value;
 use std::{
     collections::{BTreeMap, HashMap},
     fmt::{Debug, Display},
+    intrinsics::unreachable,
     sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -132,34 +133,30 @@ impl Backup {
         let mut proprietary = serde_json::Map::new();
         proprietary.insert(LIANA_VERSION_KEY.to_string(), liana_version().into());
 
-        let config = extract_daemon_config(&ctx).map_err(|e| Error::Daemon(e.to_string()))?;
-        if let Ok(config) = serde_json::to_value(config) {
-            proprietary.insert(CONFIG_KEY.to_string(), config);
-        }
+        // TODO: check unreachable
         let settings = if ctx.bitcoin_backend.is_some() {
-            Some(extract_local_gui_settings(&ctx))
+            extract_local_gui_settings(&ctx)
         } else {
             match &ctx.remote_backend {
                 RemoteBackend::WithWallet(backend) => {
-                    Some(extract_remote_gui_settings(&ctx, backend).await)
+                    extract_remote_gui_settings(&ctx, backend).await
                 }
-                _ => None,
+                _ => unreachable!(),
             }
         };
 
-        let name = if let Some(settings) = settings {
-            assert_eq!(settings.wallets.len(), 1);
-            if settings.wallets.len() != 1 {
-                return Err(Error::NotSingleWallet);
-            }
-            let settings = settings.wallets.first().expect("only one wallet");
+        let config =
+            extract_daemon_config(&ctx, &settings).map_err(|e| Error::Daemon(e.to_string()))?;
+        if let Ok(config) = serde_json::to_value(config) {
+            proprietary.insert(CONFIG_KEY.to_string(), config);
+        }
+
+        let name = {
             let name = settings.name.clone();
             if let Ok(settings) = serde_json::to_value(settings) {
                 proprietary.insert(SETTINGS_KEY.to_string(), settings);
             }
             Some(name)
-        } else {
-            None
         };
 
         ctx.keys.iter().for_each(|(k, s)| {
@@ -199,10 +196,9 @@ impl Backup {
         let keys = wallet.keys();
 
         let network_dir = datadir.network_directory(network);
-        if let Some(settings) = WalletSettings::from_file(&network_dir, |settings| {
-            wallet.descriptor_checksum() == settings.descriptor_checksum
-        })
-        .map_err(|_| Error::SettingsFromFile)?
+        if let Some(settings) =
+            WalletSettings::from_file(&network_dir, |settings| wallet.id() == settings.wallet_id())
+                .map_err(|_| Error::SettingsFromFile)?
         {
             if let Ok(settings) = serde_json::to_value(settings) {
                 proprietary.insert(SETTINGS_KEY.to_string(), settings);

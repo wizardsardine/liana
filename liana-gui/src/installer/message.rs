@@ -2,7 +2,7 @@ use liana::miniscript::{
     bitcoin::{bip32::Fingerprint, Network},
     DescriptorPublicKey,
 };
-use std::{collections::HashMap, path::PathBuf};
+use std::collections::HashMap;
 
 use super::{context, Error};
 use crate::{
@@ -28,7 +28,11 @@ use crate::{
 #[derive(Debug, Clone)]
 pub enum Message {
     UserActionDone(bool),
-    Exit(PathBuf, Option<Bitcoind>, /* remove log */ bool),
+    Exit(
+        Box<settings::WalletSettings>,
+        Option<Bitcoind>,
+        /* remove log */ bool,
+    ),
     Clibpboard(String),
     Next,
     Skip,
@@ -39,7 +43,7 @@ pub enum Message {
     Reload,
     Select(usize),
     UseHotSigner,
-    Installed(Result<PathBuf, Error>),
+    Installed(Result<settings::WalletSettings, Error>),
     CreateTaprootDescriptor(bool),
     SelectDescriptorTemplate(context::DescriptorTemplate),
     SelectBackend(SelectBackend),
