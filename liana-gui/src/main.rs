@@ -266,19 +266,20 @@ impl GUI {
                 _ => l.update(*msg).map(|msg| Message::Login(Box::new(msg))),
             },
             (State::Installer(i), Message::Install(msg)) => {
-                if let installer::Message::Exit(path, internal_bitcoind, remove_log) = *msg {
-                    let network_dir = i.datadir.network_directory(i.network);
-                    // We get the first one created.
-                    let settings = app::settings::WalletSettings::from_file(&network_dir, |_| true)
-                        .expect("A settings file was created")
-                        .expect("A wallet was created");
-                    if let Some(setting) = settings.remote_backend_auth {
+                if let installer::Message::Exit(settings, internal_bitcoind, remove_log) = *msg {
+                    if let Some(auth) = settings.remote_backend_auth {
                         let (login, command) =
-                            login::LianaLiteLogin::new(i.datadir.clone(), i.network, setting);
+                            login::LianaLiteLogin::new(i.datadir.clone(), i.network, auth);
                         self.state = State::Login(Box::new(login));
                         command.map(|msg| Message::Login(Box::new(msg)))
                     } else {
-                        let cfg = app::Config::from_file(&path).expect("A config file was created");
+                        let cfg = app::Config::from_file(
+                            &i.datadir
+                                .network_directory(i.network)
+                                .path()
+                                .join(app::config::DEFAULT_FILE_NAME),
+                        )
+                        .expect("A gui configuration file must be present");
 
                         self.logger.set_running_mode(
                             i.datadir.clone(),
@@ -296,7 +297,7 @@ impl GUI {
                             i.network,
                             internal_bitcoind,
                             i.context.backup.take(),
-                            settings,
+                            *settings,
                         );
                         self.state = State::Loader(Box::new(loader));
                         command.map(|msg| Message::Load(Box::new(msg)))

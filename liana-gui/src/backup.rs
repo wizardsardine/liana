@@ -148,11 +148,6 @@ impl Backup {
         };
 
         let name = if let Some(settings) = settings {
-            assert_eq!(settings.wallets.len(), 1);
-            if settings.wallets.len() != 1 {
-                return Err(Error::NotSingleWallet);
-            }
-            let settings = settings.wallets.first().expect("only one wallet");
             let name = settings.name.clone();
             if let Ok(settings) = serde_json::to_value(settings) {
                 proprietary.insert(SETTINGS_KEY.to_string(), settings);

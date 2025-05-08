@@ -23,7 +23,7 @@ use std::sync::{Arc, Mutex};
 use crate::{
     app::{
         config as gui_config,
-        settings::{self as gui_settings, AuthConfig, Settings, SettingsError, WalletSettings},
+        settings::{update_settings_file, AuthConfig, SettingsError, WalletSettings},
         wallet::wallet_name,
     },
     backup,
@@ -362,7 +362,7 @@ pub fn daemon_check(cfg: lianad::config::Config) -> Result<(), Error> {
 pub async fn install_local_wallet(
     ctx: Context,
     signer: Arc<Mutex<Signer>>,
-) -> Result<PathBuf, Error> {
+) -> Result<WalletSettings, Error> {
     let network_datadir = ctx
         .liana_directory
         .network_directory(ctx.bitcoin_config.network);
@@ -412,7 +412,7 @@ pub async fn install_local_wallet(
     }
 
     // create liana GUI configuration file
-    let gui_config_path = create_and_write_file(
+    let _gui_config_path = create_and_write_file(
         &network_datadir,
         gui_config::DEFAULT_FILE_NAME,
         toml::to_string(&gui_config::Config::new(
@@ -426,25 +426,24 @@ pub async fn install_local_wallet(
     info!("Gui configuration file created");
 
     // create liana GUI settings file
-    let settings: gui_settings::Settings = extract_local_gui_settings(&ctx);
-    create_and_write_file(
-        &network_datadir,
-        gui_settings::DEFAULT_FILE_NAME,
-        serde_json::to_string_pretty(&settings)
-            .map_err(|e| Error::Unexpected(format!("Failed to serialize settings: {}", e)))?
-            .as_bytes(),
-    )?;
+    let wallet_settings = extract_local_gui_settings(&ctx);
+    update_settings_file(&network_datadir, |mut settings| {
+        settings.wallets.push(wallet_settings.clone());
+        settings
+    })
+    .await
+    .map_err(|e| Error::Unexpected(e.to_string()))?;
 
     info!("Settings file created");
 
-    Ok(gui_config_path)
+    Ok(wallet_settings)
 }
 
 pub async fn create_remote_wallet(
     ctx: Context,
     signer: Arc<Mutex<Signer>>,
     remote_backend: BackendClient,
-) -> Result<PathBuf, Error> {
+) -> Result<WalletSettings, Error> {
     let network_datadir = ctx.liana_directory.network_directory(ctx.network);
     network_datadir
         .init()
@@ -477,7 +476,7 @@ pub async fn create_remote_wallet(
     }
 
     // create liana GUI configuration file
-    let gui_config_path = create_and_write_file(
+    let _gui_config_path = create_and_write_file(
         &network_datadir,
         gui_config::DEFAULT_FILE_NAME,
         toml::to_string(&gui_config::Config {
@@ -540,14 +539,13 @@ pub async fn create_remote_wallet(
     let remote_backend = remote_backend.connect_wallet(wallet).0;
 
     // create liana GUI settings file
-    let settings: gui_settings::Settings = extract_remote_gui_settings(&ctx, &remote_backend).await;
-    create_and_write_file(
-        &network_datadir,
-        gui_settings::DEFAULT_FILE_NAME,
-        serde_json::to_string_pretty(&settings)
-            .map_err(|e| Error::Unexpected(format!("Failed to serialize settings: {}", e)))?
-            .as_bytes(),
-    )?;
+    let wallet_settings = extract_remote_gui_settings(&ctx, &remote_backend).await;
+    update_settings_file(&network_datadir, |mut settings| {
+        settings.wallets.push(wallet_settings.clone());
+        settings
+    })
+    .await
+    .map_err(|e| Error::Unexpected(e.to_string()))?;
 
     info!("Settings file created");
 
@@ -567,13 +565,13 @@ pub async fn create_remote_wallet(
         info!("Liana-Connect cache updated");
     };
 
-    Ok(gui_config_path)
+    Ok(wallet_settings)
 }
 
 pub async fn import_remote_wallet(
     ctx: Context,
     backend: BackendWalletClient,
-) -> Result<PathBuf, Error> {
+) -> Result<WalletSettings, Error> {
     tracing::info!("Importing wallet from remote backend");
 
     if let Some(signer) = &ctx.recovered_signer {
@@ -590,19 +588,18 @@ pub async fn import_remote_wallet(
         .map_err(|e| Error::Unexpected(format!("Failed to create datadir path: {}", e)))?;
 
     // create liana GUI settings file
-    let settings: gui_settings::Settings = extract_remote_gui_settings(&ctx, &backend).await;
-    create_and_write_file(
-        &network_datadir,
-        gui_settings::DEFAULT_FILE_NAME,
-        serde_json::to_string_pretty(&settings)
-            .map_err(|e| Error::Unexpected(format!("Failed to serialize settings: {}", e)))?
-            .as_bytes(),
-    )?;
+    let wallet_settings = extract_remote_gui_settings(&ctx, &backend).await;
+    update_settings_file(&network_datadir, |mut settings| {
+        settings.wallets.push(wallet_settings.clone());
+        settings
+    })
+    .await
+    .map_err(|e| Error::Unexpected(e.to_string()))?;
 
     info!("Settings file created");
 
     // create liana GUI configuration file
-    let gui_config_path = create_and_write_file(
+    let _gui_config_path = create_and_write_file(
         &network_datadir,
         gui_config::DEFAULT_FILE_NAME,
         toml::to_string(&gui_config::Config {
@@ -632,7 +629,7 @@ pub async fn import_remote_wallet(
         info!("Liana-Connect cache updated");
     };
 
-    Ok(gui_config_path)
+    Ok(wallet_settings)
 }
 
 pub fn create_and_write_file(
@@ -651,7 +648,10 @@ pub fn create_and_write_file(
 
 // if the wallet is using the remote backend, then the hardware wallet settings and
 // keys will be store on the remote backend side and not in the settings file.
-pub async fn extract_remote_gui_settings(ctx: &Context, backend: &BackendWalletClient) -> Settings {
+pub async fn extract_remote_gui_settings(
+    ctx: &Context,
+    backend: &BackendWalletClient,
+) -> WalletSettings {
     let descriptor = ctx
         .descriptor
         .as_ref()
@@ -664,23 +664,21 @@ pub async fn extract_remote_gui_settings(ctx: &Context, backend: &BackendWalletC
         .expect("LianaDescriptor.to_string() always include the checksum")
         .to_string();
 
-    Settings {
-        wallets: vec![WalletSettings {
-            name: wallet_name(descriptor),
-            descriptor_checksum,
-            pinned_at: Some(chrono::Utc::now().timestamp()),
-            keys: Vec::new(),
-            hardware_wallets: Vec::new(),
-            remote_backend_auth: Some(AuthConfig::new(
-                backend.user_email().to_string(),
-                backend.wallet_id(),
-            )),
-            start_internal_bitcoind: None,
-        }],
+    WalletSettings {
+        name: wallet_name(descriptor),
+        descriptor_checksum,
+        pinned_at: Some(chrono::Utc::now().timestamp()),
+        keys: Vec::new(),
+        hardware_wallets: Vec::new(),
+        remote_backend_auth: Some(AuthConfig::new(
+            backend.user_email().to_string(),
+            backend.wallet_id(),
+        )),
+        start_internal_bitcoind: None,
     }
 }
 
-pub fn extract_local_gui_settings(ctx: &Context) -> Settings {
+pub fn extract_local_gui_settings(ctx: &Context) -> WalletSettings {
     let descriptor = ctx
         .descriptor
         .as_ref()
@@ -702,16 +700,14 @@ pub fn extract_local_gui_settings(ctx: &Context) -> Settings {
                 .map(|token| HardwareWalletConfig::new(kind, *fingerprint, token))
         })
         .collect();
-    Settings {
-        wallets: vec![WalletSettings {
-            name: wallet_name(descriptor),
-            pinned_at: Some(chrono::Utc::now().timestamp()),
-            descriptor_checksum,
-            keys: ctx.keys.values().cloned().collect(),
-            hardware_wallets,
-            remote_backend_auth: None,
-            start_internal_bitcoind: Some(ctx.internal_bitcoind.is_some()),
-        }],
+    WalletSettings {
+        name: wallet_name(descriptor),
+        pinned_at: Some(chrono::Utc::now().timestamp()),
+        descriptor_checksum,
+        keys: ctx.keys.values().cloned().collect(),
+        hardware_wallets,
+        remote_backend_auth: None,
+        start_internal_bitcoind: Some(ctx.internal_bitcoind.is_some()),
     }
 }
 

@@ -21,14 +21,14 @@ pub use mnemonic::{BackupMnemonic, RecoverMnemonic};
 pub use share_xpubs::ShareXpubs;
 use tracing::warn;
 
-use std::{collections::HashMap, path::PathBuf};
+use std::collections::HashMap;
 
 use iced::{Subscription, Task};
 
 use liana_ui::widget::*;
 
 use crate::{
-    app::settings::ProviderKey,
+    app::settings::{ProviderKey, WalletSettings},
     hw::HardwareWallets,
     installer::{context::Context, message::Message, view},
     node::bitcoind::Bitcoind,
@@ -67,7 +67,7 @@ pub struct Final {
     generating: bool,
     internal_bitcoind: Option<Bitcoind>,
     warning: Option<String>,
-    config_path: Option<PathBuf>,
+    wallet_settings: Option<WalletSettings>,
     key_redemptions: HashMap<ProviderKey, Option<Result<(), services::keys::Error>>>,
 }
 
@@ -77,7 +77,7 @@ impl Final {
             internal_bitcoind: None,
             generating: false,
             warning: None,
-            config_path: None,
+            wallet_settings: None,
             key_redemptions: HashMap::new(),
         }
     }
@@ -99,7 +99,7 @@ impl Step for Final {
             .collect();
     }
     fn load(&self) -> Task<Message> {
-        if !self.generating && self.config_path.is_none() {
+        if !self.generating && self.wallet_settings.is_none() {
             Task::perform(async {}, |_| Message::Install)
         } else {
             Task::none()
@@ -142,30 +142,30 @@ impl Step for Final {
                 }
                 // Now exit the installer whether or not any redemption errors occurred.
                 let internal_bitcoind = self.internal_bitcoind.clone();
-                let path = self.config_path.clone().expect("config path already set");
+                let settings = self.wallet_settings.clone().expect("Install is done");
                 // If there were any errors, don't remove the installer log.
                 return Task::perform(
-                    async move { (path, internal_bitcoind, has_error) },
-                    |(path, internal_bitcoind, has_error)| {
-                        Message::Exit(path, internal_bitcoind, !has_error)
+                    async move { (settings, internal_bitcoind, has_error) },
+                    |(settings, internal_bitcoind, has_error)| {
+                        Message::Exit(Box::new(settings), internal_bitcoind, !has_error)
                     },
                 );
             }
             Message::Installed(res) => match res {
                 Err(e) => {
                     self.generating = false;
-                    self.config_path = None;
+                    self.wallet_settings = None;
                     self.warning = Some(e.to_string());
                 }
-                Ok(path) => {
-                    self.config_path = Some(path.clone());
+                Ok(wallet_settings) => {
+                    self.wallet_settings = Some(wallet_settings);
                     // Now redeem any provider keys.
                     return Task::perform(async move {}, |_| Message::RedeemNextKey);
                 }
             },
             Message::Install => {
                 self.generating = true;
-                self.config_path = None;
+                self.wallet_settings = None;
                 self.warning = None;
             }
             _ => {}
@@ -183,7 +183,7 @@ impl Step for Final {
             progress,
             email,
             self.generating,
-            self.config_path.as_ref(),
+            self.wallet_settings.is_some(),
             self.warning.as_ref(),
         )
     }
