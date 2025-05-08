@@ -17,13 +17,6 @@ use lianad::config::BitcoindRpcAuth;
 
 use super::{dashboard, message::*};
 
-use liana_ui::{
-    component::{badge, button, card, form, separation, text::*, tooltip::tooltip},
-    icon,
-    theme::{self},
-    widget::*,
-};
-
 use crate::{
     app::{
         cache::Cache,
@@ -38,6 +31,13 @@ use crate::{
         electrum,
     },
 };
+use liana_ui::{
+    component::{badge, button, card, form, separation, text::*, tooltip::tooltip},
+    icon,
+    theme::{self},
+    widget::*,
+};
+use lianad::LIANA_VERSION;
 
 fn header(title: &str, msg: SettingsMessage) -> Row<'static, Message> {
     Row::new()
@@ -277,7 +277,7 @@ pub fn about_section<'a>(
             .push(
                 Row::new().push(Space::with_width(Length::Fill)).push(
                     Column::new()
-                        .push(text(format!("liana-gui v{}", crate::VERSION)))
+                        .push(text(format!("liana-gui v{}", LIANA_VERSION)))
                         .push_maybe(
                             lianad_version.map(|version| text(format!("lianad v{}", version))),
                         ),
