@@ -121,7 +121,10 @@ impl Loader {
         backup: Option<Backup>,
         wallet_settings: WalletSettings,
     ) -> (Self, Task<Message>) {
-        let path = socket_path(&datadir_path, network);
+        let socket_path = datadir_path
+            .network_directory(network)
+            .lianad_data_directory(&wallet_settings)
+            .lianad_rpc_socket_path();
         (
             Loader {
                 network,
@@ -134,7 +137,7 @@ impl Loader {
                 wallet_settings,
                 backup,
             },
-            Task::perform(connect(path), Message::Loaded),
+            Task::perform(connect(socket_path), Message::Loaded),
         )
     }
 
@@ -204,6 +207,7 @@ impl Loader {
                             self.datadir_path.clone(),
                             self.start_bitcoind(),
                             self.network,
+                            self.wallet_settings.clone(),
                         ),
                         Message::Started,
                     );
@@ -551,9 +555,11 @@ pub async fn start_bitcoind_and_daemon(
     liana_datadir_path: LianaDirectory,
     start_internal_bitcoind: bool,
     network: bitcoin::Network,
+    settings: WalletSettings,
 ) -> StartedResult {
     let mut config_path = liana_datadir_path
         .network_directory(network)
+        .lianad_data_directory(&settings)
         .path()
         .to_path_buf();
     config_path.push("daemon.toml");
@@ -628,11 +634,4 @@ impl From<DaemonError> for Error {
     fn from(error: DaemonError) -> Self {
         Error::Daemon(error)
     }
-}
-
-/// default lianad socket path is .liana/bitcoin/lianad_rpc
-fn socket_path(datadir: &LianaDirectory, network: bitcoin::Network) -> PathBuf {
-    let mut path = datadir.network_directory(network).path().to_path_buf();
-    path.push("lianad_rpc");
-    path
 }

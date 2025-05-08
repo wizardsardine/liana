@@ -132,29 +132,26 @@ impl Backup {
         let mut proprietary = serde_json::Map::new();
         proprietary.insert(LIANA_VERSION_KEY.to_string(), liana_version().into());
 
-        let config = extract_daemon_config(&ctx).map_err(|e| Error::Daemon(e.to_string()))?;
+        let settings = match &ctx.remote_backend {
+            // This append while user is importing a wallet already created on Liana-Connect.
+            RemoteBackend::WithWallet(backend) => extract_remote_gui_settings(&ctx, backend).await,
+            // Other cases are about wallet creation, the ctx contains all the keys aliases and
+            // descriptor registration hmacs.
+            _ => extract_local_gui_settings(&ctx),
+        };
+
+        let config =
+            extract_daemon_config(&ctx, &settings).map_err(|e| Error::Daemon(e.to_string()))?;
         if let Ok(config) = serde_json::to_value(config) {
             proprietary.insert(CONFIG_KEY.to_string(), config);
         }
-        let settings = if ctx.bitcoin_backend.is_some() {
-            Some(extract_local_gui_settings(&ctx))
-        } else {
-            match &ctx.remote_backend {
-                RemoteBackend::WithWallet(backend) => {
-                    Some(extract_remote_gui_settings(&ctx, backend).await)
-                }
-                _ => None,
-            }
-        };
 
-        let name = if let Some(settings) = settings {
+        let name = {
             let name = settings.name.clone();
             if let Ok(settings) = serde_json::to_value(settings) {
                 proprietary.insert(SETTINGS_KEY.to_string(), settings);
             }
             Some(name)
-        } else {
-            None
         };
 
         ctx.keys.iter().for_each(|(k, s)| {

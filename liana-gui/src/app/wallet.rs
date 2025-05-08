@@ -80,6 +80,11 @@ impl Wallet {
         }
     }
 
+    pub fn with_pinned_at(mut self, pinned_at: Option<i64>) -> Self {
+        self.pinned_at = pinned_at;
+        self
+    }
+
     pub fn with_key_aliases(mut self, aliases: HashMap<Fingerprint, String>) -> Self {
         self.keys_aliases = aliases;
         self
@@ -125,6 +130,7 @@ impl Wallet {
                 .with_key_aliases(wallet_settings.keys_aliases())
                 .with_provider_keys(wallet_settings.provider_keys())
                 .with_name(wallet_settings.name)
+                .with_pinned_at(wallet_settings.pinned_at)
                 .with_hardware_wallets(wallet_settings.hardware_wallets))
         }
     }

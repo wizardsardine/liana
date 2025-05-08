@@ -17,7 +17,7 @@ use std::ops::Deref;
 use tracing::{error, info, warn};
 
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use crate::{
@@ -28,7 +28,7 @@ use crate::{
     },
     backup,
     daemon::DaemonError,
-    dir::{LianaDirectory, NetworkDirectory},
+    dir::LianaDirectory,
     hw::{HardwareWalletConfig, HardwareWallets},
     services::{
         self,
@@ -370,7 +370,8 @@ pub async fn install_local_wallet(
         .init()
         .map_err(|e| Error::Unexpected(format!("Failed to create datadir path: {}", e)))?;
 
-    let cfg: lianad::config::Config = extract_daemon_config(&ctx)?;
+    let wallet_settings = extract_local_gui_settings(&ctx);
+    let cfg: lianad::config::Config = extract_daemon_config(&ctx, &wallet_settings)?;
 
     daemon_check(cfg.clone())?;
 
@@ -381,9 +382,11 @@ pub async fn install_local_wallet(
         .map_err(|e| Error::Unexpected(format!("Failed to serialize daemon config: {}", e)))?;
 
     // create lianad configuration file
-    let _daemon_config_path = create_and_write_file(
-        &network_datadir,
-        "daemon.toml",
+    create_and_write_file(
+        &network_datadir
+            .lianad_data_directory(&wallet_settings)
+            .path()
+            .join("daemon.toml"),
         daemon_config.to_string().as_bytes(),
     )?;
 
@@ -412,21 +415,24 @@ pub async fn install_local_wallet(
     }
 
     // create liana GUI configuration file
-    let _gui_config_path = create_and_write_file(
-        &network_datadir,
-        gui_config::DEFAULT_FILE_NAME,
-        toml::to_string(&gui_config::Config::new(
-            // Installer started a bitcoind, it is expected that gui will start it on startup
-            ctx.internal_bitcoind.is_some(),
-        ))
-        .map_err(|e| Error::Unexpected(format!("Failed to serialize gui config: {}", e)))?
-        .as_bytes(),
-    )?;
-
-    info!("Gui configuration file created");
+    let gui_config_path = network_datadir
+        .path()
+        .join(gui_config::DEFAULT_FILE_NAME)
+        .to_path_buf();
+    if !gui_config_path.exists() {
+        create_and_write_file(
+            &gui_config_path,
+            toml::to_string(&gui_config::Config::new(
+                // Installer started a bitcoind, it is expected that gui will start it on startup
+                ctx.internal_bitcoind.is_some(),
+            ))
+            .map_err(|e| Error::Unexpected(format!("Failed to serialize gui config: {}", e)))?
+            .as_bytes(),
+        )?;
+        info!("Gui configuration file created");
+    }
 
     // create liana GUI settings file
-    let wallet_settings = extract_local_gui_settings(&ctx);
     update_settings_file(&network_datadir, |mut settings| {
         settings.wallets.push(wallet_settings.clone());
         settings
@@ -476,19 +482,19 @@ pub async fn create_remote_wallet(
     }
 
     // create liana GUI configuration file
-    let _gui_config_path = create_and_write_file(
-        &network_datadir,
-        gui_config::DEFAULT_FILE_NAME,
-        toml::to_string(&gui_config::Config {
-            log_level: Some("info".to_string()),
-            debug: Some(false),
-            start_internal_bitcoind: false,
-        })
-        .map_err(|e| Error::Unexpected(format!("Failed to serialize gui config: {}", e)))?
-        .as_bytes(),
-    )?;
-
-    info!("Gui configuration file created");
+    let gui_config_path = network_datadir
+        .path()
+        .join(gui_config::DEFAULT_FILE_NAME)
+        .to_path_buf();
+    if !gui_config_path.exists() {
+        create_and_write_file(
+            &gui_config_path,
+            toml::to_string(&gui_config::Config::new(false))
+                .map_err(|e| Error::Unexpected(format!("Failed to serialize gui config: {}", e)))?
+                .as_bytes(),
+        )?;
+        info!("Gui configuration file created");
+    }
 
     let pks: Vec<_> = ctx
         .keys
@@ -599,19 +605,19 @@ pub async fn import_remote_wallet(
     info!("Settings file created");
 
     // create liana GUI configuration file
-    let _gui_config_path = create_and_write_file(
-        &network_datadir,
-        gui_config::DEFAULT_FILE_NAME,
-        toml::to_string(&gui_config::Config {
-            log_level: Some("info".to_string()),
-            debug: Some(false),
-            start_internal_bitcoind: false,
-        })
-        .map_err(|e| Error::Unexpected(format!("Failed to serialize gui config: {}", e)))?
-        .as_bytes(),
-    )?;
-
-    info!("Gui configuration file created");
+    let gui_config_path = network_datadir
+        .path()
+        .join(gui_config::DEFAULT_FILE_NAME)
+        .to_path_buf();
+    if !gui_config_path.exists() {
+        create_and_write_file(
+            &gui_config_path,
+            toml::to_string(&gui_config::Config::new(false))
+                .map_err(|e| Error::Unexpected(format!("Failed to serialize gui config: {}", e)))?
+                .as_bytes(),
+        )?;
+        info!("Gui configuration file created");
+    }
 
     let backend = backend.inner_client();
     if let Err(e) = update_connect_cache(
@@ -632,18 +638,12 @@ pub async fn import_remote_wallet(
     Ok(wallet_settings)
 }
 
-pub fn create_and_write_file(
-    network_datadir: &NetworkDirectory,
-    file_name: &str,
-    data: &[u8],
-) -> Result<PathBuf, Error> {
-    let mut path = network_datadir.path().to_path_buf();
-    path.push(file_name);
+pub fn create_and_write_file(path: &Path, data: &[u8]) -> Result<(), Error> {
     let mut file =
-        std::fs::File::create(&path).map_err(|e| Error::CannotCreateFile(e.to_string()))?;
+        std::fs::File::create(path).map_err(|e| Error::CannotCreateFile(e.to_string()))?;
     file.write_all(data)
         .map_err(|e| Error::CannotWriteToFile(e.to_string()))?;
-    Ok(path)
+    Ok(())
 }
 
 // if the wallet is using the remote backend, then the hardware wallet settings and
@@ -711,10 +711,16 @@ pub fn extract_local_gui_settings(ctx: &Context) -> WalletSettings {
     }
 }
 
-pub fn extract_daemon_config(ctx: &Context) -> Result<Config, Error> {
+pub fn extract_daemon_config(ctx: &Context, settings: &WalletSettings) -> Result<Config, Error> {
     let data_directory = ctx
         .liana_directory
         .network_directory(ctx.bitcoin_config.network)
+        .lianad_data_directory(settings);
+    data_directory
+        .init()
+        .map_err(|e| Error::CannotCreateDatadir(e.to_string()))?;
+
+    let data_directory = data_directory
         .path()
         .to_path_buf()
         .canonicalize()
