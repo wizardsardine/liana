@@ -1485,7 +1485,7 @@ pub fn install<'a>(
     progress: (usize, usize),
     email: Option<&'a str>,
     generating: bool,
-    config_path: Option<&std::path::PathBuf>,
+    installed: bool,
     warning: Option<&'a String>,
 ) -> Element<'a, Message> {
     let prev_msg = if !generating && warning.is_some() {
@@ -1501,7 +1501,7 @@ pub fn install<'a>(
             .push_maybe(warning.map(|e| card::invalid(text(e))))
             .push(if generating {
                 Container::new(text("Installing..."))
-            } else if config_path.is_some() {
+            } else if installed {
                 Container::new(
                     Row::new()
                         .spacing(10)
