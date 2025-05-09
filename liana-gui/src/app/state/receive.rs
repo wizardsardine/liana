@@ -194,6 +194,7 @@ impl State for ReceivePanel {
         &mut self,
         _daemon: Arc<dyn Daemon + Sync + Send>,
         wallet: Arc<Wallet>,
+        _reset: bool,
     ) -> Task<Message> {
         self.wallet = wallet;
         self.addresses = Addresses::default();

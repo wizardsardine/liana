@@ -169,7 +169,7 @@ impl App {
             config.clone(),
             restored_from_backup,
         );
-        let cmd = panels.home.reload(daemon.clone(), wallet.clone());
+        let cmd = panels.home.reload(daemon.clone(), wallet.clone(), false);
         (
             Self {
                 panels,
@@ -254,7 +254,7 @@ impl App {
         self.panels.current = menu;
         self.panels
             .current_mut()
-            .reload(self.daemon.clone(), self.wallet.clone())
+            .reload(self.daemon.clone(), self.wallet.clone(), true)
     }
 
     pub fn subscription(&self) -> Subscription<Message> {
@@ -338,6 +338,16 @@ impl App {
             Message::UpdateCache(res) => {
                 match res {
                     Ok(cache) => {
+                        let home_reload = if (self.cache.coins != cache.coins)
+                            && self.panels.current == Menu::Home
+                        {
+                            let task = Task::perform(async {}, |_| {
+                                Message::View(view::Message::Reload(false))
+                            });
+                            Some(task)
+                        } else {
+                            None
+                        };
                         self.cache.clone_from(&cache);
                         let current = &self.panels.current;
                         let daemon = self.daemon.clone();
@@ -346,7 +356,7 @@ impl App {
                             (&mut self.panels.home as &mut dyn State, Menu::Home),
                             (&mut self.panels.settings as &mut dyn State, Menu::Settings),
                         ];
-                        let commands: Vec<_> = panels
+                        let mut commands: Vec<_> = panels
                             .iter_mut()
                             .map(|(panel, menu)| {
                                 panel.update(
@@ -356,6 +366,9 @@ impl App {
                                 )
                             })
                             .collect();
+                        if let Some(reload) = home_reload {
+                            commands.push(reload);
+                        }
                         return Task::batch(commands);
                     }
                     Err(e) => tracing::error!("Failed to update cache: {}", e),
