@@ -1041,20 +1041,16 @@ pub fn sign_action<'a>(
                         .push(hws.iter().enumerate().fold(
                             Column::new().spacing(10),
                             |col, (i, hw)| {
-                                let can_sign = hw.fingerprint().map_or(false, |f| {
-                                    descriptor.contains_fingerprint_in_path(f, recovery_timelock)
-                                });
-                                col.push(hw_list_view(
-                                    i,
-                                    hw,
-                                    hw.fingerprint()
-                                        .map(|f| signed.contains(&f))
-                                        .unwrap_or(false),
-                                    hw.fingerprint()
-                                        .map(|f| signing.contains(&f))
-                                        .unwrap_or(false),
-                                    can_sign,
-                                ))
+                                let (signed, signing, can_sign) =
+                                    hw.fingerprint().map_or((false, false, false), |f| {
+                                        (
+                                            signed.contains(&f),
+                                            signing.contains(&f),
+                                            descriptor
+                                                .contains_fingerprint_in_path(f, recovery_timelock),
+                                        )
+                                    });
+                                col.push(hw_list_view(i, hw, signed, signing, can_sign))
                             },
                         ))
                         .push_maybe({
