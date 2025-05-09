@@ -92,10 +92,16 @@ pub struct PsbtState {
     pub warning: Option<Error>,
     pub labels_edited: LabelsEdited,
     pub modal: Option<PsbtModal>,
+    pub recovery_timelock: Option<u16>,
 }
 
 impl PsbtState {
-    pub fn new(wallet: Arc<Wallet>, tx: SpendTx, saved: bool) -> Self {
+    pub fn new(
+        wallet: Arc<Wallet>,
+        tx: SpendTx,
+        saved: bool,
+        recovery_timelock: Option<u16>,
+    ) -> Self {
         Self {
             desc_policy: wallet.main_descriptor.policy(),
             wallet,
@@ -104,6 +110,7 @@ impl PsbtState {
             modal: None,
             tx,
             saved,
+            recovery_timelock,
         }
     }
 
@@ -187,6 +194,7 @@ impl PsbtState {
                     cache.datadir_path.clone(),
                     cache.network,
                     self.saved,
+                    self.recovery_timelock,
                 );
                 let cmd = modal.load(daemon);
                 self.modal = Some(PsbtModal::Sign(modal));
@@ -438,6 +446,7 @@ pub struct SignModal {
     signed: HashSet<Fingerprint>,
     is_saved: bool,
     display_modal: bool,
+    recovery_timelock: Option<u16>,
 }
 
 impl SignModal {
@@ -447,6 +456,7 @@ impl SignModal {
         datadir_path: LianaDirectory,
         network: Network,
         is_saved: bool,
+        recovery_timelock: Option<u16>,
     ) -> Self {
         Self {
             signing: HashSet::new(),
@@ -456,6 +466,7 @@ impl SignModal {
             signed,
             is_saved,
             display_modal: true,
+            recovery_timelock,
         }
     }
 }
@@ -565,6 +576,7 @@ impl Modal for SignModal {
                 view::psbt::sign_action(
                     self.error.as_ref(),
                     &self.hws.list,
+                    &self.wallet.main_descriptor,
                     self.wallet.signer.as_ref().map(|s| s.fingerprint()),
                     self.wallet
                         .signer
@@ -572,6 +584,7 @@ impl Modal for SignModal {
                         .and_then(|signer| self.wallet.keys_aliases.get(&signer.fingerprint)),
                     &self.signed,
                     &self.signing,
+                    self.recovery_timelock,
                 ),
             )
             .on_blur(Some(view::Message::Spend(view::SpendTxMessage::Cancel)))
