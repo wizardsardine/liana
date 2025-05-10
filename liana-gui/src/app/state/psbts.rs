@@ -31,7 +31,7 @@ impl PsbtsPanel {
     }
 
     pub fn preselect(&mut self, spend_tx: SpendTx) {
-        let psbt_state = psbt::PsbtState::new(self.wallet.clone(), spend_tx, true);
+        let psbt_state = psbt::PsbtState::new(self.wallet.clone(), spend_tx, true, None);
         self.selected_tx = Some(psbt_state);
         self.warning = None;
         self.modal = None;
@@ -81,7 +81,8 @@ impl State for PsbtsPanel {
                             spend_tx.psbt.unsigned_tx.compute_txid()
                                 == tx.tx.psbt.unsigned_tx.compute_txid()
                         }) {
-                            let tx = psbt::PsbtState::new(self.wallet.clone(), tx.clone(), true);
+                            let tx =
+                                psbt::PsbtState::new(self.wallet.clone(), tx.clone(), true, None);
                             let cmd = tx.load(daemon);
                             self.selected_tx = Some(tx);
                             return cmd;
@@ -119,7 +120,7 @@ impl State for PsbtsPanel {
             }
             Message::View(view::Message::Select(i)) => {
                 if let Some(tx) = self.spend_txs.get(i) {
-                    let tx = psbt::PsbtState::new(self.wallet.clone(), tx.clone(), true);
+                    let tx = psbt::PsbtState::new(self.wallet.clone(), tx.clone(), true, None);
                     let cmd = tx.load(daemon);
                     self.selected_tx = Some(tx);
                     return cmd;

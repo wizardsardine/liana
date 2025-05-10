@@ -10,6 +10,7 @@ use crate::{
         schema::{DbBlockInfo, DbCoin, DbTip},
         SqliteConn, SqliteDb,
     },
+    payjoin::db::SessionId,
 };
 
 use std::{
@@ -22,6 +23,7 @@ use std::{
 
 use bip329::Labels;
 use miniscript::bitcoin::{self, bip32, psbt::Psbt, secp256k1, Address, Network, OutPoint, Txid};
+use payjoin::OhttpKeys;
 
 /// Information about the wallet.
 ///
@@ -194,6 +196,74 @@ pub trait DatabaseConnection {
 
     /// Dump all labels
     fn get_labels_bip329(&mut self, offset: u32, limit: u32) -> Labels;
+
+    /// Get the next Session Id
+    fn payjoin_get_ohttp_keys(&mut self, ohttp_relay: &str) -> Option<(u32, OhttpKeys)>;
+
+    /// Save OHttpKeys
+    fn payjoin_save_ohttp_keys(&mut self, ohttp_relay: &str, ohttp_keys: OhttpKeys);
+
+    /// Save Receiver Session
+    fn save_new_payjoin_receiver_session(&mut self) -> i64;
+
+    /// Save original txid for a receiver session
+    fn save_receiver_session_original_txid(
+        &mut self,
+        session_id: &SessionId,
+        original_txid: &bitcoin::Txid,
+    );
+
+    /// Save proposed txid for a receiver session
+    fn save_receiver_session_proposed_txid(
+        &mut self,
+        session_id: &SessionId,
+        proposed_txid: &bitcoin::Txid,
+    );
+
+    /// Get receiver session id from txid -- this will return the session id if the txid is a proposed payjoin txid or the original txid
+    fn get_payjoin_receiver_session_id_from_txid(
+        &mut self,
+        txid: &bitcoin::Txid,
+    ) -> Option<SessionId>;
+
+    /// Get all Receiver Sessions
+    fn get_all_active_receiver_session_ids(&mut self) -> Vec<SessionId>;
+
+    /// Save a Receiver Session Event
+    fn save_receiver_session_event(&mut self, session_id: &SessionId, event: Vec<u8>);
+
+    /// Update completed at timestamp for a Receiver Session
+    /// Sets completed_at to current timestamp
+    fn update_receiver_session_completed_at(&mut self, session_id: &SessionId);
+
+    /// Load all receiver session events for a particular session id
+    fn load_receiver_session_events(&mut self, session_id: &SessionId) -> Vec<Vec<u8>>;
+
+    /// Check if input has been seen before and then add it to the input_seen table
+    fn insert_input_seen_before(&mut self, outpoints: &[bitcoin::OutPoint]) -> bool;
+
+    /// Create a payjoin sender
+    fn save_new_payjoin_sender_session(&mut self, original_txid: &bitcoin::Txid) -> i64;
+    /// Get a all active payjoin senders
+    fn get_all_active_sender_session_ids(&mut self) -> Vec<SessionId>;
+
+    /// Save a sender session event
+    fn save_sender_session_event(&mut self, session_id: &SessionId, event: Vec<u8>);
+
+    /// Get all sender session events for a particular session id
+    fn get_all_sender_session_events(&mut self, session_id: &SessionId) -> Vec<Vec<u8>>;
+
+    /// Update the completed at timestamp for a sender session
+    fn update_sender_session_completed_at(&mut self, session_id: &SessionId);
+
+    /// Save the proposed txid for a sender session
+    fn save_proposed_payjoin_txid(&mut self, session_id: &SessionId, proposed_txid: &bitcoin::Txid);
+
+    /// Get payjoin session id from txid -- this will return the session id if the txid is a proposed payjoin txid or the original txid
+    fn get_payjoin_sender_session_id_from_txid(
+        &mut self,
+        txid: &bitcoin::Txid,
+    ) -> Option<SessionId>;
 }
 
 impl DatabaseConnection for SqliteConn {
@@ -415,6 +485,96 @@ impl DatabaseConnection for SqliteConn {
                 )
             })
             .collect()
+    }
+
+    fn insert_input_seen_before(&mut self, outpoints: &[bitcoin::OutPoint]) -> bool {
+        self.insert_outpoint_seen_before(outpoints)
+    }
+
+    fn payjoin_get_ohttp_keys(&mut self, ohttp_relay: &str) -> Option<(u32, OhttpKeys)> {
+        self.payjoin_get_ohttp_keys(ohttp_relay)
+    }
+
+    fn payjoin_save_ohttp_keys(&mut self, ohttp_relay: &str, ohttp_keys: OhttpKeys) {
+        self.payjoin_save_ohttp_keys(ohttp_relay, ohttp_keys)
+    }
+
+    fn save_new_payjoin_receiver_session(&mut self) -> i64 {
+        self.save_new_payjoin_receiver_session()
+    }
+
+    fn get_all_active_receiver_session_ids(&mut self) -> Vec<SessionId> {
+        self.get_all_active_receiver_session_ids()
+    }
+
+    fn save_receiver_session_original_txid(
+        &mut self,
+        session_id: &SessionId,
+        original_txid: &bitcoin::Txid,
+    ) {
+        self.update_receiver_session_original_txid(session_id, original_txid)
+    }
+
+    fn save_receiver_session_proposed_txid(
+        &mut self,
+        session_id: &SessionId,
+        proposed_txid: &bitcoin::Txid,
+    ) {
+        self.update_receiver_session_proposed_txid(session_id, proposed_txid)
+    }
+
+    fn get_payjoin_receiver_session_id_from_txid(
+        &mut self,
+        txid: &bitcoin::Txid,
+    ) -> Option<SessionId> {
+        self.get_payjoin_receiver_session_id(txid)
+    }
+
+    fn save_receiver_session_event(&mut self, session_id: &SessionId, event: Vec<u8>) {
+        self.save_receiver_session_event(session_id, event)
+    }
+
+    fn update_receiver_session_completed_at(&mut self, session_id: &SessionId) {
+        self.update_receiver_session_completed_at(session_id)
+    }
+
+    fn load_receiver_session_events(&mut self, session_id: &SessionId) -> Vec<Vec<u8>> {
+        self.load_receiver_session_events(session_id)
+    }
+
+    fn save_new_payjoin_sender_session(&mut self, original_txid: &bitcoin::Txid) -> i64 {
+        self.save_new_payjoin_sender_session(original_txid)
+    }
+
+    fn get_all_active_sender_session_ids(&mut self) -> Vec<SessionId> {
+        self.get_all_active_sender_session_ids()
+    }
+
+    fn save_sender_session_event(&mut self, session_id: &SessionId, event: Vec<u8>) {
+        self.save_sender_session_event(session_id, event)
+    }
+
+    fn get_all_sender_session_events(&mut self, session_id: &SessionId) -> Vec<Vec<u8>> {
+        self.load_sender_session_events(session_id)
+    }
+
+    fn update_sender_session_completed_at(&mut self, session_id: &SessionId) {
+        self.update_sender_session_completed_at(session_id)
+    }
+
+    fn save_proposed_payjoin_txid(
+        &mut self,
+        session_id: &SessionId,
+        proposed_txid: &bitcoin::Txid,
+    ) {
+        self.save_proposed_payjoin_txid(session_id, proposed_txid)
+    }
+
+    fn get_payjoin_sender_session_id_from_txid(
+        &mut self,
+        txid: &bitcoin::Txid,
+    ) -> Option<SessionId> {
+        self.get_payjoin_sender_session_id(txid)
     }
 }
 

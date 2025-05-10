@@ -25,8 +25,10 @@ use crate::{
         },
         Coin, CoinStatus, LabelItem,
     },
+    payjoin::db::SessionId,
 };
 use liana::descriptors::LianaDescriptor;
+use payjoin::{bitcoin::consensus::Encodable, OhttpKeys};
 
 use std::{
     cmp,
@@ -477,6 +479,34 @@ impl SqliteConn {
             Ok(())
         })
         .expect("Database must be available")
+    }
+
+    pub fn insert_outpoint_seen_before<'a>(
+        &mut self,
+        outpoints: impl IntoIterator<Item = &'a bitcoin::OutPoint>,
+    ) -> bool {
+        let mut is_duplicate = false;
+        db_exec(&mut self.conn, |db_tx| {
+            for outpoint in outpoints {
+                let mut buf = Vec::new();
+                outpoint
+                    .consensus_encode(&mut buf)
+                    .expect("Outpoint must encode");
+                let affected = db_tx.execute(
+                    "INSERT OR IGNORE INTO payjoin_outpoints (outpoint, added_at) \
+                        VALUES (?1, ?2)",
+                    rusqlite::params![buf, curr_timestamp()],
+                )?;
+
+                if affected == 0 {
+                    is_duplicate = true
+                }
+            }
+            Ok(())
+        })
+        .expect("database must be available");
+
+        is_duplicate
     }
 
     /// Remove a set of coins from the database.
@@ -962,6 +992,270 @@ impl SqliteConn {
             Ok(())
         })
         .expect("Db must not fail");
+    }
+
+    /// Fetch Payjoin OHttpKeys and their timestamp
+    pub fn payjoin_get_ohttp_keys(&mut self, relay_url: &str) -> Option<(u32, OhttpKeys)> {
+        let entries = db_query(
+            &mut self.conn,
+            "SELECT timestamp, key FROM payjoin_ohttp_keys WHERE relay_url = ?1 ORDER BY timestamp DESC LIMIT 1",
+            rusqlite::params![relay_url],
+            |row| {
+                let timestamp: u32 = row.get(0)?;
+                let ohttp_keys_ser: Vec<u8> = row.get(1)?;
+                let ohttp_keys = OhttpKeys::decode(&ohttp_keys_ser).unwrap();
+                Ok((timestamp, ohttp_keys))
+            },
+        )
+        .expect("Db must not fail");
+
+        // Check timestamp (7-days)
+        if let Some(entry) = entries.first().cloned() {
+            let now = curr_timestamp();
+            let seven_days_ago = now.saturating_sub(7 * 24 * 60 * 60);
+            if entry.0 < seven_days_ago {
+                // Delete entry
+                db_exec(&mut self.conn, |db_tx| {
+                    db_tx.execute(
+                        "DELETE FROM payjoin_ohttp_keys WHERE relay_url = ?1",
+                        rusqlite::params![relay_url],
+                    )?;
+                    Ok(())
+                })
+                .expect("Db must not fail");
+                return None;
+            } else {
+                return Some(entry);
+            }
+        }
+        None
+    }
+
+    /// Store new OHttpKeys with timestamp
+    pub fn payjoin_save_ohttp_keys(&mut self, relay_url: &str, ohttp_keys: OhttpKeys) {
+        let ohttp_keys_ser = ohttp_keys.encode().unwrap();
+        db_exec(&mut self.conn, |db_tx| {
+            db_tx.execute(
+                "INSERT INTO payjoin_ohttp_keys (relay_url, timestamp, key) VALUES (?1, ?2, ?3)",
+                rusqlite::params![relay_url, curr_timestamp(), ohttp_keys_ser],
+            )?;
+            Ok(())
+        })
+        .expect("Db must not fail");
+    }
+
+    /// Create new Receiver Session
+    pub fn save_new_payjoin_receiver_session(&mut self) -> i64 {
+        // TODO: is there a more elegant way to get the last insert row id atomically?
+        let mut id = 0i64;
+        db_exec(&mut self.conn, |db_tx| {
+            db_tx.execute(
+                "INSERT INTO payjoin_receivers (created_at) VALUES (?1)",
+                rusqlite::params![curr_timestamp()],
+            )?;
+
+            id = db_tx.last_insert_rowid();
+            Ok(())
+        })
+        .expect("Db must not fail");
+        id
+    }
+
+    /// Get all active receiver session ids
+    pub fn get_all_active_receiver_session_ids(&mut self) -> Vec<SessionId> {
+        db_query(
+            &mut self.conn,
+            "SELECT id FROM payjoin_receivers WHERE completed_at IS NULL",
+            rusqlite::params![],
+            |row| {
+                let id: i64 = row.get(0)?;
+                Ok(SessionId::new(id))
+            },
+        )
+        .expect("Db must not fail")
+    }
+
+    /// Save a Receiver Session Event
+    pub fn save_receiver_session_event(&mut self, session_id: &SessionId, event: Vec<u8>) {
+        db_exec(&mut self.conn, |db_tx| {
+            db_tx.execute(
+                "INSERT INTO payjoin_receiver_events (session_id, created_at, event) VALUES (?1, ?2, ?3)",
+                rusqlite::params![session_id.0, curr_timestamp(), event],
+            )?;
+            Ok(())
+        })
+        .expect("Db must not fail");
+    }
+
+    /// Update completed at timestamp for a Receiver Session
+    pub fn update_receiver_session_completed_at(&mut self, session_id: &SessionId) {
+        db_exec(&mut self.conn, |db_tx| {
+            db_tx.execute(
+                "UPDATE payjoin_receivers SET completed_at = ?1 WHERE id = ?2",
+                rusqlite::params![curr_timestamp(), session_id.0],
+            )?;
+            Ok(())
+        })
+        .expect("Db must not fail");
+    }
+
+    /// Load all receiver session events for a particular session id
+    pub fn load_receiver_session_events(&mut self, session_id: &SessionId) -> Vec<Vec<u8>> {
+        db_query(
+            &mut self.conn,
+            "SELECT event FROM payjoin_receiver_events WHERE session_id = ?1 ORDER BY created_at ASC",
+            rusqlite::params![session_id.0],
+            |row| {
+                let event: Vec<u8> = row.get(0)?;
+                Ok(event)
+            },
+        )
+        .expect("Db must not fail")
+    }
+
+    /// Save original txid for a sender session
+    pub fn update_receiver_session_original_txid(
+        &mut self,
+        session_id: &SessionId,
+        original_txid: &bitcoin::Txid,
+    ) {
+        db_exec(&mut self.conn, |db_tx| {
+            db_tx.execute(
+                "UPDATE payjoin_receivers SET original_txid = ?1 WHERE id = ?2",
+                rusqlite::params![original_txid[..].to_vec(), session_id.0],
+            )?;
+            Ok(())
+        })
+        .expect("Db must not fail");
+    }
+
+    /// Save proposed txid for a sender session
+    pub fn update_receiver_session_proposed_txid(
+        &mut self,
+        session_id: &SessionId,
+        proposed_txid: &bitcoin::Txid,
+    ) {
+        db_exec(&mut self.conn, |db_tx| {
+            db_tx.execute(
+                "UPDATE payjoin_receivers SET proposed_txid = ?1 WHERE id = ?2",
+                rusqlite::params![proposed_txid[..].to_vec(), session_id.0],
+            )?;
+            Ok(())
+        })
+        .expect("Db must not fail");
+    }
+
+    /// Get receiver session id from txid -- this will return the session id if the txid is a proposed payjoin txid or the original txid
+    pub fn get_payjoin_receiver_session_id(&mut self, txid: &bitcoin::Txid) -> Option<SessionId> {
+        // TODO: This should always be one row.
+        let session_id = db_query(
+            &mut self.conn,
+            "SELECT id FROM payjoin_receivers WHERE proposed_txid = ?1 or original_txid = ?1",
+            rusqlite::params![txid[..].to_vec()],
+            |row| {
+                let id: i64 = row.get(0)?;
+                Ok(SessionId::new(id))
+            },
+        )
+        .expect("Db must not fail");
+        session_id.first().cloned()
+    }
+
+    pub fn save_new_payjoin_sender_session(&mut self, original_txid: &bitcoin::Txid) -> i64 {
+        let mut id = 0i64;
+        db_exec(&mut self.conn, |db_tx| {
+            db_tx.execute(
+                "INSERT INTO payjoin_senders (created_at, original_txid) VALUES (?1, ?2)",
+                rusqlite::params![curr_timestamp(), original_txid[..].to_vec()],
+            )?;
+            id = db_tx.last_insert_rowid();
+            Ok(())
+        })
+        .expect("Db must not fail");
+        id
+    }
+
+    /// Get all active sender session ids
+    pub fn get_all_active_sender_session_ids(&mut self) -> Vec<SessionId> {
+        db_query(
+            &mut self.conn,
+            "SELECT id FROM payjoin_senders WHERE completed_at IS NULL",
+            rusqlite::params![],
+            |row| {
+                let id: i64 = row.get(0)?;
+                Ok(SessionId::new(id))
+            },
+        )
+        .expect("Db must not fail")
+    }
+
+    pub fn save_sender_session_event(&mut self, session_id: &SessionId, event: Vec<u8>) {
+        db_exec(&mut self.conn, |db_tx| {
+            db_tx.execute(
+                "INSERT INTO payjoin_sender_events (session_id, created_at, event) VALUES (?1, ?2, ?3)",
+                rusqlite::params![session_id.0, curr_timestamp(), event],
+            )?;
+            Ok(())
+        })
+        .expect("Db must not fail");
+    }
+
+    pub fn update_sender_session_completed_at(&mut self, session_id: &SessionId) {
+        db_exec(&mut self.conn, |db_tx| {
+            db_tx.execute(
+                "UPDATE payjoin_senders SET completed_at = ?1 WHERE id = ?2",
+                rusqlite::params![curr_timestamp(), session_id.0],
+            )?;
+            Ok(())
+        })
+        .expect("Db must not fail");
+    }
+
+    pub fn load_sender_session_events(&mut self, session_id: &SessionId) -> Vec<Vec<u8>> {
+        db_query(
+            &mut self.conn,
+            "SELECT event FROM payjoin_sender_events WHERE session_id = ?1 ORDER BY created_at ASC",
+            rusqlite::params![session_id.0],
+            |row| {
+                let event: Vec<u8> = row.get(0)?;
+                Ok(event)
+            },
+        )
+        .expect("Db must not fail")
+    }
+
+    /// Save the proposed txid for a sender session
+    pub fn save_proposed_payjoin_txid(
+        &mut self,
+        session_id: &SessionId,
+        proposed_txid: &bitcoin::Txid,
+    ) {
+        db_exec(&mut self.conn, |db_tx| {
+            db_tx.execute(
+                "UPDATE payjoin_senders SET proposed_txid = ?1 WHERE id = ?2",
+                rusqlite::params![proposed_txid[..].to_vec(), session_id.0],
+            )?;
+            Ok(())
+        })
+        .expect("Db must not fail");
+    }
+
+    /// Get the payjoin session id from a txid
+    ///
+    /// This will return the session id if the txid is a proposed payjoin txid or the original txid
+    pub fn get_payjoin_sender_session_id(&mut self, txid: &bitcoin::Txid) -> Option<SessionId> {
+        // TODO: This should always be one row.
+        let session_id = db_query(
+            &mut self.conn,
+            "SELECT id FROM payjoin_senders WHERE proposed_txid = ?1 or original_txid = ?1",
+            rusqlite::params![txid[..].to_vec()],
+            |row| {
+                let id: i64 = row.get(0)?;
+                Ok(SessionId::new(id))
+            },
+        )
+        .expect("Db must not fail");
+        session_id.first().cloned()
     }
 }
 
@@ -3095,8 +3389,8 @@ CREATE TABLE labels (
 
         // Two PSBTs we'll insert in the DB before and after the migration. Note they are random
         // PSBTs taken from the descriptor unit tests, it doesn't matter.
-        let first_psbt = psbt_from_str("cHNidP8BAIkCAAAAAWi3OFgkj1CqCDT3Swm8kbxZS9lxz4L3i4W2v9KGC7nqAQAAAAD9////AkANAwAAAAAAIgAg27lNc1rog+dOq80ohRuds4Hgg/RcpxVun2XwgpuLSrFYMwwAAAAAACIAIDyWveqaElWmFGkTbFojg1zXWHODtiipSNjfgi2DqBy9AAAAAAABAOoCAAAAAAEBsRWl70USoAFFozxc86pC7Dovttdg4kvja//3WMEJskEBAAAAAP7///8CWKmCIk4GAAAWABRKBWYWkCNS46jgF0r69Ehdnq+7T0BCDwAAAAAAIgAgTt5fs+CiB+FRzNC8lHcgWLH205sNjz1pT59ghXlG5tQCRzBEAiBXK9MF8z3bX/VnY2aefgBBmiAHPL4tyDbUOe7+KpYA4AIgL5kU0DFG8szKd+szRzz/OTUWJ0tZqij41h2eU9rSe1IBIQNBB1hy+jKsg1TihMT0dXw7etpu9TkO3NuvhBDFJlBj1cP2AQABAStAQg8AAAAAACIAIE7eX7PgogfhUczQvJR3IFix9tObDY89aU+fYIV5RubUIgICSKJsNs0zFJN58yd2aYQ+C3vhMbi0x7k0FV3wBhR4THlIMEUCIQCPWWWOhs2lThxOq/G8X2fYBRvM9MXSm7qPH+dRVYQZEwIgfut2vx3RvwZWcgEj4ohQJD5lNJlwOkA4PAiN1fjx6dABIgID3mvj1zerZKohOVhKCiskYk+3qrCum6PIwDhQ16ePACpHMEQCICZNR+0/1hPkrDQwPFmg5VjUHkh6aK9cXUu3kPbM8hirAiAyE/5NUXKfmFKij30isuyysJbq8HrURjivd+S9vdRGKQEBBZNSIQJIomw2zTMUk3nzJ3ZphD4Le+ExuLTHuTQVXfAGFHhMeSEC9OfCXl+sJOrxUFLBuMV4ZUlJYjuzNGZSld5ioY14y8FSrnNkUSED3mvj1zerZKohOVhKCiskYk+3qrCum6PIwDhQ16ePACohA+ECH+HlR+8Sf3pumaXH3IwSsoqSLCH7H1THiBP93z3ZUq9SsmgiBgJIomw2zTMUk3nzJ3ZphD4Le+ExuLTHuTQVXfAGFHhMeRxjat8/MAAAgAEAAIAAAACAAgAAgAAAAAABAAAAIgYC9OfCXl+sJOrxUFLBuMV4ZUlJYjuzNGZSld5ioY14y8Ec/9Y8jTAAAIABAACAAAAAgAIAAIAAAAAAAQAAACIGA95r49c3q2SqITlYSgorJGJPt6qwrpujyMA4UNenjwAqHGNq3z8wAACAAQAAgAEAAIACAACAAAAAAAEAAAAiBgPhAh/h5UfvEn96bpmlx9yMErKKkiwh+x9Ux4gT/d892Rz/1jyNMAAAgAEAAIABAACAAgAAgAAAAAABAAAAACICAlBQ7gGocg7eF3sXrCio+zusAC9+xfoyIV95AeR69DWvHGNq3z8wAACAAQAAgAEAAIACAACAAAAAAAMAAAAiAgMvVy984eg8Kgvj058PBHetFayWbRGb7L0DMnS9KHSJzBxjat8/MAAAgAEAAIAAAACAAgAAgAAAAAADAAAAIgIDSRIG1dn6njdjsDXenHa2lUvQHWGPLKBVrSzbQOhiIxgc/9Y8jTAAAIABAACAAAAAgAIAAIAAAAAAAwAAACICA0/epE59sVEj7Et0I4R9qJQNuX23RNvDZKCRL7eUps9FHP/WPI0wAACAAQAAgAEAAIACAACAAAAAAAMAAAAAIgICgldCOK6iHscv//2NipgaMABLV5TICU/zlP7HlQmlg08cY2rfPzAAAIABAACAAQAAgAIAAIABAAAAAQAAACICApb0p9rfpJshB3J186PGWrvzQdixcwQZWmebOUMdkquZHP/WPI0wAACAAQAAgAAAAIACAACAAQAAAAEAAAAiAgLY5q+unoDxC/HI5BaNiPq12ei1REZIcUAN304JfKXUwxz/1jyNMAAAgAEAAIABAACAAgAAgAEAAAABAAAAIgIDg6cUVCJB79cMcofiURHojxFARWyS4YEhJNRixuOZZRgcY2rfPzAAAIABAACAAAAAgAIAAIABAAAAAQAAAAA=");
-        let second_psbt = psbt_from_str("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");
+        let first_psbt = psbt_from_str("cHNidP8BAIkCAAAAAWi3OFgkj1CqCDT3Swm8kbxZS9lxz4L3i4W2v9KGC7nqAQAAAAD9////AkANAwAAAAAAIgAg27lNc1rog+dOq80ohRuds4Hgg/RcpxVun2XwgpuLSrFYMwwAAAAAACIAIDyWveqaElWmFGkTbFojg1zXWHODtiipSNjfgi2DqBy9AAAAAAABAOoCAAAAAAEBsRWl70USoAFFozxc86pC7Dovttdg4kvja//3WMEJskEBAAAAAP7///8CWKmCIk4GAAAWABRKBWYWkCNS46jgF0r69Ehdnq+7T0BCDwAAAAAAIgAgTt5fs+CiB+FRzNC8lHcgWLH205sNjz1pT59ghXlG5tQCRzBEAiBXK9MF8z3bX/VnY2aefgBBmiAHPL4tyDbUOe7+KpYA4AIgL5kU0DFG8szKd+szRzz/OTUWJ0tZqij41h2eU9rSe1IBIQNBB1hy+jKsg1TihMT0dXw7etpu9TkO3NuvhBDFJlBj1cP2AQABAStAQg8AAAAAACIAIE7eX7PgogfhUczQvJR3IFix9tObDY89aU+fYIV5RubUIgICSKJsNs0zFJN58yd2aYQ+C3vhMbi0x7k0FV3wBhR4THlIMEUCIQCPWWWOhs2lThxOq/G8X2fYBRvM9MXSm7qPH+dRVYQZEwIgfut2vx3RvwZWcgEj4ohQJD5lNJlwOkA4PAiN1fjx6dABIgID3mvj1zerZKohOVhKCiskYk+3qrCum6PIwDhQ16ePACpHMEQCICZNR+0/1hPkrDQwPFmg5VjUHkh6aK9cXUu3kPbM8hirAiAyE/5NUXKfmFKij30isuyysJbq8HrURjivd+S9vdRGKQEBBZNSIQJIomw2zTMUk3nzJ3ZphD4Le+ExuLTHuTQVXfAGFHhMeSEC9OfCXl+sJOrxUFLBuMV4ZUlJYjuzNGZSld5ioY14y8FSrnNkUSED3mvj1zerZKohOVhKCiskYk+3qrCum6PIwDhQ16ePACohA+ECH+HlR+8Sf3pumaXH3IwSsoqSLCH7H1THiBP93z3ZUq9SsmgiBgJIomw2zTMUk3nzJ3ZphD4Le+ExuLTHuTQVXfAGFHhMeRxjat8/MAAAgAEAAIAAAACAAgAAgAAAAAABAAAAIgYC9OfCXl+sJOrxUFLBuMV4ZUlJYjuzNGZSld5ioY14y8Ec/9Y8jTAAAIABAACAAAAAgAIAAIAAAAAAAQAAACIGA95r49c3q2SqITlYSgorJGJPt6qwrpujyMA4UNenjwAqHGNq3z8wAACAAQAAgAEAAIACAACAAAAAAAEAAAAiBgPhAh/h5UfvEn96bpmlx9yMErKKkiwh+x9Ux4gT/d892Rz/1jyNMAAAgAEAAIABAACAAgAAgAAAAAABAAAAACICAlBQ7gGocg7eF3sXrCio+zusAC9+xfoyIV95AeR69DWvHGNq3z8wAACAAQAAgAEAAIACAACAAAAAAAMAAAAiAgMvVy984eg8Kgvj058PBHetFayWbRGb7L0DMnS9KHSJzBxjat8/MAAAgAEAAIAAAACAAgAAgAAAAAADAAAAIgIDSRIG1dn6njdjsDXenHa2lUvQHWGPLKBVrSzbQOhiIxgc/9Y8jTAAAIABAACAAAAAgAIAAIABAAAAAQAAACICApb0p9rfpJshB3J186PGWrvzQdixcwQZWmebOUMdkquZHP/WPI0wAACAAQAAgAAAAIACAACAAQAAAAEAAAAiAgLY5q+unoDxC/HI5BaNiPq12ei1REZIcUAN304JfKXUwxz/1jyNMAAAgAEAAIABAACAAgAAgAEAAAABAAAAIgIDg6cUVCJB79cMcofiURHojxFARWyS4YEhJNRixuOZZRgcY2rfPzAAAIABAACAAAAAgAIAAIABAAAAAQAAAAA=");
+        let second_psbt = psbt_from_str("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");
 
         let bitcoin_txs: Vec<_> = (0..2)
             .map(|i| bitcoin::Transaction {
@@ -3569,5 +3863,142 @@ CREATE TABLE labels (
         }
 
         fs::remove_dir_all(tmp_dir).unwrap();
+    }
+
+    #[test]
+    fn test_payjoin_receiver_sessions() {
+        let (temp_dir, _, _, db) = dummy_db();
+        let mut conn = db.connection().unwrap();
+
+        let session_id_1 = conn.save_new_payjoin_receiver_session();
+        assert!(session_id_1 > 0);
+        let session_id_2 = conn.save_new_payjoin_receiver_session();
+        assert!(session_id_2 > session_id_1);
+
+        let active_sessions = conn.get_all_active_receiver_session_ids();
+        assert_eq!(active_sessions.len(), 2);
+        assert!(active_sessions.iter().any(|s| s.0 == session_id_1));
+        assert!(active_sessions.iter().any(|s| s.0 == session_id_2));
+
+        let event_data = b"test event data".to_vec();
+        let session_id = SessionId::new(session_id_1);
+        conn.save_receiver_session_event(&session_id, event_data.clone());
+
+        let events = conn.load_receiver_session_events(&session_id);
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0], event_data);
+
+        conn.update_receiver_session_completed_at(&session_id);
+        // This should not change how events are loaded
+        let events = conn.load_receiver_session_events(&session_id);
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0], event_data);
+
+        // Verify session is no longer active
+        let active_sessions_after = conn.get_all_active_receiver_session_ids();
+        assert_eq!(active_sessions_after.len(), 1);
+        assert!(!active_sessions_after.iter().any(|s| s.0 == session_id_1));
+
+        let event_data_2 = b"second event data".to_vec();
+        // Data is same as the second event
+        let event_data_3 = b"second event data".to_vec();
+        conn.save_receiver_session_event(&session_id, event_data_2.clone());
+        conn.save_receiver_session_event(&session_id, event_data_3.clone());
+
+        let all_events = conn.load_receiver_session_events(&session_id);
+        assert_eq!(all_events.len(), 3);
+        assert_eq!(all_events[0], event_data);
+        assert_eq!(all_events[1], event_data_2);
+        assert_eq!(all_events[2], event_data_3);
+
+        // Test empty events list for non-existent session
+        let non_existent_session = SessionId::new(99999);
+        let empty_events = conn.load_receiver_session_events(&non_existent_session);
+        assert_eq!(empty_events.len(), 0);
+
+        // Test session with no events
+        let session_id_3 = conn.save_new_payjoin_receiver_session();
+        let session_3 = SessionId::new(session_id_3);
+        let no_events = conn.load_receiver_session_events(&session_3);
+        assert_eq!(no_events.len(), 0);
+
+        // Test completing multiple sessions
+        conn.update_receiver_session_completed_at(&session_3);
+        let final_active_sessions = conn.get_all_active_receiver_session_ids();
+        assert_eq!(final_active_sessions.len(), 1);
+        assert!(final_active_sessions.iter().any(|s| s.0 == session_id_2));
+
+        fs::remove_dir_all(temp_dir).unwrap();
+    }
+
+    #[test]
+    fn test_payjoin_sender_sessions() {
+        let (temp_dir, _, _, db) = dummy_db();
+        let mut conn = db.connection().unwrap();
+        let original_txid = bitcoin::Txid::from_str(
+            "0000000000000000000000000000000000000000000000000000000000000001",
+        )
+        .unwrap();
+
+        let session_id_1 = conn.save_new_payjoin_sender_session(&original_txid);
+        assert!(session_id_1 > 0);
+        let session_id_2 = conn.save_new_payjoin_sender_session(&original_txid);
+        assert!(session_id_2 > session_id_1);
+
+        let active_sessions = conn.get_all_active_sender_session_ids();
+        assert_eq!(active_sessions.len(), 2);
+        assert!(active_sessions.iter().any(|s| s.0 == session_id_1));
+        assert!(active_sessions.iter().any(|s| s.0 == session_id_2));
+
+        let event_data = b"test event data".to_vec();
+        let session_id = SessionId::new(session_id_1);
+        conn.save_sender_session_event(&session_id, event_data.clone());
+
+        // Test load_sender_session_events
+        let events = conn.load_sender_session_events(&session_id);
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0], event_data);
+
+        conn.update_sender_session_completed_at(&session_id);
+        // This should not change how events are loaded
+        let events = conn.load_sender_session_events(&session_id);
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0], event_data);
+
+        // Verify session is no longer active
+        let active_sessions_after = conn.get_all_active_sender_session_ids();
+        assert_eq!(active_sessions_after.len(), 1);
+        assert!(!active_sessions_after.iter().any(|s| s.0 == session_id_1));
+
+        let event_data_2 = b"second event data".to_vec();
+        // Data is same as the second event
+        let event_data_3 = b"second event data".to_vec();
+        conn.save_sender_session_event(&session_id, event_data_2.clone());
+        conn.save_sender_session_event(&session_id, event_data_3.clone());
+
+        let all_events = conn.load_sender_session_events(&session_id);
+        assert_eq!(all_events.len(), 3);
+        assert_eq!(all_events[0], event_data);
+        assert_eq!(all_events[1], event_data_2);
+        assert_eq!(all_events[2], event_data_3);
+
+        // Test empty events list for non-existent session
+        let non_existent_session = SessionId::new(99999);
+        let empty_events = conn.load_sender_session_events(&non_existent_session);
+        assert_eq!(empty_events.len(), 0);
+
+        // Test session with no events
+        let session_id_3 = conn.save_new_payjoin_sender_session(&original_txid);
+        let session_3 = SessionId::new(session_id_3);
+        let no_events = conn.load_sender_session_events(&session_3);
+        assert_eq!(no_events.len(), 0);
+
+        // Test completing multiple sessions
+        conn.update_sender_session_completed_at(&session_3);
+        let final_active_sessions = conn.get_all_active_sender_session_ids();
+        assert_eq!(final_active_sessions.len(), 1);
+        assert!(final_active_sessions.iter().any(|s| s.0 == session_id_2));
+
+        fs::remove_dir_all(temp_dir).unwrap();
     }
 }

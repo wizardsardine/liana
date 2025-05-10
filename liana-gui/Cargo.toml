@@ -63,6 +63,8 @@ fs2 = "0.4.3"
 open = "5.3"
 
 encrypted_backup = { version = "0.0.1", default-features=false, features = ["miniscript_12_0"], package = "bitcoin-encrypted-backup" }
+# Payjoin
+payjoin = { git = "https://github.com/payjoin/rust-payjoin.git", branch = "master", features = ["v2", "io"] }
 
 [target.'cfg(windows)'.dependencies]
 zip = { version = "0.6", default-features=false, features = ["bzip2", "deflate"] }
