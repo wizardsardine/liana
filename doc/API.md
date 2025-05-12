@@ -12,6 +12,7 @@ Commands must be sent as valid JSONRPC 2.0 requests, ending with a `\n`.
 | [`updatederivationindexes`](#updatederivationindexes)       | Update last generated addresses derivation indexes            |
 | [`getnewaddress`](#getnewaddress)                           | Get a new receiving address                                   |
 | [`listaddresses`](#listaddresses)                           | List addresses given start_index and count                    |
+| [`listrevealedaddresses`](#listrevealedaddresses)           | List revealed addresses (both used and unused)                |
 | [`listcoins`](#listcoins)                                   | List all wallet transaction outputs.                          |
 | [`createspend`](#createspend)                               | Create a new Spend transaction                                |
 | [`updatespend`](#updatespend)                               | Store a created Spend transaction                             |
@@ -139,6 +140,40 @@ If no value is passed for `count` the maximum generated index between receive an
 | `receive`     | string            | Receive address                                             |
 | `change`      | string            | Change address                                              |
 
+
+### `listrevealedaddresses`
+
+List revealed receive or change addresses, optionally filtering for those that are unused by any of the current coins in the wallet.
+
+Addresses are returned in order of descending derivation index.
+
+If `start_index` is omitted or `null`, then addresses will be returned starting from the last revealed address.
+Otherwise, addresses will be returned starting from the specified derivation index.
+
+#### Request
+
+| Field           | Type              | Description                                                                             |
+| --------------- | ----------------- | --------------------------------------------------------------------------------------- |
+| `is_change`     | bool              | Whether to return change or otherwise receive addresses.                                |
+| `exclude_used`  | bool              | Whether to exclude those addresses that have been used by a current coin in the wallet. |
+| `limit`         | integer           | The maximum number of addresses to list.                                                |
+| `start_index`   | integer(optional) | For pagination, pass the `continue_from` value from the previous response.              |
+
+#### Response
+
+The response contains two fields:
+- `addresses`: an array of revealed addresses, with the structure given below.
+- `continue_from`: used for pagination of results. If not `null`, this indicates that there may be additional addresses that can be listed and
+this value can be passed to the next request as `start_index` to continue with the next page of results.
+
+Each element in the `addresses` array has the following fields:
+
+| Field         | Type             | Description                                                                  |
+| ------------- | ---------------- | ---------------------------------------------------------------------------- |
+| `index`       | integer          | Derivation index.                                                            |
+| `address`     | string           | Address.                                                                     |
+| `used_count`  | integer          | The number of current coins in the wallet that are using this address.       |
+| `label`       | string or null   | Address label, if any.                                                       |
 
 ### `listcoins`
 

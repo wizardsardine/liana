@@ -477,6 +477,100 @@ impl DaemonControl {
         Ok(ListAddressesResult::new(addresses?))
     }
 
+    /// List revealed addresses. Addresses will be returned in order of
+    /// descending derivation index.
+    ///
+    /// # Parameters
+    ///
+    /// - `is_change`: set to `false` to return receive addresses and `true` for change addresses.
+    ///
+    /// - `exclude_used`:  set to `true` to return only those revealed addresses that
+    ///   are unused by any coins in the wallet.
+    ///
+    /// - `limit`: the maximum number of addresses to return.
+    ///
+    /// - `start_index`: the derivation index from which to start listing addresses. As addresses are
+    ///   returned in descending order, `start_index` is the highest index that can be returned.
+    ///   If set to `None`, then addresses will be returned starting from the last revealed index.
+    ///   As there are no revealed addresses with a derivation index higher than the last revealed index,
+    ///   setting this parameter to a higher value will be the same as setting it to `None`.
+    pub fn list_revealed_addresses(
+        &self,
+        is_change: bool,
+        exclude_used: bool,
+        limit: usize,
+        start_index: Option<ChildNumber>,
+    ) -> Result<ListRevealedAddressesResult, CommandError> {
+        let mut db_conn = self.db.connection();
+
+        let (desc, last_revealed) = if is_change {
+            (
+                self.config.main_descriptor.change_descriptor(),
+                db_conn.change_index(),
+            )
+        } else {
+            (
+                self.config.main_descriptor.receive_descriptor(),
+                db_conn.receive_index(),
+            )
+        };
+
+        // Determine the index to start deriving addresses from, ensuring it is not higher than the last revealed.
+        let start_index = start_index.unwrap_or(last_revealed).min(last_revealed);
+
+        // Count how many times each (used) address has been used.
+        let mut used_counts = HashMap::<ChildNumber, u32>::new();
+        // TODO: consider adding DB method to get coins or used indices by index range.
+        for coin in db_conn.coins(&[], &[]).values() {
+            if coin.is_change == is_change && coin.derivation_index <= start_index {
+                *used_counts.entry(coin.derivation_index).or_insert(0) += 1;
+            }
+        }
+
+        let mut addresses = Vec::<_>::with_capacity(limit);
+        let mut continue_from = None;
+        // This will store (index, address) pairs.
+        let mut derived_addresses = Vec::<_>::with_capacity(limit);
+        // Iterate in descending order.
+        for i in (0..=start_index.into()).rev() {
+            let index = ChildNumber::from(i);
+            if derived_addresses.len() == limit {
+                // We've reached the limit. There may be more addresses to list using pagination.
+                continue_from = Some(index);
+                break;
+            }
+            if !exclude_used || !used_counts.contains_key(&index) {
+                let addr = desc
+                    .derive(index, &self.secp)
+                    .address(self.config.bitcoin_config.network);
+                derived_addresses.push((index, addr));
+            }
+        }
+        // Now get the labels from DB (in multiple chunks).
+        let mut labels = HashMap::<String, String>::with_capacity(derived_addresses.len());
+        const CHUNK_SIZE: usize = 100;
+        for chunk in derived_addresses.chunks(CHUNK_SIZE) {
+            let items = chunk
+                .iter()
+                .map(|(_, addr)| LabelItem::Address(addr.clone()))
+                .collect::<HashSet<_>>();
+            labels.extend(db_conn.labels(&items));
+        }
+        for (index, address) in derived_addresses {
+            let label = labels.get(&address.to_string()).cloned();
+            addresses.push(ListRevealedAddressesEntry {
+                index,
+                address,
+                label,
+                used_count: *used_counts.get(&index).unwrap_or(&0),
+            });
+        }
+        Ok(ListRevealedAddressesResult {
+            addresses,
+            continue_from,
+        })
+    }
+
     /// Get a list of all known coins, optionally by status and/or outpoint.
     pub fn list_coins(
         &self,
@@ -1317,6 +1411,37 @@ impl ListAddressesResult {
     }
 }
 
+/// A revealed address entry in the list returned by [`DaemonControl::list_revealed_addresses`].
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct ListRevealedAddressesEntry {
+    /// The address's derivation index.
+    pub index: ChildNumber,
+    /// The address.
+    pub address: bitcoin::Address,
+    /// Label assigned to the address, if any.
+    pub label: Option<String>,
+    /// How many coins, including those unconfirmed, that are currently in the wallet are using this address.
+    ///
+    /// This count does not include any coins that may have been replaced or otherwise dropped
+    /// from the mempool.
+    pub used_count: u32,
+}
+
+/// Result of a [`DaemonControl::list_revealed_addresses`] request.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct ListRevealedAddressesResult {
+    /// Revealed addresses in order of descending derivation index.
+    pub addresses: Vec<ListRevealedAddressesEntry>,
+    /// `continue_from` being set to some value indicates that there may
+    /// be more addresses that can be listed with pagination. The next
+    /// [`DaemonControl::list_revealed_addresses`] request can be continued
+    /// with this value passed to `start_index`.
+    ///
+    /// If `continue_from` is `None`, then there are no further
+    /// addresses to be listed.
+    pub continue_from: Option<ChildNumber>,
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct LCSpendInfo {
     pub txid: bitcoin::Txid,
@@ -1561,6 +1686,315 @@ mod tests {
         control
             .list_addresses(Some(next_deriv_index + 1), None)
             .unwrap();
+
+        ms.shutdown();
+    }
+
+    #[test]
+    fn list_revealed_addresses() {
+        let ms = DummyLiana::new(DummyBitcoind::new(), DummyDatabase::new());
+
+        let control = &ms.control();
+        let mut db_conn = control.db().lock().unwrap().connection();
+
+        // $ bitcoin-cli deriveaddresses "wsh(or_d(pk([aabbccdd]xpub68JJTXc1MWK8KLW4HGLXZBJknja7kDUJuFHnM424LbziEXsfkh1WQCiEjjHw4zLqSUm4rvhgyGkkuRowE9tCJSgt3TQB5J3SKAbZ2SdcKST/0/*),and_v(v:pkh([aabbccdd]xpub68JJTXc1MWK8PEQozKsRatrUHXKFNkD1Cb1BuQU9Xr5moCv87anqGyXLyUd4KpnDyZgo3gz4aN1r3NiaoweFW8UutBsBbgKHzaD5HkTkifK/0/*),older(10000))))#wx6v3mks" 0
+        // [
+        //   "bc1q9ksrc647hx8zp2cewl8p5f487dgux3777yees8rjcx46t4daqzzqt7yga8"
+        // ]
+        let addr0 = bitcoin::Address::from_str(
+            "bc1q9ksrc647hx8zp2cewl8p5f487dgux3777yees8rjcx46t4daqzzqt7yga8",
+        )
+        .unwrap()
+        .assume_checked();
+
+        // The wallet starts with index 0 already revealed:
+        let list = control
+            .list_revealed_addresses(false, false, 3, None)
+            .unwrap();
+        assert_eq!(list.addresses.len(), 1);
+        assert!(list.continue_from.is_none());
+        let revealed = list.addresses.first().unwrap();
+        assert_eq!(revealed.index, ChildNumber::from(0));
+        assert_eq!(revealed.address, addr0);
+        assert_eq!(revealed.used_count, 0);
+        assert!(revealed.label.is_none());
+
+        // Generate new addresses up to and including index 7:
+        let addr1 = control.get_new_address().address;
+        let addr2 = control.get_new_address().address;
+        let addr3 = control.get_new_address().address;
+        let addr4 = control.get_new_address().address;
+        let addr5 = control.get_new_address().address;
+        let addr6 = control.get_new_address().address;
+        let addr7 = control.get_new_address().address;
+        assert_eq!(control.get_info().receive_index, 7);
+
+        // Set some labels.
+        db_conn.update_labels(&HashMap::from([
+            (
+                LabelItem::Address(addr1.clone()),
+                Some("my test label 1".to_string()),
+            ),
+            (
+                LabelItem::Address(addr5.clone()),
+                Some("my test label 5".to_string()),
+            ),
+        ]));
+
+        // If we continue_from a value above our last index, we'll start from the last index.
+        let list = control
+            .list_revealed_addresses(false, false, 3, Some(ChildNumber::from(100)))
+            .unwrap();
+        assert_eq!(list.addresses.len(), 3);
+        assert_eq!(list.continue_from, Some(ChildNumber::from(4)));
+
+        assert_eq!(list.addresses[0].index, ChildNumber::from(7)); // this is our last revealed index
+        assert_eq!(list.addresses[0].address, addr7);
+        assert_eq!(list.addresses[0].used_count, 0);
+        assert!(list.addresses[0].label.is_none());
+        assert_eq!(list.addresses[1].index, ChildNumber::from(6));
+        assert_eq!(list.addresses[1].address, addr6);
+        assert_eq!(list.addresses[1].used_count, 0);
+        assert!(list.addresses[1].label.is_none());
+        assert_eq!(list.addresses[2].index, ChildNumber::from(5));
+        assert_eq!(list.addresses[2].address, addr5);
+        assert_eq!(list.addresses[2].used_count, 0);
+        assert_eq!(list.addresses[2].label, Some("my test label 5".to_string()));
+
+        // If we start from a hardened index, we'll get the same result again:
+        assert_eq!(
+            list,
+            control
+                .list_revealed_addresses(false, false, 3, Some(ChildNumber::from(u32::MAX)))
+                .unwrap()
+        );
+
+        // Passing `None` for `continue_from` will also start from the last revealed index:
+        let list = control
+            .list_revealed_addresses(false, false, 3, None)
+            .unwrap();
+        assert_eq!(list.addresses.len(), 3);
+        assert_eq!(list.continue_from, Some(ChildNumber::from(4)));
+
+        assert_eq!(list.addresses[0].index, ChildNumber::from(7));
+        assert_eq!(list.addresses[0].address, addr7);
+        assert_eq!(list.addresses[0].used_count, 0);
+        assert!(list.addresses[0].label.is_none());
+        assert_eq!(list.addresses[1].index, ChildNumber::from(6));
+        assert_eq!(list.addresses[1].address, addr6);
+        assert_eq!(list.addresses[1].used_count, 0);
+        assert!(list.addresses[1].label.is_none());
+        assert_eq!(list.addresses[2].index, ChildNumber::from(5));
+        assert_eq!(list.addresses[2].address, addr5);
+        assert_eq!(list.addresses[2].used_count, 0);
+        assert_eq!(list.addresses[2].label, Some("my test label 5".to_string()));
+
+        // Now continue pagination using the `continue_from` value from the result above:
+        let list = control
+            .list_revealed_addresses(false, false, 3, Some(ChildNumber::from(4)))
+            .unwrap();
+        assert_eq!(list.addresses.len(), 3);
+        assert_eq!(list.continue_from, Some(ChildNumber::from(1)));
+
+        assert_eq!(list.addresses[0].index, ChildNumber::from(4));
+        assert_eq!(list.addresses[0].address, addr4);
+        assert_eq!(list.addresses[0].used_count, 0);
+        assert!(list.addresses[0].label.is_none());
+        assert_eq!(list.addresses[1].index, ChildNumber::from(3));
+        assert_eq!(list.addresses[1].address, addr3);
+        assert_eq!(list.addresses[1].used_count, 0);
+        assert!(list.addresses[1].label.is_none());
+        assert_eq!(list.addresses[2].index, ChildNumber::from(2));
+        assert_eq!(list.addresses[2].address, addr2);
+        assert_eq!(list.addresses[2].used_count, 0);
+        assert!(list.addresses[2].label.is_none());
+
+        // This is the final page:
+        let list = control
+            .list_revealed_addresses(false, false, 3, Some(ChildNumber::from(1)))
+            .unwrap();
+        assert_eq!(list.addresses.len(), 2); // only two addresses even though limit was 3
+        assert!(list.continue_from.is_none()); // there are no more addresses to derive
+
+        assert_eq!(list.addresses[0].index, ChildNumber::from(1));
+        assert_eq!(list.addresses[0].address, addr1);
+        assert_eq!(list.addresses[0].used_count, 0);
+        assert_eq!(list.addresses[0].label, Some("my test label 1".to_string()));
+        assert_eq!(list.addresses[1].index, ChildNumber::from(0));
+        assert_eq!(list.addresses[1].address, addr0);
+        assert_eq!(list.addresses[1].used_count, 0);
+        assert!(list.addresses[1].label.is_none());
+
+        // Add a coin so that address with index 5 is used:
+        db_conn.new_unspent_coins(&[Coin {
+            outpoint: OutPoint::new(
+                Txid::from_str("617eab1fc0b03ee7f82ba70166725291783461f1a0e7975eaf8b5f8f674234f3")
+                    .unwrap(),
+                0,
+            ),
+            is_immature: false,
+            block_info: None,
+            amount: bitcoin::Amount::from_sat(80_000),
+            derivation_index: ChildNumber::from(5),
+            is_change: false,
+            spend_txid: None,
+            spend_block: None,
+            is_from_self: true,
+        }]);
+
+        // If we don't exclude used, results will be same as before, except index 5 is marked as used:
+        let list = control
+            .list_revealed_addresses(false, false, 3, None)
+            .unwrap();
+        assert_eq!(list.addresses.len(), 3);
+        assert_eq!(list.continue_from, Some(ChildNumber::from(4)));
+
+        assert_eq!(list.addresses[0].index, ChildNumber::from(7));
+        assert_eq!(list.addresses[0].address, addr7);
+        assert_eq!(list.addresses[0].used_count, 0);
+        assert!(list.addresses[0].label.is_none());
+        assert_eq!(list.addresses[1].index, ChildNumber::from(6));
+        assert_eq!(list.addresses[1].address, addr6);
+        assert_eq!(list.addresses[1].used_count, 0);
+        assert!(list.addresses[1].label.is_none());
+        assert_eq!(list.addresses[2].index, ChildNumber::from(5));
+        assert_eq!(list.addresses[2].address, addr5);
+        assert_eq!(list.addresses[2].used_count, 1); // used
+        assert_eq!(list.addresses[2].label, Some("my test label 5".to_string()));
+
+        // If we exclude used, index 5 will be skipped:
+        let list = control
+            .list_revealed_addresses(false, true, 3, None)
+            .unwrap();
+        assert_eq!(list.addresses.len(), 3);
+        assert_eq!(list.continue_from, Some(ChildNumber::from(3)));
+
+        assert_eq!(list.addresses[0].index, ChildNumber::from(7));
+        assert_eq!(list.addresses[0].address, addr7);
+        assert_eq!(list.addresses[0].used_count, 0);
+        assert!(list.addresses[0].label.is_none());
+        assert_eq!(list.addresses[1].index, ChildNumber::from(6));
+        assert_eq!(list.addresses[1].address, addr6);
+        assert_eq!(list.addresses[1].used_count, 0);
+        assert!(list.addresses[1].label.is_none());
+        assert_eq!(list.addresses[2].index, ChildNumber::from(4));
+        assert_eq!(list.addresses[2].address, addr4);
+        assert_eq!(list.addresses[2].used_count, 0);
+        assert!(list.addresses[2].label.is_none());
+
+        // Similar behaviour if we continue from index 5. First without excluding used:
+        let list = control
+            .list_revealed_addresses(false, false, 3, Some(ChildNumber::from(5)))
+            .unwrap();
+        assert_eq!(list.addresses.len(), 3);
+        assert_eq!(list.continue_from, Some(ChildNumber::from(2)));
+
+        assert_eq!(list.addresses[0].index, ChildNumber::from(5));
+        assert_eq!(list.addresses[0].address, addr5);
+        assert_eq!(list.addresses[0].used_count, 1); // used
+        assert_eq!(list.addresses[0].label, Some("my test label 5".to_string()));
+        assert_eq!(list.addresses[1].index, ChildNumber::from(4));
+        assert_eq!(list.addresses[1].address, addr4);
+        assert_eq!(list.addresses[1].used_count, 0);
+        assert!(list.addresses[1].label.is_none());
+        assert_eq!(list.addresses[2].index, ChildNumber::from(3));
+        assert_eq!(list.addresses[2].address, addr3);
+        assert_eq!(list.addresses[2].used_count, 0);
+        assert!(list.addresses[2].label.is_none());
+
+        // Now excluding used:
+        let list = control
+            .list_revealed_addresses(false, true, 3, Some(ChildNumber::from(5)))
+            .unwrap();
+        assert_eq!(list.addresses.len(), 3);
+        assert_eq!(list.continue_from, Some(ChildNumber::from(1)));
+
+        assert_eq!(list.addresses[0].index, ChildNumber::from(4));
+        assert_eq!(list.addresses[0].address, addr4);
+        assert_eq!(list.addresses[0].used_count, 0);
+        assert!(list.addresses[0].label.is_none());
+        assert_eq!(list.addresses[1].index, ChildNumber::from(3));
+        assert_eq!(list.addresses[1].address, addr3);
+        assert_eq!(list.addresses[1].used_count, 0);
+        assert!(list.addresses[1].label.is_none());
+        assert_eq!(list.addresses[2].index, ChildNumber::from(2));
+        assert_eq!(list.addresses[2].address, addr2);
+        assert_eq!(list.addresses[2].used_count, 0);
+        assert!(list.addresses[2].label.is_none());
+
+        // If we add another coin using the same derivation index, the count will increase:
+        db_conn.new_unspent_coins(&[Coin {
+            outpoint: OutPoint::new(
+                Txid::from_str("617eab1fc0b03ee7f82ba70166725291783461f1a0e7975eaf8b5f8f674234f3")
+                    .unwrap(),
+                1,
+            ),
+            is_immature: false,
+            block_info: None,
+            amount: bitcoin::Amount::from_sat(80_000),
+            derivation_index: ChildNumber::from(5),
+            is_change: false,
+            spend_txid: None,
+            spend_block: None,
+            is_from_self: true,
+        }]);
+
+        let list = control
+            .list_revealed_addresses(false, false, 3, None)
+            .unwrap();
+        assert_eq!(list.addresses.len(), 3);
+        assert_eq!(list.continue_from, Some(ChildNumber::from(4)));
+
+        assert_eq!(list.addresses[0].index, ChildNumber::from(7));
+        assert_eq!(list.addresses[0].address, addr7);
+        assert_eq!(list.addresses[0].used_count, 0);
+        assert!(list.addresses[0].label.is_none());
+        assert_eq!(list.addresses[1].index, ChildNumber::from(6));
+        assert_eq!(list.addresses[1].address, addr6);
+        assert_eq!(list.addresses[1].used_count, 0);
+        assert!(list.addresses[1].label.is_none());
+        assert_eq!(list.addresses[2].index, ChildNumber::from(5));
+        assert_eq!(list.addresses[2].address, addr5);
+        assert_eq!(list.addresses[2].used_count, 2); // count updated.
+        assert_eq!(list.addresses[2].label, Some("my test label 5".to_string()));
+
+        // Check change address
+        // $ bitcoin-cli deriveaddresses "wsh(or_d(pk([aabbccdd]xpub68JJTXc1MWK8KLW4HGLXZBJknja7kDUJuFHnM424LbziEXsfkh1WQCiEjjHw4zLqSUm4rvhgyGkkuRowE9tCJSgt3TQB5J3SKAbZ2SdcKST/1/*),and_v(v:pkh([aabbccdd]xpub68JJTXc1MWK8PEQozKsRatrUHXKFNkD1Cb1BuQU9Xr5moCv87anqGyXLyUd4KpnDyZgo3gz4aN1r3NiaoweFW8UutBsBbgKHzaD5HkTkifK/1/*),older(10000))))#sqk8au7v" 0
+        // [
+        //   "bc1qd5m23jemr8mfj8x4q482zpspnxehg0jg0pyzrhxfg8xrrtyqewvqjrq3x6"
+        // ]
+        let change_addr0 = bitcoin::Address::from_str(
+            "bc1qd5m23jemr8mfj8x4q482zpspnxehg0jg0pyzrhxfg8xrrtyqewvqjrq3x6",
+        )
+        .unwrap()
+        .assume_checked();
+
+        // If we ask for change addresses, we only have the initial one revealed:
+        let list = control
+            .list_revealed_addresses(true, false, 3, None)
+            .unwrap();
+        assert_eq!(list.addresses.len(), 1);
+        assert!(list.continue_from.is_none());
+
+        assert_eq!(list.addresses[0].index, ChildNumber::from(0));
+        assert_eq!(list.addresses[0].address, change_addr0);
+        assert_eq!(list.addresses[0].used_count, 0);
+        assert!(list.addresses[0].label.is_none());
+
+        // Finally, passing limit 0 returns an empty vector and the continue_from is same as it started with.
+        // First, passing None for continue from:
+        let list = control
+            .list_revealed_addresses(false, false, 0, None)
+            .unwrap();
+        assert_eq!(list.addresses.len(), 0);
+        assert_eq!(list.continue_from, Some(ChildNumber::from(7)));
+
+        // Now, continuing from 4:
+        let list = control
+            .list_revealed_addresses(false, false, 0, Some(ChildNumber::from(4)))
+            .unwrap();
+        assert_eq!(list.addresses.len(), 0);
+        assert_eq!(list.continue_from, Some(ChildNumber::from(4)));
 
         ms.shutdown();
     }
