@@ -151,7 +151,7 @@ impl Step for Final {
                     },
                 );
             }
-            Message::Installed(res) => match res {
+            Message::Installed(_, res) => match res {
                 Err(e) => {
                     self.generating = false;
                     self.wallet_settings = None;

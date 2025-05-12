@@ -20,16 +20,13 @@ use tokio::sync::mpsc::UnboundedSender;
 use crate::{
     app::{
         settings::{Settings, WalletSettings},
-        wallet::Wallet,
+        wallet::{wallet_name, Wallet},
         Config,
     },
     daemon::{model::HistoryTransaction, Daemon, DaemonBackend, DaemonError},
     dir::LianaDirectory,
     export::Progress,
-    installer::{
-        extract_daemon_config, extract_local_gui_settings, extract_remote_gui_settings, Context,
-        RemoteBackend,
-    },
+    installer::Context,
     services::connect::client::backend::api::DEFAULT_LIMIT,
     VERSION,
 };
@@ -116,53 +113,22 @@ impl Backup {
     ///
     /// # Arguments
     /// * `ctx` - the installer context
-    /// * `timestamp` - whether to record the current timestamp as wallet creation time
-    ///   (we should want to set timestamp = false for a wallet import for instance)
-    pub async fn from_installer(ctx: Context, timestamp: bool) -> Result<Self, Error> {
-        let descriptor = ctx
-            .descriptor
-            .clone()
-            .ok_or(Error::DescriptorMissing)?
-            .to_string();
+    pub async fn from_installer_descriptor_step(ctx: Context) -> Result<Self, Error> {
+        let descriptor = ctx.descriptor.clone().ok_or(Error::DescriptorMissing)?;
 
         let now = now();
+        let name = Some(wallet_name(&descriptor));
 
-        let mut account = Account::new(descriptor);
-
-        let mut proprietary = serde_json::Map::new();
-        proprietary.insert(LIANA_VERSION_KEY.to_string(), liana_version().into());
-
-        let settings = match &ctx.remote_backend {
-            // This append while user is importing a wallet already created on Liana-Connect.
-            RemoteBackend::WithWallet(backend) => extract_remote_gui_settings(&ctx, backend).await,
-            // Other cases are about wallet creation, the ctx contains all the keys aliases and
-            // descriptor registration hmacs.
-            _ => extract_local_gui_settings(&ctx),
-        };
-
-        let config =
-            extract_daemon_config(&ctx, &settings).map_err(|e| Error::Daemon(e.to_string()))?;
-        if let Ok(config) = serde_json::to_value(config) {
-            proprietary.insert(CONFIG_KEY.to_string(), config);
-        }
-
-        let name = {
-            let name = settings.name.clone();
-            if let Ok(settings) = serde_json::to_value(settings) {
-                proprietary.insert(SETTINGS_KEY.to_string(), settings);
-            }
-            Some(name)
-        };
+        let mut account = Account::new(descriptor.to_string());
+        account.name = name.clone();
+        account.timestamp = Some(now);
+        account
+            .proprietary
+            .insert(LIANA_VERSION_KEY.to_string(), liana_version().into());
 
         ctx.keys.iter().for_each(|(k, s)| {
             account.keys.insert(*k, s.to_backup());
         });
-
-        account.proprietary = proprietary;
-        account.name = name.clone();
-        if timestamp {
-            account.timestamp = Some(now);
-        }
 
         Ok(Backup {
             name,

@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 
 use async_fd_lock::LockWrite;
+use liana::descriptors::LianaDescriptor;
 use std::io::SeekFrom;
 use tokio::fs::OpenOptions;
 use tokio::io::AsyncSeekExt;
@@ -190,11 +191,49 @@ impl WalletSettings {
         }
     }
 
-    pub fn wallet_id(&self) -> String {
-        if let Some(t) = self.pinned_at {
-            format!("{}-{}", self.descriptor_checksum, t)
+    pub fn wallet_id(&self) -> WalletId {
+        WalletId {
+            timestamp: self.pinned_at,
+            descriptor_checksum: self.descriptor_checksum.clone(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WalletId {
+    pub timestamp: Option<i64>,
+    pub descriptor_checksum: String,
+}
+
+impl WalletId {
+    pub fn new(descriptor_checksum: String, timestamp: Option<i64>) -> Self {
+        WalletId {
+            timestamp,
+            descriptor_checksum,
+        }
+    }
+    pub fn generate(descriptor: &LianaDescriptor) -> Self {
+        WalletId {
+            timestamp: Some(chrono::Utc::now().timestamp()),
+            descriptor_checksum: descriptor
+                .to_string()
+                .split_once('#')
+                .map(|(_, checksum)| checksum)
+                .expect("LianaDescriptor.to_string() always include the checksum")
+                .to_string(),
+        }
+    }
+    pub fn is_legacy(&self) -> bool {
+        self.timestamp.is_none()
+    }
+}
+
+impl std::fmt::Display for WalletId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if let Some(t) = self.timestamp {
+            write!(f, "{}-{}", self.descriptor_checksum, t)
         } else {
-            self.descriptor_checksum.clone()
+            write!(f, "{}", self.descriptor_checksum)
         }
     }
 }

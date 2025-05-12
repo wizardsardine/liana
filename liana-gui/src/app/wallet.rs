@@ -11,7 +11,7 @@ use liana::{miniscript::bitcoin, signer::HotSigner};
 use liana::descriptors::LianaDescriptor;
 use liana::miniscript::bitcoin::bip32::Fingerprint;
 
-use super::settings::WalletSettings;
+use super::settings::{WalletId, WalletSettings};
 
 const DEFAULT_WALLET_NAME: &str = "Liana";
 
@@ -72,12 +72,8 @@ impl Wallet {
     }
 
     // To match with WalletSettings.wallet_id
-    pub fn id(&self) -> String {
-        if let Some(t) = self.pinned_at {
-            format!("{}-{}", self.descriptor_checksum, t)
-        } else {
-            self.descriptor_checksum.clone()
-        }
+    pub fn id(&self) -> WalletId {
+        WalletId::new(self.descriptor_checksum.clone(), self.pinned_at)
     }
 
     pub fn with_pinned_at(mut self, pinned_at: Option<i64>) -> Self {

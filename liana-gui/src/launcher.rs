@@ -11,9 +11,11 @@ use liana_ui::{
     widget::*,
 };
 use lianad::config::ConfigError;
+use tokio::runtime::Handle;
 
 use crate::{
     app::{self, settings::WalletSettings},
+    delete::{delete_wallet, DeleteError},
     dir::{LianaDirectory, NetworkDirectory},
     installer::UserFlow,
 };
@@ -94,19 +96,21 @@ impl Launcher {
                     Message::Install(d, n, UserFlow::ShareXpubs)
                 })
             }
-            Message::View(ViewMessage::DeleteWallet(DeleteWalletMessage::ShowModal)) => {
-                let wallet_datadir = self.datadir_path.network_directory(self.network);
-                let config_path = wallet_datadir.path().join(app::config::DEFAULT_FILE_NAME);
-                let internal_bitcoind = if let Ok(cfg) = app::Config::from_file(&config_path) {
-                    Some(cfg.start_internal_bitcoind)
-                } else {
-                    None
-                };
-                self.delete_wallet_modal = Some(DeleteWalletModal::new(
-                    self.network,
-                    wallet_datadir,
-                    internal_bitcoind,
-                ));
+            Message::View(ViewMessage::DeleteWallet(DeleteWalletMessage::ShowModal(i))) => {
+                if let State::Wallets { wallets, .. } = &self.state {
+                    let wallet_datadir = self.datadir_path.network_directory(self.network);
+                    let config_path = wallet_datadir.path().join(app::config::DEFAULT_FILE_NAME);
+                    let internal_bitcoind = if let Ok(cfg) = app::Config::from_file(&config_path) {
+                        Some(cfg.start_internal_bitcoind)
+                    } else {
+                        None
+                    };
+                    self.delete_wallet_modal = Some(DeleteWalletModal::new(
+                        wallet_datadir,
+                        wallets[i].clone(),
+                        internal_bitcoind,
+                    ));
+                }
                 Task::none()
             }
             Message::View(ViewMessage::SelectNetwork(network)) => {
@@ -116,7 +120,8 @@ impl Launcher {
             }
             Message::View(ViewMessage::DeleteWallet(DeleteWalletMessage::Deleted)) => {
                 self.state = State::NoWallet;
-                Task::none()
+                let network_dir = self.datadir_path.network_directory(self.network);
+                Task::perform(check_network_datadir(network_dir), Message::Checked)
             }
 
             Message::View(ViewMessage::DeleteWallet(DeleteWalletMessage::CloseModal)) => {
@@ -365,7 +370,7 @@ fn wallets_list_item(
                 Button::new(icon::trash_icon())
                     .style(theme::button::secondary)
                     .padding(10)
-                    .on_press(ViewMessage::DeleteWallet(DeleteWalletMessage::ShowModal)),
+                    .on_press(ViewMessage::DeleteWallet(DeleteWalletMessage::ShowModal(i))),
             ),
     )
     .into()
@@ -395,16 +400,16 @@ pub enum ViewMessage {
 
 #[derive(Debug, Clone)]
 pub enum DeleteWalletMessage {
-    ShowModal,
+    ShowModal(usize),
     CloseModal,
     Confirm,
     Deleted,
 }
 
 struct DeleteWalletModal {
-    network: Network,
-    wallet_datadir: NetworkDirectory,
-    warning: Option<std::io::Error>,
+    network_directory: NetworkDirectory,
+    wallet_settings: WalletSettings,
+    warning: Option<DeleteError>,
     deleted: bool,
     // `None` means we were not able to determine whether wallet uses internal bitcoind.
     internal_bitcoind: Option<bool>,
@@ -412,13 +417,13 @@ struct DeleteWalletModal {
 
 impl DeleteWalletModal {
     fn new(
-        network: Network,
-        wallet_datadir: NetworkDirectory,
+        network_directory: NetworkDirectory,
+        wallet_settings: WalletSettings,
         internal_bitcoind: Option<bool>,
     ) -> Self {
         Self {
-            network,
-            wallet_datadir,
+            wallet_settings,
+            network_directory,
             warning: None,
             deleted: false,
             internal_bitcoind,
@@ -428,7 +433,10 @@ impl DeleteWalletModal {
     fn update(&mut self, message: Message) -> Task<Message> {
         if let Message::View(ViewMessage::DeleteWallet(DeleteWalletMessage::Confirm)) = message {
             self.warning = None;
-            if let Err(e) = std::fs::remove_dir_all(self.wallet_datadir.path()) {
+            if let Err(e) = Handle::current().block_on(delete_wallet(
+                &self.network_directory,
+                &self.wallet_settings.wallet_id(),
+            )) {
                 self.warning = Some(e);
             } else {
                 self.deleted = true;
@@ -439,6 +447,7 @@ impl DeleteWalletModal {
         }
         Task::none()
     }
+
     fn view(&self) -> Element<Message> {
         let mut confirm_button = button::secondary(None, "Delete wallet")
             .width(Length::Fixed(200.0))
@@ -449,8 +458,8 @@ impl DeleteWalletModal {
         }
         // Use separate `Row`s for help text in order to have better spacing.
         let help_text_1 = format!(
-            "Are you sure you want to delete the configuration and all associated data for the network {}?",
-            &self.network
+            "Are you sure you want to delete the configuration and all associated data for the wallet Liana-{}?",
+            &self.wallet_settings.descriptor_checksum,
         );
         let help_text_2 = match self.internal_bitcoind {
             Some(true) => Some("(The Liana-managed Bitcoin node for this network will not be affected by this action.)"),
@@ -464,9 +473,12 @@ impl DeleteWalletModal {
                 Column::new()
                     .spacing(10)
                     .push(Container::new(
-                        h4_bold(format!("Delete configuration for {}", &self.network))
-                            .style(theme::text::destructive)
-                            .width(Length::Fill),
+                        h4_bold(format!(
+                            "Delete configuration for Liana-{}",
+                            &self.wallet_settings.descriptor_checksum
+                        ))
+                        .style(theme::text::destructive)
+                        .width(Length::Fill),
                     ))
                     .push(Row::new().push(text(help_text_1)))
                     .push_maybe(

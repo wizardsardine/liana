@@ -123,7 +123,7 @@ impl Loader {
     ) -> (Self, Task<Message>) {
         let socket_path = datadir_path
             .network_directory(network)
-            .lianad_data_directory(&wallet_settings)
+            .lianad_data_directory(&wallet_settings.wallet_id())
             .lianad_rpc_socket_path();
         (
             Loader {
@@ -559,7 +559,7 @@ pub async fn start_bitcoind_and_daemon(
 ) -> StartedResult {
     let mut config_path = liana_datadir_path
         .network_directory(network)
-        .lianad_data_directory(&settings)
+        .lianad_data_directory(&settings.wallet_id())
         .path()
         .to_path_buf();
     config_path.push("daemon.toml");
