@@ -1684,13 +1684,21 @@ pub fn hw_list_view<'a>(
             } else if chosen && processing {
                 hw::processing_hardware_wallet(kind, version.as_ref(), fingerprint, alias.as_ref())
             } else if selected {
-                hw::selected_hardware_wallet(kind, version.as_ref(), fingerprint, alias.as_ref(), {
-                    if not_tapminiscript {
-                        Some("Device firmware version does not support taproot miniscript")
-                    } else {
-                        None
-                    }
-                })
+                hw::selected_hardware_wallet(
+                    kind,
+                    version.as_ref(),
+                    fingerprint,
+                    alias.as_ref(),
+                    {
+                        if not_tapminiscript {
+                            Some("Device firmware version does not support taproot miniscript")
+                        } else {
+                            None
+                        }
+                    },
+                    None,
+                    true,
+                )
             } else if not_tapminiscript {
                 hw::warning_hardware_wallet(
                     kind,
@@ -1758,6 +1766,8 @@ pub fn key_list_view<'a>(
             } else {
                 None
             },
+            None,
+            true,
         )
     } else if device_must_support_taproot
         && kind.map(|kind| is_compatible_with_tapminiscript(kind, version)) == Some(false)

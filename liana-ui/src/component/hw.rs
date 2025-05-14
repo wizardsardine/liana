@@ -1,7 +1,8 @@
 use crate::{color, component::text, icon, image, theme, widget::*};
+use bitcoin::bip32::{ChildNumber, Fingerprint};
 use iced::{
     alignment::Vertical,
-    widget::{column, container, row, tooltip, Space},
+    widget::{column, container, pick_list, row, tooltip, Space},
     Alignment, Length,
 };
 use std::borrow::Cow;
@@ -56,6 +57,88 @@ pub fn supported_hardware_wallet<'a, T: 'a, K: Display, V: Display, F: Display>(
         ])
         .width(Length::Fill),
     )
+    .padding(10)
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Account {
+    pub index: ChildNumber,
+    pub fingerprint: Fingerprint,
+}
+
+impl Account {
+    pub fn new(index: ChildNumber, fingerprint: Fingerprint) -> Self {
+        Self { index, fingerprint }
+    }
+}
+
+impl Display for Account {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let index = self.index.to_string();
+        let index = index.replace("'", "");
+        write!(f, "Account #{}", index)
+    }
+}
+
+pub fn supported_hardware_wallet_with_account<
+    'a,
+    M: 'static + From<(Fingerprint, ChildNumber)> + Clone,
+    K: Display,
+    V: Display,
+>(
+    kind: K,
+    version: Option<V>,
+    fingerprint: Fingerprint,
+    alias: Option<impl Into<Cow<'a, str>> + Display>,
+    account: Option<ChildNumber>,
+    edit_account: bool,
+) -> Container<'a, M> {
+    let accounts: Vec<_> = (0..10)
+        .map(|i| {
+            Account::new(
+                ChildNumber::from_hardened_idx(i).expect("hardcoded"),
+                fingerprint,
+            )
+        })
+        .collect();
+    let account = Some(account.unwrap_or(ChildNumber::Hardened { index: 0 }));
+    let account = account.map(|i| Account::new(i, fingerprint));
+    let pick_account = pick_list(accounts, account.clone(), |a| {
+        (a.fingerprint, a.index).into()
+    });
+    let pick_account = if edit_account {
+        Some(pick_account)
+    } else {
+        None
+    };
+    let display_account = account.and_then(|a| {
+        if !edit_account {
+            Some(text::p1_bold(a))
+        } else {
+            None
+        }
+    });
+    let key = column(vec![
+        Row::new()
+            .spacing(5)
+            .push_maybe(alias.map(|a| text::p1_bold(a)))
+            .push(text::p1_regular(format!("#{}", fingerprint)))
+            .into(),
+        Row::new()
+            .spacing(5)
+            .push(text::caption(kind.to_string()))
+            .push_maybe(version.map(|v| text::caption(v.to_string())))
+            .into(),
+    ])
+    .width(Length::Fill);
+    Container::new(
+        Row::new()
+            .push(key)
+            .push(Space::with_width(Length::Fill))
+            .push_maybe(pick_account)
+            .push_maybe(display_account.map(|a| column![Space::with_height(8), a])),
+    )
+    .align_y(Alignment::Center)
     .padding(10)
 }
 
@@ -208,39 +291,50 @@ pub fn selected_hardware_wallet<'a, T: 'static, K: Display, V: Display, F: Displ
     fingerprint: F,
     alias: Option<impl Into<Cow<'a, str>> + Display>,
     warning: Option<&'static str>,
+    account: Option<ChildNumber>,
+    display_account: bool,
 ) -> Container<'a, T> {
-    container(
-        row(vec![
-            column(vec![
-                Row::new()
-                    .spacing(5)
-                    .push_maybe(alias.map(text::p1_bold))
-                    .push(text::p1_regular(format!("#{}", fingerprint)))
-                    .into(),
-                Row::new()
-                    .spacing(5)
-                    .push(text::caption(kind.to_string()))
-                    .push_maybe(version.map(|v| text::caption(v)))
-                    .into(),
-            ])
-            .width(Length::Fill)
+    let account = account.unwrap_or(ChildNumber::from_hardened_idx(0).expect("hardcoded"));
+    let index = match account {
+        ChildNumber::Hardened { index } => index,
+        ChildNumber::Normal { .. } => unreachable!(),
+    };
+    let account = if display_account {
+        Some(format!("Account #{index}"))
+    } else {
+        None
+    };
+
+    let key = column(vec![
+        Row::new()
+            .spacing(5)
+            .push_maybe(alias.map(|a| text::p1_bold(a)))
+            .push(text::p1_regular(format!("#{}", fingerprint)))
             .into(),
-            if let Some(w) = warning {
+        Row::new()
+            .spacing(5)
+            .push(text::caption(kind.to_string()))
+            .push_maybe(version.map(|v| text::caption(v.to_string())))
+            .into(),
+    ]);
+    container(
+        Row::new()
+            .push(key)
+            .push(Space::with_width(Length::Fill))
+            .push_maybe(account.map(|a| column![Space::with_height(8), text::p1_bold(a)]))
+            .push(Space::with_width(10))
+            .push_maybe(warning.map(|w| {
                 tooltip::Tooltip::new(
                     icon::warning_icon(),
                     iced::widget::text!("{}", w),
                     tooltip::Position::Bottom,
                 )
                 .style(theme::card::simple)
-                .into()
-            } else {
-                Row::new().into()
-            },
-            image::success_mark_icon().width(Length::Fixed(50.0)).into(),
-        ])
-        .align_y(Alignment::Center),
+            }))
+            .push(image::success_mark_icon().width(Length::Fixed(50.0))),
     )
     .padding(10)
+    .align_y(Alignment::Center)
 }
 
 pub fn sign_success_hardware_wallet<'a, T: 'a, K: Display, V: Display, F: Display>(
