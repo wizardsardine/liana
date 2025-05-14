@@ -1,7 +1,8 @@
 use crate::{color, component::text, icon, image, theme, widget::*};
+use bitcoin::bip32::Fingerprint;
 use iced::{
     alignment::Vertical,
-    widget::{column, container, row, tooltip, Space},
+    widget::{column, container, pick_list, row, tooltip, Space},
     Alignment, Length,
 };
 use std::borrow::Cow;
@@ -56,6 +57,63 @@ pub fn supported_hardware_wallet<'a, T: 'a, K: Display, V: Display, F: Display>(
         ])
         .width(Length::Fill),
     )
+    .padding(10)
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Account {
+    pub index: u32,
+    pub fingerprint: Fingerprint,
+}
+
+impl Account {
+    pub fn new(index: u32, fingerprint: Fingerprint) -> Self {
+        Self { index, fingerprint }
+    }
+}
+
+impl Display for Account {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Account #{}", self.index)
+    }
+}
+
+pub fn supported_hardware_wallet_with_account<
+    'a,
+    M: 'static + From<(Fingerprint, u32)> + Clone,
+    K: Display,
+    V: Display,
+>(
+    kind: K,
+    version: Option<V>,
+    fingerprint: Fingerprint,
+    alias: Option<impl Into<Cow<'a, str>> + Display>,
+    account: Option<u32>,
+) -> Container<'a, M> {
+    let accounts: Vec<_> = (0..10).map(|i| Account::new(i, fingerprint)).collect();
+    let account = Some(account.unwrap_or(0));
+    let account = account.map(|i| Account::new(i, fingerprint));
+    let pick = pick_list(accounts, account, |a| (a.fingerprint, a.index).into());
+    let key = column(vec![
+        Row::new()
+            .spacing(5)
+            .push_maybe(alias.map(|a| text::p1_bold(a)))
+            .push(text::p1_regular(format!("#{}", fingerprint)))
+            .into(),
+        Row::new()
+            .spacing(5)
+            .push(text::caption(kind.to_string()))
+            .push_maybe(version.map(|v| text::caption(v.to_string())))
+            .into(),
+    ])
+    .width(Length::Fill);
+    Container::new(
+        Row::new()
+            .push(key)
+            .push(Space::with_width(Length::Fill))
+            .push(pick),
+    )
+    .align_y(Alignment::Center)
     .padding(10)
 }
 
