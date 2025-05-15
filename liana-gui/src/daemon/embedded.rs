@@ -6,7 +6,9 @@ use tokio::sync::Mutex;
 use super::{model::*, node, Daemon, DaemonBackend, DaemonError};
 use crate::dir::LianaDirectory;
 use async_trait::async_trait;
-use liana::miniscript::bitcoin::{address, psbt::Psbt, Address, Network, OutPoint, Txid};
+use liana::miniscript::bitcoin::{
+    address, bip32::ChildNumber, psbt::Psbt, Address, Network, OutPoint, Txid,
+};
 use lianad::{
     commands::{CoinStatus, LabelItem},
     config::Config,
@@ -101,6 +103,21 @@ impl Daemon for EmbeddedDaemon {
 
     async fn get_new_address(&self) -> Result<GetAddressResult, DaemonError> {
         self.command(|daemon| Ok(daemon.get_new_address())).await
+    }
+
+    async fn list_revealed_addresses(
+        &self,
+        is_change: bool,
+        exclude_used: bool,
+        limit: usize,
+        start_index: Option<ChildNumber>,
+    ) -> Result<ListRevealedAddressesResult, DaemonError> {
+        self.command(|daemon| {
+            daemon
+                .list_revealed_addresses(is_change, exclude_used, limit, start_index)
+                .map_err(|e| DaemonError::Unexpected(e.to_string()))
+        })
+        .await
     }
 
     async fn update_deriv_indexes(

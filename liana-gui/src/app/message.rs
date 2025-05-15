@@ -26,6 +26,11 @@ pub enum Message {
     LoadWallet(Wallet),
     Info(Result<GetInfoResult, Error>),
     ReceiveAddress(Result<(Address, ChildNumber), Error>),
+    /// Revealed addresses. The second element contains the start index used for the request.
+    RevealedAddresses(
+        Result<ListRevealedAddressesResult, Error>,
+        Option<ChildNumber>, // start_index
+    ),
     Coins(Result<Vec<Coin>, Error>),
     /// When we want both coins and tip height together.
     CoinsTipHeight(Result<Vec<Coin>, Error>, Result<i32, Error>),

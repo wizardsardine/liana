@@ -13,7 +13,9 @@ use tracing::{error, info};
 pub mod error;
 pub mod jsonrpc;
 
-use liana::miniscript::bitcoin::{address, psbt::Psbt, Address, Network, OutPoint, Txid};
+use liana::miniscript::bitcoin::{
+    address, bip32::ChildNumber, psbt::Psbt, Address, Network, OutPoint, Txid,
+};
 use lianad::{
     commands::{CoinStatus, CreateRecoveryResult, LabelItem},
     config::Config,
@@ -85,6 +87,24 @@ impl<C: Client + Send + Sync + Debug> Daemon for Lianad<C> {
 
     async fn get_new_address(&self) -> Result<GetAddressResult, DaemonError> {
         self.call("getnewaddress", Option::<Request>::None)
+    }
+
+    async fn list_revealed_addresses(
+        &self,
+        is_change: bool,
+        exclude_used: bool,
+        limit: usize,
+        start_index: Option<ChildNumber>,
+    ) -> Result<ListRevealedAddressesResult, DaemonError> {
+        self.call(
+            "listrevealedaddresses",
+            Some(vec![
+                json!(is_change),
+                json!(exclude_used),
+                json!(limit),
+                json!(start_index), // a `null` argument is parsed as `None` by the command
+            ]),
+        )
     }
 
     async fn update_deriv_indexes(
