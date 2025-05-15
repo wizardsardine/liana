@@ -62,6 +62,7 @@ pub enum Message {
     ImportExport(ImportExportMessage),
     ImportBackup,
     WalletFromBackup((HashMap<Fingerprint, settings::KeySetting>, Backup)),
+    SelectAccount(Fingerprint, u32),
 }
 
 impl Close for Message {
@@ -73,6 +74,12 @@ impl Close for Message {
 impl From<ImportExportMessage> for Message {
     fn from(value: ImportExportMessage) -> Self {
         Message::ImportExport(value)
+    }
+}
+
+impl From<(Fingerprint, u32)> for Message {
+    fn from(value: (Fingerprint, u32)) -> Self {
+        Self::SelectAccount(value.0, value.1)
     }
 }
 

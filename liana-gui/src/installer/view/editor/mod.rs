@@ -2,7 +2,7 @@
 
 pub mod template;
 
-use iced::widget::{container, pick_list, scrollable, slider, Button, Space};
+use iced::widget::{self, container, pick_list, scrollable, slider, Button, Space};
 use iced::{Alignment, Length};
 
 use liana::miniscript::bitcoin::Network;
@@ -353,6 +353,18 @@ pub fn edit_key_modal<'a>(
     duplicate_master_fg: bool,
 ) -> Element<'a, Message> {
     let xpub_valid = form_xpub.valid && !form_xpub.value.is_empty();
+    let info = Column::new()
+        .push(Space::with_height(5))
+        .push(widget::tooltip::Tooltip::new(
+            icon::tooltip_icon(),
+            "Switch account if you already use the same hardware in other configurations",
+            widget::tooltip::Position::Bottom,
+        ));
+    let source = Row::new()
+        .push(p1_regular("Select the source of your key").bold())
+        .push(Space::with_width(10))
+        .push(info)
+        .push(Space::with_width(Length::Fill));
     let content = Column::new()
         .padding(25)
         .push_maybe(error.map(|e| card::error("Failed to import xpub", e.to_string())))
@@ -367,7 +379,7 @@ pub fn edit_key_modal<'a>(
                 )
                 .push(
                     Column::new()
-                        .push(p1_regular("Select the source of your key"))
+                        .push(source)
                         .spacing(10)
                         .push(Column::with_children(hws).spacing(10))
                         .push(Column::with_children(keys).spacing(10))
