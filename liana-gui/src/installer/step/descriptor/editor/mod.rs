@@ -764,6 +764,7 @@ mod tests {
             fingerprint: key.master_fingerprint(),
             key,
             source: KeySource::Device(async_hwi::DeviceKind::Specter, None),
+            account: None,
         };
 
         // Use Specter device for primary key

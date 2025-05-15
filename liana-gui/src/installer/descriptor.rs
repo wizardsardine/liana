@@ -1,5 +1,8 @@
 use async_hwi::{DeviceKind, Version};
-use liana::miniscript::{bitcoin::bip32::Fingerprint, descriptor::DescriptorPublicKey};
+use liana::miniscript::{
+    bitcoin::bip32::{ChildNumber, Fingerprint},
+    descriptor::DescriptorPublicKey,
+};
 
 use crate::{
     app::settings::ProviderKey, hw::is_compatible_with_tapminiscript, services::keys::api::KeyKind,
@@ -107,6 +110,7 @@ pub struct Key {
     pub name: String,
     pub fingerprint: Fingerprint,
     pub key: DescriptorPublicKey,
+    pub account: Option<ChildNumber>,
 }
 
 pub struct Path {
