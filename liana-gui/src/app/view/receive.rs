@@ -126,27 +126,29 @@ pub fn receive<'a>(
                     },
                 )),
         )
-        .push(
-            Container::new(
-                Button::new(
-                    Row::new()
-                        .align_y(Alignment::Center)
-                        .push(
-                            p1_bold("Previously generated addresses still awaiting deposit")
-                                .width(Length::Fill),
-                        )
-                        .push(if show_prev_addresses {
-                            icon::collapsed_icon()
-                        } else {
-                            icon::collapse_icon()
-                        }),
+        .push_maybe(
+            (!prev_addresses.is_empty()).then_some(
+                Container::new(
+                    Button::new(
+                        Row::new()
+                            .align_y(Alignment::Center)
+                            .push(
+                                p1_bold("Previously generated addresses still awaiting deposit")
+                                    .width(Length::Fill),
+                            )
+                            .push(if show_prev_addresses {
+                                icon::collapsed_icon()
+                            } else {
+                                icon::collapse_icon()
+                            }),
+                    )
+                    .on_press(Message::ToggleShowPreviousAddresses)
+                    .padding(20)
+                    .width(Length::Fill)
+                    .style(theme::button::transparent_border),
                 )
-                .on_press(Message::ToggleShowPreviousAddresses)
-                .padding(20)
-                .width(Length::Fill)
-                .style(theme::button::transparent_border),
-            )
-            .style(theme::card::simple),
+                .style(theme::card::simple),
+            ),
         )
         .push_maybe(show_prev_addresses.then_some(Row::new().spacing(10).push(
             prev_addresses.iter().enumerate().fold(
