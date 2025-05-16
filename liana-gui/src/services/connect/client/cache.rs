@@ -1,6 +1,7 @@
 use crate::dir::NetworkDirectory;
 use async_fd_lock::LockWrite;
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::io::SeekFrom;
 use tokio::fs::OpenOptions;
 use tokio::io::AsyncSeekExt;
@@ -136,6 +137,68 @@ pub async fn update_connect_cache(
         .map_err(|e| ConnectCacheError::WritingFile(format!("Failed to truncate file: {}", e)))?;
 
     Ok(tokens)
+}
+
+pub async fn filter_connect_cache(
+    network_dir: &NetworkDirectory,
+    emails: &HashSet<String>,
+) -> Result<(), ConnectCacheError> {
+    let mut path = network_dir.path().to_path_buf();
+    path.push(CONNECT_CACHE_FILENAME);
+
+    let file_exists = tokio::fs::try_exists(&path).await.unwrap_or(false);
+
+    let mut file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&path)
+        .await
+        .map_err(|e| ConnectCacheError::ReadingFile(format!("Opening file: {}", e)))?
+        .lock_write()
+        .await
+        .map_err(|e| ConnectCacheError::ReadingFile(format!("Locking file: {:?}", e)))?;
+
+    let mut cache = if file_exists {
+        let mut file_content = Vec::new();
+        file.read_to_end(&mut file_content)
+            .await
+            .map_err(|e| ConnectCacheError::ReadingFile(format!("Reading file content: {}", e)))?;
+
+        match serde_json::from_slice::<ConnectCache>(&file_content) {
+            Ok(cache) => cache,
+            Err(e) => {
+                tracing::warn!("Something wrong with Liana-Connect cache file: {:?}", e);
+                tracing::warn!("Liana-Connect cache file is reset");
+                ConnectCache::default()
+            }
+        }
+    } else {
+        ConnectCache::default()
+    };
+
+    cache.accounts.retain(|a| emails.contains(&a.email));
+
+    let content = serde_json::to_vec_pretty(&cache).map_err(|e| {
+        ConnectCacheError::WritingFile(format!("Failed to serialize settings: {}", e))
+    })?;
+
+    file.seek(SeekFrom::Start(0)).await.map_err(|e| {
+        ConnectCacheError::WritingFile(format!("Failed to seek to start of file: {}", e))
+    })?;
+
+    file.write_all(&content).await.map_err(|e| {
+        tracing::warn!("failed to write to file: {:?}", e);
+        ConnectCacheError::WritingFile(e.to_string())
+    })?;
+
+    file.inner_mut()
+        .set_len(content.len() as u64)
+        .await
+        .map_err(|e| ConnectCacheError::WritingFile(format!("Failed to truncate file: {}", e)))?;
+
+    Ok(())
 }
 
 #[derive(Debug, Clone)]

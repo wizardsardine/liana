@@ -1,4 +1,6 @@
+use crate::app::settings::WalletId;
 use liana::miniscript::bitcoin::Network;
+use lianad::datadir::DataDirectory;
 use std::path::{Path, PathBuf};
 
 #[derive(Clone, Debug, PartialEq)]
@@ -78,10 +80,19 @@ impl NetworkDirectory {
         self.0.as_path().exists()
     }
     pub fn init(&self) -> Result<(), Box<dyn std::error::Error>> {
-        create_directory(self.0.as_path())
+        create_directory(self.0.as_path())?;
+        create_directory(&self.0.as_path().join("data"))
     }
     pub fn path(&self) -> &Path {
         self.0.as_path()
+    }
+    pub fn lianad_data_directory(&self, wallet_id: &WalletId) -> DataDirectory {
+        let mut path = self.0.clone();
+        if !wallet_id.is_legacy() {
+            path.push("data");
+            path.push(wallet_id.to_string());
+        }
+        DataDirectory::new(path)
     }
 }
 

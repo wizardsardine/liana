@@ -428,12 +428,12 @@ async fn register_wallet(
 
         if daemon.backend() != DaemonBackend::RemoteBackend {
             let network_dir = data_dir.network_directory(network);
-            let checksum = wallet.descriptor_checksum();
+            let wallet_id = wallet.id();
             update_settings_file(&network_dir, |mut settings| {
                 if let Some(wallet_setting) = settings
                     .wallets
                     .iter_mut()
-                    .find(|w| w.descriptor_checksum == checksum)
+                    .find(|w| w.wallet_id() == wallet_id)
                 {
                     if let Some(hw_config) = wallet_setting
                         .hardware_wallets
@@ -479,12 +479,12 @@ pub async fn update_keys_aliases(
 ) -> Result<Arc<Wallet>, Error> {
     if daemon.backend() != DaemonBackend::RemoteBackend {
         let network_dir = data_dir.network_directory(network);
-        let checksum = wallet.descriptor_checksum();
+        let wallet_id = wallet.id();
         update_settings_file(&network_dir, |mut settings| {
             if let Some(wallet_setting) = settings
                 .wallets
                 .iter_mut()
-                .find(|w| w.descriptor_checksum == checksum)
+                .find(|w| w.wallet_id() == wallet_id)
             {
                 wallet_setting.keys = keys_aliases
                     .iter()

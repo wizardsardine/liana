@@ -20,16 +20,13 @@ use tokio::sync::mpsc::UnboundedSender;
 use crate::{
     app::{
         settings::{Settings, WalletSettings},
-        wallet::Wallet,
+        wallet::{wallet_name, Wallet},
         Config,
     },
     daemon::{model::HistoryTransaction, Daemon, DaemonBackend, DaemonError},
     dir::LianaDirectory,
     export::Progress,
-    installer::{
-        extract_daemon_config, extract_local_gui_settings, extract_remote_gui_settings, Context,
-        RemoteBackend,
-    },
+    installer::Context,
     services::connect::client::backend::api::DEFAULT_LIMIT,
     VERSION,
 };
@@ -116,61 +113,22 @@ impl Backup {
     ///
     /// # Arguments
     /// * `ctx` - the installer context
-    /// * `timestamp` - whether to record the current timestamp as wallet creation time
-    ///   (we should want to set timestamp = false for a wallet import for instance)
-    pub async fn from_installer(ctx: Context, timestamp: bool) -> Result<Self, Error> {
-        let descriptor = ctx
-            .descriptor
-            .clone()
-            .ok_or(Error::DescriptorMissing)?
-            .to_string();
+    pub async fn from_installer_descriptor_step(ctx: Context) -> Result<Self, Error> {
+        let descriptor = ctx.descriptor.clone().ok_or(Error::DescriptorMissing)?;
 
         let now = now();
+        let name = Some(wallet_name(&descriptor));
 
-        let mut account = Account::new(descriptor);
-
-        let mut proprietary = serde_json::Map::new();
-        proprietary.insert(LIANA_VERSION_KEY.to_string(), liana_version().into());
-
-        let config = extract_daemon_config(&ctx).map_err(|e| Error::Daemon(e.to_string()))?;
-        if let Ok(config) = serde_json::to_value(config) {
-            proprietary.insert(CONFIG_KEY.to_string(), config);
-        }
-        let settings = if ctx.bitcoin_backend.is_some() {
-            Some(extract_local_gui_settings(&ctx))
-        } else {
-            match &ctx.remote_backend {
-                RemoteBackend::WithWallet(backend) => {
-                    Some(extract_remote_gui_settings(&ctx, backend).await)
-                }
-                _ => None,
-            }
-        };
-
-        let name = if let Some(settings) = settings {
-            assert_eq!(settings.wallets.len(), 1);
-            if settings.wallets.len() != 1 {
-                return Err(Error::NotSingleWallet);
-            }
-            let settings = settings.wallets.first().expect("only one wallet");
-            let name = settings.name.clone();
-            if let Ok(settings) = serde_json::to_value(settings) {
-                proprietary.insert(SETTINGS_KEY.to_string(), settings);
-            }
-            Some(name)
-        } else {
-            None
-        };
+        let mut account = Account::new(descriptor.to_string());
+        account.name = name.clone();
+        account.timestamp = Some(now);
+        account
+            .proprietary
+            .insert(LIANA_VERSION_KEY.to_string(), liana_version().into());
 
         ctx.keys.iter().for_each(|(k, s)| {
             account.keys.insert(*k, s.to_backup());
         });
-
-        account.proprietary = proprietary;
-        account.name = name.clone();
-        if timestamp {
-            account.timestamp = Some(now);
-        }
 
         Ok(Backup {
             name,
@@ -199,10 +157,9 @@ impl Backup {
         let keys = wallet.keys();
 
         let network_dir = datadir.network_directory(network);
-        if let Some(settings) = WalletSettings::from_file(&network_dir, |settings| {
-            wallet.descriptor_checksum() == settings.descriptor_checksum
-        })
-        .map_err(|_| Error::SettingsFromFile)?
+        if let Some(settings) =
+            WalletSettings::from_file(&network_dir, |settings| wallet.id() == settings.wallet_id())
+                .map_err(|_| Error::SettingsFromFile)?
         {
             if let Ok(settings) = serde_json::to_value(settings) {
                 proprietary.insert(SETTINGS_KEY.to_string(), settings);

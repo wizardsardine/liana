@@ -14,21 +14,23 @@ use liana_ui::{
 };
 use lianad::config::{BitcoinBackend, BitcoindConfig, BitcoindRpcAuth, Config};
 use std::ops::Deref;
+use tokio::runtime::Handle;
 use tracing::{error, info, warn};
 
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use crate::{
     app::{
         config as gui_config,
-        settings::{self as gui_settings, AuthConfig, Settings, SettingsError, WalletSettings},
+        settings::{update_settings_file, AuthConfig, SettingsError, WalletId, WalletSettings},
         wallet::wallet_name,
     },
     backup,
     daemon::DaemonError,
-    dir::{LianaDirectory, NetworkDirectory},
+    delete,
+    dir::LianaDirectory,
     hw::{HardwareWalletConfig, HardwareWallets},
     services::{
         self,
@@ -252,50 +254,65 @@ impl Installer {
                     .get_mut(self.current)
                     .expect("There is always a step")
                     .update(&mut self.hws, message);
+                let wallet_id = WalletId::generate(
+                    self.context
+                        .descriptor
+                        .as_ref()
+                        .expect("Must be a descriptor at this point"),
+                );
+                let context = self.context.clone();
+                let signer = self.signer.clone();
                 match &self.context.remote_backend {
                     RemoteBackend::WithoutWallet(backend) => Task::perform(
-                        create_remote_wallet(
-                            self.context.clone(),
-                            self.signer.clone(),
-                            backend.clone(),
+                        with_wallet_id(
+                            wallet_id.clone(),
+                            create_remote_wallet(context, wallet_id, signer, backend.clone()),
                         ),
-                        Message::Installed,
+                        |(id, res)| Message::Installed(id, res),
                     ),
                     RemoteBackend::WithWallet(backend) => Task::perform(
-                        import_remote_wallet(self.context.clone(), backend.clone()),
-                        Message::Installed,
+                        with_wallet_id(
+                            wallet_id.clone(),
+                            import_remote_wallet(context, wallet_id, backend.clone()),
+                        ),
+                        |(id, res)| Message::Installed(id, res),
                     ),
                     RemoteBackend::None => Task::perform(
-                        install_local_wallet(self.context.clone(), self.signer.clone()),
-                        Message::Installed,
+                        with_wallet_id(
+                            wallet_id.clone(),
+                            install_local_wallet(context, wallet_id, signer),
+                        ),
+                        |(id, res)| Message::Installed(id, res),
                     ),
                     RemoteBackend::Undefined => unreachable!("Must be defined at this point"),
                 }
             }
-            Message::Installed(Err(e)) => {
+            Message::Installed(wallet_id, Err(e)) => {
                 let network_directory = self
                     .context
                     .liana_directory
                     .network_directory(self.context.bitcoin_config.network);
                 // In case of failure during install, block the thread to
                 // deleted the data_dir/network directory in order to start clean again.
-                warn!("Installation failed. Cleaning up the leftover data directory.");
-                if let Err(e) = std::fs::remove_dir_all(network_directory.path()) {
+                warn!("Installation failed. Cleaning up the network directory.");
+                if let Err(e) = Handle::current()
+                    .block_on(delete::delete_wallet(&network_directory, &wallet_id))
+                {
                     error!(
-                        "Failed to completely delete the data directory (path: '{}'): {}",
+                        "Failed to completely clean the network directory (path: '{}'): {}",
                         network_directory.path().to_string_lossy(),
                         e
                     );
                 } else {
                     warn!(
-                        "Successfully deleted data directory at '{}'.",
+                        "Successfully cleaned network directory at '{}'.",
                         network_directory.path().to_string_lossy()
                     );
                 };
                 self.steps
                     .get_mut(self.current)
                     .expect("There is always a step")
-                    .update(&mut self.hws, Message::Installed(Err(e)))
+                    .update(&mut self.hws, Message::Installed(wallet_id, Err(e)))
             }
             Message::WalletFromBackup((ks, backup)) => {
                 self.context.keys = ks;
@@ -359,10 +376,18 @@ pub fn daemon_check(cfg: lianad::config::Config) -> Result<(), Error> {
     }
 }
 
+async fn with_wallet_id<F>(wallet_id: WalletId, res: F) -> (WalletId, Result<WalletSettings, Error>)
+where
+    F: std::future::Future<Output = Result<WalletSettings, Error>>,
+{
+    (wallet_id, res.await)
+}
+
 pub async fn install_local_wallet(
     ctx: Context,
+    wallet_id: WalletId,
     signer: Arc<Mutex<Signer>>,
-) -> Result<PathBuf, Error> {
+) -> Result<WalletSettings, Error> {
     let network_datadir = ctx
         .liana_directory
         .network_directory(ctx.bitcoin_config.network);
@@ -370,7 +395,32 @@ pub async fn install_local_wallet(
         .init()
         .map_err(|e| Error::Unexpected(format!("Failed to create datadir path: {}", e)))?;
 
-    let cfg: lianad::config::Config = extract_daemon_config(&ctx)?;
+    let descriptor = ctx
+        .descriptor
+        .as_ref()
+        .expect("Context must have a descriptor at this point");
+
+    let hardware_wallets = ctx
+        .hws
+        .iter()
+        .filter_map(|(kind, fingerprint, token)| {
+            token
+                .as_ref()
+                .map(|token| HardwareWalletConfig::new(kind, *fingerprint, token))
+        })
+        .collect();
+
+    let wallet_settings = WalletSettings {
+        name: wallet_name(descriptor),
+        pinned_at: wallet_id.timestamp,
+        descriptor_checksum: wallet_id.descriptor_checksum.clone(),
+        keys: ctx.keys.values().cloned().collect(),
+        hardware_wallets,
+        remote_backend_auth: None,
+        start_internal_bitcoind: Some(ctx.internal_bitcoind.is_some()),
+    };
+
+    let cfg: lianad::config::Config = extract_daemon_config(&ctx, &wallet_settings)?;
 
     daemon_check(cfg.clone())?;
 
@@ -381,9 +431,11 @@ pub async fn install_local_wallet(
         .map_err(|e| Error::Unexpected(format!("Failed to serialize daemon config: {}", e)))?;
 
     // create lianad configuration file
-    let _daemon_config_path = create_and_write_file(
-        &network_datadir,
-        "daemon.toml",
+    create_and_write_file(
+        &network_datadir
+            .lianad_data_directory(&wallet_settings.wallet_id())
+            .path()
+            .join("daemon.toml"),
         daemon_config.to_string().as_bytes(),
     )?;
 
@@ -397,7 +449,14 @@ pub async fn install_local_wallet(
         signer
             .lock()
             .unwrap()
-            .store(&ctx.liana_directory, cfg.bitcoin_config.network)
+            .store(
+                &ctx.liana_directory,
+                cfg.bitcoin_config.network,
+                &wallet_id.descriptor_checksum,
+                wallet_id
+                    .timestamp
+                    .expect("Every new wallet have now a timestamp"),
+            )
             .map_err(|e| Error::Unexpected(format!("Failed to store mnemonic: {}", e)))?;
 
         info!("Hot signer mnemonic stored");
@@ -405,46 +464,56 @@ pub async fn install_local_wallet(
 
     if let Some(signer) = &ctx.recovered_signer {
         signer
-            .store(&ctx.liana_directory, cfg.bitcoin_config.network)
+            .store(
+                &ctx.liana_directory,
+                cfg.bitcoin_config.network,
+                &wallet_id.descriptor_checksum,
+                wallet_id
+                    .timestamp
+                    .expect("Every new wallet have now a timestamp"),
+            )
             .map_err(|e| Error::Unexpected(format!("Failed to store mnemonic: {}", e)))?;
 
         info!("Recovered signer mnemonic stored");
     }
 
     // create liana GUI configuration file
-    let gui_config_path = create_and_write_file(
-        &network_datadir,
-        gui_config::DEFAULT_FILE_NAME,
-        toml::to_string(&gui_config::Config::new(
-            // Installer started a bitcoind, it is expected that gui will start it on startup
-            ctx.internal_bitcoind.is_some(),
-        ))
-        .map_err(|e| Error::Unexpected(format!("Failed to serialize gui config: {}", e)))?
-        .as_bytes(),
-    )?;
-
-    info!("Gui configuration file created");
+    let gui_config_path = network_datadir
+        .path()
+        .join(gui_config::DEFAULT_FILE_NAME)
+        .to_path_buf();
+    if !gui_config_path.exists() {
+        create_and_write_file(
+            &gui_config_path,
+            toml::to_string(&gui_config::Config::new(
+                // Installer started a bitcoind, it is expected that gui will start it on startup
+                ctx.internal_bitcoind.is_some(),
+            ))
+            .map_err(|e| Error::Unexpected(format!("Failed to serialize gui config: {}", e)))?
+            .as_bytes(),
+        )?;
+        info!("Gui configuration file created");
+    }
 
     // create liana GUI settings file
-    let settings: gui_settings::Settings = extract_local_gui_settings(&ctx);
-    create_and_write_file(
-        &network_datadir,
-        gui_settings::DEFAULT_FILE_NAME,
-        serde_json::to_string_pretty(&settings)
-            .map_err(|e| Error::Unexpected(format!("Failed to serialize settings: {}", e)))?
-            .as_bytes(),
-    )?;
+    update_settings_file(&network_datadir, |mut settings| {
+        settings.wallets.push(wallet_settings.clone());
+        settings
+    })
+    .await
+    .map_err(|e| Error::Unexpected(e.to_string()))?;
 
     info!("Settings file created");
 
-    Ok(gui_config_path)
+    Ok(wallet_settings)
 }
 
 pub async fn create_remote_wallet(
     ctx: Context,
+    wallet_id: WalletId,
     signer: Arc<Mutex<Signer>>,
     remote_backend: BackendClient,
-) -> Result<PathBuf, Error> {
+) -> Result<WalletSettings, Error> {
     let network_datadir = ctx.liana_directory.network_directory(ctx.network);
     network_datadir
         .init()
@@ -462,7 +531,14 @@ pub async fn create_remote_wallet(
         signer
             .lock()
             .unwrap()
-            .store(&ctx.liana_directory, ctx.network)
+            .store(
+                &ctx.liana_directory,
+                ctx.network,
+                &wallet_id.descriptor_checksum,
+                wallet_id
+                    .timestamp
+                    .expect("Every new wallet have now a timestamp"),
+            )
             .map_err(|e| Error::Unexpected(format!("Failed to store mnemonic: {}", e)))?;
 
         info!("Hot signer mnemonic stored");
@@ -470,26 +546,33 @@ pub async fn create_remote_wallet(
 
     if let Some(signer) = &ctx.recovered_signer {
         signer
-            .store(&ctx.liana_directory, ctx.network)
+            .store(
+                &ctx.liana_directory,
+                ctx.network,
+                &wallet_id.descriptor_checksum,
+                wallet_id
+                    .timestamp
+                    .expect("Every new wallet have now a timestamp"),
+            )
             .map_err(|e| Error::Unexpected(format!("Failed to store mnemonic: {}", e)))?;
 
         info!("Recovered signer mnemonic stored");
     }
 
     // create liana GUI configuration file
-    let gui_config_path = create_and_write_file(
-        &network_datadir,
-        gui_config::DEFAULT_FILE_NAME,
-        toml::to_string(&gui_config::Config {
-            log_level: Some("info".to_string()),
-            debug: Some(false),
-            start_internal_bitcoind: false,
-        })
-        .map_err(|e| Error::Unexpected(format!("Failed to serialize gui config: {}", e)))?
-        .as_bytes(),
-    )?;
-
-    info!("Gui configuration file created");
+    let gui_config_path = network_datadir
+        .path()
+        .join(gui_config::DEFAULT_FILE_NAME)
+        .to_path_buf();
+    if !gui_config_path.exists() {
+        create_and_write_file(
+            &gui_config_path,
+            toml::to_string(&gui_config::Config::new(false))
+                .map_err(|e| Error::Unexpected(format!("Failed to serialize gui config: {}", e)))?
+                .as_bytes(),
+        )?;
+        info!("Gui configuration file created");
+    }
 
     let pks: Vec<_> = ctx
         .keys
@@ -540,14 +623,26 @@ pub async fn create_remote_wallet(
     let remote_backend = remote_backend.connect_wallet(wallet).0;
 
     // create liana GUI settings file
-    let settings: gui_settings::Settings = extract_remote_gui_settings(&ctx, &remote_backend).await;
-    create_and_write_file(
-        &network_datadir,
-        gui_settings::DEFAULT_FILE_NAME,
-        serde_json::to_string_pretty(&settings)
-            .map_err(|e| Error::Unexpected(format!("Failed to serialize settings: {}", e)))?
-            .as_bytes(),
-    )?;
+    // if the wallet is using the remote backend, then the hardware wallet settings and
+    // keys will be store on the remote backend side and not in the settings file.
+    let wallet_settings = WalletSettings {
+        name: wallet_name(descriptor),
+        descriptor_checksum: wallet_id.descriptor_checksum,
+        pinned_at: wallet_id.timestamp,
+        keys: Vec::new(),
+        hardware_wallets: Vec::new(),
+        remote_backend_auth: Some(AuthConfig::new(
+            remote_backend.user_email().to_string(),
+            remote_backend.wallet_id(),
+        )),
+        start_internal_bitcoind: None,
+    };
+    update_settings_file(&network_datadir, |mut settings| {
+        settings.wallets.push(wallet_settings.clone());
+        settings
+    })
+    .await
+    .map_err(|e| Error::Unexpected(e.to_string()))?;
 
     info!("Settings file created");
 
@@ -567,18 +662,26 @@ pub async fn create_remote_wallet(
         info!("Liana-Connect cache updated");
     };
 
-    Ok(gui_config_path)
+    Ok(wallet_settings)
 }
 
 pub async fn import_remote_wallet(
     ctx: Context,
+    wallet_id: WalletId,
     backend: BackendWalletClient,
-) -> Result<PathBuf, Error> {
+) -> Result<WalletSettings, Error> {
     tracing::info!("Importing wallet from remote backend");
 
     if let Some(signer) = &ctx.recovered_signer {
         signer
-            .store(&ctx.liana_directory, ctx.network)
+            .store(
+                &ctx.liana_directory,
+                ctx.network,
+                &wallet_id.descriptor_checksum,
+                wallet_id
+                    .timestamp
+                    .expect("Every new wallet have now a timestamp"),
+            )
             .map_err(|e| Error::Unexpected(format!("Failed to store mnemonic: {}", e)))?;
 
         info!("Recovered signer mnemonic stored");
@@ -590,31 +693,47 @@ pub async fn import_remote_wallet(
         .map_err(|e| Error::Unexpected(format!("Failed to create datadir path: {}", e)))?;
 
     // create liana GUI settings file
-    let settings: gui_settings::Settings = extract_remote_gui_settings(&ctx, &backend).await;
-    create_and_write_file(
-        &network_datadir,
-        gui_settings::DEFAULT_FILE_NAME,
-        serde_json::to_string_pretty(&settings)
-            .map_err(|e| Error::Unexpected(format!("Failed to serialize settings: {}", e)))?
-            .as_bytes(),
-    )?;
+    // if the wallet is using the remote backend, then the hardware wallet settings and
+    // keys will be store on the remote backend side and not in the settings file.
+    let wallet_settings = WalletSettings {
+        name: wallet_name(
+            ctx.descriptor
+                .as_ref()
+                .expect("Context must have a descriptor at this point"),
+        ),
+        descriptor_checksum: wallet_id.descriptor_checksum,
+        pinned_at: wallet_id.timestamp,
+        keys: Vec::new(),
+        hardware_wallets: Vec::new(),
+        remote_backend_auth: Some(AuthConfig::new(
+            backend.user_email().to_string(),
+            backend.wallet_id(),
+        )),
+        start_internal_bitcoind: None,
+    };
+    update_settings_file(&network_datadir, |mut settings| {
+        settings.wallets.push(wallet_settings.clone());
+        settings
+    })
+    .await
+    .map_err(|e| Error::Unexpected(e.to_string()))?;
 
     info!("Settings file created");
 
     // create liana GUI configuration file
-    let gui_config_path = create_and_write_file(
-        &network_datadir,
-        gui_config::DEFAULT_FILE_NAME,
-        toml::to_string(&gui_config::Config {
-            log_level: Some("info".to_string()),
-            debug: Some(false),
-            start_internal_bitcoind: false,
-        })
-        .map_err(|e| Error::Unexpected(format!("Failed to serialize gui config: {}", e)))?
-        .as_bytes(),
-    )?;
-
-    info!("Gui configuration file created");
+    let gui_config_path = network_datadir
+        .path()
+        .join(gui_config::DEFAULT_FILE_NAME)
+        .to_path_buf();
+    if !gui_config_path.exists() {
+        create_and_write_file(
+            &gui_config_path,
+            toml::to_string(&gui_config::Config::new(false))
+                .map_err(|e| Error::Unexpected(format!("Failed to serialize gui config: {}", e)))?
+                .as_bytes(),
+        )?;
+        info!("Gui configuration file created");
+    }
 
     let backend = backend.inner_client();
     if let Err(e) = update_connect_cache(
@@ -632,91 +751,27 @@ pub async fn import_remote_wallet(
         info!("Liana-Connect cache updated");
     };
 
-    Ok(gui_config_path)
+    Ok(wallet_settings)
 }
 
-pub fn create_and_write_file(
-    network_datadir: &NetworkDirectory,
-    file_name: &str,
-    data: &[u8],
-) -> Result<PathBuf, Error> {
-    let mut path = network_datadir.path().to_path_buf();
-    path.push(file_name);
+pub fn create_and_write_file(path: &Path, data: &[u8]) -> Result<(), Error> {
     let mut file =
-        std::fs::File::create(&path).map_err(|e| Error::CannotCreateFile(e.to_string()))?;
+        std::fs::File::create(path).map_err(|e| Error::CannotCreateFile(e.to_string()))?;
     file.write_all(data)
         .map_err(|e| Error::CannotWriteToFile(e.to_string()))?;
-    Ok(path)
+    Ok(())
 }
 
-// if the wallet is using the remote backend, then the hardware wallet settings and
-// keys will be store on the remote backend side and not in the settings file.
-pub async fn extract_remote_gui_settings(ctx: &Context, backend: &BackendWalletClient) -> Settings {
-    let descriptor = ctx
-        .descriptor
-        .as_ref()
-        .expect("Context must have a descriptor at this point");
-
-    let descriptor_checksum = descriptor
-        .to_string()
-        .split_once('#')
-        .map(|(_, checksum)| checksum)
-        .expect("LianaDescriptor.to_string() always include the checksum")
-        .to_string();
-
-    Settings {
-        wallets: vec![WalletSettings {
-            name: wallet_name(descriptor),
-            descriptor_checksum,
-            keys: Vec::new(),
-            hardware_wallets: Vec::new(),
-            remote_backend_auth: Some(AuthConfig::new(
-                backend.user_email().to_string(),
-                backend.wallet_id(),
-            )),
-            start_internal_bitcoind: None,
-        }],
-    }
-}
-
-pub fn extract_local_gui_settings(ctx: &Context) -> Settings {
-    let descriptor = ctx
-        .descriptor
-        .as_ref()
-        .expect("Context must have a descriptor at this point");
-
-    let descriptor_checksum = descriptor
-        .to_string()
-        .split_once('#')
-        .map(|(_, checksum)| checksum)
-        .expect("LianaDescriptor.to_string() always include the checksum")
-        .to_string();
-
-    let hardware_wallets = ctx
-        .hws
-        .iter()
-        .filter_map(|(kind, fingerprint, token)| {
-            token
-                .as_ref()
-                .map(|token| HardwareWalletConfig::new(kind, *fingerprint, token))
-        })
-        .collect();
-    Settings {
-        wallets: vec![WalletSettings {
-            name: wallet_name(descriptor),
-            descriptor_checksum,
-            keys: ctx.keys.values().cloned().collect(),
-            hardware_wallets,
-            remote_backend_auth: None,
-            start_internal_bitcoind: Some(ctx.internal_bitcoind.is_some()),
-        }],
-    }
-}
-
-pub fn extract_daemon_config(ctx: &Context) -> Result<Config, Error> {
+pub fn extract_daemon_config(ctx: &Context, settings: &WalletSettings) -> Result<Config, Error> {
     let data_directory = ctx
         .liana_directory
         .network_directory(ctx.bitcoin_config.network)
+        .lianad_data_directory(&settings.wallet_id());
+    data_directory
+        .init()
+        .map_err(|e| Error::CannotCreateDatadir(e.to_string()))?;
+
+    let data_directory = data_directory
         .path()
         .to_path_buf()
         .canonicalize()

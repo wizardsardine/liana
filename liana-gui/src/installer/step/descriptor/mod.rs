@@ -379,7 +379,7 @@ impl Step for BackupDescriptor {
                     let ctx = ctx.clone();
                     return Task::perform(
                         async move {
-                            let backup = Backup::from_installer(ctx, true).await?;
+                            let backup = Backup::from_installer_descriptor_step(ctx).await?;
                             serde_json::to_string_pretty(&backup).map_err(|_| backup::Error::Json)
                         },
                         Message::ExportWallet,

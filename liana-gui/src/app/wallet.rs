@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use crate::dir::{LianaDirectory, NetworkDirectory};
+use crate::dir::LianaDirectory;
 use crate::{
     app::settings, daemon::DaemonBackend, hw::HardwareWalletConfig, node::NodeType, signer::Signer,
 };
@@ -10,6 +10,8 @@ use liana::{miniscript::bitcoin, signer::HotSigner};
 
 use liana::descriptors::LianaDescriptor;
 use liana::miniscript::bitcoin::bip32::Fingerprint;
+
+use super::settings::{WalletId, WalletSettings};
 
 const DEFAULT_WALLET_NAME: &str = "Liana";
 
@@ -31,6 +33,8 @@ pub fn wallet_name(main_descriptor: &LianaDescriptor) -> String {
 pub struct Wallet {
     pub name: String,
     pub main_descriptor: LianaDescriptor,
+    pub descriptor_checksum: String,
+    pub pinned_at: Option<i64>,
     // TODO: We could replace these two fields with `keys: HashMap<Fingerprint, settings::KeySetting>`.
     pub keys_aliases: HashMap<Fingerprint, String>,
     pub provider_keys: HashMap<Fingerprint, settings::ProviderKey>,
@@ -42,6 +46,13 @@ impl Wallet {
     pub fn new(main_descriptor: LianaDescriptor) -> Self {
         Self {
             name: wallet_name(&main_descriptor),
+            descriptor_checksum: main_descriptor
+                .to_string()
+                .split_once('#')
+                .map(|(_, checksum)| checksum)
+                .unwrap()
+                .to_string(),
+            pinned_at: None,
             main_descriptor,
             keys_aliases: HashMap::new(),
             provider_keys: HashMap::new(),
@@ -52,6 +63,16 @@ impl Wallet {
 
     pub fn with_name(mut self, name: String) -> Self {
         self.name = name;
+        self
+    }
+
+    // To match with WalletSettings.wallet_id
+    pub fn id(&self) -> WalletId {
+        WalletId::new(self.descriptor_checksum.clone(), self.pinned_at)
+    }
+
+    pub fn with_pinned_at(mut self, pinned_at: Option<i64>) -> Self {
+        self.pinned_at = pinned_at;
         self
     }
 
@@ -92,26 +113,16 @@ impl Wallet {
         descriptor_keys
     }
 
-    pub fn descriptor_checksum(&self) -> String {
-        self.main_descriptor
-            .to_string()
-            .split_once('#')
-            .map(|(_, checksum)| checksum)
-            .unwrap()
-            .to_string()
-    }
-
-    pub fn load_from_settings(self, dir: &NetworkDirectory) -> Result<Self, WalletError> {
-        if let Some(wallet_settings) = settings::WalletSettings::from_file(dir, |w| {
-            w.descriptor_checksum == self.descriptor_checksum()
-        })? {
+    pub fn load_from_settings(self, wallet_settings: WalletSettings) -> Result<Self, WalletError> {
+        if wallet_settings.descriptor_checksum != self.descriptor_checksum {
+            Err(WalletError::WrongWalletLoaded)
+        } else {
             Ok(self
                 .with_key_aliases(wallet_settings.keys_aliases())
                 .with_provider_keys(wallet_settings.provider_keys())
                 .with_name(wallet_settings.name)
+                .with_pinned_at(wallet_settings.pinned_at)
                 .with_hardware_wallets(wallet_settings.hardware_wallets))
-        } else {
-            Ok(self)
         }
     }
 
@@ -172,6 +183,7 @@ impl Wallet {
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug)]
 pub enum WalletError {
+    WrongWalletLoaded,
     Settings(settings::SettingsError),
     HotSigner(String),
 }
@@ -179,6 +191,7 @@ pub enum WalletError {
 impl std::fmt::Display for WalletError {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
+            Self::WrongWalletLoaded => write!(f, "Wrong wallet was loaded"),
             Self::Settings(e) => write!(f, "Failed to load settings: {}", e),
             Self::HotSigner(e) => write!(f, "Failed to load hot signer: {}", e),
         }

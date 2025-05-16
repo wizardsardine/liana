@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 
 use async_fd_lock::LockWrite;
+use liana::descriptors::LianaDescriptor;
 use std::io::SeekFrom;
 use tokio::fs::OpenOptions;
 use tokio::io::AsyncSeekExt;
@@ -19,11 +20,29 @@ use crate::{
     services::{self, connect::client::backend},
 };
 
-pub const DEFAULT_FILE_NAME: &str = "settings.json";
+pub const SETTINGS_FILE_NAME: &str = "settings.json";
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct Settings {
     pub wallets: Vec<WalletSettings>,
+}
+
+impl Settings {
+    pub fn from_file(network_dir: &NetworkDirectory) -> Result<Settings, SettingsError> {
+        let mut path = network_dir.path().to_path_buf();
+        path.push(SETTINGS_FILE_NAME);
+
+        std::fs::read(path)
+            .map_err(|e| match e.kind() {
+                std::io::ErrorKind::NotFound => SettingsError::NotFound,
+                _ => SettingsError::ReadingFile(format!("Reading settings file: {}", e)),
+            })
+            .and_then(|file_content| {
+                serde_json::from_slice::<Settings>(&file_content).map_err(|e| {
+                    SettingsError::ReadingFile(format!("Parsing settings file: {}", e))
+                })
+            })
+    }
 }
 
 pub async fn update_settings_file<F>(
@@ -33,7 +52,7 @@ pub async fn update_settings_file<F>(
 where
     F: FnOnce(Settings) -> Settings,
 {
-    let path = network_dir.path().join(DEFAULT_FILE_NAME);
+    let path = network_dir.path().join(SETTINGS_FILE_NAME);
     let file_exists = tokio::fs::try_exists(&path).await.unwrap_or(false);
 
     let mut file = OpenOptions::new()
@@ -61,6 +80,13 @@ where
     };
 
     let settings = updater(settings);
+
+    if settings.wallets.is_empty() {
+        tokio::fs::remove_file(&path)
+            .await
+            .map_err(|e| SettingsError::ReadingFile(e.to_string()))?;
+        return Ok(());
+    }
 
     let content = serde_json::to_vec_pretty(&settings)
         .map_err(|e| SettingsError::WritingFile(format!("Failed to serialize settings: {}", e)))?;
@@ -107,6 +133,7 @@ impl AuthConfig {
 pub struct WalletSettings {
     pub name: String,
     pub descriptor_checksum: String,
+    pub pinned_at: Option<i64>,
     // if wallet is using remote backend, then this information is stored on the remote backend
     // wallet metadata
     #[serde(default)]
@@ -129,20 +156,7 @@ impl WalletSettings {
     where
         F: FnMut(&WalletSettings) -> bool,
     {
-        let mut path = network_dir.path().to_path_buf();
-        path.push(DEFAULT_FILE_NAME);
-
-        std::fs::read(path)
-            .map_err(|e| match e.kind() {
-                std::io::ErrorKind::NotFound => SettingsError::NotFound,
-                _ => SettingsError::ReadingFile(format!("Reading settings file: {}", e)),
-            })
-            .and_then(|file_content| {
-                serde_json::from_slice::<Settings>(&file_content).map_err(|e| {
-                    SettingsError::ReadingFile(format!("Parsing settings file: {}", e))
-                })
-            })
-            .map(|cache| cache.wallets.into_iter().find(selecter))
+        Settings::from_file(network_dir).map(|cache| cache.wallets.into_iter().find(selecter))
     }
 
     pub fn keys_aliases(&self) -> HashMap<Fingerprint, String> {
@@ -181,6 +195,52 @@ impl WalletSettings {
                     }
                 })
                 .collect();
+        }
+    }
+
+    pub fn wallet_id(&self) -> WalletId {
+        WalletId {
+            timestamp: self.pinned_at,
+            descriptor_checksum: self.descriptor_checksum.clone(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WalletId {
+    pub timestamp: Option<i64>,
+    pub descriptor_checksum: String,
+}
+
+impl WalletId {
+    pub fn new(descriptor_checksum: String, timestamp: Option<i64>) -> Self {
+        WalletId {
+            timestamp,
+            descriptor_checksum,
+        }
+    }
+    pub fn generate(descriptor: &LianaDescriptor) -> Self {
+        WalletId {
+            timestamp: Some(chrono::Utc::now().timestamp()),
+            descriptor_checksum: descriptor
+                .to_string()
+                .split_once('#')
+                .map(|(_, checksum)| checksum)
+                .expect("LianaDescriptor.to_string() always include the checksum")
+                .to_string(),
+        }
+    }
+    pub fn is_legacy(&self) -> bool {
+        self.timestamp.is_none()
+    }
+}
+
+impl std::fmt::Display for WalletId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if let Some(t) = self.timestamp {
+            write!(f, "{}-{}", self.descriptor_checksum, t)
+        } else {
+            write!(f, "{}", self.descriptor_checksum)
         }
     }
 }
@@ -298,6 +358,7 @@ impl KeySetting {
 pub enum SettingsError {
     NotFound,
     ReadingFile(String),
+    DeletingFile(String),
     WritingFile(String),
     Unexpected(String),
 }
@@ -306,6 +367,7 @@ impl std::fmt::Display for SettingsError {
         match self {
             Self::NotFound => write!(f, "Settings file not found"),
             Self::ReadingFile(e) => write!(f, "Error while reading file: {}", e),
+            Self::DeletingFile(e) => write!(f, "Error while deleting file: {}", e),
             Self::WritingFile(e) => write!(f, "Error while writing file: {}", e),
             Self::Unexpected(e) => write!(f, "Unexpected error: {}", e),
         }
