@@ -35,8 +35,8 @@ use liana_gui::{
         client::backend::{api, BackendWalletClient},
         login,
     },
-    VERSION,
 };
+use lianad::LIANA_VERSION;
 
 #[derive(Debug, PartialEq)]
 enum Arg {
@@ -48,7 +48,7 @@ fn parse_args(args: Vec<String>) -> Result<Vec<Arg>, Box<dyn Error>> {
     let mut res = Vec::new();
 
     if args.len() > 1 && (args[1] == "--version" || args[1] == "-v") {
-        eprintln!("{}", VERSION);
+        eprintln!("{}", LIANA_VERSION);
         process::exit(1);
     }
 
@@ -136,8 +136,8 @@ async fn ctrl_c() -> Result<(), ()> {
 impl GUI {
     fn title(&self) -> String {
         match self.state {
-            State::Installer(_) => format!("Liana v{} Installer", VERSION),
-            _ => format!("Liana v{}", VERSION),
+            State::Installer(_) => format!("Liana v{} Installer", LIANA_VERSION),
+            _ => format!("Liana v{}", LIANA_VERSION),
         }
     }
 
