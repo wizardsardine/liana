@@ -125,10 +125,11 @@ pub fn unimplemented_method_hardware_wallet<'a, T: 'a, K: Display, V: Display, F
     .width(Length::Fill)
 }
 
-pub fn unrelated_hardware_wallet<'a, T: 'a, K: Display, V: Display, F: Display>(
+pub fn disabled_hardware_wallet<'a, T: 'a, K: Display, V: Display, F: Display>(
     kind: K,
     version: Option<V>,
     fingerprint: F,
+    label: &'static str,
 ) -> Container<'a, T> {
     let key = column(vec![
         text::p1_regular(format!("#{}", fingerprint)).into(),
@@ -144,9 +145,7 @@ pub fn unrelated_hardware_wallet<'a, T: 'a, K: Display, V: Display, F: Display>(
                 .push(key)
                 .push(Space::with_width(15))
                 .push(Space::with_width(Length::Fill))
-                .push(text::text(
-                    "This signing device is not related to this Liana wallet.",
-                ))
+                .push(text::text(label))
                 .push(Space::with_width(Length::Fill))
                 .align_y(Vertical::Center),
         )
@@ -155,6 +154,19 @@ pub fn unrelated_hardware_wallet<'a, T: 'a, K: Display, V: Display, F: Display>(
         .style(theme::card::simple),
     )
     .width(Length::Fill)
+}
+
+pub fn unrelated_hardware_wallet<'a, T: 'a, K: Display, V: Display, F: Display>(
+    kind: K,
+    version: Option<V>,
+    fingerprint: F,
+) -> Container<'a, T> {
+    disabled_hardware_wallet(
+        kind,
+        version,
+        fingerprint,
+        "This signing device is not related to this Liana wallet.",
+    )
 }
 
 pub fn processing_hardware_wallet<'a, T: 'a, K: Display, V: Display, F: Display>(
@@ -484,20 +496,31 @@ pub fn unselected_hot_signer<'a, T: 'a, F: Display>(
 pub fn hot_signer<'a, T: 'a, F: Display>(
     fingerprint: F,
     alias: Option<impl Into<Cow<'a, str>> + Display>,
+    can_sign: bool,
 ) -> Container<'a, T> {
     Container::new(
-        column(vec![
-            Row::new()
-                .spacing(5)
-                .push_maybe(alias.map(|a| text::p1_bold(a)))
-                .push(text::p1_regular(format!("#{}", fingerprint)))
-                .into(),
-            Row::new()
-                .spacing(5)
-                .push(text::caption("This computer"))
-                .into(),
-        ])
-        .width(Length::Fill),
+        Row::new()
+            .push(column(vec![
+                Row::new()
+                    .spacing(5)
+                    .push_maybe(alias.map(|a| text::p1_bold(a)))
+                    .push(text::p1_regular(format!("#{}", fingerprint)))
+                    .into(),
+                Row::new()
+                    .spacing(5)
+                    .push(text::caption("This computer"))
+                    .into(),
+            ]))
+            .push(Space::with_width(Length::Fixed(20.0)))
+            .push_maybe(if !can_sign {
+                Some(text::text(
+                    "This hot signer is not part of this spending path.",
+                ))
+            } else {
+                None
+            })
+            .push(Space::with_width(Length::Fill))
+            .align_y(Vertical::Center),
     )
     .padding(10)
 }

@@ -217,6 +217,39 @@ impl LianaDescriptor {
             .for_any_key(|k| k.master_fingerprint() == fg)
     }
 
+    /// Determine whether the fingerprint is part of a specific path of this descriptor.
+    /// If recovery_timelock is None, checks in the primary path.
+    /// If recovery_timelock is Some(timelock), checks in the recovery path with specified timelock.
+    pub fn contains_fingerprint_in_path(
+        &self,
+        fingerprint: Fingerprint,
+        recovery_timelock: Option<u16>,
+    ) -> bool {
+        match recovery_timelock {
+            None => self.contains_fingerprint_in_primary_path(fingerprint),
+            Some(timelock) => self.contains_fingerprint_in_recovery_path(fingerprint, timelock),
+        }
+    }
+
+    /// Determine whether the fingerprint is part of the primary path of this descriptor.
+    fn contains_fingerprint_in_primary_path(&self, fingerprint: Fingerprint) -> bool {
+        self.policy().primary_path.contains_fingerprint(fingerprint)
+    }
+
+    /// Determine whether the fingerprint is part of the recovery path of this descriptor for the
+    /// specified timelock.
+    fn contains_fingerprint_in_recovery_path(
+        &self,
+        fingerprint: Fingerprint,
+        recovery_timelock: u16,
+    ) -> bool {
+        self.policy()
+            .recovery_paths
+            .get(&recovery_timelock)
+            .map(|path_info| path_info.contains_fingerprint(fingerprint))
+            .unwrap_or(false)
+    }
+
     /// Get the descriptor for receiving addresses.
     pub fn receive_descriptor(&self) -> &SinglePathLianaDesc {
         &self.receive_desc
@@ -751,9 +784,9 @@ impl DerivedSinglePathLianaDesc {
 mod tests {
     use super::*;
 
-    use bitcoin::{hashes::Hash, Sequence};
-
     use crate::signer::HotSigner;
+    use bitcoin::{hashes::Hash, Sequence};
+    use miniscript::bitcoin::bip32::Fingerprint;
 
     fn random_desc_key(
         secp: &secp256k1::Secp256k1<impl secp256k1::Signing>,
@@ -2210,13 +2243,120 @@ mod tests {
     }
 
     #[test]
-    fn descriptor_contains_fingerprint() {
+    fn descriptor_contains_fingerprint_in_primary_path_multi() {
         let descr = LianaDescriptor::from_str("wsh(or_d(multi(3,[aabb0011/48'/0'/0'/2']xpub6Eze7yAT3Y1wGrnzedCNVYDXUqa9NmHVWck5emBaTbXtURbe1NWZbK9bsz1TiVE7Cz341PMTfYgFw1KdLWdzcM1UMFTcdQfCYhhXZ2HJvTW/0/<0;1>/*,[aabb0012/48'/0'/0'/2']xpub6Bw79HbNSeS2xXw1sngPE3ehnk1U3iSPCgLYzC9LpN8m9nDuaKLZvkg8QXxL5pDmEmQtYscmUD8B9MkAAZbh6vxPzNXMaLfGQ9Sb3z85qhR/0/<0;1>/*,[aabb0013/48'/0'/0'/2']xpub67zuTXF9Ln4731avKTBSawoVVNRuMfmRvkL7kLUaLBRqma9ZqdHBJg9qx8cPUm3oNQMiXT4TmGovXNoQPuwg17RFcVJ8YrnbcooN7pxVJqC/0/<0;1>/*),and_v(v:thresh(2,pkh([aabb0011/48'/0'/0'/2']xpub6Eze7yAT3Y1wGrnzedCNVYDXUqa9NmHVWck5emBaTbXtURbe1NWZbK9bsz1TiVE7Cz341PMTfYgFw1KdLWdzcM1UMFTcdQfCYhhXZ2HJvTW/1/<0;1>/*),a:pkh([aabb0012/48'/0'/0'/2']xpub6Bw79HbNSeS2xXw1sngPE3ehnk1U3iSPCgLYzC9LpN8m9nDuaKLZvkg8QXxL5pDmEmQtYscmUD8B9MkAAZbh6vxPzNXMaLfGQ9Sb3z85qhR/1/<0;1>/*),a:pkh([aabb0013/48'/0'/0'/2']xpub67zuTXF9Ln4731avKTBSawoVVNRuMfmRvkL7kLUaLBRqma9ZqdHBJg9qx8cPUm3oNQMiXT4TmGovXNoQPuwg17RFcVJ8YrnbcooN7pxVJqC/1/<0;1>/*)),older(26352))))").unwrap();
 
-        assert!(descr.contains_fingerprint(Fingerprint::from_str("aabb0011").unwrap()));
-        assert!(descr.contains_fingerprint(Fingerprint::from_str("aabb0012").unwrap()));
-        assert!(descr.contains_fingerprint(Fingerprint::from_str("aabb0013").unwrap()));
-        assert!(!descr.contains_fingerprint(Fingerprint::from_str("aabb0014").unwrap()));
+        assert!(
+            descr.contains_fingerprint_in_primary_path(Fingerprint::from_str("aabb0011").unwrap())
+        );
+        assert!(
+            descr.contains_fingerprint_in_primary_path(Fingerprint::from_str("aabb0012").unwrap())
+        );
+        assert!(
+            descr.contains_fingerprint_in_primary_path(Fingerprint::from_str("aabb0013").unwrap())
+        );
+        assert!(
+            !descr.contains_fingerprint_in_primary_path(Fingerprint::from_str("aabb0014").unwrap())
+        );
+    }
+
+    #[test]
+    fn descriptor_contains_fingerprint_in_primary_path_single_key() {
+        let descr = LianaDescriptor::from_str("wsh(or_d(pkh([aabb0011/48'/0'/0'/2']xpub6Eze7yAT3Y1wGrnzedCNVYDXUqa9NmHVWck5emBaTbXtURbe1NWZbK9bsz1TiVE7Cz341PMTfYgFw1KdLWdzcM1UMFTcdQfCYhhXZ2HJvTW/0/<0;1>/*),and_v(v:thresh(1,pkh([bbcc2233/48'/0'/0'/2']xpub6Bw79HbNSeS2xXw1sngPE3ehnk1U3iSPCgLYzC9LpN8m9nDuaKLZvkg8QXxL5pDmEmQtYscmUD8B9MkAAZbh6vxPzNXMaLfGQ9Sb3z85qhR/1/<0;1>/*)),older(26352))))").unwrap();
+
+        assert!(
+            descr.contains_fingerprint_in_primary_path(Fingerprint::from_str("aabb0011").unwrap())
+        );
+        assert!(
+            !descr.contains_fingerprint_in_primary_path(Fingerprint::from_str("bbcc2233").unwrap())
+        );
+        assert!(
+            !descr.contains_fingerprint_in_primary_path(Fingerprint::from_str("ddeeff00").unwrap())
+        );
+    }
+
+    #[test]
+    fn descriptor_contains_fingerprint_in_recovery_path_multi() {
+        let descr = LianaDescriptor::from_str("wsh(or_d(multi(3,[aabb0011/48'/0'/0'/2']xpub6Eze7yAT3Y1wGrnzedCNVYDXUqa9NmHVWck5emBaTbXtURbe1NWZbK9bsz1TiVE7Cz341PMTfYgFw1KdLWdzcM1UMFTcdQfCYhhXZ2HJvTW/0/<0;1>/*,[aabb0012/48'/0'/0'/2']xpub6Bw79HbNSeS2xXw1sngPE3ehnk1U3iSPCgLYzC9LpN8m9nDuaKLZvkg8QXxL5pDmEmQtYscmUD8B9MkAAZbh6vxPzNXMaLfGQ9Sb3z85qhR/0/<0;1>/*,[aabb0013/48'/0'/0'/2']xpub67zuTXF9Ln4731avKTBSawoVVNRuMfmRvkL7kLUaLBRqma9ZqdHBJg9qx8cPUm3oNQMiXT4TmGovXNoQPuwg17RFcVJ8YrnbcooN7pxVJqC/0/<0;1>/*),and_v(v:thresh(2,pkh([aabb0011/48'/0'/0'/2']xpub6Eze7yAT3Y1wGrnzedCNVYDXUqa9NmHVWck5emBaTbXtURbe1NWZbK9bsz1TiVE7Cz341PMTfYgFw1KdLWdzcM1UMFTcdQfCYhhXZ2HJvTW/1/<0;1>/*),a:pkh([aabb0012/48'/0'/0'/2']xpub6Bw79HbNSeS2xXw1sngPE3ehnk1U3iSPCgLYzC9LpN8m9nDuaKLZvkg8QXxL5pDmEmQtYscmUD8B9MkAAZbh6vxPzNXMaLfGQ9Sb3z85qhR/1/<0;1>/*),a:pkh([aabb0013/48'/0'/0'/2']xpub67zuTXF9Ln4731avKTBSawoVVNRuMfmRvkL7kLUaLBRqma9ZqdHBJg9qx8cPUm3oNQMiXT4TmGovXNoQPuwg17RFcVJ8YrnbcooN7pxVJqC/1/<0;1>/*)),older(26352))))").unwrap();
+
+        assert!(descr.contains_fingerprint_in_recovery_path(
+            Fingerprint::from_str("aabb0011").unwrap(),
+            26352
+        ));
+        assert!(descr.contains_fingerprint_in_recovery_path(
+            Fingerprint::from_str("aabb0012").unwrap(),
+            26352
+        ));
+        assert!(descr.contains_fingerprint_in_recovery_path(
+            Fingerprint::from_str("aabb0013").unwrap(),
+            26352
+        ));
+        assert!(!descr.contains_fingerprint_in_recovery_path(
+            Fingerprint::from_str("aabb0013").unwrap(),
+            1000
+        ));
+        assert!(!descr.contains_fingerprint_in_recovery_path(
+            Fingerprint::from_str("aabb0014").unwrap(),
+            26352
+        ));
+    }
+
+    #[test]
+    fn descriptor_contains_fingerprint_in_recovery_path_single_key() {
+        let descr = LianaDescriptor::from_str("wsh(or_d(pkh([aabb0011/48'/0'/0'/2']xpub6Eze7yAT3Y1wGrnzedCNVYDXUqa9NmHVWck5emBaTbXtURbe1NWZbK9bsz1TiVE7Cz341PMTfYgFw1KdLWdzcM1UMFTcdQfCYhhXZ2HJvTW/0/<0;1>/*),and_v(v:thresh(1,pkh([bbcc2233/48'/0'/0'/2']xpub6Bw79HbNSeS2xXw1sngPE3ehnk1U3iSPCgLYzC9LpN8m9nDuaKLZvkg8QXxL5pDmEmQtYscmUD8B9MkAAZbh6vxPzNXMaLfGQ9Sb3z85qhR/1/<0;1>/*)),older(26352))))").unwrap();
+
+        assert!(!descr.contains_fingerprint_in_recovery_path(
+            Fingerprint::from_str("aabb0011").unwrap(),
+            26352
+        ));
+        assert!(descr.contains_fingerprint_in_recovery_path(
+            Fingerprint::from_str("bbcc2233").unwrap(),
+            26352
+        ));
+        assert!(!descr.contains_fingerprint_in_recovery_path(
+            Fingerprint::from_str("ddeeff00").unwrap(),
+            26352
+        ));
+    }
+
+    #[test]
+    fn descriptor_contains_fingerprint_in_recovery_path_multiple_keys() {
+        let descr = LianaDescriptor::from_str("wsh(or_d(c:or_i(and_v(v:older(38305),and_v(v:pkh([d6bba22a/84'/1'/0']tpubDCwMfgJWBGfJuZFmgTAP9qdSwJeC4fEKaYXQx7CNiTzsB5WrpVSmySdPFnKDu8ChWZweYNh7MoAoFsCNY7gTRFSGtDYbG9s6vAKNKzT1Hii/<0;1>/*),pk_h([e9e6c583/48'/1'/0'/2']tpubDEWn2LRKdyREaweKHxj7XzSjcxXGTVbFkL5Qi5AWsJzGvN28cKQwGqCND9TP6EPtPaE13eK9SnyuiQ4qsfy5UuGD3p32Ew36mWfKmYCJRcz/<0;1>/*))),pk_k([de8abde2/48'/1'/0'/2']tpubDES5ZQEwEuj7Fpe6d6wkwD8SdequEa2cqq57QHQ43pb1x2HxbLp6anHwutDNzrMhDAbx1YgxCFAbRi6EhWwQLaGMSSmxJRaAzCUgn6VwpVD/<0;1>/*)),and_v(v:thresh(1,pkh([d6bba22a/84'/1'/0']tpubDCwMfgJWBGfJuZFmgTAP9qdSwJeC4fEKaYXQx7CNiTzsB5WrpVSmySdPFnKDu8ChWZweYNh7MoAoFsCNY7gTRFSGtDYbG9s6vAKNKzT1Hii/<2;3>/*),a:pkh([e9e6c583/48'/1'/0'/2']tpubDEWn2LRKdyREaweKHxj7XzSjcxXGTVbFkL5Qi5AWsJzGvN28cKQwGqCND9TP6EPtPaE13eK9SnyuiQ4qsfy5UuGD3p32Ew36mWfKmYCJRcz/<2;3>/*)),older(52596))))").unwrap();
+
+        assert!(descr.contains_fingerprint_in_recovery_path(
+            Fingerprint::from_str("d6bba22a").unwrap(),
+            38305
+        ));
+        assert!(descr.contains_fingerprint_in_recovery_path(
+            Fingerprint::from_str("e9e6c583").unwrap(),
+            38305
+        ));
+        assert!(descr.contains_fingerprint_in_recovery_path(
+            Fingerprint::from_str("d6bba22a").unwrap(),
+            52596
+        ));
+        assert!(descr.contains_fingerprint_in_recovery_path(
+            Fingerprint::from_str("e9e6c583").unwrap(),
+            52596
+        ));
+
+        assert!(!descr.contains_fingerprint_in_recovery_path(
+            Fingerprint::from_str("d6bba22a").unwrap(),
+            12345
+        ));
+        assert!(!descr.contains_fingerprint_in_recovery_path(
+            Fingerprint::from_str("e9e6c583").unwrap(),
+            12345
+        ));
+
+        assert!(!descr.contains_fingerprint_in_recovery_path(
+            Fingerprint::from_str("ffffffff").unwrap(),
+            38305
+        ));
+        assert!(!descr.contains_fingerprint_in_recovery_path(
+            Fingerprint::from_str("ffffffff").unwrap(),
+            52596
+        ));
     }
 
     // TODO: test error conditions of deserialization.
