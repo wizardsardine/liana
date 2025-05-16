@@ -12,7 +12,7 @@ use liana_ui::{
     component::network_banner,
     widget::{Column, Element},
 };
-use lianad::config::Config;
+use lianad::config::{BitcoinBackend, BitcoindConfig, BitcoindRpcAuth, Config};
 use std::ops::Deref;
 use tracing::{error, info, warn};
 
@@ -721,9 +721,26 @@ pub fn extract_daemon_config(ctx: &Context) -> Result<Config, Error> {
         .to_path_buf()
         .canonicalize()
         .map_err(|e| Error::Unexpected(format!("Failed to canonicalize datadir path: {}", e)))?;
+    let bitcoin_backend = if let Some(BitcoinBackend::Bitcoind(BitcoindConfig {
+        rpc_auth: BitcoindRpcAuth::CookieFile(cookie_path),
+        addr,
+    })) = &ctx.bitcoin_backend
+    {
+        // The cookie path must exist for this canonicalization to succeed, which means bitcoind must be running.
+        // We already checked in the installer that bitcoind is running.
+        let cookie_path = cookie_path
+            .canonicalize()
+            .map_err(|e| Error::Unexpected(format!("Failed to canonicalize cookie path: {}", e)))?;
+        Some(BitcoinBackend::Bitcoind(BitcoindConfig {
+            rpc_auth: BitcoindRpcAuth::CookieFile(cookie_path),
+            addr: *addr,
+        }))
+    } else {
+        ctx.bitcoin_backend.clone()
+    };
     Ok(Config::new(
         ctx.bitcoin_config.clone(),
-        ctx.bitcoin_backend.clone(),
+        bitcoin_backend,
         log::LevelFilter::Info,
         ctx.descriptor
             .clone()

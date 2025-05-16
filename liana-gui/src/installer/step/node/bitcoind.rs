@@ -29,9 +29,9 @@ use crate::{
         view, Error,
     },
     node::bitcoind::{
-        self, bitcoind_network_dir, internal_bitcoind_datadir, internal_bitcoind_directory,
-        Bitcoind, ConfigField, InternalBitcoindConfig, InternalBitcoindConfigError,
-        InternalBitcoindNetworkConfig, RpcAuth, RpcAuthType, RpcAuthValues,
+        self, bitcoind_network_dir, internal_bitcoind_cookie_path, internal_bitcoind_datadir,
+        internal_bitcoind_directory, Bitcoind, ConfigField, InternalBitcoindConfig,
+        InternalBitcoindConfigError, InternalBitcoindNetworkConfig, RpcAuthType, RpcAuthValues,
         StartInternalBitcoindError, VERSION,
     },
 };
@@ -583,9 +583,9 @@ impl Step for InternalBitcoindStep {
                             return Task::none();
                         }
                     };
-                    let (rpc_port, p2p_port) = if let Some(network_conf) =
-                        conf.networks.get(&self.network)
-                    {
+                    let network_conf = conf.networks.get(&self.network);
+                    // Use same ports again if there is an existing installation.
+                    let (rpc_port, p2p_port) = if let Some(network_conf) = network_conf {
                         (network_conf.rpc_port, network_conf.p2p_port)
                     } else {
                         match (get_available_port(), get_available_port()) {
@@ -611,24 +611,28 @@ impl Step for InternalBitcoindStep {
                             }
                         }
                     };
-                    let (rpc_auth, rpc_password) = match RpcAuth::new("liana") {
-                        Ok((rpc_auth, password)) => (rpc_auth, password),
-                        Err(e) => {
-                            self.error = Some(e.to_string());
-                            return Task::none();
-                        }
-                    };
+
+                    // Use cookie file authentication for new wallets.
+                    // For an existing bitcoind, we would not know the RPC password to use without checking
+                    // in other daemon.toml files.
+                    let cookie_file_auth = BitcoindRpcAuth::CookieFile(
+                        internal_bitcoind_cookie_path(&self.bitcoind_datadir, &self.network),
+                    );
                     let bitcoind_config = BitcoindConfig {
-                        rpc_auth: BitcoindRpcAuth::UserPass(rpc_auth.user.clone(), rpc_password),
+                        rpc_auth: cookie_file_auth,
                         addr: internal_bitcoind_address(rpc_port),
                     };
-                    let network_conf = InternalBitcoindNetworkConfig {
-                        rpc_port,
-                        p2p_port,
-                        prune: PRUNE_DEFAULT,
-                        // Overwrite any previous entry for this network as we would no longer know the RPC password.
-                        rpc_auth: Some(rpc_auth),
-                    };
+                    // Use existing network conf if it exists as it may have rpc_auth field set.
+                    // This ensures an existing wallet using username/password authentication will continue to work.
+                    let network_conf =
+                        network_conf
+                            .cloned()
+                            .unwrap_or(InternalBitcoindNetworkConfig {
+                                rpc_port,
+                                p2p_port,
+                                prune: PRUNE_DEFAULT,
+                                rpc_auth: None, // can be omitted for new bitcoin.conf entries
+                            });
                     conf.networks.insert(self.network, network_conf);
                     if let Err(e) = conf.to_file(&bitcoind::internal_bitcoind_config_path(
                         &self.bitcoind_datadir,
