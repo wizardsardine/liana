@@ -12,18 +12,35 @@ use liana_ui::{
 };
 use lianad::config::ConfigError;
 
+use crate::node::bitcoind::VERSION;
 use crate::{
     app,
     dir::{LianaDirectory, NetworkDirectory},
     installer::UserFlow,
 };
 
-const NETWORKS: [Network; 4] = [
+const NETWORKS: [Network; 5] = [
     Network::Bitcoin,
     Network::Testnet,
+    Network::Testnet4,
     Network::Signet,
     Network::Regtest,
 ];
+
+/// Returns the list of usable Bitcoin networks.
+///
+/// `Testnet4` is excluded if the Bitcoin Core version is less than 28.0.
+fn filtered_networks() -> Vec<Network> {
+    NETWORKS
+        .iter()
+        .filter(|&&n| n != Network::Testnet4 || is_version_at_least_28_0())
+        .cloned()
+        .collect()
+}
+
+fn is_version_at_least_28_0() -> bool {
+    VERSION.parse::<f32>().map_or(false, |v| v >= 28.0)
+}
 
 #[derive(Debug, Clone)]
 pub enum State {
@@ -38,6 +55,7 @@ pub enum State {
 
 pub struct Launcher {
     state: State,
+    filtered_networks: Vec<Network>,
     network: Network,
     datadir_path: LianaDirectory,
     error: Option<String>,
@@ -57,6 +75,7 @@ impl Launcher {
         (
             Self {
                 state: State::Unchecked,
+                filtered_networks: filtered_networks(),
                 network,
                 datadir_path: datadir_path.clone(),
                 error: None,
@@ -176,7 +195,7 @@ impl Launcher {
                         )
                         .push(
                             pick_list(
-                                &NETWORKS[..],
+                                self.filtered_networks.as_slice(),
                                 Some(self.network),
                                 ViewMessage::SelectNetwork,
                             )
@@ -215,6 +234,7 @@ impl Launcher {
                                                                 Network::Bitcoin => "Bitcoin",
                                                                 Network::Signet => "Signet",
                                                                 Network::Testnet => "Testnet",
+                                                                Network::Testnet4 => "Testnet4",
                                                                 Network::Regtest => "Regtest",
                                                                 _ => "",
                                                             }
