@@ -156,15 +156,7 @@ payment.)
 Liana can be used as a hot wallet. Note that mnemonics would be stored in clear on your drive. We
 strongly recommend using a hardware signing device for any non-trivial amount.
 
-For now, the following signing devices are supported:
-- Ledger Nano S, S+ & X
-- BitBox02 (P2WSH only)
-- Specter DIY
-- Coldcard MK4 & Q
-- Blockstream Jade (P2WSH only)
-
-For more information (such as compatibility and minimum supported versions) please read the [signing
-devices documentation](./signing_devices.md).
+The list of supported devices can be found [here](./SIGNING_DEVICES.md).
 
 #### Using the recovery path
 
