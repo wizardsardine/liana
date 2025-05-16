@@ -413,7 +413,7 @@ pub async fn install_local_wallet(
     let wallet_settings = WalletSettings {
         name: wallet_name(descriptor),
         pinned_at: wallet_id.timestamp,
-        descriptor_checksum: wallet_id.descriptor_checksum,
+        descriptor_checksum: wallet_id.descriptor_checksum.clone(),
         keys: ctx.keys.values().cloned().collect(),
         hardware_wallets,
         remote_backend_auth: None,
@@ -449,7 +449,14 @@ pub async fn install_local_wallet(
         signer
             .lock()
             .unwrap()
-            .store(&ctx.liana_directory, cfg.bitcoin_config.network)
+            .store(
+                &ctx.liana_directory,
+                cfg.bitcoin_config.network,
+                &wallet_id.descriptor_checksum,
+                wallet_id
+                    .timestamp
+                    .expect("Every new wallet have now a timestamp"),
+            )
             .map_err(|e| Error::Unexpected(format!("Failed to store mnemonic: {}", e)))?;
 
         info!("Hot signer mnemonic stored");
@@ -457,7 +464,14 @@ pub async fn install_local_wallet(
 
     if let Some(signer) = &ctx.recovered_signer {
         signer
-            .store(&ctx.liana_directory, cfg.bitcoin_config.network)
+            .store(
+                &ctx.liana_directory,
+                cfg.bitcoin_config.network,
+                &wallet_id.descriptor_checksum,
+                wallet_id
+                    .timestamp
+                    .expect("Every new wallet have now a timestamp"),
+            )
             .map_err(|e| Error::Unexpected(format!("Failed to store mnemonic: {}", e)))?;
 
         info!("Recovered signer mnemonic stored");
@@ -517,7 +531,14 @@ pub async fn create_remote_wallet(
         signer
             .lock()
             .unwrap()
-            .store(&ctx.liana_directory, ctx.network)
+            .store(
+                &ctx.liana_directory,
+                ctx.network,
+                &wallet_id.descriptor_checksum,
+                wallet_id
+                    .timestamp
+                    .expect("Every new wallet have now a timestamp"),
+            )
             .map_err(|e| Error::Unexpected(format!("Failed to store mnemonic: {}", e)))?;
 
         info!("Hot signer mnemonic stored");
@@ -525,7 +546,14 @@ pub async fn create_remote_wallet(
 
     if let Some(signer) = &ctx.recovered_signer {
         signer
-            .store(&ctx.liana_directory, ctx.network)
+            .store(
+                &ctx.liana_directory,
+                ctx.network,
+                &wallet_id.descriptor_checksum,
+                wallet_id
+                    .timestamp
+                    .expect("Every new wallet have now a timestamp"),
+            )
             .map_err(|e| Error::Unexpected(format!("Failed to store mnemonic: {}", e)))?;
 
         info!("Recovered signer mnemonic stored");
@@ -646,7 +674,14 @@ pub async fn import_remote_wallet(
 
     if let Some(signer) = &ctx.recovered_signer {
         signer
-            .store(&ctx.liana_directory, ctx.network)
+            .store(
+                &ctx.liana_directory,
+                ctx.network,
+                &wallet_id.descriptor_checksum,
+                wallet_id
+                    .timestamp
+                    .expect("Every new wallet have now a timestamp"),
+            )
             .map_err(|e| Error::Unexpected(format!("Failed to store mnemonic: {}", e)))?;
 
         info!("Recovered signer mnemonic stored");

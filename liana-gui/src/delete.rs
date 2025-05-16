@@ -4,6 +4,7 @@ use crate::{
     app::settings::{self, SettingsError, WalletId},
     dir::NetworkDirectory,
     services::connect::client::cache::{self, ConnectCacheError},
+    signer,
 };
 
 pub enum DeleteError {
@@ -77,6 +78,13 @@ pub async fn delete_wallet(
     cache::filter_connect_cache(network_dir, &remaining_accounts)
         .await
         .map_err(DeleteError::Connect)?;
+
+    signer::delete_wallet_mnemonics(
+        network_dir,
+        &wallet_id.descriptor_checksum,
+        wallet_id.timestamp,
+    )
+    .map_err(DeleteError::Io)?;
 
     Ok(())
 }

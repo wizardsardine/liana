@@ -15,7 +15,7 @@ use std::{
 
 use miniscript::bitcoin::{
     self,
-    bip32::{self, Error as Bip32Error},
+    bip32::{self, Error as Bip32Error, Fingerprint},
     ecdsa,
     hashes::Hash,
     key::TapTweak,
@@ -186,22 +186,26 @@ impl HotSigner {
     /// Store the mnemonic in a file within the given "data directory".
     /// The file is stored within a "mnemonics" folder, with the filename set to the fingerprint of
     /// the master xpub corresponding to this mnemonic.
+    /// returns the filename
     pub fn store(
         &self,
         datadir_root: &path::Path,
         network: bitcoin::Network,
         secp: &secp256k1::Secp256k1<impl secp256k1::Signing>,
+        descriptor_info: Option<(String, i64)>,
     ) -> Result<(), SignerError> {
-        let mut mnemonics_folder = Self::mnemonics_folder(datadir_root, network);
+        let mnemonics_folder = Self::mnemonics_folder(datadir_root, network);
         if !mnemonics_folder.exists() {
             create_dir(&mnemonics_folder).map_err(SignerError::MnemonicStorage)?;
         }
 
         // This will fail if a file with this fingerprint exists already.
-        mnemonics_folder.push(format!("mnemonic-{:x}.txt", self.fingerprint(secp)));
-        let mnemonic_path = mnemonics_folder;
-        let mut mnemonic_file =
-            create_file(&mnemonic_path).map_err(SignerError::MnemonicStorage)?;
+        let filename = MnemonicFileName {
+            fingerprint: self.fingerprint(secp),
+            descriptor_info,
+        };
+        let mut mnemonic_file = create_file(&mnemonics_folder.join(filename.to_string()))
+            .map_err(SignerError::MnemonicStorage)?;
         mnemonic_file
             .write_all(self.mnemonic_str().as_bytes())
             .map_err(SignerError::MnemonicStorage)?;
@@ -404,6 +408,95 @@ impl HotSigner {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MnemonicFileName {
+    pub fingerprint: Fingerprint,
+    pub descriptor_info: Option<(String, i64)>, // (descriptor_checksum, timestamp)
+}
+
+impl fmt::Display for MnemonicFileName {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match &self.descriptor_info {
+            Some((checksum, timestamp)) => {
+                write!(
+                    f,
+                    "mnemonic-{}-{}-{}.txt",
+                    self.fingerprint, checksum, timestamp
+                )
+            }
+            None => {
+                write!(f, "mnemonic-{}.txt", self.fingerprint)
+            }
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum MnemonicFileNameError {
+    InvalidFormat,
+    InvalidFingerprint,
+    InvalidTimestamp,
+}
+
+impl fmt::Display for MnemonicFileNameError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            MnemonicFileNameError::InvalidFormat => write!(f, "Invalid mnemonic file name format"),
+            MnemonicFileNameError::InvalidFingerprint => write!(f, "Invalid fingerprint format"),
+            MnemonicFileNameError::InvalidTimestamp => write!(f, "Invalid timestamp format"),
+        }
+    }
+}
+
+impl std::error::Error for MnemonicFileNameError {}
+
+// Implementation of FromStr for MnemonicFileName
+impl FromStr for MnemonicFileName {
+    type Err = MnemonicFileNameError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        // Check if the string starts with "mnemonic-" and ends with ".txt"
+        if !s.starts_with("mnemonic-") || !s.ends_with(".txt") {
+            return Err(MnemonicFileNameError::InvalidFormat);
+        }
+
+        let content = s
+            .strip_prefix("mnemonic-")
+            .expect("Already checked")
+            .strip_suffix(".txt")
+            .expect("Already checked");
+
+        let parts: Vec<&str> = content.split('-').collect();
+        match parts.len() {
+            1 => {
+                // Only fingerprint
+                let fingerprint = Fingerprint::from_str(parts[0])
+                    .map_err(|_| MnemonicFileNameError::InvalidFingerprint)?;
+
+                Ok(MnemonicFileName {
+                    fingerprint,
+                    descriptor_info: None,
+                })
+            }
+            3 => {
+                // Fingerprint + checksum + timestamp
+                let fingerprint = Fingerprint::from_str(parts[0])
+                    .map_err(|_| MnemonicFileNameError::InvalidFingerprint)?;
+
+                let timestamp = parts[2]
+                    .parse::<i64>()
+                    .map_err(|_| MnemonicFileNameError::InvalidTimestamp)?;
+
+                Ok(MnemonicFileName {
+                    fingerprint,
+                    descriptor_info: Some((parts[1].to_string(), timestamp)),
+                })
+            }
+            _ => Err(MnemonicFileNameError::InvalidFormat),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -471,7 +564,7 @@ mod tests {
         let words_set: HashSet<_> = (0..10)
             .map(|_| {
                 let signer = HotSigner::generate(network).unwrap();
-                signer.store(&tmp_dir, network, &secp).unwrap();
+                signer.store(&tmp_dir, network, &secp, None).unwrap();
                 signer.words()
             })
             .collect();
@@ -1086,5 +1179,72 @@ mod tests {
                 tpub
             );
         }
+    }
+
+    #[test]
+    fn test_mnemonic_filename() {
+        // Test to_string with descriptor info
+        let fingerprint = Fingerprint::from_str("abcd1234").unwrap();
+        let filename_with_info = MnemonicFileName {
+            fingerprint,
+            descriptor_info: Some(("def456".to_string(), 1620000000)),
+        };
+
+        assert_eq!(
+            filename_with_info.to_string(),
+            "mnemonic-abcd1234-def456-1620000000.txt"
+        );
+
+        // Test to_string without descriptor info
+        let filename_without_info = MnemonicFileName {
+            fingerprint,
+            descriptor_info: None,
+        };
+
+        assert_eq!(filename_without_info.to_string(), "mnemonic-abcd1234.txt");
+
+        // Test from_str with descriptor info
+        let input_with_info = "mnemonic-abcd1234-def456-1620000000.txt";
+        let parsed_with_info = MnemonicFileName::from_str(input_with_info).unwrap();
+
+        assert_eq!(parsed_with_info.fingerprint, fingerprint);
+        assert_eq!(
+            parsed_with_info.descriptor_info,
+            Some(("def456".to_string(), 1620000000))
+        );
+
+        // Test from_str without descriptor info
+        let input_without_info = "mnemonic-abcd1234.txt";
+        let parsed_without_info = MnemonicFileName::from_str(input_without_info).unwrap();
+
+        assert_eq!(parsed_without_info.fingerprint, fingerprint);
+        assert_eq!(parsed_without_info.descriptor_info, None);
+
+        // Test roundtrip with descriptor info
+        let roundtrip_with_info =
+            MnemonicFileName::from_str(&filename_with_info.to_string()).unwrap();
+        assert_eq!(filename_with_info, roundtrip_with_info);
+
+        // Test roundtrip without descriptor info
+        let roundtrip_without_info =
+            MnemonicFileName::from_str(&filename_without_info.to_string()).unwrap();
+        assert_eq!(filename_without_info, roundtrip_without_info);
+
+        // Test error cases
+
+        // Missing prefix
+        assert!(MnemonicFileName::from_str("abcd1234.txt").is_err());
+
+        // Missing suffix
+        assert!(MnemonicFileName::from_str("mnemonic-abcd1234").is_err());
+
+        // Wrong number of parts
+        assert!(MnemonicFileName::from_str("mnemonic-abcd1234-def456.txt").is_err());
+
+        // Invalid fingerprint (assuming Fingerprint::from_str fails for "invalid")
+        assert!(MnemonicFileName::from_str("mnemonic-invalid-def456-1620000000.txt").is_err());
+
+        // Invalid timestamp
+        assert!(MnemonicFileName::from_str("mnemonic-abcd1234-def456-notanumber.txt").is_err());
     }
 }
