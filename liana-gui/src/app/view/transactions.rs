@@ -291,7 +291,7 @@ pub fn create_rbf_modal<'a>(
             }))
             .push_maybe(replacement_txid.map(|id| {
                 Row::new().push(
-                    button::secondary(None, "Go to replacement")
+                    button::primary(None, "Go to replacement")
                         .width(Length::Fixed(200.0))
                         .on_press(Message::Menu(Menu::PsbtPreSelected(id))),
                 )
