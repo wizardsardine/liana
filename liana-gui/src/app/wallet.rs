@@ -66,11 +66,6 @@ impl Wallet {
         self
     }
 
-    pub fn with_pin_date(mut self, pinned_at: Option<i64>) -> Self {
-        self.pinned_at = pinned_at;
-        self
-    }
-
     // To match with WalletSettings.wallet_id
     pub fn id(&self) -> WalletId {
         WalletId::new(self.descriptor_checksum.clone(), self.pinned_at)
