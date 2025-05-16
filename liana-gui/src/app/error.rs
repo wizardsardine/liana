@@ -6,7 +6,7 @@ use lianad::config::ConfigError;
 
 use crate::{
     app::{settings::SettingsError, wallet::WalletError},
-    daemon::DaemonError,
+    daemon::{utils::ListTransactionError, DaemonError},
     export::{self, RestoreBackupError},
 };
 
@@ -21,6 +21,7 @@ pub enum Error {
     Spend(SpendCreationError),
     ImportExport(export::Error),
     RestoreBackup(RestoreBackupError),
+    ListTransaction(ListTransactionError),
 }
 
 impl std::fmt::Display for Error {
@@ -63,6 +64,10 @@ impl std::fmt::Display for Error {
             Self::Desc(e) => write!(f, "Liana descriptor error: {}", e),
             Self::ImportExport(e) => write!(f, "{e}"),
             Self::RestoreBackup(e) => write!(f, "{e}"),
+            Self::ListTransaction(e) => match e {
+                ListTransactionError::Daemon(e) => write!(f, "Failed to list transactions: {}", e),
+                ListTransactionError::TxTimeMissing => write!(f, "Failed to list transactions: Transaction timestamp missing"),
+            }
         }
     }
 }
@@ -100,5 +105,11 @@ impl From<async_hwi::Error> for Error {
 impl From<SpendCreationError> for Error {
     fn from(error: SpendCreationError) -> Self {
         Error::Spend(error)
+    }
+}
+
+impl From<ListTransactionError> for Error {
+    fn from(value: ListTransactionError) -> Self {
+        Error::ListTransaction(value)
     }
 }

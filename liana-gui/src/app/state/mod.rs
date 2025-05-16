@@ -8,9 +8,7 @@ mod settings;
 mod spend;
 mod transactions;
 
-use std::convert::TryInto;
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use iced::{Subscription, Task};
 use liana::miniscript::bitcoin::{Amount, OutPoint};
@@ -28,7 +26,11 @@ use super::{
 
 pub const HISTORY_EVENT_PAGE_SIZE: u64 = 20;
 
-use crate::daemon::model::{coin_is_owned, LabelsLoader};
+use crate::daemon::model;
+use crate::daemon::{
+    model::{coin_is_owned, LabelsLoader},
+    utils::list_confirmed_transactions,
+};
 use crate::daemon::{
     model::{remaining_sequence, Coin, HistoryTransaction, Payment},
     Daemon,
@@ -59,6 +61,7 @@ pub trait State {
         &mut self,
         _daemon: Arc<dyn Daemon + Sync + Send>,
         _wallet: Arc<Wallet>,
+        _reset: bool,
     ) -> Task<Message> {
         Task::none()
     }
@@ -127,10 +130,10 @@ pub struct Home {
     unconfirmed_balance: Amount,
     remaining_sequence: Option<u32>,
     expiring_coins: Vec<OutPoint>,
-    events: Vec<Payment>,
-    is_last_page: bool,
+    payments: Vec<Payment>,
+    displayed_payments: usize,
     processing: bool,
-    selected_event: Option<(HistoryTransaction, usize)>,
+    selected_payment: Option<(HistoryTransaction, usize)>,
     labels_edited: LabelsEdited,
     warning: Option<Error>,
     show_rescan_warning: bool,
@@ -157,11 +160,11 @@ impl Home {
             unconfirmed_balance,
             remaining_sequence: remaining_seq,
             expiring_coins,
-            selected_event: None,
-            events: Vec::new(),
+            selected_payment: None,
+            payments: Vec::new(),
+            displayed_payments: HISTORY_EVENT_PAGE_SIZE as usize,
             labels_edited: LabelsEdited::default(),
             warning: None,
-            is_last_page: false,
             processing: false,
             show_rescan_warning,
         }
@@ -170,7 +173,7 @@ impl Home {
 
 impl State for Home {
     fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, view::Message> {
-        if let Some((tx, output_index)) = &self.selected_event {
+        if let Some((tx, output_index)) = &self.selected_payment {
             view::home::payment_view(
                 cache,
                 tx,
@@ -179,6 +182,9 @@ impl State for Home {
                 self.warning.as_ref(),
             )
         } else {
+            let displayed = self.displayed_payments.min(self.payments.len());
+            let payments: Vec<_> = self.payments.iter().take(displayed).collect();
+            let see_more = self.payments.len() > self.displayed_payments;
             view::dashboard(
                 &Menu::Home,
                 cache,
@@ -188,11 +194,11 @@ impl State for Home {
                     &self.unconfirmed_balance,
                     &self.remaining_sequence,
                     &self.expiring_coins,
-                    &self.events,
-                    self.is_last_page,
+                    payments,
                     self.processing,
                     &self.sync_status,
                     self.show_rescan_warning,
+                    see_more,
                 ),
             )
         }
@@ -223,35 +229,33 @@ impl State for Home {
             },
             Message::Payments(res) => match res {
                 Err(e) => self.warning = Some(e),
-                Ok(events) => {
+                Ok(payments) => {
                     self.warning = None;
-                    self.events = events;
-                    self.is_last_page = (self.events.len() as u64) < HISTORY_EVENT_PAGE_SIZE;
+                    self.payments = payments;
                 }
             },
             Message::PaymentsExtension(res) => match res {
                 Err(e) => self.warning = Some(e),
-                Ok(events) => {
+                Ok(payments) => {
                     self.processing = false;
                     self.warning = None;
-                    self.is_last_page = (events.len() as u64) < HISTORY_EVENT_PAGE_SIZE;
-                    if let Some(event) = events.first() {
+                    if let Some(event) = payments.first() {
                         if let Some(position) = self
-                            .events
+                            .payments
                             .iter()
                             .position(|event2| event2.outpoint == event.outpoint)
                         {
-                            let len = self.events.len();
-                            for event in events {
-                                if !self.events[position..len]
+                            let len = self.payments.len();
+                            for payment in payments {
+                                if !self.payments[position..len]
                                     .iter()
-                                    .any(|event2| event2.outpoint == event.outpoint)
+                                    .any(|event2| event2.outpoint == payment.outpoint)
                                 {
-                                    self.events.push(event);
+                                    self.payments.push(payment);
                                 }
                             }
                         } else {
-                            self.events.extend(events);
+                            self.payments.extend(payments);
                         }
                     }
                 }
@@ -267,12 +271,12 @@ impl State for Home {
                 );
                 // If this is the current panel, reload it if wallet is no longer syncing.
                 if is_current && wallet_was_syncing && self.sync_status.is_synced() {
-                    return self.reload(daemon, self.wallet.clone());
+                    return self.reload(daemon, self.wallet.clone(), false);
                 }
             }
             Message::Payment(res) => match res {
                 Ok(event) => {
-                    self.selected_event = Some(event);
+                    self.selected_payment = Some(event);
                 }
                 Err(e) => {
                     self.warning = Some(e);
@@ -294,11 +298,11 @@ impl State for Home {
                 match self.labels_edited.update(
                     daemon,
                     message,
-                    self.events
+                    self.payments
                         .iter_mut()
                         .map(|tx| tx as &mut dyn LabelsLoader)
                         .chain(
-                            self.selected_event
+                            self.selected_payment
                                 .iter_mut()
                                 .map(|(tx, _)| tx as &mut dyn LabelsLoader),
                         ),
@@ -311,15 +315,16 @@ impl State for Home {
                     }
                 };
             }
-            Message::View(view::Message::Reload) => {
-                return self.reload(daemon, self.wallet.clone());
+            Message::View(view::Message::Reload(reset)) => {
+                return self.reload(daemon, self.wallet.clone(), reset);
             }
             Message::View(view::Message::Close) => {
-                self.selected_event = None;
+                self.selected_payment = None;
             }
 
             Message::View(view::Message::Next) => {
-                if let Some(last) = self.events.last() {
+                self.displayed_payments += HISTORY_EVENT_PAGE_SIZE as usize;
+                if let Some(last) = self.payments.last() {
                     let daemon = daemon.clone();
                     let last_event_date = last.time.unwrap();
                     self.processing = true;
@@ -371,6 +376,7 @@ impl State for Home {
         &mut self,
         daemon: Arc<dyn Daemon + Sync + Send>,
         wallet: Arc<Wallet>,
+        reset: bool,
     ) -> Task<Message> {
         // If the wallet is syncing, we expect it to finish soon and so better to wait for
         // updated data before reloading. Besides, if the wallet is syncing, the DB may be
@@ -379,24 +385,29 @@ impl State for Home {
         if self.sync_status.wallet_is_syncing() {
             return Task::none();
         }
-        self.selected_event = None;
+        if reset {
+            self.displayed_payments = HISTORY_EVENT_PAGE_SIZE as usize;
+        }
+        self.selected_payment = None;
         self.wallet = wallet;
         let daemon2 = daemon.clone();
-        let now: u32 = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs()
-            .try_into()
-            .unwrap();
+        let displayed = self.displayed_payments;
         Task::batch(vec![
             Task::perform(
                 async move {
-                    let mut payments = daemon
-                        .list_confirmed_payments(0, now, HISTORY_EVENT_PAGE_SIZE)
-                        .await?;
-                    payments.sort_by(|a, b| a.compare(b));
-
                     let mut pending_payments = daemon.list_pending_payments().await?;
+                    let displayed = displayed.saturating_sub(pending_payments.len());
+
+                    let mut txs =
+                        list_confirmed_transactions(daemon.clone(), |_| {}, Some(displayed))
+                            .await?;
+                    txs.sort_by(|a, b| a.compare(b));
+                    let payments = txs.into_iter().fold(Vec::new(), |mut array, tx| {
+                        let mut events = model::payments_from_tx(tx);
+                        array.append(&mut events);
+                        array
+                    });
+
                     pending_payments.extend(payments);
                     Ok(pending_payments)
                 },
