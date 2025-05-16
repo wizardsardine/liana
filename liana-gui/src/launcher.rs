@@ -14,7 +14,10 @@ use lianad::config::ConfigError;
 use tokio::runtime::Handle;
 
 use crate::{
-    app::{self, settings::WalletSettings},
+    app::{
+        self,
+        settings::{self, WalletSettings},
+    },
     delete::{delete_wallet, DeleteError},
     dir::{LianaDirectory, NetworkDirectory},
     installer::UserFlow,
@@ -50,7 +53,13 @@ impl Launcher {
         let network = network.unwrap_or(
             NETWORKS
                 .iter()
-                .find(|net| datadir_path.path().join(net.to_string()).exists())
+                .find(|net| {
+                    datadir_path
+                        .path()
+                        .join(net.to_string())
+                        .join(settings::SETTINGS_FILE_NAME)
+                        .exists()
+                })
                 .cloned()
                 .unwrap_or(Network::Bitcoin),
         );
@@ -560,10 +569,18 @@ async fn check_network_datadir(path: NetworkDirectory) -> Result<State, String> 
     })?;
     }
 
-    app::settings::Settings::from_file(&path)
-        .map(|s| State::Wallets {
-            wallets: s.wallets,
-            add_wallet: false,
-        })
-        .map_err(|e| e.to_string())
+    match settings::Settings::from_file(&path) {
+        Ok(s) => {
+            if s.wallets.is_empty() {
+                Ok(State::NoWallet)
+            } else {
+                Ok(State::Wallets {
+                    wallets: s.wallets,
+                    add_wallet: false,
+                })
+            }
+        }
+        Err(settings::SettingsError::NotFound) => Ok(State::NoWallet),
+        Err(e) => Err(e.to_string()),
+    }
 }

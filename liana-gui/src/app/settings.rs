@@ -20,7 +20,7 @@ use crate::{
     services::{self, connect::client::backend},
 };
 
-pub const DEFAULT_FILE_NAME: &str = "settings.json";
+pub const SETTINGS_FILE_NAME: &str = "settings.json";
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct Settings {
@@ -30,7 +30,7 @@ pub struct Settings {
 impl Settings {
     pub fn from_file(network_dir: &NetworkDirectory) -> Result<Settings, SettingsError> {
         let mut path = network_dir.path().to_path_buf();
-        path.push(DEFAULT_FILE_NAME);
+        path.push(SETTINGS_FILE_NAME);
 
         std::fs::read(path)
             .map_err(|e| match e.kind() {
@@ -52,7 +52,7 @@ pub async fn update_settings_file<F>(
 where
     F: FnOnce(Settings) -> Settings,
 {
-    let path = network_dir.path().join(DEFAULT_FILE_NAME);
+    let path = network_dir.path().join(SETTINGS_FILE_NAME);
     let file_exists = tokio::fs::try_exists(&path).await.unwrap_or(false);
 
     let mut file = OpenOptions::new()
@@ -80,6 +80,13 @@ where
     };
 
     let settings = updater(settings);
+
+    if settings.wallets.is_empty() {
+        tokio::fs::remove_file(&path)
+            .await
+            .map_err(|e| SettingsError::ReadingFile(e.to_string()))?;
+        return Ok(());
+    }
 
     let content = serde_json::to_vec_pretty(&settings)
         .map_err(|e| SettingsError::WritingFile(format!("Failed to serialize settings: {}", e)))?;
@@ -351,6 +358,7 @@ impl KeySetting {
 pub enum SettingsError {
     NotFound,
     ReadingFile(String),
+    DeletingFile(String),
     WritingFile(String),
     Unexpected(String),
 }
@@ -359,6 +367,7 @@ impl std::fmt::Display for SettingsError {
         match self {
             Self::NotFound => write!(f, "Settings file not found"),
             Self::ReadingFile(e) => write!(f, "Error while reading file: {}", e),
+            Self::DeletingFile(e) => write!(f, "Error while deleting file: {}", e),
             Self::WritingFile(e) => write!(f, "Error while writing file: {}", e),
             Self::Unexpected(e) => write!(f, "Unexpected error: {}", e),
         }
