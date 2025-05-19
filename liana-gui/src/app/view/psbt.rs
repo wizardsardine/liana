@@ -5,6 +5,7 @@ use iced::{
     Alignment, Length,
 };
 
+use liana::descriptors::LianaDescriptor;
 use liana::{
     descriptors::{LianaPolicy, PathInfo, PathSpendInfo},
     miniscript::bitcoin::{
@@ -1014,13 +1015,16 @@ fn change_view(output: &TxOut, network: Network) -> Element<Message> {
         .into()
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn sign_action<'a>(
     warning: Option<&Error>,
     hws: &'a [HardwareWallet],
+    descriptor: &LianaDescriptor,
     signer: Option<Fingerprint>,
     signer_alias: Option<&'a String>,
     signed: &HashSet<Fingerprint>,
     signing: &HashSet<Fingerprint>,
+    recovery_timelock: Option<u16>,
 ) -> Element<'a, Message> {
     Column::new()
         .push_maybe(warning.map(|w| warn(Some(w))))
@@ -1037,29 +1041,37 @@ pub fn sign_action<'a>(
                         .push(hws.iter().enumerate().fold(
                             Column::new().spacing(10),
                             |col, (i, hw)| {
-                                col.push(hw_list_view(
-                                    i,
-                                    hw,
-                                    hw.fingerprint()
-                                        .map(|f| signed.contains(&f))
-                                        .unwrap_or(false),
-                                    hw.fingerprint()
-                                        .map(|f| signing.contains(&f))
-                                        .unwrap_or(false),
-                                ))
+                                let (signed, signing, can_sign) =
+                                    hw.fingerprint().map_or((false, false, false), |f| {
+                                        (
+                                            signed.contains(&f),
+                                            signing.contains(&f),
+                                            descriptor
+                                                .contains_fingerprint_in_path(f, recovery_timelock),
+                                        )
+                                    });
+                                col.push(hw_list_view(i, hw, signed, signing, can_sign))
                             },
                         ))
-                        .push_maybe(signer.map(|fingerprint| {
-                            Button::new(if signed.contains(&fingerprint) {
-                                hw::sign_success_hot_signer(fingerprint, signer_alias)
-                            } else {
-                                hw::hot_signer(fingerprint, signer_alias)
+                        .push_maybe({
+                            signer.map(|fingerprint| {
+                                let can_sign = descriptor
+                                    .contains_fingerprint_in_path(fingerprint, recovery_timelock);
+                                let btn = Button::new(if signed.contains(&fingerprint) {
+                                    hw::sign_success_hot_signer(fingerprint, signer_alias)
+                                } else {
+                                    hw::hot_signer(fingerprint, signer_alias, can_sign)
+                                })
+                                .padding(10)
+                                .style(theme::button::secondary)
+                                .width(Length::Fill);
+                                if can_sign {
+                                    btn.on_press(Message::Spend(SpendTxMessage::SelectHotSigner))
+                                } else {
+                                    btn
+                                }
                             })
-                            .on_press(Message::Spend(SpendTxMessage::SelectHotSigner))
-                            .padding(10)
-                            .style(theme::button::secondary)
-                            .width(Length::Fill)
-                        }))
+                        })
                         .width(Length::Fill),
                 )
                 .spacing(20)

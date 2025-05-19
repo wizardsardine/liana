@@ -9,6 +9,7 @@ use miniscript::{
     RelLockTime, ScriptContext, Threshold,
 };
 
+use miniscript::bitcoin::bip32::Fingerprint;
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
     convert::TryFrom,
@@ -367,6 +368,11 @@ impl PathInfo {
                 .map_err(|e| LianaPolicyError::InvalidPolicy(miniscript::Error::Threshold(e)))?,
             ),
         })
+    }
+
+    /// Determine whether the fingerprint is part of this path.
+    pub fn contains_fingerprint(&self, fingerprint: Fingerprint) -> bool {
+        self.thresh_origins().1.contains_key(&fingerprint)
     }
 }
 
