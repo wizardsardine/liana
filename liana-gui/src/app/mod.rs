@@ -182,6 +182,15 @@ impl App {
         )
     }
 
+    pub fn title(&self) -> String {
+        if let Some(alias) = &self.wallet.alias {
+            if !alias.is_empty() {
+                return format!("- {}", alias);
+            }
+        }
+        String::new()
+    }
+
     fn set_current_panel(&mut self, menu: Menu) -> Task<Message> {
         self.panels.current_mut().interrupt();
 

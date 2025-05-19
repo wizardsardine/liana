@@ -135,8 +135,9 @@ async fn ctrl_c() -> Result<(), ()> {
 
 impl GUI {
     fn title(&self) -> String {
-        match self.state {
+        match &self.state {
             State::Installer(_) => format!("Liana v{} Installer", VERSION),
+            State::App(a) => format!("Liana v{} {}", VERSION, a.title()),
             _ => format!("Liana v{}", VERSION),
         }
     }
