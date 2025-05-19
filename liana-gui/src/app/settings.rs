@@ -132,6 +132,7 @@ impl AuthConfig {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct WalletSettings {
     pub name: String,
+    pub alias: Option<String>,
     pub descriptor_checksum: String,
     pub pinned_at: Option<i64>,
     // if wallet is using remote backend, then this information is stored on the remote backend

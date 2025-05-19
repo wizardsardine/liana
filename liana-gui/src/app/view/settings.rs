@@ -946,10 +946,12 @@ fn is_ok_and<T, E>(res: &Result<T, E>, f: impl FnOnce(&T) -> bool) -> bool {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn wallet_settings<'a>(
     cache: &'a Cache,
     warning: Option<&Error>,
     descriptor: &'a LianaDescriptor,
+    wallet_alias: &'a form::Value<String>,
     keys_aliases: &'a [(Fingerprint, form::Value<String>)],
     provider_keys: &'a HashMap<Fingerprint, ProviderKey>,
     processing: bool,
@@ -1001,6 +1003,15 @@ pub fn wallet_settings<'a>(
 
     let aliases = card::simple(
         Column::new()
+            .push(text("Wallet alias:").bold())
+            .push(
+                form::Form::new("Alias", wallet_alias, move |msg| {
+                    Message::Settings(SettingsMessage::WalletAliasEdited(msg))
+                })
+                .warning("Please enter alias that is not too long")
+                .size(P1_SIZE)
+                .padding(10),
+            )
             .push(text("Fingerprint aliases:").bold())
             .push(keys_aliases.iter().fold(
                 Column::new().spacing(10),
@@ -1038,7 +1049,7 @@ pub fn wallet_settings<'a>(
                     } else {
                         None
                     })
-                    .push(if !processing {
+                    .push(if !processing && wallet_alias.valid {
                         button::secondary(None, "Update")
                             .on_press(Message::Settings(SettingsMessage::Save))
                     } else {

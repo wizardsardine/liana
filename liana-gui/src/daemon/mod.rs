@@ -397,6 +397,7 @@ pub trait Daemon: Debug {
     /// Reimplemented by LianaLite backend
     async fn update_wallet_metadata(
         &self,
+        _wallet_alias: Option<String>,
         _fingerprint_aliases: &HashMap<Fingerprint, String>,
         _hws: &[HardwareWalletConfig],
     ) -> Result<(), DaemonError> {

@@ -22,7 +22,7 @@ use liana_ui::{component::text, font, image, theme, widget::Element};
 use lianad::commands::ListCoinsResult;
 
 use liana_gui::{
-    app::{self, cache::Cache, wallet::Wallet, App},
+    app::{self, cache::Cache, settings::WalletSettings, wallet::Wallet, App},
     dir::LianaDirectory,
     export::import_backup_at_launch,
     hw::HardwareWalletConfig,
@@ -207,9 +207,9 @@ impl GUI {
                         self.log_level
                             .unwrap_or_else(|| cfg.log_level().unwrap_or(LevelFilter::INFO)),
                     );
-                    if let Some(setting) = settings.remote_backend_auth {
+                    if settings.remote_backend_auth.is_some() {
                         let (login, command) =
-                            login::LianaLiteLogin::new(datadir_path, network, setting);
+                            login::LianaLiteLogin::new(datadir_path, network, settings);
                         self.state = State::Login(Box::new(login));
                         command.map(|msg| Message::Login(Box::new(msg)))
                     } else {
@@ -252,6 +252,7 @@ impl GUI {
                     );
 
                     let (app, command) = create_app_with_remote_backend(
+                        l.settings.clone(),
                         backend_client,
                         wallet,
                         coins,
@@ -267,9 +268,9 @@ impl GUI {
             },
             (State::Installer(i), Message::Install(msg)) => {
                 if let installer::Message::Exit(settings, internal_bitcoind, remove_log) = *msg {
-                    if let Some(auth) = settings.remote_backend_auth {
+                    if settings.remote_backend_auth.is_some() {
                         let (login, command) =
-                            login::LianaLiteLogin::new(i.datadir.clone(), i.network, auth);
+                            login::LianaLiteLogin::new(i.datadir.clone(), i.network, *settings);
                         self.state = State::Login(Box::new(login));
                         command.map(|msg| Message::Login(Box::new(msg)))
                     } else {
@@ -422,6 +423,7 @@ impl GUI {
 }
 
 pub fn create_app_with_remote_backend(
+    wallet_settings: WalletSettings,
     remote_backend: BackendWalletClient,
     wallet: api::Wallet,
     coins: ListCoinsResult,
@@ -472,6 +474,8 @@ pub fn create_app_with_remote_backend(
         Arc::new(
             Wallet::new(wallet.descriptor)
                 .with_name(wallet.name)
+                .with_alias(wallet_settings.alias)
+                .with_pinned_at(wallet_settings.pinned_at)
                 .with_key_aliases(aliases)
                 .with_provider_keys(provider_keys)
                 .with_hardware_wallets(hws)

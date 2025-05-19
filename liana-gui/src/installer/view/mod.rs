@@ -22,7 +22,7 @@ use liana::{
 use liana_ui::{
     component::{
         button, card, collapse, form, hw, separation,
-        text::{h2, h3, h4_bold, h5_regular, p1_regular, text, Text},
+        text::{h2, h3, h4_bold, p1_bold, p1_regular, text, Text},
     },
     icon, theme,
     widget::*,
@@ -52,18 +52,23 @@ pub fn import_wallet_or_descriptor<'a>(
     invitation_wallet: Option<&'a str>,
     imported_descriptor: &'a form::Value<String>,
     error: Option<&'a String>,
-    wallets: Vec<&'a String>,
+    wallets: Vec<(&'a String, Option<&'a String>)>,
 ) -> Element<'a, Message> {
     let mut col_wallets = Column::new()
         .spacing(20)
         .push(h4_bold("Load a previously used wallet"));
     let no_wallets = wallets.is_empty();
-    for (i, wallet) in wallets.into_iter().enumerate() {
+    for (i, (name, alias)) in wallets.into_iter().enumerate() {
         col_wallets = col_wallets.push(
-            Button::new(h5_regular(wallet).width(Length::Fill))
-                .style(theme::button::secondary)
-                .padding(10)
-                .on_press(Message::Select(i)),
+            Button::new(
+                Column::new()
+                    .push_maybe(alias.map(p1_bold))
+                    .push(p1_regular(name))
+                    .width(Length::Fill),
+            )
+            .style(theme::button::secondary)
+            .padding(10)
+            .on_press(Message::Select(i)),
         );
     }
     let card_wallets: Element<'a, Message> = if no_wallets {

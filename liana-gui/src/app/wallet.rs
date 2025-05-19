@@ -32,6 +32,7 @@ pub fn wallet_name(main_descriptor: &LianaDescriptor) -> String {
 #[derive(Debug, Clone)]
 pub struct Wallet {
     pub name: String,
+    pub alias: Option<String>,
     pub main_descriptor: LianaDescriptor,
     pub descriptor_checksum: String,
     pub pinned_at: Option<i64>,
@@ -46,6 +47,7 @@ impl Wallet {
     pub fn new(main_descriptor: LianaDescriptor) -> Self {
         Self {
             name: wallet_name(&main_descriptor),
+            alias: None,
             descriptor_checksum: main_descriptor
                 .to_string()
                 .split_once('#')
@@ -63,6 +65,11 @@ impl Wallet {
 
     pub fn with_name(mut self, name: String) -> Self {
         self.name = name;
+        self
+    }
+
+    pub fn with_alias(mut self, alias: Option<String>) -> Self {
+        self.alias = alias;
         self
     }
 
@@ -120,6 +127,7 @@ impl Wallet {
             Ok(self
                 .with_key_aliases(wallet_settings.keys_aliases())
                 .with_provider_keys(wallet_settings.provider_keys())
+                .with_alias(wallet_settings.alias)
                 .with_name(wallet_settings.name)
                 .with_pinned_at(wallet_settings.pinned_at)
                 .with_hardware_wallets(wallet_settings.hardware_wallets))

@@ -99,6 +99,7 @@ pub enum SettingsMessage {
     AboutSection,
     RegisterWallet,
     FingerprintAliasEdited(Fingerprint, String),
+    WalletAliasEdited(String),
     Save,
 }
 

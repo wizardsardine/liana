@@ -564,7 +564,10 @@ impl Step for ImportRemoteWallet {
                 .map(|invit| invit.wallet_name.as_str()),
             &self.imported_descriptor,
             self.error.as_ref(),
-            self.wallets.iter().map(|w| &w.name).collect(),
+            self.wallets
+                .iter()
+                .map(|w| (&w.name, w.metadata.wallet_alias.as_ref()))
+                .collect(),
         )
     }
 }

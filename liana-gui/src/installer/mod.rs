@@ -412,6 +412,7 @@ pub async fn install_local_wallet(
 
     let wallet_settings = WalletSettings {
         name: wallet_name(descriptor),
+        alias: None,
         pinned_at: wallet_id.timestamp,
         descriptor_checksum: wallet_id.descriptor_checksum.clone(),
         keys: ctx.keys.values().cloned().collect(),
@@ -616,7 +617,7 @@ pub async fn create_remote_wallet(
         })
         .collect();
     remote_backend
-        .update_wallet_metadata(&wallet.id, &aliases, &hws)
+        .update_wallet_metadata(&wallet.id, None, &aliases, &hws)
         .await
         .map_err(|e| Error::Unexpected(e.to_string()))?;
 
@@ -627,6 +628,7 @@ pub async fn create_remote_wallet(
     // keys will be store on the remote backend side and not in the settings file.
     let wallet_settings = WalletSettings {
         name: wallet_name(descriptor),
+        alias: None,
         descriptor_checksum: wallet_id.descriptor_checksum,
         pinned_at: wallet_id.timestamp,
         keys: Vec::new(),
@@ -692,6 +694,8 @@ pub async fn import_remote_wallet(
         .init()
         .map_err(|e| Error::Unexpected(format!("Failed to create datadir path: {}", e)))?;
 
+    let wallet = backend.get_wallet().await?;
+
     // create liana GUI settings file
     // if the wallet is using the remote backend, then the hardware wallet settings and
     // keys will be store on the remote backend side and not in the settings file.
@@ -701,6 +705,7 @@ pub async fn import_remote_wallet(
                 .as_ref()
                 .expect("Context must have a descriptor at this point"),
         ),
+        alias: wallet.metadata.wallet_alias,
         descriptor_checksum: wallet_id.descriptor_checksum,
         pinned_at: wallet_id.timestamp,
         keys: Vec::new(),
