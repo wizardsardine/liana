@@ -83,7 +83,7 @@ impl ExportModal {
             }
             ImportExportType::ImportPsbt(_) => "Import PSBT",
             ImportExportType::ImportDescriptor => "Import Descriptor",
-            ImportExportType::ImportBackup(..) => "Restore Backup",
+            ImportExportType::ImportBackup { .. } => "Restore Backup",
             ImportExportType::WalletFromBackup => "Import existing wallet from backup",
         }
     }
@@ -111,7 +111,7 @@ impl ExportModal {
             ImportExportType::ExportBackup(_) | ImportExportType::ExportProcessBackup(..) => {
                 format!("liana-backup-{date}.json")
             }
-            ImportExportType::WalletFromBackup | ImportExportType::ImportBackup(_, _) => {
+            ImportExportType::WalletFromBackup | ImportExportType::ImportBackup { .. } => {
                 "liana-backup.json".to_string()
             }
         }
@@ -140,15 +140,33 @@ impl ExportModal {
                 }
                 Progress::Finished | Progress::Ended => self.state = ImportExportState::Ended,
                 Progress::KeyAliasesConflict(ref sender) => {
-                    if let ImportExportType::ImportBackup(_, None) = &self.import_export_type {
-                        self.import_export_type =
-                            ImportExportType::ImportBackup(None, Some(sender.clone()));
+                    if let ImportExportType::ImportBackup {
+                        network_dir,
+                        wallet,
+                        ..
+                    } = &self.import_export_type
+                    {
+                        self.import_export_type = ImportExportType::ImportBackup {
+                            network_dir: network_dir.clone(),
+                            wallet: wallet.clone(),
+                            overwrite_labels: None,
+                            overwrite_aliases: Some(sender.clone()),
+                        };
                     }
                 }
                 Progress::LabelsConflict(ref sender) => {
-                    if let ImportExportType::ImportBackup(None, _) = &self.import_export_type {
-                        self.import_export_type =
-                            ImportExportType::ImportBackup(Some(sender.clone()), None);
+                    if let ImportExportType::ImportBackup {
+                        network_dir,
+                        wallet,
+                        ..
+                    } = &self.import_export_type
+                    {
+                        self.import_export_type = ImportExportType::ImportBackup {
+                            network_dir: network_dir.clone(),
+                            wallet: wallet.clone(),
+                            overwrite_labels: Some(sender.clone()),
+                            overwrite_aliases: None,
+                        };
                     }
                 }
                 Progress::Error(e) => {
@@ -164,7 +182,7 @@ impl ExportModal {
                     });
                 }
                 Progress::Descriptor(_) => {
-                    if self.import_export_type == ImportExportType::ImportDescriptor {
+                    if matches!(self.import_export_type, ImportExportType::ImportDescriptor) {
                         self.state = ImportExportState::Ended;
                     }
                 }
@@ -192,10 +210,13 @@ impl ExportModal {
             }
             ImportExportMessage::Close | ImportExportMessage::Open => { /* unreachable */ }
             ImportExportMessage::Overwrite => {
-                if let ImportExportType::ImportBackup(labels, aliases) =
-                    &mut self.import_export_type
+                if let ImportExportType::ImportBackup {
+                    overwrite_labels,
+                    overwrite_aliases,
+                    ..
+                } = &mut self.import_export_type
                 {
-                    if let Some(sender) = labels.take() {
+                    if let Some(sender) = overwrite_labels.take() {
                         return Task::perform(
                             async move {
                                 if sender.send(true).await.is_err() {
@@ -206,7 +227,7 @@ impl ExportModal {
                             },
                             |_| ImportExportMessage::Ignore.into(),
                         );
-                    } else if let Some(sender) = aliases.take() {
+                    } else if let Some(sender) = overwrite_aliases.take() {
                         return Task::perform(
                             async move {
                                 if sender.send(true).await.is_err() {
@@ -221,10 +242,13 @@ impl ExportModal {
                 }
             }
             ImportExportMessage::Ignore => {
-                if let ImportExportType::ImportBackup(labels, aliases) =
-                    &mut self.import_export_type
+                if let ImportExportType::ImportBackup {
+                    overwrite_labels,
+                    overwrite_aliases,
+                    ..
+                } = &mut self.import_export_type
                 {
-                    if let Some(sender) = labels.take() {
+                    if let Some(sender) = overwrite_labels.take() {
                         return Task::perform(
                             async move {
                                 if sender.send(false).await.is_err() {
@@ -235,7 +259,7 @@ impl ExportModal {
                             },
                             |_| ImportExportMessage::Ignore.into(),
                         );
-                    } else if let Some(sender) = aliases.take() {
+                    } else if let Some(sender) = overwrite_aliases.take() {
                         return Task::perform(
                             async move {
                                 if sender.send(false).await.is_err() {

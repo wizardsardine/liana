@@ -86,7 +86,11 @@ pub fn export_modal<'a, Message: From<ImportExportMessage> + Clone + 'static>(
         )),
     );
     let (msg, button) = match import_export_type {
-        ImportExportType::ImportBackup(labels, aliases) => match (labels, aliases) {
+        ImportExportType::ImportBackup {
+            overwrite_labels,
+            overwrite_aliases,
+            ..
+        } => match (overwrite_labels, overwrite_aliases) {
             (Some(_), _) => labels_btn,
 
             (_, Some(_)) => aliases_btn,
