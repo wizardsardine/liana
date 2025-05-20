@@ -13,7 +13,7 @@ use lianad::commands::ListCoinsResult;
 use crate::{
     app::{
         cache::coins_to_cache,
-        settings::{AuthConfig, SettingsError},
+        settings::{SettingsError, WalletSettings},
     },
     daemon::DaemonError,
     dir::LianaDirectory,
@@ -112,6 +112,7 @@ pub enum BackendState {
 pub struct LianaLiteLogin {
     pub datadir: LianaDirectory,
     pub network: Network,
+    pub settings: WalletSettings,
 
     wallet_id: String,
     email: String,
@@ -139,16 +140,18 @@ impl LianaLiteLogin {
     pub fn new(
         datadir: LianaDirectory,
         network: Network,
-        setting: AuthConfig,
+        settings: WalletSettings,
     ) -> (Self, Task<Message>) {
+        let auth = settings.remote_backend_auth.clone().unwrap();
         (
             Self {
                 network,
                 datadir: datadir.clone(),
                 step: ConnectionStep::CheckingAuthFile,
                 connection_error: None,
-                wallet_id: setting.wallet_id.clone(),
-                email: setting.email.clone(),
+                settings,
+                wallet_id: auth.wallet_id.clone(),
+                email: auth.email.clone(),
                 auth_error: None,
                 processing: true,
             },
@@ -160,11 +163,11 @@ impl LianaLiteLogin {
                     let client = AuthClient::new(
                         service_config.auth_api_url,
                         service_config.auth_api_public_key,
-                        setting.email,
+                        auth.email,
                     );
                     connect_with_credentials(
                         client,
-                        setting.wallet_id,
+                        auth.wallet_id,
                         service_config.backend_api_url,
                         network,
                         datadir,

@@ -13,7 +13,7 @@ use liana_ui::{
     widget::{Column, Element},
 };
 use lianad::config::{BitcoinBackend, BitcoindConfig, BitcoindRpcAuth, Config};
-use std::ops::Deref;
+use std::{collections::HashMap, ops::Deref};
 use tokio::runtime::Handle;
 use tracing::{error, info, warn};
 
@@ -28,7 +28,7 @@ use crate::{
         wallet::wallet_name,
     },
     backup,
-    daemon::DaemonError,
+    daemon::{Daemon, DaemonError},
     delete,
     dir::LianaDirectory,
     hw::{HardwareWalletConfig, HardwareWallets},
@@ -52,7 +52,7 @@ use step::{
     BackupDescriptor, BackupMnemonic, ChooseBackend, ChooseDescriptorTemplate, DefineDescriptor,
     DefineNode, DescriptorTemplateDescription, Final, ImportDescriptor, ImportRemoteWallet,
     InternalBitcoindStep, RecoverMnemonic, RegisterDescriptor, RemoteBackendLogin,
-    SelectBitcoindTypeStep, ShareXpubs, Step,
+    SelectBitcoindTypeStep, ShareXpubs, Step, WalletAlias,
 };
 
 #[derive(Debug, Clone)]
@@ -141,6 +141,7 @@ impl Installer {
                     SelectBitcoindTypeStep::new().into(),
                     InternalBitcoindStep::new(&context.liana_directory).into(),
                     DefineNode::default().into(),
+                    WalletAlias::default().into(),
                     Final::new().into(),
                 ],
                 UserFlow::ShareXpubs => vec![ShareXpubs::new(network, signer.clone()).into()],
@@ -154,6 +155,7 @@ impl Installer {
                     SelectBitcoindTypeStep::new().into(),
                     InternalBitcoindStep::new(&context.liana_directory).into(),
                     DefineNode::default().into(),
+                    WalletAlias::default().into(),
                     Final::new().into(),
                 ],
             },
@@ -412,6 +414,7 @@ pub async fn install_local_wallet(
 
     let wallet_settings = WalletSettings {
         name: wallet_name(descriptor),
+        alias: Some(ctx.wallet_alias.clone()),
         pinned_at: wallet_id.timestamp,
         descriptor_checksum: wallet_id.descriptor_checksum.clone(),
         keys: ctx.keys.values().cloned().collect(),
@@ -616,7 +619,7 @@ pub async fn create_remote_wallet(
         })
         .collect();
     remote_backend
-        .update_wallet_metadata(&wallet.id, &aliases, &hws)
+        .update_wallet_metadata(&wallet.id, Some(ctx.wallet_alias.clone()), &aliases, &hws)
         .await
         .map_err(|e| Error::Unexpected(e.to_string()))?;
 
@@ -627,6 +630,7 @@ pub async fn create_remote_wallet(
     // keys will be store on the remote backend side and not in the settings file.
     let wallet_settings = WalletSettings {
         name: wallet_name(descriptor),
+        alias: Some(ctx.wallet_alias.clone()),
         descriptor_checksum: wallet_id.descriptor_checksum,
         pinned_at: wallet_id.timestamp,
         keys: Vec::new(),
@@ -692,6 +696,10 @@ pub async fn import_remote_wallet(
         .init()
         .map_err(|e| Error::Unexpected(format!("Failed to create datadir path: {}", e)))?;
 
+    backend
+        .update_wallet_metadata(Some(ctx.wallet_alias.clone()), &HashMap::new(), &[])
+        .await?;
+
     // create liana GUI settings file
     // if the wallet is using the remote backend, then the hardware wallet settings and
     // keys will be store on the remote backend side and not in the settings file.
@@ -701,6 +709,7 @@ pub async fn import_remote_wallet(
                 .as_ref()
                 .expect("Context must have a descriptor at this point"),
         ),
+        alias: Some(ctx.wallet_alias.clone()),
         descriptor_checksum: wallet_id.descriptor_checksum,
         pinned_at: wallet_id.timestamp,
         keys: Vec::new(),

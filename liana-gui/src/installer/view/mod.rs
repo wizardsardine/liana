@@ -9,7 +9,7 @@ use iced::{
 };
 
 use async_hwi::DeviceKind;
-use liana_ui::component::text;
+use liana_ui::component::text::{self, p2_regular};
 use std::collections::HashMap;
 use std::net::{Ipv4Addr, Ipv6Addr};
 use std::path::PathBuf;
@@ -22,7 +22,7 @@ use liana::{
 use liana_ui::{
     component::{
         button, card, collapse, form, hw, separation,
-        text::{h2, h3, h4_bold, h5_regular, p1_regular, text, Text},
+        text::{h2, h3, h4_bold, p1_bold, p1_regular, text, Text},
     },
     icon, theme,
     widget::*,
@@ -52,18 +52,23 @@ pub fn import_wallet_or_descriptor<'a>(
     invitation_wallet: Option<&'a str>,
     imported_descriptor: &'a form::Value<String>,
     error: Option<&'a String>,
-    wallets: Vec<&'a String>,
+    wallets: Vec<(&'a String, Option<&'a String>)>,
 ) -> Element<'a, Message> {
     let mut col_wallets = Column::new()
         .spacing(20)
         .push(h4_bold("Load a previously used wallet"));
     let no_wallets = wallets.is_empty();
-    for (i, wallet) in wallets.into_iter().enumerate() {
+    for (i, (name, alias)) in wallets.into_iter().enumerate() {
         col_wallets = col_wallets.push(
-            Button::new(h5_regular(wallet).width(Length::Fill))
-                .style(theme::button::secondary)
-                .padding(10)
-                .on_press(Message::Select(i)),
+            Button::new(
+                Column::new()
+                    .push_maybe(alias.map(p1_bold))
+                    .push(p1_regular(name))
+                    .width(Length::Fill),
+            )
+            .style(theme::button::secondary)
+            .padding(10)
+            .on_press(Message::Select(i)),
         );
     }
     let card_wallets: Element<'a, Message> = if no_wallets {
@@ -2140,6 +2145,45 @@ pub fn connection_step_connected<'a>(
 pub const REMOTE_BACKEND_DESC: &str = "Use our service to instantly be ready to transact. Wizardsardine runs the infrastructure, allowing multiple computers or participants to connect and synchronize.\n\nThis is a simpler and safer option for people who want Wizardsardine to keep a backup of their descriptor. You are still in control of your keys, and Wizardsardine does not have any control over your funds, but it will be able to see your wallet's information, associated to an email address. Privacy focused users should run their own infrastructure instead.";
 
 pub const LOCAL_WALLET_DESC: &str = "Use your already existing Bitcoin node or automatically install one. The Liana wallet will not connect to any external server.\n\nThis is the most private option, but the data is locally stored on this computer, only. You must perform your own backups, and share the descriptor with other people you want to be able to access the wallet";
+
+pub fn wallet_alias<'a>(
+    progress: (usize, usize),
+    email: Option<&'a str>,
+    wallet_alias: &form::Value<String>,
+) -> Element<'a, Message> {
+    layout(
+        progress,
+        email,
+        "Give your wallet an alias",
+        Column::new()
+            .push(
+                Column::new()
+                    .spacing(20)
+                    .push(p1_bold("Wallet alias:"))
+                    .push(
+                        form::Form::new("Wallet alias", wallet_alias, Message::WalletAliasEdited)
+                            .warning("Wallet alias is too long.")
+                            .size(text::P1_SIZE)
+                            .padding(10),
+                    )
+                    .push(p2_regular(
+                        "You will be able to change it later in Settings > Wallet",
+                    )),
+            )
+            .push(
+                button::secondary(None, "Next")
+                    .width(Length::Fixed(200.0))
+                    .on_press_maybe(if wallet_alias.valid {
+                        Some(Message::Next)
+                    } else {
+                        None
+                    }),
+            )
+            .spacing(50),
+        true,
+        Some(Message::Previous),
+    )
+}
 
 fn layout<'a>(
     progress: (usize, usize),

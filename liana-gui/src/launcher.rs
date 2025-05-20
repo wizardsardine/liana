@@ -348,16 +348,20 @@ fn wallets_list_item(
                 Container::new(
                     Button::new(
                         Column::new()
-                            .push(p1_bold(format!(
-                                "My Liana {} wallet",
-                                match network {
-                                    Network::Bitcoin => "Bitcoin",
-                                    Network::Signet => "Signet",
-                                    Network::Testnet => "Testnet",
-                                    Network::Regtest => "Regtest",
-                                    _ => "",
-                                }
-                            )))
+                            .push(if let Some(alias) = &settings.alias {
+                                p1_bold(alias)
+                            } else {
+                                p1_bold(format!(
+                                    "My Liana {} wallet",
+                                    match network {
+                                        Network::Bitcoin => "Bitcoin",
+                                        Network::Signet => "Signet",
+                                        Network::Testnet => "Testnet",
+                                        Network::Regtest => "Regtest",
+                                        _ => "",
+                                    }
+                                ))
+                            })
                             .push(
                                 p1_regular(format!("Liana-{}", settings.descriptor_checksum))
                                     .style(theme::text::secondary),

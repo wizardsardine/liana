@@ -183,6 +183,7 @@ impl BackendClient {
     pub async fn update_wallet_metadata(
         &self,
         wallet_uuid: &str,
+        wallet_alias: Option<String>,
         fingerprint_aliases: &HashMap<Fingerprint, String>,
         hws: &[HardwareWalletConfig],
     ) -> Result<(), DaemonError> {
@@ -211,6 +212,7 @@ impl BackendClient {
                     )
                     .await
                     .json(&api::payload::UpdateWallet {
+                        alias: None,
                         ledger_hmac: Some(api::payload::UpdateLedgerHmac {
                             fingerprint: cfg.fingerprint.to_string(),
                             hmac: cfg.token.clone(),
@@ -229,16 +231,31 @@ impl BackendClient {
             }
         }
 
-        if fingerprint_aliases.iter().any(|(fg, alias)| {
-            !wallet
-                .metadata
-                .fingerprint_aliases
-                .contains(&api::FingerprintAlias {
-                    alias: alias.to_string(),
-                    user_id: self.user_id.clone(),
-                    fingerprint: *fg,
-                })
-        }) {
+        let fingerprint_aliases: Option<Vec<api::payload::UpdateFingerprintAlias>> =
+            if fingerprint_aliases.iter().any(|(fg, alias)| {
+                !wallet
+                    .metadata
+                    .fingerprint_aliases
+                    .contains(&api::FingerprintAlias {
+                        alias: alias.to_string(),
+                        user_id: self.user_id.clone(),
+                        fingerprint: *fg,
+                    })
+            }) {
+                Some(
+                    fingerprint_aliases
+                        .iter()
+                        .map(|(fg, alias)| api::payload::UpdateFingerprintAlias {
+                            fingerprint: fg.to_string(),
+                            alias: alias.to_string(),
+                        })
+                        .collect(),
+                )
+            } else {
+                None
+            };
+
+        if fingerprint_aliases.is_some() || wallet_alias.is_some() {
             let response: Response = self
                 .request(
                     Method::PATCH,
@@ -246,16 +263,9 @@ impl BackendClient {
                 )
                 .await
                 .json(&api::payload::UpdateWallet {
+                    alias: wallet_alias,
                     ledger_hmac: None,
-                    fingerprint_aliases: Some(
-                        fingerprint_aliases
-                            .iter()
-                            .map(|(fg, alias)| api::payload::UpdateFingerprintAlias {
-                                fingerprint: fg.to_string(),
-                                alias: alias.to_string(),
-                            })
-                            .collect(),
-                    ),
+                    fingerprint_aliases,
                 })
                 .send()
                 .await?;
@@ -342,7 +352,7 @@ impl BackendWalletClient {
         self.inner.user_email()
     }
 
-    async fn get_wallet(&self) -> Result<api::Wallet, DaemonError> {
+    pub async fn get_wallet(&self) -> Result<api::Wallet, DaemonError> {
         let list = self.inner.list_wallets().await?;
         let wallet = list
             .into_iter()
@@ -1133,11 +1143,12 @@ impl Daemon for BackendWalletClient {
     /// Implemented by LianaLite backend
     async fn update_wallet_metadata(
         &self,
+        wallet_alias: Option<String>,
         fingerprint_aliases: &HashMap<Fingerprint, String>,
         hws: &[HardwareWalletConfig],
     ) -> Result<(), DaemonError> {
         self.inner
-            .update_wallet_metadata(&self.wallet_uuid, fingerprint_aliases, hws)
+            .update_wallet_metadata(&self.wallet_uuid, wallet_alias, fingerprint_aliases, hws)
             .await
     }
 

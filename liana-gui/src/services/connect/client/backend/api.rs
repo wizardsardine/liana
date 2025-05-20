@@ -139,10 +139,13 @@ pub struct ProviderKey {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct WalletMetadata {
+    pub wallet_alias: Option<String>,
     pub ledger_hmacs: Vec<LedgerHmac>,
     pub fingerprint_aliases: Vec<FingerprintAlias>,
     pub provider_keys: Vec<ProviderKey>,
 }
+
+pub const WALLET_ALIAS_MAXIMUM_LENGTH: usize = 64;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct LedgerHmac {
@@ -488,6 +491,7 @@ pub mod payload {
 
     #[derive(Serialize)]
     pub struct UpdateWallet {
+        pub alias: Option<String>,
         pub ledger_hmac: Option<UpdateLedgerHmac>,
         pub fingerprint_aliases: Option<Vec<UpdateFingerprintAlias>>,
     }

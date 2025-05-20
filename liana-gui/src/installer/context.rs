@@ -71,6 +71,7 @@ pub struct Context {
     pub internal_bitcoind: Option<Bitcoind>,
     pub remote_backend: RemoteBackend,
     pub backup: Option<Backup>,
+    pub wallet_alias: String,
 }
 
 impl Context {
@@ -97,6 +98,7 @@ impl Context {
             internal_bitcoind_config: None,
             internal_bitcoind: None,
             remote_backend,
+            wallet_alias: String::new(),
             backup: None,
         }
     }

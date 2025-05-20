@@ -4,6 +4,7 @@ mod backend;
 mod mnemonic;
 mod node;
 mod share_xpubs;
+mod wallet_alias;
 
 pub use node::{
     bitcoind::{DownloadState, InstallState, InternalBitcoindStep, SelectBitcoindTypeStep},
@@ -20,6 +21,7 @@ pub use backend::{ChooseBackend, ImportRemoteWallet, RemoteBackendLogin};
 pub use mnemonic::{BackupMnemonic, RecoverMnemonic};
 pub use share_xpubs::ShareXpubs;
 use tracing::warn;
+pub use wallet_alias::WalletAlias;
 
 use std::collections::HashMap;
 
