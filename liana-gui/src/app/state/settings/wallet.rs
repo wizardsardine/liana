@@ -29,6 +29,7 @@ use crate::{
     dir::LianaDirectory,
     export::{ImportExportMessage, ImportExportType},
     hw::{HardwareWallet, HardwareWalletConfig, HardwareWallets},
+    services::connect::client::backend::api::WALLET_ALIAS_MAXIMUM_LENGTH,
 };
 
 enum Modal {
@@ -168,7 +169,7 @@ impl State for WalletSettingsState {
             Message::View(view::Message::Settings(view::SettingsMessage::WalletAliasEdited(
                 alias,
             ))) => {
-                self.wallet_alias.valid = alias.len() < 64;
+                self.wallet_alias.valid = alias.len() < WALLET_ALIAS_MAXIMUM_LENGTH;
                 self.wallet_alias.value = alias;
                 Task::none()
             }

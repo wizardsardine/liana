@@ -145,6 +145,8 @@ pub struct WalletMetadata {
     pub provider_keys: Vec<ProviderKey>,
 }
 
+pub const WALLET_ALIAS_MAXIMUM_LENGTH: usize = 64;
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct LedgerHmac {
     #[serde(deserialize_with = "deser_fromstr")]

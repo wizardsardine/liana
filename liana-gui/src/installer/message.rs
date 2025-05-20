@@ -66,6 +66,7 @@ pub enum Message {
     ImportExport(ImportExportMessage),
     ImportBackup,
     WalletFromBackup((HashMap<Fingerprint, settings::KeySetting>, Backup)),
+    WalletAliasEdited(String),
 }
 
 impl Close for Message {

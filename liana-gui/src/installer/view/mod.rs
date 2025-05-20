@@ -9,7 +9,7 @@ use iced::{
 };
 
 use async_hwi::DeviceKind;
-use liana_ui::component::text;
+use liana_ui::component::text::{self, p2_regular};
 use std::collections::HashMap;
 use std::net::{Ipv4Addr, Ipv6Addr};
 use std::path::PathBuf;
@@ -2145,6 +2145,45 @@ pub fn connection_step_connected<'a>(
 pub const REMOTE_BACKEND_DESC: &str = "Use our service to instantly be ready to transact. Wizardsardine runs the infrastructure, allowing multiple computers or participants to connect and synchronize.\n\nThis is a simpler and safer option for people who want Wizardsardine to keep a backup of their descriptor. You are still in control of your keys, and Wizardsardine does not have any control over your funds, but it will be able to see your wallet's information, associated to an email address. Privacy focused users should run their own infrastructure instead.";
 
 pub const LOCAL_WALLET_DESC: &str = "Use your already existing Bitcoin node or automatically install one. The Liana wallet will not connect to any external server.\n\nThis is the most private option, but the data is locally stored on this computer, only. You must perform your own backups, and share the descriptor with other people you want to be able to access the wallet";
+
+pub fn wallet_alias<'a>(
+    progress: (usize, usize),
+    email: Option<&'a str>,
+    wallet_alias: &form::Value<String>,
+) -> Element<'a, Message> {
+    layout(
+        progress,
+        email,
+        "Give your wallet an alias",
+        Column::new()
+            .push(
+                Column::new()
+                    .spacing(20)
+                    .push(p1_bold("Wallet alias:"))
+                    .push(
+                        form::Form::new("Wallet alias", wallet_alias, Message::WalletAliasEdited)
+                            .warning("Wallet alias is too long.")
+                            .size(text::P1_SIZE)
+                            .padding(10),
+                    )
+                    .push(p2_regular(
+                        "You will be able to change it later in Settings > Wallet",
+                    )),
+            )
+            .push(
+                button::secondary(None, "Next")
+                    .width(Length::Fixed(200.0))
+                    .on_press_maybe(if wallet_alias.valid {
+                        Some(Message::Next)
+                    } else {
+                        None
+                    }),
+            )
+            .spacing(50),
+        true,
+        Some(Message::Previous),
+    )
+}
 
 fn layout<'a>(
     progress: (usize, usize),

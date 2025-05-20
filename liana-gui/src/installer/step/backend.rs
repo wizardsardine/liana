@@ -350,6 +350,9 @@ pub struct ImportRemoteWallet {
     error: Option<String>,
     backend: context::RemoteBackend,
     wallets: Vec<api::Wallet>,
+    // wallet alias is stored here to be applied to context
+    // and be modified in a following step
+    wallet_alias: Option<String>,
 }
 
 impl ImportRemoteWallet {
@@ -363,6 +366,7 @@ impl ImportRemoteWallet {
             error: None,
             backend: context::RemoteBackend::Undefined,
             wallets: Vec::new(),
+            wallet_alias: None,
         }
     }
 }
@@ -514,6 +518,7 @@ impl Step for ImportRemoteWallet {
             }
             Message::Select(i) => {
                 if let Some(wallet) = self.wallets.get(i).cloned() {
+                    self.wallet_alias = wallet.metadata.wallet_alias.clone();
                     self.backend = match self.backend.clone() {
                         context::RemoteBackend::WithoutWallet(backend) => {
                             context::RemoteBackend::WithWallet(
@@ -545,6 +550,10 @@ impl Step for ImportRemoteWallet {
         ctx.hw_is_used = true;
         ctx.descriptor.clone_from(&self.descriptor);
         ctx.remote_backend.clone_from(&self.backend);
+
+        if let Some(alias) = &self.wallet_alias {
+            ctx.wallet_alias = alias.clone();
+        }
 
         true
     }
