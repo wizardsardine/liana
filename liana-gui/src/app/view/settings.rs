@@ -558,8 +558,24 @@ pub fn bitcoind<'a>(
                 v.clone()
             };
             Row::new()
-                .push(Container::new(text(k).bold().small()).width(Length::Fill))
-                .push(text(t).small())
+                .push(Container::new(text(k).bold().small()).width(Length::FillPortion(1)))
+                .push(
+                    Container::new(
+                        scrollable(
+                            Column::new()
+                                .push(Space::with_height(Length::Fixed(10.0)))
+                                .push(text(t).small())
+                                // Space between the text and the scrollbar
+                                .push(Space::with_height(Length::Fixed(10.0))),
+                        )
+                        .direction(scrollable::Direction::Horizontal(
+                            scrollable::Scrollbar::new().width(2).scroller_width(2),
+                        )),
+                    )
+                    .align_x(alignment::Horizontal::Right)
+                    .padding(10)
+                    .width(Length::FillPortion(3)),
+                )
                 .push(Space::with_width(10))
                 .push(
                     Button::new(icon::clipboard_icon())
