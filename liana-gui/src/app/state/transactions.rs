@@ -153,8 +153,11 @@ impl State for TransactionsPanel {
                     self.warning = e.into();
                 }
             },
-            Message::View(view::Message::Reload) | Message::View(view::Message::Close) => {
-                return self.reload(daemon, self.wallet.clone());
+            Message::View(view::Message::Reload(reset)) => {
+                return self.reload(daemon, self.wallet.clone(), reset);
+            }
+            Message::View(view::Message::Close) => {
+                return self.reload(daemon, self.wallet.clone(), false);
             }
             Message::View(view::Message::Select(i)) => {
                 self.selected_tx = self.txs.get(i).cloned();
@@ -303,6 +306,7 @@ impl State for TransactionsPanel {
         &mut self,
         daemon: Arc<dyn Daemon + Sync + Send>,
         _wallet: Arc<Wallet>,
+        _reset: bool,
     ) -> Task<Message> {
         self.selected_tx = None;
         let now: u32 = SystemTime::now()
