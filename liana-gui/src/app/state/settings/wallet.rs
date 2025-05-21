@@ -516,9 +516,10 @@ pub async fn update_aliases(
     keys_aliases: Vec<(Fingerprint, String)>,
     daemon: Arc<dyn Daemon + Sync + Send>,
 ) -> Result<Arc<Wallet>, Error> {
-    let mut wallet = wallet.as_ref().clone().with_alias(wallet_alias.clone());
+    let mut wallet = wallet.as_ref().clone();
 
     if let Some(wallet_alias) = wallet_alias.as_ref() {
+        wallet = wallet.with_alias(Some(wallet_alias.clone()));
         let network_dir = data_dir.network_directory(network);
         let wallet_id = wallet.id();
         update_settings_file(&network_dir, |mut settings| {

@@ -9,7 +9,7 @@ use iced::Task;
 use liana_ui::{component::form, widget::Element};
 
 use bitcoind::BitcoindSettingsState;
-use wallet::WalletSettingsState;
+use wallet::{update_aliases, WalletSettingsState};
 
 use crate::{
     app::{
@@ -223,7 +223,19 @@ impl State for ImportExportSettingsState {
                 self.modal = None;
             }
             Message::View(view::Message::ImportExport(m)) => {
-                if let Some(modal) = self.modal.as_mut() {
+                if let ImportExportMessage::UpdateAliases(aliases) = m {
+                    return Task::perform(
+                        update_aliases(
+                            cache.datadir_path.clone(),
+                            cache.network,
+                            self.wallet.clone(),
+                            None,
+                            aliases.into_iter().map(|(fg, ks)| (fg, ks.name)).collect(),
+                            daemon,
+                        ),
+                        Message::WalletUpdated,
+                    );
+                } else if let Some(modal) = self.modal.as_mut() {
                     return modal.update(m);
                 };
             }
