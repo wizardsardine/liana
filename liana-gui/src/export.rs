@@ -165,10 +165,12 @@ pub enum ImportExportType {
     ExportXpub(String),
     ExportBackup(String),
     ExportProcessBackup(LianaDirectory, Network, Arc<Config>, Arc<Wallet>),
-    ImportBackup(
-        Option<Sender<bool>>, /*overwrite_labels*/
-        Option<Sender<bool>>, /*overwrite_aliases*/
-    ),
+    ImportBackup {
+        network_dir: NetworkDirectory,
+        wallet: Arc<Wallet>,
+        overwrite_labels: Option<Sender<bool>>,
+        overwrite_aliases: Option<Sender<bool>>,
+    },
     WalletFromBackup,
     Descriptor(LianaDescriptor),
     ExportLabels,
@@ -187,25 +189,11 @@ impl ImportExportType {
             | ImportExportType::ExportProcessBackup(..)
             | ImportExportType::ExportXpub(_)
             | ImportExportType::ExportLabels => "Export successful!",
-            ImportExportType::ImportBackup(_, _)
+            ImportExportType::ImportBackup { .. }
             | ImportExportType::ImportPsbt(_)
             | ImportExportType::ImportXpub(_)
             | ImportExportType::WalletFromBackup
             | ImportExportType::ImportDescriptor => "Import successful",
-        }
-    }
-}
-
-impl PartialEq for ImportExportType {
-    fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (Self::ExportPsbt(l0), Self::ExportPsbt(r0)) => l0 == r0,
-            (Self::ExportBackup(l0), Self::ExportBackup(r0)) => l0 == r0,
-            (Self::ImportBackup(l0, l1), Self::ImportBackup(r0, r1)) => {
-                l0.is_some() == r0.is_some() && l1.is_some() == r1.is_some()
-            }
-            (Self::Descriptor(l0), Self::Descriptor(r0)) => l0 == r0,
-            _ => core::mem::discriminant(self) == core::mem::discriminant(other),
         }
     }
 }
@@ -321,7 +309,11 @@ impl Export {
                 )
                 .await
             }
-            ImportExportType::ImportBackup(..) => import_backup(&sender, path, daemon).await,
+            ImportExportType::ImportBackup {
+                network_dir,
+                wallet,
+                ..
+            } => import_backup(&network_dir, wallet, &sender, path, daemon).await,
             ImportExportType::WalletFromBackup => wallet_from_backup(&sender, path).await,
         } {
             if let Err(e) = sender.send(Progress::Error(e)) {
@@ -694,6 +686,8 @@ pub async fn import_xpub(
 ///    - import labels if no conflict or user ACK
 ///    - update aliases if no conflict or user ACK
 pub async fn import_backup(
+    network_dir: &NetworkDirectory,
+    wallet: Arc<Wallet>,
     sender: &UnboundedSender<Progress>,
     path: PathBuf,
     daemon: Option<Arc<dyn Daemon + Sync + Send>>,
@@ -810,32 +804,16 @@ pub async fn import_backup(
         Vec::new()
     };
 
-    let lianad_datadir = daemon
-        .config()
-        .and_then(|c| c.data_directory())
-        .ok_or(Error::BackupImport("Failed to get Daemon config".into()))?;
-
-    let descriptor_checksum = descriptor
-        .to_string()
-        .split_once('#')
-        .map(|(_, checksum)| checksum)
-        .unwrap()
-        .to_string();
-
     // check if key aliases can be imported w/o conflict
     let mut write_aliases = true;
     let settings = if !account.keys.is_empty() {
-        // TODO: change lianad_datadir is common to gui datadir only for legacy wallet before
-        // multiple wallet
-        let network_dir = NetworkDirectory::new(lianad_datadir.path().to_path_buf());
-        let wallet_settings = match WalletSettings::from_file(&network_dir, |w| {
-            w.descriptor_checksum == descriptor_checksum
-        }) {
-            Ok(Some(s)) => s,
-            _ => {
-                return Err(Error::BackupImport("Failed to get App Settings".into()));
-            }
-        };
+        let wallet_settings =
+            match WalletSettings::from_file(network_dir, |w| w.wallet_id() == wallet.id()) {
+                Ok(Some(s)) => s,
+                _ => {
+                    return Err(Error::BackupImport("Failed to get App Settings".into()));
+                }
+            };
 
         let settings_aliases: HashMap<_, _> = wallet_settings
             .keys
@@ -937,19 +915,16 @@ pub async fn import_backup(
             }
         }
 
-        if let Err(e) = update_settings_file(
-            &NetworkDirectory::new(lianad_datadir.path().to_path_buf()),
-            |mut settings| {
-                if let Some(wallet) = settings
-                    .wallets
-                    .iter_mut()
-                    .find(|w| w.descriptor_checksum == descriptor_checksum)
-                {
-                    wallet.keys = settings_aliases.clone().into_values().collect();
-                }
-                settings
-            },
-        )
+        if let Err(e) = update_settings_file(network_dir, |mut settings| {
+            if let Some(wallet) = settings
+                .wallets
+                .iter_mut()
+                .find(|w| w.wallet_id() == wallet.id())
+            {
+                wallet.keys = settings_aliases.clone().into_values().collect();
+            }
+            settings
+        })
         .await
         {
             return Err(Error::BackupImport(format!(
