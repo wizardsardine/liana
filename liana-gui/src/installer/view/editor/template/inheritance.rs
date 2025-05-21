@@ -160,11 +160,18 @@ pub fn inheritance_template<'a>(
                 )
                 .map(|msg| Message::DefineDescriptor(message::DefineDescriptor::Path(1, msg))),
             )
+            .push(Space::with_height(10))
             .push(
                 Row::new()
                     .push(
+                        button::secondary(None, "Clear All")
+                            .width(Length::Fixed(120.0))
+                            .on_press(Message::DefineDescriptor(message::DefineDescriptor::Reset)),
+                    )
+                    .push(Space::with_width(40))
+                    .push(
                         button::secondary(None, "Customize")
-                            .width(Length::Fixed(200.0))
+                            .width(Length::Fixed(120.0))
                             .on_press(Message::DefineDescriptor(
                                 message::DefineDescriptor::ChangeTemplate(
                                     context::DescriptorTemplate::Custom,

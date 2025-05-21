@@ -253,12 +253,20 @@ pub fn custom_template<'a>(
                     Message::DefineDescriptor(message::DefineDescriptor::Path(sn_index + 1, msg))
                 })
             }))
+            .push(Space::with_height(10))
             .push(
-                Row::new().push(Space::with_width(Length::Fill)).push(
-                    button::primary(None, "Continue")
-                        .width(Length::Fixed(200.0))
-                        .on_press_maybe(if valid { Some(Message::Next) } else { None }),
-                ),
+                Row::new()
+                    .push(
+                        button::secondary(None, "Clear All")
+                            .width(Length::Fixed(200.0))
+                            .on_press(Message::DefineDescriptor(message::DefineDescriptor::Reset)),
+                    )
+                    .push(Space::with_width(Length::Fill))
+                    .push(
+                        button::primary(None, "Continue")
+                            .width(Length::Fixed(200.0))
+                            .on_press_maybe(if valid { Some(Message::Next) } else { None }),
+                    ),
             )
             .push(Space::with_height(100.0))
             .spacing(20),

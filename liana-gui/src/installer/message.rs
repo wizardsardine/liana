@@ -165,6 +165,7 @@ pub enum DefineDescriptor {
     AddSafetyNetPath,
     KeyModal(ImportKeyModal),
     ThresholdSequenceModal(ThresholdSequenceModal),
+    Reset,
 }
 
 #[allow(clippy::large_enum_variant)]
