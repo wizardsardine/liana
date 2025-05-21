@@ -1,5 +1,8 @@
 use liana::miniscript::{
-    bitcoin::{bip32::Fingerprint, Network},
+    bitcoin::{
+        bip32::{ChildNumber, Fingerprint},
+        Network,
+    },
     DescriptorPublicKey,
 };
 use std::collections::HashMap;
@@ -67,6 +70,7 @@ pub enum Message {
     ImportBackup,
     WalletFromBackup((HashMap<Fingerprint, settings::KeySetting>, Backup)),
     WalletAliasEdited(String),
+    SelectAccount(Fingerprint, ChildNumber),
 }
 
 impl Close for Message {
@@ -78,6 +82,12 @@ impl Close for Message {
 impl From<ImportExportMessage> for Message {
     fn from(value: ImportExportMessage) -> Self {
         Message::ImportExport(value)
+    }
+}
+
+impl From<(Fingerprint, ChildNumber)> for Message {
+    fn from(value: (Fingerprint, ChildNumber)) -> Self {
+        Self::SelectAccount(value.0, value.1)
     }
 }
 

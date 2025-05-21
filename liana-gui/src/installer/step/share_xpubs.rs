@@ -1,4 +1,7 @@
-use std::sync::{Arc, Mutex};
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex},
+};
 
 use iced::{Subscription, Task};
 use liana::miniscript::bitcoin::{
@@ -73,6 +76,7 @@ pub struct ShareXpubs {
     hw_xpubs: Vec<HardwareWalletXpubs>,
     xpubs_signer: SignerXpubs,
     modal: Option<ExportModal>,
+    accounts: HashMap<Fingerprint, ChildNumber>,
 }
 
 impl ShareXpubs {
@@ -82,6 +86,7 @@ impl ShareXpubs {
             hw_xpubs: Vec::new(),
             xpubs_signer: SignerXpubs::new(signer),
             modal: None,
+            accounts: Default::default(),
         }
     }
 }
@@ -91,6 +96,10 @@ impl Step for ShareXpubs {
     // Verification of the values is happening when the user click on Next button.
     fn update(&mut self, hws: &mut HardwareWallets, message: Message) -> Task<Message> {
         match message {
+            Message::SelectAccount(fg, index) => {
+                self.accounts.insert(fg, index);
+                return Task::none();
+            }
             Message::ImportXpub(fg, res) => {
                 if let Some(hw_xpubs) = self.hw_xpubs.iter_mut().find(|x| x.fingerprint == fg) {
                     hw_xpubs.processing = false;
@@ -138,6 +147,11 @@ impl Step for ShareXpubs {
                 }) = hws.list.get(i)
                 {
                     let device = device.clone();
+                    let account = self
+                        .accounts
+                        .get(fingerprint)
+                        .copied()
+                        .unwrap_or(ChildNumber::from_hardened_idx(0).expect("hardcoded"));
                     let fingerprint = *fingerprint;
                     let network = self.network;
                     if let Some(hw_xpubs) = self
@@ -159,7 +173,7 @@ impl Step for ShareXpubs {
                         async move {
                             (
                                 fingerprint,
-                                get_extended_pubkey(device, fingerprint, network).await,
+                                get_extended_pubkey(device, fingerprint, network, account).await,
                             )
                         },
                         |(fingerprint, res)| Message::ImportXpub(fingerprint, res),
@@ -212,9 +226,10 @@ impl Step for ShareXpubs {
                             Some(&hw_xpubs.xpubs),
                             hw_xpubs.processing,
                             hw_xpubs.error.as_ref(),
+                            &self.accounts,
                         )
                     } else {
-                        view::hardware_wallet_xpubs(i, hw, None, false, None)
+                        view::hardware_wallet_xpubs(i, hw, None, false, None, &self.accounts)
                     }
                 })
                 .collect(),

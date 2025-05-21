@@ -1,9 +1,9 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 
 use iced::{Subscription, Task};
-use liana::miniscript::bitcoin::bip32::Xpub;
+use liana::miniscript::bitcoin::bip32::{ChildNumber, Xpub};
 use liana::miniscript::{
     bitcoin::{
         bip32::{DerivationPath, Fingerprint},
@@ -89,6 +89,7 @@ pub struct EditXpubModal {
     hot_signer_fingerprint: Fingerprint,
     chosen_signer: Option<Key>,
     modal: Option<ExportModal>,
+    accounts: HashMap<Fingerprint, ChildNumber>,
 }
 
 impl EditXpubModal {
@@ -104,6 +105,10 @@ impl EditXpubModal {
         hot_signer_fingerprint: Fingerprint,
         keys: Vec<Key>,
     ) -> Self {
+        let accounts = keys
+            .iter()
+            .filter_map(|k| k.account.map(|acc| (k.fingerprint, acc)))
+            .collect();
         Self {
             device_must_support_tapminiscript,
             path_kind,
@@ -139,6 +144,7 @@ impl EditXpubModal {
             hot_signer,
             duplicate_master_fg: false,
             modal: None,
+            accounts,
         }
     }
 
@@ -158,6 +164,10 @@ impl super::DescriptorEditModal for EditXpubModal {
         self.duplicate_master_fg = false;
         self.error = None;
         match message {
+            Message::SelectAccount(fg, index) => {
+                self.accounts.insert(fg, index);
+                return Task::none();
+            }
             Message::Select(i) => {
                 if let Some(HardwareWallet::Supported {
                     device,
@@ -170,6 +180,11 @@ impl super::DescriptorEditModal for EditXpubModal {
                     self.processing = true;
                     self.form_key_source_kind = None;
                     let device_version = version.clone();
+                    let account = self
+                        .accounts
+                        .get(fingerprint)
+                        .copied()
+                        .unwrap_or(ChildNumber::from_hardened_idx(0).expect("hardcoded"));
                     let fingerprint = *fingerprint;
                     let device_kind = *kind;
                     let device_cloned = device.clone();
@@ -181,10 +196,11 @@ impl super::DescriptorEditModal for EditXpubModal {
                                 device_kind,
                                 fingerprint,
                                 network,
-                                get_extended_pubkey(device_cloned, fingerprint, network).await,
+                                get_extended_pubkey(device_cloned, fingerprint, network, account)
+                                    .await,
                             )
                         },
-                        |(device_version, device_kind, fingerprint, network, res)| {
+                        move |(device_version, device_kind, fingerprint, network, res)| {
                             Message::DefineDescriptor(message::DefineDescriptor::KeyModal(
                                 message::ImportKeyModal::FetchedKey(match res {
                                     Err(e) => Err(e),
@@ -198,6 +214,7 @@ impl super::DescriptorEditModal for EditXpubModal {
                                                 fingerprint,
                                                 name: "".to_string(),
                                                 key,
+                                                account: Some(account),
                                             })
                                         } else {
                                             Err(Error::Unexpected(
@@ -233,6 +250,7 @@ impl super::DescriptorEditModal for EditXpubModal {
                     fingerprint,
                     name: "".to_string(),
                     key: DescriptorPublicKey::from_str(&key_str).unwrap(),
+                    account: None,
                 });
                 self.form_name.value = self
                     .keys
@@ -273,7 +291,7 @@ impl super::DescriptorEditModal for EditXpubModal {
                 message::ImportKeyModal::FetchedKey(res) => {
                     self.processing = false;
                     match res {
-                        Ok(key) => {
+                        Ok(mut key) => {
                             // If it is a provider key that has just been fetched, do some additional sanity checks.
                             if let Some(key_kind) = key.source.provider_key_kind() {
                                 // We don't need to check key's status as redeemed keys are not returned.
@@ -302,6 +320,7 @@ impl super::DescriptorEditModal for EditXpubModal {
                                 };
                                 self.form_token.valid = self.form_token_warning.is_none();
                             }
+                            key.account = self.accounts.get(&key.fingerprint).copied();
                             // User can set name for key if it is not a provider key or is a valid provider key.
                             if key.source.provider_key().is_none() || self.form_token.valid {
                                 self.form_name.valid = key.name.is_empty()
@@ -374,6 +393,7 @@ impl super::DescriptorEditModal for EditXpubModal {
                                     fingerprint,
                                     name: "".to_string(),
                                     key: DescriptorPublicKey::XPub(key),
+                                    account: None,
                                 });
                                 self.form_name.value = "".to_string();
                                 self.form_name.valid = true;
@@ -429,6 +449,7 @@ impl super::DescriptorEditModal for EditXpubModal {
                                             key.kind
                                         ),
                                         key: key.xpub.clone(),
+                                        account: None,
                                     }),
                                 }),
                             ))
@@ -503,6 +524,8 @@ impl super::DescriptorEditModal for EditXpubModal {
                             hw.fingerprint() == chosen_signer,
                             None,
                             self.device_must_support_tapminiscript,
+                            Some(&self.accounts),
+                            true,
                         ))
                     }
                 })
@@ -528,6 +551,7 @@ impl super::DescriptorEditModal for EditXpubModal {
                             key.source.device_version(),
                             Some(key.fingerprint) == chosen_signer,
                             self.device_must_support_tapminiscript,
+                            &self.accounts,
                         ))
                     }
                 })
@@ -576,14 +600,31 @@ pub fn default_derivation_path(network: Network) -> DerivationPath {
     .unwrap()
 }
 
+pub fn derivation_path(network: Network, account: ChildNumber) -> DerivationPath {
+    assert!(account.is_hardened());
+    let network = if network == Network::Bitcoin {
+        ChildNumber::Hardened { index: 0 }
+    } else {
+        ChildNumber::Hardened { index: 1 }
+    };
+    vec![
+        ChildNumber::Hardened { index: 48 },
+        network,
+        account,
+        ChildNumber::Hardened { index: 2 },
+    ]
+    .into()
+}
+
 /// LIANA_STANDARD_PATH: m/48'/0'/0'/2';
 /// LIANA_TESTNET_STANDARD_PATH: m/48'/1'/0'/2';
 pub async fn get_extended_pubkey(
     hw: std::sync::Arc<dyn async_hwi::HWI + Send + Sync>,
     fingerprint: Fingerprint,
     network: Network,
+    account: ChildNumber,
 ) -> Result<DescriptorPublicKey, Error> {
-    let derivation_path = default_derivation_path(network);
+    let derivation_path = derivation_path(network, account);
     let xkey = hw
         .get_extended_pubkey(&derivation_path)
         .await
@@ -618,5 +659,31 @@ mod tests {
             default_derivation_path(Network::Regtest).to_string(),
             "48'/1'/0'/2'"
         );
+    }
+
+    #[test]
+    fn test_derivation_path() {
+        assert_eq!(
+            derivation_path(Network::Bitcoin, ChildNumber::Hardened { index: 0 }).to_string(),
+            "48'/0'/0'/2'"
+        );
+        assert_eq!(
+            derivation_path(Network::Regtest, ChildNumber::Hardened { index: 0 }).to_string(),
+            "48'/1'/0'/2'"
+        );
+        assert_eq!(
+            derivation_path(Network::Bitcoin, ChildNumber::Hardened { index: 1 }).to_string(),
+            "48'/0'/1'/2'"
+        );
+        assert_eq!(
+            derivation_path(Network::Regtest, ChildNumber::Hardened { index: 1 }).to_string(),
+            "48'/1'/1'/2'"
+        );
+    }
+
+    #[test]
+    #[should_panic]
+    fn unhardened_derivation_path() {
+        derivation_path(Network::Bitcoin, ChildNumber::Normal { index: 0 }).to_string();
     }
 }
