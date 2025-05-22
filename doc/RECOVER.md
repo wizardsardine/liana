@@ -36,7 +36,12 @@ Note the curious `<0;1>` step in the xpubs' derivation path. It's called a
 derivation steps in a single expression so you only have to backup a single descriptor instead of
 two (one for deriving receive addresses and the other for change addresses).
 
-Bitcoin Core 25.0 does not yet support multipath descriptors. So we'll have to split the descriptor
+### Step 1 : Split descriptors
+
+If you're using Bitcoin Core 29.0 or above, you can skip to step 2 — multipath descriptors are supported and don't need 
+to be split.
+
+Otherwise it means that your node does not support multipath descriptors. So we'll have to split the descriptor
 in two: one for receive and one for change. To do so:
 - Make two copies of your descriptor, without the checksum (the part following the `#`).
 - For each of them walk through the xpubs.
@@ -56,7 +61,7 @@ We'll need a checksum for each in order to be able to import them on the Bitcoin
 this use the `getdescriptorinfo` command, gather the `checksum` field and append it to the
 descriptor after a `#`. For instance with the first descriptor above:
 ```shell
-bitcoin-cli getdescriptorinfo wsh(or_d(pk([a5c6b76e/48'/1'/0'/2']tpubDF5861hj6vR3iJr3aPjGJz4rNbqDCRujQ21mczzKT5SiedaQqNVgHC8HT9ceyxvMFRoPMx4P6HAcL3NZrUPhRUbwCyj3TKSa64bAfnE3sLh/0/*),and_v(v:pkh([c477fd13/48'/1'/0'/2']tpubDFn7iPbFqGrTQ2aRACNsUK1MXQR4Z6dYfU2nD1WA9ifSaia642j3Wah4n5pBUEpERNWGJsyv3Dv5qwBabC9TLQrwSboKzukw9wmurGu7XVH/0/*),older(3))))
+bitcoin-cli getdescriptorinfo "wsh(or_d(pk([a5c6b76e/48'/1'/0'/2']tpubDF5861hj6vR3iJr3aPjGJz4rNbqDCRujQ21mczzKT5SiedaQqNVgHC8HT9ceyxvMFRoPMx4P6HAcL3NZrUPhRUbwCyj3TKSa64bAfnE3sLh/0/*),and_v(v:pkh([c477fd13/48'/1'/0'/2']tpubDFn7iPbFqGrTQ2aRACNsUK1MXQR4Z6dYfU2nD1WA9ifSaia642j3Wah4n5pBUEpERNWGJsyv3Dv5qwBabC9TLQrwSboKzukw9wmurGu7XVH/0/*),older(3))))"
 ```
 Output:
 ```
@@ -73,7 +78,11 @@ So the resulting descriptor is
 wsh(or_d(pk([a5c6b76e/48'/1'/0'/2']tpubDF5861hj6vR3iJr3aPjGJz4rNbqDCRujQ21mczzKT5SiedaQqNVgHC8HT9ceyxvMFRoPMx4P6HAcL3NZrUPhRUbwCyj3TKSa64bAfnE3sLh/0/*),and_v(v:pkh([c477fd13/48'/1'/0'/2']tpubDFn7iPbFqGrTQ2aRACNsUK1MXQR4Z6dYfU2nD1WA9ifSaia642j3Wah4n5pBUEpERNWGJsyv3Dv5qwBabC9TLQrwSboKzukw9wmurGu7XVH/0/*),older(3))))#nhtumqkr
 ```
 
-Make sure to do this for both descriptors, and then create the dedicated watchonly wallet on Bitcoin Core:
+Make sure to do this for both descriptors.
+
+### Step 2 : Create the wallet
+
+Create the dedicated watchonly wallet on Bitcoin Core:
 ```shell
 bitcoin-cli -signet createwallet liana_recovery true 
 ```
@@ -92,20 +101,26 @@ checksum appended) along with the wallet birthdate as a timestamp. Note this com
 while as it's going to be rescanning the block chain. The farther in the past the birthdate, the
 longer it will take. If the command times out you will be able to inspect the progress using the
 `getwalletinfo` command.
+
+If you're using a version earlier than 29.0 :
 ```shell
 bitcoin-cli -signet -rpcwallet=liana_recovery importdescriptors "[{\"desc\": \"wsh(or_d(pk([a5c6b76e/48'/1'/0'/2']tpubDF5861hj6vR3iJr3aPjGJz4rNbqDCRujQ21mczzKT5SiedaQqNVgHC8HT9ceyxvMFRoPMx4P6HAcL3NZrUPhRUbwCyj3TKSa64bAfnE3sLh/0/*),and_v(v:pkh([c477fd13/48'/1'/0'/2']tpubDFn7iPbFqGrTQ2aRACNsUK1MXQR4Z6dYfU2nD1WA9ifSaia642j3Wah4n5pBUEpERNWGJsyv3Dv5qwBabC9TLQrwSboKzukw9wmurGu7XVH/0/*),older(3))))#nhtumqkr\", \"range\": [0,10000], \"timestamp\": 1682920310, \"active\": true, \"internal\":false}, {\"desc\": \"wsh(or_d(pk([a5c6b76e/48'/1'/0'/2']tpubDF5861hj6vR3iJr3aPjGJz4rNbqDCRujQ21mczzKT5SiedaQqNVgHC8HT9ceyxvMFRoPMx4P6HAcL3NZrUPhRUbwCyj3TKSa64bAfnE3sLh/1/*),and_v(v:pkh([c477fd13/48'/1'/0'/2']tpubDFn7iPbFqGrTQ2aRACNsUK1MXQR4Z6dYfU2nD1WA9ifSaia642j3Wah4n5pBUEpERNWGJsyv3Dv5qwBabC9TLQrwSboKzukw9wmurGu7XVH/1/*),older(3))))#vpa5k5p6\", \"range\": [0,10000], \"timestamp\": 1682920310, \"active\": true, \"internal\":true}]"
 ```
-Output:
+
+Since 29.0 :
 ```shell
+bitcoin-cli -signet -rpcwallet=liana_recovery importdescriptors "[{\"desc\":\"wsh(or_d(pk([a5c6b76e/48'/1'/0'/2']tpubDF5861hj6vR3iJr3aPjGJz4rNbqDCRujQ21mczzKT5SiedaQqNVgHC8HT9ceyxvMFRoPMx4P6HAcL3NZrUPhRUbwCyj3TKSa64bAfnE3sLh/<0;1>/*),and_v(v:pkh([c477fd13/48'/1'/0'/2']tpubDFn7iPbFqGrTQ2aRACNsUK1MXQR4Z6dYfU2nD1WA9ifSaia642j3Wah4n5pBUEpERNWGJsyv3Dv5qwBabC9TLQrwSboKzukw9wmurGu7XVH/<0;1>/*),older(3))))#8ldsjayd\", \"range\": [0,10000], \"timestamp\": 1682920310, \"active\": true}]"
+```
+
+The output should look like this :
+```
 [
-  {
-    "success": true
-  },
   {
     "success": true
   }
 ]
 ```
+You should get 2 "success" in case you're using a version earlier than 29.0 because you imported 2 descriptors.
 
 Alright! You should now be able to see your coins on the wallet. You can check your balance with the
 `getbalance` command or list all the unspent coins using `listunspent`. For instance in our case:
