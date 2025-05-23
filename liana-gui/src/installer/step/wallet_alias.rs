@@ -1,5 +1,6 @@
 use iced::Task;
 
+use liana::miniscript::bitcoin::Network;
 use liana_ui::{component::form, widget::*};
 
 use crate::{
@@ -15,9 +16,31 @@ pub struct WalletAlias {
 
 impl Step for WalletAlias {
     fn load_context(&mut self, ctx: &Context) {
-        if !ctx.wallet_alias.is_empty() {
-            self.wallet_alias.value = ctx.wallet_alias.clone();
-            self.wallet_alias.valid = true;
+        match (
+            ctx.wallet_alias.is_empty(),
+            self.wallet_alias.value.is_empty(),
+        ) {
+            // Alias from context is the first one to be set.
+            (false, _) => {
+                self.wallet_alias.value = ctx.wallet_alias.clone();
+                self.wallet_alias.valid = true;
+            }
+            // No alias at all, we set a default value.
+            (true, true) => {
+                self.wallet_alias.value = format!(
+                    "My Liana {} wallet",
+                    match ctx.network {
+                        Network::Bitcoin => "Bitcoin",
+                        Network::Signet => "Signet",
+                        Network::Testnet => "Testnet",
+                        Network::Regtest => "Regtest",
+                        _ => "",
+                    }
+                );
+                self.wallet_alias.valid = true;
+            }
+            // We keep the current value.
+            (true, false) => {}
         }
     }
 
