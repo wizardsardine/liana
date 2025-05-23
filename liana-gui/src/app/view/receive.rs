@@ -102,6 +102,8 @@ pub fn receive<'a>(
     is_last_page: bool,
     processing: bool,
 ) -> Element<'a, Message> {
+    // Number of start and end address characters to show in collapsed view.
+    const NUM_ADDR_CHARS: usize = 16;
     let mut addresses_count = 0; // for counting number of new addresses generated
     Column::new()
         .push(
@@ -163,30 +165,31 @@ pub fn receive<'a>(
                     col.push(if !selected.contains(address) {
                         Button::new(
                             Row::new()
-                                .spacing(30)
+                                .spacing(10)
                                 .push(
-                                    Container::new(
-                                        scrollable(
-                                            Column::new()
-                                                .push(Space::with_height(Length::Fixed(10.0)))
-                                                .push(
-                                                    p2_regular(address)
-                                                        .small()
-                                                        .style(theme::text::secondary),
+                                    {
+                                        let addr = address.to_string();
+                                        let addr_len = addr.chars().count();
+                                        Container::new(
+                                            p2_regular(if addr_len > 2 * NUM_ADDR_CHARS {
+                                                format!(
+                                                    "{}...{}",
+                                                    addr.chars()
+                                                        .take(NUM_ADDR_CHARS)
+                                                        .collect::<String>(),
+                                                    addr.chars()
+                                                        .skip(addr_len - NUM_ADDR_CHARS)
+                                                        .collect::<String>(),
                                                 )
-                                                // Space between the address and the scrollbar
-                                                .push(Space::with_height(Length::Fixed(10.0))),
+                                            } else {
+                                                addr
+                                            })
+                                            .small()
+                                            .style(theme::text::secondary),
                                         )
-                                        .direction(
-                                            scrollable::Direction::Horizontal(
-                                                scrollable::Scrollbar::new()
-                                                    .width(2)
-                                                    .scroller_width(2),
-                                            ),
-                                        ),
-                                    )
+                                    }
                                     .padding(10)
-                                    .width(Length::FillPortion(13)),
+                                    .width(Length::Fixed(350.0)),
                                 )
                                 .push(
                                     Container::new(
@@ -215,7 +218,7 @@ pub fn receive<'a>(
                                         ),
                                     )
                                     .padding(10)
-                                    .width(Length::FillPortion(7)),
+                                    .width(Length::Fill),
                                 )
                                 .align_y(Alignment::Center),
                         )
