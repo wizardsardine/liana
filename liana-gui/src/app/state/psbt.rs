@@ -165,9 +165,16 @@ impl PsbtState {
                 }
             }
             Message::View(view::Message::Spend(view::SpendTxMessage::Cancel)) => {
-                if let Some(PsbtModal::Sign(SignModal { display_modal, .. })) = &mut self.modal {
-                    *display_modal = false;
-                    return Task::none();
+                if let Some(PsbtModal::Sign(SignModal {
+                    display_modal,
+                    signing,
+                    ..
+                })) = &mut self.modal
+                {
+                    if !signing.is_empty() {
+                        *display_modal = false;
+                        return Task::none();
+                    }
                 }
 
                 self.modal = None;
@@ -231,7 +238,15 @@ impl PsbtState {
             Message::Updated(Ok(_)) => {
                 self.saved = true;
                 if let Some(modal) = self.modal.as_mut() {
-                    return modal.as_mut().update(daemon.clone(), message, &mut self.tx);
+                    let cmd = modal.as_mut().update(daemon.clone(), message, &mut self.tx);
+                    // if modal is only the pending notif then we remove it once the psbt was
+                    // updated.
+                    if let PsbtModal::Sign(SignModal { display_modal, .. }) = modal {
+                        if !*display_modal {
+                            self.modal = None;
+                        }
+                    }
+                    return cmd;
                 }
             }
             Message::BroadcastModal(res) => match res {
@@ -271,6 +286,11 @@ impl PsbtState {
             &self.wallet.keys_aliases,
             self.labels_edited.cache(),
             cache.network,
+            if let Some(PsbtModal::Sign(m)) = &self.modal {
+                m.is_signing()
+            } else {
+                false
+            },
             self.warning.as_ref(),
         );
         if let Some(modal) = &self.modal {
@@ -462,6 +482,10 @@ impl SignModal {
             recovery_timelock,
         }
     }
+
+    pub fn is_signing(&self) -> bool {
+        !self.signing.is_empty()
+    }
 }
 
 impl Modal for SignModal {
@@ -503,6 +527,7 @@ impl Modal for SignModal {
                 self.signing.remove(&fingerprint);
                 match res {
                     Err(e) => {
+                        self.display_modal = true;
                         if !matches!(e, Error::HardwareWallet(async_hwi::Error::UserRefused)) {
                             self.error = Some(e)
                         }
