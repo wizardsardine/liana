@@ -50,6 +50,8 @@ fn now() -> u64 {
 pub struct Backup {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub alias: Option<String>,
     pub accounts: Vec<Account>,
     pub network: Network,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -132,6 +134,7 @@ impl Backup {
 
         Ok(Backup {
             name,
+            alias: None,
             accounts: vec![account],
             network: ctx.network,
             proprietary: serde_json::Map::new(),
@@ -157,13 +160,15 @@ impl Backup {
         let keys = wallet.keys();
 
         let network_dir = datadir.network_directory(network);
+        let mut wallet_alias = wallet.alias.clone();
         if let Some(settings) =
             WalletSettings::from_file(&network_dir, |settings| wallet.id() == settings.wallet_id())
                 .map_err(|_| Error::SettingsFromFile)?
         {
-            if let Ok(settings) = serde_json::to_value(settings) {
+            if let Ok(settings) = serde_json::to_value(&settings) {
                 proprietary.insert(SETTINGS_KEY.to_string(), settings);
             }
+            wallet_alias = settings.alias;
         };
 
         if let Ok(config) = serde_json::to_value((*config).clone()) {
@@ -245,6 +250,7 @@ impl Backup {
 
         Ok(Backup {
             name: Some(name),
+            alias: wallet_alias,
             accounts: vec![account],
             network,
             proprietary: serde_json::Map::new(),
@@ -477,6 +483,7 @@ mod test {
     fn backup_serde() {
         let mut backup = Backup {
             name: None,
+            alias: None,
             accounts: Vec::new(),
             network: Network::Signet,
             date: Some(0),

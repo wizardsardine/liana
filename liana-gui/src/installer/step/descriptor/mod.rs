@@ -29,11 +29,12 @@ use crate::{
 
 pub struct ImportDescriptor {
     network: Network,
-    imported_descriptor: form::Value<String>,
     wrong_network: bool,
     error: Option<String>,
     modal: Option<ExportModal>,
-    imported_backup: bool,
+    imported_descriptor: form::Value<String>,
+    imported_backup: Option<Backup>,
+    imported_aliases: Option<HashMap<Fingerprint, KeySetting>>,
 }
 
 impl ImportDescriptor {
@@ -44,7 +45,8 @@ impl ImportDescriptor {
             wrong_network: false,
             error: None,
             modal: None,
-            imported_backup: false,
+            imported_backup: None,
+            imported_aliases: None,
         }
     }
 
@@ -97,6 +99,12 @@ impl Step for ImportDescriptor {
     fn update(&mut self, _hws: &mut HardwareWallets, message: Message) -> Task<Message> {
         match message {
             Message::DefineDescriptor(message::DefineDescriptor::ImportDescriptor(desc)) => {
+                // If user manually change the descriptor, then the imported backup
+                // becomes invalid;
+                if desc != self.imported_descriptor.value {
+                    self.imported_backup = None;
+                    self.imported_aliases = None;
+                }
                 self.imported_descriptor.value = desc;
                 self.check_descriptor(self.network);
             }
@@ -104,21 +112,18 @@ impl Step for ImportDescriptor {
                 self.modal = None;
             }
             Message::ImportBackup => {
-                if !self.imported_backup {
-                    let modal = ExportModal::new(None, ImportExportType::WalletFromBackup);
-                    let launch = modal.launch(false);
-                    self.modal = Some(modal);
-                    return launch;
-                }
+                self.imported_backup = None;
+                let modal = ExportModal::new(None, ImportExportType::WalletFromBackup);
+                let launch = modal.launch(false);
+                self.modal = Some(modal);
+                return launch;
             }
             Message::ImportExport(ImportExportMessage::Progress(Progress::WalletFromBackup(r))) => {
                 let (descriptor, network, aliases, backup) = r;
                 if self.network == network {
-                    self.imported_backup = true;
+                    self.imported_backup = Some(backup);
                     self.imported_descriptor.value = descriptor.to_string();
-                    return Task::perform(async move { (aliases, backup) }, |(a, b)| {
-                        Message::WalletFromBackup((a, b))
-                    });
+                    self.imported_aliases = Some(aliases);
                 } else {
                     self.error = Some("Backup network do not match the selected network!".into());
                 }
@@ -141,10 +146,29 @@ impl Step for ImportDescriptor {
         // descriptor forms for import or creation cannot be both empty or filled.
         if let Some(desc) = self.check_descriptor(self.network) {
             ctx.descriptor = Some(desc);
-            true
         } else {
-            false
+            return false;
         }
+
+        if let Some(backup) = &self.imported_backup {
+            ctx.backup = Some(backup.clone());
+        }
+
+        if let Some(aliases) = &self.imported_aliases {
+            ctx.keys = aliases.clone();
+        }
+
+        if let Some(wallet_alias) = self.imported_backup.as_ref().and_then(|b| b.alias.clone()) {
+            ctx.wallet_alias = wallet_alias;
+        }
+        true
+    }
+
+    fn revert(&self, ctx: &mut Context) {
+        ctx.keys = HashMap::new();
+        ctx.backup = None;
+        ctx.descriptor = None;
+        ctx.wallet_alias = String::new();
     }
 
     fn view<'a>(
@@ -157,7 +181,7 @@ impl Step for ImportDescriptor {
             progress,
             email,
             &self.imported_descriptor,
-            self.imported_backup,
+            self.imported_backup.is_some(),
             self.wrong_network,
             self.error.as_ref(),
         );
