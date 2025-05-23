@@ -138,7 +138,7 @@ was updated by the poller.
 
 #### Liana GUI
 
-- The new Bitcoind 29.0 version is now downloaded by the GUI.
+- The new Bitcoind 28.0 version is now downloaded by the GUI.
 - Bitbox02 devices can now be part of a Taproot descriptor set-up if their firmware version is greater than or equal to 9.21.0.
 - The install process now includes examples of setups with fixed templates and explanatory descriptions to guide the user.
 - UI/UX of the GUI buttons was reworked to have a clear distinction between a primary and a secondary button.
