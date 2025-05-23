@@ -219,6 +219,7 @@ impl Step for DefineDescriptor {
                 return cmd;
             }
             Message::DefineDescriptor(message::DefineDescriptor::Reset) => {
+                hws.aliases.clear();
                 self.keys.clear();
                 self.paths.clear();
                 self.load_template(self.descriptor_template);
