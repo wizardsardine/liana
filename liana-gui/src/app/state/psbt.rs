@@ -92,9 +92,6 @@ pub struct PsbtState {
     pub warning: Option<Error>,
     pub labels_edited: LabelsEdited,
     pub modal: Option<PsbtModal>,
-    // NOTE: sign_modal is used to store state of SignModal
-    // when another modal is selected
-    pub sign_modal: Option<PsbtModal>,
 }
 
 impl PsbtState {
@@ -105,7 +102,6 @@ impl PsbtState {
             labels_edited: LabelsEdited::default(),
             warning: None,
             modal: None,
-            sign_modal: None,
             tx,
             saved,
         }
@@ -169,19 +165,26 @@ impl PsbtState {
                 }
             }
             Message::View(view::Message::Spend(view::SpendTxMessage::Cancel)) => {
-                if matches!(self.modal, Some(PsbtModal::Sign(_))) {
-                    // store SignModal state
-                    self.sign_modal = self.modal.take();
+                if let Some(PsbtModal::Sign(SignModal {
+                    display_modal,
+                    signing,
+                    ..
+                })) = &mut self.modal
+                {
+                    if !signing.is_empty() {
+                        *display_modal = false;
+                        return Task::none();
+                    }
                 }
+
                 self.modal = None;
             }
             Message::View(view::Message::Spend(view::SpendTxMessage::Delete)) => {
                 self.modal = Some(PsbtModal::Delete(DeleteModal::default()));
             }
             Message::View(view::Message::Spend(view::SpendTxMessage::Sign)) => {
-                if self.sign_modal.is_some() {
-                    // restore SignModal state
-                    self.modal = self.sign_modal.take();
+                if let Some(PsbtModal::Sign(SignModal { display_modal, .. })) = &mut self.modal {
+                    *display_modal = true;
                     return Task::none();
                 }
 
@@ -235,7 +238,15 @@ impl PsbtState {
             Message::Updated(Ok(_)) => {
                 self.saved = true;
                 if let Some(modal) = self.modal.as_mut() {
-                    return modal.as_mut().update(daemon.clone(), message, &mut self.tx);
+                    let cmd = modal.as_mut().update(daemon.clone(), message, &mut self.tx);
+                    // if modal is only the pending notif then we remove it once the psbt was
+                    // updated.
+                    if let PsbtModal::Sign(SignModal { display_modal, .. }) = modal {
+                        if !*display_modal {
+                            self.modal = None;
+                        }
+                    }
+                    return cmd;
                 }
             }
             Message::BroadcastModal(res) => match res {
@@ -275,6 +286,11 @@ impl PsbtState {
             &self.wallet.keys_aliases,
             self.labels_edited.cache(),
             cache.network,
+            if let Some(PsbtModal::Sign(m)) = &self.modal {
+                m.is_signing()
+            } else {
+                false
+            },
             self.warning.as_ref(),
         );
         if let Some(modal) = &self.modal {
@@ -466,6 +482,10 @@ impl SignModal {
             recovery_timelock,
         }
     }
+
+    pub fn is_signing(&self) -> bool {
+        !self.signing.is_empty()
+    }
 }
 
 impl Modal for SignModal {
@@ -487,6 +507,7 @@ impl Modal for SignModal {
                     ..
                 }) = self.hws.list.get(i)
                 {
+                    self.display_modal = false;
                     self.signing.insert(*fingerprint);
                     let psbt = tx.psbt.clone();
                     let fingerprint = *fingerprint;
@@ -506,6 +527,7 @@ impl Modal for SignModal {
                 self.signing.remove(&fingerprint);
                 match res {
                     Err(e) => {
+                        self.display_modal = true;
                         if !matches!(e, Error::HardwareWallet(async_hwi::Error::UserRefused)) {
                             self.error = Some(e)
                         }
@@ -561,7 +583,7 @@ impl Modal for SignModal {
         Task::none()
     }
     fn view<'a>(&'a self, content: Element<'a, view::Message>) -> Element<'a, view::Message> {
-        let content: Element<'a, view::Message> = toast::Manager::new(
+        let content = toast::Manager::new(
             content,
             view::psbt::sign_action_toasts(self.error.as_ref(), &self.hws.list, &self.signing),
         )

@@ -1018,6 +1018,11 @@ impl Step for SaveSpend {
             &psbt_state.wallet.keys_aliases,
             psbt_state.labels_edited.cache(),
             cache.network,
+            if let Some(psbt::PsbtModal::Sign(m)) = &psbt_state.modal {
+                m.is_signing()
+            } else {
+                false
+            },
             psbt_state.warning.as_ref(),
         );
         if let Some(modal) = &psbt_state.modal {

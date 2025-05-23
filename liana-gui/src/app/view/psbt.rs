@@ -46,6 +46,7 @@ pub fn psbt_view<'a>(
     key_aliases: &'a HashMap<Fingerprint, String>,
     labels_editing: &'a HashMap<String, form::Value<String>>,
     network: Network,
+    currently_signing: bool,
     warning: Option<&Error>,
 ) -> Element<'a, Message> {
     dashboard(
@@ -72,7 +73,12 @@ pub fn psbt_view<'a>(
                     }),
             )
             .push(spend_header(tx, labels_editing))
-            .push(spend_overview_view(tx, desc_info, key_aliases))
+            .push(spend_overview_view(
+                tx,
+                desc_info,
+                key_aliases,
+                currently_signing,
+            ))
             .push(
                 Column::new()
                     .spacing(20)
@@ -96,7 +102,11 @@ pub fn psbt_view<'a>(
                     .push(
                         button::secondary(None, "Delete")
                             .width(Length::Fixed(200.0))
-                            .on_press(Message::Spend(SpendTxMessage::Delete)),
+                            .on_press_maybe(if currently_signing {
+                                None
+                            } else {
+                                Some(Message::Spend(SpendTxMessage::Delete))
+                            }),
                     )
                     .width(Length::Fill)
             } else {
@@ -105,7 +115,11 @@ pub fn psbt_view<'a>(
                     .push(
                         button::secondary(None, "Save")
                             .width(Length::Fixed(150.0))
-                            .on_press(Message::Spend(SpendTxMessage::Save)),
+                            .on_press_maybe(if currently_signing {
+                                None
+                            } else {
+                                Some(Message::Spend(SpendTxMessage::Save))
+                            }),
                     )
                     .width(Length::Fill)
             })
@@ -321,6 +335,7 @@ pub fn spend_overview_view<'a>(
     tx: &'a SpendTx,
     desc_info: &'a LianaPolicy,
     key_aliases: &'a HashMap<Fingerprint, String>,
+    currently_signing: bool,
 ) -> Element<'a, Message> {
     Column::new()
         .spacing(20)
@@ -343,14 +358,22 @@ pub fn spend_overview_view<'a>(
                                                     Some(icon::backup_icon()),
                                                     "Export",
                                                 )
-                                                .on_press(Message::ExportPsbt),
+                                                .on_press_maybe(if currently_signing {
+                                                    None
+                                                } else {
+                                                    Some(Message::ExportPsbt)
+                                                }),
                                             )
                                             .push(
                                                 button::secondary(
                                                     Some(icon::restore_icon()),
                                                     "Import",
                                                 )
-                                                .on_press(Message::ImportPsbt),
+                                                .on_press_maybe(if currently_signing {
+                                                    None
+                                                } else {
+                                                    Some(Message::ImportPsbt)
+                                                }),
                                             ),
                                     )
                                     .align_y(Alignment::Center),
