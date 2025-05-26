@@ -1,6 +1,6 @@
 [package]
 name = "lianad"
-version = "10.0.0"
+version = "11.0.0"
 authors = ["Antoine Poinsot <darosior@protonmail.com>"]
 edition = "2018"
 repository = "https://github.com/wizardsardine/liana"
