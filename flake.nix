@@ -155,6 +155,7 @@
             xorg.libXcursor
             xorg.libXi
             xorg.libXrandr
+            toolchain
           ];
 
           LD_LIBRARY_PATH =
