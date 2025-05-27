@@ -18,7 +18,17 @@ pub mod utils;
 use lianad::Version;
 
 pub const VERSION: Version = Version {
-    major: 10,
+    major: 11,
     minor: 0,
     patch: 0,
 };
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn gui_version() {
+        // liana-gui major version should always be superior or equal to lianad version.
+        let lianad_version = lianad::VERSION.major;
+        assert!(super::VERSION.major >= lianad_version);
+    }
+}
