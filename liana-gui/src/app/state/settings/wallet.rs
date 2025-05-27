@@ -563,15 +563,7 @@ pub async fn update_aliases(
     wallet.keys_aliases = keys_aliases.into_iter().collect();
 
     daemon
-        .update_wallet_metadata(
-            if wallet_alias.is_some() && wallet.alias != wallet_alias {
-                wallet_alias
-            } else {
-                None
-            },
-            &wallet.keys_aliases,
-            &wallet.hardware_wallets,
-        )
+        .update_wallet_metadata(wallet_alias, &wallet.keys_aliases, &wallet.hardware_wallets)
         .await?;
 
     Ok(Arc::new(wallet))
