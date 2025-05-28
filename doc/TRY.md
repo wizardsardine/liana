@@ -193,3 +193,12 @@ You can simulate multiple wallets by using different data directories. For insta
 ./liana-gui --datadir test_charlie
  ```
 The directory will be created if it doesn't exist.
+
+### Building from source with `nix develop`
+
+If you have [nix](https://nixos.org) (the package manager) installed, you can easily
+build from source as follows:
+1. `git clone https://github.com/wizardsardine/liana.git && cd liana`
+2. `nix develop` which will put you into a development shell with all dependencies available
+3. `cargo build --release` which will build `lianad`, `liana-cli`, and `liana-gui`.
+4. `target/release/liana-gui --datadir test_alice` will load up the gui and create/use `./test_alice` as the data directory for liana.
