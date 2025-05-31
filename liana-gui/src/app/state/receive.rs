@@ -308,6 +308,7 @@ impl State for ReceivePanel {
         &mut self,
         daemon: Arc<dyn Daemon + Sync + Send>,
         wallet: Arc<Wallet>,
+        _reset: bool,
     ) -> Task<Message> {
         let data_dir = self.data_dir.clone();
         *self = Self::new(data_dir, wallet);
