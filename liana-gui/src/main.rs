@@ -686,8 +686,20 @@ fn main() -> Result<(), Box<dyn Error>> {
         fonts: font::load(),
     };
 
+    let global_config_path = GlobalSettings::datadir(&config.liana_directory);
+    let initial_size = if let Ok(Some(GlobalSettings {
+        window_config: Some(WindowConfig { width, height }),
+        ..
+    })) = GlobalSettings::load(&global_config_path)
+    {
+        Size { width, height }
+    } else {
+        iced::window::Settings::default().size
+    };
+
     #[allow(unused_mut)]
     let mut window_settings = iced::window::Settings {
+        size: initial_size,
         icon: Some(image::liana_app_icon()),
         position: iced::window::Position::Default,
         min_size: Some(Size {
