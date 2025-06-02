@@ -435,6 +435,10 @@ impl App {
             content
         }
     }
+
+    pub fn datadir_path(&self) -> &LianaDirectory {
+        &self.cache.datadir_path
+    }
 }
 
 fn new_recovery_panel(wallet: Arc<Wallet>, cache: &Cache) -> CreateSpendPanel {

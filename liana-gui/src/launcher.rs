@@ -43,7 +43,7 @@ pub enum State {
 pub struct Launcher {
     state: State,
     network: Network,
-    datadir_path: LianaDirectory,
+    pub datadir_path: LianaDirectory,
     error: Option<String>,
     delete_wallet_modal: Option<DeleteWalletModal>,
 }
