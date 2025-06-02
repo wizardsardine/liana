@@ -387,8 +387,53 @@ pub mod global {
     pub const DEFAULT_FILE_NAME: &str = "global_settings.json";
 
     #[derive(Debug, Deserialize, Serialize)]
+    pub struct WindowConfig {
+        pub width: f32,
+        pub height: f32,
+    }
+
+    #[derive(Debug, Deserialize, Serialize, Default)]
     pub struct GlobalSettings {
+        #[serde(skip)]
         pub bitbox: Option<BitboxSettings>,
+        pub window_config: Option<WindowConfig>,
+    }
+
+    impl GlobalSettings {
+        pub fn path(global_datadir: &LianaDirectory) -> PathBuf {
+            global_datadir.path().join(DEFAULT_FILE_NAME)
+        }
+        pub fn load(path: &PathBuf) -> Result<Option<GlobalSettings>, String> {
+            if !path.exists() {
+                return Ok(None);
+            }
+
+            let mut file = std::fs::File::open(path).map_err(|e| e.to_string())?;
+
+            let mut contents = String::new();
+            file.read_to_string(&mut contents)
+                .map_err(|e| e.to_string())?;
+
+            let settings =
+                serde_json::from_str::<GlobalSettings>(&contents).map_err(|e| e.to_string())?;
+            Ok(Some(settings))
+        }
+
+        pub fn load_window_config(path: &PathBuf) -> Option<WindowConfig> {
+            Self::load(path)
+                .ok()
+                .flatten()
+                .and_then(|s| s.window_config)
+        }
+
+        pub fn to_file(&self, path: &PathBuf) -> Result<(), String> {
+            let mut file = std::fs::File::create(path).map_err(|e| e.to_string())?;
+
+            let contents = serde_json::to_string_pretty(&self).map_err(|e| e.to_string())?;
+            file.write_all(contents.as_bytes())
+                .map_err(|e| e.to_string())?;
+            Ok(())
+        }
     }
 
     #[derive(Debug, Deserialize, Serialize)]
@@ -407,27 +452,16 @@ pub mod global {
         /// in the provided directory.
         pub fn new(global_datadir: &LianaDirectory) -> PersistedBitboxNoiseConfig {
             PersistedBitboxNoiseConfig {
-                file_path: global_datadir.path().join(DEFAULT_FILE_NAME),
+                file_path: GlobalSettings::path(global_datadir),
             }
         }
     }
 
     impl NoiseConfig for PersistedBitboxNoiseConfig {
-        fn read_config(&self) -> Result<NoiseConfigData, async_hwi::bitbox::api::ConfigError> {
-            if !self.file_path.exists() {
-                return Ok(NoiseConfigData::default());
-            }
-
-            let mut file =
-                std::fs::File::open(&self.file_path).map_err(|e| ConfigError(e.to_string()))?;
-
-            let mut contents = String::new();
-            file.read_to_string(&mut contents)
-                .map_err(|e| ConfigError(e.to_string()))?;
-
-            let settings = serde_json::from_str::<GlobalSettings>(&contents)
-                .map_err(|e| ConfigError(e.to_string()))?;
-
+        fn read_config(&self) -> Result<NoiseConfigData, ConfigError> {
+            let settings = GlobalSettings::load(&self.file_path)
+                .map_err(ConfigError)?
+                .unwrap_or_default();
             Ok(settings
                 .bitbox
                 .map(|s| s.noise_config)
@@ -435,40 +469,13 @@ pub mod global {
         }
 
         fn store_config(&self, conf: &NoiseConfigData) -> Result<(), ConfigError> {
-            let data = if self.file_path.exists() {
-                let mut file =
-                    std::fs::File::open(&self.file_path).map_err(|e| ConfigError(e.to_string()))?;
-
-                let mut contents = String::new();
-                file.read_to_string(&mut contents)
-                    .map_err(|e| ConfigError(e.to_string()))?;
-
-                let mut settings = serde_json::from_str::<GlobalSettings>(&contents)
-                    .map_err(|e| ConfigError(e.to_string()))?;
-
-                settings.bitbox = Some(BitboxSettings {
-                    noise_config: conf.clone(),
-                });
-
-                serde_json::to_string_pretty(&settings).map_err(|e| ConfigError(e.to_string()))?
-            } else {
-                serde_json::to_string_pretty(&GlobalSettings {
-                    bitbox: Some(BitboxSettings {
-                        noise_config: conf.clone(),
-                    }),
-                })
-                .map_err(|e| ConfigError(e.to_string()))?
-            };
-
-            let mut file = std::fs::OpenOptions::new()
-                .write(true)
-                .create(true)
-                .truncate(true)
-                .open(&self.file_path)
-                .map_err(|e| ConfigError(e.to_string()))?;
-
-            file.write_all(data.as_bytes())
-                .map_err(|e| ConfigError(e.to_string()))
+            let mut cfg = GlobalSettings::load(&self.file_path)
+                .map_err(ConfigError)?
+                .unwrap_or_default();
+            cfg.bitbox = Some(BitboxSettings {
+                noise_config: conf.clone(),
+            });
+            cfg.to_file(&self.file_path).map_err(ConfigError)
         }
     }
 }
