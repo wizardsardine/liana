@@ -387,7 +387,7 @@ pub mod global {
     pub const DEFAULT_FILE_NAME: &str = "global_settings.json";
 
     #[derive(Debug, Deserialize, Serialize)]
-    pub struct Settings {
+    pub struct GlobalSettings {
         pub bitbox: Option<BitboxSettings>,
     }
 
@@ -425,7 +425,7 @@ pub mod global {
             file.read_to_string(&mut contents)
                 .map_err(|e| ConfigError(e.to_string()))?;
 
-            let settings = serde_json::from_str::<Settings>(&contents)
+            let settings = serde_json::from_str::<GlobalSettings>(&contents)
                 .map_err(|e| ConfigError(e.to_string()))?;
 
             Ok(settings
@@ -443,7 +443,7 @@ pub mod global {
                 file.read_to_string(&mut contents)
                     .map_err(|e| ConfigError(e.to_string()))?;
 
-                let mut settings = serde_json::from_str::<Settings>(&contents)
+                let mut settings = serde_json::from_str::<GlobalSettings>(&contents)
                     .map_err(|e| ConfigError(e.to_string()))?;
 
                 settings.bitbox = Some(BitboxSettings {
@@ -452,7 +452,7 @@ pub mod global {
 
                 serde_json::to_string_pretty(&settings).map_err(|e| ConfigError(e.to_string()))?
             } else {
-                serde_json::to_string_pretty(&Settings {
+                serde_json::to_string_pretty(&GlobalSettings {
                     bitbox: Some(BitboxSettings {
                         noise_config: conf.clone(),
                     }),
