@@ -107,6 +107,19 @@ enum State {
     App(App),
 }
 
+impl State {
+    #[allow(unused)]
+    pub fn datadir_path(&self) -> &LianaDirectory {
+        match self {
+            State::Launcher(launcher) => &launcher.datadir_path,
+            State::Installer(installer) => &installer.datadir,
+            State::Loader(loader) => &loader.datadir_path,
+            State::Login(login) => &login.datadir,
+            State::App(app) => app.datadir_path(),
+        }
+    }
+}
+
 #[derive(Debug)]
 pub enum Key {
     Tab(bool),
