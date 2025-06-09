@@ -502,7 +502,7 @@ checksum = "8c3c1a368f70d6cf7302d78f8f7093da241fb8e8807c05cc9e51a125895a6d5b"
 [[package]]
 name = "bdk_chain"
 version = "0.16.0"
-source = "git+https://github.com/wizardsardine/bdk?branch=release/1.0.0-alpha.13#9dd499ace90a66775dae9c6affbb9bcbf5e09bbd"
+source = "git+https://github.com/wizardsardine/bdk?branch=release/1.0.0-alpha.13#8936e828861f0f32500c4156b6534238e5154b0f"
 dependencies = [
  "bitcoin",
  "miniscript",
@@ -517,7 +517,7 @@ checksum = "d2e57e4db8b917d554a0eb142be5267bbc88d787c3346c8dc0590fbe76be68bd"
 [[package]]
 name = "bdk_electrum"
 version = "0.15.0"
-source = "git+https://github.com/wizardsardine/bdk?branch=release/1.0.0-alpha.13#9dd499ace90a66775dae9c6affbb9bcbf5e09bbd"
+source = "git+https://github.com/wizardsardine/bdk?branch=release/1.0.0-alpha.13#8936e828861f0f32500c4156b6534238e5154b0f"
 dependencies = [
  "bdk_chain",
  "electrum-client",
@@ -1485,9 +1485,9 @@ checksum = "60b1af1c220855b6ceac025d3f6ecdd2b7c4894bfe9cd9bda4fbb4bc7c0d4cf0"
 
 [[package]]
 name = "electrum-client"
-version = "0.21.0"
+version = "0.23.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7a0bd443023f9f5c4b7153053721939accc7113cbdf810a024434eed454b3db1"
+checksum = "5ed9a037f88aa61d3627a20af1c68fa0405ed5a16d9a0d9dc0e66adcda44afbe"
 dependencies = [
  "bitcoin",
  "byteorder",
