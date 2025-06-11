@@ -401,7 +401,11 @@ impl App {
         let network = cfg.bitcoin_config.network;
         let daemon = EmbeddedDaemon::start(cfg)?;
         self.daemon = Arc::new(daemon);
-        let mut daemon_config_path = datadir_path.network_directory(network).path().to_path_buf();
+        let mut daemon_config_path = datadir_path
+            .network_directory(network)
+            .lianad_data_directory(&self.wallet.id())
+            .path()
+            .to_path_buf();
         daemon_config_path.push("daemon.toml");
 
         let content =
