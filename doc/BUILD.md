@@ -65,11 +65,18 @@ Some package managers distribute a version of `rustup`. Failing that, you can al
 "official" [installation method of `rustup`](https://www.rust-lang.org/tools/install) (that is, a
 `curl`-`sh` pipe).
 
+### With `nix develop`
+
+If you already have [nix](https://nixos.org)(the package manager), then getting to a development
+shell with the necessary build dependencies is as easy as checking out this repository
+and then running `nix develop`.
+
 
 ## Building the project
 
 To build the whole wallet including the GUI, you'll need to install its [build and runtime
-dependencies](https://github.com/wizardsardine/liana/tree/master/liana-gui#dependencies) first.
+dependencies](https://github.com/wizardsardine/liana/tree/master/liana-gui#dependencies) first
+(unless you used the `nix develop` step above).
 
 Then run:
 
