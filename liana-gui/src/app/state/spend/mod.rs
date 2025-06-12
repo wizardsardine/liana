@@ -186,6 +186,7 @@ impl State for CreateSpendPanel {
         &mut self,
         daemon: Arc<dyn Daemon + Sync + Send>,
         wallet: Arc<Wallet>,
+        _reset: bool,
     ) -> Task<Message> {
         for step in self.steps.iter_mut() {
             step.reload_wallet(wallet.clone());
