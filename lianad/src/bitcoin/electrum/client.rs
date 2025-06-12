@@ -56,9 +56,13 @@ impl Client {
     /// Create a new client and perform sanity checks.
     pub fn new(electrum_config: &config::ElectrumConfig) -> Result<Self, Error> {
         // First use a dummy config to check connectivity (no retries, short timeout).
-        let dummy_config = Config::builder().retry(0).timeout(Some(3)).build();
+        let dummy_config = Config::builder()
+            .retry(0)
+            .validate_domain(electrum_config.validate_domain)
+            .timeout(Some(3))
+            .build();
         // Try to ping the server.
-        bdk_electrum::electrum_client::Client::from_config(&electrum_config.addr, dummy_config)
+        electrum_client::Client::from_config(&electrum_config.addr, dummy_config)
             .and_then(|dummy_client| dummy_client.ping())
             .map_err(Error::Server)?;
 
@@ -66,12 +70,13 @@ impl Client {
         let config = Config::builder()
             .retry(RETRY_LIMIT)
             .timeout(Some(RPC_SOCKET_TIMEOUT))
+            .validate_domain(electrum_config.validate_domain)
             .build();
-        let client =
-            bdk_electrum::electrum_client::Client::from_config(&electrum_config.addr, config)
-                .map_err(Error::Server)?;
-        let bdk_electrum_client = BdkElectrumClient::new(client);
-        Ok(Self(bdk_electrum_client))
+
+        let inner = electrum_client::Client::from_config(&electrum_config.addr, config)
+            .map_err(Error::Server)?;
+        let inner = BdkElectrumClient::new(inner);
+        Ok(Client(inner))
     }
 
     pub fn chain_tip(&self) -> Result<BlockChainTip, Error> {
