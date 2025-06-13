@@ -187,7 +187,7 @@ impl Loader {
     ) -> Task<Message> {
         match res {
             Ok((daemon, info)) => {
-                if self.gui_config.start_internal_bitcoind {
+                if self.start_bitcoind() {
                     warn!("Lianad is external, gui will not start internal bitcoind");
                 }
                 return self.maybe_skip_syncing(daemon, info);
