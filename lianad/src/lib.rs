@@ -71,19 +71,17 @@ pub fn setup_panic_hook() {
 pub struct Version {
     pub major: u32,
     pub minor: u32,
-    pub patch: u32,
 }
 
 impl fmt::Display for Version {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}.{}.{}-dev", self.major, self.minor, self.patch)
+        write!(f, "{}.{}-dev", self.major, self.minor)
     }
 }
 
 pub const VERSION: Version = Version {
     major: 11,
     minor: 0,
-    patch: 0,
 };
 
 #[derive(Debug)]
