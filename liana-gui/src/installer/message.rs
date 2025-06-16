@@ -102,6 +102,8 @@ pub enum SelectBackend {
     // Commands messages
     OTPRequested(Result<(AuthClient, String), Error>),
     OTPResent(Result<(), Error>),
+    ExistingConnectAccounts(Vec<String>),
+    SelectConnectAccount(String),
     Connected(Result<context::RemoteBackend, Error>),
 }
 
