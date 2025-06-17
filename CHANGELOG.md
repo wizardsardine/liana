@@ -1,5 +1,12 @@
 # Liana daemon and GUI release notes
 
+## 11.1
+
+This release adds some fixes for the liana-gui software:
+
+- fix incorrect path to daemon.toml in liana-gui settings
+- fix checks for whether wallet uses managed bitcoind
+
 ## 11.0
 
 This release adds some important new features:

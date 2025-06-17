@@ -19,7 +19,7 @@ use lianad::Version;
 
 pub const VERSION: Version = Version {
     major: 11,
-    minor: 0,
+    minor: 1,
 };
 
 #[cfg(test)]
