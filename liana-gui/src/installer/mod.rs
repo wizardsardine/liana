@@ -137,7 +137,8 @@ impl Installer {
                     BackupDescriptor::default().into(),
                     RegisterDescriptor::new_create_wallet().into(),
                     ChooseBackend::new(network).into(),
-                    RemoteBackendLogin::new(network).into(),
+                    RemoteBackendLogin::new(network, destination_path.network_directory(network))
+                        .into(),
                     SelectBitcoindTypeStep::new().into(),
                     InternalBitcoindStep::new(&context.liana_directory).into(),
                     DefineNode::default().into(),
@@ -147,7 +148,8 @@ impl Installer {
                 UserFlow::ShareXpubs => vec![ShareXpubs::new(network, signer.clone()).into()],
                 UserFlow::AddWallet => vec![
                     ChooseBackend::new(network).into(),
-                    RemoteBackendLogin::new(network).into(),
+                    RemoteBackendLogin::new(network, destination_path.network_directory(network))
+                        .into(),
                     ImportRemoteWallet::new(network).into(),
                     ImportDescriptor::new(network).into(),
                     RecoverMnemonic::default().into(),

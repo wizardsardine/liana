@@ -7,6 +7,7 @@ use liana_ui::{component::form, widget::Element};
 
 use crate::{
     daemon::DaemonError,
+    dir::NetworkDirectory,
     hw::HardwareWallets,
     installer::{
         context::{self, Context, RemoteBackend},
@@ -18,6 +19,7 @@ use crate::{
         self,
         auth::{AuthClient, AuthError},
         backend::{api, BackendClient},
+        cache,
     },
 };
 
@@ -97,6 +99,8 @@ pub enum ConnectionStep {
 
 pub struct RemoteBackendLogin {
     network: Network,
+    network_dir: NetworkDirectory,
+    connect_accounts: Vec<String>,
     processing: bool,
     step: ConnectionStep,
     connection_error: Option<Error>,
@@ -104,9 +108,11 @@ pub struct RemoteBackendLogin {
 }
 
 impl RemoteBackendLogin {
-    pub fn new(network: Network) -> Self {
+    pub fn new(network: Network, network_dir: NetworkDirectory) -> Self {
         Self {
             network,
+            network_dir,
+            connect_accounts: Vec::new(),
             step: ConnectionStep::EnterEmail {
                 email: form::Value::default(),
             },
@@ -139,6 +145,21 @@ impl Step for RemoteBackendLogin {
                         )
                         .is_ok();
                     email.value = value;
+                }
+                Message::SelectBackend(message::SelectBackend::ExistingConnectAccounts(
+                    accounts,
+                )) => {
+                    self.connect_accounts = accounts;
+                }
+                Message::SelectBackend(message::SelectBackend::SelectConnectAccount(email)) => {
+                    return Task::perform(
+                        connect_with_existing_account(
+                            email,
+                            self.network,
+                            self.network_dir.clone(),
+                        ),
+                        |msg| Message::SelectBackend(message::SelectBackend::Connected(msg)),
+                    )
                 }
                 Message::SelectBackend(message::SelectBackend::RequestOTP) => {
                     if email.value.is_empty() {
@@ -186,6 +207,32 @@ impl Step for RemoteBackendLogin {
                         }
                         Err(e) => {
                             self.connection_error = Some(e);
+                        }
+                    }
+                }
+                Message::SelectBackend(message::SelectBackend::Connected(res)) => {
+                    self.processing = false;
+                    match res {
+                        Ok(remote_backend) => {
+                            self.step = ConnectionStep::Connected {
+                                email: remote_backend
+                                    .user_email()
+                                    .expect("Gui connected to Liana backend")
+                                    .to_string(),
+                                remote_backend,
+                            };
+                            return Task::perform(async move {}, |_| Message::Next);
+                        }
+                        Err(e) => {
+                            if let Error::Auth(AuthError { http_status, .. }) = e {
+                                if http_status == Some(403) {
+                                    self.auth_error = Some("Token has expired or is invalid")
+                                } else {
+                                    self.connection_error = Some(e);
+                                }
+                            } else {
+                                self.connection_error = Some(e);
+                            }
                         }
                     }
                 }
@@ -243,7 +290,6 @@ impl Step for RemoteBackendLogin {
                         .map(Message::SelectBackend);
                     }
                 }
-
                 Message::SelectBackend(message::SelectBackend::Connected(res)) => {
                     self.processing = false;
                     match res {
@@ -281,6 +327,27 @@ impl Step for RemoteBackendLogin {
         Task::none()
     }
 
+    fn load(&self) -> Task<Message> {
+        if let Ok(cache) = cache::ConnectCache::from_file(&self.network_dir) {
+            Task::perform(
+                async move {
+                    cache
+                        .accounts
+                        .into_iter()
+                        .map(|a| a.email)
+                        .collect::<Vec<String>>()
+                },
+                |accounts| {
+                    Message::SelectBackend(message::SelectBackend::ExistingConnectAccounts(
+                        accounts,
+                    ))
+                },
+            )
+        } else {
+            Task::none()
+        }
+    }
+
     fn apply(&mut self, ctx: &mut Context) -> bool {
         if let ConnectionStep::Connected { remote_backend, .. } = &self.step {
             ctx.remote_backend = remote_backend.clone();
@@ -310,6 +377,7 @@ impl Step for RemoteBackendLogin {
                     email,
                     self.processing,
                     self.connection_error.as_ref(),
+                    &self.connect_accounts,
                     self.auth_error,
                 ),
                 ConnectionStep::EnterOtp { email, otp, .. } => view::connection_step_enter_otp(
@@ -328,6 +396,36 @@ impl Step for RemoteBackendLogin {
             },
         )
     }
+}
+
+pub async fn connect_with_existing_account(
+    email: String,
+    network: Network,
+    network_dir: NetworkDirectory,
+) -> Result<context::RemoteBackend, Error> {
+    let config = client::get_service_config(network).await.map_err(|e| {
+        if e.status() == Some(reqwest::StatusCode::NOT_FOUND) {
+            Error::Unexpected("Remote servers are unresponsive".to_string())
+        } else {
+            Error::Unexpected(e.to_string())
+        }
+    })?;
+
+    let client = AuthClient::new(config.auth_api_url, config.auth_api_public_key, email);
+
+    let mut tokens = cache::Account::from_cache(&network_dir, &client.email)
+        .map_err(|_| Error::Unexpected("Account must be in cache".to_string()))?
+        .ok_or(Error::Unexpected("Account must be in cache".to_string()))?
+        .tokens;
+
+    if tokens.expires_at < chrono::Utc::now().timestamp() {
+        tokens = cache::update_connect_cache(&network_dir, &tokens, &client, true)
+            .await
+            .map_err(|e| Error::Unexpected(format!("Failed to update cache: {}", e)))?;
+    }
+
+    let client = BackendClient::connect(client, config.backend_api_url, tokens, network).await?;
+    Ok(RemoteBackend::WithoutWallet(client))
 }
 
 pub async fn connect(

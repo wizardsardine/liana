@@ -2102,18 +2102,40 @@ pub fn login(progress: (usize, usize), connection_step: Element<Message>) -> Ele
 }
 
 pub fn connection_step_enter_email<'a>(
-    email: &form::Value<String>,
+    email: &'a form::Value<String>,
     processing: bool,
-    connection_error: Option<&Error>,
-    auth_error: Option<&'static str>,
+    connection_error: Option<&'a Error>,
+    accounts: &'a [String],
+    auth_error: Option<&'a str>,
 ) -> Element<'a, Message> {
     Column::new()
         .spacing(20)
+        .push_maybe(if !accounts.is_empty() {
+            Some(text("Choose an account you are already using:"))
+        } else {
+            None
+        })
+        .push(
+            accounts
+                .iter()
+                .fold(Row::new().spacing(10), |row, a| {
+                    row.push(
+                        Button::new(Container::new(p1_regular(a)).padding(5))
+                            .style(theme::button::secondary)
+                            .on_press(Message::SelectBackend(
+                                message::SelectBackend::SelectConnectAccount(a.clone()),
+                            )),
+                    )
+                })
+                .wrap(),
+        )
         .push_maybe(connection_error.map(|e| text(e.to_string()).style(theme::text::warning)))
         .push_maybe(auth_error.map(|e| text(e.to_string()).style(theme::text::warning)))
-        .push(text(
-            "Enter the email you want to associate with the wallet:",
-        ))
+        .push(if accounts.is_empty() {
+            text("Enter an email you want to associate with the wallet:")
+        } else {
+            text("Or enter a new email you want to associate with the wallet:")
+        })
         .push(
             form::Form::new_trimmed("email", email, |msg| {
                 Message::SelectBackend(message::SelectBackend::EmailEdited(msg))
@@ -2123,13 +2145,15 @@ pub fn connection_step_enter_email<'a>(
             .warning("Email is not valid"),
         )
         .push(
-            button::secondary(None, "Next")
-                .on_press_maybe(if processing || !email.valid {
-                    None
-                } else {
-                    Some(Message::SelectBackend(message::SelectBackend::RequestOTP))
-                })
-                .width(Length::Fixed(200.0)),
+            Row::new().push(Space::with_width(Length::Fill)).push(
+                button::secondary(None, "Send token")
+                    .on_press_maybe(if processing || !email.valid {
+                        None
+                    } else {
+                        Some(Message::SelectBackend(message::SelectBackend::RequestOTP))
+                    })
+                    .width(Length::Fixed(200.0)),
+            ),
         )
         .into()
 }

@@ -27,19 +27,8 @@ impl ConnectCache {
             })
         }
     }
-}
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct Account {
-    pub email: String,
-    pub tokens: AccessTokenResponse,
-}
-
-impl Account {
-    pub fn from_cache(
-        network_dir: &NetworkDirectory,
-        email: &str,
-    ) -> Result<Option<Self>, ConnectCacheError> {
+    pub fn from_file(network_dir: &NetworkDirectory) -> Result<Self, ConnectCacheError> {
         let mut path = network_dir.path().to_path_buf();
         path.push(CONNECT_CACHE_FILENAME);
 
@@ -53,6 +42,21 @@ impl Account {
                     ConnectCacheError::ReadingFile(format!("Parsing settings file: {}", e))
                 })
             })
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct Account {
+    pub email: String,
+    pub tokens: AccessTokenResponse,
+}
+
+impl Account {
+    pub fn from_cache(
+        network_dir: &NetworkDirectory,
+        email: &str,
+    ) -> Result<Option<Self>, ConnectCacheError> {
+        ConnectCache::from_file(network_dir)
             .map(|cache| cache.accounts.into_iter().find(|c| c.email == email))
     }
 }
