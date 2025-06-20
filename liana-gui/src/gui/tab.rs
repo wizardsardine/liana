@@ -2,7 +2,6 @@ use std::{collections::HashMap, sync::Arc};
 
 use iced::{Subscription, Task};
 use tracing::{error, info};
-use tracing_subscriber::filter::LevelFilter;
 extern crate serde;
 extern crate serde_json;
 
@@ -24,7 +23,6 @@ use crate::{
     installer::{self, Installer},
     launcher::{self, Launcher},
     loader::{self, Loader},
-    logger::Logger,
     services::connect::{
         client::backend::{api, BackendWalletClient},
         login,
@@ -62,12 +60,7 @@ impl Tab {
         )
     }
 
-    pub fn update(
-        &mut self,
-        message: Message,
-        logger: &Logger,
-        log_level: Option<LevelFilter>,
-    ) -> Task<Message> {
+    pub fn update(&mut self, message: Message) -> Task<Message> {
         match (&mut self.0, message) {
             (State::Launcher(l), Message::Launch(msg)) => match *msg {
                 launcher::Message::Install(datadir, network, init) => {
@@ -83,21 +76,11 @@ impl Tab {
                             );
                         }
                     }
-                    logger.set_installer_mode(
-                        datadir.clone(),
-                        log_level.unwrap_or(LevelFilter::INFO),
-                    );
-
                     let (install, command) = Installer::new(datadir, network, None, init);
                     self.0 = State::Installer(Box::new(install));
                     command.map(|msg| Message::Install(Box::new(msg)))
                 }
                 launcher::Message::Run(datadir_path, cfg, network, settings) => {
-                    logger.set_running_mode(
-                        datadir_path.clone(),
-                        network,
-                        log_level.unwrap_or_else(|| cfg.log_level().unwrap_or(LevelFilter::INFO)),
-                    );
                     if settings.remote_backend_auth.is_some() {
                         let (login, command) =
                             login::LianaLiteLogin::new(datadir_path, network, settings);
@@ -136,12 +119,6 @@ impl Tab {
                             .join(app::config::DEFAULT_FILE_NAME),
                     )
                     .expect("A gui configuration file must be present");
-                    logger.set_running_mode(
-                        l.datadir.clone(),
-                        l.network,
-                        config.log_level().unwrap_or(LevelFilter::INFO),
-                    );
-
                     let (app, command) = create_app_with_remote_backend(
                         l.settings.clone(),
                         backend_client,
@@ -158,7 +135,7 @@ impl Tab {
                 _ => l.update(*msg).map(|msg| Message::Login(Box::new(msg))),
             },
             (State::Installer(i), Message::Install(msg)) => {
-                if let installer::Message::Exit(settings, internal_bitcoind, remove_log) = *msg {
+                if let installer::Message::Exit(settings, internal_bitcoind) = *msg {
                     if settings.remote_backend_auth.is_some() {
                         let (login, command) =
                             login::LianaLiteLogin::new(i.datadir.clone(), i.network, *settings);
@@ -172,16 +149,6 @@ impl Tab {
                                 .join(app::config::DEFAULT_FILE_NAME),
                         )
                         .expect("A gui configuration file must be present");
-
-                        logger.set_running_mode(
-                            i.datadir.clone(),
-                            i.network,
-                            log_level
-                                .unwrap_or_else(|| cfg.log_level().unwrap_or(LevelFilter::INFO)),
-                        );
-                        if remove_log {
-                            logger.remove_install_log_file(i.datadir.clone());
-                        }
 
                         let (loader, command) = Loader::new(
                             i.datadir.clone(),

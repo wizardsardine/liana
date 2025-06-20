@@ -18,9 +18,10 @@ use crate::{dir::LianaDirectory, logger::Logger, VERSION};
 
 pub struct GUI {
     state: tab::Tab,
-    logger: Logger,
+    // We may change the directory of log outputs later
+    _logger: Logger,
     // if set up, it overrides the level filter of the logger.
-    log_level: Option<LevelFilter>,
+    _log_level: Option<LevelFilter>,
 }
 
 #[derive(Debug)]
@@ -62,14 +63,18 @@ impl GUI {
 
     pub fn new((config, log_level): (Config, Option<LevelFilter>)) -> (GUI, Task<Message>) {
         let logger = Logger::setup(log_level.unwrap_or(LevelFilter::INFO));
+        logger.set_running_mode(
+            config.liana_directory.clone(),
+            log_level.unwrap_or_else(|| log_level.unwrap_or(LevelFilter::INFO)),
+        );
         let mut cmds = vec![Task::perform(ctrl_c(), |_| Message::CtrlC)];
         let (state, cmd) = tab::Tab::new(config.liana_directory, config.network);
         cmds.push(cmd.map(Message::Tab));
         (
             Self {
                 state,
-                logger,
-                log_level,
+                _logger: logger,
+                _log_level: log_level,
             },
             Task::batch(cmds),
         )
@@ -90,10 +95,7 @@ impl GUI {
                     focus_next()
                 }
             }
-            Message::Tab(msg) => self
-                .state
-                .update(msg, &self.logger, self.log_level)
-                .map(Message::Tab),
+            Message::Tab(msg) => self.state.update(msg).map(Message::Tab),
             _ => Task::none(),
         }
     }
