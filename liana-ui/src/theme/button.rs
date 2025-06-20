@@ -145,3 +145,14 @@ fn button(p: &Button, status: Status) -> Style {
         }
     }
 }
+
+pub fn tab(theme: &Theme, status: Status) -> Style {
+    let mut style = button(&theme.colors.buttons.secondary, status);
+    style.border.radius = 0.0.into();
+    style.border.width = 0.0;
+    style
+}
+
+pub fn tab_active(theme: &Theme, _status: Status) -> Style {
+    tab(theme, Status::Pressed)
+}

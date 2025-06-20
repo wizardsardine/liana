@@ -2385,6 +2385,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "iced_aw"
+version = "0.12.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "582c517a94ce3205da98e9c10b26bb71aa36b7d7d084441d826dc912711d1bac"
+dependencies = [
+ "cfg-if",
+ "chrono",
+ "getrandom 0.3.1",
+ "iced",
+ "iced_fonts",
+ "itertools 0.14.0",
+ "num-format",
+ "num-traits",
+ "web-time",
+]
+
+[[package]]
 name = "iced_core"
 version = "0.13.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2401,6 +2418,15 @@ dependencies = [
  "smol_str",
  "thiserror 1.0.69",
  "web-time",
+]
+
+[[package]]
+name = "iced_fonts"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "df7deb0800a850ee25c8a42559f72c0f249e577feb3aad37b9b65dc1e517e52a"
+dependencies = [
+ "iced_core",
 ]
 
 [[package]]
@@ -2782,6 +2808,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "itertools"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2b192c782037fadd9cfa75548310488aabdbf3d2da73885b31bd0abd03351285"
+dependencies = [
+ "either",
+]
+
+[[package]]
 name = "itoa"
 version = "1.0.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3020,6 +3055,7 @@ dependencies = [
  "flate2",
  "hex",
  "iced",
+ "iced_aw",
  "iced_runtime",
  "jsonrpc 0.12.1",
  "liana",
@@ -3047,6 +3083,7 @@ dependencies = [
  "bitcoin",
  "chrono",
  "iced",
+ "iced_aw",
  "iced_core",
  "iced_runtime",
  "unicode-segmentation",
@@ -3510,6 +3547,16 @@ checksum = "a5e44f723f1133c9deac646763579fdb3ac745e418f2a7af9cd0c431da1f20b9"
 dependencies = [
  "num-integer",
  "num-traits",
+]
+
+[[package]]
+name = "num-format"
+version = "0.4.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a652d9771a63711fd3c3deb670acfbe5c30a4072e664d7a3bf5a9e1056ac72c3"
+dependencies = [
+ "arrayvec",
+ "itoa",
 ]
 
 [[package]]

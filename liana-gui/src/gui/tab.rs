@@ -29,14 +29,25 @@ use crate::{
     },
 };
 
-pub struct Tab(pub State);
-
 pub enum State {
     Launcher(Box<Launcher>),
     Installer(Box<Installer>),
     Loader(Box<Loader>),
     Login(Box<login::LianaLiteLogin>),
     App(App),
+}
+
+impl State {
+    pub fn new(
+        directory: LianaDirectory,
+        network: Option<bitcoin::Network>,
+    ) -> (Self, Task<Message>) {
+        let (launcher, command) = Launcher::new(directory, network);
+        (
+            State::Launcher(Box::new(launcher)),
+            command.map(|msg| Message::Launch(Box::new(msg))),
+        )
+    }
 }
 
 #[derive(Debug)]
@@ -48,20 +59,28 @@ pub enum Message {
     Login(Box<login::Message>),
 }
 
+pub struct Tab {
+    pub id: usize,
+    pub state: State,
+}
+
 impl Tab {
-    pub fn new(
-        directory: LianaDirectory,
-        network: Option<bitcoin::Network>,
-    ) -> (Self, Task<Message>) {
-        let (launcher, command) = Launcher::new(directory, network);
-        (
-            Tab(State::Launcher(Box::new(launcher))),
-            command.map(|msg| Message::Launch(Box::new(msg))),
-        )
+    pub fn new(id: usize, state: State) -> Self {
+        Tab { id, state }
+    }
+
+    pub fn title(&self) -> &str {
+        match &self.state {
+            State::Installer(_) => "Installer",
+            State::Loader(_) => "Loading...",
+            State::Launcher(_) => "Launcher",
+            State::Login(_) => "Login",
+            State::App(a) => a.title(),
+        }
     }
 
     pub fn update(&mut self, message: Message) -> Task<Message> {
-        match (&mut self.0, message) {
+        match (&mut self.state, message) {
             (State::Launcher(l), Message::Launch(msg)) => match *msg {
                 launcher::Message::Install(datadir, network, init) => {
                     if !datadir.exists() {
@@ -77,19 +96,19 @@ impl Tab {
                         }
                     }
                     let (install, command) = Installer::new(datadir, network, None, init);
-                    self.0 = State::Installer(Box::new(install));
+                    self.state = State::Installer(Box::new(install));
                     command.map(|msg| Message::Install(Box::new(msg)))
                 }
                 launcher::Message::Run(datadir_path, cfg, network, settings) => {
                     if settings.remote_backend_auth.is_some() {
                         let (login, command) =
                             login::LianaLiteLogin::new(datadir_path, network, settings);
-                        self.0 = State::Login(Box::new(login));
+                        self.state = State::Login(Box::new(login));
                         command.map(|msg| Message::Login(Box::new(msg)))
                     } else {
                         let (loader, command) =
                             Loader::new(datadir_path, cfg, network, None, None, settings);
-                        self.0 = State::Loader(Box::new(loader));
+                        self.state = State::Loader(Box::new(loader));
                         command.map(|msg| Message::Load(Box::new(msg)))
                     }
                 }
@@ -98,7 +117,7 @@ impl Tab {
             (State::Login(l), Message::Login(msg)) => match *msg {
                 login::Message::View(login::ViewMessage::BackToLauncher(network)) => {
                     let (launcher, command) = Launcher::new(l.datadir.clone(), Some(network));
-                    self.0 = State::Launcher(Box::new(launcher));
+                    self.state = State::Launcher(Box::new(launcher));
                     command.map(|msg| Message::Launch(Box::new(msg)))
                 }
                 login::Message::Install(remote_backend) => {
@@ -108,7 +127,7 @@ impl Tab {
                         remote_backend,
                         installer::UserFlow::CreateWallet,
                     );
-                    self.0 = State::Installer(Box::new(install));
+                    self.state = State::Installer(Box::new(install));
                     command.map(|msg| Message::Install(Box::new(msg)))
                 }
                 login::Message::Run(Ok((backend_client, wallet, coins))) => {
@@ -129,7 +148,7 @@ impl Tab {
                         config,
                     );
 
-                    self.0 = State::App(app);
+                    self.state = State::App(app);
                     command.map(|msg| Message::Run(Box::new(msg)))
                 }
                 _ => l.update(*msg).map(|msg| Message::Login(Box::new(msg))),
@@ -139,7 +158,7 @@ impl Tab {
                     if settings.remote_backend_auth.is_some() {
                         let (login, command) =
                             login::LianaLiteLogin::new(i.datadir.clone(), i.network, *settings);
-                        self.0 = State::Login(Box::new(login));
+                        self.state = State::Login(Box::new(login));
                         command.map(|msg| Message::Login(Box::new(msg)))
                     } else {
                         let cfg = app::Config::from_file(
@@ -158,12 +177,12 @@ impl Tab {
                             i.context.backup.take(),
                             *settings,
                         );
-                        self.0 = State::Loader(Box::new(loader));
+                        self.state = State::Loader(Box::new(loader));
                         command.map(|msg| Message::Load(Box::new(msg)))
                     }
                 } else if let installer::Message::BackToLauncher(network) = *msg {
                     let (launcher, command) = Launcher::new(i.destination_path(), Some(network));
-                    self.0 = State::Launcher(Box::new(launcher));
+                    self.state = State::Launcher(Box::new(launcher));
                     command.map(|msg| Message::Launch(Box::new(msg)))
                 } else {
                     i.update(*msg).map(|msg| Message::Install(Box::new(msg)))
@@ -173,7 +192,7 @@ impl Tab {
                 loader::Message::View(loader::ViewMessage::SwitchNetwork) => {
                     let (launcher, command) =
                         Launcher::new(loader.datadir_path.clone(), Some(loader.network));
-                    self.0 = State::Launcher(Box::new(launcher));
+                    self.state = State::Launcher(Box::new(launcher));
                     command.map(|msg| Message::Launch(Box::new(msg)))
                 }
                 loader::Message::Synced(Ok((wallet, cache, daemon, bitcoind, backup))) => {
@@ -204,7 +223,7 @@ impl Tab {
                             bitcoind,
                             false,
                         );
-                        self.0 = State::App(app);
+                        self.state = State::App(app);
                         command.map(|msg| Message::Run(Box::new(msg)))
                     }
                 }
@@ -221,7 +240,7 @@ impl Tab {
                         bitcoind,
                         restored_from_backup,
                     );
-                    self.0 = State::App(app);
+                    self.state = State::App(app);
                     command.map(|msg| Message::Run(Box::new(msg)))
                 }
                 loader::Message::App(Err(e), _) => {
@@ -239,7 +258,7 @@ impl Tab {
     }
 
     pub fn subscription(&self) -> Subscription<Message> {
-        Subscription::batch(vec![match &self.0 {
+        Subscription::batch(vec![match &self.state {
             State::Installer(v) => v.subscription().map(|msg| Message::Install(Box::new(msg))),
             State::Loader(v) => v.subscription().map(|msg| Message::Load(Box::new(msg))),
             State::App(v) => v.subscription().map(|msg| Message::Run(Box::new(msg))),
@@ -249,7 +268,7 @@ impl Tab {
     }
 
     pub fn view(&self) -> Element<Message> {
-        match &self.0 {
+        match &self.state {
             State::Installer(v) => v.view().map(|msg| Message::Install(Box::new(msg))),
             State::App(v) => v.view().map(|msg| Message::Run(Box::new(msg))),
             State::Launcher(v) => v.view().map(|msg| Message::Launch(Box::new(msg))),
@@ -259,7 +278,7 @@ impl Tab {
     }
 
     pub fn stop(&mut self) {
-        match &mut self.0 {
+        match &mut self.state {
             State::Loader(s) => s.stop(),
             State::Launcher(s) => s.stop(),
             State::Installer(s) => s.stop(),
