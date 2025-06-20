@@ -10,18 +10,18 @@ extern crate serde;
 extern crate serde_json;
 
 use liana::miniscript::bitcoin;
-use liana_ui::widget::Element;
+use liana_ui::widget::{Column, Element};
 
+pub mod pane;
 pub mod tab;
 
 use crate::{dir::LianaDirectory, logger::Logger, VERSION};
 
 pub struct GUI {
-    state: tab::Tab,
+    pane: pane::Pane,
+    config: Config,
     // We may change the directory of log outputs later
     _logger: Logger,
-    // if set up, it overrides the level filter of the logger.
-    _log_level: Option<LevelFilter>,
 }
 
 #[derive(Debug)]
@@ -33,7 +33,7 @@ pub enum Key {
 pub enum Message {
     CtrlC,
     FontLoaded(Result<(), iced::font::Error>),
-    Tab(tab::Message),
+    Pane(pane::Message),
     KeyPressed(Key),
     Event(iced::Event),
 }
@@ -54,11 +54,7 @@ async fn ctrl_c() -> Result<(), ()> {
 
 impl GUI {
     pub fn title(&self) -> String {
-        match &self.state.0 {
-            tab::State::Installer(_) => format!("Liana v{} Installer", VERSION),
-            tab::State::App(a) => format!("Liana v{} {}", VERSION, a.title()),
-            _ => format!("Liana v{}", VERSION),
-        }
+        format!("Liana v{}", VERSION)
     }
 
     pub fn new((config, log_level): (Config, Option<LevelFilter>)) -> (GUI, Task<Message>) {
@@ -68,13 +64,13 @@ impl GUI {
             log_level.unwrap_or_else(|| log_level.unwrap_or(LevelFilter::INFO)),
         );
         let mut cmds = vec![Task::perform(ctrl_c(), |_| Message::CtrlC)];
-        let (state, cmd) = tab::Tab::new(config.liana_directory, config.network);
-        cmds.push(cmd.map(Message::Tab));
+        let (pane, cmd) = pane::Pane::new(&config);
+        cmds.push(cmd.map(Message::Pane));
         (
             Self {
-                state,
+                pane,
+                config,
                 _logger: logger,
-                _log_level: log_level,
             },
             Task::batch(cmds),
         )
@@ -84,7 +80,7 @@ impl GUI {
         match message {
             Message::CtrlC
             | Message::Event(iced::Event::Window(iced::window::Event::CloseRequested)) => {
-                self.state.stop();
+                self.pane.stop();
                 iced::window::get_latest().and_then(iced::window::close)
             }
             Message::KeyPressed(Key::Tab(shift)) => {
@@ -95,14 +91,14 @@ impl GUI {
                     focus_next()
                 }
             }
-            Message::Tab(msg) => self.state.update(msg).map(Message::Tab),
+            Message::Pane(msg) => self.pane.update(msg, &self.config).map(Message::Pane),
             _ => Task::none(),
         }
     }
 
     pub fn subscription(&self) -> Subscription<Message> {
         Subscription::batch(vec![
-            self.state.subscription().map(Message::Tab),
+            self.pane.subscription().map(Message::Pane),
             iced::event::listen_with(|event, status, _| match (&event, status) {
                 (
                     Event::Keyboard(keyboard::Event::KeyPressed {
@@ -122,7 +118,10 @@ impl GUI {
     }
 
     pub fn view(&self) -> Element<Message> {
-        self.state.view().map(Message::Tab)
+        Column::new()
+            .push(self.pane.tabs_menu_view().map(Message::Pane))
+            .push(self.pane.view().map(Message::Pane))
+            .into()
     }
 
     pub fn scale_factor(&self) -> f64 {

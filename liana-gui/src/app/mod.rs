@@ -182,13 +182,13 @@ impl App {
         )
     }
 
-    pub fn title(&self) -> String {
+    pub fn title(&self) -> &str {
         if let Some(alias) = &self.wallet.alias {
             if !alias.is_empty() {
-                return format!("- {}", alias);
+                return alias;
             }
         }
-        String::new()
+        "Liana wallet"
     }
 
     fn set_current_panel(&mut self, menu: Menu) -> Task<Message> {
