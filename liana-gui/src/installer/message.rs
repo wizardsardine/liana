@@ -117,6 +117,8 @@ pub enum ImportRemoteWallet {
     InvitationFetched(Result<api::WalletInvitation, Error>),
     AcceptInvitation,
     InvitationAccepted(Result<api::Wallet, Error>),
+    ImportDescriptorFromFile,
+    ImportExport(ImportExportMessage),
 }
 
 #[derive(Debug, Clone)]

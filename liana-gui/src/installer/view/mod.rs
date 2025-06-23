@@ -233,6 +233,12 @@ pub fn import_wallet_or_descriptor<'a>(
                                     .size(text::P1_SIZE)
                                     .padding(10),
                                 )
+                                .push(text("or").bold())
+                                .push(button::primary(None, "Import descriptor").on_press(
+                                    Message::ImportRemoteWallet(
+                                        message::ImportRemoteWallet::ImportDescriptorFromFile,
+                                    ),
+                                ))
                                 .spacing(10),
                         )
                         .push(
