@@ -8,6 +8,7 @@ pub mod context_menu;
 pub mod notification;
 pub mod overlay;
 pub mod palette;
+pub mod pane_grid;
 pub mod pick_list;
 pub mod pill;
 pub mod progress_bar;
