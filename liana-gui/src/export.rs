@@ -637,7 +637,19 @@ pub async fn import_descriptor(
     file.read_to_string(&mut descr_str)?;
     let descr_str = descr_str.trim();
 
-    let descriptor = LianaDescriptor::from_str(descr_str).map_err(|_| Error::ParseDescriptor)?;
+    let descriptor = if let Ok(d) = LianaDescriptor::from_str(descr_str) {
+        Some(d)
+    } else {
+        let backup: Result<Backup, _> = serde_json::from_str(descr_str);
+        backup.ok().and_then(|b| {
+            if b.accounts.len() == 1 {
+                LianaDescriptor::from_str(&b.accounts[0].descriptor).ok()
+            } else {
+                None
+            }
+        })
+    };
+    let descriptor = descriptor.ok_or(Error::ParseDescriptor)?;
 
     send_progress!(sender, Progress(100.0));
     send_progress!(sender, Descriptor(descriptor));
