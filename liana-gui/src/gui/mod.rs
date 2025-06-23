@@ -15,7 +15,7 @@ use liana_ui::widget::{Column, Container, Element};
 pub mod pane;
 pub mod tab;
 
-use crate::{dir::LianaDirectory, logger::Logger, VERSION};
+use crate::{dir::LianaDirectory, launcher, logger::Logger, VERSION};
 
 pub struct GUI {
     panes: pane_grid::State<pane::Pane>,
@@ -134,6 +134,69 @@ impl GUI {
                     return iced::window::get_latest().and_then(iced::window::close);
                 }
                 Task::none()
+            }
+            // In case of wallet deletion, remove any tab where the wallet id is currently running.
+            Message::Pane(p, pane::Message::Tab(t, tab::Message::Launch(msg))) => {
+                let mut tasks = Vec::new();
+                if let launcher::Message::View(launcher::ViewMessage::DeleteWallet(
+                    launcher::DeleteWalletMessage::Confirm(wallet_id),
+                )) = msg.as_ref()
+                {
+                    let mut panes_to_close = Vec::<pane_grid::Pane>::new();
+                    for (id, pane) in self.panes.iter_mut() {
+                        let tabs_to_close: Vec<usize> = pane
+                            .tabs
+                            .iter()
+                            .enumerate()
+                            .filter_map(|(i, tab)| {
+                                if let tab::State::App(a) = &tab.state {
+                                    if a.wallet_id() == *wallet_id {
+                                        Some(i)
+                                    } else {
+                                        None
+                                    }
+                                } else {
+                                    None
+                                }
+                            })
+                            .collect();
+                        for i in tabs_to_close {
+                            pane.close_tab(i);
+                        }
+                        if pane.tabs.is_empty() {
+                            panes_to_close.push(*id);
+                        }
+                    }
+                    for id in panes_to_close {
+                        self.panes.close(id);
+                    }
+                    for (&id, pane) in self.panes.iter() {
+                        for tab in &pane.tabs {
+                            if let tab::State::Launcher(l) = &tab.state {
+                                let tab_id = tab.id;
+                                tasks.push(l.reload().map(move |msg| {
+                                    Message::Pane(
+                                        id,
+                                        pane::Message::Tab(
+                                            tab_id,
+                                            tab::Message::Launch(Box::new(msg)),
+                                        ),
+                                    )
+                                }));
+                            }
+                        }
+                    }
+                }
+                if let Some(pane) = self.panes.get_mut(p) {
+                    tasks.push(
+                        pane.update(
+                            pane::Message::Tab(t, tab::Message::Launch(msg)),
+                            &self.config,
+                        )
+                        .map(move |msg| Message::Pane(p, msg)),
+                    );
+                }
+                Task::batch(tasks)
             }
             Message::Pane(i, msg) => {
                 if let Some(pane) = self.panes.get_mut(i) {

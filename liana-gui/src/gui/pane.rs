@@ -60,7 +60,7 @@ impl Pane {
         task.map(move |msg| Message::Tab(id, msg))
     }
 
-    fn close_tab(&mut self, i: usize) {
+    pub fn close_tab(&mut self, i: usize) {
         let mut tab = self.remove_tab(i);
         tab.stop();
     }
