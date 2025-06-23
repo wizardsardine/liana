@@ -1,4 +1,4 @@
-use iced::{Subscription, Task};
+use iced::{Length, Subscription, Task};
 use iced_aw::ContextMenu;
 use liana_ui::{component::text::*, icon::plus_icon, theme, widget::*};
 
@@ -16,14 +16,15 @@ pub enum Message {
 pub enum ViewMessage {
     FocusTab(usize),
     CloseTab(usize),
+    SplitTab(usize),
     AddTab,
 }
 
 pub struct Pane {
-    tabs: Vec<tab::Tab>,
+    pub tabs: Vec<tab::Tab>,
 
     // this is an index in the tabs array
-    focused_tab: usize,
+    pub focused_tab: usize,
 
     // used to generate tabs ids.
     tabs_created: usize,
@@ -42,6 +43,14 @@ impl Pane {
         )
     }
 
+    pub fn new_with_tab(s: tab::State) -> Self {
+        Self {
+            tabs: vec![tab::Tab::new(1, s)],
+            focused_tab: 0,
+            tabs_created: 1,
+        }
+    }
+
     fn add_tab(&mut self, cfg: &Config) -> Task<Message> {
         let (state, task) = tab::State::new(cfg.liana_directory.clone(), cfg.network);
         self.tabs_created += 1;
@@ -51,9 +60,13 @@ impl Pane {
         task.map(move |msg| Message::Tab(id, msg))
     }
 
-    fn remove_tab(&mut self, i: usize) {
-        let mut tab = self.tabs.remove(i);
+    fn close_tab(&mut self, i: usize) {
+        let mut tab = self.remove_tab(i);
         tab.stop();
+    }
+
+    pub fn remove_tab(&mut self, i: usize) -> tab::Tab {
+        let tab = self.tabs.remove(i);
         self.focused_tab = if self.tabs.is_empty() {
             0
         } else if i < self.tabs.len() - 1 {
@@ -61,6 +74,18 @@ impl Pane {
         } else {
             self.tabs.len() - 1
         };
+        tab
+    }
+
+    pub fn add_tabs(&mut self, tabs: Vec<tab::Tab>, focused_tab: usize) {
+        for tab in tabs {
+            self.tabs_created += 1;
+            let id = self.tabs_created;
+            self.tabs.push(tab::Tab::new(id, tab.state));
+        }
+        if self.focused_tab + focused_tab + 1 < self.tabs.len() {
+            self.focused_tab += focused_tab + 1;
+        }
     }
 
     pub fn update(&mut self, message: Message, cfg: &Config) -> Task<Message> {
@@ -79,9 +104,11 @@ impl Pane {
             }
             Message::View(ViewMessage::AddTab) => self.add_tab(cfg),
             Message::View(ViewMessage::CloseTab(i)) => {
-                self.remove_tab(i);
+                self.close_tab(i);
                 Task::none()
             }
+            // handle by the pane grid update.
+            Message::View(ViewMessage::SplitTab(_)) => Task::none(),
         }
     }
 
@@ -104,6 +131,7 @@ impl Pane {
 
     pub fn tabs_menu_view(&self) -> Element<Message> {
         let mut menu = Row::new().spacing(3);
+        let tabs_len = self.tabs.len();
         for (i, tab) in self.tabs.iter().enumerate() {
             let title = tab.title();
             menu = menu.push(ContextMenu::new(
@@ -125,10 +153,23 @@ impl Pane {
                     .on_press(ViewMessage::FocusTab(i)),
                 ),
                 move || {
-                    Button::new(p1_regular("Close"))
-                        .style(theme::button::secondary)
-                        .on_press(ViewMessage::CloseTab(i))
-                        .width(100)
+                    Column::new()
+                        .push(
+                            Button::new(p1_regular("Close"))
+                                .style(theme::button::secondary)
+                                .on_press(ViewMessage::CloseTab(i))
+                                .width(100),
+                        )
+                        .push_maybe(if tabs_len > 1 {
+                            Some(
+                                Button::new(p1_regular("Split"))
+                                    .style(theme::button::secondary)
+                                    .on_press(ViewMessage::SplitTab(i))
+                                    .width(100),
+                            )
+                        } else {
+                            None
+                        })
                         .into()
                 },
             ));
@@ -142,11 +183,15 @@ impl Pane {
     }
 
     pub fn view(&self) -> Element<Message> {
-        if let Some(t) = self.tabs.get(self.focused_tab) {
+        Container::new(if let Some(t) = self.tabs.get(self.focused_tab) {
             let id = t.id;
             t.view().map(move |msg| Message::Tab(id, msg))
         } else {
             Row::new().into()
-        }
+        })
+        .style(theme::container::background)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
     }
 }

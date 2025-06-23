@@ -16,6 +16,7 @@ pub struct Palette {
     pub sliders: Sliders,
     pub progress_bars: ProgressBars,
     pub rule: iced::Color,
+    pub pane_grid: PaneGrid,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq)]
@@ -44,6 +45,7 @@ pub struct Buttons {
     pub container: Button,
     pub container_border: Button,
     pub menu: Button,
+    pub tab: Button,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq)]
@@ -159,6 +161,15 @@ pub struct ProgressBars {
     pub background: iced::Color,
     pub bar: iced::Color,
     pub border: Option<iced::Color>,
+}
+
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub struct PaneGrid {
+    pub background: iced::Color,
+    pub highlight_border: iced::Color,
+    pub highlight_background: iced::Color,
+    pub picked_split: iced::Color,
+    pub hovered_split: iced::Color,
 }
 
 impl std::default::Default for Palette {
@@ -353,6 +364,28 @@ impl std::default::Default for Palette {
                         border: color::TRANSPARENT.into(),
                     }),
                 },
+                tab: Button {
+                    active: ButtonPalette {
+                        background: color::GREY_6,
+                        text: color::GREY_2,
+                        border: color::GREY_7.into(),
+                    },
+                    hovered: ButtonPalette {
+                        background: color::GREY_6,
+                        text: color::GREEN,
+                        border: color::GREEN.into(),
+                    },
+                    pressed: Some(ButtonPalette {
+                        background: color::LIGHT_BLACK,
+                        text: color::GREEN,
+                        border: color::GREEN.into(),
+                    }),
+                    disabled: Some(ButtonPalette {
+                        background: color::GREY_6,
+                        text: color::GREY_2,
+                        border: color::GREY_7.into(),
+                    }),
+                },
             },
             cards: Cards {
                 simple: ContainerPalette {
@@ -505,6 +538,13 @@ impl std::default::Default for Palette {
                 background: color::GREY_6,
             },
             rule: color::GREY_1,
+            pane_grid: PaneGrid {
+                background: color::BLACK,
+                highlight_border: color::GREEN,
+                highlight_background: color::TRANSPARENT_GREEN,
+                picked_split: color::GREEN,
+                hovered_split: color::GREEN,
+            },
         }
     }
 }
