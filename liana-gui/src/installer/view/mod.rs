@@ -274,7 +274,8 @@ pub fn import_wallet_or_descriptor<'a>(
             .push_maybe(error.map(|e| card::error("Something wrong happened", e.to_string())))
             .push(card_wallets)
             .push(card::simple(col_invitation_token).padding(0))
-            .push(card::simple(col_descriptor).padding(0)),
+            .push(card::simple(col_descriptor).padding(0))
+            .push(Space::with_height(10)),
         true,
         Some(Message::Previous),
     )
