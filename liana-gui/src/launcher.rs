@@ -16,7 +16,7 @@ use tokio::runtime::Handle;
 use crate::{
     app::{
         self,
-        settings::{self, WalletSettings},
+        settings::{self, WalletId, WalletSettings},
     },
     delete::{delete_wallet, DeleteError},
     dir::{LianaDirectory, NetworkDirectory},
@@ -73,6 +73,13 @@ impl Launcher {
                 delete_wallet_modal: None,
             },
             Task::perform(check_network_datadir(network_dir), Message::Checked),
+        )
+    }
+
+    pub fn reload(&self) -> Task<Message> {
+        Task::perform(
+            check_network_datadir(self.datadir_path.network_directory(self.network)),
+            Message::Checked,
         )
     }
 
@@ -417,7 +424,7 @@ pub enum ViewMessage {
 pub enum DeleteWalletMessage {
     ShowModal(usize),
     CloseModal,
-    Confirm,
+    Confirm(WalletId),
     Deleted,
 }
 
@@ -446,7 +453,12 @@ impl DeleteWalletModal {
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
-        if let Message::View(ViewMessage::DeleteWallet(DeleteWalletMessage::Confirm)) = message {
+        if let Message::View(ViewMessage::DeleteWallet(DeleteWalletMessage::Confirm(wallet_id))) =
+            message
+        {
+            if wallet_id != self.wallet_settings.wallet_id() {
+                return Task::none();
+            }
             self.warning = None;
             if let Err(e) = Handle::current().block_on(delete_wallet(
                 &self.network_directory,
@@ -468,8 +480,9 @@ impl DeleteWalletModal {
             .width(Length::Fixed(200.0))
             .style(theme::button::destructive);
         if self.warning.is_none() {
-            confirm_button =
-                confirm_button.on_press(ViewMessage::DeleteWallet(DeleteWalletMessage::Confirm));
+            confirm_button = confirm_button.on_press(ViewMessage::DeleteWallet(
+                DeleteWalletMessage::Confirm(self.wallet_settings.wallet_id()),
+            ));
         }
         // Use separate `Row`s for help text in order to have better spacing.
         let help_text_1 = format!(
