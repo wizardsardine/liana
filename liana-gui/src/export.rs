@@ -246,7 +246,7 @@ pub enum Progress {
     WalletFromBackup(
         (
             LianaDescriptor,
-            Network,
+            Option<Network>,
             HashMap<Fingerprint, settings::KeySetting>,
             Backup,
         ),
@@ -1045,13 +1045,33 @@ pub async fn wallet_from_backup(
 
     let backup: Result<Backup, _> = serde_json::from_str(&backup_str);
     let backup = match backup {
-        Ok(psbt) => psbt,
+        Ok(b) => b,
         Err(e) => {
-            return Err(Error::BackupImport(format!("{:?}", e)));
+            // try to import as bare descriptor
+            let descr = LianaDescriptor::from_str(&backup_str);
+            match descr {
+                Ok(descr) => {
+                    let network = if descr.all_xpubs_net_is(Network::Bitcoin) {
+                        Network::Bitcoin
+                    } else {
+                        Network::Signet
+                    };
+                    Backup::from_descriptor(descr, network)
+                }
+                Err(e2) => {
+                    return Err(Error::BackupImport(format!(
+                        "A backup or descriptor file is expected: {e}, {e2}"
+                    )));
+                }
+            }
         }
     };
 
-    let network = backup.network;
+    let network = if backup.network == Network::Bitcoin {
+        Some(backup.network)
+    } else {
+        None
+    };
 
     let account = match backup.accounts.len() {
         0 => {

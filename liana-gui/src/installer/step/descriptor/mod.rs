@@ -120,12 +120,26 @@ impl Step for ImportDescriptor {
             }
             Message::ImportExport(ImportExportMessage::Progress(Progress::WalletFromBackup(r))) => {
                 let (descriptor, network, aliases, backup) = r;
-                if self.network == network {
-                    self.imported_backup = Some(backup);
-                    self.imported_descriptor.value = descriptor.to_string();
-                    self.imported_aliases = Some(aliases);
+                if let Some(n) = network {
+                    if self.network == n {
+                        self.imported_backup = Some(backup);
+                        self.imported_descriptor.value = descriptor.to_string();
+                        self.imported_aliases = Some(aliases);
+                    } else {
+                        self.error =
+                            Some("Backup network do not match the selected network!".into());
+                    }
                 } else {
-                    self.error = Some("Backup network do not match the selected network!".into());
+                    // The backup have been inferred from a bare descriptor, we check whether
+                    // the descriptor match any test network
+                    if self.network != Network::Bitcoin {
+                        self.imported_backup = Some(backup);
+                        self.imported_descriptor.value = descriptor.to_string();
+                        self.imported_aliases = Some(aliases);
+                    } else {
+                        self.error =
+                            Some("Backup network do not match the selected network!".into());
+                    }
                 }
             }
             Message::ImportExport(m) => {
