@@ -1286,7 +1286,43 @@ pub async fn app_backup_export(
 
 #[cfg(test)]
 mod tests {
+    use std::env;
+
     use super::*;
+
+    #[tokio::test]
+    async fn test_import_descriptor_from_file() {
+        let (sender, mut receiver) = unbounded_channel();
+        let path = env::current_dir()
+            .unwrap()
+            .join("test_assets")
+            .join("liana-jz5sm0xn.txt");
+        println!("path: {}", path.display());
+        import_descriptor(&sender, path).await.unwrap();
+        let _msg = receiver.try_recv().unwrap();
+        assert!(matches!(Progress::Progress(100.0), _msg));
+        let raw_descriptor = "wsh(or_d(pk([8a550171/48'/1'/0'/2']tpubDFnCs5ZaCqopaNhgLCiXAwbkaBdcnuMt1VFoPsRpUrpidyvzG67MYjkfxw6HnTBhHqeU3xw2ioNBVcWY3jXwGhSyppEQvtn38GsL7RH1eef/<0;1>/*),and_v(v:pkh([8a550171/48'/1'/0'/2']tpubDFnCs5ZaCqopaNhgLCiXAwbkaBdcnuMt1VFoPsRpUrpidyvzG67MYjkfxw6HnTBhHqeU3xw2ioNBVcWY3jXwGhSyppEQvtn38GsL7RH1eef/<2;3>/*),older(52596))))#jz5sm0xn";
+        let descr = LianaDescriptor::from_str(raw_descriptor).unwrap();
+        let _msg = receiver.try_recv().unwrap();
+        assert!(matches!(Progress::Descriptor(descr), _msg));
+    }
+
+    #[tokio::test]
+    async fn test_import_descriptor_from_backup_file() {
+        let (sender, mut receiver) = unbounded_channel();
+        let path = env::current_dir()
+            .unwrap()
+            .join("test_assets")
+            .join("liana-backup-2025-06-23T13-23-54.json");
+        println!("path: {}", path.display());
+        import_descriptor(&sender, path).await.unwrap();
+        let _msg = receiver.try_recv().unwrap();
+        assert!(matches!(Progress::Progress(100.0), _msg));
+        let raw_descriptor = "wsh(or_d(pk([8a550171/48'/1'/0'/2']tpubDFnCs5ZaCqopaNhgLCiXAwbkaBdcnuMt1VFoPsRpUrpidyvzG67MYjkfxw6HnTBhHqeU3xw2ioNBVcWY3jXwGhSyppEQvtn38GsL7RH1eef/<0;1>/*),and_v(v:pkh([8a550171/48'/1'/0'/2']tpubDFnCs5ZaCqopaNhgLCiXAwbkaBdcnuMt1VFoPsRpUrpidyvzG67MYjkfxw6HnTBhHqeU3xw2ioNBVcWY3jXwGhSyppEQvtn38GsL7RH1eef/<2;3>/*),older(52596))))#jz5sm0xn";
+        let descr = LianaDescriptor::from_str(raw_descriptor).unwrap();
+        let _msg = receiver.try_recv().unwrap();
+        assert!(matches!(Progress::Descriptor(descr), _msg));
+    }
 
     #[test]
     fn test_parse_coldcard_xpub() {

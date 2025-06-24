@@ -1,0 +1,69 @@
+{
+  "name": "Liana-jz5sm0xn",
+  "alias": "My Liana Regtest wallet",
+  "accounts": [
+    {
+      "name": "Liana-jz5sm0xn",
+      "descriptor": "wsh(or_d(pk([8a550171/48'/1'/0'/2']tpubDFnCs5ZaCqopaNhgLCiXAwbkaBdcnuMt1VFoPsRpUrpidyvzG67MYjkfxw6HnTBhHqeU3xw2ioNBVcWY3jXwGhSyppEQvtn38GsL7RH1eef/<0;1>/*),and_v(v:pkh([8a550171/48'/1'/0'/2']tpubDFnCs5ZaCqopaNhgLCiXAwbkaBdcnuMt1VFoPsRpUrpidyvzG67MYjkfxw6HnTBhHqeU3xw2ioNBVcWY3jXwGhSyppEQvtn38GsL7RH1eef/<2;3>/*),older(52596))))#jz5sm0xn",
+      "receive_index": 1,
+      "change_index": 2,
+      "timestamp": 1748013169,
+      "keys": {
+        "8a550171": {
+          "key": "8a550171",
+          "alias": "a"
+        }
+      },
+      "labels": [],
+      "transactions": [
+        "020000000001042e410675d4d1b009e257ca11345502e5c1f00709590db95e2ac9fe1a11044d4d0000000000fdffffff2503d8712de399f674baab16b844a54870bd2142650c609edb3d1cd60bcbf77b0000000000fdffffff4e093e78a81157ebcb11780bfe010fc0752231015d0c2a8114630ac7c6c159c50000000000fdffffffb5e6c596c3659f7af56ebaa9e8ae618c5ac7f338033172e9475f1933f04e348a0000000000fdffffff02d263060000000000225120e49d1997805dbb7290369fb95f94451b0ca3e738119b9c6b6e5a70a33384913100e1f50500000000220020fd22758b64471a67371158c546ab5918732659085eb21c9af6591cb811e56c660247304402203c379630bf2b827abf013ef8ed6a37a18dfc98fef28199a208bc19bc68b441f40220248456a96302579d0739ce8dbc63550835961a811198859aaa250c8611e46466012103df49913c09de6d937101041d2e413a09e5991ba3ef31534d88054b319d2d74510247304402202a8e2ffcaa86fef2fc40caf21d0d59b4801ad553701b4466c2872e5ac3ffb23f02200f10f5493543f8c4fe37627a7ad6bfa93b01a22873983656003ababe9d6c4ca60121031337b42040d5f2700ba46ae7cf70dc172c2b4f695313a8ed0fe62ea843278e6c0247304402204ee9ae50ff1bbde05832236fdea9f3709a4d9fa87014cf86a63e9333641c737c02206394e7124539adf560f76ddbb87ec4614d9a9e70ac995c88d1b2b6e614ab4e430121034547cd6c5fe44edbc9af9193df5a9a7fc0055c3f47b968e92ae30d6630a6cd08024730440220135820533d687ed853e92f7e52ef73de755f13ace2db60f5f85a07681bd62e2a022015290d93eb8b0d53f17c2851f2fb53ba2859ee15aacb0a188041f46f249101100121029f4c9445023494227a966609268d0db59bf82eb21433188470bbdcdd63f5508caf5d0000"
+      ],
+      "psbts": [
+        "cHNidP8BAF4CAAAAAcb4e2jUBqxxBTgMZFk6JUCes6Q3cvgpYJ2uJDUOBbudAQAAAAD9////AX3g9QUAAAAAIgAgCkktj1GAtl5qSGMFiltgrcw2ozjyaWF4XBktdHaUItuyXQAAAAEA/bICAgAAAAABBC5BBnXU0bAJ4lfKETRVAuXB8AcJWQ25XirJ/hoRBE1NAAAAAAD9////JQPYcS3jmfZ0uqsWuESlSHC9IUJlDGCe2z0c1gvL93sAAAAAAP3///9OCT54qBFX68sReAv+AQ/AdSIxAV0MKoEUYwrHxsFZxQAAAAAA/f///7XmxZbDZZ969W66qeiuYYxax/M4AzFy6UdfGTPwTjSKAAAAAAD9////AtJjBgAAAAAAIlEg5J0Zl4Bdu3KQNp+5X5RFGwyj5zgRm5xrblpwozOEkTEA4fUFAAAAACIAIP0idYtkRxpnNxFYxUarWRhzJlkIXrIcmvZZHLgR5WxmAkcwRAIgPDeWML8rgnq/AT747Wo3oY38mP7ygZmiCLwZvGi0QfQCICSEVqljAledBznOjbxjVQg1lhqBEZiFmqolDIYR5GRmASED30mRPAnebZNxAQQdLkE6CeWZG6PvMVNNiAVLMZ0tdFECRzBEAiAqji/8qob+8vxAyvIdDVm0gBrVU3AbRGbChy5aw/+yPwIgDxD1STVD+MT+N2J6eta/qTsBoihzmDZWADq6vp1sTKYBIQMTN7QgQNXycAukaufPcNwXLCtPaVMTqO0P5i6oQyeObAJHMEQCIE7prlD/G73gWDIjb96p83CaTZ+ocBTPhqY+kzNkHHN8AiBjlOcSRTmt9WD3bdu4fsRhTZqecKyZXIjRsrbmFKtOQwEhA0VHzWxf5E7bya+Rk99amn/ABVw/R7lo6SrjDWYwps0IAkcwRAIgE1ggUz1ofthT6S9+Uu9z3nVfE6zi22D1+FoHaBvWLioCIBUpDZPriw1T8XwoUfL7U7ooWe4VqssKGIBB9G8kkQEQASECn0yURQI0lCJ6lmYJJo0NtZv4LrIUMxiEcLvc3WP1UIyvXQAAAQErAOH1BQAAAAAiACD9InWLZEcaZzcRWMVGq1kYcyZZCF6yHJr2WRy4EeVsZiICA2vrvUCtFrmnsdsUyMDb2kT4uowEfiQ5D/1l+cWZ1vDWRzBEAiAaM9aLqBTG5C4tK9p9c28Jz439Emr7XPoxUYyJllYLMAIgFA6/yH55PAeZedfY2h6at7dB/k/wPf8M3+y0IEcQgKIBIgIDio+/H1qygPy0Phj9olT5VctStZGyB6qVDiVdlfiIWTpHMEQCIGUetlDH7qqci2rSxbHnvoqcs1pEJHgaLbRAnMPjffv1AiBHhT5DcOQhVhn0vtXO8Ij5ii3BafsK9VX2SN2l9H1/9QEBBUQhA2vrvUCtFrmnsdsUyMDb2kT4uowEfiQ5D/1l+cWZ1vDWrHNkdqkUXG6thIRwLnqHwJdmKl7XWxiKxDyIrQN0zQCyaCIGA2vrvUCtFrmnsdsUyMDb2kT4uowEfiQ5D/1l+cWZ1vDWHIpVAXEwAACAAQAAgAAAAIACAACAAAAAAAEAAAAiBgOKj78fWrKA/LQ+GP2iVPlVy1K1kbIHqpUOJV2V+IhZOhyKVQFxMAAAgAEAAIAAAACAAgAAgAIAAAABAAAAACICA1BIFqUUMoNtx4WVqTmwuL2iEpyL6ZLAflqiZpCHcVveHIpVAXEwAACAAQAAgAAAAIACAACAAwAAAAIAAAAiAgO+QA+pMN6tM8/CHiT8Rt32H2jEOY2nZpV2rV/QYKGJEhyKVQFxMAAAgAEAAIAAAACAAgAAgAEAAAACAAAAAA=="
+      ],
+      "coins": {
+        "9dbb050e3524ae9d6029f87237a4b39e40253a59640c380571ac06d4687bf8c6:1": {
+          "amount": 100000000,
+          "outpoint": "9dbb050e3524ae9d6029f87237a4b39e40253a59640c380571ac06d4687bf8c6:1",
+          "address": "bcrt1ql538tzmygudxwdc3trz5d26erpejvkggt6epexhktywtsy09d3nqzqf3d4",
+          "block_height": 23984,
+          "account": 0,
+          "derivation_index": 1,
+          "is_coinbase": null,
+          "is_from_self": false
+        }
+      },
+      "chain_tip": {
+        "block_height": 24332,
+        "block_hash": null
+      },
+      "proprietary": {
+        "config": {
+          "debug": null,
+          "log_level": null,
+          "start_internal_bitcoind": false
+        },
+        "liana_version": "11.0",
+        "settings": {
+          "alias": "My Liana Regtest wallet",
+          "descriptor_checksum": "jz5sm0xn",
+          "hardware_wallets": [],
+          "keys": [
+            {
+              "master_fingerprint": "8a550171",
+              "name": "a",
+              "provider_key": null
+            }
+          ],
+          "name": "Liana-jz5sm0xn",
+          "pinned_at": 1748013169,
+          "remote_backend_auth": null,
+          "start_internal_bitcoind": false
+        }
+      }
+    }
+  ],
+  "network": "regtest",
+  "date": 1750677837,
+  "version": 0
+}
