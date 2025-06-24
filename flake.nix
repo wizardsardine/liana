@@ -140,23 +140,34 @@
             ${aarch64-apple-darwin}/aarch64-apple-darwin/liana-gui
         '';
 
+        # Common build inputs for all shells
+        commonBuildInputs = with pkgs; [
+          expat
+          fontconfig
+          freetype
+          freetype.dev
+          libGL
+          pkg-config
+          udev
+          wayland
+          libxkbcommon
+          xorg.libX11
+          xorg.libXcursor
+          xorg.libXi
+          xorg.libXrandr
+        ];
+
+        # Minimal shell without Rust toolchain
+        minimalShell = pkgs.mkShell rec {
+          buildInputs = commonBuildInputs;
+
+          LD_LIBRARY_PATH =
+            builtins.foldl' (a: b: "${a}:${b}/lib") "${pkgs.vulkan-loader}/lib" buildInputs;
+        };
+
+        # Full development shell with Rust toolchain
         devShell = pkgs.mkShell rec {
-          buildInputs = with pkgs; [
-            expat
-            fontconfig
-            freetype
-            freetype.dev
-            libGL
-            pkg-config
-            udev
-            wayland
-            libxkbcommon
-            xorg.libX11
-            xorg.libXcursor
-            xorg.libXi
-            xorg.libXrandr
-            toolchain
-          ];
+          buildInputs = commonBuildInputs ++ [ toolchain ];
 
           LD_LIBRARY_PATH =
             builtins.foldl' (a: b: "${a}:${b}/lib") "${pkgs.vulkan-loader}/lib" buildInputs;
@@ -191,7 +202,7 @@
 
 
         devShells = {
-          dev = devShell;
+          minimal = minimalShell;
           release = releaseShell;
           default = devShell;
         };
