@@ -125,11 +125,8 @@ impl GUI {
                 }
             }
             Message::WindowSize(monitor_size) => {
-                match (
-                    self.window_config.as_mut(),
-                    &self.window_init,
-                    &self.window_id,
-                ) {
+                let cloned_cfg = self.window_config.clone();
+                match (cloned_cfg, &self.window_init, &self.window_id) {
                     // no previous screen size recorded && window maximized
                     (None, Some(false), Some(id)) => {
                         self.window_init = Some(true);
@@ -145,32 +142,18 @@ impl GUI {
                             batch.push(window::resize(*id, iced::window::Settings::default().size));
                             iced::window::Settings::default().size
                         };
-                        let path = GlobalSettings::path(&self.config.liana_directory);
-                        if let Err(e) = GlobalSettings::update_window_config(
-                            &path,
-                            &WindowConfig {
-                                width: new_size.width,
-                                height: new_size.height,
-                            },
-                        ) {
-                            tracing::error!("Failed to update the window config: {e}");
-                        }
+                        self.window_config = Some(WindowConfig {
+                            width: new_size.width,
+                            height: new_size.height,
+                        });
                         Task::batch(batch)
                     }
                     // we already have a record of the last window size and we update it
                     (Some(WindowConfig { width, height }), _, _) => {
-                        if *width != monitor_size.width || *height != monitor_size.height {
-                            *width = monitor_size.width;
-                            *height = monitor_size.height;
-                            let path = GlobalSettings::path(&self.config.liana_directory);
-                            if let Err(e) = GlobalSettings::update_window_config(
-                                &path,
-                                &WindowConfig {
-                                    width: *width,
-                                    height: *height,
-                                },
-                            ) {
-                                tracing::error!("Failed to update the window config: {e}");
+                        if width != monitor_size.width || height != monitor_size.height {
+                            if let Some(cfg) = &mut self.window_config {
+                                cfg.width = monitor_size.width;
+                                cfg.height = monitor_size.height;
                             }
                         }
                         Task::none()
@@ -189,6 +172,12 @@ impl GUI {
             | Message::Event(iced::Event::Window(iced::window::Event::CloseRequested)) => {
                 for (_, pane) in self.panes.iter_mut() {
                     pane.stop();
+                }
+                if let Some(window_config) = &self.window_config {
+                    let path = GlobalSettings::path(&self.config.liana_directory);
+                    if let Err(e) = GlobalSettings::update_window_config(&path, window_config) {
+                        tracing::error!("Failed to update the window config: {e}");
+                    }
                 }
                 iced::window::get_latest().and_then(iced::window::close)
             }
