@@ -146,15 +146,15 @@ impl GUI {
                             iced::window::Settings::default().size
                         };
                         let path = GlobalSettings::path(&self.config.liana_directory);
-                        let mut settings = GlobalSettings::load(&path)
-                            .ok()
-                            .flatten()
-                            .unwrap_or_default();
-                        settings.window_config = Some(WindowConfig {
-                            width: new_size.width,
-                            height: new_size.height,
-                        });
-                        settings.to_file(&path).unwrap();
+                        if let Err(e) = GlobalSettings::update_window_config(
+                            &path,
+                            &WindowConfig {
+                                width: new_size.width,
+                                height: new_size.height,
+                            },
+                        ) {
+                            tracing::error!("Failed to update the window config: {e}");
+                        }
                         Task::batch(batch)
                     }
                     // we already have a record of the last window size and we update it
@@ -163,16 +163,14 @@ impl GUI {
                             *width = monitor_size.width;
                             *height = monitor_size.height;
                             let path = GlobalSettings::path(&self.config.liana_directory);
-                            let mut settings = GlobalSettings::load(&path)
-                                .ok()
-                                .flatten()
-                                .unwrap_or_default();
-                            settings.window_config = Some(WindowConfig {
-                                width: *width,
-                                height: *height,
-                            });
-                            if let Err(e) = settings.to_file(&path) {
-                                tracing::error!("Fail to write window config to file: {e}");
+                            if let Err(e) = GlobalSettings::update_window_config(
+                                &path,
+                                &WindowConfig {
+                                    width: *width,
+                                    height: *height,
+                                },
+                            ) {
+                                tracing::error!("Failed to update the window config: {e}");
                             }
                         }
                         Task::none()

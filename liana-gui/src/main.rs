@@ -108,10 +108,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     };
 
     let global_config_path = GlobalSettings::path(&config.liana_directory);
-    let initial_size = if let Ok(Some(GlobalSettings {
-        window_config: Some(WindowConfig { width, height }),
-        ..
-    })) = GlobalSettings::load(&global_config_path)
+    let initial_size = if let Some(WindowConfig { width, height }) =
+        GlobalSettings::load_window_config(&global_config_path)
     {
         Size { width, height }
     } else {

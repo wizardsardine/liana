@@ -380,13 +380,15 @@ impl std::fmt::Display for SettingsError {
 pub mod global {
     use crate::dir::LianaDirectory;
     use async_hwi::bitbox::{ConfigError, NoiseConfig, NoiseConfigData};
+    use fs2::FileExt;
     use serde::{Deserialize, Serialize};
-    use std::io::{Read, Write};
+    use std::fs::OpenOptions;
+    use std::io::{Read, Seek, SeekFrom, Write};
     use std::path::PathBuf;
 
     pub const DEFAULT_FILE_NAME: &str = "global_settings.json";
 
-    #[derive(Debug, Deserialize, Serialize)]
+    #[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
     pub struct WindowConfig {
         pub width: f32,
         pub height: f32,
@@ -402,40 +404,87 @@ pub mod global {
         pub fn path(global_datadir: &LianaDirectory) -> PathBuf {
             global_datadir.path().join(DEFAULT_FILE_NAME)
         }
-        pub fn load(path: &PathBuf) -> Result<Option<GlobalSettings>, String> {
-            if !path.exists() {
-                return Ok(None);
-            }
-
-            let mut file = std::fs::File::open(path).map_err(|e| e.to_string())?;
-
-            let mut contents = String::new();
-            file.read_to_string(&mut contents)
-                .map_err(|e| e.to_string())?;
-
-            let settings =
-                serde_json::from_str::<GlobalSettings>(&contents).map_err(|e| e.to_string())?;
-            Ok(Some(settings))
-        }
 
         pub fn load_window_config(path: &PathBuf) -> Option<WindowConfig> {
-            Self::load(path)
-                .ok()
-                .flatten()
-                .and_then(|s| s.window_config)
+            let mut ret = None;
+            if let Err(e) = Self::update(path, |s| ret = s.window_config.clone(), false) {
+                tracing::error!("Failed to load window config: {e}");
+            }
+            ret
         }
 
-        pub fn to_file(&self, path: &PathBuf) -> Result<(), String> {
-            let mut file = std::fs::File::create(path).map_err(|e| e.to_string())?;
+        pub fn update_window_config(
+            path: &PathBuf,
+            window_config: &WindowConfig,
+        ) -> Result<(), String> {
+            Self::update(
+                path,
+                |s| s.window_config = Some(window_config.clone()),
+                true,
+            )
+        }
 
-            let contents = serde_json::to_string_pretty(&self).map_err(|e| e.to_string())?;
-            file.write_all(contents.as_bytes())
-                .map_err(|e| e.to_string())?;
+        pub fn load_bitbox_settings(path: &PathBuf) -> Result<Option<BitboxSettings>, String> {
+            let mut ret = None;
+            Self::update(path, |s| ret = s.bitbox.clone(), false)?;
+            Ok(ret)
+        }
+
+        pub fn update_bitbox_settings(
+            path: &PathBuf,
+            bitbox: &BitboxSettings,
+        ) -> Result<(), String> {
+            Self::update(path, |s| s.bitbox = Some(bitbox.clone()), true)
+        }
+
+        pub fn update<F>(path: &PathBuf, mut update: F, write: bool) -> Result<(), String>
+        where
+            F: FnMut(&mut GlobalSettings),
+        {
+            let exists = path.is_file();
+            let mut file = OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create(true)
+                .truncate(false)
+                .open(path)
+                .map_err(|e| format!("Opening file: {e}"))?;
+
+            file.lock_exclusive()
+                .map_err(|e| format!("Locking file: {e}"))?;
+
+            let mut global_settings = if exists {
+                let mut content = String::new();
+                file.read_to_string(&mut content)
+                    .map_err(|e| format!("Reading file: {e}"))?;
+
+                serde_json::from_str::<GlobalSettings>(&content).map_err(|e| e.to_string())?
+            } else {
+                GlobalSettings::default()
+            };
+
+            update(&mut global_settings);
+
+            if write {
+                let content = serde_json::to_vec_pretty(&global_settings)
+                    .map_err(|e| format!("Failed to serialize GlobalSettings: {e}"))?;
+
+                file.seek(SeekFrom::Start(0))
+                    .map_err(|e| format!("Failed to seek file: {e}"))?;
+
+                file.write_all(&content)
+                    .map_err(|e| format!("Failed to write file: {e}"))?;
+                file.set_len(content.len() as u64)
+                    .map_err(|e| format!("Failed to truncate file: {e}"))?;
+            }
+
+            file.unlock().map_err(|e| format!("Unlocking file: {e}"))?;
+
             Ok(())
         }
     }
 
-    #[derive(Debug, Deserialize, Serialize)]
+    #[derive(Debug, Deserialize, Serialize, Clone)]
     pub struct BitboxSettings {
         pub noise_config: NoiseConfigData,
     }
@@ -458,23 +507,28 @@ pub mod global {
 
     impl NoiseConfig for PersistedBitboxNoiseConfig {
         fn read_config(&self) -> Result<NoiseConfigData, ConfigError> {
-            let settings = GlobalSettings::load(&self.file_path)
+            let res = GlobalSettings::load_bitbox_settings(&self.file_path)
                 .map_err(ConfigError)?
-                .unwrap_or_default();
-            Ok(settings
-                .bitbox
                 .map(|s| s.noise_config)
-                .unwrap_or_else(NoiseConfigData::default))
+                .unwrap_or_else(NoiseConfigData::default);
+            Ok(res)
         }
 
         fn store_config(&self, conf: &NoiseConfigData) -> Result<(), ConfigError> {
-            let mut cfg = GlobalSettings::load(&self.file_path)
-                .map_err(ConfigError)?
-                .unwrap_or_default();
-            cfg.bitbox = Some(BitboxSettings {
-                noise_config: conf.clone(),
-            });
-            cfg.to_file(&self.file_path).map_err(ConfigError)
+            GlobalSettings::update(
+                &self.file_path,
+                |s| {
+                    if let Some(bitbox) = s.bitbox.as_mut() {
+                        bitbox.noise_config = conf.clone();
+                    } else {
+                        s.bitbox = Some(BitboxSettings {
+                            noise_config: conf.clone(),
+                        });
+                    }
+                },
+                true,
+            )
+            .map_err(ConfigError)
         }
     }
 }
