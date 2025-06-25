@@ -12,7 +12,7 @@ use std::{
 use tokio::sync::mpsc::{channel, unbounded_channel, Sender, UnboundedReceiver, UnboundedSender};
 
 use async_hwi::bitbox::api::btc::Fingerprint;
-use chrono::{DateTime, Duration, Utc};
+use chrono::DateTime;
 use liana::{
     descriptors::LianaDescriptor,
     miniscript::{
@@ -41,12 +41,12 @@ use crate::{
     },
     backup::{self, Backup},
     daemon::{
-        model::{HistoryTransaction, Labelled},
+        model::Labelled,
+        utils::{list_confirmed_transactions, FetchProgress},
         Daemon, DaemonBackend, DaemonError,
     },
     dir::{LianaDirectory, NetworkDirectory},
     node::bitcoind::Bitcoind,
-    services::connect::client::backend::api::DEFAULT_LIMIT,
 };
 
 const DUMP_LABELS_LIMIT: u32 = 100;
@@ -427,80 +427,17 @@ pub async fn export_transactions(
     let header = "Date,Label,Value,Fee,Txid,Block\n".to_string();
     file.write_all(header.as_bytes())?;
 
-    // look 2 hour forward
-    // https://github.com/bitcoin/bitcoin/blob/62bd61de110b057cbfd6e31e4d0b727d93119c72/src/chain.h#L29
-    let mut end = ((Utc::now() + Duration::hours(2)).timestamp()) as u32;
-    let total_txs = daemon
-        .list_confirmed_txs(0, end, u32::MAX as u64)
-        .await?
-        .transactions
-        .len();
-
-    if total_txs == 0 {
-        send_progress!(sender, Ended);
-    } else {
-        send_progress!(sender, Progress(5.0));
-    }
-
-    let max = match daemon.backend() {
-        DaemonBackend::RemoteBackend => DEFAULT_LIMIT as u64,
-        _ => u32::MAX as u64,
-    };
-
-    // store txs in a map to avoid duplicates
-    let mut map = HashMap::<Txid, HistoryTransaction>::new();
-    let mut limit = max;
-
-    loop {
-        let history_txs = daemon.list_history_txs(0, end, limit).await?;
-        let dl = map.len() + history_txs.len();
-        if dl > 0 {
-            let progress = (dl as f32) / (total_txs as f32) * 80.0;
-            send_progress!(sender, Progress(progress));
-        }
-        // all txs have been fetched
-        if history_txs.is_empty() {
-            break;
-        }
-        if history_txs.len() == limit as usize {
-            let first = if let Some(t) = history_txs.first().expect("checked").time {
-                t
-            } else {
-                return Err(Error::TxTimeMissing);
-            };
-            let last = if let Some(t) = history_txs.last().expect("checked").time {
-                t
-            } else {
-                return Err(Error::TxTimeMissing);
-            };
-            // limit too low, all tx are in the same timestamp
-            // we must increase limit and retry
-            if first == last {
-                limit += DEFAULT_LIMIT as u64;
-                continue;
-            } else {
-                // add txs to map
-                for tx in history_txs {
-                    let txid = tx.txid;
-                    map.insert(txid, tx);
-                }
-                limit = max;
-                end = first.min(last);
-                continue;
+    let mut txs = list_confirmed_transactions(
+        daemon.clone(),
+        |p: FetchProgress| {
+            if let Err(e) = sender.clone().send(p.into()) {
+                tracing::error!("ImportExport fail to send msg: {}", e);
             }
-        } else
-        /* history_txs.len() < limit */
-        {
-            // add txs to map
-            for tx in history_txs {
-                let txid = tx.txid;
-                map.insert(txid, tx);
-            }
-            break;
-        }
-    }
-
-    let mut txs: Vec<_> = map.into_values().collect();
+        },
+        true,
+        None,
+    )
+    .await?;
     txs.sort_by(|a, b| b.compare(a));
 
     for mut tx in txs {
