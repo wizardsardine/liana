@@ -532,3 +532,177 @@ pub mod global {
         }
     }
 }
+
+#[cfg(test)]
+mod test {
+    use super::global::{GlobalSettings, WindowConfig};
+    use std::env;
+
+    const RAW_GLOBAL_SETTINGS: &str = r#"{
+          "bitbox": {
+            "noise_config": {
+              "app_static_privkey": [
+                84,
+                118,
+                69,
+                7,
+                5,
+                246,
+                50,
+                252,
+                79,
+                62,
+                233,
+                118,
+                54,
+                46,
+                247,
+                143,
+                255,
+                152,
+                11,
+                96,
+                7,
+                213,
+                209,
+                42,
+                219,
+                58,
+                237,
+                22,
+                53,
+                221,
+                227,
+                228
+              ],
+              "device_static_pubkeys": [
+                [
+                  252,
+                  78,
+                  254,
+                  112,
+                  62,
+                  72,
+                  220,
+                  22,
+                  23,
+                  147,
+                  205,
+                  166,
+                  248,
+                  39,
+                  97,
+                  46,
+                  32,
+                  255,
+                  132,
+                  125,
+                  97,
+                  142,
+                  31,
+                  146,
+                  44,
+                  186,
+                  231,
+                  1,
+                  12,
+                  190,
+                  105,
+                  11
+                ]
+              ]
+            }
+          },
+          "window_config": {
+            "width": 1248.0,
+            "height": 688.0
+          }
+        }"#;
+
+    #[test]
+    fn test_parse_global_config() {
+        let _ = serde_json::from_str::<GlobalSettings>(RAW_GLOBAL_SETTINGS).unwrap();
+    }
+
+    #[test]
+    fn test_update_global_config() {
+        let path = env::current_dir()
+            .unwrap()
+            .join("test_assets")
+            .join("global_settings.json");
+        assert!(path.exists());
+
+        // read global config file
+        GlobalSettings::update(
+            &path,
+            |s| {
+                assert_eq!(
+                    *s.window_config.as_ref().unwrap(),
+                    WindowConfig {
+                        width: 1248.0,
+                        height: 688.0
+                    }
+                );
+                assert!(s.bitbox.is_some());
+                // this must not be written to the file as write == false
+                s.window_config.as_mut().unwrap().height = 0.0;
+            },
+            false,
+        )
+        .unwrap();
+
+        // re-read the global config file
+        GlobalSettings::update(
+            &path,
+            |s| {
+                // change have not been written
+                assert_eq!(
+                    *s.window_config.as_ref().unwrap(),
+                    WindowConfig {
+                        width: 1248.0,
+                        height: 688.0
+                    }
+                );
+            },
+            true,
+        )
+        .unwrap();
+
+        // edit the global config file
+        GlobalSettings::update(
+            &path,
+            |s| {
+                assert_eq!(
+                    *s.window_config.as_ref().unwrap(),
+                    WindowConfig {
+                        width: 1248.0,
+                        height: 688.0
+                    }
+                );
+                assert!(s.bitbox.is_some());
+                // this must be written to the file as write == true
+                s.window_config.as_mut().unwrap().height = 0.0;
+            },
+            true,
+        )
+        .unwrap();
+
+        // re-read the global config file
+        GlobalSettings::update(
+            &path,
+            |s| {
+                // change have been written
+                assert_eq!(
+                    *s.window_config.as_ref().unwrap(),
+                    WindowConfig {
+                        width: 1248.0,
+                        height: 0.0
+                    }
+                );
+                s.window_config.as_mut().unwrap().height = 688.0;
+            },
+            true,
+        )
+        .unwrap()
+    }
+}
