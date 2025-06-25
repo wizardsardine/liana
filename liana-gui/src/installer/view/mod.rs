@@ -233,6 +233,12 @@ pub fn import_wallet_or_descriptor<'a>(
                                     .size(text::P1_SIZE)
                                     .padding(10),
                                 )
+                                .push(text("or").bold())
+                                .push(button::primary(None, "Import descriptor").on_press(
+                                    Message::ImportRemoteWallet(
+                                        message::ImportRemoteWallet::ImportDescriptorFromFile,
+                                    ),
+                                ))
                                 .spacing(10),
                         )
                         .push(
@@ -268,7 +274,8 @@ pub fn import_wallet_or_descriptor<'a>(
             .push_maybe(error.map(|e| card::error("Something wrong happened", e.to_string())))
             .push(card_wallets)
             .push(card::simple(col_invitation_token).padding(0))
-            .push(card::simple(col_descriptor).padding(0)),
+            .push(card::simple(col_descriptor).padding(0))
+            .push(Space::with_height(10)),
         true,
         Some(Message::Previous),
     )

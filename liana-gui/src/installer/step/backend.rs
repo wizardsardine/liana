@@ -1,13 +1,15 @@
 use std::str::FromStr;
 
-use iced::Task;
+use iced::{Subscription, Task};
 
 use liana::{descriptors::LianaDescriptor, miniscript::bitcoin::Network};
 use liana_ui::{component::form, widget::Element};
 
 use crate::{
+    app::state::export::ExportModal,
     daemon::DaemonError,
     dir::NetworkDirectory,
+    export::{ImportExportMessage, ImportExportType, Progress},
     hw::HardwareWallets,
     installer::{
         context::{self, Context, RemoteBackend},
@@ -448,6 +450,7 @@ pub struct ImportRemoteWallet {
     error: Option<String>,
     backend: context::RemoteBackend,
     wallets: Vec<api::Wallet>,
+    modal: Option<ExportModal>,
     // wallet alias is stored here to be applied to context
     // and be modified in a following step
     wallet_alias: Option<String>,
@@ -464,6 +467,7 @@ impl ImportRemoteWallet {
             error: None,
             backend: context::RemoteBackend::Undefined,
             wallets: Vec::new(),
+            modal: None,
             wallet_alias: None,
         }
     }
@@ -502,6 +506,37 @@ impl Step for ImportRemoteWallet {
     // Verification of the values is happening when the user click on Next button.
     fn update(&mut self, _hws: &mut HardwareWallets, message: Message) -> Task<Message> {
         match message {
+            Message::ImportRemoteWallet(message::ImportRemoteWallet::ImportDescriptorFromFile) => {
+                let modal = ExportModal::new(None, ImportExportType::ImportDescriptor);
+                let launch = modal.launch(false);
+                self.modal = Some(modal);
+                return launch;
+            }
+            Message::ImportExport(ImportExportMessage::Path(p)) => {
+                if let Some(modal) = self.modal.as_mut() {
+                    return modal.update(ImportExportMessage::Path(p));
+                }
+            }
+            Message::ImportExport(ImportExportMessage::Close) => self.modal = None,
+            Message::ImportRemoteWallet(message::ImportRemoteWallet::ImportExport(m)) => match m {
+                ImportExportMessage::Close => self.modal = None,
+                ImportExportMessage::Progress(Progress::Descriptor(d)) => {
+                    self.modal = None;
+                    return Task::batch([
+                        Task::done(Message::ImportRemoteWallet(
+                            message::ImportRemoteWallet::ImportDescriptor(d.to_string()),
+                        )),
+                        Task::done(Message::ImportRemoteWallet(
+                            message::ImportRemoteWallet::ConfirmDescriptor,
+                        )),
+                    ]);
+                }
+                m => {
+                    if let Some(modal) = self.modal.as_mut() {
+                        return modal.update(m);
+                    }
+                }
+            },
             Message::ImportRemoteWallet(message::ImportRemoteWallet::ImportDescriptor(desc)) => {
                 self.imported_descriptor.value = desc;
                 if !self.imported_descriptor.value.is_empty() {
@@ -643,6 +678,19 @@ impl Step for ImportRemoteWallet {
         Task::none()
     }
 
+    fn subscription(&self, _hws: &HardwareWallets) -> iced::Subscription<Message> {
+        if let Some(modal) = &self.modal {
+            if let Some(sub) = modal.subscription() {
+                return sub.map(|m| {
+                    Message::ImportRemoteWallet(message::ImportRemoteWallet::ImportExport(
+                        ImportExportMessage::Progress(m),
+                    ))
+                });
+            }
+        }
+        Subscription::none()
+    }
+
     fn apply(&mut self, ctx: &mut Context) -> bool {
         // Set to true in order to force the registration process to be shown to user.
         ctx.hw_is_used = true;
@@ -662,7 +710,7 @@ impl Step for ImportRemoteWallet {
         progress: (usize, usize),
         email: Option<&'a str>,
     ) -> Element<Message> {
-        view::import_wallet_or_descriptor(
+        let content = view::import_wallet_or_descriptor(
             progress,
             email,
             &self.invitation_token,
@@ -675,7 +723,12 @@ impl Step for ImportRemoteWallet {
                 .iter()
                 .map(|w| (&w.name, w.metadata.wallet_alias.as_ref()))
                 .collect(),
-        )
+        );
+        if let Some(modal) = &self.modal {
+            modal.view(content)
+        } else {
+            content
+        }
     }
 }
 

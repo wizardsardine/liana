@@ -246,7 +246,7 @@ pub enum Progress {
     WalletFromBackup(
         (
             LianaDescriptor,
-            Network,
+            Option<Network>,
             HashMap<Fingerprint, settings::KeySetting>,
             Backup,
         ),
@@ -637,7 +637,19 @@ pub async fn import_descriptor(
     file.read_to_string(&mut descr_str)?;
     let descr_str = descr_str.trim();
 
-    let descriptor = LianaDescriptor::from_str(descr_str).map_err(|_| Error::ParseDescriptor)?;
+    let descriptor = if let Ok(d) = LianaDescriptor::from_str(descr_str) {
+        Some(d)
+    } else {
+        let backup: Result<Backup, _> = serde_json::from_str(descr_str);
+        backup.ok().and_then(|b| {
+            if b.accounts.len() == 1 {
+                LianaDescriptor::from_str(&b.accounts[0].descriptor).ok()
+            } else {
+                None
+            }
+        })
+    };
+    let descriptor = descriptor.ok_or(Error::ParseDescriptor)?;
 
     send_progress!(sender, Progress(100.0));
     send_progress!(sender, Descriptor(descriptor));
@@ -1033,13 +1045,33 @@ pub async fn wallet_from_backup(
 
     let backup: Result<Backup, _> = serde_json::from_str(&backup_str);
     let backup = match backup {
-        Ok(psbt) => psbt,
+        Ok(b) => b,
         Err(e) => {
-            return Err(Error::BackupImport(format!("{:?}", e)));
+            // try to import as bare descriptor
+            let descr = LianaDescriptor::from_str(&backup_str);
+            match descr {
+                Ok(descr) => {
+                    let network = if descr.all_xpubs_net_is(Network::Bitcoin) {
+                        Network::Bitcoin
+                    } else {
+                        Network::Signet
+                    };
+                    Backup::from_descriptor(descr, network)
+                }
+                Err(e2) => {
+                    return Err(Error::BackupImport(format!(
+                        "A backup or descriptor file is expected: {e}, {e2}"
+                    )));
+                }
+            }
         }
     };
 
-    let network = backup.network;
+    let network = if backup.network == Network::Bitcoin {
+        Some(backup.network)
+    } else {
+        None
+    };
 
     let account = match backup.accounts.len() {
         0 => {
@@ -1274,7 +1306,43 @@ pub async fn app_backup_export(
 
 #[cfg(test)]
 mod tests {
+    use std::env;
+
     use super::*;
+
+    #[tokio::test]
+    async fn test_import_descriptor_from_file() {
+        let (sender, mut receiver) = unbounded_channel();
+        let path = env::current_dir()
+            .unwrap()
+            .join("test_assets")
+            .join("liana-jz5sm0xn.txt");
+        println!("path: {}", path.display());
+        import_descriptor(&sender, path).await.unwrap();
+        let _msg = receiver.try_recv().unwrap();
+        assert!(matches!(Progress::Progress(100.0), _msg));
+        let raw_descriptor = "wsh(or_d(pk([8a550171/48'/1'/0'/2']tpubDFnCs5ZaCqopaNhgLCiXAwbkaBdcnuMt1VFoPsRpUrpidyvzG67MYjkfxw6HnTBhHqeU3xw2ioNBVcWY3jXwGhSyppEQvtn38GsL7RH1eef/<0;1>/*),and_v(v:pkh([8a550171/48'/1'/0'/2']tpubDFnCs5ZaCqopaNhgLCiXAwbkaBdcnuMt1VFoPsRpUrpidyvzG67MYjkfxw6HnTBhHqeU3xw2ioNBVcWY3jXwGhSyppEQvtn38GsL7RH1eef/<2;3>/*),older(52596))))#jz5sm0xn";
+        let descr = LianaDescriptor::from_str(raw_descriptor).unwrap();
+        let _msg = receiver.try_recv().unwrap();
+        assert!(matches!(Progress::Descriptor(descr), _msg));
+    }
+
+    #[tokio::test]
+    async fn test_import_descriptor_from_backup_file() {
+        let (sender, mut receiver) = unbounded_channel();
+        let path = env::current_dir()
+            .unwrap()
+            .join("test_assets")
+            .join("liana-backup-2025-06-23T13-23-54.json");
+        println!("path: {}", path.display());
+        import_descriptor(&sender, path).await.unwrap();
+        let _msg = receiver.try_recv().unwrap();
+        assert!(matches!(Progress::Progress(100.0), _msg));
+        let raw_descriptor = "wsh(or_d(pk([8a550171/48'/1'/0'/2']tpubDFnCs5ZaCqopaNhgLCiXAwbkaBdcnuMt1VFoPsRpUrpidyvzG67MYjkfxw6HnTBhHqeU3xw2ioNBVcWY3jXwGhSyppEQvtn38GsL7RH1eef/<0;1>/*),and_v(v:pkh([8a550171/48'/1'/0'/2']tpubDFnCs5ZaCqopaNhgLCiXAwbkaBdcnuMt1VFoPsRpUrpidyvzG67MYjkfxw6HnTBhHqeU3xw2ioNBVcWY3jXwGhSyppEQvtn38GsL7RH1eef/<2;3>/*),older(52596))))#jz5sm0xn";
+        let descr = LianaDescriptor::from_str(raw_descriptor).unwrap();
+        let _msg = receiver.try_recv().unwrap();
+        assert!(matches!(Progress::Descriptor(descr), _msg));
+    }
 
     #[test]
     fn test_parse_coldcard_xpub() {

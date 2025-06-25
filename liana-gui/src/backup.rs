@@ -1,7 +1,10 @@
 use chrono::{Duration, Utc};
-use liana::miniscript::{
-    self,
-    bitcoin::{bip32::Fingerprint, Network, Txid},
+use liana::{
+    descriptors::LianaDescriptor,
+    miniscript::{
+        self,
+        bitcoin::{bip32::Fingerprint, Network, Txid},
+    },
 };
 use lianad::{
     bip329,
@@ -111,6 +114,23 @@ impl Debug for Backup {
 }
 
 impl Backup {
+    /// Create a Backup from a descriptor
+    ///
+    /// # Arguments
+    /// * `descriptor` - the descriptor
+    /// * `network` - the network
+    pub fn from_descriptor(descriptor: LianaDescriptor, network: Network) -> Self {
+        let account = Account::new(descriptor.to_string());
+        Backup {
+            name: None,
+            alias: None,
+            accounts: vec![account],
+            network,
+            date: None,
+            proprietary: Default::default(),
+            version: default_version(),
+        }
+    }
     /// Create a Backup from the Installer context
     ///
     /// # Arguments
