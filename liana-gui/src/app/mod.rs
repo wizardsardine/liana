@@ -34,7 +34,7 @@ use state::{
 use wallet::{sync_status, SyncStatus};
 
 use crate::{
-    app::{cache::Cache, error::Error, menu::Menu, wallet::Wallet},
+    app::{cache::Cache, error::Error, menu::Menu, settings::WalletId, wallet::Wallet},
     daemon::{embedded::EmbeddedDaemon, Daemon, DaemonBackend},
     dir::LianaDirectory,
     node::{bitcoind::Bitcoind, NodeType},
@@ -182,13 +182,17 @@ impl App {
         )
     }
 
-    pub fn title(&self) -> String {
+    pub fn wallet_id(&self) -> WalletId {
+        self.wallet.id()
+    }
+
+    pub fn title(&self) -> &str {
         if let Some(alias) = &self.wallet.alias {
             if !alias.is_empty() {
-                return format!("- {}", alias);
+                return alias;
             }
         }
-        String::new()
+        "Liana wallet"
     }
 
     fn set_current_panel(&mut self, menu: Menu) -> Task<Message> {

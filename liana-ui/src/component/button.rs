@@ -14,6 +14,24 @@ pub fn menu_active<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> Button
         .style(theme::button::menu_pressed)
 }
 
+pub fn menu_small<'a, T: 'a>(icon: Text<'a>) -> Button<'a, T> {
+    Button::new(
+        container(icon.style(theme::text::secondary))
+            .padding(10)
+            .align_x(Horizontal::Center),
+    )
+    .style(theme::button::menu)
+}
+
+pub fn menu_active_small<'a, T: 'a>(icon: Text<'a>) -> Button<'a, T> {
+    Button::new(
+        container(icon.style(theme::text::secondary))
+            .padding(10)
+            .align_x(Horizontal::Center),
+    )
+    .style(theme::button::menu_pressed)
+}
+
 fn content_menu<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> Container<'a, T> {
     match icon {
         None => container(text(t)).padding(5),

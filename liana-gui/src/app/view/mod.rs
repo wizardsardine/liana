@@ -18,7 +18,7 @@ pub use message::*;
 use warning::warn;
 
 use iced::{
-    widget::{column, row, scrollable, Space},
+    widget::{column, responsive, row, scrollable, Space},
     Length,
 };
 
@@ -186,6 +186,152 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
     .style(theme::container::foreground)
 }
 
+pub fn small_sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
+    let home_button = if *menu == Menu::Home {
+        row!(
+            button::menu_active_small(home_icon())
+                .on_press(Message::Reload)
+                .width(iced::Length::Fill),
+            menu_green_bar(),
+        )
+    } else {
+        row!(button::menu_small(home_icon())
+            .on_press(Message::Menu(Menu::Home))
+            .width(iced::Length::Fill),)
+    };
+
+    let transactions_button = if *menu == Menu::Transactions {
+        row!(
+            button::menu_active_small(history_icon())
+                .on_press(Message::Reload)
+                .width(iced::Length::Fill),
+            menu_green_bar()
+        )
+    } else {
+        row!(button::menu_small(history_icon())
+            .on_press(Message::Menu(Menu::Transactions))
+            .width(iced::Length::Fill))
+    };
+
+    let coins_button = if *menu == Menu::Coins {
+        row!(
+            button::menu_active_small(coins_icon())
+                .on_press(Message::Reload)
+                .width(iced::Length::Fill),
+            menu_green_bar()
+        )
+    } else {
+        row!(button::menu_small(coins_icon())
+            .style(theme::button::menu)
+            .on_press(Message::Menu(Menu::Coins))
+            .width(iced::Length::Fill))
+    };
+
+    let psbt_button = if *menu == Menu::PSBTs {
+        row!(
+            button::menu_active_small(history_icon())
+                .on_press(Message::Reload)
+                .width(iced::Length::Fill),
+            menu_green_bar()
+        )
+    } else {
+        row!(button::menu_small(history_icon())
+            .on_press(Message::Menu(Menu::PSBTs))
+            .width(iced::Length::Fill))
+    };
+
+    let spend_button = if *menu == Menu::CreateSpendTx {
+        row!(
+            button::menu_active_small(send_icon())
+                .on_press(Message::Reload)
+                .width(iced::Length::Fill),
+            menu_green_bar()
+        )
+    } else {
+        row!(button::menu_small(send_icon())
+            .on_press(Message::Menu(Menu::CreateSpendTx))
+            .width(iced::Length::Fill))
+    };
+
+    let receive_button = if *menu == Menu::Receive {
+        row!(
+            button::menu_active_small(receive_icon())
+                .on_press(Message::Reload)
+                .width(iced::Length::Fill),
+            menu_green_bar()
+        )
+    } else {
+        row!(button::menu_small(receive_icon())
+            .on_press(Message::Menu(Menu::Receive))
+            .width(iced::Length::Fill))
+    };
+
+    let recovery_button = if *menu == Menu::Recovery {
+        row!(
+            button::menu_active_small(recovery_icon())
+                .on_press(Message::Reload)
+                .width(iced::Length::Fill),
+            menu_green_bar()
+        )
+    } else {
+        row!(button::menu_small(recovery_icon())
+            .on_press(Message::Menu(Menu::Recovery))
+            .width(iced::Length::Fill))
+    };
+
+    let settings_button = if *menu == Menu::Settings {
+        row!(
+            button::menu_active_small(settings_icon())
+                .on_press(Message::Menu(Menu::Settings))
+                .width(iced::Length::Fill),
+            menu_green_bar()
+        )
+    } else {
+        row!(button::menu_small(settings_icon())
+            .on_press(Message::Menu(Menu::Settings))
+            .width(iced::Length::Fill))
+    };
+
+    Container::new(
+        Column::new()
+            .push(
+                Column::new()
+                    .push(
+                        Container::new(
+                            liana_grey_logo()
+                                .height(Length::Fixed(120.0))
+                                .width(Length::Fixed(60.0)),
+                        )
+                        .padding(10),
+                    )
+                    .push(home_button)
+                    .push(spend_button)
+                    .push(receive_button)
+                    .push(coins_button)
+                    .push(transactions_button)
+                    .push(psbt_button)
+                    .align_x(iced::Alignment::Center)
+                    .height(Length::Fill),
+            )
+            .push(
+                Container::new(
+                    Column::new()
+                        .spacing(10)
+                        .push_maybe(cache.rescan_progress.map(|p| {
+                            Container::new(text(format!("{:.2}%  ", p * 100.0)))
+                                .padding(5)
+                                .style(theme::pill::simple)
+                        }))
+                        .push(recovery_button)
+                        .push(settings_button),
+                )
+                .height(Length::Shrink),
+            )
+            .align_x(iced::Alignment::Center),
+    )
+    .style(theme::container::foreground)
+}
+
 pub fn dashboard<'a, T: Into<Element<'a, Message>>>(
     menu: &'a Menu,
     cache: &'a Cache,
@@ -194,9 +340,14 @@ pub fn dashboard<'a, T: Into<Element<'a, Message>>>(
 ) -> Element<'a, Message> {
     Row::new()
         .push(
-            sidebar(menu, cache)
-                .width(Length::FillPortion(2))
-                .height(Length::Fill),
+            Container::new(responsive(move |size| {
+                if size.width > 150.0 {
+                    sidebar(menu, cache).height(Length::Fill).into()
+                } else {
+                    small_sidebar(menu, cache).height(Length::Fill).into()
+                }
+            }))
+            .width(Length::FillPortion(2)),
         )
         .push(
             Column::new()

@@ -31,11 +31,7 @@ use crate::{
 #[derive(Debug, Clone)]
 pub enum Message {
     UserActionDone(bool),
-    Exit(
-        Box<settings::WalletSettings>,
-        Option<Bitcoind>,
-        /* remove log */ bool,
-    ),
+    Exit(Box<settings::WalletSettings>, Option<Bitcoind>),
     Clibpboard(String),
     Next,
     Skip,
