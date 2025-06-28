@@ -10,6 +10,7 @@ use iced::{
     event::{self, Event},
     keyboard,
     widget::{focus_next, focus_previous},
+    window::{self},
     Settings, Size, Subscription, Task,
 };
 use tracing::{error, info};
@@ -25,7 +26,10 @@ use liana_gui::{
     app::{
         self,
         cache::Cache,
-        settings::{update_settings_file, WalletSettings},
+        settings::{
+            global::{GlobalSettings, WindowConfig},
+            update_settings_file, WalletSettings,
+        },
         wallet::Wallet,
         App,
     },
@@ -97,6 +101,9 @@ pub struct GUI {
     logger: Logger,
     // if set up, it overrides the level filter of the logger.
     log_level: Option<LevelFilter>,
+    window_id: Option<window::Id>,
+    window_init: Option<bool>,
+    window_config: Option<WindowConfig>,
 }
 
 enum State {
@@ -105,6 +112,18 @@ enum State {
     Loader(Box<Loader>),
     Login(Box<login::LianaLiteLogin>),
     App(App),
+}
+
+impl State {
+    pub fn datadir_path(&self) -> &LianaDirectory {
+        match self {
+            State::Launcher(launcher) => &launcher.datadir_path,
+            State::Installer(installer) => &installer.datadir,
+            State::Loader(loader) => &loader.datadir_path,
+            State::Login(login) => &login.datadir,
+            State::App(app) => app.datadir_path(),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -123,6 +142,8 @@ pub enum Message {
     Login(Box<login::Message>),
     KeyPressed(Key),
     Event(iced::Event),
+    Window(Option<window::Id>),
+    WindowSize(Size),
 }
 
 impl From<Result<(), iced::font::Error>> for Message {
@@ -150,14 +171,27 @@ impl GUI {
 
     fn new((config, log_level): (Config, Option<LevelFilter>)) -> (GUI, Task<Message>) {
         let logger = Logger::setup(log_level.unwrap_or(LevelFilter::INFO));
-        let mut cmds = vec![Task::perform(ctrl_c(), |_| Message::CtrlC)];
-        let (launcher, command) = Launcher::new(config.liana_directory, config.network);
+        let mut cmds = vec![
+            window::get_oldest().map(Message::Window),
+            Task::perform(ctrl_c(), |_| Message::CtrlC),
+        ];
+        let (launcher, command) = Launcher::new(config.liana_directory.clone(), config.network);
+        let window_config =
+            GlobalSettings::load_window_config(&GlobalSettings::path(&config.liana_directory));
+        let window_init = if window_config.is_some() {
+            Some(true)
+        } else {
+            None
+        };
         cmds.push(command.map(|msg| Message::Launch(Box::new(msg))));
         (
             Self {
                 state: State::Launcher(Box::new(launcher)),
                 logger,
                 log_level,
+                window_id: None,
+                window_init,
+                window_config,
             },
             Task::batch(cmds),
         )
@@ -165,6 +199,70 @@ impl GUI {
 
     fn update(&mut self, message: Message) -> Task<Message> {
         match (&mut self.state, message) {
+            // we get this message only once at startup
+            (_, Message::Window(id)) => {
+                self.window_id = id;
+                // Common case: if there is an already saved screen size we reuse it
+                if let (Some(id), Some(WindowConfig { width, height })) = (id, &self.window_config)
+                {
+                    window::resize(
+                        id,
+                        Size {
+                            width: *width,
+                            height: *height,
+                        },
+                    )
+                // Initial startup: we maximize the screen in order to know the max usable screen size
+                } else if let Some(id) = &self.window_id {
+                    window::maximize(*id, true)
+                } else {
+                    Task::none()
+                }
+            }
+            (_, Message::WindowSize(monitor_size)) => {
+                let cloned_cfg = self.window_config.clone();
+                match (&cloned_cfg, self.window_init, &self.window_id) {
+                    // no previous screen size recorded && window maximized
+                    (None, Some(false), Some(id)) => {
+                        self.window_init = Some(true);
+                        let mut batch = vec![window::maximize(*id, false)];
+                        let new_size = if monitor_size.height >= 1200.0 {
+                            let size = Size {
+                                width: 1200.0,
+                                height: 950.0,
+                            };
+                            batch.push(window::resize(*id, size));
+                            size
+                        } else {
+                            batch.push(window::resize(*id, window::Settings::default().size));
+                            window::Settings::default().size
+                        };
+                        self.window_config = Some(WindowConfig {
+                            width: new_size.width,
+                            height: new_size.height,
+                        });
+                        Task::batch(batch)
+                    }
+                    // we already have a record of the last window size and we update it
+                    (Some(WindowConfig { width, height }), _, _) => {
+                        if *width != monitor_size.width || *height != monitor_size.height {
+                            if let Some(cfg) = &mut self.window_config {
+                                cfg.width = monitor_size.width;
+                                cfg.height = monitor_size.height;
+                            }
+                        }
+                        Task::none()
+                    }
+                    // we ignore the first notification about initial window size it will always be
+                    // the default one
+                    _ => {
+                        if self.window_init.is_none() {
+                            self.window_init = Some(false);
+                        }
+                        Task::none()
+                    }
+                }
+            }
             (_, Message::CtrlC)
             | (_, Message::Event(iced::Event::Window(iced::window::Event::CloseRequested))) => {
                 match &mut self.state {
@@ -174,6 +272,12 @@ impl GUI {
                     State::App(s) => s.stop(),
                     State::Login(_) => {}
                 };
+                if let Some(window_config) = &self.window_config {
+                    let path = GlobalSettings::path(self.state.datadir_path());
+                    if let Err(e) = GlobalSettings::update_window_config(&path, window_config) {
+                        tracing::error!("Failed to update the window config: {e}");
+                    }
+                }
                 iced::window::get_latest().and_then(iced::window::close)
             }
             (_, Message::KeyPressed(Key::Tab(shift))) => {
@@ -409,6 +513,9 @@ impl GUI {
                     iced::Event::Window(iced::window::Event::CloseRequested),
                     event::Status::Ignored,
                 ) => Some(Message::Event(event)),
+                (iced::Event::Window(iced::window::Event::Resized(size)), _) => {
+                    Some(Message::WindowSize(*size))
+                }
                 _ => None,
             }),
         ])
@@ -572,8 +679,18 @@ fn main() -> Result<(), Box<dyn Error>> {
         fonts: font::load(),
     };
 
+    let global_config_path = GlobalSettings::path(&config.liana_directory);
+    let initial_size = if let Some(WindowConfig { width, height }) =
+        GlobalSettings::load_window_config(&global_config_path)
+    {
+        Size { width, height }
+    } else {
+        iced::window::Settings::default().size
+    };
+
     #[allow(unused_mut)]
     let mut window_settings = iced::window::Settings {
+        size: initial_size,
         icon: Some(image::liana_app_icon()),
         position: iced::window::Position::Default,
         min_size: Some(Size {
