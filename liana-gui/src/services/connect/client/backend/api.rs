@@ -257,7 +257,7 @@ pub struct Transaction {
     pub raw: bitcoin::Transaction,
     pub inputs: Vec<Input>,
     pub outputs: Vec<Output>,
-    /// If the transaction has multiple incoming or ougoing payment.
+    /// If the transaction has multiple incoming or outgoing payments.
     pub is_batch: bool,
 }
 
