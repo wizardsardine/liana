@@ -3,7 +3,7 @@
 pub mod template;
 
 use iced::widget::{self, container, pick_list, scrollable, slider, Button, Space};
-use iced::{Alignment, Length};
+use iced::{alignment, Alignment, Length};
 
 use liana::miniscript::bitcoin::Network;
 use liana_ui::component::text::{self, h3, p1_bold, p2_regular, H3_SIZE};
@@ -555,28 +555,36 @@ pub fn edit_sequence_modal<'a>(sequence: &form::Value<String>) -> Element<'a, Me
                                 ),
                             )
                         })
-                        .warning("Sequence must be superior to 0 and inferior to 65535"),
+                        .warning("Value must be superior to 0 and inferior to 65535"),
                     )
                     .width(Length::Fixed(200.0)),
                 )
                 .spacing(10)
-                .push(text("blocks").bold()),
+                .push(text("blocks").bold())
+                .align_y(alignment::Vertical::Center),
         );
 
     if sequence.valid {
         if let Ok(sequence) = u16::from_str(&sequence.value) {
             let (n_years, n_months, n_days, n_hours, n_minutes) = duration_from_sequence(sequence);
+            let mut units_to_show = vec![
+                (n_years, "year"),
+                (n_months, "month"),
+                (n_days, "day"),
+                (n_hours, "hour"),
+                (n_minutes, "minute"),
+            ];
+            if sequence >= 1440 {
+                // >= 10 days: show until days
+                units_to_show.truncate(3);
+            } else if sequence >= 144 {
+                // 1-10 days: show until hours
+                units_to_show.truncate(4);
+            } // < 1 day: show all
             col = col
-                .push(
-                    [
-                        (n_years, "year"),
-                        (n_months, "month"),
-                        (n_days, "day"),
-                        (n_hours, "hour"),
-                        (n_minutes, "minute"),
-                    ]
-                    .iter()
-                    .fold(Row::new().spacing(5), |row, (n, unit)| {
+                .push(units_to_show.iter().fold(
+                    Row::new().spacing(5).push(text("~ ").bold()),
+                    |row, (n, unit)| {
                         row.push_maybe(if *n > 0 {
                             Some(
                                 text(format!("{} {}{}", n, unit, if *n > 1 { "s" } else { "" }))
@@ -585,18 +593,23 @@ pub fn edit_sequence_modal<'a>(sequence: &form::Value<String>) -> Element<'a, Me
                         } else {
                             None
                         })
-                    }),
-                )
+                    },
+                ))
                 .push(
                     Container::new(
                         slider(1..=u16::MAX, sequence, |v| {
                             Message::DefineDescriptor(
                                 message::DefineDescriptor::ThresholdSequenceModal(
-                                    message::ThresholdSequenceModal::SequenceEdited(v.to_string()),
+                                    message::ThresholdSequenceModal::SequenceEdited(
+                                        // Since slider starts at 1, intermediate values are off by 1 from intended values.
+                                        // Subtract 1 to align with expected sequence values, except for edge cases (1 and u16::MAX)
+                                        (if v > 1 && v != u16::MAX { v - 1 } else { v })
+                                            .to_string(),
+                                    ),
                                 ),
                             )
                         })
-                        .step(144_u16), // 144 blocks per day
+                        .step(4383_u16), // 4383 blocks per month
                     )
                     .width(Length::Fixed(500.0)),
                 );
