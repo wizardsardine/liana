@@ -3,7 +3,7 @@
 pub mod template;
 
 use iced::widget::{self, container, pick_list, scrollable, slider, Button, Space};
-use iced::{Alignment, Length};
+use iced::{alignment, Alignment, Length};
 
 use liana::miniscript::bitcoin::Network;
 use liana_ui::component::text::{self, h3, p1_bold, p2_regular, H3_SIZE};
@@ -557,10 +557,11 @@ pub fn edit_sequence_modal<'a>(sequence: &form::Value<String>) -> Element<'a, Me
                         })
                         .warning("Sequence must be superior to 0 and inferior to 65535"),
                     )
-                    .width(Length::Fixed(200.0)),
+                    .width(Length::Fixed(60.0)),
                 )
                 .spacing(10)
-                .push(text("blocks").bold()),
+                .push(text("blocks").bold())
+                .align_y(alignment::Vertical::Center),
         );
 
     if sequence.valid {
