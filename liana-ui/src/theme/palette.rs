@@ -46,6 +46,7 @@ pub struct Buttons {
     pub container_border: Button,
     pub menu: Button,
     pub tab: Button,
+    pub link: Button,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq)]
@@ -384,6 +385,28 @@ impl std::default::Default for Palette {
                         background: color::GREY_6,
                         text: color::GREY_2,
                         border: color::GREY_7.into(),
+                    }),
+                },
+                link: Button {
+                    active: ButtonPalette {
+                        background: color::TRANSPARENT,
+                        text: color::GREY_2,
+                        border: color::TRANSPARENT.into(),
+                    },
+                    hovered: ButtonPalette {
+                        background: color::TRANSPARENT,
+                        text: color::GREEN,
+                        border: color::TRANSPARENT.into(),
+                    },
+                    pressed: Some(ButtonPalette {
+                        background: color::TRANSPARENT,
+                        text: color::GREEN,
+                        border: color::TRANSPARENT.into(),
+                    }),
+                    disabled: Some(ButtonPalette {
+                        background: color::TRANSPARENT,
+                        text: color::GREY_2,
+                        border: color::TRANSPARENT.into(),
                     }),
                 },
             },

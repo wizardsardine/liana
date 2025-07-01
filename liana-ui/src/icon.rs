@@ -131,6 +131,10 @@ pub fn restore_icon() -> Text<'static> {
     bootstrap_icon('\u{F358}')
 }
 
+pub fn link_icon() -> Text<'static> {
+    bootstrap_icon('\u{F470}')
+}
+
 const ICONEX_ICONS: Font = Font::with_name("Untitled1");
 
 fn iconex_icon(unicode: char) -> Text<'static> {

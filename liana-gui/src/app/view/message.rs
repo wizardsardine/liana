@@ -30,6 +30,7 @@ pub enum Message {
     HideRescanWarning,
     ExportPsbt,
     ImportPsbt,
+    OpenUrl(String),
 }
 
 impl Close for Message {

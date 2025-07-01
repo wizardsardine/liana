@@ -6,6 +6,7 @@ pub mod dir;
 pub mod download;
 pub mod export;
 pub mod gui;
+pub mod help;
 pub mod hw;
 pub mod installer;
 pub mod launcher;
