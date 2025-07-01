@@ -52,6 +52,10 @@ pub fn transparent_border(theme: &Theme, status: Status) -> Style {
     button(&theme.colors.buttons.transparent_border, status)
 }
 
+pub fn link(theme: &Theme, status: Status) -> Style {
+    button(&theme.colors.buttons.link, status)
+}
+
 fn button(p: &Button, status: Status) -> Style {
     match status {
         Status::Active => Style {

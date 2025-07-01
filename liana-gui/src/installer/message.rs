@@ -67,6 +67,7 @@ pub enum Message {
     WalletFromBackup((HashMap<Fingerprint, settings::KeySetting>, Backup)),
     WalletAliasEdited(String),
     SelectAccount(Fingerprint, ChildNumber),
+    OpenUrl(String),
 }
 
 impl Close for Message {
