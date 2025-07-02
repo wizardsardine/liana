@@ -32,7 +32,7 @@ use crate::{
 pub enum Message {
     UserActionDone(bool),
     Exit(Box<settings::WalletSettings>, Option<Bitcoind>),
-    Clibpboard(String),
+    Clipboard(String),
     Next,
     Skip,
     Previous,

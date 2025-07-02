@@ -698,7 +698,7 @@ pub fn register_descriptor<'a>(
                     .push(
                         Row::new().push(Column::new().width(Length::Fill)).push(
                             button::secondary(Some(icon::clipboard_icon()), "Copy")
-                                .on_press(Message::Clibpboard(descriptor_str)),
+                                .on_press(Message::Clipboard(descriptor_str)),
                         ),
                     )
                     .spacing(10),
@@ -845,7 +845,7 @@ pub fn backup_descriptor<'a>(
                                 .push(Space::with_width(10))
                                 .push(
                                     button::secondary(Some(icon::clipboard_icon()), "Copy")
-                                        .on_press(Message::Clibpboard(descriptor.to_string())),
+                                        .on_press(Message::Clipboard(descriptor.to_string())),
                                 ),
                         )
                         .spacing(10),
