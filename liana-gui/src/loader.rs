@@ -34,7 +34,10 @@ use crate::{
         wallet::{Wallet, WalletError},
     },
     daemon::{client, embedded::EmbeddedDaemon, model::*, Daemon, DaemonError},
-    node::bitcoind::{internal_bitcoind_debug_log_path, Bitcoind, StartInternalBitcoindError},
+    node::{
+        bitcoind::{internal_bitcoind_debug_log_path, Bitcoind, StartInternalBitcoindError},
+        NodeType,
+    },
 };
 
 const SYNCING_PROGRESS_1: &str = "Bitcoin Core is synchronising the blockchain. A full synchronisation typically takes a few days and is resource-intensive. Once the initial synchronisation is done, the next ones will be much faster.";
@@ -156,9 +159,9 @@ impl Loader {
         daemon: Arc<dyn Daemon + Sync + Send>,
         info: GetInfoResult,
     ) -> Task<Message> {
-        // If the wallet was previously synced (blockheight > 0), load the
-        // application directly.
-        if info.block_height > 0 {
+        // If the node is not Bitcoin Core or otherwise the wallet was previously synced (blockheight > 0),
+        // load the application directly.
+        if daemon.backend().node_type() != Some(NodeType::Bitcoind) || info.block_height > 0 {
             return Task::perform(
                 load_application(
                     self.wallet_settings.clone(),
