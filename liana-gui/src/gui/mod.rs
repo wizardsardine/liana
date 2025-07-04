@@ -15,14 +15,12 @@ use liana_ui::widget::{Column, Container, Element};
 pub mod pane;
 pub mod tab;
 
-use crate::{dir::LianaDirectory, launcher, logger::Logger, VERSION};
+use crate::{dir::LianaDirectory, launcher, logger::setup_logger, VERSION};
 
 pub struct GUI {
     panes: pane_grid::State<pane::Pane>,
     focus: Option<pane_grid::Pane>,
     config: Config,
-    // We may change the directory of log outputs later
-    _logger: Logger,
 }
 
 #[derive(Debug)]
@@ -63,11 +61,10 @@ impl GUI {
     }
 
     pub fn new((config, log_level): (Config, Option<LevelFilter>)) -> (GUI, Task<Message>) {
-        let logger = Logger::setup(log_level.unwrap_or(LevelFilter::INFO));
-        logger.set_running_mode(
-            config.liana_directory.clone(),
-            log_level.unwrap_or_else(|| log_level.unwrap_or(LevelFilter::INFO)),
-        );
+        let log_level = log_level.unwrap_or(LevelFilter::INFO);
+        if let Err(e) = setup_logger(log_level, config.liana_directory.clone()) {
+            tracing::warn!("Error while setting error: {}", e);
+        }
         let mut cmds = vec![Task::perform(ctrl_c(), |_| Message::CtrlC)];
         let (pane, cmd) = pane::Pane::new(&config);
         let (panes, focused_pane) = pane_grid::State::new(pane);
@@ -77,7 +74,6 @@ impl GUI {
                 panes,
                 focus: Some(focused_pane),
                 config,
-                _logger: logger,
             },
             Task::batch(cmds),
         )
