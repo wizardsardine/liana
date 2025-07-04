@@ -61,11 +61,15 @@ impl Pane {
     }
 
     pub fn close_tab(&mut self, i: usize) {
-        let mut tab = self.remove_tab(i);
-        tab.stop();
+        if let Some(mut tab) = self.remove_tab(i) {
+            tab.stop();
+        }
     }
 
-    pub fn remove_tab(&mut self, i: usize) -> tab::Tab {
+    pub fn remove_tab(&mut self, i: usize) -> Option<tab::Tab> {
+        if i >= self.tabs.len() {
+            return None;
+        }
         let tab = self.tabs.remove(i);
         self.focused_tab = if self.tabs.is_empty() {
             0
@@ -74,7 +78,7 @@ impl Pane {
         } else {
             self.tabs.len() - 1
         };
-        tab
+        Some(tab)
     }
 
     pub fn add_tabs(&mut self, tabs: Vec<tab::Tab>, focused_tab: usize) {

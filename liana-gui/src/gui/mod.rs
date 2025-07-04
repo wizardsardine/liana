@@ -98,15 +98,16 @@ impl GUI {
             }
             Message::Pane(pane_id, pane::Message::View(pane::ViewMessage::SplitTab(i))) => {
                 if let Some(p) = self.panes.get_mut(pane_id) {
-                    let tab = p.remove_tab(i);
-                    let result = self.panes.split(
-                        pane_grid::Axis::Vertical,
-                        pane_id,
-                        pane::Pane::new_with_tab(tab.state),
-                    );
+                    if let Some(tab) = p.remove_tab(i) {
+                        let result = self.panes.split(
+                            pane_grid::Axis::Vertical,
+                            pane_id,
+                            pane::Pane::new_with_tab(tab.state),
+                        );
 
-                    if let Some((pane, _)) = result {
-                        self.focus = Some(pane);
+                        if let Some((pane, _)) = result {
+                            self.focus = Some(pane);
+                        }
                     }
                 }
                 Task::none()
