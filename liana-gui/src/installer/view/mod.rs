@@ -40,7 +40,7 @@ use crate::{
         message::{self, DefineBitcoind, DefineNode, Message},
         prompt,
         step::{DownloadState, InstallState},
-        view::editor::duration_from_sequence,
+        view::editor::format_sequence_duration,
         Error,
     },
     node::{
@@ -1616,29 +1616,22 @@ pub fn defined_sequence<'a>(
     sequence: PathSequence,
     warning: Option<PathWarning>,
 ) -> Element<'a, message::DefinePath> {
-    let (n_years, n_months, n_days, n_hours, n_minutes) = duration_from_sequence(sequence.as_u16());
     let duration_row = Row::new()
         .padding(5)
         .spacing(5)
         .align_y(Alignment::Center)
         .push(text(
-            [
-                (n_years, "y"),
-                (n_months, "m"),
-                (n_days, "d"),
-                (n_hours, "h"),
-                (n_minutes, "mn"),
-            ]
-            .iter()
-            .filter_map(|(n, unit)| {
-                if *n > 0 {
-                    Some(format!("{}{}", n, unit))
-                } else {
-                    None
-                }
-            })
-            .collect::<Vec<String>>()
-            .join(" "),
+            format_sequence_duration(sequence.as_u16(), true)
+                .iter()
+                .filter_map(|(n, unit)| {
+                    if *n > 0 {
+                        Some(format!("{}{}", n, unit))
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<String>>()
+                .join(" "),
         ));
     Container::new(
         Column::new()
