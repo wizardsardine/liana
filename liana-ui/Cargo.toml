@@ -7,6 +7,7 @@ edition = "2021"
 
 [dependencies]
 iced = { version = "0.13.1", default-features = false, features = ["svg", "image", "lazy", "qr_code", "advanced"] }
+iced_aw = { version = "0.12.2", features = ["context_menu"] }
 iced_core = { version = "0.13.2" }
 iced_runtime = { version = "0.13.2" }
 unicode-segmentation = "1.0"

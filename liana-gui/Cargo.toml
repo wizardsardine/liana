@@ -23,6 +23,7 @@ backtrace = "0.3"
 hex = "0.4.3"
 
 iced = { version = "0.13.1", default-features = false, features = ["tokio", "svg", "qr_code", "image", "lazy", "wgpu", "advanced", "tiny-skia"] }
+iced_aw = { version = "0.12.2", features = ["context_menu"] }
 iced_runtime = "0.13.1"
 
 # Used to verify RFC-compliance of an email

@@ -47,6 +47,12 @@ pub const GREEN: Color = Color::from_rgb(
     0xFF as f32 / 255.0,
     0x66 as f32 / 255.0,
 );
+pub const TRANSPARENT_GREEN: Color = Color::from_rgba(
+    0x00 as f32 / 255.0,
+    0xFF as f32 / 255.0,
+    0x66 as f32 / 255.0,
+    0.3,
+);
 pub const RED: Color = Color::from_rgb(
     0xE2 as f32 / 255.0,
     0x4E as f32 / 255.0,
