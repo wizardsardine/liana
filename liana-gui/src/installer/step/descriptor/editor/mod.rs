@@ -2,11 +2,11 @@ pub mod key;
 pub mod template;
 
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::iter::FromIterator;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 
 use iced::{Subscription, Task};
+use liana::miniscript::bitcoin::bip32::ChildNumber;
 use liana::{
     descriptors::{LianaDescriptor, LianaPolicy, PathInfo},
     miniscript::{
@@ -20,6 +20,7 @@ use liana_ui::{
     widget::{modal::Modal, Element},
 };
 
+use crate::installer::KeySourceKind;
 use crate::{
     app::settings::KeySetting,
     hw::HardwareWallets,
@@ -34,7 +35,7 @@ use crate::{
     signer::Signer,
 };
 
-use key::{new_multixkey_from_xpub, EditXpubModal};
+use key::{new_multixkey_from_xpub, PathData, SelectKeySource};
 
 pub trait DescriptorEditModal {
     fn processing(&self) -> bool {
@@ -55,10 +56,10 @@ pub struct DefineDescriptor {
 
     modal: Option<Box<dyn DescriptorEditModal>>,
     signer: Arc<Mutex<Signer>>,
-    signer_fingerprint: Fingerprint,
 
     keys: HashMap<Fingerprint, Key>,
     paths: Vec<Path>,
+    accounts: HashMap<Fingerprint, ChildNumber>,
     descriptor_template: DescriptorTemplate,
 
     error: Option<String>,
@@ -66,18 +67,17 @@ pub struct DefineDescriptor {
 
 impl DefineDescriptor {
     pub fn new(network: Network, signer: Arc<Mutex<Signer>>) -> Self {
-        let signer_fingerprint = signer.lock().unwrap().fingerprint();
         Self {
             network,
             use_taproot: false,
             modal: None,
-            signer_fingerprint,
 
             signer,
             error: None,
             keys: HashMap::new(),
             descriptor_template: DescriptorTemplate::default(),
             paths: Vec::new(),
+            accounts: Default::default(),
         }
     }
 
@@ -147,6 +147,73 @@ impl DefineDescriptor {
         }
         self.descriptor_template = template;
     }
+
+    fn keys(&self) -> HashMap<Fingerprint, (Vec<(usize, usize)>, Key)> {
+        let mut keys: HashMap<Fingerprint, (Vec<(usize, usize)>, Key)> = self
+            .keys
+            .clone()
+            .into_iter()
+            .map(|(fg, key)| (fg, (vec![], key)))
+            .collect();
+        for (i, path) in self.paths.iter().enumerate() {
+            for (j, key) in path.keys.iter().enumerate() {
+                if let Some(k) = key {
+                    let fg = k.fingerprint;
+                    if !keys.contains_key(&fg) {
+                        tracing::error!("DefineDesctriptor::keys() key {} missing", fg);
+                    } else {
+                        let entry = keys.get_mut(&fg).expect("checked");
+                        entry.0.push((i, j));
+                    }
+                }
+            }
+        }
+        keys
+    }
+
+    fn path_keys(&self, paths: Vec<usize>) -> Vec<Fingerprint> {
+        let mut out = vec![];
+        for path in paths {
+            let mut fgs: Vec<_> = self.paths[path]
+                .keys
+                .iter()
+                .filter_map(|k| k.as_ref().map(|k| k.fingerprint))
+                .collect();
+            out.append(&mut fgs);
+        }
+        out
+    }
+
+    fn edit_key_modal(
+        &self,
+        path_kind: PathKind,
+        coordinates: Vec<(usize, usize)>,
+    ) -> SelectKeySource {
+        let mut token_kind = vec![];
+        if let PathKind::SafetyNet = path_kind {
+            token_kind.push(KeyKind::SafetyNet);
+        }
+        if path_kind.can_choose_key_source_kind(&KeySourceKind::Token(KeyKind::Cosigner))
+            && path_kind != PathKind::SafetyNet
+        {
+            token_kind.push(KeyKind::Cosigner);
+        }
+        let keys = self.path_keys(coordinates.iter().map(|c| c.0).collect());
+        let actual_path = PathData {
+            coordinates,
+            keys,
+            token_kind,
+        };
+        let keys = self.keys();
+        SelectKeySource::new(
+            self.network,
+            self.use_taproot,
+            actual_path,
+            keys,
+            self.accounts.clone(),
+            self.signer.clone(),
+        )
+    }
 }
 
 impl Step for DefineDescriptor {
@@ -176,47 +243,67 @@ impl Step for DefineDescriptor {
                     self.paths.push(Path::new_safety_net_path());
                 }
             }
-            Message::DefineDescriptor(message::DefineDescriptor::KeysEdited(coordinate, key)) => {
-                hws.set_alias(key.fingerprint, key.name.clone());
-                for (i, j) in coordinate {
-                    self.paths[i].keys[j] = Some(key.clone());
+            Message::DefineDescriptor(message::DefineDescriptor::KeysEdited(coordinates, key)) => {
+                match key {
+                    key::SelectedKey::Existing(fingerprint) => {
+                        if let Some(existing_key) = self.keys.get(&fingerprint) {
+                            if !self.keys.contains_key(&fingerprint) {
+                                tracing::error!("Key {fingerprint} does not exists");
+                                return Task::none();
+                            }
+                            for coordinate in coordinates {
+                                if !self.paths[coordinate.0]
+                                    .keys
+                                    .contains(&Some(existing_key.clone()))
+                                {
+                                    self.paths[coordinate.0].keys[coordinate.1] =
+                                        Some(existing_key.clone());
+                                } else {
+                                    tracing::error!(
+                                        "Key {fingerprint} already in path {}",
+                                        coordinate.0
+                                    );
+                                }
+                            }
+                            self.check_setup();
+                        } else {
+                            tracing::error!("Key with fingerprint {fingerprint} does not exists");
+                        }
+                        self.modal = None;
+                    }
+                    key::SelectedKey::New(key) => {
+                        if let Some(acc) = key.account {
+                            self.accounts.insert(key.fingerprint, acc);
+                        }
+                        if self.keys.contains_key(&key.fingerprint) {
+                            tracing::error!("Key {} already exists", key.fingerprint);
+                        }
+                        self.keys.insert(key.fingerprint, *key.clone());
+                        for coordinate in coordinates {
+                            if !self.paths[coordinate.0].keys.contains(&Some(*key.clone())) {
+                                self.paths[coordinate.0].keys[coordinate.1] = Some(*key.clone());
+                            } else {
+                                tracing::error!(
+                                    "Key {} already in path {}",
+                                    key.fingerprint,
+                                    coordinate.0
+                                );
+                            }
+                        }
+                        self.check_setup();
+                        self.modal = None;
+                    }
+                    key::SelectedKey::None => {
+                        self.modal = None;
+                    }
                 }
-                self.keys.insert(key.fingerprint, key);
-                self.modal = None;
-                self.check_setup();
             }
             Message::DefineDescriptor(message::DefineDescriptor::KeysEdit(
                 path_kind,
-                coordinate,
+                coordinates,
             )) => {
-                let use_taproot = self.use_taproot;
-                let mut set = HashSet::<Fingerprint>::new();
-                let key = coordinate
-                    .first()
-                    .and_then(|(i, j)| self.paths[*i].keys[*j].clone());
-                for (i, j) in &coordinate {
-                    set.extend(self.paths[*i].keys.iter().flatten().filter_map(|key| {
-                        if Some(key) != self.paths[*i].keys[*j].as_ref() {
-                            Some(key.fingerprint)
-                        } else {
-                            None
-                        }
-                    }));
-                }
-                let modal = EditXpubModal::new(
-                    use_taproot,
-                    path_kind,
-                    set,
-                    key,
-                    coordinate,
-                    self.network,
-                    self.signer.clone(),
-                    self.signer_fingerprint,
-                    self.keys.values().cloned().collect(),
-                );
-                let cmd = modal.load();
+                let modal = self.edit_key_modal(path_kind, coordinates);
                 self.modal = Some(Box::new(modal));
-                return cmd;
             }
             Message::DefineDescriptor(message::DefineDescriptor::Reset) => {
                 hws.aliases.clear();
@@ -271,28 +358,10 @@ impl Step for DefineDescriptor {
                         }
 
                         message::DefineKey::Edit => {
-                            let use_taproot = self.use_taproot;
-                            let path = &self.paths[i];
-                            let modal = EditXpubModal::new(
-                                use_taproot,
-                                path.kind(),
-                                HashSet::from_iter(path.keys.iter().flatten().filter_map(|key| {
-                                    if Some(key) != path.keys[j].as_ref() {
-                                        Some(key.fingerprint)
-                                    } else {
-                                        None
-                                    }
-                                })),
-                                path.keys[j].clone(),
-                                vec![(i, j)],
-                                self.network,
-                                self.signer.clone(),
-                                self.signer_fingerprint,
-                                self.keys.values().cloned().collect(),
-                            );
-                            let cmd = modal.load();
+                            let coordinates = vec![(i, j)];
+                            let path_kind = self.paths[i].sequence.into();
+                            let modal = self.edit_key_modal(path_kind, coordinates);
                             self.modal = Some(Box::new(modal));
-                            return cmd;
                         }
                         message::DefineKey::Delete => {
                             if let Some(path) = self.paths.get_mut(i) {
@@ -635,6 +704,7 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::{Arc, Mutex};
 
+    use crate::installer::step::descriptor::editor::key::{SelectKeySource, SelectedKey};
     use crate::{dir::LianaDirectory, installer::descriptor::KeySource};
 
     pub struct Sandbox<S: Step> {
@@ -693,18 +763,18 @@ mod tests {
             )))
             .await;
         sandbox.check(|step| assert!(step.modal.is_some()));
-        sandbox.update(Message::UseHotSigner).await;
         sandbox
-            .update(Message::DefineDescriptor(
-                message::DefineDescriptor::KeyModal(message::ImportKeyModal::NameEdited(
-                    "hot signer key".to_string(),
-                )),
+            .update(SelectKeySource::route(
+                key::SelectKeySourceMessage::SelectGenerateHotKey,
             ))
             .await;
         sandbox
-            .update(Message::DefineDescriptor(
-                message::DefineDescriptor::KeyModal(message::ImportKeyModal::ConfirmXpub),
-            ))
+            .update(SelectKeySource::route(key::SelectKeySourceMessage::Alias(
+                "hot_signer_key".to_string(),
+            )))
+            .await;
+        sandbox
+            .update(SelectKeySource::route(key::SelectKeySourceMessage::Next))
             .await;
         sandbox.check(|step| assert!(step.modal.is_none()));
 
@@ -724,22 +794,23 @@ mod tests {
             )))
             .await;
         sandbox.check(|step| assert!(step.modal.is_some()));
-        sandbox.update(Message::DefineDescriptor(
-                message::DefineDescriptor::KeyModal(
-                    message::ImportKeyModal::XPubEdited("[f5acc2fd/48'/1'/0'/2']tpubDFAqEGNyad35aBCKUAXbQGDjdVhNueno5ZZVEn3sQbW5ci457gLR7HyTmHBg93oourBssgUxuWz1jX5uhc1qaqFo9VsybY1J5FuedLfm4dK".to_string()),
-                )
-        )).await;
         sandbox
-            .update(Message::DefineDescriptor(
-                message::DefineDescriptor::KeyModal(message::ImportKeyModal::NameEdited(
-                    "External recovery key".to_string(),
-                )),
+            .update(SelectKeySource::route(
+                key::SelectKeySourceMessage::SelectEnterXpub,
             ))
             .await;
         sandbox
-            .update(Message::DefineDescriptor(
-                message::DefineDescriptor::KeyModal(message::ImportKeyModal::ConfirmXpub),
+            .update(SelectKeySource::route(
+                key::SelectKeySourceMessage::Xpub("[f5acc2fd/48'/1'/0'/2']tpubDFAqEGNyad35aBCKUAXbQGDjdVhNueno5ZZVEn3sQbW5ci457gLR7HyTmHBg93oourBssgUxuWz1jX5uhc1qaqFo9VsybY1J5FuedLfm4dK".to_string())
             ))
+            .await;
+        sandbox
+            .update(SelectKeySource::route(key::SelectKeySourceMessage::Alias(
+                "External recovery key".to_string(),
+            )))
+            .await;
+        sandbox
+            .update(SelectKeySource::route(key::SelectKeySourceMessage::Next))
             .await;
         sandbox.check(|step| {
             assert!(step.modal.is_none());
@@ -778,7 +849,10 @@ mod tests {
         // Use Specter device for primary key
         sandbox
             .update(Message::DefineDescriptor(
-                message::DefineDescriptor::KeysEdited(vec![(0, 0)], specter_key.clone()),
+                message::DefineDescriptor::KeysEdited(
+                    vec![(0, 0)],
+                    SelectedKey::New(Box::new(specter_key.clone())),
+                ),
             ))
             .await;
 
@@ -790,22 +864,23 @@ mod tests {
             )))
             .await;
         sandbox.check(|step| assert!(step.modal.is_some()));
-        sandbox.update(Message::DefineDescriptor(
-                message::DefineDescriptor::KeyModal(
-                    message::ImportKeyModal::XPubEdited("[f5acc2fd/48'/1'/0'/2']tpubDFAqEGNyad35aBCKUAXbQGDjdVhNueno5ZZVEn3sQbW5ci457gLR7HyTmHBg93oourBssgUxuWz1jX5uhc1qaqFo9VsybY1J5FuedLfm4dK".to_string()),
-                )
-        )).await;
         sandbox
-            .update(Message::DefineDescriptor(
-                message::DefineDescriptor::KeyModal(message::ImportKeyModal::NameEdited(
-                    "External recovery key".to_string(),
-                )),
+            .update(SelectKeySource::route(
+                key::SelectKeySourceMessage::SelectEnterXpub,
             ))
             .await;
         sandbox
-            .update(Message::DefineDescriptor(
-                message::DefineDescriptor::KeyModal(message::ImportKeyModal::ConfirmXpub),
+            .update(SelectKeySource::route(
+                key::SelectKeySourceMessage::Xpub("[f5acc2fd/48'/1'/0'/2']tpubDFAqEGNyad35aBCKUAXbQGDjdVhNueno5ZZVEn3sQbW5ci457gLR7HyTmHBg93oourBssgUxuWz1jX5uhc1qaqFo9VsybY1J5FuedLfm4dK".to_string())
             ))
+            .await;
+        sandbox
+            .update(SelectKeySource::route(key::SelectKeySourceMessage::Alias(
+                "External recovery key".to_string(),
+            )))
+            .await;
+        sandbox
+            .update(SelectKeySource::route(key::SelectKeySourceMessage::Next))
             .await;
         sandbox.check(|step| {
             assert!(step.modal.is_none());
@@ -821,18 +896,18 @@ mod tests {
             )))
             .await;
         sandbox.check(|step| assert!(step.modal.is_some()));
-        sandbox.update(Message::UseHotSigner).await;
         sandbox
-            .update(Message::DefineDescriptor(
-                message::DefineDescriptor::KeyModal(message::ImportKeyModal::NameEdited(
-                    "hot signer key".to_string(),
-                )),
+            .update(SelectKeySource::route(
+                key::SelectKeySourceMessage::SelectGenerateHotKey,
             ))
             .await;
         sandbox
-            .update(Message::DefineDescriptor(
-                message::DefineDescriptor::KeyModal(message::ImportKeyModal::ConfirmXpub),
-            ))
+            .update(SelectKeySource::route(key::SelectKeySourceMessage::Alias(
+                "hot signer key".to_string(),
+            )))
+            .await;
+        sandbox
+            .update(SelectKeySource::route(key::SelectKeySourceMessage::Next))
             .await;
         sandbox.check(|step| {
             assert!(step.modal.is_none());
@@ -843,7 +918,10 @@ mod tests {
         // Now edit the recovery key to use Specter device
         sandbox
             .update(Message::DefineDescriptor(
-                message::DefineDescriptor::KeysEdited(vec![(1, 0)], specter_key.clone()),
+                message::DefineDescriptor::KeysEdited(
+                    vec![(1, 0)],
+                    SelectedKey::New(Box::new(specter_key.clone())),
+                ),
             ))
             .await;
         sandbox.check(|step| {

@@ -2,33 +2,29 @@
 
 pub mod template;
 
-use iced::widget::{self, container, pick_list, scrollable, slider, Button, Space};
+use iced::widget::{container, pick_list, slider, Button, Space};
 use iced::{alignment, Alignment, Length};
 
 use liana::miniscript::bitcoin::Network;
-use liana_ui::component::text::{self, h3, p1_bold, p2_regular, H3_SIZE};
-use liana_ui::image;
+use liana_ui::component::text::{p1_bold, p2_regular, H3_SIZE};
 use std::borrow::Cow;
 use std::fmt::Display;
 use std::str::FromStr;
 
-use liana::miniscript::bitcoin::{self, bip32::Fingerprint};
+use liana::miniscript::bitcoin::{self};
 use liana_ui::{
     component::{
-        button, card, form, hw, separation,
+        button, card, form, separation,
         text::{p1_regular, text, Text},
-        tooltip,
     },
     icon, theme,
     widget::*,
 };
 
 use crate::installer::{
-    descriptor::{KeySourceKind, PathKind, PathSequence, PathWarning},
+    descriptor::{PathKind, PathSequence, PathWarning},
     message::{self, Message},
-    prompt, services,
     view::defined_sequence,
-    Error,
 };
 
 use super::defined_threshold;
@@ -259,265 +255,7 @@ pub fn undefined_key<'a>(
     .into()
 }
 
-fn maybe_key_from_token<'a>(
-    path_kind: PathKind,
-    form_key_source_kind: Option<&KeySourceKind>,
-    has_chosen_signer: bool,
-    form_token: &form::Value<String>,
-    form_token_warning: Option<&'a String>,
-    key_kind: services::keys::api::KeyKind,
-) -> Option<Element<'a, Message>> {
-    if !path_kind.can_choose_key_source_kind(&KeySourceKind::Token(key_kind)) {
-        None
-    } else {
-        Some(
-            match (form_key_source_kind, has_chosen_signer) {
-                (Some(KeySourceKind::Token(key_kind)), false) => card::simple(
-                    Column::new()
-                        .spacing(10)
-                        .push(
-                            Row::new()
-                                .align_y(Alignment::Center)
-                                .push(
-                                    p1_regular(format!("Enter a {key_kind} token:"))
-                                        .width(Length::Fill),
-                                )
-                                .push(image::success_mark_icon().width(Length::Fixed(50.0))),
-                        )
-                        .push(
-                            Row::new()
-                                .push(
-                                    form::Form::new_trimmed("", form_token, |msg| {
-                                        Message::DefineDescriptor(
-                                            message::DefineDescriptor::KeyModal(
-                                                message::ImportKeyModal::TokenEdited(msg),
-                                            ),
-                                        )
-                                    })
-                                    .maybe_warning(form_token_warning.map(|w| w.as_str()))
-                                    .size(text::P1_SIZE)
-                                    .padding(10),
-                                )
-                                .push(button::primary(None, "Confirm").on_press_maybe(
-                                    (!form_token.value.is_empty() && form_token.valid).then_some(
-                                        Message::DefineDescriptor(
-                                            message::DefineDescriptor::KeyModal(
-                                                message::ImportKeyModal::ConfirmToken,
-                                            ),
-                                        ),
-                                    ),
-                                ))
-                                .spacing(10),
-                        ),
-                ),
-                _ => Container::new(
-                    Button::new(
-                        Row::new()
-                            .align_y(Alignment::Center)
-                            .spacing(10)
-                            .push(icon::import_icon())
-                            .push(p1_regular(format!("Enter a {key_kind} token"))),
-                    )
-                    .padding(20)
-                    .width(Length::Fill)
-                    .on_press(Message::DefineDescriptor(
-                        message::DefineDescriptor::KeyModal(message::ImportKeyModal::UseToken(
-                            key_kind,
-                        )),
-                    ))
-                    .style(theme::button::secondary),
-                ),
-            }
-            .into(),
-        )
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-pub fn edit_key_modal<'a>(
-    title: &'a str,
-    network: bitcoin::Network,
-    path_kind: PathKind,
-    hws: Vec<Element<'a, Message>>,
-    keys: Vec<Element<'a, Message>>,
-    provider_keys: Vec<Element<'a, Message>>,
-    error: Option<&Error>,
-    chosen_signer: Option<Fingerprint>,
-    hot_signer_fingerprint: &Fingerprint,
-    signer_alias: Option<&'a String>,
-    form_name: &'a form::Value<String>,
-    form_xpub: &form::Value<String>,
-    form_token: &form::Value<String>,
-    form_token_warning: Option<&'a String>,
-    form_key_source_kind: Option<&KeySourceKind>,
-    duplicate_master_fg: bool,
-) -> Element<'a, Message> {
-    let xpub_valid = form_xpub.valid && !form_xpub.value.is_empty();
-    let info = Column::new()
-        .push(Space::with_height(5))
-        .push(widget::tooltip::Tooltip::new(
-            icon::tooltip_icon(),
-            "Switch account if you already use the same hardware in other configurations",
-            widget::tooltip::Position::Bottom,
-        ));
-    let source = Row::new()
-        .push(p1_regular("Select the source of your key").bold())
-        .push(Space::with_width(10))
-        .push(info)
-        .push(Space::with_width(Length::Fill));
-    let content = Column::new()
-        .padding(25)
-        .push_maybe(error.map(|e| card::error("Failed to import xpub", e.to_string())))
-        .push(card::modal(
-            Column::new()
-                .spacing(25)
-                .push(Row::new()
-                    .push(h3(title))
-                    .push(Space::with_width(Length::Fill))
-                    .push(button::transparent(Some(icon::cross_icon().size(40)), "").on_press(Message::Close))
-                    .align_y(Alignment::Center)
-                )
-                .push(
-                    Column::new()
-                        .push(source)
-                        .spacing(10)
-                        .push(Column::with_children(hws).spacing(10))
-                        .push(Column::with_children(keys).spacing(10))
-                        .push(Column::with_children(provider_keys).spacing(10))
-                        .push_maybe(if !path_kind.can_choose_key_source_kind(&KeySourceKind::HotSigner) {
-                            None
-                        } else {
-                            Some(Button::new(if Some(*hot_signer_fingerprint) == chosen_signer {
-                                hw::selected_hot_signer(hot_signer_fingerprint, signer_alias)
-                            } else {
-                                hw::unselected_hot_signer(hot_signer_fingerprint, signer_alias)
-                            })
-                            .width(Length::Fill)
-                            .on_press(Message::UseHotSigner)
-                            .style(theme::button::secondary))
-                        }
-                        )
-                        .push_maybe(if !path_kind.can_choose_key_source_kind(&KeySourceKind::Manual) {
-                            None
-                        } else if form_key_source_kind == Some(&KeySourceKind::Manual) {
-                                Some(card::simple(Column::new()
-                                    .spacing(10)
-                                    .push(
-                                        Row::new()
-                                            .align_y(Alignment::Center)
-                                            .push(p1_regular("Enter/import an extended public key:").width(Length::Fill))
-                                            .push_maybe(if !xpub_valid{
-                                                    Some(
-                                                    button::primary(Some(icon::restore_icon()), "Import")
-                                                    .on_press(
-                                                        Message::DefineDescriptor(
-                                                            message::DefineDescriptor::KeyModal(
-                                                                message::ImportKeyModal::ImportXpub(network),),)
-                                                    ))
-                                                } else { None }
-                                            )
-                                            .push_maybe(
-                                                if xpub_valid {
-                                                    Some(image::success_mark_icon().width(Length::Fixed(50.0)))
-                                                } else {None}
-                                            )
-                                    )
-                                    .push(
-                                        Row::new()
-                                            .push(
-                                                form::Form::new_trimmed(
-                                                    &example_xpub(network),
-                                                    form_xpub, |msg| {
-                                                        Message::DefineDescriptor(
-                                                            message::DefineDescriptor::KeyModal(
-                                                                message::ImportKeyModal::XPubEdited(msg),),)
-                                                    })
-                                                    .warning(if network == bitcoin::Network::Bitcoin {
-                                                        "Please enter correct xpub with origin and without appended derivation path"
-                                                    } else {
-                                                        "Please enter correct tpub with origin and without appended derivation path"
-                                                    })
-                                                    .size(text::P1_SIZE)
-                                                    .padding(10),
-                                            )
-                                            .spacing(10)
-                                    )))
-                                } else {
-                                    Some(Container::new(
-                                        Button::new(
-                                        Row::new()
-                                            .align_y(Alignment::Center)
-                                            .spacing(10)
-                                            .push(icon::import_icon())
-                                            .push(p1_regular("Enter/import an extended public key"))
-                                        )
-                                        .padding(20)
-                                        .width(Length::Fill)
-                                        .on_press(Message::DefineDescriptor(
-                                                message::DefineDescriptor::KeyModal(message::ImportKeyModal::ManuallyImportXpub)
-                                        ))
-                                        .style(theme::button::secondary),
-                                ))
-                                }
-                            )
-                            .push_maybe(maybe_key_from_token(path_kind, form_key_source_kind, chosen_signer.is_some(), form_token, form_token_warning, services::keys::api::KeyKind::SafetyNet))
-                            .push_maybe(maybe_key_from_token(path_kind, form_key_source_kind, chosen_signer.is_some(), form_token, form_token_warning, services::keys::api::KeyKind::Cosigner))
-                        .width(Length::Fill),
-                )
-                .push_maybe(
-                    if chosen_signer.is_some() {
-                        Some(card::simple(Column::new()
-                            .spacing(10)
-                            .push(
-                                Row::new()
-                                    .spacing(5)
-                                    .push(text("Key name:").bold())
-                                    .push(tooltip(prompt::DEFINE_DESCRIPTOR_FINGERPRINT_TOOLTIP)),
-                            )
-                            .push(p1_regular("Give this key a friendly name. It helps you identify it later").style(theme::text::secondary))
-                            .push(
-                                form::Form::new("Name", form_name, |msg| {
-                                    Message::DefineDescriptor(message::DefineDescriptor::KeyModal(
-                                        message::ImportKeyModal::NameEdited(msg),
-                                    ))
-                                })
-                                .warning("Two different keys cannot have the same name")
-                                .padding(10)
-                                .size(text::P1_SIZE)
-                            )))
-                    } else {
-                        None
-                    }
-                )
-                .push_maybe(
-                    if duplicate_master_fg {
-                        Some(text("A single signing device may not be used more than once per path. (It can still be used in other paths.)").style(theme::text::error))
-                    } else {
-                        None
-                    }
-                )
-                .push(
-                    button::primary(None, "Apply")
-                        .on_press_maybe(if !duplicate_master_fg
-                            && !form_name.value.is_empty() && form_name.valid
-                            && chosen_signer.is_some() {
-                                Some(Message::DefineDescriptor(
-                                    message::DefineDescriptor::KeyModal(
-                                        message::ImportKeyModal::ConfirmXpub,
-                                    )
-                                ))
-                            } else {
-                                None
-                            })
-                        .width(Length::Fixed(200.0))
-                )
-                .align_x(Alignment::Center),
-        ))
-        .width(Length::Fixed(800.0));
-    scrollable(content).into()
-}
-
-fn example_xpub(network: Network) -> String {
+pub fn example_xpub(network: Network) -> String {
     format!("[aabbccdd/42'/0']{}pub6DAkq8LWw91WGgUGnkR5Sbzjev5JCsXaTVZQ9MwsPV4BkNFKygtJ8GHodfDVx1udR723nT7JASqGPpKvz7zQ25pUTW6zVEBdiWoaC4aUqik",
         if network == bitcoin::Network::Bitcoin { "x" } else { "t" }
     )
