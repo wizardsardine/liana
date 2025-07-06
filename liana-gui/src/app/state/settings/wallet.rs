@@ -65,6 +65,7 @@ impl WalletSettingsState {
             keys_aliases: Self::keys_aliases(&wallet),
             wallet_alias: form::Value {
                 value: wallet.alias.clone().unwrap_or_default(),
+                warning: None,
                 valid: true,
             },
             wallet,
@@ -86,6 +87,7 @@ impl WalletSettingsState {
                     fg,
                     form::Value {
                         value: name,
+                        warning: None,
                         valid: true,
                     },
                 )

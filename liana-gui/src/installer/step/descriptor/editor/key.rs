@@ -73,8 +73,6 @@ pub struct EditXpubModal {
 
     form_name: form::Value<String>,
     form_xpub: form::Value<String>,
-    // TODO: Define new `form::Value` type with `Option<String>` instead of `bool` so that we can
-    // store `form_token_warning` directly in `form_token`.
     form_token: form::Value<String>,
     form_token_warning: Option<String>,
     /// The `KeySourceKind` corresponding to the required form for entering a new key.
@@ -115,10 +113,12 @@ impl EditXpubModal {
             other_path_keys,
             form_name: form::Value {
                 valid: true,
+                warning: None,
                 value: key.as_ref().map(|k| k.name.clone()).unwrap_or_default(),
             },
             form_xpub: form::Value {
                 valid: true,
+                warning: None,
                 value: key
                     .as_ref()
                     .filter(|k| k.source.is_manual())
@@ -127,6 +127,7 @@ impl EditXpubModal {
             },
             form_token: form::Value {
                 valid: true,
+                warning: None,
                 value: key
                     .as_ref()
                     .and_then(|k| k.source.token().cloned())

@@ -7,6 +7,7 @@ use crate::{color, component::text, theme, widget::*};
 #[derive(Debug, Clone)]
 pub struct Value<T> {
     pub value: T,
+    pub warning: Option<&'static str>,
     pub valid: bool,
 }
 
@@ -14,6 +15,7 @@ impl std::default::Default for Value<String> {
     fn default() -> Self {
         Self {
             value: "".to_string(),
+            warning: None,
             valid: true,
         }
     }
@@ -41,7 +43,7 @@ where
     {
         Self {
             input: text_input::TextInput::new(placeholder, &value.value).on_input(on_change),
-            warning: None,
+            warning: value.warning,
             valid: value.valid,
         }
     }

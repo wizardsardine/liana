@@ -520,6 +520,7 @@ impl EditSequenceModal {
             path_index,
             sequence: form::Value {
                 value: path_sequence.as_u16().to_string(),
+                warning: None,
                 valid: true,
             },
         }
