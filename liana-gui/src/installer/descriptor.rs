@@ -223,6 +223,16 @@ impl PathSequence {
     }
 }
 
+impl From<PathSequence> for PathKind {
+    fn from(value: PathSequence) -> Self {
+        match value {
+            PathSequence::Primary => PathKind::Primary,
+            PathSequence::Recovery(_) => PathKind::Recovery,
+            PathSequence::SafetyNet => PathKind::SafetyNet,
+        }
+    }
+}
+
 /// A path warning.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PathWarning {
