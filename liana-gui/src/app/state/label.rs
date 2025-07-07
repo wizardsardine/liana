@@ -38,6 +38,7 @@ impl LabelsEdited {
                                 item,
                                 form::Value {
                                     valid,
+                                    warning: None,
                                     value: value.clone(),
                                 },
                             );

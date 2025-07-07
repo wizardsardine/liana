@@ -388,6 +388,7 @@ impl CreateRbfModal {
             descendant_txids,
             feerate_val: form::Value {
                 valid: true,
+                warning: None,
                 value: min_feerate_vb.to_string(),
             },
             // For cancel, we let `rbfpsbt` set the feerate.

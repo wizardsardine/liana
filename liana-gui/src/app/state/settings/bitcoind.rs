@@ -245,6 +245,7 @@ impl BitcoindSettings {
                 RpcAuthValues {
                     cookie_path: form::Value {
                         valid: true,
+                        warning: None,
                         value: path.to_str().unwrap().to_string(),
                     },
                     user: form::Value::default(),
@@ -257,10 +258,12 @@ impl BitcoindSettings {
                     cookie_path: form::Value::default(),
                     user: form::Value {
                         valid: true,
+                        warning: None,
                         value: user.clone(),
                     },
                     password: form::Value {
                         valid: true,
+                        warning: None,
                         value: password.clone(),
                     },
                 },
@@ -284,6 +287,7 @@ impl BitcoindSettings {
             selected_auth_type,
             addr: form::Value {
                 valid: true,
+                warning: None,
                 value: addr,
             },
         }
@@ -423,6 +427,7 @@ impl ElectrumSettings {
             processing: false,
             addr: form::Value {
                 valid: true,
+                warning: None,
                 value: addr,
             },
         }

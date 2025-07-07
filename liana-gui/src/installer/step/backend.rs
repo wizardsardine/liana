@@ -250,6 +250,7 @@ impl Step for RemoteBackendLogin {
                     self.step = ConnectionStep::EnterEmail {
                         email: form::Value {
                             value: email.clone(),
+                            warning: None,
                             valid: true,
                         },
                     };

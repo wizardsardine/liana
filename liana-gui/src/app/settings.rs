@@ -342,6 +342,7 @@ impl KeySetting {
     pub fn to_form(&self) -> form::Value<String> {
         form::Value {
             value: self.name.clone(),
+            warning: None,
             valid: true,
         }
     }
