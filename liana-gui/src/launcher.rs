@@ -485,10 +485,18 @@ impl DeleteWalletModal {
             ));
         }
         // Use separate `Row`s for help text in order to have better spacing.
-        let help_text_1 = format!(
-            "Are you sure you want to delete the configuration and all associated data for the wallet Liana-{}?",
-            &self.wallet_settings.descriptor_checksum,
-        );
+        let help_text_1 = if let Some(alias) = &self.wallet_settings.alias {
+            format!(
+                "Are you sure you want to delete the configuration and all associated data for the wallet {} (Liana-{})?",
+                alias,
+                self.wallet_settings.descriptor_checksum
+            )
+        } else {
+            format!(
+                "Are you sure you want to delete the configuration and all associated data for the wallet Liana-{}?",
+                &self.wallet_settings.descriptor_checksum,
+            )
+        };
         let help_text_2 = match self.internal_bitcoind {
             Some(true) => Some("(The Liana-managed Bitcoin node for this network will not be affected by this action.)"),
             Some(false) => None,
@@ -501,10 +509,17 @@ impl DeleteWalletModal {
                 Column::new()
                     .spacing(10)
                     .push(Container::new(
-                        h4_bold(format!(
-                            "Delete configuration for Liana-{}",
-                            &self.wallet_settings.descriptor_checksum
-                        ))
+                        h4_bold(if let Some(alias) = &self.wallet_settings.alias {
+                            format!(
+                                "Delete configuration for {} (Liana-{})",
+                                alias, &self.wallet_settings.descriptor_checksum
+                            )
+                        } else {
+                            format!(
+                                "Delete configuration for Liana-{}",
+                                &self.wallet_settings.descriptor_checksum
+                            )
+                        })
                         .style(theme::text::destructive)
                         .width(Length::Fill),
                     ))
