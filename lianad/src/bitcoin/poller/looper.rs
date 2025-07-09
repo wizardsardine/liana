@@ -73,10 +73,9 @@ fn update_coins(
         };
         // First of if we are receiving coins that are beyond our next derivation index,
         // adjust it.
-        if derivation_index > db_conn.receive_index() {
+        if !is_change && derivation_index > db_conn.receive_index() {
             db_conn.set_receive_index(derivation_index, secp);
-        }
-        if derivation_index > db_conn.change_index() {
+        } else if is_change && derivation_index > db_conn.change_index() {
             db_conn.set_change_index(derivation_index, secp);
         }
 

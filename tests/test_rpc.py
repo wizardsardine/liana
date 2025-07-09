@@ -406,27 +406,18 @@ def test_listrevealedaddresses(lianad, bitcoind):
     assert list_rec["continue_from"] == 7  # same as starting index
     assert len(list_rec["addresses"]) == 0
 
-    # The poller currently sets the change index to match the receive index.
-    # See https://github.com/wizardsardine/liana/issues/1333.
+    # The change index has index 0 as "revealed".
     assert lianad.rpc.getinfo()["receive_index"] == 7
-    assert lianad.rpc.getinfo()["change_index"] == 7
+    assert lianad.rpc.getinfo()["change_index"] == 0
 
-    # We can get change addresses:
+    # We can get the single revealed change address:
     list_cha = lianad.rpc.listrevealedaddresses(True, False, 3)
-    assert list_cha["continue_from"] == 4
-    assert len(list_cha["addresses"]) == 3
-    assert list_cha["addresses"][0]["index"] == 7
-    assert list_cha["addresses"][0]["address"] == addresses[7]["change"]
+    assert list_cha["continue_from"] is None
+    assert len(list_cha["addresses"]) == 1
+    assert list_cha["addresses"][0]["index"] == 0
+    assert list_cha["addresses"][0]["address"] == addresses[0]["change"]
     assert list_cha["addresses"][0]["used_count"] == 0
     assert list_cha["addresses"][0]["label"] is None
-    assert list_cha["addresses"][1]["index"] == 6
-    assert list_cha["addresses"][1]["address"] == addresses[6]["change"]
-    assert list_cha["addresses"][1]["used_count"] == 0
-    assert list_cha["addresses"][1]["label"] is None
-    assert list_cha["addresses"][2]["index"] == 5
-    assert list_cha["addresses"][2]["address"] == addresses[5]["change"]
-    assert list_cha["addresses"][2]["used_count"] == 0
-    assert list_cha["addresses"][2]["label"] is None
 
 
 def test_listcoins(lianad, bitcoind):
@@ -771,10 +762,8 @@ def test_create_spend(lianad, bitcoind):
     # 15 new receive addresses have been generated (starting at index 1),
     # so last used value is 15:
     assert lianad.rpc.getinfo()["receive_index"] == 15
-    # For each received coin, the change index has also been updated by the poller
-    # (see https://github.com/wizardsardine/liana/issues/1333), so is also 15.
-    # Then `createspend` will use the next index for change and update the DB value accordingly:
-    assert lianad.rpc.getinfo()["change_index"] == 16
+    # `createspend` will use the next index for change and update the DB value accordingly:
+    assert lianad.rpc.getinfo()["change_index"] == 1
 
     # The transaction must contain the spent transaction for each input for P2WSH. But not for Taproot.
     # We don't make assumptions about the ordering of PSBT inputs.
