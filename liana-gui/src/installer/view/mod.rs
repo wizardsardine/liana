@@ -326,7 +326,7 @@ pub fn import_descriptor<'a>(
     let import_backup = if !valid && !imported_backup {
         Some(
             Row::new()
-                .push(button::secondary(None, "Import backup").on_press(Message::ImportBackup))
+                .push(button::primary(None, "Import backup").on_press(Message::ImportBackup))
                 .push(Space::with_width(Length::Fill)),
         )
     } else {
@@ -351,10 +351,10 @@ pub fn import_descriptor<'a>(
             .push(
                 Column::new()
                     .spacing(20)
-                    .push_maybe(descriptor)
-                    .push_maybe(or)
                     .push_maybe(import_backup)
                     .push_maybe(backup_imported)
+                    .push_maybe(or)
+                    .push_maybe(descriptor)
                     .push(text(
                         "If you are using a Bitcoin Core node, \
                 you will need to perform a rescan of \
