@@ -336,7 +336,7 @@ pub fn import_descriptor<'a>(
     let backup_imported = if imported_backup {
         Some(
             Row::new()
-                .push(text("Backup successfuly imported!").bold())
+                .push(text("Backup successfully imported!").bold())
                 .push(Space::with_width(Length::Fill)),
         )
     } else {

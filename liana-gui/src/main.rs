@@ -145,7 +145,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 fn setup_panic_hook(liana_directory: &LianaDirectory) {
     let bitcoind_dir = liana_directory.bitcoind_directory();
     std::panic::set_hook(Box::new(move |panic_info| {
-        error!("Panic occured");
+        error!("Panic occurred");
         if let Err(e) = delete_all_bitcoind_locks_for_process(bitcoind_dir.clone()) {
             error!("Failed to delete internal bitcoind locks: {}", e);
         }
