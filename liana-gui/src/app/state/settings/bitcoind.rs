@@ -18,6 +18,7 @@ use liana_ui::{component::form, widget::Element};
 use crate::{
     app::{cache::Cache, error::Error, message::Message, state::settings::State, view},
     daemon::Daemon,
+    help,
     node::{
         bitcoind::{RpcAuthType, RpcAuthValues},
         NodeType,
@@ -196,6 +197,10 @@ impl State for BitcoindSettingsState {
                         },
                     ))
                 }
+                setting_panels.push(view::settings::link(
+                    help::CHANGE_BACKEND_OR_NODE_URL,
+                    "I want to change node type or use Liana Connect",
+                ));
                 setting_panels.push(self.rescan_settings.view(cache, can_do_rescan).map(
                     move |msg| view::Message::Settings(view::SettingsMessage::RescanSettings(msg)),
                 ));

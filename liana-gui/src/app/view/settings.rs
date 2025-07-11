@@ -32,6 +32,7 @@ use crate::{
         settings::ProviderKey,
         view::{hw, warning::warn},
     },
+    help,
     hw::HardwareWallet,
     node::{
         bitcoind::{RpcAuthType, RpcAuthValues},
@@ -163,6 +164,18 @@ pub fn list(cache: &Cache, is_remote_backend: bool) -> Element<Message> {
             .push(import_export)
             .push(about),
     )
+}
+
+pub fn link<'a>(url: &str, link_text: &'static str) -> Element<'a, Message> {
+    iced_tooltip::Tooltip::new(
+        button::link(Some(icon::link_icon()), link_text)
+            .on_press(Message::OpenUrl(url.to_string())),
+        Container::new(text(url))
+            .style(theme::card::simple)
+            .padding(10),
+        iced_tooltip::Position::Bottom,
+    )
+    .into()
 }
 
 pub fn bitcoind_settings<'a>(
@@ -345,7 +358,14 @@ pub fn remote_backend_section<'a>(
         &Menu::Settings,
         cache,
         warning,
-        Column::new().spacing(20).push(header).push(content),
+        Column::new()
+            .spacing(20)
+            .push(header)
+            .push(content)
+            .push(link(
+                help::CHANGE_BACKEND_OR_NODE_URL,
+                "I want to connect to my own node",
+            )),
     )
 }
 

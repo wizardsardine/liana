@@ -34,6 +34,7 @@ use liana_ui::{
 use crate::node::electrum::validate_domain_checkbox;
 use crate::{
     app::settings,
+    help,
     hw::{is_compatible_with_tapminiscript, HardwareWallet, UnsupportedReason},
     installer::{
         descriptor::{Key, PathSequence, PathWarning},
@@ -698,7 +699,7 @@ pub fn register_descriptor<'a>(
                     .push(
                         Row::new().push(Column::new().width(Length::Fill)).push(
                             button::secondary(Some(icon::clipboard_icon()), "Copy")
-                                .on_press(Message::Clibpboard(descriptor_str)),
+                                .on_press(Message::Clipboard(descriptor_str)),
                         ),
                     )
                     .spacing(10),
@@ -845,7 +846,7 @@ pub fn backup_descriptor<'a>(
                                 .push(Space::with_width(10))
                                 .push(
                                     button::secondary(Some(icon::clipboard_icon()), "Copy")
-                                        .on_press(Message::Clibpboard(descriptor.to_string())),
+                                        .on_press(Message::Clipboard(descriptor.to_string())),
                                 ),
                         )
                         .spacing(10),
@@ -2075,6 +2076,20 @@ pub fn choose_backend(progress: (usize, usize)) -> Element<'static, Message> {
                         .width(Length::FillPortion(1)),
                     ),
             )
+            .push(Space::with_height(20)) // ensures mouse cursor is not already on link when arriving at this step
+            .push(tooltip::Tooltip::new(
+                button::link(
+                    Some(icon::link_icon()),
+                    "More information about backend and node options",
+                )
+                .on_press(Message::OpenUrl(
+                    help::CHANGE_BACKEND_OR_NODE_URL.to_string(),
+                )),
+                Container::new(text(help::CHANGE_BACKEND_OR_NODE_URL))
+                    .style(theme::card::simple)
+                    .padding(10),
+                tooltip::Position::Bottom,
+            ))
             .spacing(20),
         true,
         Some(Message::Previous),

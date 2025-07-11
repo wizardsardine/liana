@@ -249,7 +249,13 @@ impl Installer {
                     Task::none()
                 }
             },
-            Message::Clibpboard(s) => clipboard::write(s),
+            Message::Clipboard(s) => clipboard::write(s),
+            Message::OpenUrl(url) => {
+                if let Err(e) = open::that_detached(&url) {
+                    tracing::error!("Error opening '{}': {}", url, e);
+                }
+                Task::none()
+            }
             Message::Next => self.next(),
             Message::Previous => self.previous(),
             Message::Install => {
