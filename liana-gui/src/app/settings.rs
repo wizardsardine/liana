@@ -437,35 +437,66 @@ pub mod global {
             Self::update(path, |s| s.bitbox = Some(bitbox.clone()), true)
         }
 
-        pub fn update<F>(path: &PathBuf, mut update: F, write: bool) -> Result<(), String>
+        pub fn update<F>(path: &PathBuf, mut update: F, mut write: bool) -> Result<(), String>
         where
             F: FnMut(&mut GlobalSettings),
         {
+            log::info!("GLobalSettings::update() write: {write}");
             let exists = path.is_file();
-            let mut file = OpenOptions::new()
-                .read(true)
-                .write(true)
-                .create(true)
-                .truncate(false)
-                .open(path)
-                .map_err(|e| format!("Opening file: {e}"))?;
 
-            file.lock_exclusive()
-                .map_err(|e| format!("Locking file: {e}"))?;
+            let (mut global_settings, file) = if exists {
+                let mut file = OpenOptions::new()
+                    .read(true)
+                    .write(true)
+                    .create(true)
+                    .truncate(false)
+                    .open(path)
+                    .map_err(|e| format!("Opening file: {e}"))?;
 
-            let mut global_settings = if exists {
+                file.lock_exclusive()
+                    .map_err(|e| format!("Locking file: {e}"))?;
+
                 let mut content = String::new();
                 file.read_to_string(&mut content)
                     .map_err(|e| format!("Reading file: {e}"))?;
 
-                serde_json::from_str::<GlobalSettings>(&content).map_err(|e| e.to_string())?
+                if !write {
+                    file.unlock().map_err(|e| format!("Unlocking file: {e}"))?;
+                }
+
+                (
+                    serde_json::from_str::<GlobalSettings>(&content).map_err(|e| e.to_string())?,
+                    Some(file),
+                )
             } else {
-                GlobalSettings::default()
+                (GlobalSettings::default(), None)
             };
 
             update(&mut global_settings);
 
+            if !exists
+                && global_settings.bitbox.is_none()
+                && global_settings.window_config.is_none()
+            {
+                write = false;
+            }
+
             if write {
+                let mut file = if let Some(file) = file {
+                    file
+                } else {
+                    let file = OpenOptions::new()
+                        .read(true)
+                        .write(true)
+                        .create(true)
+                        .truncate(false)
+                        .open(path)
+                        .map_err(|e| format!("Opening file: {e}"))?;
+
+                    file.lock_exclusive()
+                        .map_err(|e| format!("Locking file: {e}"))?;
+                    file
+                };
                 let content = serde_json::to_vec_pretty(&global_settings)
                     .map_err(|e| format!("Failed to serialize GlobalSettings: {e}"))?;
 
@@ -476,9 +507,8 @@ pub mod global {
                     .map_err(|e| format!("Failed to write file: {e}"))?;
                 file.set_len(content.len() as u64)
                     .map_err(|e| format!("Failed to truncate file: {e}"))?;
+                file.unlock().map_err(|e| format!("Unlocking file: {e}"))?;
             }
-
-            file.unlock().map_err(|e| format!("Unlocking file: {e}"))?;
 
             Ok(())
         }
