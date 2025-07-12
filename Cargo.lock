@@ -3022,7 +3022,7 @@ version = "11.0.0"
 dependencies = [
  "bdk_coin_select",
  "bip39",
- "getrandom 0.2.15",
+ "getrandom 0.3.1",
  "log",
  "miniscript",
  "rdrand",

@@ -7,7 +7,11 @@ use liana::miniscript::{
 };
 use std::collections::HashMap;
 
-use super::{context, Error};
+use super::{
+    context,
+    step::descriptor::editor::key::{SelectKeySourceMessage, SelectedKey},
+    Error,
+};
 use crate::{
     app::{
         settings::{self, ProviderKey},
@@ -67,6 +71,7 @@ pub enum Message {
     WalletFromBackup((HashMap<Fingerprint, settings::KeySetting>, Backup)),
     WalletAliasEdited(String),
     SelectAccount(Fingerprint, ChildNumber),
+    SelectKeySource(SelectKeySourceMessage),
 }
 
 impl Close for Message {
@@ -159,7 +164,10 @@ pub enum InternalBitcoindMsg {
 pub enum DefineDescriptor {
     ChangeTemplate(context::DescriptorTemplate),
     ImportDescriptor(String),
-    KeysEdited(Vec<(usize, usize)>, Key),
+    // NOTE: KeysEdit & KeysEdited takes a Vec<coordinate>
+    // in order to assign a key to several path from a single
+    // modal call
+    KeysEdited(Vec<(usize, usize)>, SelectedKey),
     KeysEdit(PathKind, Vec<(usize, usize)>),
     Path(usize, DefinePath),
     AddRecoveryPath,
