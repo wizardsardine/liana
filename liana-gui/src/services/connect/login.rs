@@ -16,7 +16,7 @@ use crate::{
         settings::{SettingsError, WalletSettings},
     },
     daemon::DaemonError,
-    dir::LianaDirectory,
+    dir::{LianaDirectory, NetworkDirectory},
 };
 
 use super::client::{
@@ -170,7 +170,7 @@ impl LianaLiteLogin {
                         auth.wallet_id,
                         service_config.backend_api_url,
                         network,
-                        datadir,
+                        &datadir.network_directory(network),
                     )
                     .await
                 },
@@ -483,10 +483,9 @@ pub async fn connect_with_credentials(
     wallet_id: String,
     backend_api_url: String,
     network: Network,
-    liana_directory: LianaDirectory,
+    network_dir: &NetworkDirectory,
 ) -> Result<BackendState, Error> {
-    let network_dir = liana_directory.network_directory(network);
-    let mut tokens = cache::Account::from_cache(&network_dir, &auth.email)
+    let mut tokens = cache::Account::from_cache(network_dir, &auth.email)
         .map_err(|e| match e {
             ConnectCacheError::NotFound => Error::CredentialsMissing,
             _ => e.into(),
@@ -495,7 +494,7 @@ pub async fn connect_with_credentials(
         .tokens;
 
     if tokens.expires_at < chrono::Utc::now().timestamp() {
-        tokens = cache::update_connect_cache(&network_dir, &tokens, &auth, true).await?;
+        tokens = cache::update_connect_cache(network_dir, &tokens, &auth, true).await?;
     }
 
     let client = BackendClient::connect(auth, backend_api_url, tokens, network).await?;

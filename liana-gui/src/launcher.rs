@@ -1,6 +1,6 @@
 use iced::{
     alignment::Horizontal,
-    widget::{pick_list, scrollable, Button, Space},
+    widget::{checkbox, pick_list, scrollable, Button, Space},
     Alignment, Length, Subscription, Task,
 };
 
@@ -124,6 +124,7 @@ impl Launcher {
                         None
                     };
                     self.delete_wallet_modal = Some(DeleteWalletModal::new(
+                        self.network,
                         wallet_datadir,
                         wallets[i].clone(),
                         internal_bitcoind,
@@ -425,52 +426,66 @@ pub enum DeleteWalletMessage {
     ShowModal(usize),
     CloseModal,
     Confirm(WalletId),
+    DeleteLianaConnect(bool),
     Deleted,
 }
 
 struct DeleteWalletModal {
+    network: Network,
     network_directory: NetworkDirectory,
     wallet_settings: WalletSettings,
     warning: Option<DeleteError>,
     deleted: bool,
+    delete_liana_connect: bool,
     // `None` means we were not able to determine whether wallet uses internal bitcoind.
     internal_bitcoind: Option<bool>,
 }
 
 impl DeleteWalletModal {
     fn new(
+        network: Network,
         network_directory: NetworkDirectory,
         wallet_settings: WalletSettings,
         internal_bitcoind: Option<bool>,
     ) -> Self {
         Self {
+            network,
             wallet_settings,
             network_directory,
             warning: None,
             deleted: false,
+            delete_liana_connect: false,
             internal_bitcoind,
         }
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
-        if let Message::View(ViewMessage::DeleteWallet(DeleteWalletMessage::Confirm(wallet_id))) =
-            message
-        {
-            if wallet_id != self.wallet_settings.wallet_id() {
-                return Task::none();
+        match message {
+            Message::View(ViewMessage::DeleteWallet(DeleteWalletMessage::Confirm(wallet_id))) => {
+                if wallet_id != self.wallet_settings.wallet_id() {
+                    return Task::none();
+                }
+                self.warning = None;
+                if let Err(e) = Handle::current().block_on(delete_wallet(
+                    self.network,
+                    &self.network_directory,
+                    &self.wallet_settings,
+                    self.delete_liana_connect,
+                )) {
+                    self.warning = Some(e);
+                } else {
+                    self.deleted = true;
+                    return Task::perform(async {}, |_| {
+                        Message::View(ViewMessage::DeleteWallet(DeleteWalletMessage::Deleted))
+                    });
+                };
             }
-            self.warning = None;
-            if let Err(e) = Handle::current().block_on(delete_wallet(
-                &self.network_directory,
-                &self.wallet_settings.wallet_id(),
-            )) {
-                self.warning = Some(e);
-            } else {
-                self.deleted = true;
-                return Task::perform(async {}, |_| {
-                    Message::View(ViewMessage::DeleteWallet(DeleteWalletMessage::Deleted))
-                });
-            };
+            Message::View(ViewMessage::DeleteWallet(DeleteWalletMessage::DeleteLianaConnect(
+                delete,
+            ))) => {
+                self.delete_liana_connect = delete;
+            }
+            _ => {}
         }
         Task::none()
     }
@@ -523,6 +538,14 @@ impl DeleteWalletModal {
                         .style(theme::text::destructive)
                         .width(Length::Fill),
                     ))
+                    .push_maybe(self.wallet_settings.remote_backend_auth.as_ref().map(|_| {
+                        checkbox("Delete also on Liana-Connect", self.delete_liana_connect)
+                            .on_toggle(|v| {
+                                ViewMessage::DeleteWallet(DeleteWalletMessage::DeleteLianaConnect(
+                                    v,
+                                ))
+                            })
+                    }))
                     .push(Row::new().push(text(help_text_1)))
                     .push_maybe(
                         help_text_2
