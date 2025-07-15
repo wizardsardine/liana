@@ -471,6 +471,21 @@ impl BackendWalletClient {
     pub async fn auth(&self) -> AccessTokenResponse {
         self.inner.auth.read().await.clone()
     }
+
+    pub async fn delete_wallet(&self) -> Result<(), DaemonError> {
+        self.inner
+            .request(
+                Method::DELETE,
+                &format!("{}/v1/wallets/{}", self.inner.url, self.wallet_uuid),
+            )
+            .await
+            .send()
+            .await?
+            .check_success()
+            .await?;
+
+        Ok(())
+    }
 }
 
 #[async_trait]
