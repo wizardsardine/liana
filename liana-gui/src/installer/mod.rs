@@ -299,9 +299,10 @@ impl Installer {
                 // In case of failure during install, block the thread to
                 // deleted the data_dir/network directory in order to start clean again.
                 warn!("Installation failed. Cleaning up the network directory.");
-                if let Err(e) = Handle::current()
-                    .block_on(delete::delete_wallet(&network_directory, &wallet_id))
-                {
+                if let Err(e) = Handle::current().block_on(delete::delete_failed_install(
+                    &network_directory,
+                    &wallet_id,
+                )) {
                     error!(
                         "Failed to completely clean the network directory (path: '{}'): {}",
                         network_directory.path().to_string_lossy(),

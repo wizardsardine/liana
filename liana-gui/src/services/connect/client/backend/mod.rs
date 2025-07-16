@@ -468,8 +468,44 @@ impl BackendWalletClient {
             .await
     }
 
+    pub async fn user_wallet_membership(&self) -> Result<api::UserRole, DaemonError> {
+        let list: api::ListWalletMembers = self
+            .inner
+            .request(
+                Method::GET,
+                &format!("{}/v1/wallets/{}/members", self.inner.url, self.wallet_uuid),
+            )
+            .await
+            .send()
+            .await?
+            .check_success()
+            .await?
+            .json_or_error()
+            .await?;
+        list.members
+            .into_iter()
+            .find(|m| m.user_id == self.user_id())
+            .map(|m| m.role)
+            .ok_or(DaemonError::Unexpected("Membership not found".to_string()))
+    }
+
     pub async fn auth(&self) -> AccessTokenResponse {
         self.inner.auth.read().await.clone()
+    }
+
+    pub async fn delete_wallet(&self) -> Result<(), DaemonError> {
+        self.inner
+            .request(
+                Method::DELETE,
+                &format!("{}/v1/wallets/{}", self.inner.url, self.wallet_uuid),
+            )
+            .await
+            .send()
+            .await?
+            .check_success()
+            .await?;
+
+        Ok(())
     }
 }
 
