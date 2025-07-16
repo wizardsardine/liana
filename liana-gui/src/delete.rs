@@ -143,7 +143,7 @@ pub async fn delete_wallet(
             .await
             .map_err(|e| DeleteError::Connect(e.to_string()))?
             {
-                tracing::info!("Deleting  wallet on Liana-Connect {} plateform", network);
+                tracing::info!("Deleting wallet on Liana-Connect {} backend", network);
                 client
                     .delete_wallet()
                     .await
