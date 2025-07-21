@@ -1,5 +1,31 @@
 # Liana daemon and GUI release notes
 
+## 12.0
+
+This release mostly modifies liana-gui by adding new features:
+
+* Update library dependency to support Bitbox02 Nova.
+* Allow user to also delete wallet on Liana-Connect platform.
+* Add tiny-skia Iced backend to have a GUI renderer fallback.
+* Add support for multiple panes and tabs.
+* Add an option to upload a wallet/descriptor file when adding an existing Liana wallet using Liana-Connect as a backend.
+* Allow self signed certificate for electrum server.
+
+And some UX/UI improvements:
+
+* Add alias to confirmation message of delete wallet modal.
+* Add links with info about changing backend or node type both during the setup and in the wallet settings.
+* skip syncing screen if node is not bitcoind.
+* Improve timelock duration selection and display.
+* Improve the "Add an existing Liana wallet" with own node UI by prioritizing backup file usage.
+
+And fixes some small issues:
+
+* fix some minor issues in the comments.
+* fix(poller): only update last used index for affected keychain.
+* liana-ui: add warning to form::Value.
+
+
 ## 11.0
 
 This release adds some important new features:
