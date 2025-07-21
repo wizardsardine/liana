@@ -63,6 +63,10 @@ pub fn transparent_border<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) ->
     button(content(icon, text(t))).style(theme::button::container_border)
 }
 
+pub fn link<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> Button<'a, T> {
+    Button::new(content(icon, text(t))).style(theme::button::link)
+}
+
 fn content<'a, T: 'a>(icon: Option<Text<'a>>, text: Text<'a>) -> Container<'a, T> {
     match icon {
         None => container(text).align_x(Horizontal::Center).padding(5),

@@ -32,7 +32,7 @@ use crate::{
 pub enum Message {
     UserActionDone(bool),
     Exit(Box<settings::WalletSettings>, Option<Bitcoind>),
-    Clibpboard(String),
+    Clipboard(String),
     Next,
     Skip,
     Previous,
@@ -67,6 +67,7 @@ pub enum Message {
     WalletFromBackup((HashMap<Fingerprint, settings::KeySetting>, Backup)),
     WalletAliasEdited(String),
     SelectAccount(Fingerprint, ChildNumber),
+    OpenUrl(String),
 }
 
 impl Close for Message {

@@ -267,7 +267,7 @@ impl Step for DefineDescriptor {
                     }
                     message::DefinePath::Key(j, msg) => match msg {
                         message::DefineKey::Clipboard(key) => {
-                            return Task::perform(async move { key }, Message::Clibpboard);
+                            return Task::perform(async move { key }, Message::Clipboard);
                         }
 
                         message::DefineKey::Edit => {
