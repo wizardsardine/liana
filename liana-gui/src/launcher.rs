@@ -1,6 +1,6 @@
 use iced::{
     alignment::Horizontal,
-    widget::{pick_list, scrollable, Button, Space},
+    widget::{checkbox, pick_list, scrollable, Button, Space},
     Alignment, Length, Subscription, Task,
 };
 
@@ -16,11 +16,15 @@ use tokio::runtime::Handle;
 use crate::{
     app::{
         self,
-        settings::{self, WalletId, WalletSettings},
+        settings::{self, AuthConfig, WalletId, WalletSettings},
     },
     delete::{delete_wallet, DeleteError},
     dir::{LianaDirectory, NetworkDirectory},
     installer::UserFlow,
+    services::connect::{
+        client::{auth::AuthClient, backend::api::UserRole, get_service_config},
+        login::{connect_with_credentials, BackendState},
+    },
 };
 
 const NETWORKS: [Network; 4] = [
@@ -124,6 +128,7 @@ impl Launcher {
                         None
                     };
                     self.delete_wallet_modal = Some(DeleteWalletModal::new(
+                        self.network,
                         wallet_datadir,
                         wallets[i].clone(),
                         internal_bitcoind,
@@ -425,52 +430,83 @@ pub enum DeleteWalletMessage {
     ShowModal(usize),
     CloseModal,
     Confirm(WalletId),
+    DeleteLianaConnect(bool),
     Deleted,
 }
 
 struct DeleteWalletModal {
+    network: Network,
     network_directory: NetworkDirectory,
     wallet_settings: WalletSettings,
     warning: Option<DeleteError>,
     deleted: bool,
+    delete_liana_connect: bool,
+    user_role: Option<UserRole>,
     // `None` means we were not able to determine whether wallet uses internal bitcoind.
     internal_bitcoind: Option<bool>,
 }
 
 impl DeleteWalletModal {
     fn new(
+        network: Network,
         network_directory: NetworkDirectory,
         wallet_settings: WalletSettings,
         internal_bitcoind: Option<bool>,
     ) -> Self {
-        Self {
+        let mut modal = Self {
+            network,
             wallet_settings,
             network_directory,
             warning: None,
             deleted: false,
+            delete_liana_connect: false,
             internal_bitcoind,
+            user_role: None,
+        };
+        if let Some(auth) = &modal.wallet_settings.remote_backend_auth {
+            match Handle::current().block_on(check_membership(
+                modal.network,
+                &modal.network_directory,
+                auth,
+            )) {
+                Err(e) => {
+                    modal.warning = Some(e);
+                }
+                Ok(user_role) => {
+                    modal.user_role = user_role;
+                }
+            }
         }
+        modal
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
-        if let Message::View(ViewMessage::DeleteWallet(DeleteWalletMessage::Confirm(wallet_id))) =
-            message
-        {
-            if wallet_id != self.wallet_settings.wallet_id() {
-                return Task::none();
+        match message {
+            Message::View(ViewMessage::DeleteWallet(DeleteWalletMessage::Confirm(wallet_id))) => {
+                if wallet_id != self.wallet_settings.wallet_id() {
+                    return Task::none();
+                }
+                self.warning = None;
+                if let Err(e) = Handle::current().block_on(delete_wallet(
+                    self.network,
+                    &self.network_directory,
+                    &self.wallet_settings,
+                    self.delete_liana_connect,
+                )) {
+                    self.warning = Some(e);
+                } else {
+                    self.deleted = true;
+                    return Task::perform(async {}, |_| {
+                        Message::View(ViewMessage::DeleteWallet(DeleteWalletMessage::Deleted))
+                    });
+                };
             }
-            self.warning = None;
-            if let Err(e) = Handle::current().block_on(delete_wallet(
-                &self.network_directory,
-                &self.wallet_settings.wallet_id(),
-            )) {
-                self.warning = Some(e);
-            } else {
-                self.deleted = true;
-                return Task::perform(async {}, |_| {
-                    Message::View(ViewMessage::DeleteWallet(DeleteWalletMessage::Deleted))
-                });
-            };
+            Message::View(ViewMessage::DeleteWallet(DeleteWalletMessage::DeleteLianaConnect(
+                delete,
+            ))) => {
+                self.delete_liana_connect = delete;
+            }
+            _ => {}
         }
         Task::none()
     }
@@ -485,18 +521,22 @@ impl DeleteWalletModal {
             ));
         }
         // Use separate `Row`s for help text in order to have better spacing.
-        let help_text_1 = if let Some(alias) = &self.wallet_settings.alias {
-            format!(
-                "Are you sure you want to delete the configuration and all associated data for the wallet {} (Liana-{})?",
-                alias,
-                self.wallet_settings.descriptor_checksum
-            )
-        } else {
-            format!(
-                "Are you sure you want to delete the configuration and all associated data for the wallet Liana-{}?",
-                &self.wallet_settings.descriptor_checksum,
-            )
-        };
+        let help_text_1 = format!(
+            "Are you sure you want to {} for the wallet {}",
+            if self.wallet_settings.remote_backend_auth.is_some() {
+                "delete locally the configuration"
+            } else {
+                "delete the configuration and all associated data"
+            },
+            if let Some(alias) = &self.wallet_settings.alias {
+                format!(
+                    "{} (Liana-{})?",
+                    alias, self.wallet_settings.descriptor_checksum
+                )
+            } else {
+                format!("Liana-{}?", &self.wallet_settings.descriptor_checksum)
+            }
+        );
         let help_text_2 = match self.internal_bitcoind {
             Some(true) => Some("(The Liana-managed Bitcoin node for this network will not be affected by this action.)"),
             Some(false) => None,
@@ -529,6 +569,22 @@ impl DeleteWalletModal {
                             .map(|t| Row::new().push(p1_regular(t).style(theme::text::secondary))),
                     )
                     .push(Row::new())
+                    .push_maybe(self.wallet_settings.remote_backend_auth.as_ref().map(|a| {
+                        checkbox(
+                            match self.user_role {
+                                Some(UserRole::Owner) | None => "Also permanently delete this wallet from Liana Connect (for all members).".to_string(),
+                                Some(UserRole::Member) => format!("Also disassociate {} from this Liana Connect wallet.", a.email),
+                            },
+                            self.delete_liana_connect,
+                        )
+                        .on_toggle_maybe(if !self.deleted {
+                                Some(|v| {
+                                    ViewMessage::DeleteWallet(DeleteWalletMessage::DeleteLianaConnect(v))
+                                })
+                            } else {
+                                None
+                            })
+                    }))
                     .push(Row::new().push(text(help_text_3)))
                     .push_maybe(self.warning.as_ref().map(|w| {
                         notification::warning(w.to_string(), w.to_string()).width(Length::Fill)
@@ -551,6 +607,40 @@ impl DeleteWalletModal {
             .width(Length::Fixed(700.0)),
         )
         .map(Message::View)
+    }
+}
+
+pub async fn check_membership(
+    network: Network,
+    network_dir: &NetworkDirectory,
+    auth: &AuthConfig,
+) -> Result<Option<UserRole>, DeleteError> {
+    let service_config = get_service_config(network)
+        .await
+        .map_err(|e| DeleteError::Connect(e.to_string()))?;
+
+    if let BackendState::WalletExists(client, _, _) = connect_with_credentials(
+        AuthClient::new(
+            service_config.auth_api_url,
+            service_config.auth_api_public_key,
+            auth.email.to_string(),
+        ),
+        auth.wallet_id.clone(),
+        service_config.backend_api_url,
+        network,
+        network_dir,
+    )
+    .await
+    .map_err(|e| DeleteError::Connect(e.to_string()))?
+    {
+        Ok(Some(
+            client
+                .user_wallet_membership()
+                .await
+                .map_err(|e| DeleteError::Connect(e.to_string()))?,
+        ))
+    } else {
+        Ok(None)
     }
 }
 

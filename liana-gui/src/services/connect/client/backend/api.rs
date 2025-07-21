@@ -122,6 +122,24 @@ pub struct ListWallets {
     pub wallets: Vec<Wallet>,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum UserRole {
+    Owner,
+    Member,
+}
+
+#[derive(Deserialize)]
+pub struct ListWalletMembers {
+    pub members: Vec<Member>,
+}
+
+#[derive(Deserialize)]
+pub struct Member {
+    pub user_id: String,
+    pub role: UserRole,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct Provider {
     pub uuid: String,
