@@ -54,6 +54,7 @@ bitcoin_hashes = "0.12"
 reqwest = { version = "0.11", default-features=false, features = ["json", "rustls-tls", "stream"] }
 rust-ini = "0.19.0"
 rfd = "0.15.1"
+fs2 = "0.4.3"
 
 # Used for opening URLs in browser
 open = "5.3"

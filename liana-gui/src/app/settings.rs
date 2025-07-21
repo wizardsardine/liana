@@ -380,18 +380,141 @@ impl std::fmt::Display for SettingsError {
 pub mod global {
     use crate::dir::LianaDirectory;
     use async_hwi::bitbox::{ConfigError, NoiseConfig, NoiseConfigData};
+    use fs2::FileExt;
     use serde::{Deserialize, Serialize};
-    use std::io::{Read, Write};
+    use std::fs::OpenOptions;
+    use std::io::{Read, Seek, SeekFrom, Write};
     use std::path::PathBuf;
 
     pub const DEFAULT_FILE_NAME: &str = "global_settings.json";
 
-    #[derive(Debug, Deserialize, Serialize)]
-    pub struct Settings {
-        pub bitbox: Option<BitboxSettings>,
+    #[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
+    pub struct WindowConfig {
+        pub width: f32,
+        pub height: f32,
     }
 
-    #[derive(Debug, Deserialize, Serialize)]
+    #[derive(Debug, Deserialize, Serialize, Default)]
+    pub struct GlobalSettings {
+        pub bitbox: Option<BitboxSettings>,
+        pub window_config: Option<WindowConfig>,
+    }
+
+    impl GlobalSettings {
+        pub fn path(global_datadir: &LianaDirectory) -> PathBuf {
+            global_datadir.path().join(DEFAULT_FILE_NAME)
+        }
+
+        pub fn load_window_config(path: &PathBuf) -> Option<WindowConfig> {
+            let mut ret = None;
+            if let Err(e) = Self::update(path, |s| ret = s.window_config.clone(), false) {
+                tracing::error!("Failed to load window config: {e}");
+            }
+            ret
+        }
+
+        pub fn update_window_config(
+            path: &PathBuf,
+            window_config: &WindowConfig,
+        ) -> Result<(), String> {
+            Self::update(
+                path,
+                |s| s.window_config = Some(window_config.clone()),
+                true,
+            )
+        }
+
+        pub fn load_bitbox_settings(path: &PathBuf) -> Result<Option<BitboxSettings>, String> {
+            let mut ret = None;
+            Self::update(path, |s| ret = s.bitbox.clone(), false)?;
+            Ok(ret)
+        }
+
+        pub fn update_bitbox_settings(
+            path: &PathBuf,
+            bitbox: &BitboxSettings,
+        ) -> Result<(), String> {
+            Self::update(path, |s| s.bitbox = Some(bitbox.clone()), true)
+        }
+
+        pub fn update<F>(path: &PathBuf, mut update: F, mut write: bool) -> Result<(), String>
+        where
+            F: FnMut(&mut GlobalSettings),
+        {
+            log::info!("GLobalSettings::update() write: {write}");
+            let exists = path.is_file();
+
+            let (mut global_settings, file) = if exists {
+                let mut file = OpenOptions::new()
+                    .read(true)
+                    .write(true)
+                    .create(true)
+                    .truncate(false)
+                    .open(path)
+                    .map_err(|e| format!("Opening file: {e}"))?;
+
+                file.lock_exclusive()
+                    .map_err(|e| format!("Locking file: {e}"))?;
+
+                let mut content = String::new();
+                file.read_to_string(&mut content)
+                    .map_err(|e| format!("Reading file: {e}"))?;
+
+                if !write {
+                    file.unlock().map_err(|e| format!("Unlocking file: {e}"))?;
+                }
+
+                (
+                    serde_json::from_str::<GlobalSettings>(&content).map_err(|e| e.to_string())?,
+                    Some(file),
+                )
+            } else {
+                (GlobalSettings::default(), None)
+            };
+
+            update(&mut global_settings);
+
+            if !exists
+                && global_settings.bitbox.is_none()
+                && global_settings.window_config.is_none()
+            {
+                write = false;
+            }
+
+            if write {
+                let mut file = if let Some(file) = file {
+                    file
+                } else {
+                    let file = OpenOptions::new()
+                        .read(true)
+                        .write(true)
+                        .create(true)
+                        .truncate(false)
+                        .open(path)
+                        .map_err(|e| format!("Opening file: {e}"))?;
+
+                    file.lock_exclusive()
+                        .map_err(|e| format!("Locking file: {e}"))?;
+                    file
+                };
+                let content = serde_json::to_vec_pretty(&global_settings)
+                    .map_err(|e| format!("Failed to serialize GlobalSettings: {e}"))?;
+
+                file.seek(SeekFrom::Start(0))
+                    .map_err(|e| format!("Failed to seek file: {e}"))?;
+
+                file.write_all(&content)
+                    .map_err(|e| format!("Failed to write file: {e}"))?;
+                file.set_len(content.len() as u64)
+                    .map_err(|e| format!("Failed to truncate file: {e}"))?;
+                file.unlock().map_err(|e| format!("Unlocking file: {e}"))?;
+            }
+
+            Ok(())
+        }
+    }
+
+    #[derive(Debug, Deserialize, Serialize, Clone)]
     pub struct BitboxSettings {
         pub noise_config: NoiseConfigData,
     }
@@ -407,68 +530,209 @@ pub mod global {
         /// in the provided directory.
         pub fn new(global_datadir: &LianaDirectory) -> PersistedBitboxNoiseConfig {
             PersistedBitboxNoiseConfig {
-                file_path: global_datadir.path().join(DEFAULT_FILE_NAME),
+                file_path: GlobalSettings::path(global_datadir),
             }
         }
     }
 
     impl NoiseConfig for PersistedBitboxNoiseConfig {
-        fn read_config(&self) -> Result<NoiseConfigData, async_hwi::bitbox::api::ConfigError> {
-            if !self.file_path.exists() {
-                return Ok(NoiseConfigData::default());
-            }
-
-            let mut file =
-                std::fs::File::open(&self.file_path).map_err(|e| ConfigError(e.to_string()))?;
-
-            let mut contents = String::new();
-            file.read_to_string(&mut contents)
-                .map_err(|e| ConfigError(e.to_string()))?;
-
-            let settings = serde_json::from_str::<Settings>(&contents)
-                .map_err(|e| ConfigError(e.to_string()))?;
-
-            Ok(settings
-                .bitbox
+        fn read_config(&self) -> Result<NoiseConfigData, ConfigError> {
+            let res = GlobalSettings::load_bitbox_settings(&self.file_path)
+                .map_err(ConfigError)?
                 .map(|s| s.noise_config)
-                .unwrap_or_else(NoiseConfigData::default))
+                .unwrap_or_else(NoiseConfigData::default);
+            Ok(res)
         }
 
         fn store_config(&self, conf: &NoiseConfigData) -> Result<(), ConfigError> {
-            let data = if self.file_path.exists() {
-                let mut file =
-                    std::fs::File::open(&self.file_path).map_err(|e| ConfigError(e.to_string()))?;
-
-                let mut contents = String::new();
-                file.read_to_string(&mut contents)
-                    .map_err(|e| ConfigError(e.to_string()))?;
-
-                let mut settings = serde_json::from_str::<Settings>(&contents)
-                    .map_err(|e| ConfigError(e.to_string()))?;
-
-                settings.bitbox = Some(BitboxSettings {
-                    noise_config: conf.clone(),
-                });
-
-                serde_json::to_string_pretty(&settings).map_err(|e| ConfigError(e.to_string()))?
-            } else {
-                serde_json::to_string_pretty(&Settings {
-                    bitbox: Some(BitboxSettings {
-                        noise_config: conf.clone(),
-                    }),
-                })
-                .map_err(|e| ConfigError(e.to_string()))?
-            };
-
-            let mut file = std::fs::OpenOptions::new()
-                .write(true)
-                .create(true)
-                .truncate(true)
-                .open(&self.file_path)
-                .map_err(|e| ConfigError(e.to_string()))?;
-
-            file.write_all(data.as_bytes())
-                .map_err(|e| ConfigError(e.to_string()))
+            GlobalSettings::update(
+                &self.file_path,
+                |s| {
+                    if let Some(bitbox) = s.bitbox.as_mut() {
+                        bitbox.noise_config = conf.clone();
+                    } else {
+                        s.bitbox = Some(BitboxSettings {
+                            noise_config: conf.clone(),
+                        });
+                    }
+                },
+                true,
+            )
+            .map_err(ConfigError)
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::global::{GlobalSettings, WindowConfig};
+    use std::env;
+
+    const RAW_GLOBAL_SETTINGS: &str = r#"{
+          "bitbox": {
+            "noise_config": {
+              "app_static_privkey": [
+                84,
+                118,
+                69,
+                7,
+                5,
+                246,
+                50,
+                252,
+                79,
+                62,
+                233,
+                118,
+                54,
+                46,
+                247,
+                143,
+                255,
+                152,
+                11,
+                96,
+                7,
+                213,
+                209,
+                42,
+                219,
+                58,
+                237,
+                22,
+                53,
+                221,
+                227,
+                228
+              ],
+              "device_static_pubkeys": [
+                [
+                  252,
+                  78,
+                  254,
+                  112,
+                  62,
+                  72,
+                  220,
+                  22,
+                  23,
+                  147,
+                  205,
+                  166,
+                  248,
+                  39,
+                  97,
+                  46,
+                  32,
+                  255,
+                  132,
+                  125,
+                  97,
+                  142,
+                  31,
+                  146,
+                  44,
+                  186,
+                  231,
+                  1,
+                  12,
+                  190,
+                  105,
+                  11
+                ]
+              ]
+            }
+          },
+          "window_config": {
+            "width": 1248.0,
+            "height": 688.0
+          }
+        }"#;
+
+    #[test]
+    fn test_parse_global_config() {
+        let _ = serde_json::from_str::<GlobalSettings>(RAW_GLOBAL_SETTINGS).unwrap();
+    }
+
+    #[test]
+    fn test_update_global_config() {
+        let path = env::current_dir()
+            .unwrap()
+            .join("test_assets")
+            .join("global_settings.json");
+        assert!(path.exists());
+
+        // read global config file
+        GlobalSettings::update(
+            &path,
+            |s| {
+                assert_eq!(
+                    *s.window_config.as_ref().unwrap(),
+                    WindowConfig {
+                        width: 1248.0,
+                        height: 688.0
+                    }
+                );
+                assert!(s.bitbox.is_some());
+                // this must not be written to the file as write == false
+                s.window_config.as_mut().unwrap().height = 0.0;
+            },
+            false,
+        )
+        .unwrap();
+
+        // re-read the global config file
+        GlobalSettings::update(
+            &path,
+            |s| {
+                // change have not been written
+                assert_eq!(
+                    *s.window_config.as_ref().unwrap(),
+                    WindowConfig {
+                        width: 1248.0,
+                        height: 688.0
+                    }
+                );
+            },
+            true,
+        )
+        .unwrap();
+
+        // edit the global config file
+        GlobalSettings::update(
+            &path,
+            |s| {
+                assert_eq!(
+                    *s.window_config.as_ref().unwrap(),
+                    WindowConfig {
+                        width: 1248.0,
+                        height: 688.0
+                    }
+                );
+                assert!(s.bitbox.is_some());
+                // this must be written to the file as write == true
+                s.window_config.as_mut().unwrap().height = 0.0;
+            },
+            true,
+        )
+        .unwrap();
+
+        // re-read the global config file
+        GlobalSettings::update(
+            &path,
+            |s| {
+                // change have been written
+                assert_eq!(
+                    *s.window_config.as_ref().unwrap(),
+                    WindowConfig {
+                        width: 1248.0,
+                        height: 0.0
+                    }
+                );
+                s.window_config.as_mut().unwrap().height = 688.0;
+            },
+            true,
+        )
+        .unwrap()
     }
 }
