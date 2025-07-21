@@ -120,7 +120,9 @@ impl Launcher {
                 if let State::Wallets { wallets, .. } = &self.state {
                     let wallet_datadir = self.datadir_path.network_directory(self.network);
                     let config_path = wallet_datadir.path().join(app::config::DEFAULT_FILE_NAME);
-                    let internal_bitcoind = if wallets[i].start_internal_bitcoind.is_some() {
+                    let internal_bitcoind = if wallets[i].remote_backend_auth.is_some() {
+                        Some(false)
+                    } else if wallets[i].start_internal_bitcoind.is_some() {
                         wallets[i].start_internal_bitcoind
                     } else if let Ok(cfg) = app::Config::from_file(&config_path) {
                         Some(cfg.start_internal_bitcoind)
