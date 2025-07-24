@@ -239,12 +239,14 @@ impl GUI {
                             .iter()
                             .enumerate()
                             .filter_map(|(i, tab)| {
-                                if let tab::State::App(a) = &tab.state {
-                                    if a.wallet_id() == *wallet_id {
-                                        Some(i)
-                                    } else {
-                                        None
+                                if match &tab.state {
+                                    tab::State::App(a) => a.wallet_id() == *wallet_id,
+                                    tab::State::Loader(l) => {
+                                        l.wallet_settings.wallet_id() == *wallet_id
                                     }
+                                    _ => false,
+                                } {
+                                    Some(i)
                                 } else {
                                     None
                                 }
