@@ -129,6 +129,7 @@ pub struct LianaLiteLogin {
 pub enum ConnectionStep {
     CheckingAuthFile,
     CheckEmail,
+    WalletDoesNotExist,
     EnterOtp {
         client: AuthClient,
         backend_api_url: String,
@@ -186,7 +187,7 @@ impl LianaLiteLogin {
                     self.processing = false;
                     match res {
                         Ok(BackendState::NoWallet(_)) => {
-                            self.auth_error = Some("No wallet found for the given email");
+                            self.step = ConnectionStep::WalletDoesNotExist;
                         }
                         Ok(BackendState::WalletExists(client, wallet, coins)) => {
                             return Task::perform(
@@ -339,6 +340,7 @@ impl LianaLiteLogin {
                 }
                 _ => {}
             },
+            _ => {}
         }
 
         Task::none()
@@ -358,6 +360,8 @@ impl LianaLiteLogin {
                                 .max_width(500)
                                 .spacing(20)
                                 .push(match &self.step {
+                                    ConnectionStep::WalletDoesNotExist => Column::new()
+                                        .push(text("This wallet was deleted by its creator for all participants and cannot be opened. To access it again, restore it using a backup file or the wallet descriptor.")),
                                     ConnectionStep::CheckingAuthFile => Column::new(),
                                     ConnectionStep::CheckEmail => Column::new()
                                         .spacing(20)
