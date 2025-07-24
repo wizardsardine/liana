@@ -71,13 +71,11 @@ impl Pane {
             return None;
         }
         let tab = self.tabs.remove(i);
-        self.focused_tab = if self.tabs.is_empty() {
-            0
-        } else if i < self.tabs.len() - 1 {
-            i
-        } else {
-            self.tabs.len() - 1
-        };
+
+        if self.focused_tab >= i {
+            self.focused_tab = self.focused_tab.saturating_sub(1);
+        }
+
         Some(tab)
     }
 
