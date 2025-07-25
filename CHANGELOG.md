@@ -10,6 +10,7 @@ This release mostly modifies liana-gui by adding new features:
 * Add support for multiple panes and tabs.
 * Add an option to upload a wallet/descriptor file when adding an existing Liana wallet using Liana-Connect as a backend.
 * Allow self signed certificate for electrum server.
+* Whenever the user resizes the GUI window, the new dimensions are saved and applied the next time the GUI is opened.
 
 And some UX/UI improvements:
 
@@ -22,8 +23,7 @@ And some UX/UI improvements:
 And fixes some small issues:
 
 * fix some minor issues in the comments.
-* fix(poller): only update last used index for affected keychain.
-* liana-ui: add warning to form::Value.
+* fix poller: only update last used index for affected keychain.
 
 ## 11.1
 
