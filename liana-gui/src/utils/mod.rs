@@ -1,3 +1,5 @@
+pub mod serde;
+
 #[cfg(test)]
 pub mod sandbox;
 

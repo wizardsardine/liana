@@ -7,15 +7,7 @@ use liana::{
 };
 use serde::{de, Deserialize, Deserializer};
 
-pub fn deser_fromstr<'de, D, T>(deserializer: D) -> Result<T, D::Error>
-where
-    D: Deserializer<'de>,
-    T: FromStr,
-    <T as FromStr>::Err: std::fmt::Display,
-{
-    let string = String::deserialize(deserializer)?;
-    T::from_str(&string).map_err(de::Error::custom)
-}
+use crate::utils::serde::deser_fromstr;
 
 /// Deserialize an address from string, assuming the network was checked.
 pub fn deser_addr_assume_checked<'de, D>(deserializer: D) -> Result<bitcoin::Address, D::Error>
