@@ -34,7 +34,13 @@ use state::{
 use wallet::{sync_status, SyncStatus};
 
 use crate::{
-    app::{cache::Cache, error::Error, menu::Menu, settings::WalletId, wallet::Wallet},
+    app::{
+        cache::{Cache, DaemonCache},
+        error::Error,
+        menu::Menu,
+        settings::WalletId,
+        wallet::Wallet,
+    },
     daemon::{embedded::EmbeddedDaemon, Daemon, DaemonBackend},
     dir::LianaDirectory,
     node::{bitcoind::Bitcoind, NodeType},
@@ -75,26 +81,26 @@ impl Panels {
             current: Menu::Home,
             home: Home::new(
                 wallet.clone(),
-                &cache.coins,
+                cache.coins(),
                 sync_status(
                     daemon_backend.clone(),
-                    cache.blockheight,
-                    cache.sync_progress,
-                    cache.last_poll_timestamp,
+                    cache.blockheight(),
+                    cache.sync_progress(),
+                    cache.last_poll_timestamp(),
                     cache.last_poll_at_startup,
                 ),
-                cache.blockheight,
+                cache.blockheight(),
                 show_rescan_warning,
             ),
-            coins: CoinsPanel::new(&cache.coins, wallet.main_descriptor.first_timelock_value()),
+            coins: CoinsPanel::new(cache.coins(), wallet.main_descriptor.first_timelock_value()),
             transactions: TransactionsPanel::new(wallet.clone()),
             psbts: PsbtsPanel::new(wallet.clone()),
             recovery: new_recovery_panel(wallet.clone(), cache),
             receive: ReceivePanel::new(data_dir.clone(), wallet.clone()),
             create_spend: CreateSpendPanel::new(
                 wallet.clone(),
-                &cache.coins,
-                cache.blockheight as u32,
+                cache.coins(),
+                cache.blockheight() as u32,
                 cache.network,
             ),
             settings: state::SettingsState::new(
@@ -239,8 +245,8 @@ impl App {
             menu::Menu::RefreshCoins(preselected) => {
                 self.panels.create_spend = CreateSpendPanel::new_self_send(
                     self.wallet.clone(),
-                    &self.cache.coins,
-                    self.cache.blockheight as u32,
+                    self.cache.coins(),
+                    self.cache.blockheight() as u32,
                     preselected,
                     self.cache.network,
                 );
@@ -250,8 +256,8 @@ impl App {
                 if !self.panels.create_spend.keep_state() {
                     self.panels.create_spend = CreateSpendPanel::new(
                         self.wallet.clone(),
-                        &self.cache.coins,
-                        self.cache.blockheight as u32,
+                        self.cache.coins(),
+                        self.cache.blockheight() as u32,
                         self.cache.network,
                     );
                 }
@@ -275,9 +281,9 @@ impl App {
             time::every(Duration::from_secs(
                 match sync_status(
                     self.daemon.backend(),
-                    self.cache.blockheight,
-                    self.cache.sync_progress,
-                    self.cache.last_poll_timestamp,
+                    self.cache.blockheight(),
+                    self.cache.sync_progress(),
+                    self.cache.last_poll_timestamp(),
                     self.cache.last_poll_at_startup,
                 ) {
                     SyncStatus::BlockchainSync(_) => 5, // Only applies to local backends
@@ -336,13 +342,15 @@ impl App {
                         let coins = cache::coins_to_cache(daemon).await?;
                         Ok(Cache {
                             datadir_path,
-                            coins: coins.coins,
                             network: info.network,
-                            blockheight: info.block_height,
-                            rescan_progress: info.rescan_progress,
-                            sync_progress: info.sync,
-                            last_poll_timestamp: info.last_poll_timestamp,
                             last_poll_at_startup, // doesn't change
+                            daemon_cache: DaemonCache {
+                                blockheight: info.block_height,
+                                coins: coins.coins,
+                                rescan_progress: info.rescan_progress,
+                                sync_progress: info.sync,
+                                last_poll_timestamp: info.last_poll_timestamp,
+                            },
                         })
                     },
                     Message::UpdateCache,
@@ -450,8 +458,8 @@ impl App {
 fn new_recovery_panel(wallet: Arc<Wallet>, cache: &Cache) -> CreateSpendPanel {
     CreateSpendPanel::new_recovery(
         wallet,
-        &cache.coins,
-        cache.blockheight as u32,
+        cache.coins(),
+        cache.blockheight() as u32,
         cache.network,
     )
 }
