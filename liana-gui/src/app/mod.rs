@@ -331,7 +331,6 @@ impl App {
                 let daemon = self.daemon.clone();
                 let datadir_path = self.cache.datadir_path.clone();
                 let network = self.cache.network;
-                let last_poll_at_startup = self.cache.last_poll_at_startup;
                 Task::perform(
                     async move {
                         // we check every 10 second if the daemon poller is alive
@@ -340,48 +339,47 @@ impl App {
 
                         let info = daemon.get_info().await?;
                         let coins = cache::coins_to_cache(daemon).await?;
-                        Ok(Cache {
-                            datadir_path,
-                            network: info.network,
-                            last_poll_at_startup, // doesn't change
-                            daemon_cache: DaemonCache {
-                                blockheight: info.block_height,
-                                coins: coins.coins,
-                                rescan_progress: info.rescan_progress,
-                                sync_progress: info.sync,
-                                last_poll_timestamp: info.last_poll_timestamp,
-                            },
+                        Ok(DaemonCache {
+                            blockheight: info.block_height,
+                            coins: coins.coins,
+                            rescan_progress: info.rescan_progress,
+                            sync_progress: info.sync,
+                            last_poll_timestamp: info.last_poll_timestamp,
                         })
                     },
-                    Message::UpdateCache,
+                    Message::UpdateDaemonCache,
                 )
             }
-            Message::UpdateCache(res) => {
+            Message::UpdateDaemonCache(res) => {
                 match res {
-                    Ok(cache) => {
-                        self.cache.clone_from(&cache);
-                        let current = &self.panels.current;
-                        let daemon = self.daemon.clone();
-                        // These are the panels to update with the cache.
-                        let mut panels = [
-                            (&mut self.panels.home as &mut dyn State, Menu::Home),
-                            (&mut self.panels.settings as &mut dyn State, Menu::Settings),
-                        ];
-                        let commands: Vec<_> = panels
-                            .iter_mut()
-                            .map(|(panel, menu)| {
-                                panel.update(
-                                    daemon.clone(),
-                                    &cache,
-                                    Message::UpdatePanelCache(current == menu),
-                                )
-                            })
-                            .collect();
-                        return Task::batch(commands);
+                    Ok(daemon_cache) => {
+                        self.cache.daemon_cache = daemon_cache;
+                        return Task::perform(async {}, |_| Message::CacheUpdated);
                     }
-                    Err(e) => tracing::error!("Failed to update cache: {}", e),
+                    Err(e) => tracing::error!("Failed to update daemon cache: {}", e),
                 }
                 Task::none()
+            }
+            Message::CacheUpdated => {
+                // These are the panels to update with the cache.
+                let mut panels = [
+                    (&mut self.panels.home as &mut dyn State, Menu::Home),
+                    (&mut self.panels.settings as &mut dyn State, Menu::Settings),
+                ];
+                let daemon = self.daemon.clone();
+                let current = &self.panels.current;
+                let cache = self.cache.clone();
+                let commands: Vec<_> = panels
+                    .iter_mut()
+                    .map(|(panel, menu)| {
+                        panel.update(
+                            daemon.clone(),
+                            &cache,
+                            Message::UpdatePanelCache(current == menu),
+                        )
+                    })
+                    .collect();
+                Task::batch(commands)
             }
             Message::LoadDaemonConfig(cfg) => {
                 let res = self.load_daemon_config(self.cache.datadir_path.clone(), *cfg);
