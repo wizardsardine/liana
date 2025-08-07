@@ -318,6 +318,7 @@ impl State for WalletSettingsState {
         &mut self,
         daemon: Arc<dyn Daemon + Sync + Send>,
         wallet: Arc<Wallet>,
+        _reset: bool,
     ) -> Task<Message> {
         self.descriptor = wallet.main_descriptor.clone();
         self.keys_aliases = Self::keys_aliases(&wallet);
@@ -385,7 +386,7 @@ impl RegisterWalletModal {
         message: Message,
     ) -> Task<Message> {
         match message {
-            Message::View(view::Message::Reload) => {
+            Message::View(view::Message::Reload(_)) => {
                 self.chosen_hw = None;
                 self.warning = None;
                 Task::none()

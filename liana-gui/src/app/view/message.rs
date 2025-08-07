@@ -7,7 +7,7 @@ pub trait Close {
 
 #[derive(Debug, Clone)]
 pub enum Message {
-    Reload,
+    Reload(bool /* reset */),
     Clipboard(String),
     Menu(Menu),
     Close,
