@@ -78,6 +78,7 @@ impl ExportModal {
             ImportExportType::ImportXpub(_) => "Import Xpub",
             ImportExportType::ExportBackup(_) => "Export Backup",
             ImportExportType::Descriptor(_) => "Export Descriptor",
+            ImportExportType::ExportEncryptedDescriptor(_) => "Export Encrypted Descriptor",
             ImportExportType::ExportProcessBackup(..) | ImportExportType::ExportLabels => {
                 "Export Labels"
             }
@@ -105,6 +106,8 @@ impl ExportModal {
                     .to_string();
                 format!("liana-{}.txt", checksum)
             }
+            // TODO: update w/ BIP #
+            ImportExportType::ExportEncryptedDescriptor(_) => "liana.bipxxxx".into(),
             ImportExportType::ImportPsbt(_) => "psbt.psbt".into(),
             ImportExportType::ImportDescriptor => "descriptor.txt".into(),
             ImportExportType::ExportLabels => format!("liana-labels-{date}.jsonl"),
