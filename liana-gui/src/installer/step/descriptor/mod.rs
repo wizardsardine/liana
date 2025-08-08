@@ -17,7 +17,7 @@ use async_hwi::DeviceKind;
 
 use crate::{
     app::{settings::KeySetting, state::export::ExportModal, wallet::wallet_name},
-    backup::{self, Backup},
+    backup::Backup,
     export::{ImportExportMessage, ImportExportType, Progress},
     hw::{HardwareWallet, HardwareWallets},
     installer::{
@@ -412,29 +412,32 @@ impl Step for BackupDescriptor {
                     return task;
                 };
             }
-            Message::BackupWallet => {
+            Message::BackupDescriptor => {
                 if let (None, Some(ctx)) = (&self.modal, self.context.as_ref()) {
-                    let ctx = ctx.clone();
+                    let descriptor = ctx.descriptor.clone();
                     return Task::perform(
                         async move {
-                            let backup = Backup::from_installer_descriptor_step(ctx).await?;
-                            serde_json::to_string_pretty(&backup).map_err(|_| backup::Error::Json)
+                            let descriptor = descriptor.ok_or(encrypted_backup::Error::String(
+                                Box::new("Descriptor missing".to_string()),
+                            ))?;
+                            Ok(Box::new(descriptor))
                         },
-                        Message::ExportWallet,
+                        Message::ExportEncryptedDescriptor,
                     );
                 }
             }
-            Message::ExportWallet(str) => {
+            Message::ExportEncryptedDescriptor(bytes) => {
                 if self.modal.is_none() {
-                    let str = match str {
-                        Ok(s) => s,
+                    let bytes = match bytes {
+                        Ok(b) => b,
                         Err(e) => {
                             tracing::error!("{e:?}");
                             self.error = Some(Error::Backup(e));
                             return Task::none();
                         }
                     };
-                    let modal = ExportModal::new(None, ImportExportType::ExportBackup(str));
+                    let modal =
+                        ExportModal::new(None, ImportExportType::ExportEncryptedDescriptor(bytes));
                     let launch = modal.launch(true);
                     self.modal = Some(modal);
                     return launch;
