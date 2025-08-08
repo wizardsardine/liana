@@ -1,9 +1,12 @@
-use liana::miniscript::{
-    bitcoin::{
-        bip32::{ChildNumber, Fingerprint},
-        Network,
+use liana::{
+    descriptors::LianaDescriptor,
+    miniscript::{
+        bitcoin::{
+            bip32::{ChildNumber, Fingerprint},
+            Network,
+        },
+        DescriptorPublicKey,
     },
-    DescriptorPublicKey,
 };
 use std::collections::HashMap;
 
@@ -17,7 +20,7 @@ use crate::{
         settings::{self, ProviderKey},
         view::Close,
     },
-    backup::{self, Backup},
+    backup::Backup,
     download::{DownloadError, Progress},
     export::ImportExportMessage,
     hw::HardwareWalletMessage,
@@ -63,8 +66,8 @@ pub enum Message {
     RedeemNextKey,
     KeyRedeemed(ProviderKey, Result<(), services::keys::Error>),
     AllKeysRedeemed,
-    BackupWallet,
-    ExportWallet(Result<String, backup::Error>),
+    BackupDescriptor,
+    ExportEncryptedDescriptor(Result<Box<LianaDescriptor>, encrypted_backup::Error>),
     ExportXpub(String),
     ImportExport(ImportExportMessage),
     ImportBackup,
