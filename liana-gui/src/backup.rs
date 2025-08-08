@@ -135,6 +135,7 @@ impl Backup {
     ///
     /// # Arguments
     /// * `ctx` - the installer context
+    #[allow(unused)]
     pub async fn from_installer_descriptor_step(ctx: Context) -> Result<Self, Error> {
         let descriptor = ctx.descriptor.clone().ok_or(Error::DescriptorMissing)?;
 
