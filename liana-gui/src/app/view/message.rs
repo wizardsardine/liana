@@ -99,7 +99,7 @@ pub enum SettingsMessage {
     RemoteBackendSettings(RemoteBackendSettingsMessage),
     EditWalletSettings,
     ImportExportSection,
-    ExportDescriptor,
+    ExportEncryptedDescriptor,
     ExportTransactions,
     ExportLabels,
     ExportWallet,
