@@ -59,6 +59,8 @@ fs2 = "0.4.3"
 # Used for opening URLs in browser
 open = "5.3"
 
+encrypted_backup = { version = "0.0.1", default-features=false, features = ["miniscript_12_0"], package = "bitcoin-encrypted-backup" }
+
 [target.'cfg(windows)'.dependencies]
 zip = { version = "0.6", default-features=false, features = ["bzip2", "deflate"] }
 
