@@ -79,6 +79,7 @@ impl ExportModal {
             ImportExportType::ExportProcessBackup(..) | ImportExportType::ExportBackup(_) => {
                 "Export Backup"
             }
+            ImportExportType::ExportEncryptedDescriptor(_) => "Export Encrypted Descriptor",
             ImportExportType::Descriptor(_) => "Export Descriptor",
             ImportExportType::ExportLabels => "Export Labels",
             ImportExportType::ImportPsbt(_) => "Import PSBT",
@@ -105,6 +106,7 @@ impl ExportModal {
                     .to_string();
                 format!("liana-{}.txt", checksum)
             }
+            ImportExportType::ExportEncryptedDescriptor(_) => "liana.bed".into(),
             ImportExportType::ImportPsbt(_) => "psbt.psbt".into(),
             ImportExportType::ImportDescriptor => "descriptor.txt".into(),
             ImportExportType::ExportLabels => format!("liana-labels-{date}.jsonl"),

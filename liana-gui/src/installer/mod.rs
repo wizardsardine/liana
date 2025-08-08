@@ -27,7 +27,6 @@ use crate::{
         settings::{update_settings_file, AuthConfig, SettingsError, WalletId, WalletSettings},
         wallet::wallet_name,
     },
-    backup,
     daemon::{Daemon, DaemonError},
     delete,
     dir::LianaDirectory,
@@ -836,7 +835,7 @@ pub enum Error {
     CannotGetAvailablePort(String),
     Unexpected(String),
     HardwareWallet(async_hwi::Error),
-    Backup(backup::Error),
+    Backup(encrypted_backup::Error),
 }
 
 impl From<jsonrpc::simple_http::Error> for Error {
