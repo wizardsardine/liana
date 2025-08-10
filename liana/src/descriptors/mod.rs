@@ -83,6 +83,7 @@ fn key_is_for_path(
             return der_paths.contains(&der_path_no_wildcard.into());
         }
     }
+
     false
 }
 
