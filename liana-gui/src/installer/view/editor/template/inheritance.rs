@@ -40,7 +40,7 @@ pub fn inheritance_template_description(progress: (usize, usize)) -> Element<'st
                     Row::new()
                     .align_y(Alignment::Center)
                     .spacing(10)
-                    .push(icon::round_key_icon().size(H3_SIZE).color(color::GREEN))
+                    .push(icon::round_key_icon().size(H3_SIZE).color(color::ORANGE))
                     .push(p1_regular("Primary key").bold())
                 ).push(
                     Row::new()
@@ -108,7 +108,7 @@ pub fn inheritance_template<'a>(
             ))
             .push(
                 path(
-                    color::GREEN,
+                    color::ORANGE,
                     None,
                     PathSequence::Primary,
                     primary_path.warning,
@@ -116,7 +116,7 @@ pub fn inheritance_template<'a>(
                     vec![if let Some(key) = primary_key {
                         defined_key(
                             &key.name,
-                            color::GREEN,
+                            color::ORANGE,
                             "Primary key",
                             if use_taproot && !key.source.is_compatible_taproot() {
                                 Some("This device does not support Taproot")
@@ -126,7 +126,7 @@ pub fn inheritance_template<'a>(
                             true,
                         )
                     } else {
-                        undefined_key(color::GREEN, "Primary key", true, true)
+                        undefined_key(color::ORANGE, "Primary key", true, true)
                     }
                     .map(|msg| message::DefinePath::Key(0, msg))],
                     true,

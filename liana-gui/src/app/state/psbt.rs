@@ -38,9 +38,11 @@ pub trait Modal {
     fn load(&self, _daemon: Arc<dyn Daemon + Sync + Send>) -> Task<Message> {
         Task::none()
     }
+
     fn subscription(&self) -> Subscription<Message> {
         Subscription::none()
     }
+
     fn update(
         &mut self,
         _daemon: Arc<dyn Daemon + Sync + Send>,
@@ -49,6 +51,7 @@ pub trait Modal {
     ) -> Task<Message> {
         Task::none()
     }
+
     fn view<'a>(&'a self, content: Element<'a, view::Message>) -> Element<'a, view::Message>;
 }
 
@@ -582,6 +585,7 @@ impl Modal for SignModal {
         };
         Task::none()
     }
+
     fn view<'a>(&'a self, content: Element<'a, view::Message>) -> Element<'a, view::Message> {
         let content = toast::Manager::new(
             content,

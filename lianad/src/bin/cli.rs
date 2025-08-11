@@ -1,4 +1,4 @@
-#![cfg(not(target_os = "windows"))]
+#![cfg(unix)]
 
 use lianad::config::Config;
 

@@ -5,7 +5,6 @@ Documentation related to signing devices. It is required signers support Miniscr
 The connection to the signing devices is implemented in [another
 repository](https://github.com/wizardsardine/async-hwi).
 
-
 ## [Specter DIY](https://github.com/cryptoadvance/specter-diy)
 
 Version 1.5.0 and above of the firmware is supported for use in P2WSH descriptors.
@@ -28,7 +27,6 @@ Support for use in both P2WSH and Taproot descriptors has only been released in 
 writing. It is only supported by the [Edge
 firmware](https://github.com/Coldcard/firmware?tab=readme-ov-file#long-lived-branches).
 For use in Taproot descriptors you should use version 6.3.3 or higher.
-
 
 ## [Jade and Jade Plus](https://github.com/Blockstream/Jade)
 

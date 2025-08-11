@@ -531,7 +531,7 @@ pub trait TxGetter {
 
 /// Specify the fee requirements for a transaction. In both cases set a target feerate in satoshi
 /// per virtual byte. For RBF also set a minimum fee in satoshis for this transaction. See
-/// https://github.com/bitcoin/bitcoin/blob/master/doc/policy/mempool-replacements.md for more
+/// <https://github.com/bitcoin/bitcoin/blob/master/doc/policy/mempool-replacements.md> for more
 /// information about how it should be set.
 pub enum SpendTxFees {
     /// The target feerate in sats/vb for this transaction.

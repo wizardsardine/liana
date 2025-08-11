@@ -36,10 +36,10 @@ use liana_ui::{
 
 use crate::app::{cache::Cache, error::Error, menu::Menu};
 
-fn menu_green_bar<'a, T: 'a>() -> Container<'a, T> {
-    Container::new(Space::with_width(Length::Fixed(2.0)))
+fn menu_bar_highlight<'a, T: 'a>() -> Container<'a, T> {
+    Container::new(Space::with_width(Length::Fixed(5.0)))
         .height(Length::Fixed(50.0))
-        .style(theme::container::custom(color::GREEN))
+        .style(theme::container::custom(color::ORANGE))
 }
 
 pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
@@ -48,7 +48,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
             button::menu_active(Some(home_icon()), "Home")
                 .on_press(Message::Reload)
                 .width(iced::Length::Fill),
-            menu_green_bar(),
+            menu_bar_highlight(),
         )
     } else {
         row!(button::menu(Some(home_icon()), "Home")
@@ -61,7 +61,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
             button::menu_active(Some(history_icon()), "Transactions")
                 .on_press(Message::Reload)
                 .width(iced::Length::Fill),
-            menu_green_bar()
+            menu_bar_highlight()
         )
     } else {
         row!(button::menu(Some(history_icon()), "Transactions")
@@ -74,7 +74,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
             button::menu_active(Some(coins_icon()), "Coins")
                 .on_press(Message::Reload)
                 .width(iced::Length::Fill),
-            menu_green_bar()
+            menu_bar_highlight()
         )
     } else {
         row!(button::menu(Some(coins_icon()), "Coins")
@@ -88,7 +88,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
             button::menu_active(Some(history_icon()), "PSBTs")
                 .on_press(Message::Reload)
                 .width(iced::Length::Fill),
-            menu_green_bar()
+            menu_bar_highlight()
         )
     } else {
         row!(button::menu(Some(history_icon()), "PSBTs")
@@ -101,7 +101,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
             button::menu_active(Some(send_icon()), "Send")
                 .on_press(Message::Reload)
                 .width(iced::Length::Fill),
-            menu_green_bar()
+            menu_bar_highlight()
         )
     } else {
         row!(button::menu(Some(send_icon()), "Send")
@@ -114,7 +114,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
             button::menu_active(Some(receive_icon()), "Receive")
                 .on_press(Message::Reload)
                 .width(iced::Length::Fill),
-            menu_green_bar()
+            menu_bar_highlight()
         )
     } else {
         row!(button::menu(Some(receive_icon()), "Receive")
@@ -127,7 +127,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
             button::menu_active(Some(recovery_icon()), "Recovery")
                 .on_press(Message::Reload)
                 .width(iced::Length::Fill),
-            menu_green_bar()
+            menu_bar_highlight()
         )
     } else {
         row!(button::menu(Some(recovery_icon()), "Recovery")
@@ -140,7 +140,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
             button::menu_active(Some(settings_icon()), "Settings")
                 .on_press(Message::Menu(Menu::Settings))
                 .width(iced::Length::Fill),
-            menu_green_bar()
+            menu_bar_highlight()
         )
     } else {
         row!(button::menu(Some(settings_icon()), "Settings")
@@ -192,7 +192,7 @@ pub fn small_sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message
             button::menu_active_small(home_icon())
                 .on_press(Message::Reload)
                 .width(iced::Length::Fill),
-            menu_green_bar(),
+            menu_bar_highlight(),
         )
     } else {
         row!(button::menu_small(home_icon())
@@ -205,7 +205,7 @@ pub fn small_sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message
             button::menu_active_small(history_icon())
                 .on_press(Message::Reload)
                 .width(iced::Length::Fill),
-            menu_green_bar()
+            menu_bar_highlight()
         )
     } else {
         row!(button::menu_small(history_icon())
@@ -218,7 +218,7 @@ pub fn small_sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message
             button::menu_active_small(coins_icon())
                 .on_press(Message::Reload)
                 .width(iced::Length::Fill),
-            menu_green_bar()
+            menu_bar_highlight()
         )
     } else {
         row!(button::menu_small(coins_icon())
@@ -232,7 +232,7 @@ pub fn small_sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message
             button::menu_active_small(history_icon())
                 .on_press(Message::Reload)
                 .width(iced::Length::Fill),
-            menu_green_bar()
+            menu_bar_highlight()
         )
     } else {
         row!(button::menu_small(history_icon())
@@ -245,7 +245,7 @@ pub fn small_sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message
             button::menu_active_small(send_icon())
                 .on_press(Message::Reload)
                 .width(iced::Length::Fill),
-            menu_green_bar()
+            menu_bar_highlight()
         )
     } else {
         row!(button::menu_small(send_icon())
@@ -258,7 +258,7 @@ pub fn small_sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message
             button::menu_active_small(receive_icon())
                 .on_press(Message::Reload)
                 .width(iced::Length::Fill),
-            menu_green_bar()
+            menu_bar_highlight()
         )
     } else {
         row!(button::menu_small(receive_icon())
@@ -271,7 +271,7 @@ pub fn small_sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message
             button::menu_active_small(recovery_icon())
                 .on_press(Message::Reload)
                 .width(iced::Length::Fill),
-            menu_green_bar()
+            menu_bar_highlight()
         )
     } else {
         row!(button::menu_small(recovery_icon())
@@ -284,7 +284,7 @@ pub fn small_sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message
             button::menu_active_small(settings_icon())
                 .on_press(Message::Menu(Menu::Settings))
                 .width(iced::Length::Fill),
-            menu_green_bar()
+            menu_bar_highlight()
         )
     } else {
         row!(button::menu_small(settings_icon())

@@ -60,26 +60,22 @@ impl str::FromStr for DerivedPublicKey {
             return Err(DescKeyError::DerivedKeyParsing);
         }
 
-        // Non-ASCII?
-        for ch in s.as_bytes() {
-            if *ch < 20 || *ch > 127 {
-                return Err(DescKeyError::DerivedKeyParsing);
-            }
-        }
-
-        if s.chars().next().expect("Size checked above") != '[' {
+        if !s.starts_with('[') {
             return Err(DescKeyError::DerivedKeyParsing);
         }
 
         let mut parts = s[1..].split(']');
-        let fg_deriv = parts.next().ok_or(DescKeyError::DerivedKeyParsing)?;
-        let key_str = parts.next().ok_or(DescKeyError::DerivedKeyParsing)?;
 
+        // parse fingerprint
+        let fg_deriv = parts.next().ok_or(DescKeyError::DerivedKeyParsing)?;
         if fg_deriv.len() < 10 {
             return Err(DescKeyError::DerivedKeyParsing);
         }
+
         let fingerprint = bip32::Fingerprint::from_str(&fg_deriv[..8])
             .map_err(|_| DescKeyError::DerivedKeyParsing)?;
+
+        // parse derivation path
         let deriv_path = fg_deriv[9..]
             .split('/')
             .map(bip32::ChildNumber::from_str)
@@ -89,6 +85,8 @@ impl str::FromStr for DerivedPublicKey {
             return Err(DescKeyError::DerivedKeyParsing);
         }
 
+        // parse public key
+        let key_str = parts.next().ok_or(DescKeyError::DerivedKeyParsing)?;
         let key =
             bitcoin::PublicKey::from_str(key_str).map_err(|_| DescKeyError::DerivedKeyParsing)?;
 
