@@ -12,7 +12,7 @@ use lianad::commands::ListCoinsResult;
 use crate::{
     app::{
         self,
-        cache::Cache,
+        cache::{Cache, DaemonCache},
         settings::{update_settings_file, WalletSettings},
         wallet::Wallet,
         App,
@@ -351,14 +351,17 @@ pub fn create_app_with_remote_backend(
     App::new(
         Cache {
             network,
-            coins: coins.coins,
-            rescan_progress: None,
-            sync_progress: 1.0, // Remote backend is always synced
             datadir_path: liana_dir.clone(),
-            blockheight: wallet.tip_height.unwrap_or(0),
             // We ignore last poll fields for remote backend.
-            last_poll_timestamp: None,
             last_poll_at_startup: None,
+            daemon_cache: DaemonCache {
+                coins: coins.coins,
+                rescan_progress: None,
+                sync_progress: 1.0, // Remote backend is always synced
+                blockheight: wallet.tip_height.unwrap_or(0),
+                // We ignore last poll fields for remote backend.
+                last_poll_timestamp: None,
+            },
         },
         Arc::new(
             Wallet::new(wallet.descriptor)

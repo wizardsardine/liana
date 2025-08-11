@@ -9,7 +9,7 @@ use liana::miniscript::bitcoin::{
 use lianad::config::Config as DaemonConfig;
 
 use crate::{
-    app::{cache::Cache, error::Error, view, wallet::Wallet},
+    app::{cache::DaemonCache, error::Error, view, wallet::Wallet},
     daemon::model::*,
     export::ImportExportMessage,
     hw::HardwareWalletMessage,
@@ -18,7 +18,8 @@ use crate::{
 #[derive(Debug)]
 pub enum Message {
     Tick,
-    UpdateCache(Result<Cache, Error>),
+    UpdateDaemonCache(Result<DaemonCache, Error>),
+    CacheUpdated,
     UpdatePanelCache(/* is current panel */ bool),
     View(view::Message),
     LoadDaemonConfig(Box<DaemonConfig>),

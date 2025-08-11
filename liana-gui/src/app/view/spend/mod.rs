@@ -316,7 +316,7 @@ pub fn create_spend_tx<'a>(
                                         coin,
                                         coins_labels,
                                         timelock,
-                                        cache.blockheight as u32,
+                                        cache.blockheight() as u32,
                                         *selected,
                                     ))
                                 },
