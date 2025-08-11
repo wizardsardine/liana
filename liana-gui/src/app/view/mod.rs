@@ -37,7 +37,7 @@ use liana_ui::{
 use crate::app::{cache::Cache, error::Error, menu::Menu};
 
 fn menu_bar_highlight<'a, T: 'a>() -> Container<'a, T> {
-    Container::new(Space::with_width(Length::Fixed(2.0)))
+    Container::new(Space::with_width(Length::Fixed(5.0)))
         .height(Length::Fixed(50.0))
         .style(theme::container::custom(color::ORANGE))
 }

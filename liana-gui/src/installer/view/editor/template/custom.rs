@@ -95,7 +95,7 @@ pub fn custom_template<'a>(
             ))
             .push(
                 path(
-                    color::GREEN,
+                    color::ORANGE,
                     Some("Primary spending option:".to_string()),
                     primary_path.sequence,
                     primary_path.warning,
@@ -108,7 +108,7 @@ pub fn custom_template<'a>(
                             if let Some(key) = primary_key {
                                 defined_key(
                                     &key.name,
-                                    color::GREEN,
+                                    color::ORANGE,
                                     "Primary key",
                                     if use_taproot && !key.source.is_compatible_taproot() {
                                         Some("This device does not support Taproot")
@@ -119,7 +119,7 @@ pub fn custom_template<'a>(
                                 )
                             } else {
                                 undefined_key(
-                                    color::GREEN,
+                                    color::ORANGE,
                                     "Primary key",
                                     !primary_path.keys[0..i].iter().any(|k| k.is_none()),
                                     prim_keys_fixed,

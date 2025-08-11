@@ -191,68 +191,68 @@ impl std::default::Default for Palette {
             buttons: Buttons {
                 primary: Button {
                     active: ButtonPalette {
-                        background: color::GREEN,
+                        background: color::ORANGE,
                         text: color::LIGHT_BLACK,
-                        border: color::GREEN.into(),
+                        border: Some(color::ORANGE),
                     },
                     hovered: ButtonPalette {
-                        background: color::GREEN,
+                        background: color::ORANGE,
                         text: color::LIGHT_BLACK,
-                        border: color::GREEN.into(),
+                        border: Some(color::ORANGE),
                     },
                     pressed: Some(ButtonPalette {
-                        background: color::GREEN,
+                        background: color::ORANGE,
                         text: color::LIGHT_BLACK,
-                        border: color::GREEN.into(),
+                        border: Some(color::ORANGE),
                     }),
                     disabled: Some(ButtonPalette {
                         background: color::GREY_6,
                         text: color::GREY_2,
-                        border: color::GREY_7.into(),
+                        border: Some(color::TRANSPARENT_ORANGE),
                     }),
                 },
                 secondary: Button {
                     active: ButtonPalette {
                         background: color::GREY_6,
                         text: color::GREY_2,
-                        border: color::GREY_7.into(),
+                        border: Some(color::GREY_7),
                     },
                     hovered: ButtonPalette {
                         background: color::GREY_6,
-                        text: color::GREEN,
-                        border: color::GREEN.into(),
+                        text: color::ORANGE,
+                        border: Some(color::TRANSPARENT_ORANGE),
                     },
                     pressed: Some(ButtonPalette {
                         background: color::GREY_6,
-                        text: color::GREEN,
-                        border: color::GREEN.into(),
+                        text: color::ORANGE,
+                        border: Some(color::ORANGE),
                     }),
                     disabled: Some(ButtonPalette {
                         background: color::GREY_6,
                         text: color::GREY_2,
-                        border: color::GREY_7.into(),
+                        border: Some(color::TRANSPARENT_ORANGE),
                     }),
                 },
                 destructive: Button {
                     active: ButtonPalette {
                         background: color::GREY_6,
                         text: color::RED,
-                        border: color::RED.into(),
+                        border: Some(color::RED),
                     },
                     hovered: ButtonPalette {
                         background: color::RED,
                         text: color::LIGHT_BLACK,
-                        border: color::RED.into(),
+                        border: Some(color::RED),
                     },
                     pressed: Some(ButtonPalette {
                         background: color::RED,
                         text: color::LIGHT_BLACK,
-                        border: color::RED.into(),
+                        border: Some(color::RED),
                     }),
                     disabled: Some(ButtonPalette {
                         background: color::GREY_6,
                         text: color::RED,
-                        border: color::RED.into(),
+                        border: Some(color::RED),
                     }),
                 },
                 transparent: Button {
@@ -286,12 +286,12 @@ impl std::default::Default for Palette {
                     hovered: ButtonPalette {
                         background: color::TRANSPARENT,
                         text: color::GREY_2,
-                        border: color::GREEN.into(),
+                        border: color::ORANGE.into(),
                     },
                     pressed: Some(ButtonPalette {
                         background: color::TRANSPARENT,
                         text: color::GREY_2,
-                        border: color::GREEN.into(),
+                        border: color::ORANGE.into(),
                     }),
                     disabled: Some(ButtonPalette {
                         background: color::TRANSPARENT,
@@ -330,12 +330,12 @@ impl std::default::Default for Palette {
                     hovered: ButtonPalette {
                         background: color::TRANSPARENT,
                         text: color::GREY_2,
-                        border: color::GREEN.into(),
+                        border: color::ORANGE.into(),
                     },
                     pressed: Some(ButtonPalette {
                         background: color::TRANSPARENT,
                         text: color::GREY_2,
-                        border: color::GREEN.into(),
+                        border: color::ORANGE.into(),
                     }),
                     disabled: Some(ButtonPalette {
                         background: color::TRANSPARENT,
@@ -369,38 +369,38 @@ impl std::default::Default for Palette {
                     active: ButtonPalette {
                         background: color::GREY_6,
                         text: color::GREY_2,
-                        border: color::GREY_7.into(),
+                        border: Some(color::GREY_7),
                     },
                     hovered: ButtonPalette {
                         background: color::GREY_6,
-                        text: color::GREEN,
-                        border: color::GREEN.into(),
+                        text: color::ORANGE,
+                        border: Some(color::ORANGE),
                     },
                     pressed: Some(ButtonPalette {
                         background: color::LIGHT_BLACK,
-                        text: color::GREEN,
-                        border: color::GREEN.into(),
+                        text: color::ORANGE,
+                        border: Some(color::ORANGE),
                     }),
                     disabled: Some(ButtonPalette {
                         background: color::GREY_6,
                         text: color::GREY_2,
-                        border: color::GREY_7.into(),
+                        border: Some(color::GREY_7),
                     }),
                 },
                 link: Button {
                     active: ButtonPalette {
                         background: color::TRANSPARENT,
                         text: color::GREY_2,
-                        border: color::TRANSPARENT.into(),
+                        border: Some(color::TRANSPARENT),
                     },
                     hovered: ButtonPalette {
                         background: color::TRANSPARENT,
-                        text: color::GREEN,
-                        border: color::TRANSPARENT.into(),
+                        text: color::ORANGE,
+                        border: Some(color::TRANSPARENT_ORANGE),
                     },
                     pressed: Some(ButtonPalette {
                         background: color::TRANSPARENT,
-                        text: color::GREEN,
+                        text: color::ORANGE,
                         border: color::TRANSPARENT.into(),
                     }),
                     disabled: Some(ButtonPalette {
@@ -468,8 +468,8 @@ impl std::default::Default for Palette {
             },
             pills: Pills {
                 primary: ContainerPalette {
-                    background: color::GREEN,
-                    text: color::LIGHT_BLACK.into(),
+                    background: color::ORANGE,
+                    text: color::BLACK.into(),
                     border: color::TRANSPARENT.into(),
                 },
                 simple: ContainerPalette {
@@ -478,26 +478,26 @@ impl std::default::Default for Palette {
                     border: color::GREY_3.into(),
                 },
                 warning: ContainerPalette {
-                    background: color::TRANSPARENT,
-                    text: color::RED.into(),
+                    background: color::RED,
+                    text: color::BLACK.into(),
                     border: color::RED.into(),
                 },
                 success: ContainerPalette {
                     background: color::GREEN,
-                    text: color::LIGHT_BLACK.into(),
+                    text: color::BLACK.into(),
                     border: color::GREEN.into(),
                 },
             },
             notifications: Notifications {
                 pending: ContainerPalette {
                     background: color::GREEN,
-                    text: color::LIGHT_BLACK.into(),
+                    text: color::BLACK.into(),
                     border: Some(color::GREEN),
                 },
                 error: ContainerPalette {
-                    background: color::ORANGE,
-                    text: color::LIGHT_BLACK.into(),
-                    border: Some(color::ORANGE),
+                    background: color::RED,
+                    text: color::BLACK.into(),
+                    border: Some(color::RED),
                 },
             },
             text_inputs: TextInputs {
@@ -507,7 +507,7 @@ impl std::default::Default for Palette {
                         icon: color::TRANSPARENT,
                         placeholder: color::GREY_7,
                         value: color::GREY_2,
-                        selection: color::GREEN,
+                        selection: color::ORANGE,
                         border: Some(color::GREY_7),
                     },
                     disabled: TextInputPalette {
@@ -515,7 +515,7 @@ impl std::default::Default for Palette {
                         icon: color::TRANSPARENT,
                         placeholder: color::GREY_7,
                         value: color::GREY_2,
-                        selection: color::GREEN,
+                        selection: color::ORANGE,
                         border: Some(color::GREY_7),
                     },
                 },
@@ -525,7 +525,7 @@ impl std::default::Default for Palette {
                         icon: color::TRANSPARENT,
                         placeholder: color::GREY_7,
                         value: color::GREY_2,
-                        selection: color::GREEN,
+                        selection: color::ORANGE,
                         border: Some(color::RED),
                     },
                     disabled: TextInputPalette {
@@ -533,40 +533,40 @@ impl std::default::Default for Palette {
                         icon: color::TRANSPARENT,
                         placeholder: color::GREY_7,
                         value: color::TRANSPARENT,
-                        selection: color::GREEN,
+                        selection: color::ORANGE,
                         border: Some(color::RED),
                     },
                 },
             },
             checkboxes: Checkboxes {
-                icon: color::GREEN,
+                icon: color::ORANGE,
                 text: color::GREY_2,
                 background: color::GREY_4,
                 border: Some(color::GREY_4),
             },
             radio_buttons: RadioButtons {
-                dot: color::GREEN,
+                dot: color::ORANGE,
                 text: color::GREY_2,
                 border: color::GREY_7,
             },
             sliders: Sliders {
-                background: color::GREEN,
-                border: color::GREEN,
+                background: color::ORANGE,
+                border: color::ORANGE,
                 rail_border: None,
-                rail_backgrounds: (color::GREEN, color::GREY_7),
+                rail_backgrounds: (color::ORANGE, color::GREY_7),
             },
             progress_bars: ProgressBars {
-                bar: color::GREEN,
+                bar: color::ORANGE,
                 border: color::TRANSPARENT.into(),
                 background: color::GREY_6,
             },
             rule: color::GREY_1,
             pane_grid: PaneGrid {
                 background: color::BLACK,
-                highlight_border: color::GREEN,
-                highlight_background: color::TRANSPARENT_GREEN,
-                picked_split: color::GREEN,
-                hovered_split: color::GREEN,
+                highlight_border: color::ORANGE,
+                highlight_background: color::TRANSPARENT_ORANGE,
+                picked_split: color::ORANGE,
+                hovered_split: color::ORANGE,
             },
         }
     }

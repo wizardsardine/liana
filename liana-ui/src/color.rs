@@ -1,44 +1,17 @@
 use iced::Color;
 
-pub const BLACK: Color = iced::Color::BLACK;
-pub const TRANSPARENT: Color = iced::Color::TRANSPARENT;
-pub const LIGHT_BLACK: Color = Color::from_rgb(
-    0x14 as f32 / 255.0,
-    0x14 as f32 / 255.0,
-    0x14 as f32 / 255.0,
-);
-pub const GREY_7: Color = Color::from_rgb(
-    0x3F as f32 / 255.0,
-    0x3F as f32 / 255.0,
-    0x3F as f32 / 255.0,
-);
-pub const GREY_6: Color = iced::color!(0x202020);
-pub const GREY_5: Color = Color::from_rgb(
-    0x27 as f32 / 255.0,
-    0x27 as f32 / 255.0,
-    0x27 as f32 / 255.0,
-);
-pub const GREY_4: Color = Color::from_rgb(
-    0x42 as f32 / 255.0,
-    0x42 as f32 / 255.0,
-    0x42 as f32 / 255.0,
-);
-pub const GREY_3: Color = Color::from_rgb(
-    0x71 as f32 / 255.0,
-    0x71 as f32 / 255.0,
-    0x71 as f32 / 255.0,
-);
-pub const GREY_2: Color = Color::from_rgb(
-    0xCC as f32 / 255.0,
-    0xCC as f32 / 255.0,
-    0xCC as f32 / 255.0,
-);
-pub const GREY_1: Color = Color::from_rgb(
-    0xE6 as f32 / 255.0,
-    0xE6 as f32 / 255.0,
-    0xE6 as f32 / 255.0,
-);
 pub const WHITE: Color = iced::Color::WHITE;
+pub const TRANSPARENT: Color = iced::Color::TRANSPARENT;
+
+pub const BLACK: Color = iced::Color::BLACK;
+pub const LIGHT_BLACK: Color = iced::color!(0x161716);
+pub const GREY_7: Color = iced::color!(0x3F3F3F);
+pub const GREY_6: Color = iced::color!(0x202020);
+pub const GREY_5: Color = iced::color!(0x272727);
+pub const GREY_4: Color = iced::color!(0x424242);
+pub const GREY_3: Color = iced::color!(0x717171);
+pub const GREY_2: Color = iced::color!(0xCCCCCC);
+pub const GREY_1: Color = iced::color!(0xE6E6E6);
 
 pub const GREEN: Color = iced::color!(0x00FF66);
 pub const TRANSPARENT_GREEN: Color = iced::color!(0x00FF66, 0.3);
