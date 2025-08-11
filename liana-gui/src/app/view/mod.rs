@@ -152,14 +152,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
         Column::new()
             .push(
                 Column::new()
-                    .push(
-                        Container::new(
-                            liana_grey_logo()
-                                .height(Length::Fixed(120.0))
-                                .width(Length::Fixed(60.0)),
-                        )
-                        .padding(10),
-                    )
+                    .push(Container::new(liana_logotype()).padding(10))
                     .push(home_button)
                     .push(spend_button)
                     .push(receive_button)
@@ -171,7 +164,6 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
             .push(
                 Container::new(
                     Column::new()
-                        .spacing(10)
                         .push_maybe(cache.rescan_progress.map(|p| {
                             Container::new(text(format!("  Rescan...{:.2}%  ", p * 100.0)))
                                 .padding(5)
@@ -296,14 +288,7 @@ pub fn small_sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message
         Column::new()
             .push(
                 Column::new()
-                    .push(
-                        Container::new(
-                            liana_grey_logo()
-                                .height(Length::Fixed(120.0))
-                                .width(Length::Fixed(60.0)),
-                        )
-                        .padding(10),
-                    )
+                    .push(Container::new(liana_logotype()).padding(10))
                     .push(home_button)
                     .push(spend_button)
                     .push(receive_button)
@@ -316,7 +301,6 @@ pub fn small_sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message
             .push(
                 Container::new(
                     Column::new()
-                        .spacing(10)
                         .push_maybe(cache.rescan_progress.map(|p| {
                             Container::new(text(format!("{:.2}%  ", p * 100.0)))
                                 .padding(5)
