@@ -1,9 +1,9 @@
 use crate::widget::Svg;
 use iced::{widget::svg::Handle, window::icon};
 
-const LIANA_APP_ICON: &[u8] = include_bytes!("../static/logos/liana-app-icon.png");
+const LIANA_APP_ICON: &[u8] = include_bytes!("../static/logos/liana-app-icon-coincube.png");
 const LIANA_LOGO_GREY: &[u8] = include_bytes!("../static/logos/LIANA_SYMBOL_Gray.svg");
-const LIANA_BRAND_GREY: &[u8] = include_bytes!("../static/logos/LIANA_BRAND_Gray.svg");
+const LIANA_BRAND_GREY: &[u8] = include_bytes!("../static/logos/LIANA_BRAND_Gray-coincube.svg");
 const WIZARDSARDINE_LETTERING: &[u8] = include_bytes!("../static/logos/logo-wizardsardine.svg");
 
 pub fn liana_app_icon() -> icon::Icon {
