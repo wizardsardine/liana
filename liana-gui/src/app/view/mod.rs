@@ -153,12 +153,10 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
             .push(
                 Column::new()
                     .push(
-                        Container::new(
-                            liana_grey_logo()
-                                .height(Length::Fixed(120.0))
-                                .width(Length::Fixed(60.0)),
-                        )
-                        .padding(10),
+                        Container::new(liana_logotype_raster().width(Length::Fixed(100.0)))
+                            .padding(10)
+                            .align_x(iced::Alignment::Center)
+                            .width(Length::Fill),
                     )
                     .push(home_button)
                     .push(spend_button)
@@ -297,12 +295,8 @@ pub fn small_sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message
             .push(
                 Column::new()
                     .push(
-                        Container::new(
-                            liana_grey_logo()
-                                .height(Length::Fixed(120.0))
-                                .width(Length::Fixed(60.0)),
-                        )
-                        .padding(10),
+                        Container::new(liana_logotype_raster().width(Length::Fixed(80.0)))
+                            .padding(10),
                     )
                     .push(home_button)
                     .push(spend_button)
