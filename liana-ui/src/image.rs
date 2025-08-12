@@ -1,13 +1,22 @@
 use crate::widget::Svg;
-use iced::{widget::svg::Handle, window::icon};
+use iced::{
+    widget::{image::Image, svg::Handle},
+    window::icon,
+};
 
 const LIANA_WINDOW_ICON: &[u8] = include_bytes!("../static/logos/liana-app-icon-coincube.png");
 const LIANA_LOGOTYPE_GREY: &[u8] =
     include_bytes!("../static/logos/LIANA_LOGOTYPE_Gray-coincube.svg");
 const LIANA_LOGOTYPE: &[u8] = include_bytes!("../static/logos/LIANA_LOGOTYPE-coincube.svg");
+const LIANA_LOGOTYPE_PNG: &[u8] = include_bytes!("../static/logos/LIANA_LOGOTYPE-coincube.png");
 
 pub fn liana_window_icon() -> icon::Icon {
     icon::from_file_data(LIANA_WINDOW_ICON, None).unwrap()
+}
+
+pub fn liana_logotype_raster() -> Image {
+    let h = iced::widget::image::Handle::from_bytes(LIANA_LOGOTYPE_PNG);
+    Image::new(h)
 }
 
 pub fn liana_logotype() -> Svg<'static> {

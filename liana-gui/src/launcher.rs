@@ -209,7 +209,7 @@ impl Launcher {
                     Row::new()
                         .spacing(20)
                         .push(
-                            Container::new(image::liana_logotype().width(Length::Shrink))
+                            Container::new(image::liana_logotype_raster().width(Length::Shrink))
                                 .align_x(iced::Alignment::Start)
                                 .width(Length::Fill)
                                 .style(|_| {
