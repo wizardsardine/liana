@@ -5,7 +5,6 @@ const LIANA_WINDOW_ICON: &[u8] = include_bytes!("../static/logos/liana-app-icon-
 const LIANA_LOGOTYPE_GREY: &[u8] =
     include_bytes!("../static/logos/LIANA_LOGOTYPE_Gray-coincube.svg");
 const LIANA_LOGOTYPE: &[u8] = include_bytes!("../static/logos/LIANA_LOGOTYPE-coincube.svg");
-const LIANA_BRAND_GREY: &[u8] = include_bytes!("../static/logos/LIANA_BRAND_Gray-coincube.svg");
 
 pub fn liana_window_icon() -> icon::Icon {
     icon::from_file_data(LIANA_WINDOW_ICON, None).unwrap()
@@ -18,11 +17,6 @@ pub fn liana_logotype() -> Svg<'static> {
 
 pub fn liana_logotype_grey() -> Svg<'static> {
     let h = Handle::from_memory(LIANA_LOGOTYPE_GREY);
-    Svg::new(h)
-}
-
-pub fn liana_brand_grey() -> Svg<'static> {
-    let h = Handle::from_memory(LIANA_BRAND_GREY);
     Svg::new(h)
 }
 

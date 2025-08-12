@@ -152,7 +152,15 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
         Column::new()
             .push(
                 Column::new()
-                    .push(Container::new(liana_logotype()).padding(10))
+                    .push(
+                        Container::new(liana_logotype().width(Length::Shrink))
+                            .padding(10)
+                            .width(Length::Fill)
+                            .style(|_| {
+                                iced::widget::container::Style::default()
+                                    .background(iced::Background::Color(iced::Color::WHITE))
+                            }),
+                    )
                     .push(home_button)
                     .push(spend_button)
                     .push(receive_button)
