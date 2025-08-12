@@ -155,6 +155,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
                     .push(
                         Container::new(liana_logotype().width(Length::Shrink))
                             .padding(10)
+                            .align_x(iced::Alignment::Center)
                             .width(Length::Fill)
                             .style(|_| {
                                 iced::widget::container::Style::default()
