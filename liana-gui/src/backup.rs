@@ -16,7 +16,6 @@ use std::{
     collections::{BTreeMap, HashMap},
     fmt::{Debug, Display},
     sync::Arc,
-    time::{SystemTime, UNIX_EPOCH},
 };
 use tokio::sync::mpsc::UnboundedSender;
 
@@ -31,6 +30,7 @@ use crate::{
     export::Progress,
     installer::Context,
     services::connect::client::backend::api::DEFAULT_LIMIT,
+    utils::now,
     VERSION,
 };
 
@@ -40,13 +40,6 @@ const LIANA_VERSION_KEY: &str = "liana_version";
 
 pub fn liana_version() -> String {
     format!("{}.{}", VERSION.major, VERSION.minor)
-}
-
-fn now() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("cannot fail")
-        .as_secs()
 }
 
 #[derive(Serialize, Deserialize, Clone, PartialEq, Eq)]
@@ -138,7 +131,7 @@ impl Backup {
     pub async fn from_installer_descriptor_step(ctx: Context) -> Result<Self, Error> {
         let descriptor = ctx.descriptor.clone().ok_or(Error::DescriptorMissing)?;
 
-        let now = now();
+        let now = now().as_secs();
         let name = Some(wallet_name(&descriptor));
 
         let mut account = Account::new(descriptor.to_string());
@@ -274,7 +267,7 @@ impl Backup {
             accounts: vec![account],
             network,
             proprietary: serde_json::Map::new(),
-            date: Some(now()),
+            date: Some(now().as_secs()),
             version: 0,
         })
     }

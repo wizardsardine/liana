@@ -10,7 +10,6 @@ mod transactions;
 
 use std::convert::TryInto;
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use iced::{Subscription, Task};
 use liana::miniscript::bitcoin::{Amount, OutPoint};
@@ -33,6 +32,7 @@ use crate::daemon::{
     model::{remaining_sequence, Coin, HistoryTransaction, Payment},
     Daemon,
 };
+use crate::utils::now;
 pub use coins::CoinsPanel;
 use label::LabelsEdited;
 pub use psbts::PsbtsPanel;
@@ -382,12 +382,7 @@ impl State for Home {
         self.selected_event = None;
         self.wallet = wallet;
         let daemon2 = daemon.clone();
-        let now: u32 = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs()
-            .try_into()
-            .unwrap();
+        let now: u32 = now().as_secs().try_into().unwrap();
         Task::batch(vec![
             Task::perform(
                 async move {
