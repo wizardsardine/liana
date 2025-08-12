@@ -23,6 +23,7 @@ use lianad::{
 };
 
 use crate::app;
+use crate::app::cache::DaemonCache;
 use crate::app::settings::WalletSettings;
 use crate::backup::Backup;
 use crate::dir::LianaDirectory;
@@ -434,16 +435,18 @@ pub async fn load_application(
 
     let coins = coins_to_cache(daemon.clone()).await.map(|res| res.coins)?;
 
+    // Both last poll fields start with the same value.
     let cache = Cache {
         datadir_path,
         network: info.network,
-        blockheight: info.block_height,
-        coins,
-        sync_progress: info.sync,
-        // Both last poll fields start with the same value.
-        last_poll_timestamp: info.last_poll_timestamp,
         last_poll_at_startup: info.last_poll_timestamp,
-        ..Default::default()
+        daemon_cache: DaemonCache {
+            blockheight: info.block_height,
+            coins,
+            sync_progress: info.sync,
+            last_poll_timestamp: info.last_poll_timestamp,
+            ..Default::default()
+        },
     };
 
     Ok((Arc::new(wallet), cache, daemon, internal_bitcoind, backup))

@@ -169,7 +169,8 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
             .push(
                 Container::new(
                     Column::new()
-                        .push_maybe(cache.rescan_progress.map(|p| {
+                        .spacing(10)
+                        .push_maybe(cache.rescan_progress().map(|p| {
                             Container::new(text(format!("  Rescan...{:.2}%  ", p * 100.0)))
                                 .padding(5)
                                 .style(theme::pill::simple)
@@ -309,7 +310,8 @@ pub fn small_sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message
             .push(
                 Container::new(
                     Column::new()
-                        .push_maybe(cache.rescan_progress.map(|p| {
+                        .spacing(10)
+                        .push_maybe(cache.rescan_progress().map(|p| {
                             Container::new(text(format!("{:.2}%  ", p * 100.0)))
                                 .padding(5)
                                 .style(theme::pill::simple)
