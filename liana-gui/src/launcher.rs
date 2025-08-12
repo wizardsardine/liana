@@ -209,13 +209,11 @@ impl Launcher {
                     Row::new()
                         .spacing(20)
                         .push(
-                            Container::new(image::liana_logotype_raster().width(Length::Shrink))
-                                .align_x(iced::Alignment::Start)
-                                .width(Length::Fill)
-                                .style(|_| {
-                                    iced::widget::container::Style::default()
-                                        .background(iced::Background::Color(iced::Color::WHITE))
-                                }),
+                            Container::new(
+                                image::liana_logotype_raster().width(Length::Fixed(150.0)),
+                            )
+                            .align_x(iced::Alignment::Start)
+                            .width(Length::Fill),
                         )
                         .push_maybe(if let State::Wallets { add_wallet, .. } = &self.state {
                             if *add_wallet {
