@@ -153,14 +153,10 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
             .push(
                 Column::new()
                     .push(
-                        Container::new(liana_logotype().width(Length::Shrink))
+                        Container::new(liana_logotype_raster().width(Length::Fixed(100.0)))
                             .padding(10)
                             .align_x(iced::Alignment::Center)
-                            .width(Length::Fill)
-                            .style(|_| {
-                                iced::widget::container::Style::default()
-                                    .background(iced::Background::Color(iced::Color::WHITE))
-                            }),
+                            .width(Length::Fill),
                     )
                     .push(home_button)
                     .push(spend_button)
@@ -297,7 +293,10 @@ pub fn small_sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message
         Column::new()
             .push(
                 Column::new()
-                    .push(Container::new(liana_logotype()).padding(10))
+                    .push(
+                        Container::new(liana_logotype_raster().width(Length::Fixed(80.0)))
+                            .padding(10),
+                    )
                     .push(home_button)
                     .push(spend_button)
                     .push(receive_button)
