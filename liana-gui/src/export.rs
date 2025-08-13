@@ -129,6 +129,7 @@ pub enum Error {
     TxidNotMatch,
     InsanePsbt,
     OutpointNotOwned,
+    UnknownFormat,
 }
 
 impl Display for Error {
@@ -157,6 +158,7 @@ impl Display for Error {
                 "Import failed. The PSBT either doesn't belong to the wallet or has already been spent."
             ),
             Error::EncryptedBackup(e) => write!(f, "Failed to encrypt backup: {e:?}"),
+            Error::UnknownFormat => write!(f, "Format of the file unknown"),
         }
     }
 }
@@ -175,7 +177,7 @@ pub enum ImportExportType {
         overwrite_labels: Option<Sender<bool>>,
         overwrite_aliases: Option<Sender<bool>>,
     },
-    WalletFromBackup,
+    FromBackup,
     Descriptor(LianaDescriptor),
     ExportLabels,
     ImportPsbt(Option<Txid>),
@@ -197,7 +199,7 @@ impl ImportExportType {
             ImportExportType::ImportBackup { .. }
             | ImportExportType::ImportPsbt(_)
             | ImportExportType::ImportXpub(_)
-            | ImportExportType::WalletFromBackup
+            | ImportExportType::FromBackup
             | ImportExportType::ImportDescriptor => "Import successful",
         }
     }
@@ -262,6 +264,7 @@ pub enum Progress {
             Backup,
         ),
     ),
+    EncryptedFile(Vec<u8>),
 }
 
 pub struct Export {
@@ -328,7 +331,7 @@ impl Export {
                 wallet,
                 ..
             } => import_backup(&network_dir, wallet, &sender, path, daemon).await,
-            ImportExportType::WalletFromBackup => wallet_from_backup(&sender, path).await,
+            ImportExportType::FromBackup => from_backup(&sender, path).await,
         } {
             if let Err(e) = sender.send(Progress::Error(e)) {
                 tracing::error!("Import/Export fail to send msg: {}", e);
@@ -1055,22 +1058,33 @@ impl From<DaemonError> for RestoreBackupError {
     }
 }
 
-/// Create a wallet from a backup
-///    - load backup from file
-///    - extract descriptor
-///    - extract network
-///    - extract aliases
-pub async fn wallet_from_backup(
-    sender: &UnboundedSender<Progress>,
-    path: PathBuf,
-) -> Result<(), Error> {
-    // Load backup from file
+/// Try to import descriptor/backup from file, several input types are supported:
+///    - encrypted file
+///    - liana wallet backup
+///    - plaintext descriptor
+pub async fn from_backup(sender: &UnboundedSender<Progress>, path: PathBuf) -> Result<(), Error> {
+    // Load file
     let mut file = File::open(path)?;
 
-    let mut backup_str = String::new();
-    file.read_to_string(&mut backup_str)?;
-    backup_str = backup_str.trim().to_string();
+    let mut bytes = vec![];
+    if let Err(e) = file.read_to_end(&mut bytes) {
+        return Err(Error::Io(e.to_string()));
+    }
 
+    // first we try to parse as an encrypted backup
+    if EncryptedBackup::new().set_encrypted_payload(&bytes).is_ok() {
+        send_progress!(sender, EncryptedFile(bytes));
+        send_progress!(sender, Progress(100.0));
+        send_progress!(sender, Ended);
+        return Ok(());
+    }
+
+    let backup_str = match String::from_utf8(bytes) {
+        Ok(s) => s,
+        Err(_) => return Err(Error::UnknownFormat),
+    };
+
+    // else we try to parse as plaintetxt descriptor or backup file
     let backup: Result<Backup, _> = serde_json::from_str(&backup_str);
     let backup = match backup {
         Ok(b) => b,

@@ -30,7 +30,7 @@ use crate::{
     daemon::{Daemon, DaemonError},
     delete,
     dir::LianaDirectory,
-    hw::{HardwareWalletConfig, HardwareWallets},
+    hw::{HardwareWalletConfig, HardwareWalletMessage, HardwareWallets},
     services::{
         self,
         connect::client::{
@@ -241,13 +241,31 @@ impl Installer {
 
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
-            Message::HardwareWallets(msg) => match self.hws.update(msg) {
-                Ok(cmd) => cmd.map(Message::HardwareWallets),
-                Err(e) => {
-                    error!("{}", e);
-                    Task::none()
+            Message::HardwareWallets(msg) => {
+                let update = matches!(&msg, &HardwareWalletMessage::List(_));
+                match self.hws.update(msg) {
+                    Ok(cmd) => {
+                        let task_1 = cmd.map(Message::HardwareWallets);
+                        let mut task_2 = Task::none();
+                        if update {
+                            task_2 = self
+                                .steps
+                                .get_mut(self.current)
+                                .expect("There is always a step")
+                                .update(
+                                    &mut self.hws,
+                                    // We notify downstream that the the list have been updated
+                                    Message::HardwareWallets(HardwareWalletMessage::Update),
+                                );
+                        }
+                        Task::batch(vec![task_1, task_2])
+                    }
+                    Err(e) => {
+                        error!("{}", e);
+                        Task::none()
+                    }
                 }
-            },
+            }
             Message::Clipboard(s) => clipboard::write(s),
             Message::OpenUrl(url) => {
                 if let Err(e) = open::that_detached(&url) {

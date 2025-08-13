@@ -18,8 +18,9 @@ use async_hwi::DeviceKind;
 use crate::{
     app::{settings::KeySetting, state::export::ExportModal, wallet::wallet_name},
     backup::Backup,
+    decrypt::{Decrypt, DecryptModal},
     export::{ImportExportMessage, ImportExportType, Progress},
-    hw::{HardwareWallet, HardwareWallets},
+    hw::{HardwareWallet, HardwareWalletMessage, HardwareWallets},
     installer::{
         message::{self, Message},
         step::{Context, Step},
@@ -27,11 +28,20 @@ use crate::{
     },
 };
 
+const BACKUP_NETWORK_NOT_MATCH: &str = "Backup network do not match the selected network!";
+
+#[derive(Debug)]
+pub enum ImportDescriptorModal {
+    None,
+    Export(ExportModal),
+    Decrypt(DecryptModal),
+}
+
 pub struct ImportDescriptor {
     network: Network,
     wrong_network: bool,
     error: Option<String>,
-    modal: Option<ExportModal>,
+    modal: ImportDescriptorModal,
     imported_descriptor: form::Value<String>,
     imported_backup: Option<Backup>,
     imported_aliases: Option<HashMap<Fingerprint, KeySetting>>,
@@ -44,7 +54,7 @@ impl ImportDescriptor {
             imported_descriptor: form::Value::default(),
             wrong_network: false,
             error: None,
-            modal: None,
+            modal: ImportDescriptorModal::None,
             imported_backup: None,
             imported_aliases: None,
         }
@@ -84,20 +94,28 @@ impl Step for ImportDescriptor {
         ctx.remote_backend.is_some()
     }
 
-    fn subscription(&self, _hws: &HardwareWallets) -> Subscription<Message> {
-        if let Some(modal) = &self.modal {
+    fn subscription(&self, hws: &HardwareWallets) -> Subscription<Message> {
+        if let ImportDescriptorModal::Export(modal) = &self.modal {
             if let Some(sub) = modal.subscription() {
                 sub.map(|m| Message::ImportExport(ImportExportMessage::Progress(m)))
             } else {
                 Subscription::none()
             }
+        } else if let ImportDescriptorModal::Decrypt(modal) = &self.modal {
+            let mut batch = vec![hws.refresh().map(Message::HardwareWallets)];
+            if let Some(import_modal) = modal.modal.as_ref() {
+                if let Some(sub) = import_modal.subscription() {
+                    batch.push(sub.map(|p| Message::ImportExport(ImportExportMessage::Progress(p))))
+                }
+            }
+            Subscription::batch(batch)
         } else {
             Subscription::none()
         }
     }
 
-    fn update(&mut self, _hws: &mut HardwareWallets, message: Message) -> Task<Message> {
-        match message {
+    fn update(&mut self, hws: &mut HardwareWallets, message: Message) -> Task<Message> {
+        let task = match message {
             Message::DefineDescriptor(message::DefineDescriptor::ImportDescriptor(desc)) => {
                 // If user manually change the descriptor, then the imported backup
                 // becomes invalid;
@@ -107,16 +125,18 @@ impl Step for ImportDescriptor {
                 }
                 self.imported_descriptor.value = desc;
                 self.check_descriptor(self.network);
-            }
-            Message::ImportExport(ImportExportMessage::Close) => {
-                self.modal = None;
+                None
             }
             Message::ImportBackup => {
                 self.imported_backup = None;
-                let modal = ExportModal::new(None, ImportExportType::WalletFromBackup);
+                let modal = ExportModal::new(None, ImportExportType::FromBackup);
                 let launch = modal.launch(false);
-                self.modal = Some(modal);
-                return launch;
+                self.modal = ImportDescriptorModal::Export(modal);
+                Some(launch)
+            }
+            Message::ImportExport(ImportExportMessage::Close) => {
+                self.modal = ImportDescriptorModal::None;
+                None
             }
             Message::ImportExport(ImportExportMessage::Progress(Progress::WalletFromBackup(r))) => {
                 let (descriptor, network, aliases, backup) = r;
@@ -126,8 +146,7 @@ impl Step for ImportDescriptor {
                         self.imported_descriptor.value = descriptor.to_string();
                         self.imported_aliases = Some(aliases);
                     } else {
-                        self.error =
-                            Some("Backup network do not match the selected network!".into());
+                        self.error = Some(BACKUP_NETWORK_NOT_MATCH.into());
                     }
                 } else {
                     // The backup have been inferred from a bare descriptor, we check whether
@@ -137,20 +156,108 @@ impl Step for ImportDescriptor {
                         self.imported_descriptor.value = descriptor.to_string();
                         self.imported_aliases = Some(aliases);
                     } else {
-                        self.error =
-                            Some("Backup network do not match the selected network!".into());
+                        self.error = Some(BACKUP_NETWORK_NOT_MATCH.into());
                     }
+                }
+                None
+            }
+            Message::ImportExport(ImportExportMessage::Progress(Progress::EncryptedFile(
+                bytes,
+            ))) => {
+                self.modal = ImportDescriptorModal::Decrypt(DecryptModal::new(bytes, self.network));
+                None
+            }
+            Message::ImportExport(ImportExportMessage::Progress(Progress::Xpub(xpub))) => {
+                if let ImportDescriptorModal::Decrypt(modal) = &mut self.modal {
+                    let _ = modal.update(Decrypt::CloseModal);
+                    Some(modal.update(Decrypt::Xpub(xpub)))
+                } else {
+                    None
                 }
             }
             Message::ImportExport(m) => {
-                if let Some(modal) = self.modal.as_mut() {
+                if let ImportDescriptorModal::Export(modal) = &mut self.modal {
                     let task: Task<Message> = modal.update(m);
-                    return task;
-                };
+                    Some(task)
+                } else if let ImportDescriptorModal::Decrypt(modal) = &mut self.modal {
+                    if let Some(mo) = &mut modal.modal {
+                        let task: Task<Message> = mo.update(m);
+                        Some(task)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
             }
-            _ => {}
-        }
-        Task::none()
+            Message::HardwareWallets(HardwareWalletMessage::Update) => {
+                if let ImportDescriptorModal::Decrypt(modal) = &mut self.modal {
+                    modal.update_devices(hws)
+                } else {
+                    None
+                }
+            }
+            Message::Decrypt(Decrypt::Close) => {
+                if matches!(self.modal, ImportDescriptorModal::Decrypt(_)) {
+                    self.modal = ImportDescriptorModal::None;
+                }
+                None
+            }
+            Message::Decrypt(Decrypt::Backup(mut backup)) => {
+                let descriptor = backup.accounts.first().map(|acc| acc.descriptor.clone());
+                if let Some(desc) = descriptor {
+                    let network_matches = if self.network == Network::Bitcoin {
+                        backup.network == Network::Bitcoin
+                    } else {
+                        backup.network != Network::Bitcoin
+                    };
+                    if network_matches {
+                        // NOTE: we need to overwrite w/ correct network for testnets
+                        // as non Mainnet keys / descriptor are parsed as Signet
+                        backup.network = self.network;
+
+                        self.imported_descriptor.value = desc;
+                        self.imported_backup = Some(backup);
+                        self.imported_aliases = None;
+                        self.modal = ImportDescriptorModal::None;
+                    } else {
+                        self.modal = ImportDescriptorModal::None;
+                        self.error = Some(BACKUP_NETWORK_NOT_MATCH.into());
+                    }
+                } else {
+                    self.modal = ImportDescriptorModal::None;
+                    self.error = Some("Backup imported but descriptor missing!".into());
+                }
+                None
+            }
+            Message::Decrypt(msg) => {
+                if let ImportDescriptorModal::Decrypt(modal) = &mut self.modal {
+                    match msg {
+                        Decrypt::Fetched(_, _)
+                        | Decrypt::Xpub(_)
+                        | Decrypt::XpubError(_)
+                        | Decrypt::Mnemonic(_)
+                        | Decrypt::MnemonicStatus(_, _)
+                        | Decrypt::UnexpectedPayload(_)
+                        | Decrypt::InvalidDescriptor
+                        | Decrypt::ContentNotSupported
+                        | Decrypt::PasteXpub
+                        | Decrypt::SelectXpub
+                        | Decrypt::PasteMnemonic
+                        | Decrypt::SelectMnemonic
+                        | Decrypt::SelectImportXpub
+                        | Decrypt::None
+                        | Decrypt::CloseModal
+                        | Decrypt::ShowOptions(_) => Some(modal.update(msg)),
+                        Decrypt::Backup(_) | Decrypt::Close => None,
+                    }
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        };
+        task.unwrap_or(Task::none())
     }
 
     fn apply(&mut self, ctx: &mut Context) -> bool {
@@ -199,10 +306,10 @@ impl Step for ImportDescriptor {
             self.wrong_network,
             self.error.as_ref(),
         );
-        if let Some(modal) = &self.modal {
-            modal.view(content)
-        } else {
-            content
+        match &self.modal {
+            ImportDescriptorModal::None => content,
+            ImportDescriptorModal::Export(modal) => modal.view(content),
+            ImportDescriptorModal::Decrypt(modal) => modal.view(content),
         }
     }
 }
