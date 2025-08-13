@@ -1,3 +1,4 @@
+use crate::decrypt::Decrypt;
 use liana::{
     descriptors::LianaDescriptor,
     miniscript::{
@@ -77,6 +78,8 @@ pub enum Message {
     OpenUrl(String),
     SelectKeySource(SelectKeySourceMessage),
     EditKeyAlias(EditKeyAliasMessage),
+    Decrypt(Decrypt),
+    None,
 }
 
 impl Close for Message {
