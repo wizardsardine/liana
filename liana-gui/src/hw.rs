@@ -145,6 +145,7 @@ pub enum HardwareWalletMessage {
     Error(String),
     List(ConnectedList),
     Unlocked(String, Result<HardwareWallet, async_hwi::Error>),
+    Update,
 }
 
 #[derive(Debug, Clone)]
@@ -312,6 +313,7 @@ impl HardwareWallets {
                 }
                 Ok(Task::none())
             }
+            HardwareWalletMessage::Update => Ok(Task::none()),
         }
     }
 

@@ -1,3 +1,4 @@
+use crate::decrypt::Decrypt;
 use liana::{
     descriptors::LianaDescriptor,
     miniscript::{
@@ -71,6 +72,8 @@ pub enum Message {
     WalletAliasEdited(String),
     SelectAccount(Fingerprint, ChildNumber),
     OpenUrl(String),
+    Decrypt(Decrypt),
+    None,
 }
 
 impl Close for Message {
