@@ -113,7 +113,7 @@ where
 
     let icon = icon.map(|i| i.color(color::WHITE));
 
-    if !collapsed {
+    if collapsed {
         let line = Row::new().push(form).push_maybe(paste).spacing(V_SPACING);
         let col = Column::new()
             .push(row![

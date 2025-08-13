@@ -59,7 +59,7 @@ fs2 = "0.4.3"
 # Used for opening URLs in browser
 open = "5.3"
 
-encrypted_backup = { git = "https://github.com/pythcoiner/encrypted_backup.git", rev= "1f3a68a", features = ["miniscript_12_0"]}
+encrypted_backup = { git = "https://github.com/pythcoiner/encrypted_backup.git", rev= "797f3f6", features = ["miniscript_12_0"]}
 
 [target.'cfg(windows)'.dependencies]
 zip = { version = "0.6", default-features=false, features = ["bzip2", "deflate"] }

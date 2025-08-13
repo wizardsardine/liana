@@ -1541,7 +1541,7 @@ dependencies = [
 [[package]]
 name = "encrypted_backup"
 version = "0.1.0"
-source = "git+https://github.com/pythcoiner/encrypted_backup.git?rev=1f3a68a#1f3a68ad028e1f3bd2994f9c5b3148124c5c04d7"
+source = "git+https://github.com/pythcoiner/encrypted_backup.git?rev=797f3f6#797f3f679f1b7acf79c8cb0fe3907b2a8a5ca73a"
 dependencies = [
  "aes-gcm",
  "miniscript",

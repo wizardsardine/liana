@@ -5,7 +5,6 @@ pub mod template;
 use iced::widget::{self, container, pick_list, scrollable, slider, Button, Space};
 use iced::{alignment, Alignment, Length};
 
-use liana::miniscript::bitcoin::Network;
 use liana_ui::component::text::{self, h3, p1_bold, p2_regular, H3_SIZE};
 use liana_ui::image;
 use std::borrow::Cow;
@@ -30,6 +29,7 @@ use crate::installer::{
     view::defined_sequence,
     Error,
 };
+use crate::utils::example_xpub;
 
 use super::defined_threshold;
 
@@ -515,12 +515,6 @@ pub fn edit_key_modal<'a>(
         ))
         .width(Length::Fixed(800.0));
     scrollable(content).into()
-}
-
-fn example_xpub(network: Network) -> String {
-    format!("[aabbccdd/42'/0']{}pub6DAkq8LWw91WGgUGnkR5Sbzjev5JCsXaTVZQ9MwsPV4BkNFKygtJ8GHodfDVx1udR723nT7JASqGPpKvz7zQ25pUTW6zVEBdiWoaC4aUqik",
-        if network == bitcoin::Network::Bitcoin { "x" } else { "t" }
-    )
 }
 
 /// returns y,m,d,h,m

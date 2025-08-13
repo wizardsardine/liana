@@ -85,7 +85,7 @@ impl ExportModal {
             ImportExportType::ImportPsbt(_) => "Import PSBT",
             ImportExportType::ImportDescriptor => "Import Descriptor",
             ImportExportType::ImportBackup { .. } => "Restore Backup",
-            ImportExportType::WalletFromBackup => "Import existing wallet from backup",
+            ImportExportType::FromBackup => "Import existing wallet from backup",
         }
     }
 
@@ -114,7 +114,7 @@ impl ExportModal {
             ImportExportType::ExportBackup(_) | ImportExportType::ExportProcessBackup(..) => {
                 format!("liana-backup-{date}.json")
             }
-            ImportExportType::WalletFromBackup | ImportExportType::ImportBackup { .. } => {
+            ImportExportType::FromBackup | ImportExportType::ImportBackup { .. } => {
                 "liana-backup.json".to_string()
             }
         }
@@ -194,8 +194,9 @@ impl ExportModal {
                         ImportExportMessage::UpdateAliases(map.clone()).into()
                     });
                 }
-                Progress::WalletFromBackup(_) => {}
-                Progress::Psbt(_) => {}
+                Progress::WalletFromBackup(_)
+                | Progress::EncryptedDescriptor(_)
+                | Progress::Psbt(_) => {}
             },
             ImportExportMessage::TimedOut => {
                 self.stop(ImportExportState::TimedOut);
