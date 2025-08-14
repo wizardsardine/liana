@@ -123,7 +123,10 @@ pub(crate) fn payjoin_sender_check(db: &sync::Arc<sync::Mutex<dyn DatabaseInterf
             Ok(None) => {
                 log::info!("[Payjoin] Proposal not received yet...");
             }
-            Err(e) => log::warn!("payjoin_sender_check(): {}", e),
+            Err(e) => {
+                log::warn!("payjoin_sender_check(): {}", e);
+                continue;
+            }
         }
     }
 }
