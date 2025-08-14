@@ -97,25 +97,13 @@ pub(crate) fn payjoin_sender_check(db: &sync::Arc<sync::Mutex<dyn DatabaseInterf
             .map_err(|e| format!("Failed to replay sender event log: {:?}", e))
             // TODO: handle error
             .unwrap();
-        let original_psbt = match session_history.fallback_tx().map(|tx| tx.compute_txid()) {
-            Some(txid) => {
-                // Get the original psbt so we can restore the input fields
-                let original_psbt = db_conn.spend_tx(&txid);
-                if original_psbt.is_none() {
-                    log::error!("[Payjoin] expecting fallback txid for session={session_id:?}, but none found");
-                    return;
-                }
-                original_psbt.expect("checked above")
-            }
-            None => {
-                log::info!("[Payjoin] No fallback txid found for session={session_id:?}");
-                return;
-            }
-        };
 
         match process_sender_session(state, &persister) {
             Ok(Some(proposal_psbt)) => {
-                let original_txid = original_psbt.unsigned_tx.compute_txid();
+                let original_txid = session_history
+                    .fallback_tx()
+                    .map(|tx| tx.compute_txid())
+                    .expect("Fallback tx should be present");
                 // TODO: should we be deleting the original psbt?  can we fallback without it?
                 log::info!("[Payjoin] Deleting original Payjoin psbt (txid={original_txid})");
                 db_conn.delete_spend(&original_txid);
