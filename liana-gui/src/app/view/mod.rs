@@ -153,7 +153,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
             .push(
                 Column::new()
                     .push(
-                        Container::new(liana_logotype_raster().width(Length::Fill))
+                        Container::new(liana_logotype_raster().width(Length::Fixed(120.0)))
                             .padding(10)
                             .align_x(iced::Alignment::Center)
                             .width(Length::Fill),
