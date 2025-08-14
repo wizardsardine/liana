@@ -27,6 +27,10 @@ pub fn arrow_return_right() -> Text<'static> {
     bootstrap_icon('\u{F132}')
 }
 
+pub fn arrow_back() -> Text<'static> {
+    bootstrap_icon('\u{F12E}')
+}
+
 pub fn chevron_right() -> Text<'static> {
     bootstrap_icon('\u{F285}')
 }
