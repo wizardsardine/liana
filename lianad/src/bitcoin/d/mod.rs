@@ -1230,6 +1230,21 @@ impl BitcoinD {
             .collect()
     }
 
+    /// Test whether raw transactions would be accepted by the mempool.
+    pub fn test_mempool_accept(&self, rawtxs: Vec<String>) -> Vec<bool> {
+        let hex_txs: Json = rawtxs.into_iter().map(|tx| serde_json::json!(tx)).collect();
+        self.make_node_request("testmempoolaccept", params!(hex_txs))
+            .as_array()
+            .expect("Always returns an array")
+            .iter()
+            .map(|e| {
+                e.get("allowed")
+                    .and_then(|v| v.as_bool())
+                    .expect("Each result must have an 'allowed' boolean")
+            })
+            .collect()
+    }
+
     /// Stop bitcoind.
     pub fn stop(&self) {
         self.make_node_request("stop", None);

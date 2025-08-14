@@ -1,6 +1,7 @@
 use crate::{
     bitcoin::{BitcoinInterface, BlockChainTip, UTxO, UTxOAddress},
     database::{Coin, DatabaseConnection, DatabaseInterface},
+    payjoin::{receiver::payjoin_receiver_check, sender::payjoin_sender_check},
 };
 
 use std::{collections::HashSet, convert::TryInto, sync, thread, time};
@@ -28,7 +29,7 @@ fn update_coins(
     bit: &impl BitcoinInterface,
     db_conn: &mut Box<dyn DatabaseConnection>,
     previous_tip: &BlockChainTip,
-    descs: &[descriptors::SinglePathLianaDesc],
+    desc: &descriptors::LianaDescriptor,
     secp: &secp256k1::Secp256k1<secp256k1::VerifyOnly>,
 ) -> UpdatedCoins {
     let network = db_conn.network();
@@ -36,6 +37,10 @@ fn update_coins(
     log::debug!("Current coins: {:?}", curr_coins);
 
     // Start by fetching newly received coins.
+    let descs = &[
+        desc.receive_descriptor().clone(),
+        desc.change_descriptor().clone(),
+    ];
     let mut received = Vec::new();
     for utxo in bit.received_coins(previous_tip, descs) {
         let UTxO {
@@ -241,7 +246,7 @@ fn new_tip(bit: &impl BitcoinInterface, current_tip: &BlockChainTip) -> TipUpdat
 fn updates(
     db_conn: &mut Box<dyn DatabaseConnection>,
     bit: &mut impl BitcoinInterface,
-    descs: &[descriptors::SinglePathLianaDesc],
+    desc: &descriptors::LianaDescriptor,
     secp: &secp256k1::Secp256k1<secp256k1::VerifyOnly>,
 ) {
     // Check if there was a new block before we update our state.
@@ -264,7 +269,7 @@ fn updates(
                     // between our former chain and the new one, then restart fresh.
                     db_conn.rollback_tip(&new_tip);
                     log::info!("Tip was rolled back to '{}'.", new_tip);
-                    return updates(db_conn, bit, descs, secp);
+                    return updates(db_conn, bit, desc, secp);
                 }
             }
         }
@@ -285,23 +290,23 @@ fn updates(
                     &reorg_common_ancestor
                 );
             }
-            return updates(db_conn, bit, descs, secp);
+            return updates(db_conn, bit, desc, secp);
         }
         Err(e) => {
             log::error!("Error syncing wallet: '{}'.", e);
             thread::sleep(time::Duration::from_secs(2));
-            return updates(db_conn, bit, descs, secp);
+            return updates(db_conn, bit, desc, secp);
         }
     };
 
     // Then check the state of our coins. Do it even if the tip did not change since last poll, as
     // we may have unconfirmed transactions.
-    let updated_coins = update_coins(bit, db_conn, &current_tip, descs, secp);
+    let updated_coins = update_coins(bit, db_conn, &current_tip, desc, secp);
 
     // If the tip changed while we were polling our Bitcoin interface, start over.
     if bit.chain_tip() != latest_tip {
         log::info!("Chain tip changed while we were updating our state. Starting over.");
-        return updates(db_conn, bit, descs, secp);
+        return updates(db_conn, bit, desc, secp);
     }
 
     // Transactions must be added to the DB before coins due to foreign key constraints.
@@ -330,7 +335,7 @@ fn updates(
 fn rescan_check(
     db_conn: &mut Box<dyn DatabaseConnection>,
     bit: &mut impl BitcoinInterface,
-    descs: &[descriptors::SinglePathLianaDesc],
+    desc: &descriptors::LianaDescriptor,
     secp: &secp256k1::Secp256k1<secp256k1::VerifyOnly>,
 ) {
     log::debug!("Checking the state of an ongoing rescan if there is any");
@@ -368,7 +373,7 @@ fn rescan_check(
             "Rolling back our internal tip to '{}' to update our internal state with past transactions.",
             rescan_tip
         );
-        updates(db_conn, bit, descs, secp)
+        updates(db_conn, bit, desc, secp)
     } else {
         log::debug!("No ongoing rescan.");
     }
@@ -399,11 +404,13 @@ pub fn poll(
     bit: &mut sync::Arc<sync::Mutex<dyn BitcoinInterface>>,
     db: &sync::Arc<sync::Mutex<dyn DatabaseInterface>>,
     secp: &secp256k1::Secp256k1<secp256k1::VerifyOnly>,
-    descs: &[descriptors::SinglePathLianaDesc],
+    desc: &descriptors::LianaDescriptor,
 ) {
     let mut db_conn = db.connection();
-    updates(&mut db_conn, bit, descs, secp);
-    rescan_check(&mut db_conn, bit, descs, secp);
+    updates(&mut db_conn, bit, desc, secp);
+    rescan_check(&mut db_conn, bit, desc, secp);
+    payjoin_sender_check(db);
+    payjoin_receiver_check(db, bit, desc, secp);
     let now: u32 = time::SystemTime::now()
         .duration_since(time::UNIX_EPOCH)
         .expect("current system time must be later than epoch")

@@ -58,6 +58,7 @@ pub enum PsbtModal {
     Broadcast(BroadcastModal),
     Delete(DeleteModal),
     Export(ExportModal),
+    SendPayjoin(SendPayjoinModal),
 }
 
 impl<'a> AsRef<dyn Modal + 'a> for PsbtModal {
@@ -68,6 +69,7 @@ impl<'a> AsRef<dyn Modal + 'a> for PsbtModal {
             Self::Broadcast(a) => a,
             Self::Delete(a) => a,
             Self::Export(a) => a,
+            Self::SendPayjoin(a) => a,
         }
     }
 }
@@ -80,6 +82,7 @@ impl<'a> AsMut<dyn Modal + 'a> for PsbtModal {
             Self::Broadcast(a) => a,
             Self::Delete(a) => a,
             Self::Export(a) => a,
+            Self::SendPayjoin(a) => a,
         }
     }
 }
@@ -88,6 +91,7 @@ pub struct PsbtState {
     pub wallet: Arc<Wallet>,
     pub desc_policy: LianaPolicy,
     pub tx: SpendTx,
+    pub bip21: Option<String>,
     pub saved: bool,
     pub warning: Option<Error>,
     pub labels_edited: LabelsEdited,
@@ -95,7 +99,7 @@ pub struct PsbtState {
 }
 
 impl PsbtState {
-    pub fn new(wallet: Arc<Wallet>, tx: SpendTx, saved: bool) -> Self {
+    pub fn new(wallet: Arc<Wallet>, tx: SpendTx, saved: bool, bip21: Option<String>) -> Self {
         Self {
             desc_policy: wallet.main_descriptor.policy(),
             wallet,
@@ -103,6 +107,7 @@ impl PsbtState {
             warning: None,
             modal: None,
             tx,
+            bip21,
             saved,
         }
     }
@@ -181,6 +186,30 @@ impl PsbtState {
             }
             Message::View(view::Message::Spend(view::SpendTxMessage::Delete)) => {
                 self.modal = Some(PsbtModal::Delete(DeleteModal::default()));
+            }
+            Message::View(view::Message::Spend(view::SpendTxMessage::SendPayjoin)) => {
+                let modal = SendPayjoinModal;
+                let cmd = modal.load(daemon);
+                self.modal = Some(PsbtModal::SendPayjoin(modal));
+                return cmd;
+            }
+            Message::View(view::Message::Spend(view::SpendTxMessage::PayjoinInitiated)) => {
+                self.tx.status = SpendStatus::PayjoinInitiated;
+                self.modal = None;
+                if let Some(_payjoin_info) = self.tx.payjoin_status {
+                    let psbt = self.tx.psbt.clone();
+                    // TODO: should this be an error?
+                    let bip21 = self.bip21.clone().expect("bip21 should be set");
+                    return Task::perform(
+                        async move {
+                            daemon
+                                .send_payjoin(bip21, &psbt)
+                                .await
+                                .map_err(|e| e.into())
+                        },
+                        Message::SendPayjoin,
+                    );
+                }
             }
             Message::View(view::Message::Spend(view::SpendTxMessage::Sign)) => {
                 if let Some(PsbtModal::Sign(SignModal { display_modal, .. })) = &mut self.modal {
@@ -298,6 +327,20 @@ impl PsbtState {
         } else {
             content
         }
+    }
+}
+
+#[derive(Default)]
+pub struct SendPayjoinModal;
+
+impl Modal for SendPayjoinModal {
+    fn view<'a>(&'a self, content: Element<'a, view::Message>) -> Element<'a, view::Message> {
+        modal::Modal::new(content, view::psbt::payjoin_send_success_view())
+            // On blur, show the psbts view
+            .on_blur(Some(view::Message::Spend(
+                view::SpendTxMessage::PayjoinInitiated,
+            )))
+            .into()
     }
 }
 
@@ -537,6 +580,7 @@ impl Modal for SignModal {
                         self.signed.insert(fingerprint);
                         let daemon = daemon.clone();
                         merge_signatures(&mut tx.psbt, &psbt);
+
                         if self.is_saved {
                             return Task::perform(
                                 async move { daemon.update_spend_tx(&psbt).await.map_err(|e| e.into()) },

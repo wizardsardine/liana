@@ -59,6 +59,10 @@ fs2 = "0.4.3"
 # Used for opening URLs in browser
 open = "5.3"
 
+# Payjoin
+payjoin = { git = "https://github.com/payjoin/rust-payjoin.git", branch = "master", features = ["v2", "io"] }
+
+
 [target.'cfg(windows)'.dependencies]
 zip = { version = "0.6", default-features=false, features = ["bzip2", "deflate"] }
 

@@ -8,6 +8,11 @@ use crate::{
     bitcoin::BitcoinInterface,
     database::{Coin, DatabaseConnection, DatabaseInterface},
     miniscript::bitcoin::absolute::LockTime,
+    payjoin::{
+        db::{ReceiverPersister, SenderPersister},
+        helpers::{fetch_ohttp_keys, FetchOhttpKeysError, OHTTP_RELAY, PAYJOIN_DIRECTORY},
+        types::PayjoinStatus,
+    },
     poller::PollerMessage,
     DaemonControl, VERSION,
 };
@@ -22,6 +27,7 @@ use liana::{
     },
 };
 
+use log::info;
 use utils::{
     deser_addr_assume_checked, deser_amount_from_sats, deser_fromstr, deser_hex, ser_amount,
     ser_hex, ser_to_string,
@@ -29,9 +35,10 @@ use utils::{
 
 use std::{
     collections::{hash_map, HashMap, HashSet},
-    convert::TryInto,
+    convert::{TryFrom, TryInto},
     fmt,
-    sync::{self, mpsc},
+    str::FromStr,
+    sync::{self, mpsc, Arc},
     time::SystemTime,
 };
 
@@ -42,6 +49,12 @@ use miniscript::{
         psbt::Psbt,
     },
     psbt::PsbtExt,
+};
+use payjoin::{
+    bitcoin::{key::Secp256k1, FeeRate},
+    receive::v2::{replay_event_log as replay_receiver_event_log, Receiver, UninitializedReceiver},
+    send::v2::{replay_event_log as replay_sender_event_log, SenderBuilder},
+    Uri, UriExt, Url,
 };
 use serde::{Deserialize, Serialize};
 
@@ -74,6 +87,9 @@ pub enum CommandError {
     InvalidDerivationIndex,
     RbfError(RbfErrorInfo),
     EmptyFilterList,
+    FailedToFetchOhttpKeys(FetchOhttpKeysError),
+    // Same FIXME as `SpendFinalization`
+    FailedToPostOriginalPayjoinProposal(String),
 }
 
 impl fmt::Display for CommandError {
@@ -132,6 +148,10 @@ impl fmt::Display for CommandError {
             }
             Self::RbfError(e) => write!(f, "RBF error: '{}'.", e),
             Self::EmptyFilterList => write!(f, "Filter list is empty, should supply None instead."),
+            Self::FailedToFetchOhttpKeys(e) => write!(f, "Failed to fetch OHTTP keys: '{}'.", e),
+            Self::FailedToPostOriginalPayjoinProposal(e) => {
+                write!(f, "Failed to post original payjoin proposal: '{}'.", e)
+            }
         }
     }
 }
@@ -359,7 +379,109 @@ impl DaemonControl {
             .receive_descriptor()
             .derive(new_index, &self.secp)
             .address(self.config.bitcoin_config.network);
-        GetAddressResult::new(address, new_index)
+        GetAddressResult::new(address, new_index, None)
+    }
+
+    pub fn receive_payjoin(&self) -> Result<GetAddressResult, CommandError> {
+        let mut db_conn = self.db.connection();
+
+        let ohttp_keys = if let Some(entry) = db_conn.payjoin_get_ohttp_keys(OHTTP_RELAY) {
+            entry.1
+        } else {
+            let ohttp_keys =
+                std::thread::spawn(move || fetch_ohttp_keys(OHTTP_RELAY, PAYJOIN_DIRECTORY))
+                    .join()
+                    .unwrap()
+                    .map_err(CommandError::FailedToFetchOhttpKeys)?;
+            db_conn.payjoin_save_ohttp_keys(OHTTP_RELAY, ohttp_keys.clone());
+            ohttp_keys
+        };
+
+        let index = db_conn.receive_index();
+        let new_index = index
+            .increment()
+            .expect("Can't get into hardened territory");
+        db_conn.set_receive_index(new_index, &self.secp);
+        let address = self
+            .config
+            .main_descriptor
+            .receive_descriptor()
+            .derive(new_index, &self.secp)
+            .address(self.config.bitcoin_config.network);
+
+        let persister = ReceiverPersister::new(Arc::new(self.db.clone()));
+        let session = Receiver::<UninitializedReceiver>::create_session(
+            address.clone(),
+            PAYJOIN_DIRECTORY,
+            ohttp_keys.clone(),
+            None,
+        )
+        .save(&persister)
+        .unwrap();
+
+        Ok(GetAddressResult::new(
+            address,
+            new_index,
+            Some(Url::from_str(session.pj_uri().to_string().as_str()).expect("Should be valid")),
+        ))
+    }
+
+    /// Initiate a payjoin sender
+    // TODO bip21 should be a uri not a string
+    // TODO: min fee rate should be a param
+    pub fn init_payjoin_sender(&self, bip21: String, psbt: &Psbt) -> Result<(), CommandError> {
+        // TODO: validate bip21 in uri
+        let uri = Uri::try_from(bip21.clone())
+            .map_err(|e| format!("Failed to create URI from BIP21: {}", e))
+            .unwrap();
+        let uri = uri.assume_checked();
+        let uri = uri
+            .check_pj_supported()
+            .map_err(|_| "URI does not support Payjoin".to_string())
+            .unwrap();
+
+        let mut signed_psbt = psbt.clone();
+        signed_psbt
+            .finalize_mut(&Secp256k1::verification_only())
+            // Just display the first error
+            .map_err(|e| CommandError::FailedToPostOriginalPayjoinProposal(e[0].to_string()))?;
+
+        let mut original_psbt = psbt.clone();
+        for (index, input) in original_psbt.inputs.iter_mut().enumerate() {
+            input.partial_sigs = Default::default();
+            input.final_script_witness = signed_psbt.inputs[index].final_script_witness.clone();
+        }
+
+        let original_txid = original_psbt.unsigned_tx.compute_txid();
+        let persister = SenderPersister::new(Arc::new(self.db.clone()), &original_txid);
+        let _sender = SenderBuilder::new(original_psbt.clone(), uri)
+            .build_recommended(FeeRate::BROADCAST_MIN)
+            .save(&persister)
+            .unwrap();
+
+        Ok(())
+    }
+
+    /// Get Payjoin URI (BIP21) and its sender/receiver status by txid
+    pub fn get_payjoin_info(&self, txid: &bitcoin::Txid) -> Result<PayjoinStatus, CommandError> {
+        let mut db_conn = self.db.connection();
+        info!("Getting payjoin info for txid: {:?}", txid);
+        if let Some(session_id) = db_conn.get_payjoin_receiver_session_id_from_txid(txid) {
+            let persister =
+                ReceiverPersister::from_id(Arc::new(self.db.clone()), session_id.clone());
+            let (state, _) = replay_receiver_event_log(&persister).unwrap();
+            return Ok(state.into());
+        }
+
+        if let Some(session_id) = db_conn.get_payjoin_sender_session_id_from_txid(txid) {
+            log::info!("Checking sender session: {:?}", session_id);
+            let persister = SenderPersister::from_id(Arc::new(self.db.clone()), session_id.clone());
+            let (state, _) = replay_sender_event_log(&persister).unwrap();
+            log::info!("Sender state: {:?}", state);
+            return Ok(state.into());
+        }
+
+        Ok(PayjoinStatus::Unknown)
     }
 
     /// Update derivation indexes
@@ -901,14 +1023,13 @@ impl DaemonControl {
         let mut spend_psbt = db_conn
             .spend_tx(txid)
             .ok_or(CommandError::UnknownSpend(*txid))?;
-        spend_psbt.finalize_mut(&self.secp).map_err(|e| {
-            CommandError::SpendFinalization(
-                e.into_iter()
-                    .next()
-                    .map(|e| e.to_string())
-                    .unwrap_or_default(),
-            )
-        })?;
+
+        for index in 0..spend_psbt.inputs.len() {
+            match spend_psbt.finalize_inp_mut(&self.secp, index) {
+                Ok(_) => log::info!("Finalizing input at: {}", index),
+                Err(e) => log::warn!("Not finalizing input at: {} | {}", index, e),
+            }
+        }
 
         // Then, broadcast it (or try to, we never know if we are not going to hit an
         // error at broadcast time).
@@ -1372,13 +1493,19 @@ pub struct GetAddressResult {
     #[serde(deserialize_with = "deser_addr_assume_checked")]
     pub address: bitcoin::Address,
     pub derivation_index: bip32::ChildNumber,
+    pub bip21: Option<Url>,
 }
 
 impl GetAddressResult {
-    pub fn new(address: bitcoin::Address, derivation_index: bip32::ChildNumber) -> Self {
+    pub fn new(
+        address: bitcoin::Address,
+        derivation_index: bip32::ChildNumber,
+        bip21: Option<Url>,
+    ) -> Self {
         Self {
             address,
             derivation_index,
+            bip21,
         }
     }
 }

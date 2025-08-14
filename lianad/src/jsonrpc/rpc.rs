@@ -164,13 +164,17 @@ impl From<commands::CommandError> for Error {
             | commands::CommandError::RbfError(..)
             | commands::CommandError::EmptyFilterList
             | commands::CommandError::RecoveryNotAvailable
-            | commands::CommandError::OutpointNotRecoverable(..) => {
+            | commands::CommandError::OutpointNotRecoverable(..)
+            | commands::CommandError::FailedToFetchOhttpKeys(..) => {
                 Error::new(ErrorCode::InvalidParams, e.to_string())
             }
             commands::CommandError::RescanTrigger(..) => {
                 Error::new(ErrorCode::InternalError, e.to_string())
             }
             commands::CommandError::TxBroadcast(_) => {
+                Error::new(ErrorCode::ServerError(BROADCAST_ERROR), e.to_string())
+            }
+            commands::CommandError::FailedToPostOriginalPayjoinProposal(_) => {
                 Error::new(ErrorCode::ServerError(BROADCAST_ERROR), e.to_string())
             }
         }
