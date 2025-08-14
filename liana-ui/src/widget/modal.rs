@@ -124,8 +124,7 @@ where
         let row = Row::new()
             .push_maybe(icon)
             .push(col)
-            .align_y(Vertical::Center)
-            .spacing(V_SPACING);
+            .align_y(Vertical::Center);
 
         Button::new(row).style(widget_style)
     } else {
@@ -133,7 +132,6 @@ where
             .push_maybe(icon)
             .push(text::p1_regular(label))
             .height(BTN_H)
-            .spacing(V_SPACING)
             .align_y(Vertical::Center);
         Button::new(row)
             .on_press(collapse_message())
