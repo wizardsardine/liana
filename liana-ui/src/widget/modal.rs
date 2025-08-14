@@ -2,7 +2,7 @@ use iced::{
     alignment::Vertical,
     widget::{
         button::{Status, Style},
-        row, Space,
+        container, row, Space,
     },
     Length,
 };
@@ -12,7 +12,7 @@ use crate::{
     component::{
         button,
         form::{self, Value},
-        text,
+        text, tooltip,
     },
     icon,
     theme::{self, Theme},
@@ -141,4 +141,43 @@ where
     }
     .width(BTN_W)
     .into()
+}
+
+pub fn button_entry<'a, Message, OnClick>(
+    icon: Option<Text<'static>>,
+    label: &'a str,
+    tooltip_str: Option<&'static str>,
+    error: Option<String>,
+    on_press: Option<OnClick>,
+) -> Element<'a, Message>
+where
+    OnClick: 'static + Fn() -> Message,
+    Message: Clone + 'static,
+{
+    let error = error.map(|e| {
+        row![
+            text::p1_regular(e).color(color::ORANGE),
+            Space::with_width(Length::Fill)
+        ]
+    });
+
+    let tt = tooltip_str.map(|s| tooltip(s));
+
+    let row = Row::new()
+        .push_maybe(icon)
+        .push(text::p1_regular(label))
+        .push(Space::with_width(Length::Fill))
+        .push_maybe(tt)
+        .spacing(H_SPACING)
+        .align_y(Vertical::Center)
+        .height(BTN_H);
+
+    let col = Column::new().push(row).push_maybe(error).width(BTN_W);
+
+    let mut btn = Button::new(container(col)).style(widget_style);
+    if let Some(msg) = on_press {
+        let msg = msg();
+        btn = btn.on_press(msg);
+    }
+    btn.into()
 }
