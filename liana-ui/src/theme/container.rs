@@ -22,6 +22,14 @@ pub fn background(theme: &Theme) -> Style {
     }
 }
 
+pub fn debug(theme: &Theme) -> Style {
+    Style {
+        background: Some(Background::Color(iced::Color::WHITE)),
+        border: iced::Border::default().color(iced::color!(0xFF0000)),
+        ..Default::default()
+    }
+}
+
 pub fn foreground(theme: &Theme) -> Style {
     Style {
         background: Some(Background::Color(theme.colors.general.foreground)),
