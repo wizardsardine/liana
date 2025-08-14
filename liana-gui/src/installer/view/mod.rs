@@ -10,7 +10,6 @@ use iced::{
     Alignment, Length,
 };
 
-use async_hwi::DeviceKind;
 use liana::miniscript::bitcoin::bip32::ChildNumber;
 use liana_ui::component::text::{self, p2_regular};
 use std::collections::HashMap;
@@ -37,7 +36,7 @@ use crate::{
     help,
     hw::{is_compatible_with_tapminiscript, HardwareWallet, UnsupportedReason},
     installer::{
-        descriptor::{Key, PathSequence, PathWarning},
+        descriptor::{PathSequence, PathWarning},
         message::{self, DefineBitcoind, DefineNode, Message},
         prompt,
         step::{DownloadState, InstallState},
@@ -1788,89 +1787,6 @@ pub fn hw_list_view<'a>(
         bttn = bttn.on_press(Message::Select(i));
     }
     bttn.into()
-}
-
-#[allow(clippy::too_many_arguments)]
-pub fn key_list_view<'a>(
-    i: usize,
-    name: &'a str,
-    fingerprint: &'a Fingerprint,
-    kind: Option<&'a DeviceKind>,
-    version: Option<&'a async_hwi::Version>,
-    chosen: bool,
-    device_must_support_taproot: bool,
-    accounts: &HashMap<Fingerprint, ChildNumber>,
-) -> Element<'a, Message> {
-    let account = accounts.get(fingerprint).copied();
-    Button::new(if chosen {
-        hw::selected_hardware_wallet(
-            kind.map(|k| k.to_string()).unwrap_or_default(),
-            version,
-            fingerprint,
-            Some(name),
-            if device_must_support_taproot
-                && kind.map(|kind| is_compatible_with_tapminiscript(kind, version)) == Some(false)
-            {
-                Some("Device firmware version does not support taproot miniscript")
-            } else {
-                None
-            },
-            account,
-            true,
-        )
-    } else if device_must_support_taproot
-        && kind.map(|kind| is_compatible_with_tapminiscript(kind, version)) == Some(false)
-    {
-        hw::warning_hardware_wallet(
-            kind.map(|k| k.to_string()).unwrap_or_default(),
-            version,
-            fingerprint,
-            Some(name),
-            "Device firmware version does not support taproot miniscript",
-        )
-    } else {
-        hw::supported_hardware_wallet_with_account(
-            kind.map(|k| k.to_string()).unwrap_or_default(),
-            version,
-            *fingerprint,
-            Some(name),
-            account,
-            false,
-        )
-    })
-    .style(theme::button::secondary)
-    .width(Length::Fill)
-    .on_press(Message::DefineDescriptor(
-        message::DefineDescriptor::KeyModal(message::ImportKeyModal::SelectKey(i)),
-    ))
-    .into()
-}
-
-pub fn provider_key_list_view(i: Option<usize>, key: &Key, chosen: bool) -> Element<'_, Message> {
-    // If `i.is_some()`, it means this key is in our list of (saved) keys and can be selected.
-    let key_kind = key
-        .source
-        .provider_key_kind()
-        .expect("has kind")
-        .to_string();
-    let token = key.source.token().expect("has token");
-    Button::new(if i.is_some() {
-        if chosen {
-            hw::selected_provider_key(key.fingerprint, key.name.clone(), key_kind, token)
-        } else {
-            hw::unselected_provider_key(key.fingerprint, key.name.clone(), key_kind, token)
-        }
-    } else {
-        hw::unsaved_provider_key(key.fingerprint, key_kind, token)
-    })
-    .style(theme::button::secondary)
-    .width(Length::Fill)
-    .on_press_maybe(i.map(|i| {
-        Message::DefineDescriptor(message::DefineDescriptor::KeyModal(
-            message::ImportKeyModal::SelectKey(i),
-        ))
-    }))
-    .into()
 }
 
 pub fn backup_mnemonic<'a>(
