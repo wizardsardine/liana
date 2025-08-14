@@ -10,11 +10,12 @@ use iced::{
 use crate::{
     color,
     component::{
+        button,
         form::{self, Value},
         text,
     },
     icon,
-    theme::{self, Theme},
+    theme::Theme,
 };
 
 use super::{Button, Column, Element, Row, Text};
@@ -26,6 +27,30 @@ pub const SPACING: u16 = 10;
 
 fn widget_style(theme: &Theme, status: Status) -> Style {
     crate::theme::button::secondary(theme, status)
+}
+
+pub fn header<'a, Message, Back, Close>(
+    label: Option<String>,
+    back_message: Option<Back>,
+    close_message: Option<Close>,
+) -> Element<'a, Message>
+where
+    Back: 'static + Fn() -> Message,
+    Close: 'static + Fn() -> Message,
+    Message: Clone + 'static,
+{
+    let back = back_message
+        .map(|m| button::transparent(Some(icon::arrow_back().size(25)), "").on_press(m()));
+    let title = label.map(text::h3);
+    let close = close_message
+        .map(|m| button::transparent(Some(icon::cross_icon().size(40)), "").on_press(m()));
+    Row::new()
+        .push_maybe(back)
+        .push_maybe(title)
+        .push(Space::with_width(Length::Fill))
+        .push_maybe(close)
+        .align_y(Vertical::Center)
+        .into()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -52,7 +77,7 @@ where
     }
     .padding(10);
     let paste = paste_message
-        .map(|m| Button::new(icon::clipboard_icon().style(theme::text::secondary)).on_press(m()));
+        .map(|m| Button::new(icon::clipboard_icon().color(color::BLACK)).on_press(m()));
 
     let icon = icon.map(|i| i.color(color::WHITE));
 
