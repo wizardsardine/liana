@@ -1,8 +1,8 @@
 use iced::{
-    alignment::Vertical,
+    alignment::{Horizontal, Vertical},
     widget::{
         button::{Status, Style},
-        container, row, Space,
+        column, container, row, Space,
     },
     Length,
 };
@@ -141,6 +141,49 @@ where
     }
     .width(BTN_W)
     .into()
+}
+
+pub fn key_entry<'a, Message, OnClick>(
+    icon: Option<Text<'static>>,
+    name: String,
+    fingerprint: Option<String>,
+    tooltip_str: Option<&'static str>,
+    error: Option<String>,
+    mut message: Option<String>,
+    on_press: Option<OnClick>,
+) -> Element<'a, Message>
+where
+    OnClick: 'static + Fn() -> Message,
+    Message: Clone + 'static,
+{
+    if error.is_some() {
+        message = None;
+    }
+    let message = message.map(text::p1_regular);
+    let error = error.map(|e| text::p1_regular(e).color(color::ORANGE));
+    let tt = tooltip_str.map(|s| tooltip(s));
+
+    let designation = column![
+        text::p1_bold(name),
+        text::p1_regular(fingerprint.unwrap_or(" - ".to_string()))
+    ]
+    .align_x(Horizontal::Center);
+    let row = Row::new()
+        .push_maybe(icon.as_ref().map(|_| Space::with_width(H_SPACING)))
+        .push_maybe(icon)
+        .push(Space::with_width(H_SPACING))
+        .push(designation)
+        .push_maybe(message)
+        .push_maybe(error)
+        .push(Space::with_width(Length::Fill))
+        .push_maybe(tt)
+        .align_y(Vertical::Center)
+        .spacing(V_SPACING);
+    let mut btn = Button::new(row).style(widget_style).width(BTN_W);
+    if let Some(msg) = on_press {
+        btn = btn.on_press(msg())
+    }
+    btn.into()
 }
 
 pub fn button_entry<'a, Message, OnClick>(
