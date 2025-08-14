@@ -153,7 +153,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
             .push(
                 Column::new()
                     .push(
-                        Container::new(liana_logotype_raster().width(Length::Fixed(100.0)))
+                        Container::new(liana_logotype_raster().width(Length::Fill))
                             .padding(10)
                             .align_x(iced::Alignment::Center)
                             .width(Length::Fill),
@@ -164,6 +164,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
                     .push(coins_button)
                     .push(transactions_button)
                     .push(psbt_button)
+                    .width(Length::Fill)
                     .height(Length::Fill),
             )
             .push(
@@ -178,6 +179,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
                         .push(recovery_button)
                         .push(settings_button),
                 )
+                .width(Length::Fill)
                 .height(Length::Shrink),
             ),
     )
@@ -341,7 +343,7 @@ pub fn dashboard<'a, T: Into<Element<'a, Message>>>(
                     small_sidebar(menu, cache).height(Length::Fill).into()
                 }
             }))
-            .width(Length::FillPortion(2)),
+            .width(Length::FillPortion(22)),
         )
         .push(
             Column::new()
@@ -358,7 +360,7 @@ pub fn dashboard<'a, T: Into<Element<'a, Message>>>(
                     .style(theme::container::background)
                     .height(Length::Fill),
                 )
-                .width(Length::FillPortion(10)),
+                .width(Length::FillPortion(100)),
         )
         .width(Length::Fill)
         .height(Length::Fill)
