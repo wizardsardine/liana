@@ -1,5 +1,6 @@
-use crate::database::DatabaseInterface;
+use crate::database::{DatabaseConnection, DatabaseInterface};
 
+use crate::payjoin::db::SessionId;
 use crate::payjoin::helpers::post_request;
 
 use std::error::Error;
@@ -43,6 +44,35 @@ fn get_proposed_payjoin_psbt(
     }
 }
 
+fn update_db_with_psbt(
+    db_conn: &mut Box<dyn DatabaseConnection>,
+    session_history: &SessionHistory,
+    session_id: &SessionId,
+    psbt: Psbt,
+) {
+    let original_txid = session_history
+        .fallback_tx()
+        .map(|tx| tx.compute_txid())
+        .expect("fallback tx should be present");
+
+    log::info!("[Payjoin] Deleting original Payjoin psbt (txid={original_txid})");
+    db_conn.delete_spend(&original_txid);
+
+    let new_txid = psbt.unsigned_tx.compute_txid();
+    if db_conn.spend_tx(&new_txid).is_some() {
+        log::info!("[Payjoin] Proposal already exists in the db");
+        return;
+    }
+
+    log::info!(
+        "[Payjoin] Updating Payjoin psbt: {} -> {}",
+        original_txid,
+        new_txid
+    );
+    db_conn.store_spend(&psbt);
+    db_conn.save_proposed_payjoin_txid(session_id, &new_txid);
+}
+
 fn post_orginal_proposal(
     sender: Sender<WithReplyKey>,
     persister: &SenderPersister,
@@ -61,28 +91,35 @@ fn post_orginal_proposal(
 }
 
 fn process_sender_session(
-    state: SendSession,
+    db_conn: &mut Box<dyn DatabaseConnection>,
+    session_id: SessionId,
     persister: &SenderPersister,
-) -> Result<Option<Psbt>, Box<dyn Error>> {
+) -> Result<(), Box<dyn Error>> {
+    let (state, session_history) = replay_event_log(persister)
+        .map_err(|e| format!("Failed to replay sender event log: {:?}", e))?;
+
     match state {
         SendSession::WithReplyKey(sender) => {
             log::info!("[Payjoin] SenderState::WithReplyKey");
-            match post_orginal_proposal(sender, persister) {
-                Ok(_) => {}
-                Err(err) => log::warn!("post_orginal_proposal(): {}", err),
+            if let Err(err) = post_orginal_proposal(sender, persister) {
+                log::warn!("post_orginal_proposal(): {}", err);
             }
-            Ok(None)
+            Ok(())
         }
         SendSession::V2GetContext(context) => {
             log::info!("[Payjoin] SenderState::V2GetContext");
-            get_proposed_payjoin_psbt(context, persister)
+            if let Ok(Some(psbt)) = get_proposed_payjoin_psbt(context, persister) {
+                update_db_with_psbt(db_conn, &session_history, &session_id, psbt);
+            }
+            Ok(())
         }
         SendSession::ProposalReceived(psbt) => {
             log::info!(
                 "[Payjoin] SenderState::ProposalReceived: {}",
                 psbt.to_string()
             );
-            Ok(Some(psbt.clone()))
+            update_db_with_psbt(db_conn, &session_history, &session_id, psbt.clone());
+            Ok(())
         }
         _ => Err("Unexpected sender state".into()),
     }
@@ -92,38 +129,12 @@ pub(crate) fn payjoin_sender_check(db: &sync::Arc<sync::Mutex<dyn DatabaseInterf
     let mut db_conn = db.connection();
     for session_id in db_conn.get_all_active_sender_session_ids() {
         let persister = SenderPersister::from_id(Arc::new(db.clone()), session_id.clone());
-
-        let (state, session_history) = replay_event_log(&persister)
-            .map_err(|e| format!("Failed to replay sender event log: {:?}", e))
-            // TODO: handle error
-            .unwrap();
-
-        match process_sender_session(state, &persister) {
-            Ok(Some(proposal_psbt)) => {
-                let original_txid = session_history
-                    .fallback_tx()
-                    .map(|tx| tx.compute_txid())
-                    .expect("Fallback tx should be present");
-                // TODO: should we be deleting the original psbt?  can we fallback without it?
-                log::info!("[Payjoin] Deleting original Payjoin psbt (txid={original_txid})");
-                db_conn.delete_spend(&original_txid);
-                let new_txid = proposal_psbt.unsigned_tx.compute_txid();
-                if db_conn.spend_tx(&new_txid).is_some() {
-                    log::info!("[Payjoin] Proposal already exists in the db");
-                    return;
-                }
-                log::info!(
-                    "[Payjoin] Updating Payjoin psbt: {} -> {}",
-                    original_txid,
-                    new_txid
-                );
-                db_conn.store_spend(&proposal_psbt);
-                db_conn.save_proposed_payjoin_txid(&session_id, &new_txid);
+        match process_sender_session(&mut db_conn, session_id, &persister) {
+            Ok(_) => (),
+            Err(e) => {
+                log::warn!("payjoin_sender_check(): {}", e);
+                continue;
             }
-            Ok(None) => {
-                log::info!("[Payjoin] Proposal not received yet...");
-            }
-            Err(e) => log::warn!("payjoin_sender_check(): {}", e),
         }
     }
 }

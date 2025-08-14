@@ -316,48 +316,42 @@ fn send_payjoin_proposal(
 }
 
 fn process_receiver_session(
-    db: &sync::Arc<sync::Mutex<dyn DatabaseInterface>>,
+    db_conn: &mut Box<dyn DatabaseConnection>,
     bit: &mut sync::Arc<sync::Mutex<dyn BitcoinInterface>>,
     desc: &descriptors::LianaDescriptor,
     secp: &secp256k1::Secp256k1<secp256k1::VerifyOnly>,
+    persister: ReceiverPersister,
 ) -> Result<(), Box<dyn Error>> {
-    let mut db_conn = db.connection();
-    for session_id in db_conn.get_all_active_receiver_session_ids() {
-        let persister = ReceiverPersister::from_id(Arc::new(db.clone()), session_id.clone());
+    let (state, _) = replay_event_log(&persister)
+        .map_err(|e| format!("Failed to replay receiver event log: {:?}", e))?;
 
-        let (state, _) = replay_event_log(&persister)
-            .map_err(|e| format!("Failed to replay receiver event log: {:?}", e))?;
-
-        match state {
-            ReceiveSession::Initialized(context) => {
-                read_from_directory(context, &persister, &mut db_conn, bit, desc, secp)?;
-            }
-            ReceiveSession::UncheckedProposal(proposal) => {
-                check_proposal(proposal, &persister, &mut db_conn, bit, desc, secp)?;
-            }
-            ReceiveSession::MaybeInputsOwned(proposal) => {
-                check_inputs_not_owned(proposal, &persister, &mut db_conn, desc, secp)?;
-            }
-            ReceiveSession::MaybeInputsSeen(proposal) => {
-                check_no_inputs_seen_before(proposal, &persister, &mut db_conn, desc, secp)?;
-            }
-            ReceiveSession::OutputsUnknown(proposal) => {
-                identify_receiver_outputs(proposal, &persister, &mut db_conn, desc, secp)?;
-            }
-            ReceiveSession::WantsOutputs(proposal) => {
-                commit_outputs(proposal, &persister, &mut db_conn, desc, secp)?;
-            }
-            ReceiveSession::WantsInputs(proposal) => {
-                contribute_inputs(proposal, &persister, &mut db_conn, desc, secp)?
-            }
-            ReceiveSession::ProvisionalProposal(proposal) => {
-                finalize_proposal(proposal, &persister, &mut db_conn, secp)?
-            }
-            ReceiveSession::PayjoinProposal(proposal) => {
-                send_payjoin_proposal(proposal, &persister)?
-            }
-            _ => return Err(format!("Unexpected receiver state: {:?}", state).into()),
+    match state {
+        ReceiveSession::Initialized(context) => {
+            read_from_directory(context, &persister, db_conn, bit, desc, secp)?;
         }
+        ReceiveSession::UncheckedProposal(proposal) => {
+            check_proposal(proposal, &persister, db_conn, bit, desc, secp)?;
+        }
+        ReceiveSession::MaybeInputsOwned(proposal) => {
+            check_inputs_not_owned(proposal, &persister, db_conn, desc, secp)?;
+        }
+        ReceiveSession::MaybeInputsSeen(proposal) => {
+            check_no_inputs_seen_before(proposal, &persister, db_conn, desc, secp)?;
+        }
+        ReceiveSession::OutputsUnknown(proposal) => {
+            identify_receiver_outputs(proposal, &persister, db_conn, desc, secp)?;
+        }
+        ReceiveSession::WantsOutputs(proposal) => {
+            commit_outputs(proposal, &persister, db_conn, desc, secp)?;
+        }
+        ReceiveSession::WantsInputs(proposal) => {
+            contribute_inputs(proposal, &persister, db_conn, desc, secp)?
+        }
+        ReceiveSession::ProvisionalProposal(proposal) => {
+            finalize_proposal(proposal, &persister, db_conn, secp)?
+        }
+        ReceiveSession::PayjoinProposal(proposal) => send_payjoin_proposal(proposal, &persister)?,
+        _ => return Err(format!("Unexpected receiver state: {:?}", state).into()),
     }
     Ok(())
 }
@@ -368,8 +362,15 @@ pub(crate) fn payjoin_receiver_check(
     desc: &descriptors::LianaDescriptor,
     secp: &secp256k1::Secp256k1<secp256k1::VerifyOnly>,
 ) {
-    match process_receiver_session(db, bit, desc, secp) {
-        Ok(_) => (),
-        Err(e) => log::warn!("process_receiver_session(): {}", e),
+    let mut db_conn = db.connection();
+    for session_id in db_conn.get_all_active_receiver_session_ids() {
+        let persister = ReceiverPersister::from_id(Arc::new(db.clone()), session_id.clone());
+        match process_receiver_session(&mut db_conn, bit, desc, secp, persister) {
+            Ok(_) => (),
+            Err(e) => {
+                log::warn!("process_receiver_session(): {}", e);
+                continue;
+            }
+        }
     }
 }
