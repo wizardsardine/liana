@@ -30,6 +30,7 @@ pub use message::Message;
 
 use state::{
     CoinsPanel, CreateSpendPanel, Home, PsbtsPanel, ReceivePanel, State, TransactionsPanel,
+    BuyAndSellPanel,
 };
 use wallet::{sync_status, SyncStatus};
 
@@ -52,6 +53,7 @@ struct Panels {
     receive: ReceivePanel,
     create_spend: CreateSpendPanel,
     settings: SettingsState,
+    buy_and_sell: BuyAndSellPanel,
 }
 
 impl Panels {
@@ -104,6 +106,7 @@ impl Panels {
                 internal_bitcoind.is_some(),
                 config.clone(),
             ),
+            buy_and_sell: BuyAndSellPanel::new(),
         }
     }
 
@@ -120,6 +123,7 @@ impl Panels {
             Menu::Recovery => &self.recovery,
             Menu::RefreshCoins(_) => &self.create_spend,
             Menu::PsbtPreSelected(_) => &self.psbts,
+            Menu::BuyAndSell => &self.buy_and_sell,
         }
     }
 
@@ -136,6 +140,7 @@ impl Panels {
             Menu::Recovery => &mut self.recovery,
             Menu::RefreshCoins(_) => &mut self.create_spend,
             Menu::PsbtPreSelected(_) => &mut self.psbts,
+            Menu::BuyAndSell => &mut self.buy_and_sell,
         }
     }
 }

@@ -192,3 +192,11 @@ pub fn circle_check_icon() -> Text<'static> {
 pub fn circle_cross_icon() -> Text<'static> {
     iconex_icon('\u{19DA}')
 }
+
+pub fn buy_and_sell_icon() -> Text<'static> {
+    iconex_icon('\u{F635}')
+}
+
+pub fn building_icon() -> Text<'static> {
+    bootstrap_icon('\u{F87D}')
+}

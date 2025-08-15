@@ -2,6 +2,7 @@ mod label;
 mod message;
 mod warning;
 
+pub mod buysell;
 pub mod coins;
 pub mod export;
 pub mod home;
@@ -26,7 +27,7 @@ use liana_ui::{
     color,
     component::{button, text::*},
     icon::{
-        coins_icon, cross_icon, history_icon, home_icon, receive_icon, recovery_icon, send_icon,
+        buy_and_sell_icon, coins_icon, cross_icon, history_icon, home_icon, receive_icon, recovery_icon, send_icon,
         settings_icon,
     },
     image::*,
@@ -135,6 +136,19 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
             .width(iced::Length::Fill))
     };
 
+    let buy_sell_button = if *menu == Menu::BuyAndSell {
+        row!(
+            button::menu_active(Some(buy_and_sell_icon()), "Buy/Sell")
+                .on_press(Message::Reload)
+                .width(iced::Length::Fill),
+            menu_bar_highlight()
+        )
+    } else {
+        row!(button::menu(Some(buy_and_sell_icon()), "Buy/Sell")
+            .on_press(Message::Menu(Menu::BuyAndSell))
+            .width(iced::Length::Fill))
+    };
+    
     let settings_button = if *menu == Menu::Settings {
         row!(
             button::menu_active(Some(settings_icon()), "Settings")
@@ -166,6 +180,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
                     .push(coins_button)
                     .push(transactions_button)
                     .push(psbt_button)
+                    .push(buy_sell_button)
                     .height(Length::Fill),
             )
             .push(
@@ -278,6 +293,19 @@ pub fn small_sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message
             .on_press(Message::Menu(Menu::Recovery))
             .width(iced::Length::Fill))
     };
+    
+    let buy_sell_button = if *menu == Menu::BuyAndSell {
+        row!(
+            button::menu_active_small(buy_and_sell_icon())
+                .on_press(Message::Reload)
+                .width(iced::Length::Fill),
+            menu_bar_highlight()
+        )
+    } else {
+        row!(button::menu_small(buy_and_sell_icon())
+            .on_press(Message::Menu(Menu::BuyAndSell))
+            .width(iced::Length::Fill))
+    };
 
     let settings_button = if *menu == Menu::Settings {
         row!(
@@ -310,6 +338,7 @@ pub fn small_sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message
                     .push(coins_button)
                     .push(transactions_button)
                     .push(psbt_button)
+                    .push(buy_sell_button)
                     .align_x(iced::Alignment::Center)
                     .height(Length::Fill),
             )
