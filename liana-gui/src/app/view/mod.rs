@@ -3,6 +3,8 @@ mod message;
 mod warning;
 
 pub mod buysell;
+#[cfg(feature = "dev-meld")]
+pub mod meld_buysell;
 pub mod coins;
 pub mod export;
 pub mod home;

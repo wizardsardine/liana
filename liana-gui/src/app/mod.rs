@@ -1,3 +1,4 @@
+pub mod buysell;
 pub mod cache;
 pub mod config;
 pub mod menu;
@@ -53,7 +54,10 @@ struct Panels {
     receive: ReceivePanel,
     create_spend: CreateSpendPanel,
     settings: SettingsState,
+    #[cfg(all(feature = "dev-coincube", not(feature = "dev-meld")))]
     buy_and_sell: BuyAndSellPanel,
+    #[cfg(feature = "dev-meld")]
+    meld_buy_and_sell: crate::app::view::meld_buysell::MeldBuySellPanel,
 }
 
 impl Panels {
@@ -106,7 +110,10 @@ impl Panels {
                 internal_bitcoind.is_some(),
                 config.clone(),
             ),
+            #[cfg(all(feature = "dev-coincube", not(feature = "dev-meld")))]
             buy_and_sell: BuyAndSellPanel::new(),
+            #[cfg(feature = "dev-meld")]
+            meld_buy_and_sell: crate::app::view::meld_buysell::MeldBuySellPanel::new(cache.network),
         }
     }
 
@@ -123,7 +130,10 @@ impl Panels {
             Menu::Recovery => &self.recovery,
             Menu::RefreshCoins(_) => &self.create_spend,
             Menu::PsbtPreSelected(_) => &self.psbts,
+            #[cfg(all(feature = "dev-coincube", not(feature = "dev-meld")))]
             Menu::BuyAndSell => &self.buy_and_sell,
+            #[cfg(feature = "dev-meld")]
+            Menu::BuyAndSell => &self.meld_buy_and_sell,
         }
     }
 
@@ -140,7 +150,10 @@ impl Panels {
             Menu::Recovery => &mut self.recovery,
             Menu::RefreshCoins(_) => &mut self.create_spend,
             Menu::PsbtPreSelected(_) => &mut self.psbts,
+            #[cfg(all(feature = "dev-coincube", not(feature = "dev-meld")))]
             Menu::BuyAndSell => &mut self.buy_and_sell,
+            #[cfg(feature = "dev-meld")]
+            Menu::BuyAndSell => &mut self.meld_buy_and_sell,
         }
     }
 }
@@ -392,7 +405,24 @@ impl App {
                     Message::WalletUpdated(Ok(wallet)),
                 )
             }
-            Message::View(view::Message::Menu(menu)) => self.set_current_panel(menu),
+            Message::View(view::Message::Menu(menu)) => {
+                match menu {
+                    menu::Menu::BuyAndSell => {
+                        // Switch to buy/sell panel and show modal
+                        self.panels.current = menu;
+                        #[cfg(all(feature = "dev-coincube", not(feature = "dev-meld")))]
+                        {
+                            self.panels.buy_and_sell.show_modal();
+                        }
+                        #[cfg(feature = "dev-meld")]
+                        {
+                            // No need to show modal - form is always visible
+                        }
+                        Task::none()
+                    }
+                    _ => self.set_current_panel(menu),
+                }
+            }
             Message::View(view::Message::OpenUrl(url)) => {
                 if let Err(e) = open::that_detached(&url) {
                     tracing::error!("Error opening '{}': {}", url, e);

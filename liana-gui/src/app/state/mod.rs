@@ -8,6 +8,8 @@ mod settings;
 mod spend;
 mod transactions;
 pub mod buysell;
+#[cfg(feature = "dev-meld")]
+pub mod meld_buysell;
 
 use std::convert::TryInto;
 use std::sync::Arc;

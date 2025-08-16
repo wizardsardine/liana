@@ -13,6 +13,11 @@ resolver = "2"
 name = "liana-gui"
 path = "src/main.rs"
 
+[features]
+default = ["dev-coincube"]
+dev-coincube = []
+dev-meld = []
+
 [dependencies]
 async-trait = "0.1"
 async-hwi = "0.0.29"
@@ -27,11 +32,13 @@ hex = "0.4.3"
 iced = { version = "0.13.1", default-features = false, features = [
 	"tokio",
 	"svg",
+    "canvas",
 	"qr_code",
 	"image",
 	"lazy",
 	"advanced",
-	"tiny-skia",
+	"wgpu",
+    "tiny-skia"
 ] }
 iced_aw = { version = "0.12.2", features = ["context_menu"] }
 iced_runtime = "0.13.1"

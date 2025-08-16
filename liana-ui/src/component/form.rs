@@ -125,6 +125,12 @@ where
         self.input = self.input.size(size);
         self
     }
+
+    /// Makes the [`Form`] secure (password field)
+    pub fn secure(mut self) -> Self {
+        self.input = self.input.secure(true);
+        self
+    }
 }
 
 impl<'a, Message: 'a + Clone> From<Form<'a, Message>> for Element<'a, Message> {

@@ -32,6 +32,8 @@ pub enum Message {
     ImportPsbt,
     OpenUrl(String),
     BuySell(BuySellMessage),
+    #[cfg(feature = "dev-meld")]
+    MeldBuySell(MeldBuySellMessage),
 }
 
 impl Close for Message {
@@ -132,8 +134,33 @@ pub enum CreateRbfMessage {
 
 #[derive(Debug, Clone)]
 pub enum BuySellMessage {
+    ShowModal,
+    CloseModal,
     ShowAccountSelection,
     HideAccountSelection,
     SelectAccountType(AccountType),
     GetStarted,
+    GoBack,
+    FormFieldEdited(String, String),
+    ToggleTermsAcceptance,
+    CreateAccount,
+}
+
+#[cfg(feature = "dev-meld")]
+#[derive(Debug, Clone)]
+pub enum MeldBuySellMessage {
+    ShowModal,
+    CloseModal,
+    WalletAddressChanged(String),
+    CountryCodeChanged(String),
+    SourceAmountChanged(String),
+    ProviderSelected(crate::app::buysell::ServiceProvider),
+    CreateSession,
+    SessionCreated(String), // widget_url
+    SessionError(String),
+    OpenWidget(String), // widget_url
+    CopyUrl(String), // widget_url
+    UrlCopied,
+    CopyError,
+    ResetForm,
 }
