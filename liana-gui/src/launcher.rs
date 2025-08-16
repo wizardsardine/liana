@@ -209,8 +209,11 @@ impl Launcher {
                     Row::new()
                         .spacing(20)
                         .push(
-                            Container::new(image::liana_brand_grey().width(Length::Fixed(200.0)))
-                                .width(Length::Fill),
+                            Container::new(
+                                image::liana_logotype_raster().width(Length::Fixed(150.0)),
+                            )
+                            .align_x(iced::Alignment::Start)
+                            .width(Length::Fill),
                         )
                         .push_maybe(if let State::Wallets { add_wallet, .. } = &self.state {
                             if *add_wallet {
@@ -248,10 +251,13 @@ impl Launcher {
                         Column::new()
                             .align_x(Alignment::Center)
                             .spacing(30)
-                            .push(if matches!(self.state, State::Wallets { .. }) {
-                                text("Welcome back").size(50).bold()
-                            } else {
-                                text("Welcome").size(50).bold()
+                            .push({
+                                let c = if matches!(self.state, State::Wallets { .. }) {
+                                    "Welcome back"
+                                } else {
+                                    "Welcome"
+                                };
+                                text(c).size(50).bold()
                             })
                             .push_maybe(self.error.as_ref().map(|e| card::simple(text(e))))
                             .push(match &self.state {

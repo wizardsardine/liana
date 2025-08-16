@@ -80,7 +80,7 @@ impl BitcoindSettingsState {
                     daemon_is_external,
                 )
             }),
-            rescan_settings: RescanSetting::new(cache.rescan_progress),
+            rescan_settings: RescanSetting::new(cache.rescan_progress()),
         }
     }
 }
@@ -138,7 +138,7 @@ impl State for BitcoindSettingsState {
                 self.rescan_settings.processing = false;
             }
             Message::UpdatePanelCache(_) => {
-                self.rescan_settings.processing = cache.rescan_progress.is_some_and(|p| p < 1.0);
+                self.rescan_settings.processing = cache.rescan_progress().is_some_and(|p| p < 1.0);
             }
             Message::View(view::Message::Settings(view::SettingsMessage::BitcoindSettings(
                 msg,
@@ -385,7 +385,7 @@ impl BitcoindSettings {
             view::settings::bitcoind_edit(
                 is_configured_node_type,
                 self.bitcoin_config.network,
-                cache.blockheight,
+                cache.blockheight(),
                 &self.addr,
                 &self.rpc_auth_vals,
                 &self.selected_auth_type,
@@ -396,8 +396,8 @@ impl BitcoindSettings {
                 is_configured_node_type,
                 self.bitcoin_config.network,
                 &self.bitcoind_config,
-                cache.blockheight,
-                Some(cache.blockheight != 0),
+                cache.blockheight(),
+                Some(cache.blockheight() != 0),
                 can_edit && !self.daemon_is_external && !self.bitcoind_is_internal,
             )
         }
@@ -501,7 +501,7 @@ impl ElectrumSettings {
             view::settings::electrum_edit(
                 is_configured_node_type,
                 self.bitcoin_config.network,
-                cache.blockheight,
+                cache.blockheight(),
                 &self.addr,
                 self.processing,
                 self.electrum_config.validate_domain,
@@ -511,8 +511,8 @@ impl ElectrumSettings {
                 is_configured_node_type,
                 self.bitcoin_config.network,
                 &self.electrum_config,
-                cache.blockheight,
-                Some(cache.blockheight != 0),
+                cache.blockheight(),
+                Some(cache.blockheight() != 0),
                 can_edit && !self.daemon_is_external,
             )
         }
@@ -646,7 +646,7 @@ impl RescanSetting {
             &self.year,
             &self.month,
             &self.day,
-            cache.rescan_progress,
+            cache.rescan_progress(),
             self.success,
             self.processing,
             can_edit,

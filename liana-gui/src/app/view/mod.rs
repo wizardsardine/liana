@@ -169,12 +169,10 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
             .push(
                 Column::new()
                     .push(
-                        Container::new(
-                            liana_grey_logo()
-                                .height(Length::Fixed(120.0))
-                                .width(Length::Fixed(60.0)),
-                        )
-                        .padding(10),
+                        Container::new(liana_logotype_raster().width(Length::Fixed(120.0)))
+                            .padding(10)
+                            .align_x(iced::Alignment::Center)
+                            .width(Length::Fill),
                     )
                     .push(home_button)
                     .push(spend_button)
@@ -189,7 +187,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
                 Container::new(
                     Column::new()
                         .spacing(10)
-                        .push_maybe(cache.rescan_progress.map(|p| {
+                        .push_maybe(cache.rescan_progress().map(|p| {
                             Container::new(text(format!("  Rescan...{:.2}%  ", p * 100.0)))
                                 .padding(5)
                                 .style(theme::pill::simple)
@@ -197,6 +195,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
                         .push(recovery_button)
                         .push(settings_button),
                 )
+                .width(Length::Fill)
                 .height(Length::Shrink),
             ),
     )
@@ -327,12 +326,8 @@ pub fn small_sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message
             .push(
                 Column::new()
                     .push(
-                        Container::new(
-                            liana_grey_logo()
-                                .height(Length::Fixed(120.0))
-                                .width(Length::Fixed(60.0)),
-                        )
-                        .padding(10),
+                        Container::new(liana_logotype_raster().width(Length::Fixed(80.0)))
+                            .padding(10),
                     )
                     .push(home_button)
                     .push(spend_button)
@@ -348,7 +343,7 @@ pub fn small_sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message
                 Container::new(
                     Column::new()
                         .spacing(10)
-                        .push_maybe(cache.rescan_progress.map(|p| {
+                        .push_maybe(cache.rescan_progress().map(|p| {
                             Container::new(text(format!("{:.2}%  ", p * 100.0)))
                                 .padding(5)
                                 .style(theme::pill::simple)
@@ -378,7 +373,7 @@ pub fn dashboard<'a, T: Into<Element<'a, Message>>>(
                     small_sidebar(menu, cache).height(Length::Fill).into()
                 }
             }))
-            .width(Length::FillPortion(2)),
+            .width(Length::FillPortion(22)),
         )
         .push(
             Column::new()
@@ -395,7 +390,7 @@ pub fn dashboard<'a, T: Into<Element<'a, Message>>>(
                     .style(theme::container::background)
                     .height(Length::Fill),
                 )
-                .width(Length::FillPortion(10)),
+                .width(Length::FillPortion(100)),
         )
         .width(Length::Fill)
         .height(Length::Fill)

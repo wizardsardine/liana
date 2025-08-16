@@ -36,7 +36,13 @@ use state::{
 use wallet::{sync_status, SyncStatus};
 
 use crate::{
-    app::{cache::Cache, error::Error, menu::Menu, settings::WalletId, wallet::Wallet},
+    app::{
+        cache::{Cache, DaemonCache},
+        error::Error,
+        menu::Menu,
+        settings::WalletId,
+        wallet::Wallet,
+    },
     daemon::{embedded::EmbeddedDaemon, Daemon, DaemonBackend},
     dir::LianaDirectory,
     node::{bitcoind::Bitcoind, NodeType},
@@ -81,26 +87,26 @@ impl Panels {
             current: Menu::Home,
             home: Home::new(
                 wallet.clone(),
-                &cache.coins,
+                cache.coins(),
                 sync_status(
                     daemon_backend.clone(),
-                    cache.blockheight,
-                    cache.sync_progress,
-                    cache.last_poll_timestamp,
+                    cache.blockheight(),
+                    cache.sync_progress(),
+                    cache.last_poll_timestamp(),
                     cache.last_poll_at_startup,
                 ),
-                cache.blockheight,
+                cache.blockheight(),
                 show_rescan_warning,
             ),
-            coins: CoinsPanel::new(&cache.coins, wallet.main_descriptor.first_timelock_value()),
+            coins: CoinsPanel::new(cache.coins(), wallet.main_descriptor.first_timelock_value()),
             transactions: TransactionsPanel::new(wallet.clone()),
             psbts: PsbtsPanel::new(wallet.clone()),
             recovery: new_recovery_panel(wallet.clone(), cache),
             receive: ReceivePanel::new(data_dir.clone(), wallet.clone()),
             create_spend: CreateSpendPanel::new(
                 wallet.clone(),
-                &cache.coins,
-                cache.blockheight as u32,
+                cache.coins(),
+                cache.blockheight() as u32,
                 cache.network,
             ),
             settings: state::SettingsState::new(
@@ -257,8 +263,8 @@ impl App {
             menu::Menu::RefreshCoins(preselected) => {
                 self.panels.create_spend = CreateSpendPanel::new_self_send(
                     self.wallet.clone(),
-                    &self.cache.coins,
-                    self.cache.blockheight as u32,
+                    self.cache.coins(),
+                    self.cache.blockheight() as u32,
                     preselected,
                     self.cache.network,
                 );
@@ -268,8 +274,8 @@ impl App {
                 if !self.panels.create_spend.keep_state() {
                     self.panels.create_spend = CreateSpendPanel::new(
                         self.wallet.clone(),
-                        &self.cache.coins,
-                        self.cache.blockheight as u32,
+                        self.cache.coins(),
+                        self.cache.blockheight() as u32,
                         self.cache.network,
                     );
                 }
@@ -293,9 +299,9 @@ impl App {
             time::every(Duration::from_secs(
                 match sync_status(
                     self.daemon.backend(),
-                    self.cache.blockheight,
-                    self.cache.sync_progress,
-                    self.cache.last_poll_timestamp,
+                    self.cache.blockheight(),
+                    self.cache.sync_progress(),
+                    self.cache.last_poll_timestamp(),
                     self.cache.last_poll_at_startup,
                 ) {
                     SyncStatus::BlockchainSync(_) => 5, // Only applies to local backends
@@ -343,7 +349,6 @@ impl App {
                 let daemon = self.daemon.clone();
                 let datadir_path = self.cache.datadir_path.clone();
                 let network = self.cache.network;
-                let last_poll_at_startup = self.cache.last_poll_at_startup;
                 Task::perform(
                     async move {
                         // we check every 10 second if the daemon poller is alive
@@ -352,46 +357,47 @@ impl App {
 
                         let info = daemon.get_info().await?;
                         let coins = cache::coins_to_cache(daemon).await?;
-                        Ok(Cache {
-                            datadir_path,
-                            coins: coins.coins,
-                            network: info.network,
+                        Ok(DaemonCache {
                             blockheight: info.block_height,
+                            coins: coins.coins,
                             rescan_progress: info.rescan_progress,
                             sync_progress: info.sync,
                             last_poll_timestamp: info.last_poll_timestamp,
-                            last_poll_at_startup, // doesn't change
                         })
                     },
-                    Message::UpdateCache,
+                    Message::UpdateDaemonCache,
                 )
             }
-            Message::UpdateCache(res) => {
+            Message::UpdateDaemonCache(res) => {
                 match res {
-                    Ok(cache) => {
-                        self.cache.clone_from(&cache);
-                        let current = &self.panels.current;
-                        let daemon = self.daemon.clone();
-                        // These are the panels to update with the cache.
-                        let mut panels = [
-                            (&mut self.panels.home as &mut dyn State, Menu::Home),
-                            (&mut self.panels.settings as &mut dyn State, Menu::Settings),
-                        ];
-                        let commands: Vec<_> = panels
-                            .iter_mut()
-                            .map(|(panel, menu)| {
-                                panel.update(
-                                    daemon.clone(),
-                                    &cache,
-                                    Message::UpdatePanelCache(current == menu),
-                                )
-                            })
-                            .collect();
-                        return Task::batch(commands);
+                    Ok(daemon_cache) => {
+                        self.cache.daemon_cache = daemon_cache;
+                        return Task::perform(async {}, |_| Message::CacheUpdated);
                     }
-                    Err(e) => tracing::error!("Failed to update cache: {}", e),
+                    Err(e) => tracing::error!("Failed to update daemon cache: {}", e),
                 }
                 Task::none()
+            }
+            Message::CacheUpdated => {
+                // These are the panels to update with the cache.
+                let mut panels = [
+                    (&mut self.panels.home as &mut dyn State, Menu::Home),
+                    (&mut self.panels.settings as &mut dyn State, Menu::Settings),
+                ];
+                let daemon = self.daemon.clone();
+                let current = &self.panels.current;
+                let cache = self.cache.clone();
+                let commands: Vec<_> = panels
+                    .iter_mut()
+                    .map(|(panel, menu)| {
+                        panel.update(
+                            daemon.clone(),
+                            &cache,
+                            Message::UpdatePanelCache(current == menu),
+                        )
+                    })
+                    .collect();
+                Task::batch(commands)
             }
             Message::LoadDaemonConfig(cfg) => {
                 let res = self.load_daemon_config(self.cache.datadir_path.clone(), *cfg);
@@ -485,8 +491,8 @@ impl App {
 fn new_recovery_panel(wallet: Arc<Wallet>, cache: &Cache) -> CreateSpendPanel {
     CreateSpendPanel::new_recovery(
         wallet,
-        &cache.coins,
-        cache.blockheight as u32,
+        cache.coins(),
+        cache.blockheight() as u32,
         cache.network,
     )
 }

@@ -36,7 +36,7 @@ pub fn coins_view<'a>(
                         col.push(coin_list_view(
                             coin,
                             timelock,
-                            cache.blockheight as u32,
+                            cache.blockheight() as u32,
                             i,
                             selected.contains(&i),
                             labels,
