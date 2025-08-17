@@ -34,6 +34,10 @@ pub enum Message {
     BuySell(BuySellMessage),
     #[cfg(feature = "dev-meld")]
     MeldBuySell(MeldBuySellMessage),
+    #[cfg(feature = "webview")]
+    WebviewAction(iced_webview::Action),
+    OpenWebview(String),
+    CloseWebview,
 }
 
 impl Close for Message {
@@ -159,8 +163,10 @@ pub enum MeldBuySellMessage {
     SessionCreated(String), // widget_url
     SessionError(String),
     OpenWidget(String), // widget_url
+    OpenWidgetInNewWindow(String), // widget_url
     CopyUrl(String), // widget_url
     UrlCopied,
     CopyError,
     ResetForm,
+    GoBackToForm,
 }

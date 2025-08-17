@@ -28,8 +28,13 @@ impl Default for MeldBuySellPanel {
 
 #[cfg(feature = "dev-meld")]
 impl State for MeldBuySellPanel {
-    fn view<'a>(&'a self, _cache: &'a Cache) -> Element<'a, ViewMessage> {
-        meld_buysell_view(self)
+    fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, ViewMessage> {
+        crate::app::view::dashboard(
+            &crate::app::menu::Menu::BuyAndSell,
+            cache,
+            None, // Error handling will be done within the meld view itself
+            meld_buysell_view(self),
+        )
     }
 
     fn update(
@@ -90,74 +95,84 @@ impl State for MeldBuySellPanel {
                 // Log the URL we're trying to open
                 tracing::info!("Attempting to open widget URL: {}", widget_url);
 
-                // Try multiple methods to open the browser
-                let mut success = false;
-
-                // Method 1: Try open::that_detached first (non-blocking)
-                match open::that_detached(&widget_url) {
-                    Ok(_) => {
-                        tracing::info!("Successfully opened widget URL with detached method");
-                        success = true;
-                    }
-                    Err(e) => {
-                        tracing::warn!("Failed to open browser with detached method: {}", e);
-                    }
+                // Use embedded webview if available, otherwise fallback to external browser
+                #[cfg(feature = "webview")]
+                {
+                    tracing::info!("Opening widget URL in embedded webview");
+                    return Task::done(Message::View(ViewMessage::OpenWebview(widget_url)));
                 }
 
-                // Method 2: Try WSL-specific commands first, then Linux commands
-                if !success {
-                    // WSL-specific commands (these work better in WSL)
-                    let wsl_commands = [
-                        ("cmd.exe", vec!["/c", "start", &widget_url]),
-                        ("powershell.exe", vec!["-c", "Start-Process", &widget_url]),
-                        ("explorer.exe", vec![&widget_url]),
-                    ];
+                #[cfg(not(feature = "webview"))]
+                {
+                    // Fallback to external browser
+                    let mut success = false;
 
-                    // Try WSL commands first
-                    for (cmd, args) in &wsl_commands {
-                        match std::process::Command::new(cmd).args(args).spawn() {
-                            Ok(_) => {
-                                tracing::info!("Successfully opened widget URL with WSL command: {}", cmd);
-                                success = true;
-                                break;
-                            }
-                            Err(_) => {
-                                tracing::debug!("WSL command {} not available", cmd);
-                            }
+                    // Method 1: Try open::that_detached first (non-blocking)
+                    match open::that_detached(&widget_url) {
+                        Ok(_) => {
+                            tracing::info!("Successfully opened widget URL with detached method");
+                            success = true;
+                        }
+                        Err(e) => {
+                            tracing::warn!("Failed to open browser with detached method: {}", e);
                         }
                     }
 
-                    // If WSL commands failed, try Linux commands
+                    // Method 2: Try WSL-specific commands first, then Linux commands
                     if !success {
-                        let linux_commands = [
-                            ("xdg-open", vec![&widget_url]),
-                            ("firefox", vec![&widget_url]),
-                            ("google-chrome", vec![&widget_url]),
-                            ("chromium", vec![&widget_url]),
-                            ("sensible-browser", vec![&widget_url]),
+                        // WSL-specific commands (these work better in WSL)
+                        let wsl_commands = [
+                            ("cmd.exe", vec!["/c", "start", &widget_url]),
+                            ("powershell.exe", vec!["-c", "Start-Process", &widget_url]),
+                            ("explorer.exe", vec![&widget_url]),
                         ];
 
-                        for (cmd, args) in &linux_commands {
+                        // Try WSL commands first
+                        for (cmd, args) in &wsl_commands {
                             match std::process::Command::new(cmd).args(args).spawn() {
                                 Ok(_) => {
-                                    tracing::info!("Successfully opened widget URL with Linux command: {}", cmd);
+                                    tracing::info!("Successfully opened widget URL with WSL command: {}", cmd);
                                     success = true;
                                     break;
                                 }
                                 Err(_) => {
-                                    tracing::debug!("Linux command {} not available", cmd);
+                                    tracing::debug!("WSL command {} not available", cmd);
+                                }
+                            }
+                        }
+
+                        // If WSL commands failed, try Linux commands
+                        if !success {
+                            let linux_commands = [
+                                ("xdg-open", vec![&widget_url]),
+                                ("firefox", vec![&widget_url]),
+                                ("google-chrome", vec![&widget_url]),
+                                ("chromium", vec![&widget_url]),
+                                ("sensible-browser", vec![&widget_url]),
+                            ];
+
+                            for (cmd, args) in &linux_commands {
+                                match std::process::Command::new(cmd).args(args).spawn() {
+                                    Ok(_) => {
+                                        tracing::info!("Successfully opened widget URL with Linux command: {}", cmd);
+                                        success = true;
+                                        break;
+                                    }
+                                    Err(_) => {
+                                        tracing::debug!("Linux command {} not available", cmd);
+                                    }
                                 }
                             }
                         }
                     }
-                }
 
-                if !success {
-                    tracing::error!("All browser opening methods failed");
-                    self.set_error("Could not open browser automatically. Please copy the URL manually and paste it into your browser.".to_string());
-                }
+                    if !success {
+                        tracing::error!("All browser opening methods failed");
+                        self.set_error("Could not open browser automatically. Please copy the URL manually and paste it into your browser.".to_string());
+                    }
 
-                Task::none()
+                    Task::none()
+                }
             }
             Message::View(ViewMessage::MeldBuySell(MeldBuySellMessage::CopyUrl(widget_url))) => {
                 tracing::info!("Attempting to copy URL to clipboard: {}", widget_url);
@@ -268,6 +283,84 @@ impl State for MeldBuySellPanel {
             Message::View(ViewMessage::MeldBuySell(MeldBuySellMessage::ResetForm)) => {
                 self.error = None;
                 self.widget_url = None;
+                Task::none()
+            }
+            Message::View(ViewMessage::MeldBuySell(MeldBuySellMessage::GoBackToForm)) => {
+                // Reset to form state - clear widget URL and error
+                self.widget_url = None;
+                self.error = None;
+                Task::none()
+            }
+            Message::View(ViewMessage::MeldBuySell(MeldBuySellMessage::OpenWidgetInNewWindow(widget_url))) => {
+                // Open in a new window/browser tab - similar to OpenWidget but explicitly for new window
+                tracing::info!("Attempting to open widget URL in new window: {}", widget_url);
+
+                let mut success = false;
+
+                // Method 1: Try open::that_detached first (non-blocking)
+                match open::that_detached(&widget_url) {
+                    Ok(_) => {
+                        tracing::info!("Successfully opened widget URL in new window with detached method");
+                        success = true;
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to open browser with detached method: {}", e);
+                    }
+                }
+
+                // Method 2: Try WSL-specific commands first, then Linux commands
+                if !success {
+                    // WSL-specific commands (these work better in WSL)
+                    let wsl_commands = [
+                        ("cmd.exe", vec!["/c", "start", &widget_url]),
+                        ("powershell.exe", vec!["-c", "Start-Process", &widget_url]),
+                        ("explorer.exe", vec![&widget_url]),
+                    ];
+
+                    // Try WSL commands first
+                    for (cmd, args) in &wsl_commands {
+                        match std::process::Command::new(cmd).args(args).spawn() {
+                            Ok(_) => {
+                                tracing::info!("Successfully opened widget URL in new window with WSL command: {}", cmd);
+                                success = true;
+                                break;
+                            }
+                            Err(_) => {
+                                tracing::debug!("WSL command {} not available", cmd);
+                            }
+                        }
+                    }
+
+                    // If WSL commands failed, try Linux commands
+                    if !success {
+                        let linux_commands = [
+                            ("xdg-open", vec![&widget_url]),
+                            ("firefox", vec![&widget_url]),
+                            ("google-chrome", vec![&widget_url]),
+                            ("chromium", vec![&widget_url]),
+                            ("sensible-browser", vec![&widget_url]),
+                        ];
+
+                        for (cmd, args) in &linux_commands {
+                            match std::process::Command::new(cmd).args(args).spawn() {
+                                Ok(_) => {
+                                    tracing::info!("Successfully opened widget URL in new window with Linux command: {}", cmd);
+                                    success = true;
+                                    break;
+                                }
+                                Err(_) => {
+                                    tracing::debug!("Linux command {} not available", cmd);
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if !success {
+                    tracing::error!("All browser opening methods failed for new window");
+                    self.set_error("Could not open browser automatically. Please copy the URL manually and paste it into your browser.".to_string());
+                }
+
                 Task::none()
             }
             _ => Task::none(),
