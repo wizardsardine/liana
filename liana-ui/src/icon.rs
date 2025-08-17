@@ -4,7 +4,7 @@ use iced::{alignment, Font, Length};
 const BOOTSTRAP_ICONS: Font = Font::with_name("bootstrap-icons");
 
 fn bootstrap_icon(unicode: char) -> Text<'static> {
-    Text::new(unicode.to_string())
+    Text::new(unicode)
         .font(BOOTSTRAP_ICONS)
         .width(Length::Fixed(20.0))
         .align_x(alignment::Horizontal::Center)
@@ -138,7 +138,7 @@ pub fn link_icon() -> Text<'static> {
 const ICONEX_ICONS: Font = Font::with_name("Untitled1");
 
 fn iconex_icon(unicode: char) -> Text<'static> {
-    Text::new(unicode.to_string())
+    Text::new(unicode)
         .font(ICONEX_ICONS)
         .width(Length::Fixed(20.0))
         .align_x(alignment::Horizontal::Center)
