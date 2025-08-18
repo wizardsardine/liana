@@ -220,7 +220,7 @@ impl State for Home {
                         self.remaining_sequence,
                     ) = coins_summary(
                         &coins,
-                        cache.blockheight as u32,
+                        cache.blockheight() as u32,
                         self.wallet.main_descriptor.first_timelock_value(),
                     );
                 }
@@ -264,9 +264,9 @@ impl State for Home {
                 let wallet_was_syncing = !self.sync_status.is_synced();
                 self.sync_status = sync_status(
                     daemon.backend(),
-                    cache.blockheight,
-                    cache.sync_progress,
-                    cache.last_poll_timestamp,
+                    cache.blockheight(),
+                    cache.sync_progress(),
+                    cache.last_poll_timestamp(),
                     cache.last_poll_at_startup,
                 );
                 // If this is the current panel, reload it if wallet is no longer syncing.
