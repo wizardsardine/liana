@@ -45,13 +45,12 @@ iced_aw = { version = "0.12.2", features = ["context_menu"] }
 iced_runtime = "0.13.1"
 
 # Webview for embedded browser functionality
-# Try using a specific working version
-iced_webview = { git = "https://github.com/LegitCamper/iced_webview.git", rev = "e0fd299f", optional = true }
+iced_webview = { git = "https://github.com/coincubetech/iced_webview.git", optional = true }
 
 # Used to verify RFC-compliance of an email
 email_address = "0.2.7"
 
-tokio = { version = "1.21.0", features = ["signal"] }
+tokio = { version = "1", features = ["signal"] }
 async-fd-lock = "0.2.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -100,4 +99,4 @@ tar = { version = "0.4", default-features = false }
 flate2 = { version = "1.0", default-features = false }
 
 [dev-dependencies]
-tokio = { version = "1.9.0", features = ["rt", "macros"] }
+tokio = { version = "1", features = ["rt", "macros"] }
