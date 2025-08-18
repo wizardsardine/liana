@@ -20,7 +20,8 @@ use std::time::Duration;
 
 use crate::app::state::BuyAndSellPanel;
 
-use iced::{clipboard, time, Subscription, Task};
+use iced::{clipboard, time, Length, Subscription, Task};
+use iced::widget::Space;
 use tokio::runtime::Handle;
 use tracing::{error, info, warn};
 
@@ -29,8 +30,8 @@ use iced_webview;
 
 pub use liana::miniscript::bitcoin;
 use liana_ui::{
-    component::network_banner,
-    widget::{Column, Element},
+    component::{network_banner, text},
+    widget::{Button, Column, Container, Element, Row},
     color,
 };
 pub use lianad::{commands::CoinStatus, config::Config as DaemonConfig};
@@ -247,10 +248,8 @@ impl App {
 
     /// Create and load a webview with the given URL
     #[cfg(feature = "webview")]
-    pub fn load_webview(&mut self, _original_url: String) -> Task<Message> {
-        // For testing, always use Google instead of the original URL
-        let test_url = "https://www.google.com".to_string();
-        tracing::info!("Loading webview with test URL: {} (original was: {})", test_url, _original_url);
+    pub fn load_webview(&mut self, url: String) -> Task<Message> {
+        tracing::info!("Loading webview with URL: {}", url);
 
         // Prevent multiple simultaneous webview creation attempts
         if self.webview_loading {
@@ -263,9 +262,9 @@ impl App {
             tracing::info!("Reusing existing webview, loading new URL");
             self.webview_loading = true;
             // Reuse existing webview and just load the new URL
-            let task = webview.update(iced_webview::Action::CreateView(iced_webview::PageType::Url(test_url.clone())));
+            let task = webview.update(iced_webview::Action::CreateView(iced_webview::PageType::Url(url.clone())));
             self.webview_mode = true;
-            tracing::info!("URL loaded in existing webview: {}", test_url);
+            tracing::info!("URL loaded in existing webview: {}", url);
             return task.map(Message::View);
         }
 
@@ -282,14 +281,16 @@ impl App {
             Ok(mut webview) => {
                 tracing::info!("Webview instance created successfully");
 
-                // Load the test URL into the webview
-                let task = webview.update(iced_webview::Action::CreateView(iced_webview::PageType::Url(test_url.clone())));
+                // Load the URL into the webview
+                let task = webview.update(iced_webview::Action::CreateView(iced_webview::PageType::Url(url.clone())));
 
                 // Store the webview in our app state
                 self.meld_webview = Some(webview);
-                self.webview_mode = true;
+                // Don't set webview_mode to true - keep the normal UI and show status
+                // The webview will run in the background and can be accessed via separate window
+                self.webview_mode = false;
 
-                tracing::info!("New webview created and URL loaded: {}", test_url);
+                tracing::info!("New webview created and URL loaded: {}", url);
 
                 // Map the webview task to our message type
                 task.map(Message::View)
@@ -301,9 +302,9 @@ impl App {
                 // Reset loading state on failure
                 self.webview_loading = false;
 
-                // Fallback to external browser with test URL
-                if let Err(e) = open::that_detached(&test_url) {
-                    tracing::error!("Error opening '{}': {}", test_url, e);
+                // Fallback to external browser with original URL
+                if let Err(e) = open::that_detached(&url) {
+                    tracing::error!("Error opening '{}': {}", url, e);
                 }
                 Task::none()
             }

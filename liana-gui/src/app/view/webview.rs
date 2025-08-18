@@ -285,12 +285,13 @@ pub fn meld_webview_widget(url: &str, app_webview: Option<&iced_webview::WebView
         // Check if we have an active webview from the app
         if let Some(webview) = app_webview {
             // Render the actual webview content from the app's webview instance
-            return render_active_webview_content(webview);
+            return render_active_webview_content(webview, url);
         }
 
         // No active webview - show a widget that will automatically trigger webview creation
         // This creates an embedded browser experience like LegitCamper's example
-        render_webview_auto_create_widget(url, is_loading)
+        // Test with hardcoded Google URL
+        render_webview_auto_create_widget("www.google.com", is_loading)
     }
 
     #[cfg(not(feature = "webview"))]
@@ -329,7 +330,7 @@ fn check_ultralight_resources() -> Result<String, String> {
 
 // Render the actual webview content from an active webview instance
 #[cfg(feature = "webview")]
-fn render_active_webview_content(_webview: &iced_webview::WebView<iced_webview::Ultralight, view::Message>) -> Element<'static, view::Message> {
+fn render_active_webview_content(webview: &iced_webview::WebView<iced_webview::Ultralight, view::Message>, url: &str) -> Element<'static, view::Message> {
     // Render the actual webview content directly inline like an iframe
     // This creates an embedded browser widget that shows the web content
 
@@ -385,22 +386,50 @@ fn render_active_webview_content(_webview: &iced_webview::WebView<iced_webview::
                     .padding(10)
             )
             .push(
-                // The actual webview content - this is the embedded browser
-                // Note: Due to type constraints, we show a placeholder for the webview content
+                // Webview is active - show status and provide options
                 Container::new(
-                    text::text("🌐 WebView Content Rendered Here")
-                        .size(14)
-                        .color(color::GREY_2)
+                    Column::new()
+                        .push(
+                            text::text("🌐 Google WebView Test")
+                                .size(16)
+                                .color(color::WHITE)
+                        )
+                        .push(Space::with_height(Length::Fixed(10.0)))
+                        .push(
+                            text::text("✅ WebView instance created with Google URL")
+                                .size(12)
+                                .color(color::ORANGE)
+                        )
+                        .push(Space::with_height(Length::Fixed(8.0)))
+                        .push(
+                            text::text("Testing webview functionality with www.google.com")
+                                .size(11)
+                                .color(color::GREY_2)
+                        )
+                        .push(Space::with_height(Length::Fixed(12.0)))
+                        .push(
+                            Button::new(text::text("🪟 Open Google in Browser"))
+                                .on_press(view::Message::OpenUrl("https://www.google.com".to_string()))
+                                .style(|_theme, _status| iced::widget::button::Style {
+                                    background: Some(iced::Background::Color(color::ORANGE)),
+                                    text_color: color::WHITE,
+                                    border: iced::Border::default(),
+                                    shadow: iced::Shadow::default(),
+                                })
+                                .width(Length::Fill)
+                        )
+                        .align_x(Horizontal::Center)
                 )
                 .width(Length::Fill)
-                .height(Length::Fixed(300.0))
+                .height(Length::Fixed(180.0)) // Reduced height to fit within app window
+                .padding(15) // Reduced padding
                 .center_x(Length::Fill)
                 .center_y(Length::Fill)
                 .style(|_theme| iced::widget::container::Style {
-                    background: Some(iced::Background::Color(iced::Color::BLACK)),
+                    background: Some(iced::Background::Color(iced::Color::from_rgb(0.1, 0.1, 0.1))),
                     border: iced::Border {
-                        color: color::GREY_3,
-                        width: 1.0,
+                        color: color::ORANGE,
+                        width: 2.0,
                         radius: 4.0.into(),
                     },
                     ..Default::default()
@@ -478,13 +507,13 @@ fn render_webview_auto_create_widget(url: &str, is_loading: bool) -> Element<'st
                     if is_loading {
                         Column::new()
                             .push(
-                                text::text("⏳ Loading Google.com...")
+                                text::text("⏳ Loading Google WebView...")
                                     .size(14)
                                     .color(color::ORANGE)
                             )
-                            .push(Space::with_height(Length::Fixed(10.0)))
+                            .push(Space::with_height(Length::Fixed(8.0)))
                             .push(
-                                text::text("Please wait while the webview initializes...")
+                                text::text("Testing webview with www.google.com...")
                                     .size(12)
                                     .color(color::GREY_2)
                             )
@@ -499,10 +528,10 @@ fn render_webview_auto_create_widget(url: &str, is_loading: bool) -> Element<'st
                             .push(Space::with_height(Length::Fixed(15.0)))
                             .push(
                                 Button::new(
-                                    text::text("🖥️ Open Embedded")
+                                    text::text("🖥️ Test Google WebView")
                                         .size(14)
                                 )
-                                .on_press(view::Message::OpenWebview(url.to_string()))
+                                .on_press(view::Message::OpenWebview("https://www.google.com".to_string()))
                                 .style(|_theme, _status| iced::widget::button::Style {
                                     background: Some(iced::Background::Color(color::ORANGE)),
                                     text_color: color::WHITE,
@@ -530,8 +559,8 @@ fn render_webview_auto_create_widget(url: &str, is_loading: bool) -> Element<'st
                     }
                 )
                 .width(Length::Fill)
-                .height(Length::Fixed(300.0))
-                .padding(20)
+                .height(Length::Fixed(160.0)) // Further reduced height to fit in app window
+                .padding(12) // Reduced padding
                 .center_x(Length::Fill)
                 .center_y(Length::Fill)
                 .style(|_theme| iced::widget::container::Style {

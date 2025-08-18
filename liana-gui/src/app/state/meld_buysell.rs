@@ -283,12 +283,14 @@ impl State for MeldBuySellPanel {
             Message::View(ViewMessage::MeldBuySell(MeldBuySellMessage::ResetForm)) => {
                 self.error = None;
                 self.widget_url = None;
+                self.widget_session_created = None;
                 Task::none()
             }
             Message::View(ViewMessage::MeldBuySell(MeldBuySellMessage::GoBackToForm)) => {
                 // Reset to form state - clear widget URL and error
                 self.widget_url = None;
                 self.error = None;
+                self.widget_session_created = None;
                 Task::none()
             }
             Message::View(ViewMessage::MeldBuySell(MeldBuySellMessage::OpenWidgetInNewWindow(widget_url))) => {

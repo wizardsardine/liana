@@ -405,7 +405,7 @@ pub fn dashboard<'a, T: Into<Element<'a, Message>>>(
                                     )
                                     .push(Space::with_width(Length::FillPortion(1)))
                             )
-                            .spacing(20)
+                            .spacing(10)
                             .height(Length::Shrink)
                     ))
                     .center_x(Length::Fill)

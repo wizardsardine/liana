@@ -36,6 +36,7 @@ pub struct MeldBuySellPanel {
     pub error: Option<String>,
     pub network: Network,
     pub widget_url: Option<String>,
+    pub widget_session_created: Option<String>,
 }
 
 #[cfg(feature = "dev-meld")]
@@ -62,6 +63,7 @@ impl MeldBuySellPanel {
             error: None,
             network,
             widget_url: None,
+            widget_session_created: None,
         }
     }
 
@@ -78,7 +80,8 @@ impl MeldBuySellPanel {
     pub fn session_created(&mut self, widget_url: String) {
         self.loading = false;
         self.error = None;
-        self.widget_url = Some(widget_url);
+        self.widget_url = Some(widget_url.clone());
+        self.widget_session_created = Some(widget_url);
     }
 
     pub fn set_wallet_address(&mut self, address: String) {
@@ -160,8 +163,6 @@ impl MeldBuySellPanel {
         self.update_wallet_address_warning();
     }
 
-
-
     pub fn is_form_valid(&self) -> bool {
         self.wallet_address.valid
             && self.country_code.valid
@@ -198,29 +199,36 @@ pub fn meld_buysell_view(state: &MeldBuySellPanel) -> Element<'_, ViewMessage> {
                     .push(Space::with_width(Length::Fill))
                     .align_y(Alignment::Center)
             )
-            .push(Space::with_height(Length::Fixed(10.0)))
-            .push(
-                Row::new()
-                    .push(Space::with_width(Length::Fill))
-                    .push(
-                        Row::new()
+            .push_maybe(if state.widget_session_created.is_none() {
+                Some(
+                    Column::new()
+                        .push(Space::with_height(Length::Fixed(10.0)))
+                        .push(
+                            Row::new()
+                            .push(Space::with_width(Length::Fill))
                             .push(
-                                Container::new(bitcoin_icon().size(24))
-                                    .style(theme::container::border)
-                                    .padding(10)
+                                Row::new()
+                                    .push(
+                                        Container::new(bitcoin_icon().size(24))
+                                            .style(theme::container::border)
+                                            .padding(10)
+                                    )
+                                    .push(Space::with_width(Length::Fixed(15.0)))
+                                    .push(
+                                        Column::new()
+                                            .push(text("COINCUBE").size(16).color(color::ORANGE))
+                                            .push(text("BUY/SELL").size(14).color(color::GREY_3))
+                                            .spacing(2)
+                                    )
+                                    .align_y(Alignment::Center)
                             )
-                            .push(Space::with_width(Length::Fixed(15.0)))
-                            .push(
-                                Column::new()
-                                    .push(text("COINCUBE").size(16).color(color::ORANGE))
-                                    .push(text("BUY/SELL").size(14).color(color::GREY_3))
-                                    .spacing(2)
-                            )
+                            .push(Space::with_width(Length::Fill))
                             .align_y(Alignment::Center)
-                    )
-                    .push(Space::with_width(Length::Fill))
-                    .align_y(Alignment::Center)
-            )
+                        )
+                )
+            } else {
+                None
+            })
             .push(Space::with_height(Length::Fixed(10.0)))
             .push(meld_form_content(state))
             .align_x(Alignment::Center)
@@ -239,6 +247,7 @@ fn meld_form_content(state: &MeldBuySellPanel) -> Element<'_, ViewMessage> {
 
     // If we have a widget URL, show success state
     if let Some(widget_url) = &state.widget_url {
+        tracing::info!("Rendering meld form content using url: {}", widget_url);
         return success_content(widget_url);
     }
 
