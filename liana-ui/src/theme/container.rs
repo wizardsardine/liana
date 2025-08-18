@@ -22,6 +22,7 @@ pub fn background(theme: &Theme) -> Style {
     }
 }
 
+#[allow(unused)]
 pub fn debug(theme: &Theme) -> Style {
     Style {
         background: Some(Background::Color(iced::Color::WHITE)),
