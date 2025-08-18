@@ -1,3 +1,4 @@
+pub mod buysell;
 pub mod cache;
 pub mod config;
 pub mod menu;
@@ -7,6 +8,9 @@ pub mod state;
 pub mod view;
 pub mod wallet;
 
+#[cfg(feature = "webview")]
+mod webview_utils;
+
 mod error;
 
 use std::fs::OpenOptions;
@@ -14,14 +18,21 @@ use std::io::Write;
 use std::sync::Arc;
 use std::time::Duration;
 
-use iced::{clipboard, time, Subscription, Task};
+use crate::app::state::BuyAndSellPanel;
+
+use iced::{clipboard, time, Length, Subscription, Task};
+use iced::widget::Space;
 use tokio::runtime::Handle;
 use tracing::{error, info, warn};
 
+#[cfg(feature = "webview")]
+use iced_webview;
+
 pub use liana::miniscript::bitcoin;
 use liana_ui::{
-    component::network_banner,
-    widget::{Column, Element},
+    component::{network_banner, text},
+    widget::{Button, Column, Container, Element, Row},
+    color,
 };
 pub use lianad::{commands::CoinStatus, config::Config as DaemonConfig};
 
@@ -58,6 +69,10 @@ struct Panels {
     receive: ReceivePanel,
     create_spend: CreateSpendPanel,
     settings: SettingsState,
+    #[cfg(all(feature = "dev-coincube", not(feature = "dev-meld")))]
+    buy_and_sell: BuyAndSellPanel,
+    #[cfg(feature = "dev-meld")]
+    meld_buy_and_sell: crate::app::view::meld_buysell::MeldBuySellPanel,
 }
 
 impl Panels {
@@ -110,6 +125,10 @@ impl Panels {
                 internal_bitcoind.is_some(),
                 config.clone(),
             ),
+            #[cfg(all(feature = "dev-coincube", not(feature = "dev-meld")))]
+            buy_and_sell: BuyAndSellPanel::new(),
+            #[cfg(feature = "dev-meld")]
+            meld_buy_and_sell: crate::app::view::meld_buysell::MeldBuySellPanel::new(cache.network),
         }
     }
 
@@ -126,6 +145,10 @@ impl Panels {
             Menu::Recovery => &self.recovery,
             Menu::RefreshCoins(_) => &self.create_spend,
             Menu::PsbtPreSelected(_) => &self.psbts,
+            #[cfg(all(feature = "dev-coincube", not(feature = "dev-meld")))]
+            Menu::BuyAndSell => &self.buy_and_sell,
+            #[cfg(feature = "dev-meld")]
+            Menu::BuyAndSell => &self.meld_buy_and_sell,
         }
     }
 
@@ -142,6 +165,10 @@ impl Panels {
             Menu::Recovery => &mut self.recovery,
             Menu::RefreshCoins(_) => &mut self.create_spend,
             Menu::PsbtPreSelected(_) => &mut self.psbts,
+            #[cfg(all(feature = "dev-coincube", not(feature = "dev-meld")))]
+            Menu::BuyAndSell => &mut self.buy_and_sell,
+            #[cfg(feature = "dev-meld")]
+            Menu::BuyAndSell => &mut self.meld_buy_and_sell,
         }
     }
 }
@@ -153,6 +180,18 @@ pub struct App {
     internal_bitcoind: Option<Bitcoind>,
 
     panels: Panels,
+
+    // WebView for Meld widget integration
+    #[cfg(feature = "webview")]
+    meld_webview: Option<iced_webview::WebView<iced_webview::Ultralight, view::Message>>,
+
+    // Flag to indicate when webview should be rendered instead of normal panels
+    #[cfg(feature = "webview")]
+    webview_mode: bool,
+
+    // Flag to track webview loading state
+    #[cfg(feature = "webview")]
+    webview_loading: bool,
 }
 
 impl App {
@@ -183,6 +222,12 @@ impl App {
                 daemon,
                 wallet,
                 internal_bitcoind,
+                #[cfg(feature = "webview")]
+                meld_webview: None,
+                #[cfg(feature = "webview")]
+                webview_mode: false,
+                #[cfg(feature = "webview")]
+                webview_loading: false,
             },
             cmd,
         )
@@ -200,6 +245,87 @@ impl App {
         }
         "Liana wallet"
     }
+
+    /// Check if webview is currently loading
+    #[cfg(feature = "webview")]
+    pub fn is_webview_loading(&self) -> bool {
+        self.webview_loading
+    }
+
+    /// Create and load a webview with the given URL
+    #[cfg(feature = "webview")]
+    pub fn load_webview(&mut self, url: String) -> Task<Message> {
+        tracing::info!("Loading webview with URL: {}", url);
+
+        // Prevent multiple simultaneous webview creation attempts
+        if self.webview_loading {
+            tracing::warn!("Webview is already loading, ignoring request");
+            return Task::none();
+        }
+
+        // Check if we already have an active webview
+        if let Some(webview) = &mut self.meld_webview {
+            tracing::info!("Reusing existing webview, loading new URL");
+            self.webview_loading = true;
+            // Reuse existing webview and just load the new URL
+            let task = webview.update(iced_webview::Action::CreateView(iced_webview::PageType::Url(url.clone())));
+            self.webview_mode = true;
+            tracing::info!("URL loaded in existing webview: {}", url);
+            return task.map(Message::View);
+        }
+
+        // Set loading state to prevent multiple creation attempts
+        self.webview_loading = true;
+
+        // No existing webview, create a new one
+        tracing::info!("Creating new webview instance");
+
+        // Use a safer approach to create webview with error handling
+        match std::panic::catch_unwind(|| {
+            iced_webview::WebView::<iced_webview::Ultralight, view::Message>::new()
+        }) {
+            Ok(mut webview) => {
+                tracing::info!("Webview instance created successfully");
+
+                // Load the URL into the webview
+                let task = webview.update(iced_webview::Action::CreateView(iced_webview::PageType::Url(url.clone())));
+
+                // Store the webview in our app state
+                self.meld_webview = Some(webview);
+                // Don't set webview_mode to true - keep the normal UI and show status
+                // The webview will run in the background and can be accessed via separate window
+                self.webview_mode = false;
+
+                tracing::info!("New webview created and URL loaded: {}", url);
+
+                // Map the webview task to our message type
+                task.map(Message::View)
+            }
+            Err(e) => {
+                tracing::error!("Failed to create webview instance: {:?}", e);
+                tracing::info!("Falling back to external browser");
+
+                // Reset loading state on failure
+                self.webview_loading = false;
+
+                // Fallback to external browser with original URL
+                if let Err(e) = open::that_detached(&url) {
+                    tracing::error!("Error opening '{}': {}", url, e);
+                }
+                Task::none()
+            }
+        }
+    }
+
+
+
+    /// Get a reference to the webview if it exists
+    #[cfg(feature = "webview")]
+    pub fn get_webview(&self) -> Option<&iced_webview::WebView<iced_webview::Ultralight, view::Message>> {
+        self.meld_webview.as_ref()
+    }
+
+
 
     fn set_current_panel(&mut self, menu: Menu) -> Task<Message> {
         self.panels.current_mut().interrupt();
@@ -277,7 +403,7 @@ impl App {
     }
 
     pub fn subscription(&self) -> Subscription<Message> {
-        Subscription::batch(vec![
+        let mut subscriptions = vec![
             time::every(Duration::from_secs(
                 match sync_status(
                     self.daemon.backend(),
@@ -308,7 +434,21 @@ impl App {
             ))
             .map(|_| Message::Tick),
             self.panels.current().subscription(),
-        ])
+        ];
+
+        // Add webview subscription for periodic updates
+        #[cfg(feature = "webview")]
+        {
+            if self.meld_webview.is_some() && self.webview_mode {
+                subscriptions.push(
+                    iced::time::every(std::time::Duration::from_millis(16)) // ~60 FPS
+                        .map(|_| iced_webview::Action::Update)
+                        .map(|action| Message::View(view::Message::WebviewAction(action)))
+                );
+            }
+        }
+
+        Subscription::batch(subscriptions)
     }
 
     pub fn stop(&mut self) {
@@ -393,7 +533,24 @@ impl App {
                     Message::WalletUpdated(Ok(wallet)),
                 )
             }
-            Message::View(view::Message::Menu(menu)) => self.set_current_panel(menu),
+            Message::View(view::Message::Menu(menu)) => {
+                match menu {
+                    menu::Menu::BuyAndSell => {
+                        // Switch to buy/sell panel and show modal
+                        self.panels.current = menu;
+                        #[cfg(all(feature = "dev-coincube", not(feature = "dev-meld")))]
+                        {
+                            self.panels.buy_and_sell.show_modal();
+                        }
+                        #[cfg(feature = "dev-meld")]
+                        {
+                            // No need to show modal - form is always visible
+                        }
+                        Task::none()
+                    }
+                    _ => self.set_current_panel(menu),
+                }
+            }
             Message::View(view::Message::OpenUrl(url)) => {
                 if let Err(e) = open::that_detached(&url) {
                     tracing::error!("Error opening '{}': {}", url, e);
@@ -401,6 +558,62 @@ impl App {
                 Task::none()
             }
             Message::View(view::Message::Clipboard(text)) => clipboard::write(text),
+
+            Message::View(view::Message::OpenWebview(url)) => {
+                #[cfg(feature = "webview")]
+                {
+                    // Load URL into embedded webview
+                    self.load_webview(url)
+                }
+                #[cfg(not(feature = "webview"))]
+                {
+                    // Fallback to external browser
+                    if let Err(e) = open::that_detached(&url) {
+                        tracing::error!("Error opening '{}': {}", url, e);
+                    }
+                    Task::none()
+                }
+            }
+            #[cfg(feature = "webview")]
+            Message::View(view::Message::WebviewAction(action)) => {
+                // Handle webview actions (like URL loading, navigation, etc.)
+                tracing::info!("Received webview action: {:?}", action);
+
+                // Check if this is a page load completion to reset loading state
+                match &action {
+                    iced_webview::Action::Update => {
+                        // Page is updating/loading
+                    }
+                    _ => {
+                        // For other actions, assume loading is complete
+                        if self.webview_loading {
+                            tracing::info!("Webview loading completed");
+                            self.webview_loading = false;
+                        }
+                    }
+                }
+
+                // Update the webview if it exists
+                if let Some(webview) = &mut self.meld_webview {
+                    webview.update(action).map(Message::View)
+                } else {
+                    Task::none()
+                }
+            }
+            Message::View(view::Message::CloseWebview) => {
+                #[cfg(feature = "webview")]
+                {
+                    // Close the webview by removing it from the app state
+                    self.meld_webview = None;
+                    self.webview_mode = false;
+                    self.webview_loading = false;
+                    tracing::info!("WebView closed by user");
+                }
+                Task::none()
+            }
+
+
+
             _ => self
                 .panels
                 .current_mut()
@@ -447,6 +660,8 @@ impl App {
             content
         }
     }
+
+
 
     pub fn datadir_path(&self) -> &LianaDirectory {
         &self.cache.datadir_path

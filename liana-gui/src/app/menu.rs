@@ -13,6 +13,7 @@ pub enum Menu {
     Recovery,
     RefreshCoins(Vec<OutPoint>),
     PsbtPreSelected(Txid),
+    BuyAndSell,//(Option<AccountInfo>),
 }
 
 /// Pre-selectable settings options.

@@ -1,4 +1,4 @@
-use crate::{app::menu::Menu, export::ImportExportMessage, node::bitcoind::RpcAuthType};
+use crate::{app::{menu::Menu, state::buysell::AccountType}, export::ImportExportMessage, node::bitcoind::RpcAuthType};
 use liana::miniscript::bitcoin::{bip32::Fingerprint, Address, OutPoint};
 
 pub trait Close {
@@ -31,6 +31,13 @@ pub enum Message {
     ExportPsbt,
     ImportPsbt,
     OpenUrl(String),
+    BuySell(BuySellMessage),
+    #[cfg(feature = "dev-meld")]
+    MeldBuySell(MeldBuySellMessage),
+    #[cfg(feature = "webview")]
+    WebviewAction(iced_webview::Action),
+    OpenWebview(String),
+    CloseWebview,
 }
 
 impl Close for Message {
@@ -127,4 +134,39 @@ pub enum CreateRbfMessage {
     FeerateEdited(String),
     Cancel,
     Confirm,
+}
+
+#[derive(Debug, Clone)]
+pub enum BuySellMessage {
+    ShowModal,
+    CloseModal,
+    ShowAccountSelection,
+    HideAccountSelection,
+    SelectAccountType(AccountType),
+    GetStarted,
+    GoBack,
+    FormFieldEdited(String, String),
+    ToggleTermsAcceptance,
+    CreateAccount,
+}
+
+#[cfg(feature = "dev-meld")]
+#[derive(Debug, Clone)]
+pub enum MeldBuySellMessage {
+    ShowModal,
+    CloseModal,
+    WalletAddressChanged(String),
+    CountryCodeChanged(String),
+    SourceAmountChanged(String),
+    ProviderSelected(crate::app::buysell::ServiceProvider),
+    CreateSession,
+    SessionCreated(String), // widget_url
+    SessionError(String),
+    OpenWidget(String), // widget_url
+    OpenWidgetInNewWindow(String), // widget_url
+    CopyUrl(String), // widget_url
+    UrlCopied,
+    CopyError,
+    ResetForm,
+    GoBackToForm,
 }
