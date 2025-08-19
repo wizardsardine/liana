@@ -131,6 +131,10 @@ pub fn restore_icon() -> Text<'static> {
     bootstrap_icon('\u{F358}')
 }
 
+pub fn wrench_icon() -> Text<'static> {
+    bootstrap_icon('\u{F621}')
+}
+
 pub fn link_icon() -> Text<'static> {
     bootstrap_icon('\u{F470}')
 }
