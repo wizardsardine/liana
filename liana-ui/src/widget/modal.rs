@@ -15,7 +15,7 @@ use crate::{
         text,
     },
     icon,
-    theme::Theme,
+    theme::{self, Theme},
 };
 
 use super::{Button, Column, Element, Row, Text};
@@ -23,10 +23,11 @@ use super::{Button, Column, Element, Row, Text};
 pub const MODAL_WIDTH: u16 = 550;
 pub const BTN_W: u16 = 400;
 pub const BTN_H: u16 = 40;
-pub const SPACING: u16 = 10;
+pub const V_SPACING: u16 = 10;
+pub const H_SPACING: u16 = 5;
 
 fn widget_style(theme: &Theme, status: Status) -> Style {
-    crate::theme::button::secondary(theme, status)
+    theme::button::secondary(theme, status)
 }
 
 pub fn header<'a, Message, Back, Close>(
@@ -50,6 +51,37 @@ where
         .push(Space::with_width(Length::Fill))
         .push_maybe(close)
         .align_y(Vertical::Center)
+        .into()
+}
+
+pub fn optional_section<'a, Message, Collapse, Fold>(
+    collapsed: bool,
+    title: String,
+    collapse: Collapse,
+    fold: Fold,
+) -> Element<'a, Message>
+where
+    Collapse: 'static + Fn() -> Message,
+    Fold: 'static + Fn() -> Message,
+    Message: Clone + 'static,
+{
+    let icon = if collapsed {
+        icon::collapsed_icon().style(theme::text::secondary)
+    } else {
+        icon::collapse_icon().style(theme::text::secondary)
+    };
+
+    let msg = if !collapsed { collapse() } else { fold() };
+
+    let row = Row::new()
+        .push(text::p1_bold(&title))
+        .push(icon)
+        .align_y(Vertical::Center)
+        .spacing(H_SPACING);
+
+    Button::new(row)
+        .style(theme::button::transparent_border)
+        .on_press(msg)
         .into()
 }
 
@@ -82,7 +114,7 @@ where
     let icon = icon.map(|i| i.color(color::WHITE));
 
     if collapsed {
-        let line = Row::new().push(form).push_maybe(paste).spacing(SPACING);
+        let line = Row::new().push(form).push_maybe(paste).spacing(V_SPACING);
         let col = Column::new()
             .push(row![
                 text::p1_regular(label).color(color::WHITE),
@@ -93,7 +125,7 @@ where
             .push_maybe(icon)
             .push(col)
             .align_y(Vertical::Center)
-            .spacing(SPACING);
+            .spacing(V_SPACING);
 
         Button::new(row).style(widget_style)
     } else {
@@ -101,7 +133,7 @@ where
             .push_maybe(icon)
             .push(text::p1_regular(label))
             .height(BTN_H)
-            .spacing(SPACING)
+            .spacing(V_SPACING)
             .align_y(Vertical::Center);
         Button::new(row)
             .on_press(collapse_message())
