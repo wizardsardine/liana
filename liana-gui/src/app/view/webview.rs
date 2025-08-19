@@ -285,8 +285,7 @@ pub fn meld_webview_widget(
 
     // No active webview - show a widget that will automatically trigger webview creation
     // This creates an embedded browser experience like LegitCamper's example
-    // Test with hardcoded Google URL
-    render_webview_auto_create_widget("www.google.com", is_loading)
+    render_webview_auto_create_widget(url, is_loading)
 }
 
 // Helper function to check Ultralight resources
