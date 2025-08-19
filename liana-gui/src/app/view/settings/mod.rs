@@ -1,3 +1,5 @@
+pub mod general;
+
 use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
 
@@ -116,6 +118,13 @@ pub fn list(cache: &Cache, is_remote_backend: bool) -> Element<Message> {
         .style(theme::button::transparent)
         .on_press(Message::Menu(Menu::Settings));
 
+    let general = settings_section(
+        "General",
+        None,
+        icon::wrench_icon(),
+        Message::Settings(SettingsMessage::GeneralSection),
+    );
+
     let node = settings_section(
         "Node",
         None,
@@ -159,6 +168,7 @@ pub fn list(cache: &Cache, is_remote_backend: bool) -> Element<Message> {
             .spacing(20)
             .width(Length::Fill)
             .push(header)
+            .push(general)
             .push(if !is_remote_backend { node } else { backend })
             .push(wallet)
             .push(import_export)

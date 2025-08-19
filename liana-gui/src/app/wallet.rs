@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use crate::dir::LianaDirectory;
+use crate::services::fiat::{Currency, PriceSource};
 use crate::{
     app::settings, daemon::DaemonBackend, hw::HardwareWalletConfig, node::NodeType, signer::Signer,
 };
@@ -11,7 +12,7 @@ use liana::{miniscript::bitcoin, signer::HotSigner};
 use liana::descriptors::LianaDescriptor;
 use liana::miniscript::bitcoin::bip32::Fingerprint;
 
-use super::settings::{WalletId, WalletSettings};
+use super::settings::{fiat, WalletId, WalletSettings};
 
 const DEFAULT_WALLET_NAME: &str = "Liana";
 
@@ -41,6 +42,7 @@ pub struct Wallet {
     pub provider_keys: HashMap<Fingerprint, settings::ProviderKey>,
     pub hardware_wallets: Vec<HardwareWalletConfig>,
     pub signer: Option<Arc<Signer>>,
+    pub fiat_price_setting: Option<fiat::PriceSetting>,
 }
 
 impl Wallet {
@@ -60,6 +62,7 @@ impl Wallet {
             provider_keys: HashMap::new(),
             hardware_wallets: Vec::new(),
             signer: None,
+            fiat_price_setting: None,
         }
     }
 
@@ -106,6 +109,48 @@ impl Wallet {
         self
     }
 
+    pub fn with_fiat_price_setting(
+        mut self,
+        fiat_price_setting: Option<fiat::PriceSetting>,
+    ) -> Self {
+        self.fiat_price_setting = fiat_price_setting;
+        self
+    }
+
+    /// If the fiat price setting is not set, use a default value unless the backend is local and
+    /// the network is mainnet. A value set by this method will be indistinguishable from a value
+    /// loaded from `WalletSettings`.
+    ///
+    /// In all cases where a value is set, the default source and currency will be used:
+    /// * If the backend is remote, the fiat price setting will be enabled for mainnet and otherwise
+    ///   disabled.
+    /// * If the backend is local and the network is not mainnet, the fiat price setting will be disabled.
+    /// * If the backend is local and the network is mainnet, the fiat price setting will not be set.
+    pub fn or_default_fiat_price_setting(
+        mut self,
+        network: bitcoin::Network,
+        is_remote_backend: bool,
+    ) -> Self {
+        if self.fiat_price_setting.is_none() {
+            self.fiat_price_setting = if is_remote_backend {
+                Some(fiat::PriceSetting {
+                    source: PriceSource::default(),
+                    currency: Currency::default(),
+                    is_enabled: network == bitcoin::Network::Bitcoin,
+                })
+            } else if network != bitcoin::Network::Bitcoin {
+                Some(fiat::PriceSetting {
+                    source: PriceSource::default(),
+                    currency: Currency::default(),
+                    is_enabled: false,
+                })
+            } else {
+                None // local backend on mainnet requires user to explicitly enable or disable
+            }
+        };
+        self
+    }
+
     pub fn descriptor_keys(&self) -> HashSet<Fingerprint> {
         let info = self.main_descriptor.policy();
         let mut descriptor_keys = HashSet::new();
@@ -130,7 +175,8 @@ impl Wallet {
                 .with_alias(wallet_settings.alias)
                 .with_name(wallet_settings.name)
                 .with_pinned_at(wallet_settings.pinned_at)
-                .with_hardware_wallets(wallet_settings.hardware_wallets))
+                .with_hardware_wallets(wallet_settings.hardware_wallets)
+                .with_fiat_price_setting(wallet_settings.fiat_price))
         }
     }
 
