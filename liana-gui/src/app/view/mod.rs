@@ -22,7 +22,7 @@ pub use message::*;
 use warning::warn;
 
 use iced::{
-    widget::{column, responsive, row, scrollable, Space},
+    widget::{responsive, row, scrollable, Space},
     Length,
 };
 
@@ -31,7 +31,7 @@ use liana_ui::{
     component::{button, text::*},
     icon::{
         bitcoin_icon, coins_icon, cross_icon, history_icon, home_icon, receive_icon, recovery_icon, send_icon,
-        settings_icon, link_icon,
+        settings_icon,
     },
     image::*,
     theme,

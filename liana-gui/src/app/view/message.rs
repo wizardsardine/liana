@@ -36,6 +36,10 @@ pub enum Message {
     MeldBuySell(MeldBuySellMessage),
     #[cfg(feature = "webview")]
     WebviewAction(iced_webview::Action),
+    #[cfg(feature = "webview")]
+    WebviewCreated,
+    #[cfg(feature = "webview")]
+    WebviewUrlChanged(String),
     OpenWebview(String),
     CloseWebview,
 }

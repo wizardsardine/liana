@@ -2701,7 +2701,6 @@ dependencies = [
 [[package]]
 name = "iced_webview"
 version = "0.0.5"
-source = "git+https://github.com/LegitCamper/iced_webview.git?rev=e0fd299f#e0fd299f1a7291378999aa5c939f9a02c90dee40"
 dependencies = [
  "clipboard-rs",
  "html",

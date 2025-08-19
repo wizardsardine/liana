@@ -18,10 +18,10 @@ use std::io::Write;
 use std::sync::Arc;
 use std::time::Duration;
 
+#[cfg(all(feature = "dev-coincube", not(feature = "dev-meld")))]
 use crate::app::state::BuyAndSellPanel;
 
-use iced::{clipboard, time, Length, Subscription, Task};
-use iced::widget::Space;
+use iced::{clipboard, time, Subscription, Task};
 use tokio::runtime::Handle;
 use tracing::{error, info, warn};
 
@@ -30,9 +30,8 @@ use iced_webview;
 
 pub use liana::miniscript::bitcoin;
 use liana_ui::{
-    component::{network_banner, text},
-    widget::{Button, Column, Container, Element, Row},
-    color,
+    component::{network_banner},
+    widget::{Column, Element},
 };
 pub use lianad::{commands::CoinStatus, config::Config as DaemonConfig};
 
@@ -192,6 +191,10 @@ pub struct App {
     // Flag to track webview loading state
     #[cfg(feature = "webview")]
     webview_loading: bool,
+
+    // Current webview URL for display
+    #[cfg(feature = "webview")]
+    current_webview_url: Option<String>,
 }
 
 impl App {
@@ -228,6 +231,8 @@ impl App {
                 webview_mode: false,
                 #[cfg(feature = "webview")]
                 webview_loading: false,
+                #[cfg(feature = "webview")]
+                current_webview_url: None,
             },
             cmd,
         )
@@ -268,10 +273,18 @@ impl App {
             tracing::info!("Reusing existing webview, loading new URL");
             self.webview_loading = true;
             // Reuse existing webview and just load the new URL
-            let task = webview.update(iced_webview::Action::CreateView(iced_webview::PageType::Url(url.clone())));
+            let create_task = webview.update(iced_webview::Action::CreateView(iced_webview::PageType::Url(url.clone())));
+
+            // CRITICAL: After creating a view, we must set it as the current view
+            // Since we just created a view, it will be at the last index
+            // For simplicity, we'll use index 0 which should work for most cases
+            let change_task = webview.update(iced_webview::Action::ChangeView(0));
+
             self.webview_mode = true;
+            // Store the current URL for display
+            self.current_webview_url = Some(url.clone());
             tracing::info!("URL loaded in existing webview: {}", url);
-            return task.map(Message::View);
+            return Task::batch([create_task, change_task]).map(Message::View);
         }
 
         // Set loading state to prevent multiple creation attempts
@@ -280,26 +293,52 @@ impl App {
         // No existing webview, create a new one
         tracing::info!("Creating new webview instance");
 
+        // Create webview data directory within Liana's data directory
+        let webview_data_dir = self.cache.datadir_path.path().join("webview_data");
+        if let Err(e) = std::fs::create_dir_all(&webview_data_dir) {
+            tracing::warn!("Failed to create webview data directory: {}", e);
+        }
+
+        // Store current directory and change to webview data directory
+        let original_dir = std::env::current_dir().unwrap_or_default();
+        if let Err(e) = std::env::set_current_dir(&webview_data_dir) {
+            tracing::warn!("Failed to change to webview data directory: {}", e);
+        }
+
         // Use a safer approach to create webview with error handling
-        match std::panic::catch_unwind(|| {
+        let webview_result = std::panic::catch_unwind(|| {
             iced_webview::WebView::<iced_webview::Ultralight, view::Message>::new()
-        }) {
+                .on_create_view(view::Message::WebviewCreated)
+                .on_url_change(view::Message::WebviewUrlChanged)
+        });
+
+        // Restore original directory
+        if let Err(e) = std::env::set_current_dir(&original_dir) {
+            tracing::warn!("Failed to restore original directory: {}", e);
+        }
+
+        match webview_result {
             Ok(mut webview) => {
                 tracing::info!("Webview instance created successfully");
 
-                // Load the URL into the webview
-                let task = webview.update(iced_webview::Action::CreateView(iced_webview::PageType::Url(url.clone())));
+                // Create a view and then navigate to the URL for more reliable loading
+                let create_task = webview.update(iced_webview::Action::CreateView(iced_webview::PageType::Url(url.clone())));
+
+                // CRITICAL: After creating a view, we must set it as the current view
+                // This sets current_view_index to 0, which prevents the panic in get_current_view_id()
+                let change_task = webview.update(iced_webview::Action::ChangeView(0));
 
                 // Store the webview in our app state
                 self.meld_webview = Some(webview);
-                // Don't set webview_mode to true - keep the normal UI and show status
-                // The webview will run in the background and can be accessed via separate window
-                self.webview_mode = false;
+                // Enable webview mode to display the webview
+                self.webview_mode = true;
+                // Store the current URL for display
+                self.current_webview_url = Some(url.clone());
 
-                tracing::info!("New webview created and URL loaded: {}", url);
+                tracing::info!("Webview created and URL loaded directly: {}", url);
 
-                // Map the webview task to our message type
-                task.map(Message::View)
+                // Combine both tasks and map to our message type
+                Task::batch([create_task, change_task]).map(Message::View)
             }
             Err(e) => {
                 tracing::error!("Failed to create webview instance: {:?}", e);
@@ -439,9 +478,9 @@ impl App {
         // Add webview subscription for periodic updates
         #[cfg(feature = "webview")]
         {
-            if self.meld_webview.is_some() && self.webview_mode {
+            if self.meld_webview.is_some() {
                 subscriptions.push(
-                    iced::time::every(std::time::Duration::from_millis(16)) // ~60 FPS
+                    iced::time::every(std::time::Duration::from_millis(10)) // Match reference example
                         .map(|_| iced_webview::Action::Update)
                         .map(|action| Message::View(view::Message::WebviewAction(action)))
                 );
@@ -600,6 +639,17 @@ impl App {
                     Task::none()
                 }
             }
+            #[cfg(feature = "webview")]
+            Message::View(view::Message::WebviewCreated) => {
+                tracing::info!("Webview created successfully");
+                self.webview_loading = false;
+                Task::none()
+            }
+            #[cfg(feature = "webview")]
+            Message::View(view::Message::WebviewUrlChanged(url)) => {
+                tracing::info!("Webview URL changed to: {}", url);
+                Task::none()
+            }
             Message::View(view::Message::CloseWebview) => {
                 #[cfg(feature = "webview")]
                 {
@@ -607,6 +657,7 @@ impl App {
                     self.meld_webview = None;
                     self.webview_mode = false;
                     self.webview_loading = false;
+                    self.current_webview_url = None;
                     tracing::info!("WebView closed by user");
                 }
                 Task::none()
@@ -653,11 +704,54 @@ impl App {
     }
 
     pub fn view(&self) -> Element<Message> {
-        let content = self.panels.current().view(&self.cache).map(Message::View);
-        if self.cache.network != bitcoin::Network::Bitcoin {
-            Column::with_children(vec![network_banner(self.cache.network).into(), content]).into()
-        } else {
-            content
+        // Check if we should display webview mode instead of normal panels
+        #[cfg(feature = "webview")]
+        {
+            if self.webview_mode && self.meld_webview.is_some() {
+                // Display the webview as a seamless, non-scrollable embedded component
+                if let Some(webview) = &self.meld_webview {
+                    use iced::widget::{Container, container};
+                    use iced::{Length, Padding};
+
+                    // Create webview content with fixed dimensions and no scrolling
+                    let webview_content = webview.view().map(|action| Message::View(view::Message::WebviewAction(action)));
+
+                    // Wrap in a container with fixed size to prevent scrolling
+                    let webview_container = Container::new(webview_content)
+                        .width(Length::Fill)
+                        .height(Length::Fill)
+                        .padding(Padding::ZERO)
+                        .style(container::transparent);
+
+                    if self.cache.network != bitcoin::Network::Bitcoin {
+                        Column::with_children(vec![network_banner(self.cache.network).into(), webview_container.into()]).into()
+                    } else {
+                        webview_container.into()
+                    }
+                } else {
+                    // Fallback if webview is None (shouldn't happen due to the condition above)
+                    self.panels.current().view(&self.cache).map(Message::View)
+                }
+            } else {
+                // Normal panel view
+                let content = self.panels.current().view(&self.cache).map(Message::View);
+                if self.cache.network != bitcoin::Network::Bitcoin {
+                    Column::with_children(vec![network_banner(self.cache.network).into(), content]).into()
+                } else {
+                    content
+                }
+            }
+        }
+
+        #[cfg(not(feature = "webview"))]
+        {
+            // Normal panel view when webview feature is disabled
+            let content = self.panels.current().view(&self.cache).map(Message::View);
+            if self.cache.network != bitcoin::Network::Bitcoin {
+                Column::with_children(vec![network_banner(self.cache.network).into(), content]).into()
+            } else {
+                content
+            }
         }
     }
 

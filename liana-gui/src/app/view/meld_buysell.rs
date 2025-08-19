@@ -22,8 +22,7 @@ use crate::app::{
     view::{MeldBuySellMessage, Message as ViewMessage},
 };
 
-#[cfg(all(feature = "dev-meld", feature = "webview"))]
-use iced_webview;
+
 
 #[cfg(feature = "dev-meld")]
 #[derive(Debug, Clone)]
@@ -232,11 +231,11 @@ pub fn meld_buysell_view(state: &MeldBuySellPanel) -> Element<'_, ViewMessage> {
             .push(Space::with_height(Length::Fixed(10.0)))
             .push(meld_form_content(state))
             .align_x(Alignment::Center)
-            .spacing(10)
+            .spacing(5) // Reduced spacing for more compact layout
             .max_width(600)
             .width(Length::Fill)
     )
-    .padding(iced::Padding::new(5.0).left(40.0).right(40.0).bottom(40.0)) // further reduced top padding
+    .padding(iced::Padding::new(2.0).left(40.0).right(40.0).bottom(20.0)) // further reduced padding for compact layout
     .center_x(Length::Fill)
     .into()
 }
@@ -405,7 +404,48 @@ fn success_content(widget_url: &str) -> Element<'_, ViewMessage> {
             // Show the webview widget with a launch button
             #[cfg(feature = "webview")]
             {
-                crate::app::view::webview::meld_webview_widget(widget_url, None, false)
+                Container::new(
+                    Column::new()
+                        .push(text("🌐 Meld Widget Ready").size(16).color(color::GREEN))
+                        .push(Space::with_height(Length::Fixed(10.0)))
+                        .push(text("Click below to open the Meld widget in an embedded webview:").size(14).color(color::GREY_3))
+                        .push(Space::with_height(Length::Fixed(15.0)))
+                        .push(
+                            ui_button::primary(None, "Open Meld Widget")
+                                .on_press(ViewMessage::OpenWebview(widget_url.to_string()))
+                                .width(Length::Fill)
+                        )
+                        .push(Space::with_height(Length::Fixed(10.0)))
+                        .push(
+                            Container::new(
+                                text(widget_url)
+                                    .size(11)
+                                    .color(color::BLUE)
+                            )
+                            .padding(10)
+                            .style(theme::card::simple)
+                            .width(Length::Fill)
+                        )
+                        .push(Space::with_height(Length::Fixed(10.0)))
+                        .push(
+                            ui_button::secondary(None, "Copy URL")
+                                .on_press(ViewMessage::MeldBuySell(MeldBuySellMessage::CopyUrl(widget_url.to_string())))
+                                .width(Length::Fill)
+                        )
+                        .align_x(Alignment::Center)
+                )
+                .width(Length::Fill)
+                .height(Length::Fixed(350.0))
+                .padding(20)
+                .style(|_theme| iced::widget::container::Style {
+                    background: Some(iced::Background::Color(iced::Color::from_rgb(0.05, 0.05, 0.05))),
+                    border: iced::Border {
+                        color: color::GREEN,
+                        width: 1.0,
+                        radius: 8.0.into(),
+                    },
+                    ..Default::default()
+                })
             }
             #[cfg(not(feature = "webview"))]
             {
