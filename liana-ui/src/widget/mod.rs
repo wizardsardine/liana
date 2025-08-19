@@ -13,6 +13,7 @@ pub type Row<'a, Message> = iced::widget::Row<'a, Message, Theme, Renderer>;
 pub type Button<'a, Message> = iced::widget::Button<'a, Message, Theme, Renderer>;
 pub type CheckBox<'a, Message> = iced::widget::Checkbox<'a, Message, Theme, Renderer>;
 pub type Text<'a> = iced::widget::Text<'a, Theme, Renderer>;
+pub type Toggler<'a, Message> = iced::widget::Toggler<'a, Message, Theme, Renderer>;
 pub type TextInput<'a, Message> = text_input::TextInput<'a, Message, Theme, Renderer>;
 pub type Tooltip<'a> = iced::widget::Tooltip<'a, Theme, Renderer>;
 pub type ProgressBar<'a> = iced::widget::ProgressBar<'a, Theme>;
