@@ -374,7 +374,7 @@ fn wallets_list_item(
                                 p1_bold(alias)
                             } else {
                                 p1_bold(format!(
-                                    "My Liana {} wallet",
+                                    "My Vault {} wallet",
                                     match network {
                                         Network::Bitcoin => "Bitcoin",
                                         Network::Signet => "Signet",

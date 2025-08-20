@@ -109,10 +109,10 @@ impl ExportModal {
             ImportExportType::ImportDescriptor => "descriptor.txt".into(),
             ImportExportType::ExportLabels => format!("liana-labels-{date}.jsonl"),
             ImportExportType::ExportBackup(_) | ImportExportType::ExportProcessBackup(..) => {
-                format!("liana-backup-{date}.json")
+                format!("coincube-vault-backup-{date}.json")
             }
             ImportExportType::WalletFromBackup | ImportExportType::ImportBackup { .. } => {
-                "liana-backup.json".to_string()
+                "coincube-vault-backup.json".to_string()
             }
         }
     }
