@@ -6,11 +6,13 @@ use liana_ui::{
     widget::{Button, Container, Element, Row},
 };
 
-#[cfg(feature = "webview")]
-use iced_webview::{Action, PageType, Ultralight, WebView};
-
-use crate::app::view;
 use crate::app::view::color;
+
+#[cfg(feature = "webview")]
+use {
+    crate::app::view,
+    iced_webview::{Action, PageType, Ultralight, WebView},
+};
 
 /// Webview state for managing embedded browser
 #[derive(Debug, Clone, Default)]
