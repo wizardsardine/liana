@@ -248,7 +248,7 @@ pub fn unrelated_hardware_wallet<'a, T: 'a, K: Display, V: Display, F: Display>(
         kind,
         version,
         fingerprint,
-        "This signing device is not related to this Liana wallet.",
+        "This signing device is not related to this Vault wallet.",
     )
 }
 

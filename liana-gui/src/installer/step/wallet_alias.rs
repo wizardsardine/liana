@@ -28,13 +28,12 @@ impl Step for WalletAlias {
             // No alias at all, we set a default value.
             (true, true) => {
                 self.wallet_alias.value = format!(
-                    "My Liana {} wallet",
+                    "My Vault {} wallet",
                     match ctx.network {
                         Network::Bitcoin => "Bitcoin",
                         Network::Signet => "Signet",
-                        Network::Testnet => "Testnet",
+                        Network::Testnet4 | Network::Testnet => "Testnet",
                         Network::Regtest => "Regtest",
-                        _ => "",
                     }
                 );
                 self.wallet_alias.valid = true;

@@ -328,7 +328,7 @@ fn add_wallet_menu<'a>() -> Element<'a, ViewMessage> {
                     .spacing(20)
                     .align_x(Alignment::Center)
                     .push(image::create_new_wallet_icon().width(Length::Fixed(100.0)))
-                    .push(p1_regular("Create a new Liana wallet").style(theme::text::secondary))
+                    .push(p1_regular("Create a new Vault wallet").style(theme::text::secondary))
                     .push(
                         button::secondary(None, "Select")
                             .width(Length::Fixed(200.0))
@@ -344,7 +344,7 @@ fn add_wallet_menu<'a>() -> Element<'a, ViewMessage> {
                     .spacing(20)
                     .align_x(Alignment::Center)
                     .push(image::restore_wallet_icon().width(Length::Fixed(100.0)))
-                    .push(p1_regular("Add an existing Liana wallet").style(theme::text::secondary))
+                    .push(p1_regular("Add an existing Vault wallet").style(theme::text::secondary))
                     .push(
                         button::secondary(None, "Select")
                             .width(Length::Fixed(200.0))

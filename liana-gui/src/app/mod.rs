@@ -231,7 +231,8 @@ impl App {
                 return alias;
             }
         }
-        "Liana wallet"
+
+        "COINCUBE|Vault wallet"
     }
 
     /// Check if webview is currently loading

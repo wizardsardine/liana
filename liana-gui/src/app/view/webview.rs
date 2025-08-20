@@ -52,7 +52,6 @@ pub enum WebviewMessage {
     Close,
     ToggleWebview,
     WebviewCreated,
-    // Note: WebView-specific messages disabled due to library compilation issues
     #[cfg(feature = "webview")]
     UpdateWebview(Action),
 }
