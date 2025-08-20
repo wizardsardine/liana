@@ -70,6 +70,3 @@ impl fmt::Display for ServiceProvider {
 
 #[cfg(feature = "dev-meld")]
 pub mod meld;
-
-#[cfg(feature = "dev-coincube")]
-pub mod coincube;

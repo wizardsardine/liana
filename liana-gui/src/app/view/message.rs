@@ -1,4 +1,4 @@
-use crate::{app::{menu::Menu, state::buysell::AccountType}, export::ImportExportMessage, node::bitcoind::RpcAuthType};
+use crate::{app::{menu::Menu}, export::ImportExportMessage, node::bitcoind::RpcAuthType};
 use liana::miniscript::bitcoin::{bip32::Fingerprint, Address, OutPoint};
 
 pub trait Close {
@@ -31,7 +31,6 @@ pub enum Message {
     ExportPsbt,
     ImportPsbt,
     OpenUrl(String),
-    BuySell(BuySellMessage),
     #[cfg(feature = "dev-meld")]
     MeldBuySell(MeldBuySellMessage),
     #[cfg(feature = "webview")]
@@ -134,20 +133,6 @@ pub enum CreateRbfMessage {
     FeerateEdited(String),
     Cancel,
     Confirm,
-}
-
-#[derive(Debug, Clone)]
-pub enum BuySellMessage {
-    ShowModal,
-    CloseModal,
-    ShowAccountSelection,
-    HideAccountSelection,
-    SelectAccountType(AccountType),
-    GetStarted,
-    GoBack,
-    FormFieldEdited(String, String),
-    ToggleTermsAcceptance,
-    CreateAccount,
 }
 
 #[cfg(feature = "dev-meld")]

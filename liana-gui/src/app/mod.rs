@@ -18,10 +18,8 @@ use std::io::Write;
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::app::state::BuyAndSellPanel;
-
-use iced::{clipboard, time, Length, Subscription, Task};
 use iced::widget::Space;
+use iced::{clipboard, time, Length, Subscription, Task};
 use tokio::runtime::Handle;
 use tracing::{error, info, warn};
 
@@ -30,9 +28,9 @@ use iced_webview;
 
 pub use liana::miniscript::bitcoin;
 use liana_ui::{
+    color,
     component::{network_banner, text},
     widget::{Button, Column, Container, Element, Row},
-    color,
 };
 pub use lianad::{commands::CoinStatus, config::Config as DaemonConfig};
 
@@ -69,8 +67,6 @@ struct Panels {
     receive: ReceivePanel,
     create_spend: CreateSpendPanel,
     settings: SettingsState,
-    #[cfg(all(feature = "dev-coincube", not(feature = "dev-meld")))]
-    buy_and_sell: BuyAndSellPanel,
     #[cfg(feature = "dev-meld")]
     meld_buy_and_sell: crate::app::view::meld_buysell::MeldBuySellPanel,
 }
@@ -125,8 +121,6 @@ impl Panels {
                 internal_bitcoind.is_some(),
                 config.clone(),
             ),
-            #[cfg(all(feature = "dev-coincube", not(feature = "dev-meld")))]
-            buy_and_sell: BuyAndSellPanel::new(),
             #[cfg(feature = "dev-meld")]
             meld_buy_and_sell: crate::app::view::meld_buysell::MeldBuySellPanel::new(cache.network),
         }
@@ -145,8 +139,6 @@ impl Panels {
             Menu::Recovery => &self.recovery,
             Menu::RefreshCoins(_) => &self.create_spend,
             Menu::PsbtPreSelected(_) => &self.psbts,
-            #[cfg(all(feature = "dev-coincube", not(feature = "dev-meld")))]
-            Menu::BuyAndSell => &self.buy_and_sell,
             #[cfg(feature = "dev-meld")]
             Menu::BuyAndSell => &self.meld_buy_and_sell,
         }
@@ -165,8 +157,6 @@ impl Panels {
             Menu::Recovery => &mut self.recovery,
             Menu::RefreshCoins(_) => &mut self.create_spend,
             Menu::PsbtPreSelected(_) => &mut self.psbts,
-            #[cfg(all(feature = "dev-coincube", not(feature = "dev-meld")))]
-            Menu::BuyAndSell => &mut self.buy_and_sell,
             #[cfg(feature = "dev-meld")]
             Menu::BuyAndSell => &mut self.meld_buy_and_sell,
         }
@@ -268,7 +258,9 @@ impl App {
             tracing::info!("Reusing existing webview, loading new URL");
             self.webview_loading = true;
             // Reuse existing webview and just load the new URL
-            let task = webview.update(iced_webview::Action::CreateView(iced_webview::PageType::Url(url.clone())));
+            let task = webview.update(iced_webview::Action::CreateView(
+                iced_webview::PageType::Url(url.clone()),
+            ));
             self.webview_mode = true;
             tracing::info!("URL loaded in existing webview: {}", url);
             return task.map(Message::View);
@@ -288,7 +280,9 @@ impl App {
                 tracing::info!("Webview instance created successfully");
 
                 // Load the URL into the webview
-                let task = webview.update(iced_webview::Action::CreateView(iced_webview::PageType::Url(url.clone())));
+                let task = webview.update(iced_webview::Action::CreateView(
+                    iced_webview::PageType::Url(url.clone()),
+                ));
 
                 // Store the webview in our app state
                 self.meld_webview = Some(webview);
@@ -317,15 +311,13 @@ impl App {
         }
     }
 
-
-
     /// Get a reference to the webview if it exists
     #[cfg(feature = "webview")]
-    pub fn get_webview(&self) -> Option<&iced_webview::WebView<iced_webview::Ultralight, view::Message>> {
+    pub fn get_webview(
+        &self,
+    ) -> Option<&iced_webview::WebView<iced_webview::Ultralight, view::Message>> {
         self.meld_webview.as_ref()
     }
-
-
 
     fn set_current_panel(&mut self, menu: Menu) -> Task<Message> {
         self.panels.current_mut().interrupt();
@@ -443,7 +435,7 @@ impl App {
                 subscriptions.push(
                     iced::time::every(std::time::Duration::from_millis(16)) // ~60 FPS
                         .map(|_| iced_webview::Action::Update)
-                        .map(|action| Message::View(view::Message::WebviewAction(action)))
+                        .map(|action| Message::View(view::Message::WebviewAction(action))),
                 );
             }
         }
@@ -533,24 +525,7 @@ impl App {
                     Message::WalletUpdated(Ok(wallet)),
                 )
             }
-            Message::View(view::Message::Menu(menu)) => {
-                match menu {
-                    menu::Menu::BuyAndSell => {
-                        // Switch to buy/sell panel and show modal
-                        self.panels.current = menu;
-                        #[cfg(all(feature = "dev-coincube", not(feature = "dev-meld")))]
-                        {
-                            self.panels.buy_and_sell.show_modal();
-                        }
-                        #[cfg(feature = "dev-meld")]
-                        {
-                            // No need to show modal - form is always visible
-                        }
-                        Task::none()
-                    }
-                    _ => self.set_current_panel(menu),
-                }
-            }
+            Message::View(view::Message::Menu(menu)) => self.set_current_panel(menu),
             Message::View(view::Message::OpenUrl(url)) => {
                 if let Err(e) = open::that_detached(&url) {
                     tracing::error!("Error opening '{}': {}", url, e);
@@ -612,8 +587,6 @@ impl App {
                 Task::none()
             }
 
-
-
             _ => self
                 .panels
                 .current_mut()
@@ -660,8 +633,6 @@ impl App {
             content
         }
     }
-
-
 
     pub fn datadir_path(&self) -> &LianaDirectory {
         &self.cache.datadir_path

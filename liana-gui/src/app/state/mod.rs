@@ -1,15 +1,14 @@
 mod coins;
 pub mod export;
 mod label;
+#[cfg(feature = "dev-meld")]
+pub mod meld_buysell;
 mod psbt;
 mod psbts;
 mod receive;
 mod settings;
 mod spend;
 mod transactions;
-pub mod buysell;
-#[cfg(feature = "dev-meld")]
-pub mod meld_buysell;
 
 use std::convert::TryInto;
 use std::sync::Arc;
@@ -43,7 +42,6 @@ pub use receive::ReceivePanel;
 pub use settings::SettingsState;
 pub use spend::CreateSpendPanel;
 pub use transactions::TransactionsPanel;
-pub use buysell::BuyAndSellPanel;
 
 pub trait State {
     fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, view::Message>;
