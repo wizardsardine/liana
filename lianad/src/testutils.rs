@@ -5,9 +5,11 @@ use crate::{
         BlockInfo, Coin, CoinStatus, DatabaseConnection, DatabaseInterface, LabelItem, Wallet,
     },
     datadir::DataDirectory,
+    payjoin::db::SessionId,
     DaemonControl, DaemonHandle,
 };
 use liana::descriptors;
+use payjoin::OhttpKeys;
 
 use std::convert::TryInto;
 use std::{
@@ -143,6 +145,18 @@ impl BitcoinInterface for DummyBitcoind {
     fn mempool_entry(&self, _: &bitcoin::Txid) -> Option<MempoolEntry> {
         None
     }
+
+    fn test_mempool_accept(&self, _rawtxs: Vec<String>) -> Vec<bool> {
+        todo!()
+    }
+}
+
+struct PayjoinSession {
+    completed: bool,
+}
+
+struct PayjoinSessionEvent {
+    events: Vec<Vec<u8>>,
 }
 
 struct DummyDbState {
@@ -156,6 +170,9 @@ struct DummyDbState {
     timestamp: u32,
     rescan_timestamp: Option<u32>,
     last_poll_timestamp: Option<u32>,
+    payjoin_sender_sessions: HashMap<i64, PayjoinSession>,
+    payjoin_receiver_sessions: HashMap<i64, PayjoinSession>,
+    payjoin_session_events: HashMap<i64, PayjoinSessionEvent>,
 }
 
 pub struct DummyDatabase {
@@ -191,6 +208,9 @@ impl DummyDatabase {
                 timestamp: now,
                 rescan_timestamp: None,
                 last_poll_timestamp: None,
+                payjoin_sender_sessions: HashMap::new(),
+                payjoin_receiver_sessions: HashMap::new(),
+                payjoin_session_events: HashMap::new(),
             })),
         }
     }
@@ -547,7 +567,169 @@ impl DatabaseConnection for DummyDatabase {
         wallet_txs
     }
 
+    fn insert_input_seen_before(&mut self, _outpoints: &[bitcoin::OutPoint]) -> bool {
+        todo!()
+    }
+
     fn get_labels_bip329(&mut self, _offset: u32, _limit: u32) -> bip329::Labels {
+        todo!()
+    }
+    fn payjoin_get_ohttp_keys(&mut self, _ohttp_relay: &str) -> Option<(u32, OhttpKeys)> {
+        todo!()
+    }
+
+    fn payjoin_save_ohttp_keys(&mut self, _ohttp_relay: &str, _ohttp_keys: payjoin::OhttpKeys) {
+        todo!()
+    }
+
+    fn get_all_active_receiver_session_ids(&mut self) -> Vec<SessionId> {
+        self.db
+            .read()
+            .expect("lock should not be poisoned")
+            .payjoin_receiver_sessions
+            .keys()
+            .map(|id| SessionId(*id))
+            .collect()
+    }
+    fn save_new_payjoin_sender_session(&mut self, _txid: &bitcoin::Txid) -> i64 {
+        let id = self
+            .db
+            .read()
+            .expect("lock should not be poisoned")
+            .payjoin_sender_sessions
+            .len() as i64
+            + 1;
+        self.db
+            .write()
+            .expect("lock should not be poisoned")
+            .payjoin_sender_sessions
+            .insert(id, PayjoinSession { completed: false });
+        id
+    }
+
+    fn get_all_active_sender_session_ids(&mut self) -> Vec<SessionId> {
+        self.db
+            .read()
+            .expect("lock should not be poisoned")
+            .payjoin_sender_sessions
+            .keys()
+            .map(|id| SessionId(*id))
+            .collect()
+    }
+
+    fn save_new_payjoin_receiver_session(&mut self) -> i64 {
+        let id = self
+            .db
+            .read()
+            .expect("lock should not be poisoned")
+            .payjoin_receiver_sessions
+            .len() as i64
+            + 1;
+        self.db
+            .write()
+            .expect("lock should not be poisoned")
+            .payjoin_receiver_sessions
+            .insert(id, PayjoinSession { completed: false });
+        id
+    }
+
+    fn save_receiver_session_event(&mut self, session_id: &SessionId, event: Vec<u8>) {
+        self.db
+            .write()
+            .expect("lock should not be poisoned")
+            .payjoin_session_events
+            .entry(session_id.0)
+            .or_insert(PayjoinSessionEvent { events: Vec::new() })
+            .events
+            .push(event);
+    }
+
+    fn update_receiver_session_completed_at(&mut self, session_id: &SessionId) {
+        self.db
+            .write()
+            .expect("lock should not be poisoned")
+            .payjoin_receiver_sessions
+            .entry(session_id.0)
+            .or_insert(PayjoinSession { completed: false })
+            .completed = true;
+    }
+
+    fn load_receiver_session_events(&mut self, session_id: &SessionId) -> Vec<Vec<u8>> {
+        self.db
+            .read()
+            .expect("lock should not be poisoned")
+            .payjoin_session_events
+            .get(&session_id.0)
+            .map(|e| e.events.clone())
+            .unwrap_or_default()
+    }
+
+    fn save_sender_session_event(&mut self, session_id: &SessionId, event: Vec<u8>) {
+        self.db
+            .write()
+            .expect("lock should not be poisoned")
+            .payjoin_session_events
+            .entry(session_id.0)
+            .or_insert(PayjoinSessionEvent { events: Vec::new() })
+            .events
+            .push(event);
+    }
+
+    fn get_all_sender_session_events(&mut self, session_id: &SessionId) -> Vec<Vec<u8>> {
+        self.db
+            .read()
+            .expect("lock should not be poisoned")
+            .payjoin_session_events
+            .get(&session_id.0)
+            .map(|e| e.events.clone())
+            .unwrap_or_default()
+    }
+
+    fn update_sender_session_completed_at(&mut self, session_id: &SessionId) {
+        self.db
+            .write()
+            .expect("lock should not be poisoned")
+            .payjoin_receiver_sessions
+            .entry(session_id.0)
+            .or_insert(PayjoinSession { completed: false })
+            .completed = true;
+    }
+
+    fn save_receiver_session_original_txid(
+        &mut self,
+        _session_id: &SessionId,
+        _original_txid: &bitcoin::Txid,
+    ) {
+        todo!()
+    }
+
+    fn save_receiver_session_proposed_txid(
+        &mut self,
+        _session_id: &SessionId,
+        _proposed_txid: &bitcoin::Txid,
+    ) {
+        todo!()
+    }
+
+    fn get_payjoin_receiver_session_id_from_txid(
+        &mut self,
+        _txid: &bitcoin::Txid,
+    ) -> Option<SessionId> {
+        todo!()
+    }
+
+    fn save_proposed_payjoin_txid(
+        &mut self,
+        _session_id: &SessionId,
+        _proposed_txid: &bitcoin::Txid,
+    ) {
+        todo!()
+    }
+
+    fn get_payjoin_sender_session_id_from_txid(
+        &mut self,
+        _txid: &bitcoin::Txid,
+    ) -> Option<SessionId> {
         todo!()
     }
 }

@@ -59,3 +59,7 @@ jsonrpc = { version = "0.17", features = ["minreq_http"], default-features = fal
 
 # import/export labels
 bip329 = { version = "0.3.0", default-features = false }
+
+# Payjoin
+payjoin = { git = "https://github.com/payjoin/rust-payjoin.git", branch = "master", features = ["v2", "io"] }
+reqwest = { version = "0.11", default-features=false, features = ["json", "rustls-tls", "stream", "blocking"] }

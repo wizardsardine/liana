@@ -7,6 +7,7 @@ use liana::miniscript::bitcoin::{
     Address, Network,
 };
 use liana_ui::{component::modal, widget::*};
+use payjoin::Url;
 
 use crate::daemon::model::LabelsLoader;
 use crate::dir::LianaDirectory;
@@ -33,12 +34,14 @@ const PREV_ADDRESSES_PAGE_SIZE: usize = 20;
 pub enum Modal {
     VerifyAddress(VerifyAddressModal),
     ShowQrCode(ShowQrCodeModal),
+    ShowBip21QrCode(ShowBip21QrCodeModal),
     None,
 }
 
 #[derive(Debug, Default)]
 pub struct Addresses {
     list: Vec<Address>,
+    bip21s: HashMap<Address, Url>,
     derivation_indexes: Vec<ChildNumber>,
     labels: HashMap<String, String>,
 }
@@ -121,6 +124,7 @@ impl State for ReceivePanel {
             self.warning.as_ref(),
             view::receive::receive(
                 &self.addresses.list,
+                &self.addresses.bip21s,
                 &self.addresses.labels,
                 &self.prev_addresses.list,
                 &self.prev_addresses.labels,
@@ -137,6 +141,9 @@ impl State for ReceivePanel {
                 .on_blur(Some(view::Message::Close))
                 .into(),
             Modal::ShowQrCode(m) => modal::Modal::new(content, m.view())
+                .on_blur(Some(view::Message::Close))
+                .into(),
+            Modal::ShowBip21QrCode(m) => modal::Modal::new(content, m.view())
                 .on_blur(Some(view::Message::Close))
                 .into(),
             Modal::None => content,
@@ -175,10 +182,13 @@ impl State for ReceivePanel {
             }
             Message::ReceiveAddress(res) => {
                 match res {
-                    Ok((address, derivation_index)) => {
+                    Ok((address, derivation_index, bip21)) => {
                         self.warning = None;
-                        self.addresses.list.push(address);
+                        self.addresses.list.push(address.clone());
                         self.addresses.derivation_indexes.push(derivation_index);
+                        if let Some(bip21) = bip21 {
+                            self.addresses.bip21s.insert(address, bip21);
+                        }
                     }
                     Err(e) => self.warning = Some(e),
                 }
@@ -209,7 +219,7 @@ impl State for ReceivePanel {
                         daemon
                             .get_new_address()
                             .await
-                            .map(|res| (res.address, res.derivation_index))
+                            .map(|res| (res.address, res.derivation_index, res.bip21))
                             .map_err(|e| e.into())
                     },
                     Message::ReceiveAddress,
@@ -293,6 +303,33 @@ impl State for ReceivePanel {
                     }
                 }
                 Task::none()
+            }
+            Message::View(view::Message::ShowBip21QrCode(i)) => {
+                if let (Some(bip21), Some(index)) = (
+                    &self
+                        .addresses
+                        .bip21s
+                        .get(self.address(i).expect("Address should be in bip21")),
+                    self.derivation_index(i),
+                ) {
+                    if let Some(modal) = ShowBip21QrCodeModal::new(bip21, *index) {
+                        self.modal = Modal::ShowBip21QrCode(modal);
+                    }
+                }
+                Task::none()
+            }
+            Message::View(view::Message::PayjoinInitiate) => {
+                let daemon = daemon.clone();
+                Task::perform(
+                    async move {
+                        daemon
+                            .receive_payjoin()
+                            .await
+                            .map(|res| (res.address, res.derivation_index, res.bip21))
+                            .map_err(|e| e.into())
+                    },
+                    Message::ReceiveAddress,
+                )
             }
             _ => {
                 if let Modal::VerifyAddress(ref mut m) = self.modal {
@@ -434,6 +471,26 @@ impl ShowQrCodeModal {
     }
 }
 
+pub struct ShowBip21QrCodeModal {
+    qr_code: qr_code::Data,
+    bip21: String,
+}
+
+impl ShowBip21QrCodeModal {
+    pub fn new(bip21: &payjoin::Url, _index: ChildNumber) -> Option<Self> {
+        qr_code::Data::new(format!("{}", bip21))
+            .ok()
+            .map(|qr_code| Self {
+                qr_code,
+                bip21: bip21.to_string(),
+            })
+    }
+
+    fn view(&self) -> Element<view::Message> {
+        view::receive::qr_modal(&self.qr_code, &self.bip21)
+    }
+}
+
 async fn verify_address(
     hw: std::sync::Arc<dyn async_hwi::HWI + Send + Sync>,
     index: ChildNumber,
@@ -484,7 +541,8 @@ mod tests {
                 Some(json!({"method": "getnewaddress", "params": Option::<Request>::None})),
                 Ok(json!(GetAddressResult::new(
                     addr.clone(),
-                    ChildNumber::from_normal_idx(0).unwrap()
+                    ChildNumber::from_normal_idx(0).unwrap(),
+                    None,
                 ))),
             ),
         ]);

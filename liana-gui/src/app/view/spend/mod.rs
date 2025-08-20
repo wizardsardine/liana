@@ -372,6 +372,7 @@ pub fn recipient_view<'a>(
     label: &'a form::Value<String>,
     is_max_selected: bool,
     is_recovery: bool,
+    bip21: &'a form::Value<String>,
 ) -> Element<'a, CreateSpendMessage> {
     Container::new(
         Column::new()
@@ -386,6 +387,25 @@ pub fn recipient_view<'a>(
                             .width(Length::Shrink),
                     ),
                 ),
+            )
+            .push(
+                Row::new()
+                    .align_y(Alignment::Start)
+                    .spacing(10)
+                    .push(
+                        Container::new(p1_bold("BIP21"))
+                            .align_x(alignment::Horizontal::Right)
+                            .padding(10)
+                            .width(Length::Fixed(110.0)),
+                    )
+                    .push(
+                        form::Form::new_trimmed("BIP21", bip21, move |msg| {
+                            CreateSpendMessage::Bip21Edited(index, msg)
+                        })
+                        .warning("Invalid BIP21")
+                        .size(P1_SIZE)
+                        .padding(10),
+                    ),
             )
             .push(
                 Row::new()

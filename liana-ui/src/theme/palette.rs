@@ -26,6 +26,7 @@ pub struct Text {
     pub warning: iced::Color,
     pub success: iced::Color,
     pub error: iced::Color,
+    pub payjoin: iced::Color,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq)]
@@ -187,6 +188,7 @@ impl std::default::Default for Palette {
                 warning: color::ORANGE,
                 success: color::GREEN,
                 error: color::RED,
+                payjoin: color::PAYJOIN_PINK,
             },
             buttons: Buttons {
                 primary: Button {
