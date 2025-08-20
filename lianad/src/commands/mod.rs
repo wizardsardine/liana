@@ -90,6 +90,7 @@ pub enum CommandError {
     FailedToFetchOhttpKeys(FetchOhttpKeysError),
     // Same FIXME as `SpendFinalization`
     FailedToPostOriginalPayjoinProposal(String),
+    ReplayError(String),
 }
 
 impl fmt::Display for CommandError {
@@ -151,6 +152,9 @@ impl fmt::Display for CommandError {
             Self::FailedToFetchOhttpKeys(e) => write!(f, "Failed to fetch OHTTP keys: '{}'.", e),
             Self::FailedToPostOriginalPayjoinProposal(e) => {
                 write!(f, "Failed to post original payjoin proposal: '{}'.", e)
+            }
+            Self::ReplayError(e) => {
+                write!(f, "Payjoin replay failed: '{}'.", e)
             }
         }
     }
@@ -469,14 +473,16 @@ impl DaemonControl {
         if let Some(session_id) = db_conn.get_payjoin_receiver_session_id_from_txid(txid) {
             let persister =
                 ReceiverPersister::from_id(Arc::new(self.db.clone()), session_id.clone());
-            let (state, _) = replay_receiver_event_log(&persister).unwrap();
+            let (state, _) = replay_receiver_event_log(&persister)
+                .map_err(|e| CommandError::ReplayError(format!("Receiver replay failed: {e:?}")))?;
             return Ok(state.into());
         }
 
         if let Some(session_id) = db_conn.get_payjoin_sender_session_id_from_txid(txid) {
             log::info!("Checking sender session: {:?}", session_id);
             let persister = SenderPersister::from_id(Arc::new(self.db.clone()), session_id.clone());
-            let (state, _) = replay_sender_event_log(&persister).unwrap();
+            let (state, _) = replay_sender_event_log(&persister)
+                .map_err(|e| CommandError::ReplayError(format!("Sender replay failed: {e:?}")))?;
             log::info!("Sender state: {:?}", state);
             return Ok(state.into());
         }

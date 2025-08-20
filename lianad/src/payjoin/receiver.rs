@@ -42,7 +42,8 @@ fn read_from_directory(
     let mut receiver = receiver;
     let (req, context) = receiver
         .create_poll_request(OHTTP_RELAY)
-        .expect("Failed to extract request");
+        .map_err(|e| format!("Failed to extract request: {:?}", e))?;
+
     let proposal = match post_request(req.clone()) {
         Ok(ohttp_response) => {
             let response_bytes = ohttp_response.bytes()?;

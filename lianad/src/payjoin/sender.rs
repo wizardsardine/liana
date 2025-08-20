@@ -8,7 +8,7 @@ use std::sync::{self, Arc};
 
 use payjoin::bitcoin::Psbt;
 use payjoin::persist::OptionalTransitionOutcome;
-use payjoin::send::v2::{replay_event_log, SendSession, V2GetContext};
+use payjoin::send::v2::{replay_event_log, SendSession, SessionHistory, V2GetContext};
 use payjoin::send::v2::{Sender, WithReplyKey};
 
 use super::db::SenderPersister;
