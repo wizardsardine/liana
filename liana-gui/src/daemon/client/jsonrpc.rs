@@ -41,7 +41,7 @@ use tracing::debug;
 /// A handle to a remote JSONRPC server
 #[derive(Debug, Clone)]
 pub struct JsonRPCClient {
-    #[cfg(not(windows))]
+    #[cfg_attr(windows, allow(unused))]
     sockpath: PathBuf,
     timeout: Option<Duration>,
 }
@@ -62,7 +62,6 @@ impl JsonRPCClient {
     /// Creates a new client
     pub fn new<P: AsRef<Path>>(sockpath: P) -> JsonRPCClient {
         JsonRPCClient {
-            #[cfg(not(windows))]
             sockpath: sockpath.as_ref().to_path_buf(),
             timeout: None,
         }

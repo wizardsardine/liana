@@ -57,7 +57,7 @@ impl Step for WalletAlias {
         _hws: &'a HardwareWallets,
         progress: (usize, usize),
         email: Option<&'a str>,
-    ) -> Element<Message> {
+    ) -> Element<'a, Message> {
         view::wallet_alias(progress, email, &self.wallet_alias)
     }
 

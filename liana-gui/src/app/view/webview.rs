@@ -8,7 +8,6 @@ use liana_ui::{
 
 #[cfg(feature = "webview")]
 use iced_webview::{Action, PageType, Ultralight, WebView};
-use url;
 
 use crate::app::view;
 use crate::app::view::color;

@@ -22,7 +22,7 @@ pub use message::*;
 use warning::warn;
 
 use iced::{
-    widget::{column, responsive, row, scrollable, Space},
+    widget::{responsive, row, scrollable, Space},
     Length,
 };
 
@@ -30,13 +30,16 @@ use liana_ui::{
     color,
     component::{button, text::*},
     icon::{
-        bitcoin_icon, coins_icon, cross_icon, history_icon, home_icon, link_icon, receive_icon,
-        recovery_icon, send_icon, settings_icon,
+        coins_icon, cross_icon, history_icon, home_icon, receive_icon, recovery_icon, send_icon,
+        settings_icon,
     },
     image::*,
     theme,
     widget::*,
 };
+
+#[cfg(feature = "dev-coincube")]
+use liana_ui::icon::bitcoin_icon;
 
 use crate::app::{cache::Cache, error::Error, menu::Menu};
 

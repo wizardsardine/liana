@@ -18,8 +18,7 @@ use std::io::Write;
 use std::sync::Arc;
 use std::time::Duration;
 
-use iced::widget::Space;
-use iced::{clipboard, time, Length, Subscription, Task};
+use iced::{clipboard, time, Subscription, Task};
 use tokio::runtime::Handle;
 use tracing::{error, info, warn};
 
@@ -28,9 +27,8 @@ use iced_webview;
 
 pub use liana::miniscript::bitcoin;
 use liana_ui::{
-    color,
-    component::{network_banner, text},
-    widget::{Button, Column, Container, Element, Row},
+    component::network_banner,
+    widget::{Column, Element},
 };
 pub use lianad::{commands::CoinStatus, config::Config as DaemonConfig};
 
@@ -395,6 +393,7 @@ impl App {
     }
 
     pub fn subscription(&self) -> Subscription<Message> {
+        #[allow(unused_mut)]
         let mut subscriptions = vec![
             time::every(Duration::from_secs(
                 match sync_status(
