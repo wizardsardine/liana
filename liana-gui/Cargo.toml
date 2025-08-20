@@ -14,9 +14,10 @@ name = "liana-gui"
 path = "src/main.rs"
 
 [features]
-default = ["dev-coincube"]
+dev-meld = ["webview", "dev-coincube"]
+dev-onramper = ["webview", "dev-coincube"]
+
 dev-coincube = []
-dev-meld = []
 webview = ["iced_webview"]
 
 [dependencies]
