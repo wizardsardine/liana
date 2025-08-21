@@ -1,7 +1,6 @@
-name: Github Release
+name: Dev Incremental Release
 
 permissions:
-  # TODO: once `releases: write` is supported, use it instead.
   contents: write
 
 on:
@@ -20,26 +19,17 @@ jobs:
   upload-binaries:
     name: upload-binaries
     if: github.repository == 'coincubetech/liana/'
-
     strategy:
       matrix:
         include:
-          # linux x86
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
-
-          # windows x86
           - target: x86_64-pc-windows-gnu
             os: windows-latest
-
-          # apple x86
           - target: x86_64-apple-darwin
             os: macos-latest
-
-          # apple silicon (arm64)
           - target: aarch64-apple-darwin
             os: macos-latest
-
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v2
@@ -50,9 +40,13 @@ jobs:
         with:
           toolchain: stable
 
+      - name: Set development version
+        shell: bash
+        run: echo "version=dev-$(date +'%Y-%m-%d')" >> $GITHUB_ENV
+
       - uses: taiki-e/create-gh-release-action@v1
         with:
-          title: $version
+          title: ${{ env.version }}
           branch: master
 
       - uses: taiki-e/upload-rust-binary-action@v1
