@@ -318,27 +318,21 @@ impl App {
         }
 
         match webview_result {
-            Ok(mut webview) => {
+            Ok(webview) => {
                 tracing::info!("Webview instance created successfully");
 
-                // Create a view and then navigate to the URL for more reliable loading
-                let create_task = webview.update(iced_webview::Action::CreateView(iced_webview::PageType::Url(url.clone())));
-
-                // CRITICAL: After creating a view, we must set it as the current view
-                // This sets current_view_index to 0, which prevents the panic in get_current_view_id()
-                let change_task = webview.update(iced_webview::Action::ChangeView(0));
-
-                // Store the webview in our app state
+                // Store the webview in our app state first
                 self.meld_webview = Some(webview);
-                // Enable webview mode to display the webview
-                self.webview_mode = true;
                 // Store the current URL for display
                 self.current_webview_url = Some(url.clone());
 
-                tracing::info!("Webview created and URL loaded directly: {}", url);
-
-                // Combine both tasks and map to our message type
-                Task::batch([create_task, change_task]).map(Message::View)
+                // Create a view with the URL - this will trigger WebviewViewCreated message
+                if let Some(webview) = &mut self.meld_webview {
+                    let create_task = webview.update(iced_webview::Action::CreateView(iced_webview::PageType::Url(url.clone())));
+                    create_task.map(Message::View)
+                } else {
+                    Task::none()
+                }
             }
             Err(e) => {
                 tracing::error!("Failed to create webview instance: {:?}", e);
@@ -478,9 +472,9 @@ impl App {
         // Add webview subscription for periodic updates
         #[cfg(feature = "webview")]
         {
-            if self.meld_webview.is_some() {
+            if self.meld_webview.is_some() && self.webview_mode {
                 subscriptions.push(
-                    iced::time::every(std::time::Duration::from_millis(10)) // Match reference example
+                    iced::time::every(std::time::Duration::from_millis(16)) // ~60 FPS
                         .map(|_| iced_webview::Action::Update)
                         .map(|action| Message::View(view::Message::WebviewAction(action)))
                 );
@@ -623,6 +617,24 @@ impl App {
                     iced_webview::Action::Update => {
                         // Page is updating/loading
                     }
+                    iced_webview::Action::Resize(size) => {
+                        // Handle resize events - completely block excessive dimensions
+                        if size.height > 1000 || size.width > 2000 || size.height == 4294967295 {
+                            tracing::error!("Webview resize with excessive dimensions: {:?}, BLOCKING to prevent memory leak", size);
+
+                            // Disable webview mode to prevent further issues
+                            self.webview_mode = false;
+                            self.webview_loading = false;
+
+                            // Clear the webview instance to free memory
+                            self.meld_webview = None;
+                            self.current_webview_url = None;
+
+                            tracing::info!("Webview disabled due to size issues. Please restart to try again.");
+                            return Task::none(); // Block this resize completely
+                        }
+                        tracing::debug!("Webview resize: {:?}", size);
+                    }
                     _ => {
                         // For other actions, assume loading is complete
                         if self.webview_loading {
@@ -645,6 +657,7 @@ impl App {
                 self.webview_loading = false;
                 Task::none()
             }
+
             #[cfg(feature = "webview")]
             Message::View(view::Message::WebviewUrlChanged(url)) => {
                 tracing::info!("Webview URL changed to: {}", url);
@@ -704,33 +717,87 @@ impl App {
     }
 
     pub fn view(&self) -> Element<Message> {
-        // Check if we should display webview mode instead of normal panels
+        // Check if we should show webview content within the buy/sell panel
         #[cfg(feature = "webview")]
         {
-            if self.webview_mode && self.meld_webview.is_some() {
-                // Display the webview as a seamless, non-scrollable embedded component
-                if let Some(webview) = &self.meld_webview {
-                    use iced::widget::{Container, container};
-                    use iced::{Length, Padding};
+            if self.webview_mode && self.meld_webview.is_some() && matches!(self.panels.current, Menu::BuyAndSell) {
+                // Show webview content within the dashboard layout for buy/sell panel
+                let webview_content = if let Some(webview) = &self.meld_webview {
+                    use iced::widget::{Container, Column, Row, Space, container};
+                    use iced::{Length, Padding, Alignment};
+                    use liana_ui::{color, component::text::text};
 
-                    // Create webview content with fixed dimensions and no scrolling
-                    let webview_content = webview.view().map(|action| Message::View(view::Message::WebviewAction(action)));
-
-                    // Wrap in a container with fixed size to prevent scrolling
-                    let webview_container = Container::new(webview_content)
+                    // Safety check: Don't render webview if we're still loading
+                    let webview_element = if self.webview_loading {
+                        // Show loading state instead of potentially problematic webview
+                        Container::new(
+                            Column::new()
+                                .push(text("Loading webview...").size(16).color(color::GREY_2))
+                                .push(Space::with_height(Length::Fixed(10.0)))
+                                .push(text("Please wait while the content loads.").size(12).color(color::GREY_3))
+                                .align_x(Alignment::Center)
+                                .spacing(5)
+                        )
                         .width(Length::Fill)
-                        .height(Length::Fill)
-                        .padding(Padding::ZERO)
-                        .style(container::transparent);
-
-                    if self.cache.network != bitcoin::Network::Bitcoin {
-                        Column::with_children(vec![network_banner(self.cache.network).into(), webview_container.into()]).into()
+                        .height(Length::Fixed(580.0))
+                        .center_x(Length::Fill)
+                        .center_y(Length::Fixed(580.0))
+                        .style(container::transparent)
+                        .into()
                     } else {
-                        webview_container.into()
-                    }
+                        // Render the webview using basic webview pattern (no ViewId needed)
+                        webview.view().map(view::Message::WebviewAction)
+                    };
+
+                    // Create a container with close button and webview
+                    let webview_container = Container::new(
+                        Column::new()
+                            .push(
+                                // Header with close button
+                                Row::new()
+                                    .push(
+                                        text("✕ Close Webview")
+                                            .size(14)
+                                            .color(color::GREY_2)
+                                    )
+                                    .push(Space::with_width(Length::Fill))
+                                    .push(
+                                        text(self.current_webview_url.as_deref().unwrap_or("Loading..."))
+                                            .size(12)
+                                            .color(color::GREY_3)
+                                    )
+                                    .align_y(Alignment::Center)
+                                    .padding(Padding::new(10.0))
+                            )
+                            .push(
+                                // The actual webview content with constrained size
+                                Container::new(webview_element)
+                                    .width(Length::Fill)
+                                    .height(Length::Fixed(600.0)) // Fixed height to prevent overflow
+                                    .style(container::transparent)
+                            )
+                            .spacing(0)
+                    )
+                    .width(Length::Fill)
+                    .height(Length::Fixed(650.0)) // Fixed total height
+                    .padding(Padding::ZERO);
+
+                    // Wrap in dashboard layout
+                    view::dashboard(
+                        &Menu::BuyAndSell,
+                        &self.cache,
+                        None,
+                        webview_container,
+                    )
                 } else {
-                    // Fallback if webview is None (shouldn't happen due to the condition above)
-                    self.panels.current().view(&self.cache).map(Message::View)
+                    // Fallback to normal panel view
+                    self.panels.current().view(&self.cache)
+                };
+
+                if self.cache.network != bitcoin::Network::Bitcoin {
+                    Column::with_children(vec![network_banner(self.cache.network).into(), webview_content.map(Message::View)]).into()
+                } else {
+                    webview_content.map(Message::View)
                 }
             } else {
                 // Normal panel view

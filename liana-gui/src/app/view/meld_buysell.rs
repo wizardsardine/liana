@@ -404,48 +404,8 @@ fn success_content(widget_url: &str) -> Element<'_, ViewMessage> {
             // Show the webview widget with a launch button
             #[cfg(feature = "webview")]
             {
-                Container::new(
-                    Column::new()
-                        .push(text("🌐 Meld Widget Ready").size(16).color(color::GREEN))
-                        .push(Space::with_height(Length::Fixed(10.0)))
-                        .push(text("Click below to open the Meld widget in an embedded webview:").size(14).color(color::GREY_3))
-                        .push(Space::with_height(Length::Fixed(15.0)))
-                        .push(
-                            ui_button::primary(None, "Open Meld Widget")
-                                .on_press(ViewMessage::OpenWebview(widget_url.to_string()))
-                                .width(Length::Fill)
-                        )
-                        .push(Space::with_height(Length::Fixed(10.0)))
-                        .push(
-                            Container::new(
-                                text(widget_url)
-                                    .size(11)
-                                    .color(color::BLUE)
-                            )
-                            .padding(10)
-                            .style(theme::card::simple)
-                            .width(Length::Fill)
-                        )
-                        .push(Space::with_height(Length::Fixed(10.0)))
-                        .push(
-                            ui_button::secondary(None, "Copy URL")
-                                .on_press(ViewMessage::MeldBuySell(MeldBuySellMessage::CopyUrl(widget_url.to_string())))
-                                .width(Length::Fill)
-                        )
-                        .align_x(Alignment::Center)
-                )
-                .width(Length::Fill)
-                .height(Length::Fixed(350.0))
-                .padding(20)
-                .style(|_theme| iced::widget::container::Style {
-                    background: Some(iced::Background::Color(iced::Color::from_rgb(0.05, 0.05, 0.05))),
-                    border: iced::Border {
-                        color: color::GREEN,
-                        width: 1.0,
-                        radius: 8.0.into(),
-                    },
-                    ..Default::default()
-                })
+                // Create a webview widget that will be embedded in the content area
+                crate::app::view::webview::meld_webview_widget_embedded(widget_url)
             }
             #[cfg(not(feature = "webview"))]
             {

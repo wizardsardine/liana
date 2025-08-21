@@ -111,7 +111,6 @@ impl WebviewComponent {
 
                 #[cfg(not(feature = "webview"))]
                 {
-                    self.state.has_webview = false;
                     self.state.is_loading = false;
                     Task::none()
                 }
@@ -127,7 +126,10 @@ impl WebviewComponent {
             }
             WebviewMessage::WebviewCreated => {
                 tracing::info!("Webview created successfully");
-                self.state.has_webview = true;
+                #[cfg(feature = "webview")]
+                {
+                    self.state.has_webview = true;
+                }
                 self.state.is_loading = false;
                 Task::none()
             }
@@ -207,12 +209,12 @@ impl WebviewComponent {
         #[cfg(feature = "webview")]
         {
             if self.state.has_webview {
-                // Render the actual webview content
+                // Render the actual webview content with constrained dimensions
                 Container::new(
                     self.webview.view().map(WebviewMessage::WebviewAction)
                 )
                 .width(Length::Fill)
-                .height(Length::Fill)
+                .height(Length::Fixed(600.0)) // Fixed height to prevent overflow
                 .style(|_theme| iced::widget::container::Style {
                     background: Some(iced::Background::Color(color::WHITE)),
                     text_color: Some(color::BLACK),
@@ -353,6 +355,96 @@ pub fn meld_webview_widget(url: &str, app_webview: Option<&iced_webview::WebView
         // Fallback when webview feature is not available - show browser button
         render_webview_disabled_fallback(url)
     }
+}
+
+/// Create an embedded webview widget that shows the actual web content within the panel
+/// This creates a self-contained webview that doesn't replace the entire application view
+#[cfg(feature = "webview")]
+pub fn meld_webview_widget_embedded(url: &str) -> Element<'static, view::Message> {
+    use iced::widget::{Container, Column, Row, Space, Button};
+    use iced::{Length, Alignment, Padding};
+    use liana_ui::{color, theme, component::text::text, icon::previous_icon, component::button as ui_button};
+
+    // For now, show controls to open/close the webview since the actual webview
+    // is managed at the application level
+    Container::new(
+        Column::new()
+            .push(
+                // Header with webview status
+                Row::new()
+                    .push(
+                        Container::new(
+                            text("🌐")
+                                .size(20)
+                                .color(color::ORANGE)
+                        )
+                        .padding(Padding::new(0.0).right(10.0))
+                    )
+                    .push(
+                        Column::new()
+                            .push(
+                                text("MELD WIDGET")
+                                    .size(14)
+                                    .color(color::ORANGE)
+                            )
+                            .push(
+                                text("Embedded Webview")
+                                    .size(10)
+                                    .color(color::GREY_3)
+                            )
+                    )
+                    .push(Space::with_width(Length::Fill))
+                    .align_y(Alignment::Center)
+                    .padding(Padding::new(15.0))
+            )
+            .push(
+                // Controls for webview
+                Column::new()
+                    .push(
+                        text("The Meld widget will open in an embedded webview within this panel.")
+                            .size(14)
+                            .color(color::GREY_3)
+                    )
+                    .push(Space::with_height(Length::Fixed(15.0)))
+                    .push(
+                        ui_button::primary(None, "Open Meld Widget")
+                            .on_press(view::Message::OpenWebview(url.to_string()))
+                            .width(Length::Fill)
+                    )
+                    .push(Space::with_height(Length::Fixed(10.0)))
+                    .push(
+                        ui_button::secondary(None, "Close Webview")
+                            .on_press(view::Message::CloseWebview)
+                            .width(Length::Fill)
+                    )
+                    .push(Space::with_height(Length::Fixed(15.0)))
+                    .push(
+                        Container::new(
+                            text(url)
+                                .size(11)
+                                .color(color::BLUE)
+                        )
+                        .padding(10)
+                        .style(theme::card::simple)
+                        .width(Length::Fill)
+                    )
+                    .align_x(Alignment::Center)
+                    .padding(Padding::new(20.0))
+            )
+            .spacing(0)
+    )
+    .width(Length::Fill)
+    .height(Length::Fixed(400.0))
+    .style(|_theme| iced::widget::container::Style {
+        background: Some(iced::Background::Color(iced::Color::from_rgb(0.05, 0.05, 0.05))),
+        border: iced::Border {
+            color: color::GREEN,
+            width: 1.0,
+            radius: 8.0.into(),
+        },
+        ..Default::default()
+    })
+    .into()
 }
 
 #[cfg(not(feature = "webview"))]
