@@ -18,6 +18,7 @@ use crate::{
 #[derive(Debug)]
 pub enum Message {
     Tick,
+
     UpdateDaemonCache(Result<DaemonCache, Error>),
     CacheUpdated,
     UpdatePanelCache(/* is current panel */ bool),

@@ -1,19 +1,17 @@
-use iced::{Length, Subscription, Task};
-use iced::alignment::{Horizontal, Vertical};
+use iced::{Task, Subscription};
+use iced::alignment::Horizontal;
 
+// Ultralight webview imports
 #[cfg(feature = "webview")]
-use iced_webview::{WebView, Ultralight, Action, PageType};
-use iced::widget::{Space, Column};
+use iced_webview::{WebView, Ultralight, Action as WebviewAction};
+use iced::widget::Column;
 use liana_ui::{
-    component::{text},
-    widget::{Button, Container, Row, Element},
+    color,
+    component::text,
+    widget::Element,
 };
 
-
-
-
-use crate::app::view::color;
-use crate::app::view;
+// Clean Ultralight webview implementation
 
 /// Webview state for managing embedded browser
 #[derive(Debug, Clone)]
@@ -21,7 +19,6 @@ pub struct WebviewState {
     pub url: String,
     pub is_loading: bool,
     pub show_webview: bool,
-    #[cfg(feature = "webview")]
     pub has_webview: bool,
 }
 
@@ -31,7 +28,6 @@ impl Default for WebviewState {
             url: String::new(),
             is_loading: false,
             show_webview: false,
-            #[cfg(feature = "webview")]
             has_webview: false,
         }
     }
@@ -69,7 +65,7 @@ pub enum WebviewMessage {
     Close,
     ToggleWebview,
     #[cfg(feature = "webview")]
-    WebviewAction(Action),
+    WebviewAction(WebviewAction),
     #[cfg(feature = "webview")]
     WebviewCreated,
     #[cfg(feature = "webview")]
@@ -88,9 +84,7 @@ impl WebviewComponent {
         Self {
             state: WebviewState::new(),
             #[cfg(feature = "webview")]
-            webview: WebView::new()
-                .on_create_view(WebviewMessage::WebviewCreated)
-                .on_url_change(WebviewMessage::UrlChanged),
+            webview: WebView::new(),
         }
     }
 
@@ -99,21 +93,8 @@ impl WebviewComponent {
             WebviewMessage::OpenUrl(url) => {
                 tracing::info!("Opening URL in webview: {}", url);
                 self.state.open_url(url.clone());
-
-                #[cfg(feature = "webview")]
-                {
-                    // Create a webview with the URL
-                    let webview_task = self.webview.update(Action::CreateView(PageType::Url(url)));
-                    self.state.has_webview = true;
-                    self.state.is_loading = false;
-                    webview_task
-                }
-
-                #[cfg(not(feature = "webview"))]
-                {
-                    self.state.is_loading = false;
-                    Task::none()
-                }
+                self.state.is_loading = false;
+                Task::none()
             }
             WebviewMessage::Close => {
                 tracing::info!("Closing webview");
@@ -124,79 +105,36 @@ impl WebviewComponent {
                 self.state.toggle();
                 Task::none()
             }
+            #[cfg(feature = "webview")]
             WebviewMessage::WebviewCreated => {
                 tracing::info!("Webview created successfully");
-                #[cfg(feature = "webview")]
-                {
-                    self.state.has_webview = true;
-                }
+                self.state.has_webview = true;
                 self.state.is_loading = false;
                 Task::none()
             }
+            #[cfg(feature = "webview")]
             WebviewMessage::UrlChanged(new_url) => {
                 tracing::info!("Webview URL changed to: {}", new_url);
                 self.state.url = new_url;
                 Task::none()
             }
+            #[cfg(feature = "webview")]
             WebviewMessage::WebviewAction(action) => {
-                #[cfg(feature = "webview")]
-                {
-                    self.webview.update(action)
-                }
-                #[cfg(not(feature = "webview"))]
-                {
-                    Task::none()
-                }
+                // Handle Ultralight webview actions
+                self.webview.update(action)
             }
         }
     }
 
-    pub fn view(&self) -> Element<WebviewMessage> {
-        if self.state.show_webview {
-            Column::new()
-                .push(
-                    // Header with close button
-                    Row::new()
-                        .push(
-                            Button::new(text::text("✕ Close"))
-                                .on_press(WebviewMessage::Close)
-                                .style(|_theme, _status| iced::widget::button::Style {
-                                    background: Some(iced::Background::Color(color::GREY_3)),
-                                    text_color: color::WHITE,
-                                    border: iced::Border::default(),
-                                    shadow: iced::Shadow::default(),
-                                })
-                        )
-                        .push(Space::with_width(Length::Fill))
-                        .push(
-                            text::text(&self.state.url)
-                                .color(color::GREY_2)
-                                .size(12)
-                        )
-                        .padding(10)
-                )
-                .push(
-                    // Webview content area
-                    Container::new(
-                        self.render_webview_content()
-                    )
-                    .width(Length::Fill)
-                    .height(Length::Fill)
-                    .align_x(Horizontal::Center)
-                    .align_y(Vertical::Center)
-                    .style(|_theme| iced::widget::container::Style {
-                        background: Some(iced::Background::Color(color::WHITE)),
-                        text_color: Some(color::BLACK),
-                        border: iced::Border::default(),
-                        shadow: iced::Shadow::default(),
-                    })
-                )
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .into()
-        } else {
-            Space::new(Length::Fixed(0.0), Length::Fixed(0.0)).into()
-        }
+    pub fn view(&self) -> Element<'_, WebviewMessage> {
+        Column::new()
+            .push(
+                text::text("Webview component placeholder")
+                    .size(16)
+                    .color(color::GREY_2)
+            )
+            .align_x(Horizontal::Center)
+            .into()
     }
 }
 
@@ -205,1291 +143,301 @@ impl WebviewComponent {
 
 
 impl WebviewComponent {
-    fn render_webview_content(&self) -> Element<WebviewMessage> {
-        #[cfg(feature = "webview")]
-        {
-            if self.state.has_webview {
-                // Render the actual webview content with constrained dimensions
-                Container::new(
-                    self.webview.view().map(WebviewMessage::WebviewAction)
-                )
-                .width(Length::Fill)
-                .height(Length::Fixed(600.0)) // Fixed height to prevent overflow
-                .style(|_theme| iced::widget::container::Style {
-                    background: Some(iced::Background::Color(color::WHITE)),
-                    text_color: Some(color::BLACK),
-                    border: iced::Border::default(),
-                    shadow: iced::Shadow::default(),
-                })
-                .into()
-            } else {
-                // Show loading or setup message
-                Column::new()
-                    .push(
-                        text::text("🌐 Initializing Webview...")
-                            .size(24)
-                            .color(color::GREEN)
-                    )
-                    .push(Space::with_height(Length::Fixed(20.0)))
-                    .push(
-                        Container::new(
-                            Column::new()
-                                .push(
-                                    text::text("Widget URL:")
-                                        .size(12)
-                                        .color(color::GREEN)
-                                )
-                                .push(Space::with_height(Length::Fixed(5.0)))
-                                .push(
-                                    text::text(&self.state.url)
-                                        .size(10)
-                                        .color(color::GREY_1)
-                                        .width(Length::Fill)
-                                )
-                        )
-                        .width(Length::Fill)
-                        .padding(8)
-                        .style(|_theme| iced::widget::container::Style {
-                            background: Some(iced::Background::Color(iced::Color::from_rgb(0.05, 0.05, 0.05))),
-                            border: iced::Border {
-                                color: color::GREEN,
-                                width: 1.0,
-                                radius: 4.0.into(),
-                            },
-                            ..Default::default()
-                        })
-                    )
-                    .push(Space::with_height(Length::Fixed(20.0)))
-                    .push(
-                        text::text("Setting up webview...")
-                            .size(16)
-                    )
-                    .push(Space::with_height(Length::Fixed(30.0)))
-                    .push(
-                        Row::new()
-                            .push(
-                                Button::new(text::text("Open Google"))
-                                    .on_press(WebviewMessage::OpenUrl("https://www.google.com".to_string()))
-                                    .style(|_theme, _status| iced::widget::button::Style {
-                                        background: Some(iced::Background::Color(color::GREEN)),
-                                        text_color: color::WHITE,
-                                        border: iced::Border::default(),
-                                        shadow: iced::Shadow::default(),
-                                    })
-                            )
-                            .push(Space::with_width(Length::Fixed(10.0)))
-                            .push(
-                                Button::new(text::text("Open GitHub"))
-                                    .on_press(WebviewMessage::OpenUrl("https://github.com".to_string()))
-                                    .style(|_theme, _status| iced::widget::button::Style {
-                                        background: Some(iced::Background::Color(color::BLUE)),
-                                        text_color: color::WHITE,
-                                        border: iced::Border::default(),
-                                        shadow: iced::Shadow::default(),
-                                    })
-                            )
-                            .align_y(Vertical::Center)
-                    )
-                    .align_x(Horizontal::Center)
-                    .into()
-            }
-        }
 
-        #[cfg(not(feature = "webview"))]
-        {
-            Column::new()
-                .push(
-                    text::text("Webview feature not available")
-                        .size(16)
-                        .color(color::GREY_2)
-                )
-                .align_x(Horizontal::Center)
-                .into()
-        }
-    }
 
     pub fn subscription(&self) -> Subscription<WebviewMessage> {
-        #[cfg(feature = "webview")]
-        {
-            use iced::time;
-            use std::time::Duration;
-
-            if self.state.has_webview {
-                // Subscribe to webview updates
-                time::every(Duration::from_millis(16)) // ~60 FPS
-                    .map(|_| Action::Update)
-                    .map(WebviewMessage::WebviewAction)
-            } else {
-                Subscription::none()
-            }
-        }
-
-        #[cfg(not(feature = "webview"))]
-        {
+        if self.state.has_webview {
+            // Subscribe to webview updates - disabled due to missing Action type
+            // time::every(Duration::from_millis(16)) // ~60 FPS
+            //     .map(|_| Action::Update)
+            //     .map(WebviewMessage::WebviewAction)
+            Subscription::none()
+        } else {
             Subscription::none()
         }
     }
 }
 
-/// Create a webview widget for Meld integration
-/// When webview feature is enabled, this renders the actual Meld widget content inline (like an iframe)
-/// When webview feature is disabled, this shows a fallback with browser button
+/// Create a webview widget for Meld integration using Ultralight
+/// This renders the actual Meld widget content inline with proper initialization
 #[cfg(feature = "webview")]
-pub fn meld_webview_widget(url: &str, app_webview: Option<&iced_webview::WebView<iced_webview::Ultralight, view::Message>>, is_loading: bool) -> Element<'static, view::Message> {
-    #[cfg(feature = "webview")]
-    {
-        // Check if we have an active webview from the app
-        if let Some(webview) = app_webview {
-            // Render the actual webview content from the app's webview instance
-            return render_actual_webview_widget(webview, url);
-        }
+pub fn meld_webview_widget_ultralight<'a>(
+    webview: Option<&'a WebView<Ultralight, crate::app::WebviewMessage>>,
+    url: Option<&'a str>,
+    show_webview: bool,
+    webview_ready: bool,
+    is_loading: bool,
+    current_webview_index: Option<u32>,
+) -> Element<'a, crate::app::view::Message> {
+    use iced::widget::{Container, Column, Row, Space};
+    use iced::{Length, Alignment};
+    use liana_ui::{color, component::{text::text, button::*}};
 
-        // No active webview - show a widget that will automatically trigger webview creation
-        // This creates an embedded browser experience like LegitCamper's example
-        // Test with hardcoded Google URL
-        render_webview_auto_create_widget("https://www.google.com", is_loading)
-    }
-
-    #[cfg(not(feature = "webview"))]
-    {
-        // Fallback when webview feature is not available - show browser button
-        render_webview_disabled_fallback(url)
-    }
-}
-
-/// Create an embedded webview widget that shows the actual web content within the panel
-/// This creates a self-contained webview that doesn't replace the entire application view
-#[cfg(feature = "webview")]
-pub fn meld_webview_widget_embedded(url: &str) -> Element<'static, view::Message> {
-    use iced::widget::{Container, Column, Row, Space, Button};
-    use iced::{Length, Alignment, Padding};
-    use liana_ui::{color, theme, component::text::text, icon::previous_icon, component::button as ui_button};
-
-    // For now, show controls to open/close the webview since the actual webview
-    // is managed at the application level
-    Container::new(
-        Column::new()
-            .push(
-                // Header with webview status
-                Row::new()
-                    .push(
-                        Container::new(
-                            text("🌐")
-                                .size(20)
-                                .color(color::ORANGE)
-                        )
-                        .padding(Padding::new(0.0).right(10.0))
-                    )
-                    .push(
-                        Column::new()
-                            .push(
-                                text("MELD WIDGET")
-                                    .size(14)
-                                    .color(color::ORANGE)
-                            )
-                            .push(
-                                text("Embedded Webview")
-                                    .size(10)
-                                    .color(color::GREY_3)
-                            )
-                    )
-                    .push(Space::with_width(Length::Fill))
-                    .align_y(Alignment::Center)
-                    .padding(Padding::new(15.0))
-            )
-            .push(
-                // Controls for webview
-                Column::new()
-                    .push(
-                        text("The Meld widget will open in an embedded webview within this panel.")
-                            .size(14)
-                            .color(color::GREY_3)
-                    )
-                    .push(Space::with_height(Length::Fixed(15.0)))
-                    .push(
-                        ui_button::primary(None, "Open Meld Widget")
-                            .on_press(view::Message::OpenWebview(url.to_string()))
-                            .width(Length::Fill)
-                    )
-                    .push(Space::with_height(Length::Fixed(10.0)))
-                    .push(
-                        ui_button::secondary(None, "Close Webview")
-                            .on_press(view::Message::CloseWebview)
-                            .width(Length::Fill)
-                    )
-                    .push(Space::with_height(Length::Fixed(15.0)))
-                    .push(
-                        Container::new(
-                            text(url)
-                                .size(11)
-                                .color(color::BLUE)
-                        )
-                        .padding(10)
-                        .style(theme::card::simple)
-                        .width(Length::Fill)
-                    )
-                    .align_x(Alignment::Center)
-                    .padding(Padding::new(20.0))
-            )
-            .spacing(0)
-    )
-    .width(Length::Fill)
-    .height(Length::Fixed(400.0))
-    .style(|_theme| iced::widget::container::Style {
-        background: Some(iced::Background::Color(iced::Color::from_rgb(0.05, 0.05, 0.05))),
-        border: iced::Border {
-            color: color::GREEN,
-            width: 1.0,
-            radius: 8.0.into(),
-        },
-        ..Default::default()
-    })
-    .into()
-}
-
-#[cfg(not(feature = "webview"))]
-pub fn meld_webview_widget(url: &str, _app_webview: Option<()>, _is_loading: bool) -> Element<'static, view::Message> {
-    render_webview_disabled_fallback(url)
-}
-
-// Helper function to check Ultralight resources
-#[cfg(feature = "webview")]
-fn check_ultralight_resources() -> Result<String, String> {
-    // Check if ULTRALIGHT_RESOURCES_DIR environment variable is set
-    let resources_dir = std::env::var("ULTRALIGHT_RESOURCES_DIR")
-        .map_err(|_| "ULTRALIGHT_RESOURCES_DIR environment variable is not set".to_string())?;
-
-    // Check if the directory exists
-    let resources_path = std::path::Path::new(&resources_dir);
-    if !resources_path.exists() {
-        return Err(format!("Resources directory does not exist: {}", resources_dir));
-    }
-
-    // Check for required files
-    let cacert_path = resources_path.join("cacert.pem");
-    if !cacert_path.exists() {
-        return Err(format!("Required file 'cacert.pem' not found in: {}", resources_dir));
-    }
-
-    let icu_path = resources_path.join("icudt67l.dat");
-    if !icu_path.exists() {
-        return Err(format!("Required file 'icudt67l.dat' not found in: {}", resources_dir));
-    }
-
-    Ok(resources_dir)
-}
-
-// Render the actual webview widget with real web content
-#[cfg(feature = "webview")]
-fn render_actual_webview_widget(_webview: &iced_webview::WebView<iced_webview::Ultralight, view::Message>, url: &str) -> Element<'static, view::Message> {
-    // For now, show a status that the webview is active and running in the background
-    // The actual webview rendering happens at the application level
-    Container::new(
-        Column::new()
-            .push(
-                // Header with URL and controls
-                Row::new()
-                    .push(
-                        Row::new()
-                            .push(
-                                Container::new(
-                                    text::text("₿")
-                                        .size(20)
-                                        .color(color::ORANGE)
-                                )
-                                .padding(iced::Padding::new(0.0).right(10.0))
-                            )
-                            .push(
-                                Column::new()
-                                    .push(
-                                        text::text("COINCUBE")
-                                            .size(14)
-                                            .color(color::ORANGE)
-                                    )
-                                    .push(
-                                        text::text("BUY/SELL")
-                                            .size(10)
-                                            .color(color::GREY_3)
-                                    )
-                            )
-                            .align_y(Vertical::Center)
-                    )
-                    .push(Space::with_width(Length::Fill))
-                    .push(
-                        text::text("WebView Active")
-                            .size(12)
-                            .color(color::GREEN)
-                    )
-                    .push(Space::with_width(Length::Fixed(10.0)))
-                    .push(
-                        Button::new(text::text("✕ Close"))
-                            .on_press(view::Message::CloseWebview)
-                            .style(|_theme, _status| iced::widget::button::Style {
-                                background: Some(iced::Background::Color(color::GREY_3)),
-                                text_color: color::WHITE,
-                                border: iced::Border::default(),
-                                shadow: iced::Shadow::default(),
-                            })
-                    )
-                    .align_y(Vertical::Center)
-                    .padding(5) // Reduced padding for more compact layout
-            )
-            .push(
-                // Status display showing that webview is running
-                Container::new(
-                    Column::new()
-                        .push(
-                            text::text("🌐 WebView Running")
-                                .size(16)
-                                .color(color::GREEN)
-                        )
-                        .push(Space::with_height(Length::Fixed(10.0)))
-                        .push(
-                            text::text(format!("Loading: {}", url))
-                                .size(12)
-                                .color(color::GREY_3)
-                        )
-                        .push(Space::with_height(Length::Fixed(10.0)))
-                        .push(
-                            text::text("The webview is active and processing web content in the background.")
-                                .size(12)
-                                .color(color::GREY_3)
-                        )
-                        .push(Space::with_height(Length::Fixed(15.0)))
-                        .push(
-                            Button::new(text::text("🪟 Open in Browser (Fallback)"))
-                                .on_press(view::Message::OpenUrl(url.to_string()))
-                                .style(|_theme, _status| iced::widget::button::Style {
-                                    background: Some(iced::Background::Color(color::ORANGE)),
-                                    text_color: color::WHITE,
-                                    border: iced::Border::default(),
-                                    shadow: iced::Shadow::default(),
-                                })
-                                .width(Length::Fill)
-                        )
-                        .align_x(Horizontal::Center)
-                        .spacing(5)
-                )
-                .width(Length::Fill)
-                .height(Length::Fixed(200.0)) // Compact height
-                .padding(20)
-                .style(|_theme| iced::widget::container::Style {
-                    background: Some(iced::Background::Color(iced::Color::WHITE)),
-                    border: iced::Border {
-                        color: color::GREY_3,
-                        width: 1.0,
-                        radius: 4.0.into(),
-                    },
-                    ..Default::default()
-                })
-            )
-    )
-    .width(Length::Fill)
-    .height(Length::Shrink)
-    .style(|_theme| iced::widget::container::Style {
-        background: Some(iced::Background::Color(iced::Color::from_rgb(0.95, 0.95, 0.95))),
-        border: iced::Border {
-            color: color::GREEN,
-            width: 2.0,
-            radius: 8.0.into(),
-        },
-        ..Default::default()
-    })
-    .into()
-}
-
-// Render the actual webview content from an active webview instance (legacy function)
-#[cfg(feature = "webview")]
-fn render_active_webview_content(_webview: &iced_webview::WebView<iced_webview::Ultralight, view::Message>, _url: &str) -> Element<'static, view::Message> {
-    // Render the actual webview content directly inline like an iframe
-    // This creates an embedded browser widget that shows the web content
-
-    // Create a container for the embedded webview
-    Container::new(
-        Column::new()
-            .push(
-                // Header with close button
-                Row::new()
-                    .push(
-                        Row::new()
-                            .push(
-                                Container::new(
-                                    text::text("₿")
-                                        .size(20)
-                                        .color(color::ORANGE)
-                                )
-                                .padding(iced::Padding::new(0.0).right(10.0))
-                            )
-                            .push(
-                                Column::new()
-                                    .push(
-                                        text::text("COINCUBE")
-                                            .size(14)
-                                            .color(color::ORANGE)
-                                    )
-                                    .push(
-                                        text::text("BUY/SELL")
-                                            .size(10)
-                                            .color(color::GREY_3)
-                                    )
-                            )
-                            .align_y(Vertical::Center)
-                    )
-                    .push(Space::with_width(Length::Fill))
-                    .push(
-                        text::text("Ready")
-                            .size(12)
-                            .color(color::ORANGE)
-                    )
-                    .push(Space::with_width(Length::Fixed(10.0)))
-                    .push(
-                        Button::new(text::text("✕ Close"))
-                            .on_press(view::Message::CloseWebview)
-                            .style(|_theme, _status| iced::widget::button::Style {
-                                background: Some(iced::Background::Color(color::GREY_3)),
-                                text_color: color::WHITE,
-                                border: iced::Border::default(),
-                                shadow: iced::Shadow::default(),
-                            })
-                    )
-                    .align_y(Vertical::Center)
-                    .padding(10)
-            )
-            .push(
-                // Webview is active - show status and provide options
-                Container::new(
-                    Column::new()
-                        .push(
-                            text::text("🌐 Google WebView Active")
-                                .size(16)
-                                .color(color::WHITE)
-                        )
-                        .push(Space::with_height(Length::Fixed(10.0)))
-                        .push(
-                            text::text("✅ WebView is running and displaying content")
-                                .size(12)
-                                .color(color::GREEN)
-                        )
-                        .push(Space::with_height(Length::Fixed(8.0)))
-                        .push(
-                            text::text("The webview is active in the background. Due to theme compatibility,")
-                                .size(11)
-                                .color(color::GREY_2)
-                        )
-                        .push(
-                            text::text("the content is rendered in a separate context.")
-                                .size(11)
-                                .color(color::GREY_2)
-                        )
-                        .push(Space::with_height(Length::Fixed(12.0)))
-                        .push(
-                            Button::new(text::text("🔄 Switch to WebView Mode"))
-                                .on_press(view::Message::OpenWebview("https://www.google.com".to_string()))
-                                .style(|_theme, _status| iced::widget::button::Style {
-                                    background: Some(iced::Background::Color(color::GREEN)),
-                                    text_color: color::WHITE,
-                                    border: iced::Border::default(),
-                                    shadow: iced::Shadow::default(),
-                                })
-                                .width(Length::Fill)
-                        )
-                        .push(Space::with_height(Length::Fixed(8.0)))
-                        .push(
-                            Button::new(text::text("🪟 Open in Browser (Fallback)"))
-                                .on_press(view::Message::OpenUrl("https://www.google.com".to_string()))
-                                .style(|_theme, _status| iced::widget::button::Style {
-                                    background: Some(iced::Background::Color(color::ORANGE)),
-                                    text_color: color::WHITE,
-                                    border: iced::Border::default(),
-                                    shadow: iced::Shadow::default(),
-                                })
-                                .width(Length::Fill)
-                        )
-                        .align_x(Horizontal::Center)
-                )
-                .width(Length::Fill)
-                .height(Length::Fixed(220.0)) // Slightly increased for additional button
-                .padding(15)
-                .center_x(Length::Fill)
-                .center_y(Length::Fill)
-                .style(|_theme| iced::widget::container::Style {
-                    background: Some(iced::Background::Color(iced::Color::from_rgb(0.1, 0.1, 0.1))),
-                    border: iced::Border {
-                        color: color::GREEN,
-                        width: 2.0,
-                        radius: 4.0.into(),
-                    },
-                    ..Default::default()
-                })
-            )
-    )
-    .width(Length::Fill)
-    .height(Length::Shrink) // Let the container size itself based on content
-    .style(|_theme| iced::widget::container::Style {
-        background: Some(iced::Background::Color(iced::Color::from_rgb(0.95, 0.95, 0.95))),
-        border: iced::Border {
-            color: color::ORANGE,
-            width: 2.0,
-            radius: 8.0.into(),
-        },
-        ..Default::default()
-    })
-    .width(Length::Fill)
-    .height(Length::Fixed(500.0)) // Good height for embedded browser
-    .style(|_theme| iced::widget::container::Style {
-        background: Some(iced::Background::Color(iced::Color::from_rgb(0.95, 0.95, 0.95))),
-        border: iced::Border {
-            color: color::ORANGE,
-            width: 2.0,
-            radius: 8.0.into(),
-        },
-        ..Default::default()
-    })
-    .into()
-}
-
-// Render a widget that automatically creates the webview (like LegitCamper's example)
-#[cfg(feature = "webview")]
-fn render_webview_auto_create_widget(url: &str, is_loading: bool) -> Element<'static, view::Message> {
-    Container::new(
-        Column::new()
-            .push(
-                Row::new()
-                    .push(
-                        Row::new()
-                            .push(
-                                Container::new(
-                                    text::text("₿")
-                                        .size(20)
-                                        .color(color::ORANGE)
-                                )
-                                .padding(iced::Padding::new(0.0).right(10.0))
-                            )
-                            .push(
-                                Column::new()
-                                    .push(
-                                        text::text("COINCUBE")
-                                            .size(14)
-                                            .color(color::ORANGE)
-                                    )
-                                    .push(
-                                        text::text("BUY/SELL")
-                                            .size(10)
-                                            .color(color::GREY_3)
-                                    )
-                            )
-                            .align_y(Vertical::Center)
-                    )
-                    .push(Space::with_width(Length::Fill))
-                    .push(
-                        text::text(if is_loading { "Loading..." } else { "Ready" })
-                            .size(12)
-                            .color(color::ORANGE)
-                    )
-                    .align_y(Vertical::Center)
-                    .padding(5) // Reduced padding for more compact layout
-            )
-            .push(
-                Container::new(
-                    if is_loading {
-                        Column::new()
-                            .push(
-                                text::text("⏳ Loading Google WebView...")
-                                    .size(14)
-                                    .color(color::ORANGE)
-                            )
-                            .push(Space::with_height(Length::Fixed(8.0)))
-                            .push(
-                                text::text("Testing webview with www.google.com...")
-                                    .size(12)
-                                    .color(color::GREY_2)
-                            )
-                            .align_x(Horizontal::Center)
-                    } else {
-                        Column::new()
-                            .push(
-                                text::text("Choose how to open the Meld widget:")
-                                    .size(14)
-                                    .color(color::GREY_2)
-                            )
-                            .push(Space::with_height(Length::Fixed(15.0)))
-                            .push(
-                                Button::new(
-                                    text::text("🖥️ Test Google WebView")
-                                        .size(14)
-                                )
-                                .on_press(view::Message::OpenWebview("https://www.google.com".to_string()))
-                                .style(|_theme, _status| iced::widget::button::Style {
-                                    background: Some(iced::Background::Color(color::ORANGE)),
-                                    text_color: color::WHITE,
-                                    border: iced::Border::default(),
-                                    shadow: iced::Shadow::default(),
-                                })
-                                .width(Length::Fill)
-                            )
-                            .push(Space::with_height(Length::Fixed(10.0)))
-                            .push(
-                                Button::new(
-                                    text::text("🪟 Open in New Window")
-                                        .size(14)
-                                )
-                                .on_press(view::Message::OpenUrl(url.to_string()))
-                                .style(|_theme, _status| iced::widget::button::Style {
-                                    background: Some(iced::Background::Color(color::GREY_4)),
-                                    text_color: color::WHITE,
-                                    border: iced::Border::default(),
-                                    shadow: iced::Shadow::default(),
-                                })
-                                .width(Length::Fill)
-                            )
-                            .align_x(Horizontal::Center)
-                    }
-                )
-                .width(Length::Fill)
-                .height(Length::Fixed(140.0)) // Further reduced height to fit in app window
-                .padding(8) // Further reduced padding
-                .center_x(Length::Fill)
-                .center_y(Length::Fill)
-                .style(|_theme| iced::widget::container::Style {
-                    background: Some(iced::Background::Color(iced::Color::BLACK)),
-                    border: iced::Border {
-                        color: color::GREY_3,
-                        width: 1.0,
-                        radius: 4.0.into(),
-                    },
-                    ..Default::default()
-                })
-            )
-    )
-    .width(Length::Fill)
-    .max_height(200.0) // Reduced maximum height for more compact layout
-    .style(|_theme| iced::widget::container::Style {
-        background: Some(iced::Background::Color(iced::Color::from_rgb(0.95, 0.95, 0.95))),
-        border: iced::Border {
-            color: color::ORANGE,
-            width: 2.0,
-            radius: 8.0.into(),
-        },
-        ..Default::default()
-    })
-    .into()
-}
-
-// Render instructions when webview is ready but not yet created
-#[cfg(feature = "webview")]
-fn render_webview_ready_instructions(url: &str, is_loading: bool) -> Element<'static, view::Message> {
-    Container::new(
-        Column::new()
-            .push(
-                Row::new()
-                    .push(
-                        text::text("🚀 Meld Trading Widget")
-                            .size(18)
-                            .color(color::ORANGE)
-                    )
-                    .push(Space::with_width(Length::Fill))
-                    .push(
-                        text::text("Ready")
-                            .size(12)
-                            .color(color::ORANGE)
-                    )
-                    .align_y(Vertical::Center)
-            )
-            .push(Space::with_height(Length::Fixed(15.0)))
-            .push(
-                text::text(if is_loading {
-                    "WebView is loading Google.com for testing..."
-                } else {
-                    "WebView resources are available. Click below to test with Google.com."
-                })
-                    .size(14)
-                    .color(if is_loading { color::ORANGE } else { color::GREY_2 })
-            )
-            .push(Space::with_height(Length::Fixed(15.0)))
-            .push({
-                let button_content = if is_loading {
-                    Row::new()
-                        .push(text::text("⏳ Loading WebView..."))
-                        .align_y(Vertical::Center)
-                } else {
-                    Row::new()
-                        .push(text::text("🚀 Test WebView (Google.com)"))
-                        .push(Space::with_width(Length::Fixed(8.0)))
-                        .push(text::text("→").size(16))
-                        .align_y(Vertical::Center)
-                };
-
-                let mut button = Button::new(button_content)
-                    .style(move |_theme, _status| iced::widget::button::Style {
-                        background: Some(iced::Background::Color(
-                            if is_loading { color::GREY_3 } else { color::ORANGE }
-                        )),
-                        text_color: color::WHITE,
-                        border: iced::Border::default(),
-                        shadow: iced::Shadow::default(),
-                    })
-                    .width(Length::Fill);
-
-                if !is_loading {
-                    button = button.on_press(view::Message::OpenWebview(url.to_string()));
-                }
-
-                button
-            })
-            .push(Space::with_height(Length::Fixed(15.0)))
-            .push(
-                Button::new(text::text("Open in Browser (Fallback)"))
-                    .on_press(view::Message::OpenUrl(url.to_string()))
-                    .style(|_theme, _status| iced::widget::button::Style {
-                        background: Some(iced::Background::Color(color::GREY_3)),
-                        text_color: color::WHITE,
-                        border: iced::Border::default(),
-                        shadow: iced::Shadow::default(),
-                    })
-            )
-    )
-    .width(Length::Fill)
-    .height(Length::Fixed(200.0))
-    .padding(15)
-    .style(|_theme| iced::widget::container::Style {
-        background: Some(iced::Background::Color(iced::Color::from_rgb(0.1, 0.1, 0.1))),
-        border: iced::Border {
-            color: color::ORANGE,
-            width: 2.0,
-            radius: 8.0.into(),
-        },
-        ..Default::default()
-    })
-    .into()
-}
-
-// Render actual webview content when resources are available
-#[cfg(feature = "webview")]
-fn render_webview_content(url: &str) -> Element<'static, view::Message> {
-    // Try to create webview with proper error handling and URL loading
-    match std::panic::catch_unwind(|| {
-        // Create a new webview instance
-        let mut webview = WebView::<Ultralight, view::Message>::new();
-
-        // Parse the URL and create a view with it
-        if let Ok(_parsed_url) = url.parse::<url::Url>() {
-            // Create a view with the URL - this loads the actual content
-            let _ = webview.update(Action::CreateView(PageType::Url(url.to_string())));
-            tracing::info!("Loading Meld widget URL: {}", url);
-        } else {
-            tracing::error!("Failed to parse URL: {}", url);
-        }
-
-        webview
-    }) {
-        Ok(_webview) => {
+    if is_loading {
+        // Show loading state while webview is being created
+        Container::new(
+            Column::new()
+                .push(text("🌐 Loading Meld Widget...").size(16).color(color::GREEN))
+                .push(Space::with_height(Length::Fixed(10.0)))
+                .push(text("Creating embedded webview...").size(14).color(color::GREY_3))
+                .align_x(Alignment::Center)
+                .spacing(5)
+        )
+        .padding(20)
+        .width(Length::Fill)
+        .height(Length::Fixed(300.0))
+        .center_x(Length::Fill)
+        .center_y(Length::Fill)
+        .style(|_theme| iced::widget::container::Style {
+            background: Some(iced::Background::Color(iced::Color::from_rgb(0.05, 0.05, 0.05))),
+            border: iced::Border {
+                color: color::ORANGE,
+                width: 1.0,
+                radius: 8.0.into(),
+            },
+            ..Default::default()
+        })
+        .into()
+    } else if url.is_some() && show_webview && webview_ready && current_webview_index.is_some() {
+        // Show the actual Ultralight webview content only when everything is ready AND we have a current view index
+        if let Some(webview) = webview {
             Container::new(
                 Column::new()
                     .push(
+                        // Header with webview info
                         Row::new()
-                            .push(
-                                text::text("🚀 Meld Trading Widget")
-                                    .size(16)
-                                    .color(color::ORANGE)
-                            )
+                            .push(text("Meld Widget").size(16).color(color::GREEN))
                             .push(Space::with_width(Length::Fill))
-                            .push(
-                                text::text("✅ Live")
-                                    .size(12)
-                                    .color(color::ORANGE)
-                            )
-                            .align_y(Vertical::Center)
+                            // .push(text(url.unwrap_or("Loading...")).size(12).color(color::GREY_3))
+                            // .push(Space::with_width(Length::Fixed(10.0)))
+                            // .push(text(format!("View: {}", current_webview_index.unwrap_or(0))).size(10).color(color::GREY_2))
+                            .align_y(Alignment::Center)
+                            .padding([5, 10])
                     )
-                    .push(Space::with_height(Length::Fixed(10.0)))
                     .push(
-                        // WebView content area - Ultralight renders web content at the native level
+                        // The actual Ultralight webview content area
                         Container::new(
-                            Column::new()
-                                .push(
-                                    text::text("🌐 Meld Trading Interface")
-                                        .size(16)
-                                        .color(color::WHITE)
-                                )
-                                .push(Space::with_height(Length::Fixed(15.0)))
-                                .push(
-                                    text::text("✅ WebView Active - Content Loading")
-                                        .size(12)
-                                        .color(color::ORANGE)
-                                )
-                                .push(Space::with_height(Length::Fixed(10.0)))
-                                .push(
-                                    text::text("✅ Ultralight Engine Processing URL")
-                                        .size(12)
-                                        .color(color::ORANGE)
-                                )
-                                .push(Space::with_height(Length::Fixed(15.0)))
-                                .push(
-                                    text::text("🚀 Web Content Rendering in Background")
-                                        .size(11)
-                                        .color(color::ORANGE)
-                                )
-                                .push(Space::with_height(Length::Fixed(8.0)))
-                                .push(
-                                    text::text("Note: Ultralight renders web content at the native window level")
-                                        .size(10)
-                                        .color(color::GREY_3)
-                                )
-                                .align_x(Horizontal::Center)
+                            webview.view()
+                                .map(|action| crate::app::view::Message::WebviewAction(action))
                         )
                         .width(Length::Fill)
-                        .height(Length::Fixed(200.0))
-                        .style(|_theme| iced::widget::container::Style {
-                            background: Some(iced::Background::Color(iced::Color::BLACK)),
-                            border: iced::Border {
-                                color: color::ORANGE,
-                                width: 1.0,
-                                radius: 4.0.into(),
-                            },
-                            ..Default::default()
-                        })
-                    )
-                    .push(Space::with_height(Length::Fixed(10.0)))
-                    .push(
-                        Row::new()
-                            .push(
-                                text::text("✅ Resources: OK")
-                                    .size(10)
-                                    .color(color::ORANGE)
-                            )
-                            .push(Space::with_width(Length::Fixed(15.0)))
-                            .push(
-                                text::text("🌐 Content Loaded")
-                                    .size(10)
-                                    .color(color::ORANGE)
-                            )
-                            .align_y(Vertical::Center)
-                    )
-                    .push(Space::with_height(Length::Fixed(5.0)))
-                    .push(
-                        // Display the full URL with proper wrapping
-                        Container::new(
-                            Column::new()
-                                .push(
-                                    text::text("Widget URL:")
-                                        .size(10)
-                                        .color(color::ORANGE)
-                                )
-                                .push(Space::with_height(Length::Fixed(3.0)))
-                                .push(
-                                    text::text(url)
-                                        .size(8)
-                                        .color(color::GREY_3)
-                                        .width(Length::Fill)
-                                )
-                        )
-                        .width(Length::Fill)
-                        .padding(5)
-                        .style(|_theme| iced::widget::container::Style {
-                            background: Some(iced::Background::Color(iced::Color::from_rgb(0.05, 0.05, 0.05))),
-                            border: iced::Border {
-                                color: color::GREY_3,
-                                width: 1.0,
-                                radius: 3.0.into(),
-                            },
-                            ..Default::default()
-                        })
+                        .height(Length::Fixed(800.0))
                     )
             )
             .width(Length::Fill)
-            .height(Length::Fixed(300.0))
-            .padding(15)
-            .style(|_theme| iced::widget::container::Style {
-                background: Some(iced::Background::Color(iced::Color::from_rgb(0.1, 0.1, 0.1))),
-                border: iced::Border {
-                    color: color::ORANGE,
-                    width: 2.0,
-                    radius: 8.0.into(),
-                },
-                ..Default::default()
-            })
+            .style(webview_container_style)
             .into()
-        },
-        Err(_) => {
-            // WebView creation failed - show error with browser fallback
-            render_webview_error_fallback(url, "WebView initialization failed")
+        } else {
+            // Webview not available, show error
+            Container::new(
+                Column::new()
+                    .push(text("❌ Webview Error").size(16).color(color::RED))
+                    .push(Space::with_height(Length::Fixed(10.0)))
+                    .push(text("Webview not available").size(14).color(color::GREY_3))
+                    .align_x(Alignment::Center)
+                    .spacing(5)
+            )
+            .padding(20)
+            .width(Length::Fill)
+            .height(Length::Fixed(800.0))
+            .style(webview_placeholder_style)
+            .into()
         }
+    } else if url.is_some() && show_webview && webview_ready && current_webview_index.is_none() {
+        // Webview is ready but no current view index set - show waiting for view switch
+        Container::new(
+            Column::new()
+                .push(text("🌐 Switching to Webview...").size(16).color(color::ORANGE))
+                .push(Space::with_height(Length::Fixed(10.0)))
+                .push(text("Setting up view index").size(14).color(color::GREY_3))
+                .push(Space::with_height(Length::Fixed(10.0)))
+                .push(text("Please wait...").size(12).color(color::GREY_2))
+                .align_x(Alignment::Center)
+                .spacing(5)
+        )
+        .padding(20)
+        .width(Length::Fill)
+        .height(Length::Fixed(800.0))
+        .style(webview_placeholder_style)
+        .into()
+    } else if url.is_some() && show_webview && !webview_ready {
+        // Show initializing state when webview is being prepared
+        Container::new(
+            Column::new()
+                .push(text("🌐 Initializing Webview...").size(16).color(color::ORANGE))
+                .push(Space::with_height(Length::Fixed(10.0)))
+                .push(text("Setting up payment interface").size(14).color(color::GREY_3))
+                .push(Space::with_height(Length::Fixed(10.0)))
+                .push(text("Please wait...").size(12).color(color::GREY_2))
+                .align_x(Alignment::Center)
+                .spacing(5)
+        )
+        .padding(20)
+        .width(Length::Fill)
+        .height(Length::Fixed(800.0))
+        .style(webview_placeholder_style)
+        .into()
+    } else if url.is_some() && !show_webview {
+        // Show button to open webview when URL is available but webview is not shown
+        Container::new(
+            Column::new()
+                .push(text("🌐 Meld Payment Ready").size(16).color(color::GREEN))
+                .push(Space::with_height(Length::Fixed(10.0)))
+                .push(text("Your payment session is ready").size(14).color(color::GREY_3))
+                .push(Space::with_height(Length::Fixed(15.0)))
+                .push(
+                    primary(None, "Show Payment Interface")
+                        .on_press(crate::app::view::Message::ShowWebView)
+                        .width(Length::Fixed(200.0))
+                )
+                .align_x(Alignment::Center)
+                .spacing(5)
+        )
+        .padding(20)
+        .width(Length::Fill)
+        .height(Length::Fixed(800.0))
+        .style(webview_placeholder_style)
+        .into()
+    } else {
+        // Show that webview will be available after session creation
+        Container::new(
+            Column::new()
+                .push(text("🌐 Meld Widget").size(16).color(color::GREEN))
+                .push(Space::with_height(Length::Fixed(10.0)))
+                .push(text("Payment interface will appear after session creation").size(14).color(color::GREY_3))
+                .push(Space::with_height(Length::Fixed(15.0)))
+                .push(text("Generate a session to continue").size(12).color(color::GREY_2))
+                .align_x(Alignment::Center)
+                .spacing(5)
+        )
+        .padding(20)
+        .width(Length::Fill)
+        .height(Length::Fixed(800.0))
+        .style(webview_placeholder_style)
+        .into()
     }
 }
 
-// Render setup instructions when resources are missing
-#[cfg(feature = "webview")]
-fn render_setup_instructions(url: &str, error_message: &str) -> Element<'static, view::Message> {
-    Container::new(
-        Column::new()
-            .push(
-                Row::new()
-                    .push(
-                        text::text("⚙️ Ultralight Setup Required")
-                            .size(16)
-                            .color(color::ORANGE)
-                    )
-                    .push(Space::with_width(Length::Fill))
-                    .push(
-                        text::text("Setup Needed")
-                            .size(12)
-                            .color(color::ORANGE)
-                    )
-                    .align_y(Vertical::Center)
-            )
-            .push(Space::with_height(Length::Fixed(10.0)))
-            .push(
-                text::text("Webview resources are not properly configured.")
-                    .size(14)
-                    .color(color::GREY_2)
-            )
-            .push(Space::with_height(Length::Fixed(8.0)))
-            .push(
-                Container::new(
-                    Column::new()
-                        .push(
-                            text::text("❌ Error:")
-                                .size(12)
-                                .color(color::ORANGE)
-                        )
-                        .push(
-                            text::text(error_message)
-                                .size(11)
-                                .color(color::GREY_2)
-                        )
-                        .spacing(4)
-                )
-                .padding(10)
-                .style(|_theme| iced::widget::container::Style {
-                    background: Some(iced::Background::Color(iced::Color::from_rgb(0.2, 0.1, 0.0))), // Dark orange background
-                    border: iced::Border {
-                        color: color::ORANGE,
-                        width: 1.0,
-                        radius: 4.0.into(),
-                    },
-                    ..Default::default()
-                })
-                .width(Length::Fill)
-            )
-            .push(Space::with_height(Length::Fixed(12.0)))
-            .push(
-                Column::new()
-                    .push(
-                        text::text("🔧 To fix this:")
-                            .size(12)
-                            .color(color::GREY_2)
-                    )
-                    .push(Space::with_height(Length::Fixed(6.0)))
-                    .push(
-                        text::text("1. Set environment variable:")
-                            .size(11)
-                            .color(color::GREY_3)
-                    )
-                    .push(
-                        Container::new(
-                            text::text("export ULTRALIGHT_RESOURCES_DIR=/home/rizary/ultralight_resources/resources/resources")
-                                .size(10)
-                                .color(color::ORANGE) // Orange text for command
-                        )
-                        .padding(6)
-                        .style(|_theme| iced::widget::container::Style {
-                            background: Some(iced::Background::Color(iced::Color::from_rgb(0.1, 0.1, 0.1))), // Dark background
-                            border: iced::Border {
-                                color: color::ORANGE,
-                                width: 1.0,
-                                radius: 3.0.into(),
-                            },
-                            ..Default::default()
-                        })
-                    )
-                    .push(Space::with_height(Length::Fixed(6.0)))
-                    .push(
-                        text::text("2. Ensure files exist: cacert.pem, icudt67l.dat")
-                            .size(11)
-                            .color(color::GREY_3)
-                    )
-                    .spacing(3)
-            )
-            .push(Space::with_height(Length::Fixed(12.0)))
-            .push(
-                Button::new(
-                    Row::new()
-                        .push(text::text("🌐"))
-                        .push(Space::with_width(Length::Fixed(8.0)))
-                        .push(text::text("Open in Browser (Fallback)"))
-                        .align_y(Vertical::Center)
-                )
-                .on_press(view::Message::OpenWebview(url.to_string()))
-                .style(|_theme, _status| iced::widget::button::Style {
-                    background: Some(iced::Background::Color(color::ORANGE)),
-                    text_color: color::WHITE,
-                    border: iced::Border::default(),
-                    shadow: iced::Shadow::default(),
-                })
-                .width(Length::Fill)
-                .padding(10)
-            )
-    )
-    .width(Length::Fill)
-    .height(Length::Fixed(300.0))
-    .padding(15)
-    .style(|_theme| iced::widget::container::Style {
-        background: Some(iced::Background::Color(iced::Color::from_rgb(0.15, 0.1, 0.05))), // Dark background
+/// Theme-compatible style function for webview container
+/// Uses liana-ui theme colors to ensure visual consistency
+fn webview_container_style(theme: &liana_ui::theme::Theme) -> iced::widget::container::Style {
+    iced::widget::container::Style {
+        background: Some(iced::Background::Color(theme.colors.general.foreground)),
         border: iced::Border {
-            color: color::ORANGE,
+            color: theme.colors.text.success, // Use theme's success color (green)
             width: 2.0,
             radius: 8.0.into(),
         },
+        text_color: Some(theme.colors.text.primary),
         ..Default::default()
-    })
-    .into()
+    }
 }
 
-// Render error fallback when webview creation fails
-#[cfg(feature = "webview")]
-fn render_webview_error_fallback(url: &str, error_message: &str) -> Element<'static, view::Message> {
-    Container::new(
-        Column::new()
-            .push(
-                Row::new()
-                    .push(
-                        text::text("⚠️ Webview Error")
-                            .size(16)
-                            .color(color::ORANGE)
-                    )
-                    .push(Space::with_width(Length::Fill))
-                    .push(
-                        text::text("Fallback Mode")
-                            .size(12)
-                            .color(color::ORANGE)
-                    )
-                    .align_y(Vertical::Center)
-            )
-            .push(Space::with_height(Length::Fixed(15.0)))
-            .push(
-                text::text(format!("Webview initialization failed: {}", error_message))
-                    .size(14)
-                    .color(color::GREY_2)
-            )
-            .push(Space::with_height(Length::Fixed(15.0)))
-            .push(
-                text::text("Using browser fallback instead.")
-                    .size(12)
-                    .color(color::GREY_3)
-            )
-            .push(Space::with_height(Length::Fixed(20.0)))
-            .push(
-                Button::new(
-                    Row::new()
-                        .push(text::text("🌐"))
-                        .push(Space::with_width(Length::Fixed(8.0)))
-                        .push(text::text("Open Meld Trading Widget"))
-                        .align_y(Vertical::Center)
-                )
-                .on_press(view::Message::OpenWebview(url.to_string()))
-                .style(|_theme, _status| iced::widget::button::Style {
-                    background: Some(iced::Background::Color(color::ORANGE)),
-                    text_color: color::WHITE,
-                    border: iced::Border::default(),
-                    shadow: iced::Shadow::default(),
-                })
-                .width(Length::Fill)
-                .padding(12)
-            )
-    )
-    .width(Length::Fill)
-    .height(Length::Fixed(300.0))
-    .padding(20)
-    .style(|_theme| iced::widget::container::Style {
-        background: Some(iced::Background::Color(iced::Color::from_rgb(0.15, 0.1, 0.05))), // Dark background
+/// Theme-compatible style function for webview placeholder
+/// Uses liana-ui theme colors for the placeholder state
+fn webview_placeholder_style(theme: &liana_ui::theme::Theme) -> iced::widget::container::Style {
+    iced::widget::container::Style {
+        background: Some(iced::Background::Color(theme.colors.general.foreground)),
         border: iced::Border {
-            color: color::ORANGE,
-            width: 2.0,
+            color: theme.colors.text.success, // Use theme's success color (green)
+            width: 1.0,
             radius: 8.0.into(),
         },
+        text_color: Some(theme.colors.text.primary),
         ..Default::default()
-    })
-    .into()
+    }
 }
 
-// Render fallback for payment providers that block embedding
-#[cfg(feature = "webview")]
-fn render_payment_provider_fallback(url: &str) -> Element<'static, view::Message> {
-    let provider_message = crate::app::webview_utils::get_payment_provider_message(url);
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use liana_ui::theme::Theme;
+    use crate::app::WebviewMessage;
 
-    Container::new(
-        Column::new()
-            .push(
-                Row::new()
-                    .push(
-                        text::text("🔒 Payment Provider Security")
-                            .size(18)
-                            .color(color::ORANGE)
-                    )
-                    .push(Space::with_width(Length::Fill))
-                    .push(
-                        text::text("🛡️ Secure")
-                            .size(12)
-                            .color(color::GREEN)
-                    )
-                    .align_y(Vertical::Center)
-            )
-            .push(Space::with_height(Length::Fixed(15.0)))
-            .push(
-                Container::new(
-                    Column::new()
-                        .push(
-                            text::text("🏦 Payment Provider Detected")
-                                .size(16)
-                                .color(color::ORANGE)
-                        )
-                        .push(Space::with_height(Length::Fixed(10.0)))
-                        .push(
-                            text::text(&provider_message)
-                                .size(14)
-                                .color(color::GREY_2)
-                        )
-                        .push(Space::with_height(Length::Fixed(15.0)))
-                        .push(
-                            text::text("This is a security feature to protect your payment information.")
-                                .size(12)
-                                .color(color::GREY_3)
-                        )
-                        .push(Space::with_height(Length::Fixed(20.0)))
-                        .push(
-                            Button::new(
-                                Row::new()
-                                    .push(text::text("🌐 Open in Browser"))
-                                    .push(Space::with_width(Length::Fixed(8.0)))
-                                    .push(text::text("→").size(16))
-                                    .align_y(Vertical::Center)
-                            )
-                            .on_press(view::Message::OpenUrl(url.to_string()))
-                            .style(|_theme, _status| iced::widget::button::Style {
-                                background: Some(iced::Background::Color(color::ORANGE)),
-                                text_color: color::WHITE,
-                                border: iced::Border::default(),
-                                shadow: iced::Shadow::default(),
-                            })
-                        )
-                        .align_x(Horizontal::Center)
-                )
-                .width(Length::Fill)
-                .height(Length::Fixed(200.0))
-                .style(|_theme| iced::widget::container::Style {
-                    background: Some(iced::Background::Color(iced::Color::from_rgb(0.05, 0.05, 0.1))),
-                    border: iced::Border {
-                        color: color::ORANGE,
-                        width: 1.0,
-                        radius: 4.0.into(),
-                    },
-                    ..Default::default()
-                })
-            )
-            .push(Space::with_height(Length::Fixed(10.0)))
-            .push(
-                Row::new()
-                    .push(
-                        text::text("🔐 Secure Payment")
-                            .size(10)
-                            .color(color::GREEN)
-                    )
-                    .push(Space::with_width(Length::Fixed(15.0)))
-                    .push(
-                        text::text("🛡️ Anti-Fraud Protection")
-                            .size(10)
-                            .color(color::GREEN)
-                    )
-                    .align_y(Vertical::Center)
-            )
-    )
-    .width(Length::Fill)
-    .height(Length::Fixed(300.0))
-    .padding(15)
-    .style(|_theme| iced::widget::container::Style {
-        background: Some(iced::Background::Color(iced::Color::from_rgb(0.1, 0.1, 0.1))),
-        border: iced::Border {
-            color: color::ORANGE,
-            width: 2.0,
-            radius: 8.0.into(),
-        },
-        ..Default::default()
-    })
-    .into()
-}
+    #[test]
+    fn test_webview_state_default() {
+        let state = WebviewState::default();
+        assert_eq!(state.url, "");
+        assert!(!state.is_loading);
+        assert!(!state.show_webview);
+        assert!(!state.has_webview);
+    }
 
-// Render fallback when webview feature is disabled
-#[cfg(not(feature = "webview"))]
-fn render_webview_disabled_fallback(url: &str) -> Element<'static, view::Message> {
-    Container::new(
-        Column::new()
-            .push(
-                Row::new()
-                    .push(
-                        text::text("🚀 Meld Trading Widget")
-                            .size(18)
-                            .color(color::ORANGE) // Changed to orange
-                    )
-                    .push(Space::with_width(Length::Fill))
-                    .push(
-                        text::text("Webview Disabled")
-                            .size(12)
-                            .color(color::ORANGE)
-                    )
-                    .align_y(Vertical::Center)
-            )
-            .push(Space::with_height(Length::Fixed(15.0)))
-            .push(
-                text::text("Webview feature is not enabled. Click the button below to open the trading interface in your browser.")
-                    .size(14)
-                    .color(color::GREY_2)
-            )
-            .push(Space::with_height(Length::Fixed(20.0)))
-            .push(
-                Button::new(
-                    Row::new()
-                        .push(text::text("🌐"))
-                        .push(Space::with_width(Length::Fixed(8.0)))
-                        .push(text::text("Open Meld Trading Widget"))
-                        .align_y(Vertical::Center)
-                )
-                .on_press(view::Message::OpenWebview(url.to_string()))
-                .style(|_theme, _status| iced::widget::button::Style {
-                    background: Some(iced::Background::Color(color::ORANGE)), // Changed to orange
-                    text_color: color::WHITE,
-                    border: iced::Border::default(),
-                    shadow: iced::Shadow::default(),
-                })
-                .width(Length::Fill)
-                .padding(12)
-            )
-            .push(Space::with_height(Length::Fixed(15.0)))
-            .push(
-                text::text("The trading interface will open in a new browser window where you can:")
-                    .size(12)
-                    .color(color::GREY_3)
-            )
-            .push(Space::with_height(Length::Fixed(8.0)))
-            .push(
-                Column::new()
-                    .push(text::text("• Buy and sell Bitcoin").size(12).color(color::GREY_3))
-                    .push(text::text("• Connect your bank account").size(12).color(color::GREY_3))
-                    .push(text::text("• Complete KYC verification").size(12).color(color::GREY_3))
-                    .push(text::text("• Track your transactions").size(12).color(color::GREY_3))
-                    .spacing(4)
-            )
-            .spacing(2)
-    )
-    .width(Length::Fill)
-    .height(Length::Fixed(300.0))
-    .padding(20)
-    .style(|_theme| iced::widget::container::Style {
-        background: Some(iced::Background::Color(iced::Color::from_rgb(0.15, 0.1, 0.05))), // Dark background
-        border: iced::Border {
-            color: color::ORANGE, // Orange border
-            width: 2.0,
-            radius: 8.0.into(),
-        },
-        ..Default::default()
-    })
-    .into()
+    #[test]
+    fn test_webview_state_new() {
+        let state = WebviewState::new();
+        assert_eq!(state.url, "");
+        assert!(!state.is_loading);
+        assert!(!state.show_webview);
+        assert!(!state.has_webview);
+    }
+
+    #[test]
+    fn test_webview_container_style() {
+        let theme = Theme::default();
+        let style = webview_container_style(&theme);
+
+        // Verify background uses theme foreground color
+        assert!(style.background.is_some());
+        if let Some(iced::Background::Color(color)) = style.background {
+            assert_eq!(color, theme.colors.general.foreground);
+        }
+
+        // Verify border uses theme success color
+        assert_eq!(style.border.color, theme.colors.text.success);
+        assert_eq!(style.border.width, 2.0);
+        assert_eq!(style.border.radius, 8.0.into());
+
+        // Verify text color uses theme primary color
+        assert_eq!(style.text_color, Some(theme.colors.text.primary));
+    }
+
+    #[test]
+    fn test_webview_placeholder_style() {
+        let theme = Theme::default();
+        let style = webview_placeholder_style(&theme);
+
+        // Verify background uses theme foreground color
+        assert!(style.background.is_some());
+        if let Some(iced::Background::Color(color)) = style.background {
+            assert_eq!(color, theme.colors.general.foreground);
+        }
+
+        // Verify border uses theme success color with different width
+        assert_eq!(style.border.color, theme.colors.text.success);
+        assert_eq!(style.border.width, 1.0);
+        assert_eq!(style.border.radius, 8.0.into());
+
+        // Verify text color uses theme primary color
+        assert_eq!(style.text_color, Some(theme.colors.text.primary));
+    }
+
+    #[cfg(feature = "webview")]
+    #[test]
+    fn test_webview_component_new() {
+        let component = WebviewComponent::new();
+        assert_eq!(component.state.url, "");
+        assert!(!component.state.is_loading);
+        assert!(!component.state.show_webview);
+        assert!(!component.state.has_webview);
+    }
+
+    #[test]
+    fn test_webview_message_variants() {
+        // Test that WebviewMessage variants can be created and cloned
+        let created = WebviewMessage::Created;
+        let url_changed = WebviewMessage::UrlChanged("https://example.com".to_string());
+
+        // Test cloning
+        let _created_clone = created.clone();
+        let _url_changed_clone = url_changed.clone();
+
+        // Test debug formatting
+        let debug_str = format!("{:?}", created);
+        assert!(debug_str.contains("Created"));
+
+        let debug_str = format!("{:?}", url_changed);
+        assert!(debug_str.contains("UrlChanged"));
+        assert!(debug_str.contains("https://example.com"));
+    }
 }

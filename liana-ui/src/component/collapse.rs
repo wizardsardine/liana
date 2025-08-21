@@ -70,7 +70,7 @@ where
         }
     }
 
-    fn view(&self, state: &Self::State) -> Element<Self::Event, Theme, Renderer> {
+    fn view(&self, state: &Self::State) -> Element<'_, Self::Event, Theme, Renderer> {
         match state {
             Some(true) => column![
                 (self.after)().on_press(Event::Collapse(false)),

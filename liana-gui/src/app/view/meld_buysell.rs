@@ -1,6 +1,6 @@
 #[cfg(feature = "dev-meld")]
 use iced::{
-    widget::{text, Space, pick_list},
+    widget::{text, Space},
     Alignment, Length,
 };
 
@@ -18,7 +18,6 @@ use liana_ui::{
 
 #[cfg(feature = "dev-meld")]
 use crate::app::{
-    buysell::ServiceProvider,
     view::{MeldBuySellMessage, Message as ViewMessage},
 };
 
@@ -30,7 +29,6 @@ pub struct MeldBuySellPanel {
     pub wallet_address: form::Value<String>,
     pub country_code: form::Value<String>,
     pub source_amount: form::Value<String>,
-    pub selected_provider: ServiceProvider,
     pub loading: bool,
     pub error: Option<String>,
     pub network: Network,
@@ -57,7 +55,7 @@ impl MeldBuySellPanel {
                 warning: None,
                 valid: true,
             },
-            selected_provider: ServiceProvider::Transak, // Only Transak for now
+
             loading: false,
             error: None,
             network,
@@ -121,27 +119,11 @@ impl MeldBuySellPanel {
             return;
         }
 
-        self.wallet_address.warning = match self.selected_provider {
-            ServiceProvider::Transak => {
-                // Transak testing requires testnet addresses
-                if self.network == Network::Bitcoin {
-                    Some("Transak testing requires testnet. Switch to testnet network or use testnet address")
-                } else if self.validate_wallet_address() {
-                    None
-                } else {
-                    Some("For Transak testing, use testnet address like: 2N3oefVeg6stiTb5Kh3ozCSkaqmx91FDbsm")
-                }
-            }
-            _ => {
-                if self.validate_wallet_address() {
-                    None
-                } else {
-                    match self.network {
-                        Network::Bitcoin => Some("Please enter a valid mainnet Bitcoin address (1, 3, or bc1)"),
-                        _ => Some("Please enter a valid testnet Bitcoin address (2, tb1, or bcrt1)"),
-                    }
-                }
-            }
+        // Simplified validation - Meld API handles network-specific requirements
+        self.wallet_address.warning = if self.validate_wallet_address() {
+            None
+        } else {
+            Some("Invalid Bitcoin address format")
         };
     }
 
@@ -155,12 +137,7 @@ impl MeldBuySellPanel {
         self.source_amount.valid = !self.source_amount.value.is_empty() && self.source_amount.value.parse::<f64>().is_ok();
     }
 
-    pub fn set_selected_provider(&mut self, provider: ServiceProvider) {
-        self.selected_provider = provider;
-        // Re-validate wallet address when provider changes
-        self.wallet_address.valid = !self.wallet_address.value.is_empty() && self.validate_wallet_address();
-        self.update_wallet_address_warning();
-    }
+
 
     pub fn is_form_valid(&self) -> bool {
         self.wallet_address.valid
@@ -174,8 +151,16 @@ impl MeldBuySellPanel {
 
 #[cfg(feature = "dev-meld")]
 pub fn meld_buysell_view(state: &MeldBuySellPanel) -> Element<'_, ViewMessage> {
-    Container::new(
-        Column::new()
+    meld_buysell_view_with_webview(state, None)
+}
+
+#[cfg(feature = "dev-meld")]
+pub fn meld_buysell_view_with_webview<'a>(
+    state: &'a MeldBuySellPanel,
+    webview_widget: Option<Element<'a, ViewMessage>>
+) -> Element<'a, ViewMessage> {
+    Container::new({
+        let mut column = Column::new()
             .push(
                 Row::new()
                     .push(
@@ -197,8 +182,21 @@ pub fn meld_buysell_view(state: &MeldBuySellPanel) -> Element<'_, ViewMessage> {
                     )
                     .push(Space::with_width(Length::Fill))
                     .align_y(Alignment::Center)
-            )
-            .push_maybe(if state.widget_session_created.is_none() {
+            );
+
+        // Check if webview widget is provided (before consuming it)
+        let has_webview = webview_widget.is_some();
+
+        // Insert webview widget right after the Previous button if provided
+        if let Some(webview) = webview_widget {
+            column = column
+                .push(Space::with_height(Length::Fixed(20.0)))
+                .push(webview);
+        }
+
+        // Only show form content if no session has been created (i.e., no webview is active)
+        column
+            .push_maybe(if state.widget_url.is_none() && !has_webview {
                 Some(
                     Column::new()
                         .push(Space::with_height(Length::Fixed(10.0)))
@@ -228,13 +226,21 @@ pub fn meld_buysell_view(state: &MeldBuySellPanel) -> Element<'_, ViewMessage> {
             } else {
                 None
             })
-            .push(Space::with_height(Length::Fixed(10.0)))
-            .push(meld_form_content(state))
+            .push_maybe(if state.widget_url.is_none() && !has_webview {
+                Some(Space::with_height(Length::Fixed(10.0)))
+            } else {
+                None
+            })
+            .push_maybe(if state.widget_url.is_none() && !has_webview {
+                Some(meld_form_content(state))
+            } else {
+                None
+            })
             .align_x(Alignment::Center)
             .spacing(5) // Reduced spacing for more compact layout
             .max_width(600)
             .width(Length::Fill)
-    )
+    })
     .padding(iced::Padding::new(2.0).left(40.0).right(40.0).bottom(20.0)) // further reduced padding for compact layout
     .center_x(Length::Fill)
     .into()
@@ -242,14 +248,6 @@ pub fn meld_buysell_view(state: &MeldBuySellPanel) -> Element<'_, ViewMessage> {
 
 #[cfg(feature = "dev-meld")]
 fn meld_form_content(state: &MeldBuySellPanel) -> Element<'_, ViewMessage> {
-    let providers = vec![ServiceProvider::Transak]; // Only Transak for now
-
-    // If we have a widget URL, show success state
-    if let Some(widget_url) = &state.widget_url {
-        tracing::info!("Rendering meld form content using url: {}", widget_url);
-        return success_content(widget_url);
-    }
-
     Column::new()
         .push_maybe(state.error.as_ref().map(|err| {
             Container::new(
@@ -266,10 +264,9 @@ fn meld_form_content(state: &MeldBuySellPanel) -> Element<'_, ViewMessage> {
                 .push(text("Wallet Address").size(14).color(color::GREY_3))
                 .push(Space::with_height(Length::Fixed(5.0)))
                 .push({
-                    let placeholder = match (state.selected_provider, state.network) {
-                        (ServiceProvider::Transak, _) => "Testnet address for Transak testing",
-                        (_, Network::Bitcoin) => "Enter mainnet Bitcoin address (1, 3, bc1)",
-                        (_, _) => "Enter testnet Bitcoin address (2, tb1, bcrt1)",
+                    let placeholder = match state.network {
+                        Network::Bitcoin => "Enter mainnet Bitcoin address (1, 3, bc1)",
+                        _ => "Enter testnet Bitcoin address (2, tb1, bcrt1)",
                     };
 
                     form::Form::new_trimmed(placeholder, &state.wallet_address, |value| {
@@ -313,22 +310,7 @@ fn meld_form_content(state: &MeldBuySellPanel) -> Element<'_, ViewMessage> {
                         .width(Length::FillPortion(1))
                 )
         )
-        .push(Space::with_height(Length::Fixed(20.0)))
-        .push(
-            Column::new()
-                .push(text("Service Provider").size(14).color(color::GREY_3))
-                .push(Space::with_height(Length::Fixed(5.0)))
-                .push(
-                    pick_list(
-                        providers,
-                        Some(state.selected_provider),
-                        |provider| ViewMessage::MeldBuySell(MeldBuySellMessage::ProviderSelected(provider))
-                    )
-                    .padding(15)
-                    .width(Length::Fill)
-                )
-                .spacing(5)
-        )
+
         .push(Space::with_height(Length::Fixed(30.0)))
         .push(
             if state.loading {
@@ -353,39 +335,14 @@ fn meld_form_content(state: &MeldBuySellPanel) -> Element<'_, ViewMessage> {
 
 #[cfg(feature = "dev-meld")]
 fn network_info_panel(state: &MeldBuySellPanel) -> Option<Element<'_, ViewMessage>> {
-    match (state.selected_provider, state.network) {
-        (ServiceProvider::Transak, Network::Bitcoin) => Some(
-            Container::new(
-                Column::new()
-                    .push(text("⚠️ Network Mismatch").size(14).color(color::RED))
-                    .push(Space::with_height(Length::Fixed(5.0)))
-                    .push(text("Transak testing requires testnet network").size(12).color(color::GREY_3))
-                    .push(text("Switch to testnet with: cargo run --bin liana-gui --features dev-meld -- --testnet").size(12).color(color::GREY_3))
-                    .spacing(2)
-            )
-            .padding(10)
-            .style(theme::card::invalid)
-            .into()
-        ),
-        (ServiceProvider::Transak, _) => Some(
-            Container::new(
-                Column::new()
-                    .push(text("💡 Transak Testing Info").size(14).color(color::ORANGE))
-                    .push(Space::with_height(Length::Fixed(5.0)))
-                    .push(text("Using testnet network with default Transak test address").size(12).color(color::GREY_3))
-                    .push(text("Default address: 2N3oefVeg6stiTb5Kh3ozCSkaqmx91FDbsm").size(12).color(color::GREY_3))
-                    .spacing(2)
-            )
-            .padding(10)
-            .style(theme::card::simple)
-            .into()
-        ),
-        (_, Network::Bitcoin) => Some(
+    // Simplified network info - Meld API handles provider-specific requirements
+    match state.network {
+        Network::Bitcoin => Some(
             Container::new(
                 Column::new()
                     .push(text("🌐 Mainnet Network").size(14).color(color::ORANGE))
                     .push(Space::with_height(Length::Fixed(5.0)))
-                    .push(text("Using Bitcoin mainnet - use real addresses").size(12).color(color::GREY_3))
+                    .push(text("Using Bitcoin mainnet with Transak payment provider").size(12).color(color::GREY_3))
                     .push(text("Address formats: 1..., 3..., bc1...").size(12).color(color::GREY_3))
                     .spacing(2)
             )
@@ -393,75 +350,18 @@ fn network_info_panel(state: &MeldBuySellPanel) -> Option<Element<'_, ViewMessag
             .style(theme::card::simple)
             .into()
         ),
-        _ => None
-    }
-}
-
-#[cfg(feature = "dev-meld")]
-fn success_content(widget_url: &str) -> Element<'_, ViewMessage> {
-    Column::new()
-        .push({
-            // Show the webview widget with a launch button
-            #[cfg(feature = "webview")]
-            {
-                // Create a webview widget that will be embedded in the content area
-                crate::app::view::webview::meld_webview_widget_embedded(widget_url)
-            }
-            #[cfg(not(feature = "webview"))]
-            {
-                // Fallback UI when webview is not available
-                Container::new(
-                    Column::new()
-                        .push(text("🌐 Meld Widget").size(16).color(color::GREEN))
-                        .push(Space::with_height(Length::Fixed(10.0)))
-                        .push(text("Webview not available. Choose how to open the widget:").size(14).color(color::GREY_3))
-                        .push(Space::with_height(Length::Fixed(15.0)))
-                        .push(
-                            ui_button::primary(None, "Open in Browser")
-                                .on_press(ViewMessage::MeldBuySell(MeldBuySellMessage::OpenWidget(widget_url.to_string())))
-                                .width(Length::Fill)
-                        )
-                        .push(Space::with_height(Length::Fixed(10.0)))
-                        .push(
-                            ui_button::secondary(None, "Open in New Window")
-                                .on_press(ViewMessage::MeldBuySell(MeldBuySellMessage::OpenWidgetInNewWindow(widget_url.to_string())))
-                                .width(Length::Fill)
-                        )
-                        .push(Space::with_height(Length::Fixed(10.0)))
-                        .push(
-                            Container::new(
-                                text(widget_url)
-                                    .size(11)
-                                    .color(color::BLUE)
-                            )
-                            .padding(10)
-                            .style(theme::card::simple)
-                            .width(Length::Fill)
-                        )
-                        .push(Space::with_height(Length::Fixed(10.0)))
-                        .push(
-                            ui_button::secondary(None, "Copy URL")
-                                .on_press(ViewMessage::MeldBuySell(MeldBuySellMessage::CopyUrl(widget_url.to_string())))
-                                .width(Length::Fill)
-                        )
-                        .align_x(Alignment::Center)
-                )
-                .width(Length::Fill)
-                .height(Length::Fixed(350.0))
-                .padding(20)
-                .style(theme::card::simple)
-                .into()
-            }
-        })
-        .push(Space::with_height(Length::Fixed(15.0)))
-        .push(
-            ui_button::secondary(None, "Create Another Session")
-                .on_press(ViewMessage::MeldBuySell(MeldBuySellMessage::ResetForm))
-                .width(Length::Fill)
+        _ => Some(
+            Container::new(
+                Column::new()
+                    .push(text("🧪 Testnet Network").size(14).color(color::ORANGE))
+                    .push(Space::with_height(Length::Fixed(5.0)))
+                    .push(text("Using Bitcoin testnet with Transak payment provider").size(12).color(color::GREY_3))
+                    .push(text("Address formats: 2..., tb1..., bcrt1...").size(12).color(color::GREY_3))
+                    .spacing(2)
+            )
+            .padding(10)
+            .style(theme::card::simple)
+            .into()
         )
-        .align_x(Alignment::Center)
-        .spacing(5)
-        .max_width(500)
-        .width(Length::Fill)
-        .into()
+    }
 }

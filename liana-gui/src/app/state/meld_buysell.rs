@@ -28,13 +28,9 @@ impl Default for MeldBuySellPanel {
 
 #[cfg(feature = "dev-meld")]
 impl State for MeldBuySellPanel {
-    fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, ViewMessage> {
-        crate::app::view::dashboard(
-            &crate::app::menu::Menu::BuyAndSell,
-            cache,
-            None, // Error handling will be done within the meld view itself
-            meld_buysell_view(self),
-        )
+    fn view<'a>(&'a self, _cache: &'a Cache) -> Element<'a, ViewMessage> {
+        // Return the meld view directly - dashboard wrapper will be applied by app/mod.rs
+        meld_buysell_view(self)
     }
 
     fn update(
@@ -64,17 +60,15 @@ impl State for MeldBuySellPanel {
                 self.set_source_amount(amount);
                 Task::none()
             }
-            Message::View(ViewMessage::MeldBuySell(MeldBuySellMessage::ProviderSelected(provider))) => {
-                self.set_selected_provider(provider);
-                Task::none()
-            }
+
             Message::View(ViewMessage::MeldBuySell(MeldBuySellMessage::CreateSession)) => {
                 if self.is_form_valid() {
                     self.start_session();
                     let wallet_address = self.wallet_address.value.clone();
                     let country_code = self.country_code.value.clone();
                     let source_amount = self.source_amount.value.clone();
-                    let provider = self.selected_provider;
+                    // Use Transak as the default payment provider
+                    let provider = ServiceProvider::Transak;
 
                     Task::perform(
                         create_meld_session(wallet_address, country_code, source_amount, provider, self.network),
@@ -88,91 +82,19 @@ impl State for MeldBuySellPanel {
                 }
             }
             Message::View(ViewMessage::MeldBuySell(MeldBuySellMessage::SessionCreated(widget_url))) => {
-                self.session_created(widget_url);
-                Task::none()
+                self.session_created(widget_url.clone());
+
+                // Immediately open the webview after session creation
+                tracing::info!("Auto-opening widget URL in embedded webview: {}", widget_url);
+                return Task::done(Message::View(ViewMessage::OpenWebview(widget_url)));
             }
             Message::View(ViewMessage::MeldBuySell(MeldBuySellMessage::OpenWidget(widget_url))) => {
                 // Log the URL we're trying to open
                 tracing::info!("Attempting to open widget URL: {}", widget_url);
 
-                // Use embedded webview if available, otherwise fallback to external browser
-                #[cfg(feature = "webview")]
-                {
-                    tracing::info!("Opening widget URL in embedded webview");
-                    return Task::done(Message::View(ViewMessage::OpenWebview(widget_url)));
-                }
-
-                #[cfg(not(feature = "webview"))]
-                {
-                    // Fallback to external browser
-                    let mut success = false;
-
-                    // Method 1: Try open::that_detached first (non-blocking)
-                    match open::that_detached(&widget_url) {
-                        Ok(_) => {
-                            tracing::info!("Successfully opened widget URL with detached method");
-                            success = true;
-                        }
-                        Err(e) => {
-                            tracing::warn!("Failed to open browser with detached method: {}", e);
-                        }
-                    }
-
-                    // Method 2: Try WSL-specific commands first, then Linux commands
-                    if !success {
-                        // WSL-specific commands (these work better in WSL)
-                        let wsl_commands = [
-                            ("cmd.exe", vec!["/c", "start", &widget_url]),
-                            ("powershell.exe", vec!["-c", "Start-Process", &widget_url]),
-                            ("explorer.exe", vec![&widget_url]),
-                        ];
-
-                        // Try WSL commands first
-                        for (cmd, args) in &wsl_commands {
-                            match std::process::Command::new(cmd).args(args).spawn() {
-                                Ok(_) => {
-                                    tracing::info!("Successfully opened widget URL with WSL command: {}", cmd);
-                                    success = true;
-                                    break;
-                                }
-                                Err(_) => {
-                                    tracing::debug!("WSL command {} not available", cmd);
-                                }
-                            }
-                        }
-
-                        // If WSL commands failed, try Linux commands
-                        if !success {
-                            let linux_commands = [
-                                ("xdg-open", vec![&widget_url]),
-                                ("firefox", vec![&widget_url]),
-                                ("google-chrome", vec![&widget_url]),
-                                ("chromium", vec![&widget_url]),
-                                ("sensible-browser", vec![&widget_url]),
-                            ];
-
-                            for (cmd, args) in &linux_commands {
-                                match std::process::Command::new(cmd).args(args).spawn() {
-                                    Ok(_) => {
-                                        tracing::info!("Successfully opened widget URL with Linux command: {}", cmd);
-                                        success = true;
-                                        break;
-                                    }
-                                    Err(_) => {
-                                        tracing::debug!("Linux command {} not available", cmd);
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    if !success {
-                        tracing::error!("All browser opening methods failed");
-                        self.set_error("Could not open browser automatically. Please copy the URL manually and paste it into your browser.".to_string());
-                    }
-
-                    Task::none()
-                }
+                // Use embedded webview - webview is mandatory
+                tracing::info!("Opening widget URL in embedded webview");
+                return Task::done(Message::View(ViewMessage::OpenWebview(widget_url)));
             }
             Message::View(ViewMessage::MeldBuySell(MeldBuySellMessage::CopyUrl(widget_url))) => {
                 tracing::info!("Attempting to copy URL to clipboard: {}", widget_url);
@@ -291,7 +213,9 @@ impl State for MeldBuySellPanel {
                 self.widget_url = None;
                 self.error = None;
                 self.widget_session_created = None;
-                Task::none()
+
+                // Also close the webview
+                Task::done(Message::View(ViewMessage::CloseWebview))
             }
             Message::View(ViewMessage::MeldBuySell(MeldBuySellMessage::OpenWidgetInNewWindow(widget_url))) => {
                 // Open in a new window/browser tab - similar to OpenWidget but explicitly for new window

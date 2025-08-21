@@ -364,7 +364,7 @@ impl RegisterWalletModal {
 }
 
 impl RegisterWalletModal {
-    fn view(&self) -> Element<view::Message> {
+    fn view(&self) -> Element<'_, view::Message> {
         view::settings::register_wallet_modal(
             self.warning.as_ref(),
             &self.hws.list,

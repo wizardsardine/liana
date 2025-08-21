@@ -46,7 +46,7 @@ pub fn label_editing(
     labelled: Vec<String>,
     label: &form::Value<String>,
     size: u16,
-) -> Element<view::Message> {
+) -> Element<'_, view::Message> {
     let e: Element<view::LabelMessage> = Container::new(
         row!(
             form::Form::new("Label", label, view::LabelMessage::Edited)

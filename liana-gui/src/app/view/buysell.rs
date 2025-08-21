@@ -16,7 +16,7 @@ use crate::app::{
     view::{BuySellMessage, Message as ViewMessage},
 };
 
-pub fn buysell_view(state: &BuyAndSellPanel) -> Element<ViewMessage> {
+pub fn buysell_view(state: &BuyAndSellPanel) -> Element<'_, ViewMessage> {
     // Create the base content (what would be shown when modal is not active)
     let base_content = buysell_base_content();
 
@@ -66,7 +66,7 @@ fn buysell_base_content() -> Element<'static, ViewMessage> {
     .into()
 }
 
-fn buysell_modal_content(state: &BuyAndSellPanel) -> Element<ViewMessage> {
+fn buysell_modal_content(state: &BuyAndSellPanel) -> Element<'_, ViewMessage> {
     match state.current_step {
         BuySellStep::Initial | BuySellStep::AccountSelection => {
             account_selection_modal_content(state)
@@ -79,7 +79,7 @@ fn buysell_modal_content(state: &BuyAndSellPanel) -> Element<ViewMessage> {
 
 
 
-fn account_selection_modal_content(state: &BuyAndSellPanel) -> Element<ViewMessage> {
+fn account_selection_modal_content(state: &BuyAndSellPanel) -> Element<'_, ViewMessage> {
     let individual_selected = matches!(state.selected_account_type, Some(AccountType::Individual));
     let business_selected = matches!(state.selected_account_type, Some(AccountType::Business));
     let can_get_started = state.selected_account_type.is_some();
@@ -251,7 +251,7 @@ fn account_selection_modal_content(state: &BuyAndSellPanel) -> Element<ViewMessa
     .into()
 }
 
-fn account_form_modal_content(state: &BuyAndSellPanel) -> Element<ViewMessage> {
+fn account_form_modal_content(state: &BuyAndSellPanel) -> Element<'_, ViewMessage> {
     let form_valid = state.is_form_valid();
 
     Container::new(

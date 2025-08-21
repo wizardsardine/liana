@@ -14,7 +14,7 @@ name = "liana-gui"
 path = "src/main.rs"
 
 [features]
-default = ["dev-coincube"]
+default = ["dev-coincube", "webview"]
 dev-coincube = []
 dev-meld = []
 webview = ["iced_webview"]
@@ -44,8 +44,8 @@ iced = { version = "0.13.1", default-features = false, features = [
 iced_aw = { version = "0.12.2", features = ["context_menu"] }
 iced_runtime = "0.13.1"
 
-# Webview for embedded browser functionality
-iced_webview = { path = "../../iced_webview", optional = true }
+# Webview for embedded browser functionality (Ultralight-based)
+iced_webview = { path = "../../iced_webview", features = ["ultralight"], optional = true }
 
 # Used to verify RFC-compliance of an email
 email_address = "0.2.7"
@@ -97,6 +97,10 @@ zip = { version = "0.6", default-features = false, features = [
 [target.'cfg(unix)'.dependencies]
 tar = { version = "0.4", default-features = false }
 flate2 = { version = "1.0", default-features = false }
+
+[build-dependencies]
+# Build script dependencies for webview linking
+# Note: These are conditionally used in build.rs based on the webview feature
 
 [dev-dependencies]
 tokio = { version = "1.9.0", features = ["rt", "macros"] }

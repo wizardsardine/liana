@@ -914,7 +914,7 @@ impl Recipient {
         };
     }
 
-    fn view(&self, i: usize, is_max_selected: bool) -> Element<view::CreateSpendMessage> {
+    fn view(&self, i: usize, is_max_selected: bool) -> Element<'_, view::CreateSpendMessage> {
         view::spend::recipient_view(
             i,
             &self.address,

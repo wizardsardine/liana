@@ -279,7 +279,7 @@ impl ExportModal {
         Task::none()
     }
 
-    pub fn view<'a, M>(&'a self, content: Element<'a, M>) -> Element<M>
+    pub fn view<'a, M>(&'a self, content: Element<'a, M>) -> Element<'a, M>
     where
         M: 'a + Close + Clone + From<export::ImportExportMessage> + 'static,
     {

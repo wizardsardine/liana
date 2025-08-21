@@ -40,8 +40,12 @@ pub enum Message {
     WebviewCreated,
     #[cfg(feature = "webview")]
     WebviewUrlChanged(String),
+    #[cfg(feature = "webview")]
+    SwitchToWebview(u32),
     OpenWebview(String),
     CloseWebview,
+    ShowWebView,
+
 }
 
 impl Close for Message {
@@ -162,7 +166,7 @@ pub enum MeldBuySellMessage {
     WalletAddressChanged(String),
     CountryCodeChanged(String),
     SourceAmountChanged(String),
-    ProviderSelected(crate::app::buysell::ServiceProvider),
+
     CreateSession,
     SessionCreated(String), // widget_url
     SessionError(String),
