@@ -52,6 +52,7 @@ jobs:
       - uses: taiki-e/upload-rust-binary-action@v1
         with:
           package: liana-gui
+          bin: coincube-vault
           target: ${{ matrix.target }}
           checksum: sha512,md5
           locked: true
