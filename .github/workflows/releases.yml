@@ -5,8 +5,8 @@ permissions:
 
 on:
   push:
-    branches:
-      - master
+    tags:
+      - 'v*.*'
 
 env:
   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
