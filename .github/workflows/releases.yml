@@ -6,7 +6,7 @@ permissions:
 on:
   push:
     tags:
-      - 'v*.*'
+      - "v*.*"
 
 env:
   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -35,6 +35,10 @@ jobs:
       - uses: actions/checkout@v2
         with:
           persist-credentials: false
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libudev-dev pkg-config
 
       - uses: taiki-e/github-actions/install-rust@main
         with:
