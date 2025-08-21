@@ -1,0 +1,64 @@
+name: Github Release
+
+permissions:
+  # TODO: once `releases: write` is supported, use it instead.
+  contents: write
+
+on:
+  push:
+    branches:
+      - master
+
+env:
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  CARGO_INCREMENTAL: 0
+  CARGO_TERM_COLOR: always
+  CARGO_PROFILE_RELEASE_LTO: true
+  CARGO_PROFILE_RELEASE_CODEGEN_UNITS: 1
+
+jobs:
+  upload-binaries:
+    name: upload-binaries
+    if: github.repository == 'coincubetech/liana/'
+
+    strategy:
+      matrix:
+        include:
+          # linux x86
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+
+          # windows x86
+          - target: x86_64-pc-windows-gnu
+            os: windows-latest
+
+          # apple x86
+          - target: x86_64-apple-darwin
+            os: macos-latest
+
+          # apple silicon (arm64)
+          - target: aarch64-apple-darwin
+            os: macos-latest
+
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          persist-credentials: false
+
+      - uses: taiki-e/github-actions/install-rust@main
+        with:
+          toolchain: stable
+
+      - uses: taiki-e/create-gh-release-action@v1
+        with:
+          title: $version
+          branch: master
+
+      - uses: taiki-e/upload-rust-binary-action@v1
+        with:
+          package: liana-gui
+          bin: liana-gui
+          target: ${{ matrix.target }}
+          checksum: sha512,md5
+          locked: true
