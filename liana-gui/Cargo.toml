@@ -34,13 +34,13 @@ hex = "0.4.3"
 iced = { version = "0.13.1", default-features = false, features = [
 	"tokio",
 	"svg",
-    "canvas",
+	"canvas",
 	"qr_code",
 	"image",
 	"lazy",
 	"advanced",
 	"wgpu",
-    "tiny-skia"
+	"tiny-skia",
 ] }
 iced_aw = { version = "0.12.2", features = ["context_menu"] }
 iced_runtime = "0.13.1"
@@ -101,3 +101,12 @@ flate2 = { version = "1.0", default-features = false }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt", "macros"] }
+
+[target.'cfg(windows)'.build-dependencies]
+winres = "0.1.12"
+
+[package.metadata.winres]
+OriginalFilename = "coincube-vault.exe"
+FileDescription = "The missing safety net for your coins, Coincube's Fork"
+CompanyName = "Coincube"
+InternalName = "Liana"
