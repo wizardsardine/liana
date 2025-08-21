@@ -1,4 +1,4 @@
-#![cfg(unix)]
+#![cfg_attr(not(unix), allow(unused))]
 
 use lianad::config::Config;
 
@@ -10,8 +10,6 @@ use std::{
 };
 
 use serde_json::Value as Json;
-
-use std::os::unix::net::UnixStream;
 
 // Exits with error
 fn show_usage() {
@@ -109,7 +107,10 @@ fn trimmed(mut vec: Vec<u8>, bytes_read: usize) -> Vec<u8> {
     vec
 }
 
+#[cfg(unix)]
 fn main() {
+    use std::os::unix::net::UnixStream;
+
     let args = env::args().collect();
     let (conf_file, raw, method, params) = parse_args(args);
     let request = rpc_request(method, params);
@@ -165,4 +166,9 @@ fn main() {
             Err(_) => continue,
         }
     }
+}
+
+#[cfg(not(unix))]
+fn main() {
+    panic!("liana-cli is only supported on Unix systems")
 }
