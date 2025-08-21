@@ -10,7 +10,7 @@ edition = "2018"
 resolver = "2"
 
 [[bin]]
-name = "liana-gui"
+name = "coincube-vault"
 path = "src/main.rs"
 
 [features]
