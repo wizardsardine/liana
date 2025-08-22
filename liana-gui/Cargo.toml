@@ -103,9 +103,9 @@ flate2 = { version = "1.0", default-features = false }
 tokio = { version = "1", features = ["rt", "macros"] }
 
 [target.'cfg(windows)'.build-dependencies]
-winres = "0.1.12"
+winresource = "0.1"
 
-[package.metadata.winres]
+[package.metadata.winresource]
 OriginalFilename = "coincube-vault.exe"
 FileDescription = "The missing safety net for your coins, Coincube's Fork"
 CompanyName = "Coincube"
