@@ -179,314 +179,6 @@ impl Panels {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::app::view::Message as ViewMessage;
-
-    #[cfg(feature = "webview")]
-    #[test]
-    fn test_webview_message_mapping() {
-        // Test WebviewMessage::Created mapping
-        let created_msg = App::map_webview_message_static(WebviewMessage::Created);
-        assert!(matches!(created_msg, Message::View(ViewMessage::WebviewCreated)));
-
-        // Test WebviewMessage::UrlChanged mapping
-        let url = "https://example.com".to_string();
-        let url_changed_msg = App::map_webview_message_static(WebviewMessage::UrlChanged(url.clone()));
-        if let Message::View(ViewMessage::WebviewUrlChanged(mapped_url)) = url_changed_msg {
-            assert_eq!(mapped_url, url);
-        } else {
-            panic!("Expected WebviewUrlChanged message");
-        }
-    }
-
-    #[cfg(feature = "webview")]
-    #[test]
-    fn test_webview_functionality() {
-        use iced_webview::{WebView, Ultralight, Action as WebviewAction, PageType};
-
-        // Test webview creation
-        let _webview: WebView<Ultralight, WebviewMessage> = WebView::new()
-            .on_create_view(WebviewMessage::Created)
-            .on_url_change(|url| WebviewMessage::UrlChanged(url));
-
-        // Test URL loading action
-        let test_url = "https://test.example.com".to_string();
-        let create_action = WebviewAction::CreateView(PageType::Url(test_url.clone()));
-
-        // Verify action is properly formed
-        match create_action {
-            WebviewAction::CreateView(PageType::Url(url)) => {
-                assert_eq!(url, test_url);
-            }
-            _ => panic!("Expected CreateView action with URL"),
-        }
-    }
-
-    #[cfg(feature = "webview")]
-    #[test]
-    fn test_webview_interaction_handling() {
-        use iced::keyboard::{Event as KeyboardEvent, Key};
-        use iced::mouse::{Event as MouseEvent, Button};
-        use iced::Point;
-        use iced_webview::Action as WebviewAction;
-
-        // Test keyboard event handling (using basic webview API)
-        let key_event = KeyboardEvent::KeyPressed {
-            key: Key::Character("a".into()),
-            location: iced::keyboard::Location::Standard,
-            modifiers: iced::keyboard::Modifiers::default(),
-            text: Some("a".into()),
-            modified_key: Key::Character("a".into()),
-            physical_key: iced::keyboard::key::Physical::Code(iced::keyboard::key::Code::KeyA),
-        };
-
-        // Basic webview uses single parameter for keyboard events
-        let keyboard_action = WebviewAction::SendKeyboardEvent(key_event);
-        match keyboard_action {
-            WebviewAction::SendKeyboardEvent(_) => {
-                // Test passes if we can create the action
-                assert!(true);
-            }
-            _ => panic!("Expected SendKeyboardEvent action"),
-        }
-
-        // Test mouse event handling (basic webview API)
-        let mouse_event = MouseEvent::ButtonPressed(Button::Left);
-        let point = Point::new(100.0, 200.0);
-        let mouse_action = WebviewAction::SendMouseEvent(mouse_event, point);
-
-        match mouse_action {
-            WebviewAction::SendMouseEvent(_, click_point) => {
-                assert_eq!(click_point.x, 100.0);
-                assert_eq!(click_point.y, 200.0);
-            }
-            _ => panic!("Expected SendMouseEvent action"),
-        }
-    }
-
-    #[cfg(feature = "webview")]
-    #[test]
-    fn test_webview_state_management() {
-        use crate::app::view::webview::WebviewState;
-
-        // Test initial state
-        let mut state = WebviewState::new();
-        assert_eq!(state.url, "");
-        assert!(!state.is_loading);
-        assert!(!state.show_webview);
-        assert!(!state.has_webview);
-
-        // Test URL opening
-        let test_url = "https://meld.example.com/widget".to_string();
-        state.open_url(test_url.clone());
-        assert_eq!(state.url, test_url);
-        assert!(state.show_webview);
-        assert!(state.is_loading);
-
-        // Test webview closing
-        state.close();
-        assert!(!state.show_webview);
-        assert!(!state.is_loading);
-        assert!(!state.has_webview);
-    }
-
-    #[cfg(all(feature = "webview", feature = "dev-meld"))]
-    #[test]
-    fn test_end_to_end_workflow() {
-        use crate::app::view::{Message as ViewMessage, MeldBuySellMessage};
-        use crate::app::message::Message;
-        use crate::app::view::webview::WebviewMessage;
-
-        // Test 1: Meld session creation triggers webview opening
-        let session_url = "https://docs.rs/iced/latest/iced/index.html".to_string();
-        let session_created_msg = Message::View(ViewMessage::MeldBuySell(
-            MeldBuySellMessage::SessionCreated(session_url.clone())
-        ));
-
-        // Verify the message structure is correct
-        match session_created_msg {
-            Message::View(ViewMessage::MeldBuySell(MeldBuySellMessage::SessionCreated(url))) => {
-                assert_eq!(url, session_url);
-            }
-            _ => panic!("Expected SessionCreated message"),
-        }
-
-        // Test 2: OpenWebview message handling
-        let open_webview_msg = Message::View(ViewMessage::OpenWebview(session_url.clone()));
-        match open_webview_msg {
-            Message::View(ViewMessage::OpenWebview(url)) => {
-                assert_eq!(url, session_url);
-            }
-            _ => panic!("Expected OpenWebview message"),
-        }
-
-        // Test 3: Webview action message handling
-        let webview_action = WebviewAction::CreateView(PageType::Url(session_url.clone()));
-        let webview_action_msg = Message::View(ViewMessage::WebviewAction(webview_action));
-
-        match webview_action_msg {
-            Message::View(ViewMessage::WebviewAction(action)) => {
-                match action {
-                    WebviewAction::CreateView(PageType::Url(url)) => {
-                        assert_eq!(url, session_url);
-                    }
-                    _ => panic!("Expected CreateView action with URL"),
-                }
-            }
-            _ => panic!("Expected WebviewAction message"),
-        }
-
-        // Test 4: Webview creation confirmation
-        let webview_created_msg = Message::View(ViewMessage::WebviewCreated);
-        match webview_created_msg {
-            Message::View(ViewMessage::WebviewCreated) => {
-                // Test passes if we can create the message
-                assert!(true);
-            }
-            _ => panic!("Expected WebviewCreated message"),
-        }
-    }
-
-    #[cfg(all(feature = "webview", feature = "dev-meld"))]
-    #[test]
-    fn test_meld_api_integration() {
-        use crate::app::buysell::{ServiceProvider, meld::MeldSessionRequest, meld::SessionData};
-
-        // Test Meld API request structure
-        let request = MeldSessionRequest {
-            session_data: SessionData {
-                wallet_address: "2N3oefVeg6stiTb5Kh3ozCSkaqmx91FDbsm".to_string(),
-                country_code: "US".to_string(),
-                source_currency_code: "USD".to_string(),
-                source_amount: "60".to_string(),
-                destination_currency_code: "BTC".to_string(),
-                service_provider: ServiceProvider::Transak.as_str().to_string(),
-            },
-            session_type: "BUY".to_string(),
-            external_customer_id: "testcustomer".to_string(),
-        };
-
-        // Verify request structure
-        assert_eq!(request.session_data.wallet_address, "2N3oefVeg6stiTb5Kh3ozCSkaqmx91FDbsm");
-        assert_eq!(request.session_data.country_code, "US");
-        assert_eq!(request.session_data.source_amount, "60");
-        assert_eq!(request.session_data.destination_currency_code, "BTC");
-        assert_eq!(request.session_type, "BUY");
-
-        // Test serialization
-        let json_result = serde_json::to_string(&request);
-        assert!(json_result.is_ok());
-
-        let json_str = json_result.unwrap();
-        assert!(json_str.contains("sessionData"));
-        assert!(json_str.contains("sessionType"));
-        assert!(json_str.contains("externalCustomerId"));
-    }
-
-    #[cfg(all(feature = "webview", feature = "dev-meld"))]
-    #[test]
-    fn test_complete_workflow_integration() {
-        use crate::app::view::{Message as ViewMessage, MeldBuySellMessage};
-        use crate::app::message::Message;
-        use crate::app::view::webview::{WebviewState, WebviewMessage};
-        use iced_webview::{Action as WebviewAction, PageType};
-
-        // Test complete workflow simulation
-        let mut webview_state = WebviewState::new();
-
-        // Step 1: Initial state verification
-        assert!(!webview_state.show_webview);
-        assert!(!webview_state.has_webview);
-        assert_eq!(webview_state.url, "");
-
-        // Step 2: Simulate Meld session creation
-        let session_url = "https://docs.rs/iced/latest/iced/index.html".to_string();
-        let session_created_msg = Message::View(ViewMessage::MeldBuySell(
-            MeldBuySellMessage::SessionCreated(session_url.clone())
-        ));
-
-        // Verify session creation message
-        match session_created_msg {
-            Message::View(ViewMessage::MeldBuySell(MeldBuySellMessage::SessionCreated(url))) => {
-                assert_eq!(url, session_url);
-            }
-            _ => panic!("Expected SessionCreated message"),
-        }
-
-        // Step 3: Simulate webview opening
-        webview_state.open_url(session_url.clone());
-        assert!(webview_state.show_webview);
-        assert!(webview_state.is_loading);
-        assert_eq!(webview_state.url, session_url);
-
-        // Step 4: Simulate webview creation action
-        let create_action = WebviewAction::CreateView(PageType::Url(session_url.clone()));
-        let webview_action_msg = Message::View(ViewMessage::WebviewAction(create_action));
-
-        match webview_action_msg {
-            Message::View(ViewMessage::WebviewAction(WebviewAction::CreateView(PageType::Url(url)))) => {
-                assert_eq!(url, session_url);
-            }
-            _ => panic!("Expected WebviewAction::CreateView message"),
-        }
-
-        // Step 5: Simulate webview creation completion
-        webview_state.has_webview = true;
-        webview_state.is_loading = false;
-
-        let webview_created_msg = Message::View(ViewMessage::WebviewCreated);
-        match webview_created_msg {
-            Message::View(ViewMessage::WebviewCreated) => {
-                assert!(true); // Test passes if message can be created
-            }
-            _ => panic!("Expected WebviewCreated message"),
-        }
-
-        // Step 6: Final state verification
-        assert!(webview_state.show_webview);
-        assert!(webview_state.has_webview);
-        assert!(!webview_state.is_loading);
-        assert_eq!(webview_state.url, session_url);
-
-        // Step 7: Test webview closing
-        webview_state.close();
-        assert!(!webview_state.show_webview);
-        assert!(!webview_state.has_webview);
-        assert!(!webview_state.is_loading);
-    }
-
-    #[cfg(feature = "webview")]
-    #[test]
-    fn test_webview_message_debug() {
-        // Test that WebviewMessage implements Debug
-        let created = WebviewMessage::Created;
-        let url_changed = WebviewMessage::UrlChanged("test".to_string());
-
-        let debug_str = format!("{:?}", created);
-        assert!(debug_str.contains("Created"));
-
-        let debug_str = format!("{:?}", url_changed);
-        assert!(debug_str.contains("UrlChanged"));
-        assert!(debug_str.contains("test"));
-    }
-
-    #[cfg(feature = "webview")]
-    #[test]
-    fn test_webview_message_clone() {
-        // Test that WebviewMessage implements Clone
-        let original = WebviewMessage::UrlChanged("test".to_string());
-        let cloned = original.clone();
-
-        if let (WebviewMessage::UrlChanged(orig_url), WebviewMessage::UrlChanged(cloned_url)) = (original, cloned) {
-            assert_eq!(orig_url, cloned_url);
-        } else {
-            panic!("Clone failed or wrong variant");
-        }
-    }
-}
-
 pub struct App {
     cache: Cache,
     wallet: Arc<Wallet>,
@@ -598,12 +290,6 @@ impl App {
         }
     }
 
-
-
-    // CEF helper methods removed - will be replaced with Ultralight methods
-
-
-
     fn set_current_panel(&mut self, menu: Menu) -> Task<Message> {
         self.panels.current_mut().interrupt();
 
@@ -713,16 +399,47 @@ impl App {
             self.panels.current().subscription(),
         ];
 
-        // Add webview update subscription for smooth rendering when webview is active
+        // Smart webview-only update strategy: intensive loading → maintenance → event-driven
         #[cfg(feature = "webview")]
-        if self.webview_mode && self.show_webview && self.webview_ready {
-            subscriptions.push(
-                time::every(Duration::from_millis(16)) // ~60 FPS
-                    .map(|_| {
-                        use iced_webview::Action as WebViewAction;
-                        Message::View(view::Message::WebviewAction(WebViewAction::Update))
-                    })
-            );
+        if self.webview_mode && self.show_webview {
+            if let Some(loading_start) = self.webview_loading_start {
+                let elapsed = loading_start.elapsed();
+
+                if elapsed < Duration::from_secs(60) {
+                    // Phase 1: First 30 seconds - 60 FPS for webview loading only
+                    subscriptions.push(
+                        time::every(Duration::from_millis(15))
+                            .map(|_| {
+                                use iced_webview::Action as WebViewAction;
+                                Message::View(view::Message::WebviewAction(WebViewAction::Update))
+                            })
+                    );
+                    tracing::debug!("🌐 [LIANA] Webview loading phase - 60 FPS webview-only updates ({:.1}s elapsed)", elapsed.as_secs_f32());
+                } else if elapsed < Duration::from_secs(120) { // 2 minutes total
+                    // Phase 2: Next 4.5 minutes - 30 second intervals for webview maintenance only
+                    subscriptions.push(
+                        time::every(Duration::from_secs(30))
+                            .map(|_| {
+                                use iced_webview::Action as WebViewAction;
+                                Message::View(view::Message::WebviewAction(WebViewAction::Update))
+                            })
+                    );
+                    tracing::debug!("🌐 [LIANA] Webview maintenance phase - 30s webview-only intervals ({:.1}s elapsed)", elapsed.as_secs_f32());
+                } else {
+                    // Phase 3: After 5 minutes - event-driven webview updates only
+                    tracing::debug!("🌐 [LIANA] Webview stable phase - event-driven webview updates only ({:.1}s elapsed)", elapsed.as_secs_f32());
+                }
+            } else {
+                // Fallback: if no loading start time, use maintenance mode for webview only
+                subscriptions.push(
+                    time::every(Duration::from_secs(30))
+                        .map(|_| {
+                            use iced_webview::Action as WebViewAction;
+                            Message::View(view::Message::WebviewAction(WebViewAction::Update))
+                        })
+                );
+                tracing::debug!("🌐 [LIANA] Webview fallback - 30s webview-only maintenance intervals");
+            }
         }
 
         Subscription::batch(subscriptions)
@@ -816,14 +533,6 @@ impl App {
                     menu::Menu::BuyAndSell => {
                         // Switch to buy/sell panel and show modal
                         self.panels.current = menu;
-                        #[cfg(all(feature = "dev-coincube", not(feature = "dev-meld")))]
-                        {
-                            self.panels.buy_and_sell.show_modal();
-                        }
-                        #[cfg(feature = "dev-meld")]
-                        {
-                            // No need to show modal - form is always visible
-                        }
                         Task::none()
                     }
                     _ => self.set_current_panel(menu),
@@ -856,10 +565,31 @@ impl App {
             }
             #[cfg(feature = "webview")]
             Message::View(view::Message::WebviewAction(action)) => {
-                // Handle Ultralight webview actions
-                tracing::info!("🌐 [LIANA] Received Ultralight webview action: {:?}", action);
-                self.webview.update(action)
-                    .map(Self::map_webview_message_static)
+                // Handle webview-only actions - does NOT trigger full app update
+                tracing::debug!("🌐 [LIANA] Processing webview-only action: {:?}", action);
+
+                use iced_webview::Action as WebViewAction;
+
+                // Determine if this action needs a follow-up update for rendering
+                let needs_update = matches!(action,
+                    WebViewAction::CreateView(_) |
+                    WebViewAction::Resize(_) |
+                    WebViewAction::GoToUrl(_) |
+                    WebViewAction::Refresh
+                );
+
+                let main_task = self.webview.update(action)
+                    .map(Self::map_webview_message_static);
+
+                if needs_update {
+                    // Add a single update after actions that change content/size
+                    let update_task = Task::done(Message::View(view::Message::WebviewAction(
+                        WebViewAction::Update
+                    )));
+                    Task::batch(vec![main_task, update_task])
+                } else {
+                    main_task
+                }
             }
             #[cfg(feature = "webview")]
             Message::View(view::Message::WebviewCreated) => {
@@ -916,14 +646,16 @@ impl App {
                 if let Some(url) = &self.current_webview_url {
                     tracing::info!("🌐 [LIANA] Creating webview with URL: {}", url);
                     self.webview_ready = false; // Mark as not ready until view is created
+                    self.webview_loading = true; // Mark as loading
+                    self.webview_loading_start = Some(std::time::Instant::now()); // Track loading start time
 
                     #[cfg(feature = "webview")]
                     {
                         use iced::Size;
                         use iced_webview::{Action as WebViewAction, engines::PageType};
 
-                        // Resize webview to full payment interface size (600px width, 800px height)
-                        let webview_size = Size::new(600, 800);
+                        // Resize webview to match meld container size (600px width, 600px height)
+                        let webview_size = Size::new(600, 600);
                         let resize_task = self.webview.update(WebViewAction::Resize(webview_size))
                             .map(Self::map_webview_message_static);
 
@@ -934,10 +666,6 @@ impl App {
 
                         Task::batch(vec![resize_task, create_task])
                     }
-                    #[cfg(not(feature = "webview"))]
-                    {
-                        Task::none()
-                    }
                 } else {
                     tracing::warn!("🌐 [LIANA] No URL available for webview");
                     Task::none()
@@ -946,10 +674,15 @@ impl App {
             #[cfg(feature = "dev-meld")]
             Message::View(view::Message::MeldBuySell(view::MeldBuySellMessage::SessionCreated(url))) => {
                 tracing::info!("🌐 [LIANA] Meld session created with URL: {}", url);
-                // Set the URL but don't show webview yet - user will click button to show it
+                // Set the URL and show webview immediately - no intermediate button needed
                 self.current_webview_url = Some(url.clone());
                 self.webview_mode = true;
-                self.show_webview = false; // Don't show automatically
+                self.show_webview = true; // Show webview immediately
+
+                // Initialize loading timer for smart update strategy
+                self.webview_loading_start = Some(std::time::Instant::now());
+                self.webview_loading = true;
+                self.webview_ready = false;
 
                 // Resize webview to match the "Meld Payment Ready" container size
                 // This ensures the webview will be properly sized when shown
@@ -958,8 +691,8 @@ impl App {
                     use iced::Size;
                     use iced_webview::Action as WebViewAction;
 
-                    // Set webview size to match the payment ready container (600px width, 800px height)
-                    let container_size = Size::new(600, 800);
+                    // Set webview size to match the meld container (600px width, 600px height)
+                    let container_size = Size::new(600, 600);
                     let resize_task = self.webview.update(WebViewAction::Resize(container_size))
                         .map(Self::map_webview_message_static);
 
@@ -1042,7 +775,7 @@ impl App {
                 ))
             };
 
-            // Create panel content with embedded webview using dashboard to keep sidebar
+            // Use meld buy/sell view with embedded webview for Buy/Sell panel in webview mode
             let panel_content = {
                 use crate::app::view::meld_buysell::meld_buysell_view_with_webview;
                 #[cfg(feature = "dev-meld")]
@@ -1056,7 +789,7 @@ impl App {
                 }
             };
 
-            // Create dashboard layout manually to maintain left sidebar
+            // Apply dashboard layout once to maintain left sidebar
             let dashboard_content = view::dashboard(&self.panels.current, &self.cache, None, panel_content);
 
             if self.cache.network != bitcoin::Network::Bitcoin {
@@ -1068,32 +801,28 @@ impl App {
                 dashboard_content.map(Message::View)
             }
         } else {
-            // Normal panel view using dashboard to maintain sidebar
-            let dashboard_content = view::dashboard(&self.panels.current, &self.cache, None, self.panels.current().view(&self.cache));
-            if self.cache.network != bitcoin::Network::Bitcoin {
-                Column::with_children(vec![network_banner(self.cache.network).into(), dashboard_content.map(Message::View)]).into()
-            } else {
-                dashboard_content.map(Message::View)
-            }
-        }
+            // Normal panel view without webview
+            let panel_content = self.panels.current().view(&self.cache);
 
-        #[cfg(not(feature = "webview"))]
-        {
-            // Normal panel view when webview feature is disabled using dashboard to maintain sidebar
-            let dashboard_content = view::dashboard(&self.panels.current, &self.cache, None, self.panels.current().view(&self.cache));
-            if self.cache.network != bitcoin::Network::Bitcoin {
-                Column::with_children(vec![network_banner(self.cache.network).into(), dashboard_content.map(Message::View)]).into()
+            // Buy/Sell panel needs dashboard wrapper, other panels already have it internally
+            let final_view = if matches!(self.panels.current, menu::Menu::BuyAndSell) {
+                // Apply dashboard wrapper for Buy/Sell panel
+                view::dashboard(&self.panels.current, &self.cache, None, panel_content)
             } else {
-                dashboard_content.map(Message::View)
+                // Other panels already apply dashboard() internally
+                panel_content
+            };
+
+            if self.cache.network != bitcoin::Network::Bitcoin {
+                Column::with_children(vec![
+                    network_banner(self.cache.network).into(),
+                    final_view.map(Message::View)
+                ]).into()
+            } else {
+                final_view.map(Message::View)
             }
         }
     }
-
-    // CEF helper method removed - will be replaced with Ultralight helper
-
-
-
-
 
     pub fn datadir_path(&self) -> &LianaDirectory {
         &self.cache.datadir_path

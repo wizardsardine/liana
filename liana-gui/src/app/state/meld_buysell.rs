@@ -63,6 +63,13 @@ impl State for MeldBuySellPanel {
 
             Message::View(ViewMessage::MeldBuySell(MeldBuySellMessage::CreateSession)) => {
                 if self.is_form_valid() {
+                    tracing::info!("🚀 [MELD] Creating new session - clearing any existing session data");
+
+                    // Ensure we start with a clean slate
+                    self.widget_url = None;
+                    self.widget_session_created = None;
+                    self.error = None;
+
                     self.start_session();
                     let wallet_address = self.wallet_address.value.clone();
                     let country_code = self.country_code.value.clone();
@@ -70,14 +77,32 @@ impl State for MeldBuySellPanel {
                     // Use Transak as the default payment provider
                     let provider = ServiceProvider::Transak;
 
+                    tracing::info!("🚀 [MELD] Making fresh API call with: address={}, country={}, amount={}",
+                        wallet_address, country_code, source_amount);
+
+                    // Add safety checks before making API call
+                    if wallet_address.is_empty() || country_code.is_empty() || source_amount.is_empty() {
+                        tracing::error!("❌ [MELD] Invalid form data - cannot create session");
+                        return Task::done(Message::View(ViewMessage::MeldBuySell(
+                            MeldBuySellMessage::SessionError("Invalid form data".to_string())
+                        )));
+                    }
+
                     Task::perform(
                         create_meld_session(wallet_address, country_code, source_amount, provider, self.network),
                         |result| match result {
-                            Ok(widget_url) => Message::View(ViewMessage::MeldBuySell(MeldBuySellMessage::SessionCreated(widget_url))),
-                            Err(error) => Message::View(ViewMessage::MeldBuySell(MeldBuySellMessage::SessionError(error))),
+                            Ok(widget_url) => {
+                                tracing::info!("✅ [MELD] New session created successfully: {}", widget_url);
+                                Message::View(ViewMessage::MeldBuySell(MeldBuySellMessage::SessionCreated(widget_url)))
+                            },
+                            Err(error) => {
+                                tracing::error!("❌ [MELD] Session creation failed: {}", error);
+                                Message::View(ViewMessage::MeldBuySell(MeldBuySellMessage::SessionError(error)))
+                            },
                         }
                     )
                 } else {
+                    tracing::warn!("⚠️ [MELD] Cannot create session - form validation failed");
                     Task::none()
                 }
             }
@@ -209,10 +234,18 @@ impl State for MeldBuySellPanel {
                 Task::none()
             }
             Message::View(ViewMessage::MeldBuySell(MeldBuySellMessage::GoBackToForm)) => {
-                // Reset to form state - clear widget URL and error
+                tracing::info!("🔄 [MELD] Going back to form - clearing all session data");
+
+                // Complete session reset - clear all session-related data
                 self.widget_url = None;
                 self.error = None;
                 self.widget_session_created = None;
+                self.loading = false;
+
+                // Don't reset form validation - keep existing valid data
+                // Only reset session-related data, not form data
+
+                tracing::info!("🔄 [MELD] Session data cleared, form reset to initial state");
 
                 // Also close the webview
                 Task::done(Message::View(ViewMessage::CloseWebview))

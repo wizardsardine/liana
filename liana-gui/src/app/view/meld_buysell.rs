@@ -160,8 +160,14 @@ pub fn meld_buysell_view_with_webview<'a>(
     webview_widget: Option<Element<'a, ViewMessage>>
 ) -> Element<'a, ViewMessage> {
     Container::new({
-        let mut column = Column::new()
-            .push(
+        let mut column = Column::new();
+
+        // Check if webview widget is provided (before consuming it)
+        let has_webview = webview_widget.is_some();
+
+        // Only show Previous button if we have a webview session active
+        if has_webview {
+            column = column.push(
                 Row::new()
                     .push(
                         Button::new(
@@ -183,9 +189,7 @@ pub fn meld_buysell_view_with_webview<'a>(
                     .push(Space::with_width(Length::Fill))
                     .align_y(Alignment::Center)
             );
-
-        // Check if webview widget is provided (before consuming it)
-        let has_webview = webview_widget.is_some();
+        }
 
         // Insert webview widget right after the Previous button if provided
         if let Some(webview) = webview_widget {

@@ -407,7 +407,7 @@ pub fn dashboard<'a, T: Into<Element<'a, Message>>>(
                     .style(theme::container::background)
                     .height(Length::Fill),
                 )
-                .width(Length::FillPortion(150)),
+                .width(Length::FillPortion(130)),
         )
         .width(Length::Fill)
         .height(Length::Fill)
