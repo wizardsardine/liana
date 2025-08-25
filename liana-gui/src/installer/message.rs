@@ -9,7 +9,7 @@ use std::collections::HashMap;
 
 use super::{
     context,
-    step::descriptor::editor::key::{SelectKeySourceMessage, SelectedKey},
+    step::descriptor::editor::key::{EditKeyAliasMessage, SelectKeySourceMessage, SelectedKey},
     Error,
 };
 use crate::{
@@ -73,6 +73,7 @@ pub enum Message {
     SelectAccount(Fingerprint, ChildNumber),
     OpenUrl(String),
     SelectKeySource(SelectKeySourceMessage),
+    EditKeyAlias(EditKeyAliasMessage),
 }
 
 impl Close for Message {
@@ -175,6 +176,7 @@ pub enum DefineDescriptor {
     AddSafetyNetPath,
     ThresholdSequenceModal(ThresholdSequenceModal),
     Reset,
+    AliasEdited(Fingerprint, String /* alias*/),
 }
 
 #[allow(clippy::large_enum_variant)]
@@ -193,6 +195,7 @@ pub enum DefinePath {
 pub enum DefineKey {
     Delete,
     Edit,
+    EditAlias,
     Clipboard(String),
 }
 

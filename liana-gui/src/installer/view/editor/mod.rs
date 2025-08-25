@@ -199,7 +199,7 @@ pub fn defined_key<'a>(
             })
             .push(
                 button::secondary(Some(icon::pencil_icon()), "Edit")
-                    .on_press(message::DefineKey::Edit),
+                    .on_press(message::DefineKey::EditAlias),
             )
             .push_maybe(if fixed {
                 None
