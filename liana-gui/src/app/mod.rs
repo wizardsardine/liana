@@ -399,24 +399,24 @@ impl App {
             self.panels.current().subscription(),
         ];
 
-        // Smart webview-only update strategy: intensive loading → maintenance → event-driven
+        // Smart webview update strategy with reduced frequency to prevent memory leaks
         #[cfg(feature = "webview")]
         if self.webview_mode && self.show_webview {
             if let Some(loading_start) = self.webview_loading_start {
                 let elapsed = loading_start.elapsed();
 
-                if elapsed < Duration::from_secs(60) {
-                    // Phase 1: First 30 seconds - 60 FPS for webview loading only
+                if elapsed < Duration::from_secs(30) {
+                    // Phase 1: First 30 seconds - 30 FPS for initial loading (reduced from 60 FPS)
                     subscriptions.push(
-                        time::every(Duration::from_millis(15))
+                        time::every(Duration::from_millis(33))
                             .map(|_| {
                                 use iced_webview::Action as WebViewAction;
                                 Message::View(view::Message::WebviewAction(WebViewAction::Update))
                             })
                     );
-                    tracing::debug!("🌐 [LIANA] Webview loading phase - 60 FPS webview-only updates ({:.1}s elapsed)", elapsed.as_secs_f32());
-                } else if elapsed < Duration::from_secs(120) { // 2 minutes total
-                    // Phase 2: Next 4.5 minutes - 30 second intervals for webview maintenance only
+                    tracing::debug!("🌐 [LIANA] Webview loading phase - 30 FPS webview updates ({:.1}s elapsed)", elapsed.as_secs_f32());
+                } else if elapsed < Duration::from_secs(300) { // 5 minutes total
+                    // Phase 2: Next 4.5 minutes - 30 second intervals for webview maintenance
                     subscriptions.push(
                         time::every(Duration::from_secs(30))
                             .map(|_| {
@@ -424,13 +424,13 @@ impl App {
                                 Message::View(view::Message::WebviewAction(WebViewAction::Update))
                             })
                     );
-                    tracing::debug!("🌐 [LIANA] Webview maintenance phase - 30s webview-only intervals ({:.1}s elapsed)", elapsed.as_secs_f32());
+                    tracing::debug!("🌐 [LIANA] Webview maintenance phase - 30s webview intervals ({:.1}s elapsed)", elapsed.as_secs_f32());
                 } else {
                     // Phase 3: After 5 minutes - event-driven webview updates only
-                    tracing::debug!("🌐 [LIANA] Webview stable phase - event-driven webview updates only ({:.1}s elapsed)", elapsed.as_secs_f32());
+                    tracing::debug!("🌐 [LIANA] Webview stable phase - event-driven updates only ({:.1}s elapsed)", elapsed.as_secs_f32());
                 }
             } else {
-                // Fallback: if no loading start time, use maintenance mode for webview only
+                // Fallback: if no loading start time, use maintenance mode for webview
                 subscriptions.push(
                     time::every(Duration::from_secs(30))
                         .map(|_| {
@@ -438,7 +438,7 @@ impl App {
                             Message::View(view::Message::WebviewAction(WebViewAction::Update))
                         })
                 );
-                tracing::debug!("🌐 [LIANA] Webview fallback - 30s webview-only maintenance intervals");
+                tracing::debug!("🌐 [LIANA] Webview fallback - 30s webview maintenance intervals");
             }
         }
 
