@@ -16,8 +16,8 @@ use liana::{
 };
 
 use liana_ui::{
-    component::{form, modal::Modal},
-    widget::Element,
+    component::form,
+    widget::{modal::Modal, Element},
 };
 
 use crate::{
