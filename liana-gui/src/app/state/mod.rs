@@ -27,6 +27,7 @@ use super::{
 
 pub const HISTORY_EVENT_PAGE_SIZE: u64 = 20;
 
+use crate::app::cache::FiatPrice;
 use crate::daemon::model::{coin_is_owned, LabelsLoader};
 use crate::daemon::{
     model::{remaining_sequence, Coin, HistoryTransaction, Payment},
@@ -69,6 +70,23 @@ pub fn redirect(menu: Menu) -> Task<Message> {
     Task::perform(async { menu }, |menu| {
         Message::View(view::Message::Menu(menu))
     })
+}
+
+/// Returns fiat price if the wallet setting is enabled and the cached price matches the setting.
+pub fn fiat_price_for_wallet(wallet: &Wallet, cache: &Cache) -> Option<FiatPrice> {
+    let mut fiat_price = None;
+    if let Some(sett) = wallet
+        .fiat_price_setting
+        .as_ref()
+        .filter(|sett| sett.is_enabled)
+    {
+        if let Some(price) = cache.fiat_price_cache.fiat_price.as_ref() {
+            if price.source() == sett.source && price.currency() == sett.currency {
+                fiat_price = Some(price.clone());
+            }
+        }
+    }
+    fiat_price
 }
 
 /// Returns the confirmed and unconfirmed balances from `coins`, as well
@@ -170,6 +188,7 @@ impl Home {
 
 impl State for Home {
     fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, view::Message> {
+        let fiat_price = fiat_price_for_wallet(&self.wallet, cache);
         if let Some((tx, output_index)) = &self.selected_event {
             view::home::payment_view(
                 cache,
@@ -187,6 +206,7 @@ impl State for Home {
                     &self.balance,
                     &self.unconfirmed_balance,
                     &self.remaining_sequence,
+                    fiat_price,
                     &self.expiring_coins,
                     &self.events,
                     self.is_last_page,

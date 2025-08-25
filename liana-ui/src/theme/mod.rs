@@ -20,6 +20,7 @@ pub mod slider;
 pub mod svg;
 pub mod text;
 pub mod text_input;
+pub mod toggler;
 
 #[derive(Debug, Copy, Clone, PartialEq, Default)]
 pub struct Theme {

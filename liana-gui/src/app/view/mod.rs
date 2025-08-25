@@ -1,3 +1,4 @@
+mod fiat;
 mod label;
 mod message;
 mod warning;
