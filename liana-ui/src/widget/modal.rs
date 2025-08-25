@@ -29,7 +29,7 @@ impl<'a, Message, Theme, Renderer> Modal<'a, Message, Theme, Renderer> {
         }
     }
 
-    /// Sets the message that will be produces when the background
+    /// Sets the message that will be produced when the background
     /// of the [`Modal`] is pressed
     pub fn on_blur(self, on_blur: Option<Message>) -> Self {
         Self { on_blur, ..self }

@@ -8,7 +8,7 @@ use async_hwi::{DeviceKind, Version};
 use iced::{
     alignment::{Horizontal, Vertical},
     clipboard,
-    widget::{column, container, pick_list, row, Column, Space},
+    widget::{column, container, pick_list, row, Column, Row, Space},
     Length, Subscription, Task,
 };
 use liana::miniscript::{
@@ -40,7 +40,7 @@ use crate::{
         descriptor::{Key, KeySource},
         message::{self, Message},
         view::editor::example_xpub,
-        Error,
+        Error, PathKind,
     },
     services::{
         self,
@@ -911,66 +911,19 @@ impl SelectKeySource {
             container(p1_regular(account.to_string()))
         };
         let edit_account = matches!(self.focus, Focus::Device(_));
-        let pick_account = if edit_account {
-            Some(row![pick_account, Space::with_width(Length::Fill)].spacing(5))
-        } else {
-            None
-        };
 
-        let info = "Switch account if you already uses the same hardware in other configurations";
+        let pick_account = edit_account.then_some(pick_account);
 
-        let error = self
-            .details_error
-            .clone()
-            .map(|e| p1_regular(e).color(color::ORANGE));
-
-        let apply_btn = if self.details_error.is_none() {
-            row![
-                Space::with_width(Length::Fill),
-                button::primary(None, "Apply").on_press_maybe(apply)
-            ]
-            .spacing(5)
-        } else {
-            row![
-                Space::with_width(Length::Fill),
-                button::primary(None, "Retry").on_press(Self::route(SelectKeySourceMessage::Retry)),
-                button::secondary(None, "Apply")
-            ]
-            .spacing(5)
-            .align_y(Vertical::Center)
-        };
-
-        let column = Column::new()
-            .spacing(5)
-            .push(header)
-            .push(row![
-                p1_bold("Key name (alias):"),
-                Space::with_width(Length::Fill)
-            ])
-            .push(row![
-                p1_regular("Give this key a friendly name. it helps you identify it later:"),
-                Space::with_width(Length::Fill)
-            ])
-            .push(
-                container(
-                    form::Form::new("E.g. My Hardware Wallet", &self.form_alias, |s| {
-                        Self::route(SelectKeySourceMessage::Alias(s))
-                    })
-                    .padding(10),
-                )
-                .width(300),
-            )
-            .push(Space::with_height(10))
-            .push_maybe(if pick_account.is_some() {
-                Some(row![p1_bold("Key path account:"), tooltip(info)].align_y(Vertical::Center))
-            } else {
-                None
-            })
-            .push_maybe(pick_account)
-            .push_maybe(error)
-            .push(apply_btn)
-            .width(450);
-        card::modal(column).into()
+        details_view(
+            header,
+            pick_account,
+            &self.form_alias,
+            self.details_error.clone(),
+            |s| Self::route(SelectKeySourceMessage::Alias(s)),
+            apply,
+            Some(Self::route(SelectKeySourceMessage::Retry)),
+            None,
+        )
     }
     fn view_no_devices(&self) -> Element<Message> {
         column![
@@ -1274,6 +1227,165 @@ impl super::DescriptorEditModal for SelectKeySource {
         } else {
             content
         }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn details_view<'a, Alias>(
+    header: Element<'a, Message>,
+    pick_account: Option<Container<'a, Message>>,
+    alias: &'a form::Value<String>,
+    error: Option<String>,
+    alias_msg: Alias,
+    apply_msg: Option<Message>,
+    retry_msg: Option<Message>,
+    replace_message: Option<Message>,
+) -> Element<'a, Message>
+where
+    Alias: 'static + Fn(String) -> Message,
+{
+    let pick_account = pick_account
+        .map(|pick_account| row![pick_account, Space::with_width(Length::Fill)].spacing(5));
+    let info = "Switch account if you already uses the same hardware in other configurations";
+
+    let error = error.clone().map(|e| p1_regular(e).color(color::ORANGE));
+
+    let spacer = replace_message.is_some().then(|| Space::with_width(10));
+    let replace_btn = replace_message.map(|m| {
+        let mut btn = button::secondary(None, "Replace");
+        if alias.valid {
+            btn = btn.on_press(m);
+        }
+        btn
+    });
+
+    let btn_row = if error.is_none() {
+        Row::new()
+            .push(Space::with_width(Length::Fill))
+            .push_maybe(replace_btn)
+            .push_maybe(spacer)
+            .push(button::primary(None, "Apply").on_press_maybe(apply_msg))
+    } else if let Some(retry_msg) = retry_msg {
+        row![
+            Space::with_width(Length::Fill),
+            button::primary(None, "Retry").on_press(retry_msg),
+            button::secondary(None, "Apply")
+        ]
+        .spacing(5)
+        .align_y(Vertical::Center)
+    } else {
+        Row::new()
+            .push(Space::with_width(Length::Fill))
+            .push_maybe(replace_btn)
+            .push_maybe(spacer)
+            .push(button::primary(None, "Apply"))
+    };
+    let column = Column::new()
+        .spacing(5)
+        .push(header)
+        .push(row![
+            p1_bold("Key name (alias):"),
+            Space::with_width(Length::Fill)
+        ])
+        .push(row![
+            p1_regular("Give this key a friendly name. it helps you identify it later:"),
+            Space::with_width(Length::Fill)
+        ])
+        .push(
+            container(form::Form::new("E.g. My Hardware Wallet", alias, alias_msg).padding(10))
+                .width(300),
+        )
+        .push(Space::with_height(10))
+        .push_maybe(if pick_account.is_some() {
+            Some(row![p1_bold("Key path account:"), tooltip(info)].align_y(Vertical::Center))
+        } else {
+            None
+        })
+        .push_maybe(pick_account)
+        .push_maybe(error)
+        .push(btn_row)
+        .width(410);
+    card::modal(column).into()
+}
+
+#[derive(Debug, Clone)]
+pub enum EditKeyAliasMessage {
+    Alias(String),
+    Save,
+    Replace,
+    DoReplace {
+        path_kind: PathKind,
+        coordinates: Vec<(usize, usize)>,
+    },
+    Close,
+}
+
+pub struct EditKeyAlias {
+    fingerprint: Fingerprint,
+    form_alias: form::Value<String>,
+    path_kind: PathKind,
+    coordinates: Vec<(usize, usize)>,
+}
+
+impl EditKeyAlias {
+    pub fn new(
+        fingerprint: Fingerprint,
+        alias: String,
+        path_kind: PathKind,
+        coordinates: Vec<(usize, usize)>,
+    ) -> Self {
+        let form_alias = form::Value {
+            value: alias,
+            warning: None,
+            valid: true,
+        };
+        Self {
+            fingerprint,
+            form_alias,
+            path_kind,
+            coordinates,
+        }
+    }
+}
+
+impl super::DescriptorEditModal for EditKeyAlias {
+    fn update(&mut self, _hws: &mut HardwareWallets, message: Message) -> Task<Message> {
+        if let Message::EditKeyAlias(msg) = message {
+            match msg {
+                EditKeyAliasMessage::Alias(alias) => self.form_alias.value = alias,
+                EditKeyAliasMessage::Save => {
+                    return Task::done(Message::DefineDescriptor(
+                        message::DefineDescriptor::AliasEdited(
+                            self.fingerprint,
+                            self.form_alias.value.clone(),
+                        ),
+                    ))
+                }
+                EditKeyAliasMessage::Replace => {
+                    return Task::done(Message::EditKeyAlias(EditKeyAliasMessage::DoReplace {
+                        path_kind: self.path_kind,
+                        coordinates: self.coordinates.clone(),
+                    }))
+                }
+                EditKeyAliasMessage::DoReplace { .. } | EditKeyAliasMessage::Close => { /* unreachable  */
+                }
+            }
+        }
+        Task::none()
+    }
+
+    fn view<'a>(&'a self, _hws: &'a HardwareWallets) -> Element<'a, Message> {
+        let header = modal::header(None, None::<FnMsg>, Some(|| Message::Close));
+        details_view(
+            header,
+            None,
+            &self.form_alias,
+            self.form_alias.warning.map(|s| s.to_string()),
+            |s| Message::EditKeyAlias(EditKeyAliasMessage::Alias(s)),
+            Some(Message::EditKeyAlias(EditKeyAliasMessage::Save)),
+            None,
+            Some(Message::EditKeyAlias(EditKeyAliasMessage::Replace)),
+        )
     }
 }
 

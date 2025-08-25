@@ -35,7 +35,7 @@ use crate::{
     signer::Signer,
 };
 
-use key::{new_multixkey_from_xpub, PathData, SelectKeySource};
+use key::{new_multixkey_from_xpub, EditKeyAlias, PathData, SelectKeySource};
 
 pub trait DescriptorEditModal {
     fn processing(&self) -> bool {
@@ -305,6 +305,24 @@ impl Step for DefineDescriptor {
                 let modal = self.edit_key_modal(path_kind, coordinates);
                 self.modal = Some(Box::new(modal));
             }
+            Message::DefineDescriptor(message::DefineDescriptor::AliasEdited(fg, alias)) => {
+                if let Some(key) = self.keys.get_mut(&fg) {
+                    key.name = alias.clone();
+                }
+                // FIXME: this is a bad hack, we should not store duplicates of keys in paths,
+                // source of truth should be self.keys
+                for p in &mut self.paths {
+                    #[allow(clippy::manual_flatten)]
+                    for k in &mut p.keys {
+                        if let Some(key) = k {
+                            if key.fingerprint == fg {
+                                key.name = alias.clone();
+                            }
+                        }
+                    }
+                }
+                self.modal = None;
+            }
             Message::DefineDescriptor(message::DefineDescriptor::Reset) => {
                 hws.aliases.clear();
                 self.keys.clear();
@@ -352,39 +370,74 @@ impl Step for DefineDescriptor {
                             self.check_for_warning();
                         }
                     }
-                    message::DefinePath::Key(j, msg) => match msg {
-                        message::DefineKey::Clipboard(key) => {
-                            return Task::perform(async move { key }, Message::Clipboard);
-                        }
-
-                        message::DefineKey::Edit => {
-                            let coordinates = vec![(i, j)];
-                            let path_kind = self.paths[i].sequence.into();
-                            let modal = self.edit_key_modal(path_kind, coordinates);
-                            self.modal = Some(Box::new(modal));
-                        }
-                        message::DefineKey::Delete => {
-                            if let Some(path) = self.paths.get_mut(i) {
-                                path.keys.remove(j);
-                                if path.threshold > path.keys.len() {
-                                    path.threshold -= 1;
-                                }
+                    message::DefinePath::Key(j, msg) => {
+                        match msg {
+                            message::DefineKey::Clipboard(key) => {
+                                return Task::perform(async move { key }, Message::Clipboard);
                             }
-                            // Only delete non-primary paths.
-                            if i > 0 // we could alternatively check `path_kind != PathKind::Primary`
+
+                            message::DefineKey::EditAlias => {
+                                let coordinates = vec![(i, j)];
+                                let path_kind = self.paths[i].sequence.into();
+                                if let Some(path) = self.paths.get(i) {
+                                    if let Some(Some(key)) = path.keys.get(j) {
+                                        let fg = key.fingerprint;
+                                        let alias = key.name.clone();
+                                        let modal =
+                                            EditKeyAlias::new(fg, alias, path_kind, coordinates);
+                                        self.modal = Some(Box::new(modal));
+                                        return Task::none();
+                                    }
+                                }
+                                log::error!("DefineDescriptor.update(): DefineKey::EditAlias => key is None.");
+                                return Task::none();
+                            }
+                            message::DefineKey::Edit => {
+                                let coordinates = vec![(i, j)];
+                                let path_kind = self.paths[i].sequence.into();
+                                let modal = self.edit_key_modal(path_kind, coordinates);
+                                self.modal = Some(Box::new(modal));
+                            }
+                            message::DefineKey::Delete => {
+                                if let Some(path) = self.paths.get_mut(i) {
+                                    path.keys.remove(j);
+                                    if path.threshold > path.keys.len() {
+                                        path.threshold -= 1;
+                                    }
+                                }
+                                // Only delete non-primary paths.
+                                if i > 0 // we could alternatively check `path_kind != PathKind::Primary`
                                 && self
                                     .paths
                                     .get(i)
                                     .map(|path| path.keys.is_empty())
                                     .unwrap_or(false)
-                            {
-                                self.paths.remove(i);
+                                {
+                                    self.paths.remove(i);
+                                }
+                                self.check_setup();
                             }
-                            self.check_setup();
                         }
-                    },
+                    }
                 }
             }
+            Message::EditKeyAlias(msg) => match msg.clone() {
+                key::EditKeyAliasMessage::Alias(_)
+                | key::EditKeyAliasMessage::Save
+                | key::EditKeyAliasMessage::Replace => {
+                    if let Some(modal) = &mut self.modal {
+                        return modal.update(hws, Message::EditKeyAlias(msg));
+                    }
+                }
+                key::EditKeyAliasMessage::DoReplace {
+                    path_kind,
+                    coordinates,
+                } => {
+                    let modal = self.edit_key_modal(path_kind, coordinates);
+                    self.modal = Some(Box::new(modal));
+                }
+                key::EditKeyAliasMessage::Close => self.modal = None,
+            },
             _ => {
                 if let Some(modal) = &mut self.modal {
                     return modal.update(hws, message);
