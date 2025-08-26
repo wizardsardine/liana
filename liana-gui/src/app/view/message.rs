@@ -32,7 +32,7 @@ pub enum Message {
     ImportPsbt,
     OpenUrl(String),
     BuySell(BuySellMessage),
-    #[cfg(feature = "dev-meld")]
+    #[cfg(any(feature = "dev-meld", feature = "dev-onramp"))]
     MeldBuySell(MeldBuySellMessage),
     #[cfg(feature = "webview")]
     WebviewAction(iced_webview::Action),
@@ -158,7 +158,7 @@ pub enum BuySellMessage {
     CreateAccount,
 }
 
-#[cfg(feature = "dev-meld")]
+#[cfg(any(feature = "dev-meld", feature = "dev-onramp"))]
 #[derive(Debug, Clone)]
 pub enum MeldBuySellMessage {
     ShowModal,

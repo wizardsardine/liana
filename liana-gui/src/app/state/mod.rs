@@ -8,7 +8,7 @@ mod settings;
 mod spend;
 mod transactions;
 pub mod buysell;
-#[cfg(feature = "dev-meld")]
+#[cfg(any(feature = "dev-meld", feature = "dev-onramp"))]
 pub mod meld_buysell;
 
 use std::convert::TryInto;

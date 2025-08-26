@@ -10,13 +10,14 @@ edition = "2018"
 resolver = "2"
 
 [[bin]]
-name = "liana-gui"
+name = "coincube-vault"
 path = "src/main.rs"
 
 [features]
-default = ["dev-coincube", "webview"]
+# New 3-feature structure from master with webview support
+dev-meld = ["webview", "dev-coincube"]
+dev-onramp = ["webview", "dev-coincube"]
 dev-coincube = []
-dev-meld = []
 webview = ["iced_webview"]
 
 [dependencies]
@@ -50,7 +51,7 @@ iced_webview = { path = "../../iced_webview", features = ["ultralight"], optiona
 # Used to verify RFC-compliance of an email
 email_address = "0.2.7"
 
-tokio = { version = "1.21.0", features = ["signal"] }
+tokio = { version = "1", features = ["signal"] }
 async-fd-lock = "0.2.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -98,9 +99,14 @@ zip = { version = "0.6", default-features = false, features = [
 tar = { version = "0.4", default-features = false }
 flate2 = { version = "1.0", default-features = false }
 
-[build-dependencies]
-# Build script dependencies for webview linking
-# Note: These are conditionally used in build.rs based on the webview feature
-
 [dev-dependencies]
-tokio = { version = "1.9.0", features = ["rt", "macros"] }
+tokio = { version = "1", features = ["rt", "macros"] }
+
+[target.'cfg(windows)'.build-dependencies]
+winresource = "0.1"
+
+[package.metadata.winresource]
+OriginalFilename = "coincube-vault.exe"
+FileDescription = "The missing safety net for your coins, Coincube's Fork"
+CompanyName = "Coincube"
+InternalName = "Liana"
