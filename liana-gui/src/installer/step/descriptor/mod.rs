@@ -190,7 +190,7 @@ impl Step for ImportDescriptor {
         _hws: &'a HardwareWallets,
         progress: (usize, usize),
         email: Option<&'a str>,
-    ) -> Element<Message> {
+    ) -> Element<'a, Message> {
         let content = view::import_descriptor(
             progress,
             email,
@@ -464,7 +464,7 @@ impl Step for BackupDescriptor {
         _hws: &'a HardwareWallets,
         progress: (usize, usize),
         email: Option<&'a str>,
-    ) -> Element<Message> {
+    ) -> Element<'a, Message> {
         let content = view::backup_descriptor(
             progress,
             email,

@@ -6,7 +6,7 @@ edition = "2018"
 repository = "https://github.com/wizardsardine/liana"
 license-file = "LICENCE"
 keywords = ["bitcoin", "wallet", "miniscript", "inheritance", "recovery"]
-description = "Liana wallet daemon"
+description = "COINCUBE Vault wallet daemon"
 exclude = [".github/", ".cirrus.yml", "tests/",  "test_data/", "contrib/", "pyproject.toml"]
 
 [[bin]]

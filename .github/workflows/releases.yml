@@ -1,0 +1,62 @@
+name: Dev Incremental Release
+
+permissions:
+  contents: write
+
+on:
+  push:
+    tags:
+      - "v*.*"
+
+env:
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  CARGO_INCREMENTAL: 0
+  CARGO_TERM_COLOR: always
+  CARGO_PROFILE_RELEASE_LTO: true
+  CARGO_PROFILE_RELEASE_CODEGEN_UNITS: 1
+
+jobs:
+  upload-binaries:
+    name: upload-binaries
+    if: github.repository == 'coincubetech/liana'
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+          - target: x86_64-apple-darwin
+            os: macos-latest
+          - target: aarch64-apple-darwin
+            os: macos-latest
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          persist-credentials: false
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libudev-dev pkg-config
+
+      - uses: taiki-e/github-actions/install-rust@main
+        with:
+          toolchain: stable
+
+      - name: Set development version
+        shell: bash
+        run: echo "version=dev-$(date +'%Y-%m-%d')" >> $GITHUB_ENV
+
+      - uses: taiki-e/create-gh-release-action@v1
+        with:
+          title: ${{ env.version }}
+          branch: master
+
+      - uses: taiki-e/upload-rust-binary-action@v1
+        with:
+          package: liana-gui
+          bin: coincube-vault
+          target: ${{ matrix.target }}
+          checksum: sha512,md5
+          locked: true

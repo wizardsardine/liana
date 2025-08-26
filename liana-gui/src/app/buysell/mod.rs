@@ -70,6 +70,3 @@ impl fmt::Display for ServiceProvider {
 
 #[cfg(any(feature = "dev-meld", feature = "dev-onramp"))]
 pub mod meld;
-
-#[cfg(feature = "dev-coincube")]
-pub mod coincube;

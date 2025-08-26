@@ -377,12 +377,13 @@ impl std::fmt::Display for SettingsError {
 }
 
 /// global settings.
+#[allow(unstable_name_collisions)]
 pub mod global {
     use crate::dir::LianaDirectory;
     use async_hwi::bitbox::{ConfigError, NoiseConfig, NoiseConfigData};
     use fs2::FileExt;
     use serde::{Deserialize, Serialize};
-    use std::fs::OpenOptions;
+    use std::fs::{File, OpenOptions};
     use std::io::{Read, Seek, SeekFrom, Write};
     use std::path::PathBuf;
 
@@ -461,7 +462,7 @@ pub mod global {
                     .map_err(|e| format!("Reading file: {e}"))?;
 
                 if !write {
-                    file.unlock().map_err(|e| format!("Unlocking file: {e}"))?;
+                    File::unlock(&file).map_err(|e| format!("Unlocking file: {e}"))?;
                 }
 
                 (
@@ -507,7 +508,7 @@ pub mod global {
                     .map_err(|e| format!("Failed to write file: {e}"))?;
                 file.set_len(content.len() as u64)
                     .map_err(|e| format!("Failed to truncate file: {e}"))?;
-                file.unlock().map_err(|e| format!("Unlocking file: {e}"))?;
+                File::unlock(&file).map_err(|e| format!("Unlocking file: {e}"))?;
             }
 
             Ok(())

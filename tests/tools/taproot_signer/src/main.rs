@@ -37,7 +37,7 @@ fn sign_taproot(
                 let privkey = master_xpriv.derive_priv(secp, der_path).unwrap().to_priv();
                 let keypair = secp256k1::Keypair::from_secret_key(secp, &privkey.inner);
                 assert_eq!(keypair.x_only_public_key().0, *int_key);
-                let keypair = keypair.tap_tweak(secp, psbt_in.tap_merkle_root).to_inner();
+                let keypair = keypair.tap_tweak(secp, psbt_in.tap_merkle_root).to_keypair();
                 let sighash = sighash_cache
                     .taproot_key_spend_signature_hash(input_index, &prevouts, sig_type)
                     .unwrap();

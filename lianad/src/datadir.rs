@@ -24,7 +24,7 @@ impl DataDirectory {
 
         // TODO: permissions on Windows..
         #[cfg(not(unix))]
-        return { std::fs::create_dir_all(self.path()) };
+        return std::fs::create_dir_all(self.path());
     }
     pub fn path(&self) -> &Path {
         self.0.as_path()

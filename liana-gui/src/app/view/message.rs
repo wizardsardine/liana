@@ -1,4 +1,4 @@
-use crate::{app::{menu::Menu, state::buysell::AccountType}, export::ImportExportMessage, node::bitcoind::RpcAuthType};
+use crate::{app::menu::Menu, export::ImportExportMessage, node::bitcoind::RpcAuthType};
 use liana::miniscript::bitcoin::{bip32::Fingerprint, Address, OutPoint};
 
 pub trait Close {
@@ -170,9 +170,9 @@ pub enum MeldBuySellMessage {
     CreateSession,
     SessionCreated(String), // widget_url
     SessionError(String),
-    OpenWidget(String), // widget_url
+    OpenWidget(String),            // widget_url
     OpenWidgetInNewWindow(String), // widget_url
-    CopyUrl(String), // widget_url
+    CopyUrl(String),               // widget_url
     UrlCopied,
     CopyError,
     ResetForm,

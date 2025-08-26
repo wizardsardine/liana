@@ -28,13 +28,12 @@ impl Step for WalletAlias {
             // No alias at all, we set a default value.
             (true, true) => {
                 self.wallet_alias.value = format!(
-                    "My Liana {} wallet",
+                    "My Vault {} wallet",
                     match ctx.network {
                         Network::Bitcoin => "Bitcoin",
                         Network::Signet => "Signet",
-                        Network::Testnet => "Testnet",
+                        Network::Testnet4 | Network::Testnet => "Testnet",
                         Network::Regtest => "Regtest",
-                        _ => "",
                     }
                 );
                 self.wallet_alias.valid = true;
@@ -57,7 +56,7 @@ impl Step for WalletAlias {
         _hws: &'a HardwareWallets,
         progress: (usize, usize),
         email: Option<&'a str>,
-    ) -> Element<Message> {
+    ) -> Element<'a, Message> {
         view::wallet_alias(progress, email, &self.wallet_alias)
     }
 
