@@ -20,7 +20,7 @@ use crate::app::state::BuyAndSellPanel;
 use iced::{clipboard, time, Subscription, Task, widget::Column};
 use tokio::runtime::Handle;
 use tracing::{error, info, warn};
-// url import removed - not needed for Ultralight
+
 
 // Ultralight webview imports
 #[cfg(feature = "webview")]
@@ -247,7 +247,7 @@ impl App {
                     // Create optimized webview with performance settings
                     WebView::new()
                         .on_create_view(WebviewMessage::Created)
-                        .on_url_change(|url| WebviewMessage::UrlChanged(url))
+                        .on_url_change(WebviewMessage::UrlChanged)
                 },
                 webview_mode: false,
                 webview_loading: false,
@@ -279,6 +279,8 @@ impl App {
     pub fn is_webview_loading(&self) -> bool {
         self.webview_loading
     }
+
+
 
     /// Map webview messages to main app messages (static version for Task::map)
     #[cfg(feature = "webview")]
@@ -366,6 +368,7 @@ impl App {
     }
 
     pub fn subscription(&self) -> Subscription<Message> {
+
         let mut subscriptions = vec![
             time::every(Duration::from_secs(
                 match sync_status(
@@ -399,47 +402,16 @@ impl App {
             self.panels.current().subscription(),
         ];
 
-        // Smart webview update strategy with reduced frequency to prevent memory leaks
+        // Add webview update subscription for smooth rendering when webview is active
         #[cfg(feature = "webview")]
-        if self.webview_mode && self.show_webview {
-            if let Some(loading_start) = self.webview_loading_start {
-                let elapsed = loading_start.elapsed();
-
-                if elapsed < Duration::from_secs(30) {
-                    // Phase 1: First 30 seconds - 30 FPS for initial loading (reduced from 60 FPS)
-                    subscriptions.push(
-                        time::every(Duration::from_millis(33))
-                            .map(|_| {
-                                use iced_webview::Action as WebViewAction;
-                                Message::View(view::Message::WebviewAction(WebViewAction::Update))
-                            })
-                    );
-                    tracing::debug!("🌐 [LIANA] Webview loading phase - 30 FPS webview updates ({:.1}s elapsed)", elapsed.as_secs_f32());
-                } else if elapsed < Duration::from_secs(300) { // 5 minutes total
-                    // Phase 2: Next 4.5 minutes - 30 second intervals for webview maintenance
-                    subscriptions.push(
-                        time::every(Duration::from_secs(30))
-                            .map(|_| {
-                                use iced_webview::Action as WebViewAction;
-                                Message::View(view::Message::WebviewAction(WebViewAction::Update))
-                            })
-                    );
-                    tracing::debug!("🌐 [LIANA] Webview maintenance phase - 30s webview intervals ({:.1}s elapsed)", elapsed.as_secs_f32());
-                } else {
-                    // Phase 3: After 5 minutes - event-driven webview updates only
-                    tracing::debug!("🌐 [LIANA] Webview stable phase - event-driven updates only ({:.1}s elapsed)", elapsed.as_secs_f32());
-                }
-            } else {
-                // Fallback: if no loading start time, use maintenance mode for webview
-                subscriptions.push(
-                    time::every(Duration::from_secs(30))
-                        .map(|_| {
-                            use iced_webview::Action as WebViewAction;
-                            Message::View(view::Message::WebviewAction(WebViewAction::Update))
-                        })
-                );
-                tracing::debug!("🌐 [LIANA] Webview fallback - 30s webview maintenance intervals");
-            }
+        if self.webview_mode && self.show_webview && self.webview_ready {
+            subscriptions.push(
+                time::every(Duration::from_secs(1)) // 1 second for faster loading detection and content updates
+                    .map(|_| {
+                        use iced_webview::Action as WebViewAction;
+                        Message::View(view::Message::WebviewAction(WebViewAction::Update))
+                    })
+            );
         }
 
         Subscription::batch(subscriptions)
@@ -556,9 +528,18 @@ impl App {
                     self.webview_loading_start = Some(std::time::Instant::now());
                     self.current_webview_url = Some(url.clone());
 
-                    // Create webview with URL string
-                    self.webview.update(WebviewAction::CreateView(PageType::Url(url)))
-                        .map(Self::map_webview_message_static)
+
+
+                    // Create webview with URL string and immediately update to ensure content loads
+                    let create_task = self.webview.update(WebviewAction::CreateView(PageType::Url(url)))
+                        .map(Self::map_webview_message_static);
+
+                    // Add immediate update to trigger content loading
+                    let immediate_update = Task::done(Message::View(view::Message::WebviewAction(
+                        WebviewAction::Update
+                    )));
+
+                    Task::batch(vec![create_task, immediate_update])
                 }
                 #[cfg(not(feature = "webview"))]
                 Task::none()
@@ -574,8 +555,7 @@ impl App {
                 let needs_update = matches!(action,
                     WebViewAction::CreateView(_) |
                     WebViewAction::Resize(_) |
-                    WebViewAction::GoToUrl(_) |
-                    WebViewAction::Refresh
+                    WebViewAction::GoToUrl(_)
                 );
 
                 let main_task = self.webview.update(action)
@@ -601,8 +581,12 @@ impl App {
                 // Increment view count and switch to the first view (following iced_webview example pattern)
                 self.num_webviews += 1;
 
-                // Automatically switch to the first view (index 0) after creation
-                Task::done(Message::View(view::Message::SwitchToWebview(0)))
+                // Switch to the first view and immediately update to display content
+                let switch_task = Task::done(Message::View(view::Message::SwitchToWebview(0)));
+                let update_task = Task::done(Message::View(view::Message::WebviewAction(
+                    iced_webview::Action::Update
+                )));
+                Task::batch(vec![switch_task, update_task])
             }
             #[cfg(feature = "webview")]
             Message::View(view::Message::SwitchToWebview(index)) => {
@@ -611,10 +595,14 @@ impl App {
                 // Update current view index in app state
                 self.current_webview_index = Some(index);
 
-                // Send ChangeView action to webview
+                // Send ChangeView action to webview and immediately update to display content
                 use iced_webview::Action as WebViewAction;
-                self.webview.update(WebViewAction::ChangeView(index))
-                    .map(Self::map_webview_message_static)
+                let change_task = self.webview.update(WebViewAction::ChangeView(index))
+                    .map(Self::map_webview_message_static);
+                let update_task = Task::done(Message::View(view::Message::WebviewAction(
+                    WebViewAction::Update
+                )));
+                Task::batch(vec![change_task, update_task])
             }
             #[cfg(feature = "webview")]
             Message::View(view::Message::WebviewUrlChanged(url)) => {
@@ -622,6 +610,7 @@ impl App {
                 self.current_webview_url = Some(url);
                 Task::none()
             }
+
             // Duplicate handlers removed
             Message::View(view::Message::CloseWebview) => {
                 tracing::info!("🌐 [LIANA] Closing webview");
@@ -652,10 +641,10 @@ impl App {
                     #[cfg(feature = "webview")]
                     {
                         use iced::Size;
-                        use iced_webview::{Action as WebViewAction, engines::PageType};
+                        use iced_webview::{Action as WebViewAction, PageType};
 
-                        // Resize webview to match meld container size (600px width, 600px height)
-                        let webview_size = Size::new(600, 600);
+                        // Resize webview to match meld container size (800px width, 600px height for better fit)
+                        let webview_size = Size::new(800, 600);
                         let resize_task = self.webview.update(WebViewAction::Resize(webview_size))
                             .map(Self::map_webview_message_static);
 
