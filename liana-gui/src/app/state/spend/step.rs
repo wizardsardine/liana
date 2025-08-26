@@ -9,7 +9,6 @@ use std::{
 
 use iced::{Subscription, Task};
 use liana::{
-    descriptors::LianaDescriptor,
     miniscript::bitcoin::{
         address,
         bip32::{DerivationPath, Fingerprint},
@@ -141,7 +140,7 @@ pub struct DefineSpend {
     is_duplicate: bool,
 
     network: Network,
-    descriptor: LianaDescriptor,
+    wallet: Arc<Wallet>,
     curve: secp256k1::Secp256k1<secp256k1::VerifyOnly>,
     /// Leave as `None` for a primary path spend. Otherwise, this is the timelock
     /// corresponding to the recovery path to use for the spend.
@@ -166,7 +165,7 @@ pub struct DefineSpend {
 impl DefineSpend {
     pub fn new(
         network: Network,
-        descriptor: LianaDescriptor,
+        wallet: Arc<Wallet>,
         coins: &[Coin],
         tip_height: u32,
         recovery_timelock: Option<u16>,
@@ -181,7 +180,7 @@ impl DefineSpend {
 
         Self {
             network,
-            descriptor,
+            wallet,
             curve: secp256k1::Secp256k1::verification_only(),
             recovery_timelock,
             tip_height,
@@ -243,7 +242,7 @@ impl DefineSpend {
     /// timelock as used for the recovery.
     pub fn timelock(&self) -> u16 {
         self.recovery_timelock
-            .unwrap_or_else(|| self.descriptor.first_timelock_value())
+            .unwrap_or_else(|| self.wallet.main_descriptor.first_timelock_value())
     }
 
     // If `is_redraft`, the validation of recipients will take into account
@@ -393,7 +392,8 @@ impl DefineSpend {
                 .as_unchecked()
                 .clone()
         } else {
-            self.descriptor
+            self.wallet
+                .main_descriptor
                 .change_descriptor()
                 .derive(0.into(), &self.curve)
                 .address(self.network)
@@ -511,7 +511,7 @@ impl Step for DefineSpend {
                     // If the timelock has changed, reinitialise this step.
                     let new = Self::new(
                         self.network,
-                        self.descriptor.clone(),
+                        self.wallet.clone(),
                         coins,
                         tip_height as u32,
                         Some(new_tl),
@@ -559,7 +559,7 @@ impl Step for DefineSpend {
                     view::CreateSpendMessage::Clear => {
                         *self = Self::new(
                             self.network,
-                            self.descriptor.clone(),
+                            self.wallet.clone(),
                             self.coins
                                 .iter()
                                 .map(|(c, _)| c.clone())
@@ -824,6 +824,10 @@ impl Step for DefineSpend {
             self.warning.as_ref(),
             self.is_first_step,
         )
+    }
+
+    fn reload_wallet(&mut self, wallet: Arc<Wallet>) {
+        self.wallet = wallet;
     }
 }
 
