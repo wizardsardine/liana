@@ -101,7 +101,8 @@ enum Focus {
     EnterXpub,
     LoadXpubFromFile,
     GenerateHotKey,
-    EnterToken,
+    EnterSafetyNetToken,
+    EnterCosignerToken,
 }
 
 #[derive(Debug, Clone)]
@@ -115,7 +116,8 @@ pub enum SelectKeySourceMessage {
     Xpub(String),
     SelectGenerateHotKey,
     FetchFromHotSigner(ChildNumber),
-    SelectEnterToken,
+    SelectEnterSafetyNetToken,
+    SelectEnterCosignerToken,
     PasteToken,
     Token(String),
     Previous,
@@ -191,7 +193,8 @@ pub struct SelectKeySource {
     // fields
     form_alias: form::Value<String>,
     form_xpub: form::Value<String>,
-    form_token: form::Value<String>,
+    form_safety_net_token: form::Value<String>,
+    form_cosigner_token: form::Value<String>,
     form_account: Option<ChildNumber>,
 
     options_collapsed: bool,
@@ -224,7 +227,8 @@ impl SelectKeySource {
             import_xpub_error: None,
             form_alias: Default::default(),
             form_xpub: Default::default(),
-            form_token: Default::default(),
+            form_safety_net_token: Default::default(),
+            form_cosigner_token: Default::default(),
             form_account: None,
             options_collapsed: false,
         }
@@ -522,20 +526,33 @@ impl SelectKeySource {
         self.selected_key = SelectedKey::New(Box::new(key));
         Task::none()
     }
-    fn on_select_enter_token(&mut self) -> Task<Message> {
-        self.focus = Focus::EnterToken;
+    fn on_select_enter_safety_net_token(&mut self) -> Task<Message> {
+        self.focus = Focus::EnterSafetyNetToken;
+        Task::none()
+    }
+    fn on_select_enter_cosigner_token(&mut self) -> Task<Message> {
+        self.focus = Focus::EnterCosignerToken;
         Task::none()
     }
     fn on_provider_key(&mut self, key: Result<Key, Error>) -> Task<Message> {
         self.processing = false;
+        let (warning, valid) = match self.focus {
+            Focus::EnterSafetyNetToken => (
+                &mut self.form_safety_net_token.warning,
+                &mut self.form_safety_net_token.valid,
+            ),
+            Focus::EnterCosignerToken => (
+                &mut self.form_cosigner_token.warning,
+                &mut self.form_cosigner_token.valid,
+            ),
+            _ => return Task::none(),
+        };
         match key {
             Ok(k) => {
                 // If it is a provider key that has just been fetched, do some additional sanity checks.
                 if let Some(key_kind) = k.source.provider_key_kind() {
                     // We don't need to check key's status as redeemed keys are not returned.
-                    self.form_token.warning = if self.focus != Focus::EnterToken {
-                        Some("Wrong kind of token")
-                    } else if !check_key_network(&k.key, self.network) {
+                    *warning = if !check_key_network(&k.key, self.network) {
                         Some("Fetched key does not have the correct network")
                     } else if !self.actual_path.token_kind.contains(&key_kind) {
                         let warn = match key_kind {
@@ -558,8 +575,8 @@ impl SelectKeySource {
                     } else {
                         None
                     };
-                    self.form_token.valid = self.form_token.warning.is_none();
-                    if self.form_token.valid {
+                    *valid = warning.is_none();
+                    if *valid {
                         self.selected_key = SelectedKey::New(Box::new(k.clone()));
                         if let Some(kind) = k.source.provider_key_kind() {
                             self.form_alias.value = format!("{:?}", kind);
@@ -681,30 +698,57 @@ impl SelectKeySource {
         })
     }
     fn on_update_token(&mut self, token: String) -> Task<Message> {
+        let token = token.trim().to_string();
         self.selected_key = SelectedKey::None;
-        self.form_token.value = token.clone();
-
-        if keys::token::Token::from_str(&token).is_ok() {
-            // We check if the token has already been fetched and saved regardless of its kind
-            self.form_token.warning = if self
-                .keys
-                .iter()
-                .any(|(_, (_, k))| k.source.token() == Some(&token))
-            {
-                Some("Duplicate token")
-            } else {
-                None
+        let value = {
+            let (value, valid, warning) = match self.focus {
+                Focus::EnterSafetyNetToken => (
+                    &mut self.form_safety_net_token.value,
+                    &mut self.form_safety_net_token.valid,
+                    &mut self.form_safety_net_token.warning,
+                ),
+                Focus::EnterCosignerToken => (
+                    &mut self.form_cosigner_token.value,
+                    &mut self.form_cosigner_token.valid,
+                    &mut self.form_cosigner_token.warning,
+                ),
+                _ => {
+                    log::error!(
+                        "SelectKeySource.on_update_token() call with focus on {:?}",
+                        self.focus
+                    );
+                    return Task::none();
+                }
             };
-            self.form_token.valid = token.is_empty() || self.form_token.warning.is_none();
-            if self.form_token.valid {
-                self.fetch_provider(self.form_token.value.clone())
+            *value = token.clone();
+
+            if keys::token::Token::from_str(&token).is_ok() {
+                // We check if the token has already been fetched and saved regardless of its kind
+                *warning = if self
+                    .keys
+                    .iter()
+                    .any(|(_, (_, k))| k.source.token() == Some(&token))
+                {
+                    Some("Duplicate token")
+                } else {
+                    None
+                };
+                *valid = token.is_empty() || warning.is_none();
+                if !*valid {
+                    return Task::none();
+                }
             } else {
-                Task::none()
+                *valid = value.is_empty();
+                *warning = if !*valid {
+                    Some("Invalid token!")
+                } else {
+                    None
+                };
+                return Task::none();
             }
-        } else {
-            self.form_token.valid = self.form_token.value.is_empty();
-            Task::none()
-        }
+            value.clone()
+        };
+        self.fetch_provider(value)
     }
     fn on_paste_token(&mut self) -> Task<Message> {
         clipboard::read().map(|t| {
@@ -774,9 +818,9 @@ impl SelectKeySource {
             self.step = Step::Select;
             self.focus = Focus::None;
 
-            self.form_token.value = "".to_string();
-            self.form_token.valid = true;
-            self.form_token.warning = None;
+            self.form_safety_net_token.value = "".to_string();
+            self.form_safety_net_token.valid = true;
+            self.form_safety_net_token.warning = None;
 
             self.form_xpub.value = "".to_string();
             self.form_xpub.valid = true;
@@ -966,13 +1010,26 @@ impl SelectKeySource {
         }
         col.into()
     }
+    fn safety_net_enabled(&self) -> bool {
+        self.actual_path.token_kind.contains(&KeyKind::SafetyNet)
+    }
+    fn cosigner_enabled(&self) -> bool {
+        self.actual_path.token_kind.contains(&KeyKind::Cosigner)
+    }
     fn view_other_options(&self) -> Element<Message> {
-        let paste_token =
-            (!self.actual_path.token_kind.is_empty()).then_some(self.widget_paste_token());
+        let safety_net_token = self
+            .safety_net_enabled()
+            .then_some(self.widget_paste_safety_net_token());
 
-        let paste_xpub = paste_token.is_none().then_some(self.widget_paste_xpub());
+        let cosigner_token = self
+            .cosigner_enabled()
+            .then_some(self.widget_paste_cosigner_token());
 
-        let collapsed = self.options_collapsed || paste_token.is_some();
+        let paste_xpub = safety_net_token
+            .is_none()
+            .then_some(self.widget_paste_xpub());
+
+        let collapsed = self.options_collapsed || safety_net_token.is_some();
 
         let option_section = modal::optional_section(
             collapsed,
@@ -982,10 +1039,10 @@ impl SelectKeySource {
         );
 
         let hot_signer_fg = self.hot_signer.lock().expect("poisoned").fingerprint();
-        let hot_signer = (!self.keys.contains_key(&hot_signer_fg) && paste_token.is_none())
+        let hot_signer = (!self.keys.contains_key(&hot_signer_fg) && safety_net_token.is_none())
             .then_some(self.widget_generate_hot_key());
 
-        let load_key = paste_token.is_none().then_some(self.widget_load_key());
+        let load_key = safety_net_token.is_none().then_some(self.widget_load_key());
 
         let mut col = Column::new()
             .push(option_section)
@@ -996,7 +1053,8 @@ impl SelectKeySource {
                 .push_maybe(load_key)
                 .push_maybe(paste_xpub)
                 .push_maybe(hot_signer)
-                .push_maybe(paste_token);
+                .push_maybe(cosigner_token)
+                .push_maybe(safety_net_token);
         }
         col.into()
     }
@@ -1117,16 +1175,28 @@ impl SelectKeySource {
             || Self::route(SelectKeySourceMessage::SelectEnterXpub),
         )
     }
-    fn widget_paste_token(&self) -> Element<Message> {
+    fn widget_paste_safety_net_token(&self) -> Element<Message> {
         collapsible_input_button(
-            self.focus == Focus::EnterToken,
+            self.focus == Focus::EnterSafetyNetToken,
             Some(icon::enter_box_icon()),
             "Enter a Safety Net token".to_string(),
             "aaaa-bbbb-cccc".to_string(),
-            &self.form_token,
+            &self.form_safety_net_token,
             Some(|token| Self::route(SelectKeySourceMessage::Token(token))),
             Some(|| Self::route(SelectKeySourceMessage::PasteToken)),
-            || Self::route(SelectKeySourceMessage::SelectEnterToken),
+            || Self::route(SelectKeySourceMessage::SelectEnterSafetyNetToken),
+        )
+    }
+    fn widget_paste_cosigner_token(&self) -> Element<Message> {
+        collapsible_input_button(
+            self.focus == Focus::EnterCosignerToken,
+            Some(icon::enter_box_icon()),
+            "Enter a Cosigner token".to_string(),
+            "aaaa-bbbb-cccc".to_string(),
+            &self.form_cosigner_token,
+            Some(|token| Self::route(SelectKeySourceMessage::Token(token))),
+            Some(|| Self::route(SelectKeySourceMessage::PasteToken)),
+            || Self::route(SelectKeySourceMessage::SelectEnterCosignerToken),
         )
     }
 }
@@ -1182,7 +1252,12 @@ impl super::DescriptorEditModal for SelectKeySource {
                 SelectKeySourceMessage::FetchFromHotSigner(account) => {
                     self.on_fetch_from_hotsigner(account)
                 }
-                SelectKeySourceMessage::SelectEnterToken => self.on_select_enter_token(),
+                SelectKeySourceMessage::SelectEnterCosignerToken => {
+                    self.on_select_enter_cosigner_token()
+                }
+                SelectKeySourceMessage::SelectEnterSafetyNetToken => {
+                    self.on_select_enter_safety_net_token()
+                }
                 SelectKeySourceMessage::PasteToken => self.on_paste_token(),
                 SelectKeySourceMessage::Token(token) => self.on_update_token(token),
                 SelectKeySourceMessage::Next => self.on_next(),
