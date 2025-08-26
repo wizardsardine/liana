@@ -7,7 +7,7 @@ mod receive;
 mod settings;
 mod spend;
 mod transactions;
-pub mod buysell;
+
 #[cfg(any(feature = "dev-meld", feature = "dev-onramp"))]
 pub mod meld_buysell;
 
@@ -43,6 +43,9 @@ pub use receive::ReceivePanel;
 pub use settings::SettingsState;
 pub use spend::CreateSpendPanel;
 pub use transactions::TransactionsPanel;
+#[cfg(all(feature = "dev-coincube", not(any(feature = "dev-meld", feature = "dev-onramp"))))]
+pub mod buysell;
+#[cfg(all(feature = "dev-coincube", not(any(feature = "dev-meld", feature = "dev-onramp"))))]
 pub use buysell::BuyAndSellPanel;
 
 pub trait State {

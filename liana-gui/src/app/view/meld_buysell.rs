@@ -375,7 +375,29 @@ fn success_content(widget_url: &str) -> Element<'_, ViewMessage> {
             // Show the webview widget with a launch button
             #[cfg(feature = "webview")]
             {
-                crate::app::view::webview::meld_webview_widget(widget_url, None, false)
+                // Webview widget placeholder - will be properly integrated later
+                let webview_container: Element<'_, ViewMessage> = Container::new(
+                    Column::new()
+                        .push(text("🌐 Meld Payment Widget").size(16).color(color::GREEN))
+                        .push(Space::with_height(Length::Fixed(10.0)))
+                        .push(text("Webview integration active").size(14).color(color::GREY_3))
+                        .push(Space::with_height(Length::Fixed(15.0)))
+                        .push(
+                            ui_button::primary(None, "Open in Browser")
+                                .on_press(ViewMessage::MeldBuySell(MeldBuySellMessage::OpenWidget(
+                                    widget_url.to_string(),
+                                )))
+                                .width(Length::Fill),
+                        )
+                        .align_x(Alignment::Center)
+                        .spacing(5)
+                )
+                .width(Length::Fill)
+                .height(Length::Fixed(350.0))
+                .padding(20)
+                .style(theme::card::simple)
+                .into();
+                webview_container
             }
             #[cfg(not(feature = "webview"))]
             {
@@ -437,5 +459,5 @@ fn success_content(widget_url: &str) -> Element<'_, ViewMessage> {
                 .on_press(ViewMessage::MeldBuySell(MeldBuySellMessage::ResetForm))
                 .width(Length::Fill)
         )
-    }
+        .into()
 }

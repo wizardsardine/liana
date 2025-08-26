@@ -3,7 +3,7 @@ mod message;
 mod warning;
 pub mod webview;
 
-pub mod buysell;
+
 #[cfg(any(feature = "dev-meld", feature = "dev-onramp"))]
 pub mod meld_buysell;
 pub mod coins;
