@@ -168,7 +168,6 @@ pub enum ImportExportType {
     Transactions,
     ExportPsbt(String),
     ExportXpub(String),
-    ExportBackup(String),
     ExportEncryptedDescriptor(Box<LianaDescriptor>),
     ExportProcessBackup(LianaDirectory, Network, Arc<Config>, Arc<Wallet>),
     ImportBackup {
@@ -190,7 +189,6 @@ impl ImportExportType {
         match self {
             ImportExportType::Transactions
             | ImportExportType::ExportPsbt(_)
-            | ImportExportType::ExportBackup(_)
             | ImportExportType::Descriptor(_)
             | ImportExportType::ExportProcessBackup(..)
             | ImportExportType::ExportXpub(_)
@@ -309,7 +307,6 @@ impl Export {
             ImportExportType::ImportPsbt(txid) => import_psbt(daemon, &sender, path, txid).await,
             ImportExportType::ImportXpub(network) => import_xpub(&sender, path, network).await,
             ImportExportType::ImportDescriptor => import_descriptor(&sender, path).await,
-            ImportExportType::ExportBackup(str) => export_string(&sender, path, str).await,
             ImportExportType::ExportEncryptedDescriptor(descr) => {
                 export_encrypted_descriptor(&sender, path, *descr).await
             }
