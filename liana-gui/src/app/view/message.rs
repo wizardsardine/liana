@@ -1,4 +1,6 @@
 use crate::{app::menu::Menu, export::ImportExportMessage, node::bitcoind::RpcAuthType};
+#[cfg(all(feature = "dev-coincube", not(any(feature = "dev-meld", feature = "dev-onramp"))))]
+use crate::app::state::buysell::AccountType;
 use liana::miniscript::bitcoin::{bip32::Fingerprint, Address, OutPoint};
 
 pub trait Close {
@@ -31,12 +33,21 @@ pub enum Message {
     ExportPsbt,
     ImportPsbt,
     OpenUrl(String),
-    #[cfg(feature = "dev-meld")]
+    BuySell(BuySellMessage),
+    #[cfg(any(feature = "dev-meld", feature = "dev-onramp"))]
     MeldBuySell(MeldBuySellMessage),
     #[cfg(feature = "webview")]
     WebviewAction(iced_webview::Action),
+    #[cfg(feature = "webview")]
+    WebviewCreated,
+    #[cfg(feature = "webview")]
+    WebviewUrlChanged(String),
+    #[cfg(feature = "webview")]
+    SwitchToWebview(u32),
     OpenWebview(String),
     CloseWebview,
+    ShowWebView,
+
 }
 
 impl Close for Message {
@@ -135,7 +146,22 @@ pub enum CreateRbfMessage {
     Confirm,
 }
 
-#[cfg(feature = "dev-meld")]
+#[derive(Debug, Clone)]
+pub enum BuySellMessage {
+    ShowModal,
+    CloseModal,
+    ShowAccountSelection,
+    HideAccountSelection,
+    #[cfg(all(feature = "dev-coincube", not(any(feature = "dev-meld", feature = "dev-onramp"))))]
+    SelectAccountType(AccountType),
+    GetStarted,
+    GoBack,
+    FormFieldEdited(String, String),
+    ToggleTermsAcceptance,
+    CreateAccount,
+}
+
+#[cfg(any(feature = "dev-meld", feature = "dev-onramp"))]
 #[derive(Debug, Clone)]
 pub enum MeldBuySellMessage {
     ShowModal,
@@ -143,7 +169,7 @@ pub enum MeldBuySellMessage {
     WalletAddressChanged(String),
     CountryCodeChanged(String),
     SourceAmountChanged(String),
-    ProviderSelected(crate::app::buysell::ServiceProvider),
+
     CreateSession,
     SessionCreated(String), // widget_url
     SessionError(String),

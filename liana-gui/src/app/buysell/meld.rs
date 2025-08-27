@@ -105,6 +105,13 @@ impl MeldClient {
         // Debug logging to see what we're sending
         tracing::info!("Creating Meld session with network: {:?}, currency: {}", network, destination_currency);
 
+        // Generate unique customer ID for each request to ensure fresh sessions
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|e| MeldError::Api(format!("System time error: {}", e)))?
+            .as_secs();
+        let unique_customer_id = format!("liana_user_{}", timestamp);
+
         let request = MeldSessionRequest {
             session_data: SessionData {
                 wallet_address,
@@ -115,7 +122,7 @@ impl MeldClient {
                 service_provider: service_provider.as_str().to_string(),
             },
             session_type: "BUY".to_string(),
-            external_customer_id: "testcustomer".to_string(),
+            external_customer_id: unique_customer_id,
         };
 
         let url = format!("{}{}", MELD_API_BASE_URL, MELD_API_ENDPOINT);

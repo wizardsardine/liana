@@ -356,7 +356,7 @@ impl VerifyAddressModal {
 }
 
 impl VerifyAddressModal {
-    fn view(&self) -> Element<view::Message> {
+    fn view(&self) -> Element<'_, view::Message> {
         view::receive::verify_address_modal(
             self.warning.as_ref(),
             &self.hws.list,
@@ -429,7 +429,7 @@ impl ShowQrCodeModal {
             })
     }
 
-    fn view(&self) -> Element<view::Message> {
+    fn view(&self) -> Element<'_, view::Message> {
         view::receive::qr_modal(&self.qr_code, &self.address)
     }
 }

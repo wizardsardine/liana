@@ -14,9 +14,9 @@ name = "coincube-vault"
 path = "src/main.rs"
 
 [features]
+# New 3-feature structure from master with webview support
 dev-meld = ["webview", "dev-coincube"]
-dev-onramper = ["webview", "dev-coincube"]
-
+dev-onramp = ["webview", "dev-coincube"]
 dev-coincube = []
 webview = ["iced_webview"]
 
@@ -34,19 +34,19 @@ hex = "0.4.3"
 iced = { version = "0.13.1", default-features = false, features = [
 	"tokio",
 	"svg",
-	"canvas",
+    "canvas",
 	"qr_code",
 	"image",
 	"lazy",
 	"advanced",
 	"wgpu",
-	"tiny-skia",
+    "tiny-skia"
 ] }
 iced_aw = { version = "0.12.2", features = ["context_menu"] }
 iced_runtime = "0.13.1"
 
-# Webview for embedded browser functionality
-iced_webview = { git = "https://github.com/coincubetech/iced_webview.git", optional = true }
+# Webview for embedded browser functionality (Ultralight-based)
+iced_webview = { git = "https://github.com/coincubetech/iced_webview.git", features = ["ultralight"], optional = true }
 
 # Used to verify RFC-compliance of an email
 email_address = "0.2.7"
