@@ -1,4 +1,5 @@
 use chrono::{Duration, Utc};
+use encrypted_backup::ToPayload;
 use liana::{
     descriptors::LianaDescriptor,
     miniscript::{
@@ -448,6 +449,28 @@ pub enum KeyType {
     External,
     /// Service the user pay for
     ThirdParty,
+}
+
+impl ToPayload for Backup {
+    fn to_payload(&self) -> Result<Vec<u8>, encrypted_backup::Error> {
+        Ok(self.to_string().as_bytes().to_vec())
+    }
+
+    fn content_type(&self) -> encrypted_backup::Content {
+        encrypted_backup::Content::WalletBackup
+    }
+
+    fn derivation_paths(
+        &self,
+    ) -> Result<Vec<miniscript::bitcoin::bip32::DerivationPath>, encrypted_backup::Error> {
+        Ok(vec![])
+    }
+
+    fn keys(
+        &self,
+    ) -> Result<Vec<miniscript::bitcoin::secp256k1::PublicKey>, encrypted_backup::Error> {
+        Ok(vec![])
+    }
 }
 
 #[cfg(test)]
