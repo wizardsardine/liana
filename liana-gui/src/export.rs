@@ -9,7 +9,7 @@ use std::{
     time,
 };
 
-use encrypted_backup::EncryptedBackup;
+use encrypted_backup::{EncryptedBackup, ToPayload};
 use tokio::sync::mpsc::{channel, unbounded_channel, Sender, UnboundedReceiver, UnboundedSender};
 
 use async_hwi::bitbox::api::btc::Fingerprint;
@@ -589,8 +589,16 @@ pub async fn export_string(
     path: PathBuf,
     str: String,
 ) -> Result<(), Error> {
+    export_bytes(sender, path, str.as_bytes()).await
+}
+
+pub async fn export_bytes(
+    sender: &UnboundedSender<Progress>,
+    path: PathBuf,
+    bytes: &[u8],
+) -> Result<(), Error> {
     let mut file = open_file_write(&path).await?;
-    file.write_all(str.as_bytes())?;
+    file.write_all(bytes)?;
     send_progress!(sender, Progress(100.0));
     send_progress!(sender, Ended);
     Ok(())
@@ -1323,9 +1331,8 @@ pub async fn app_backup(
     wallet: Arc<Wallet>,
     daemon: Arc<dyn Daemon + Sync + Send>,
     sender: &UnboundedSender<Progress>,
-) -> Result<String, backup::Error> {
-    let backup = Backup::from_app(datadir, network, config, wallet, daemon, sender).await?;
-    serde_json::to_string_pretty(&backup).map_err(|_| backup::Error::Json)
+) -> Result<Backup, backup::Error> {
+    Backup::from_app(datadir, network, config, wallet, daemon, sender).await
 }
 
 pub async fn app_backup_export(
@@ -1337,10 +1344,26 @@ pub async fn app_backup_export(
     path: PathBuf,
     sender: &UnboundedSender<Progress>,
 ) -> Result<(), Error> {
+    let descriptor = wallet
+        .main_descriptor
+        .clone()
+        .policy()
+        .into_multipath_descriptor();
     let backup = app_backup(datadir.clone(), network, config, wallet, daemon, sender)
         .await
         .map_err(Error::Backup)?;
-    export_string(sender, path, backup).await
+    let keys = ToPayload::keys(&descriptor).expect("cannot fail");
+    let deriv_paths = ToPayload::derivation_paths(&descriptor).expect("cannot fail");
+
+    let backup = EncryptedBackup::new()
+        .set_payload(&backup)
+        .expect("cannot fail")
+        .set_keys(keys)
+        .set_derivation_paths(deriv_paths)
+        .set_content_type(encrypted_backup::Content::WalletBackup)
+        .encrypt()?;
+
+    export_bytes(sender, path, &backup).await
 }
 
 #[cfg(test)]
