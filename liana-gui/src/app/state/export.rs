@@ -109,7 +109,8 @@ impl ExportModal {
             ImportExportType::ImportDescriptor => "descriptor.txt".into(),
             ImportExportType::ExportLabels => format!("liana-labels-{date}.jsonl"),
             ImportExportType::ExportProcessBackup(..) => {
-                format!("liana-backup-{date}.json")
+                // TODO: replace extension after we get a BIP #
+                format!("liana-backup-{date}.beb")
             }
             ImportExportType::FromBackup | ImportExportType::ImportBackup { .. } => {
                 "liana-backup.json".to_string()
