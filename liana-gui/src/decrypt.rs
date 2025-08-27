@@ -145,6 +145,23 @@ pub fn decrypt_descriptor_with_pk(bytes: &[u8], pk: secp256k1::PublicKey) -> Opt
                 };
                 Some(Decrypt::Backup(Backup::from_descriptor(descr, network)))
             }
+            Decrypted::WalletBackup(backup_bytes) => {
+                let backup_str = String::from_utf8(backup_bytes.clone()).ok()?;
+                let backup: Backup = serde_json::from_str(&backup_str).ok()?;
+                if backup.accounts.len() != 1 {
+                    return None;
+                }
+                let descriptor_str = &backup.accounts.first().expect("checked").descriptor;
+                let _ = match LianaDescriptor::from_str(descriptor_str) {
+                    Ok(descr) => descr,
+                    Err(_) => {
+                        return Some(Decrypt::UnexpectedPayload(Decrypted::WalletBackup(
+                            backup_bytes,
+                        )))
+                    }
+                };
+                Some(Decrypt::Backup(backup))
+            }
             decrypted => Some(Decrypt::UnexpectedPayload(decrypted)),
         },
         Err(_) => None,
