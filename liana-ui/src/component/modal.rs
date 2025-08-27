@@ -1,302 +1,226 @@
-/// modal widget from https://github.com/iced-rs/iced/blob/master/examples/modal/
-use iced::advanced::layout::{self, Layout};
-use iced::advanced::overlay;
-use iced::advanced::renderer;
-use iced::advanced::widget::{self, Tree, Widget};
-use iced::advanced::{self, Clipboard, Shell};
-use iced::alignment::Alignment;
-use iced::event;
-use iced::mouse;
-use iced::{Color, Element, Event, Length, Point, Rectangle, Size, Vector};
+use iced::{
+    alignment::{Horizontal, Vertical},
+    widget::{
+        button::{Status, Style},
+        column, container, row, Space,
+    },
+    Length,
+};
 
-/// A widget that centers a modal element over some base element
-pub struct Modal<'a, Message, Theme, Renderer> {
-    base: Element<'a, Message, Theme, Renderer>,
-    modal: Element<'a, Message, Theme, Renderer>,
-    on_blur: Option<Message>,
+use crate::{
+    color,
+    component::{
+        button,
+        form::{self, Value},
+        text, tooltip,
+    },
+    icon,
+    theme::{self, Theme},
+};
+
+use crate::widget::{Button, Column, Element, Row, Text};
+
+pub const MODAL_WIDTH: u16 = 550;
+pub const BTN_W: u16 = 400;
+pub const BTN_H: u16 = 40;
+pub const V_SPACING: u16 = 10;
+pub const H_SPACING: u16 = 5;
+
+fn widget_style(theme: &Theme, status: Status) -> Style {
+    theme::button::secondary(theme, status)
 }
 
-impl<'a, Message, Theme, Renderer> Modal<'a, Message, Theme, Renderer> {
-    /// Returns a new [`Modal`]
-    pub fn new(
-        base: impl Into<Element<'a, Message, Theme, Renderer>>,
-        modal: impl Into<Element<'a, Message, Theme, Renderer>>,
-    ) -> Self {
-        Self {
-            base: base.into(),
-            modal: modal.into(),
-            on_blur: None,
-        }
-    }
-
-    /// Sets the message that will be produces when the background
-    /// of the [`Modal`] is pressed
-    pub fn on_blur(self, on_blur: Option<Message>) -> Self {
-        Self { on_blur, ..self }
-    }
-}
-
-impl<'a, Message, Theme, Renderer> Widget<Message, Theme, Renderer>
-    for Modal<'a, Message, Theme, Renderer>
+pub fn header<'a, Message, Back, Close>(
+    label: Option<String>,
+    back_message: Option<Back>,
+    close_message: Option<Close>,
+) -> Element<'a, Message>
 where
-    Renderer: advanced::Renderer,
-    Message: Clone,
+    Back: 'static + Fn() -> Message,
+    Close: 'static + Fn() -> Message,
+    Message: Clone + 'static,
 {
-    fn children(&self) -> Vec<Tree> {
-        vec![Tree::new(&self.base), Tree::new(&self.modal)]
-    }
-
-    fn diff(&self, tree: &mut Tree) {
-        tree.diff_children(&[&self.base, &self.modal]);
-    }
-
-    fn size(&self) -> Size<Length> {
-        self.base.as_widget().size()
-    }
-
-    fn layout(
-        &self,
-        tree: &mut widget::Tree,
-        renderer: &Renderer,
-        limits: &layout::Limits,
-    ) -> layout::Node {
-        self.base
-            .as_widget()
-            .layout(&mut tree.children[0], renderer, limits)
-    }
-
-    fn on_event(
-        &mut self,
-        state: &mut widget::Tree,
-        event: Event,
-        layout: Layout<'_>,
-        cursor: mouse::Cursor,
-        renderer: &Renderer,
-        clipboard: &mut dyn Clipboard,
-        shell: &mut Shell<'_, Message>,
-        viewport: &Rectangle,
-    ) -> event::Status {
-        self.base.as_widget_mut().on_event(
-            &mut state.children[0],
-            event,
-            layout,
-            cursor,
-            renderer,
-            clipboard,
-            shell,
-            viewport,
-        )
-    }
-
-    fn draw(
-        &self,
-        state: &widget::Tree,
-        renderer: &mut Renderer,
-        theme: &Theme,
-        style: &renderer::Style,
-        layout: Layout<'_>,
-        cursor: mouse::Cursor,
-        viewport: &Rectangle,
-    ) {
-        self.base.as_widget().draw(
-            &state.children[0],
-            renderer,
-            theme,
-            style,
-            layout,
-            cursor,
-            viewport,
-        );
-    }
-
-    fn overlay<'b>(
-        &'b mut self,
-        state: &'b mut Tree,
-        layout: Layout<'_>,
-        _renderer: &Renderer,
-        translation: Vector,
-    ) -> Option<overlay::Element<'b, Message, Theme, Renderer>> {
-        Some(overlay::Element::new(Box::new(Overlay {
-            position: layout.position() + translation,
-            content: &mut self.modal,
-            tree: &mut state.children[1],
-            size: layout.bounds().size(),
-            on_blur: self.on_blur.clone(),
-        })))
-    }
-
-    fn mouse_interaction(
-        &self,
-        state: &widget::Tree,
-        layout: Layout<'_>,
-        cursor: mouse::Cursor,
-        viewport: &Rectangle,
-        renderer: &Renderer,
-    ) -> mouse::Interaction {
-        self.base.as_widget().mouse_interaction(
-            &state.children[0],
-            layout,
-            cursor,
-            viewport,
-            renderer,
-        )
-    }
-
-    fn operate(
-        &self,
-        state: &mut Tree,
-        layout: Layout<'_>,
-        renderer: &Renderer,
-        operation: &mut dyn widget::Operation,
-    ) {
-        self.base
-            .as_widget()
-            .operate(&mut state.children[0], layout, renderer, operation);
-    }
+    let back = back_message
+        .map(|m| button::transparent(Some(icon::arrow_back().size(25)), "").on_press(m()));
+    let title = label.map(text::h3);
+    let close = close_message
+        .map(|m| button::transparent(Some(icon::cross_icon().size(40)), "").on_press(m()));
+    Row::new()
+        .push_maybe(back)
+        .push_maybe(title)
+        .push(Space::with_width(Length::Fill))
+        .push_maybe(close)
+        .align_y(Vertical::Center)
+        .into()
 }
 
-struct Overlay<'a, 'b, Message, Theme, Renderer> {
-    position: Point,
-    content: &'b mut Element<'a, Message, Theme, Renderer>,
-    tree: &'b mut Tree,
-    size: Size,
-    on_blur: Option<Message>,
-}
-
-impl<'a, 'b, Message, Theme, Renderer> overlay::Overlay<Message, Theme, Renderer>
-    for Overlay<'a, 'b, Message, Theme, Renderer>
+pub fn optional_section<'a, Message, Collapse, Fold>(
+    collapsed: bool,
+    title: String,
+    collapse: Collapse,
+    fold: Fold,
+) -> Element<'a, Message>
 where
-    Renderer: advanced::Renderer,
-    Message: Clone,
+    Collapse: 'static + Fn() -> Message,
+    Fold: 'static + Fn() -> Message,
+    Message: Clone + 'static,
 {
-    fn layout(&mut self, renderer: &Renderer, _bounds: Size) -> layout::Node {
-        let limits = layout::Limits::new(Size::ZERO, self.size)
-            .width(Length::Fill)
-            .height(Length::Fill);
+    let icon = if collapsed {
+        icon::collapsed_icon().style(theme::text::secondary)
+    } else {
+        icon::collapse_icon().style(theme::text::secondary)
+    };
 
-        let child = self
-            .content
-            .as_widget()
-            .layout(self.tree, renderer, &limits)
-            .align(Alignment::Center, Alignment::Center, limits.max());
+    let msg = if !collapsed { collapse() } else { fold() };
 
-        layout::Node::with_children(self.size, vec![child]).move_to(self.position)
-    }
+    let row = Row::new()
+        .push(text::p1_bold(&title))
+        .push(icon)
+        .align_y(Vertical::Center)
+        .spacing(H_SPACING);
 
-    fn on_event(
-        &mut self,
-        event: Event,
-        layout: Layout<'_>,
-        cursor: mouse::Cursor,
-        renderer: &Renderer,
-        clipboard: &mut dyn Clipboard,
-        shell: &mut Shell<'_, Message>,
-    ) -> event::Status {
-        let content_bounds = layout.children().next().unwrap().bounds();
-
-        if let Some(message) = self.on_blur.as_ref() {
-            if let Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) = &event {
-                if !cursor.is_over(content_bounds) {
-                    shell.publish(message.clone());
-                    return event::Status::Captured;
-                }
-            }
-        }
-
-        self.content.as_widget_mut().on_event(
-            self.tree,
-            event,
-            layout.children().next().unwrap(),
-            cursor,
-            renderer,
-            clipboard,
-            shell,
-            &layout.bounds(),
-        )
-    }
-
-    fn draw(
-        &self,
-        renderer: &mut Renderer,
-        theme: &Theme,
-        style: &renderer::Style,
-        layout: Layout<'_>,
-        cursor: mouse::Cursor,
-    ) {
-        renderer.fill_quad(
-            renderer::Quad {
-                bounds: layout.bounds(),
-                ..renderer::Quad::default()
-            },
-            Color {
-                a: 0.80,
-                ..Color::BLACK
-            },
-        );
-
-        self.content.as_widget().draw(
-            self.tree,
-            renderer,
-            theme,
-            style,
-            layout.children().next().unwrap(),
-            cursor,
-            &layout.bounds(),
-        );
-    }
-
-    fn operate(
-        &mut self,
-        layout: Layout<'_>,
-        renderer: &Renderer,
-        operation: &mut dyn widget::Operation,
-    ) {
-        self.content.as_widget().operate(
-            self.tree,
-            layout.children().next().unwrap(),
-            renderer,
-            operation,
-        );
-    }
-
-    fn mouse_interaction(
-        &self,
-        layout: Layout<'_>,
-        cursor: mouse::Cursor,
-        viewport: &Rectangle,
-        renderer: &Renderer,
-    ) -> mouse::Interaction {
-        self.content.as_widget().mouse_interaction(
-            self.tree,
-            layout.children().next().unwrap(),
-            cursor,
-            viewport,
-            renderer,
-        )
-    }
-
-    fn overlay<'c>(
-        &'c mut self,
-        layout: Layout<'_>,
-        renderer: &Renderer,
-    ) -> Option<overlay::Element<'c, Message, Theme, Renderer>> {
-        self.content.as_widget_mut().overlay(
-            self.tree,
-            layout.children().next().unwrap(),
-            renderer,
-            Vector::ZERO,
-        )
-    }
+    Button::new(row)
+        .style(theme::button::transparent_border)
+        .on_press(msg)
+        .into()
 }
 
-impl<'a, Message, Theme, Renderer> From<Modal<'a, Message, Theme, Renderer>>
-    for Element<'a, Message, Theme, Renderer>
+#[allow(clippy::too_many_arguments)]
+pub fn collapsible_input_button<'a, Message, Paste, Collapse, Input>(
+    collapsed: bool,
+    icon: Option<Text<'static>>,
+    label: String,
+    input_placeholder: String,
+    input_value: &Value<String>,
+    input_message: Option<Input>,
+    paste_message: Option<Paste>,
+    collapse_message: Collapse,
+) -> Element<'a, Message>
 where
-    Renderer: 'a + advanced::Renderer,
-    Message: 'a + Clone,
-    Theme: 'a,
+    Input: 'static + Fn(String) -> Message,
+    Paste: 'static + Fn() -> Message,
+    Collapse: 'static + Fn() -> Message,
+    Message: Clone + 'static,
 {
-    fn from(modal: Modal<'a, Message, Theme, Renderer>) -> Self {
-        Element::new(modal)
+    let form = if let Some(input_message) = input_message {
+        form::Form::new(&input_placeholder, input_value, input_message)
+    } else {
+        form::Form::new_disabled(&input_placeholder, input_value)
     }
+    .padding(10);
+    let paste = paste_message
+        .map(|m| Button::new(icon::clipboard_icon().color(color::BLACK)).on_press(m()));
+
+    let icon = icon.map(|i| i.color(color::WHITE));
+
+    if collapsed {
+        let line = Row::new().push(form).push_maybe(paste).spacing(V_SPACING);
+        let col = Column::new()
+            .push(row![
+                text::p1_regular(label).color(color::WHITE),
+                Space::with_width(Length::Fill)
+            ])
+            .push(line);
+        let row = Row::new()
+            .push_maybe(icon)
+            .push(col)
+            .align_y(Vertical::Center)
+            .spacing(V_SPACING);
+
+        Button::new(row).style(widget_style)
+    } else {
+        let row = Row::new()
+            .push_maybe(icon)
+            .push(text::p1_regular(label))
+            .height(BTN_H)
+            .spacing(V_SPACING)
+            .align_y(Vertical::Center);
+        Button::new(row)
+            .on_press(collapse_message())
+            .style(widget_style)
+    }
+    .width(BTN_W)
+    .into()
+}
+
+pub fn key_entry<'a, Message, OnClick>(
+    icon: Option<Text<'static>>,
+    name: String,
+    fingerprint: Option<String>,
+    tooltip_str: Option<&'static str>,
+    error: Option<String>,
+    mut message: Option<String>,
+    on_press: Option<OnClick>,
+) -> Element<'a, Message>
+where
+    OnClick: 'static + Fn() -> Message,
+    Message: Clone + 'static,
+{
+    if error.is_some() {
+        message = None;
+    }
+    let message = message.map(text::p1_regular);
+    let error = error.map(|e| text::p1_regular(e).color(color::ORANGE));
+    let tt = tooltip_str.map(|s| tooltip(s));
+
+    let designation = column![
+        text::p1_bold(name),
+        text::p1_regular(fingerprint.unwrap_or(" - ".to_string()))
+    ]
+    .align_x(Horizontal::Center);
+    let row = Row::new()
+        .push_maybe(icon.as_ref().map(|_| Space::with_width(H_SPACING)))
+        .push_maybe(icon)
+        .push(Space::with_width(H_SPACING))
+        .push(designation)
+        .push_maybe(message)
+        .push_maybe(error)
+        .push(Space::with_width(Length::Fill))
+        .push_maybe(tt)
+        .align_y(Vertical::Center)
+        .spacing(V_SPACING);
+    let mut btn = Button::new(row).style(widget_style).width(BTN_W);
+    if let Some(msg) = on_press {
+        btn = btn.on_press(msg())
+    }
+    btn.into()
+}
+
+pub fn button_entry<'a, Message, OnClick>(
+    icon: Option<Text<'static>>,
+    label: &'a str,
+    tooltip_str: Option<&'static str>,
+    error: Option<String>,
+    on_press: Option<OnClick>,
+) -> Element<'a, Message>
+where
+    OnClick: 'static + Fn() -> Message,
+    Message: Clone + 'static,
+{
+    let error = error.map(|e| {
+        row![
+            text::p1_regular(e).color(color::ORANGE),
+            Space::with_width(Length::Fill)
+        ]
+    });
+
+    let tt = tooltip_str.map(|s| tooltip(s));
+
+    let row = Row::new()
+        .push_maybe(icon)
+        .push(text::p1_regular(label))
+        .push(Space::with_width(Length::Fill))
+        .push_maybe(tt)
+        .spacing(H_SPACING)
+        .align_y(Vertical::Center)
+        .height(BTN_H);
+
+    let col = Column::new().push(row).push_maybe(error).width(BTN_W);
+
+    let mut btn = Button::new(container(col)).style(widget_style);
+    if let Some(msg) = on_press {
+        let msg = msg();
+        btn = btn.on_press(msg);
+    }
+    btn.into()
 }

@@ -9,6 +9,7 @@ use std::{
     time,
 };
 
+use encrypted_backup::{EncryptedBackup, ToPayload};
 use tokio::sync::mpsc::{channel, unbounded_channel, Sender, UnboundedReceiver, UnboundedSender};
 
 use async_hwi::bitbox::api::btc::Fingerprint;
@@ -122,11 +123,13 @@ pub enum Error {
     Bip329Export(String),
     BackupImport(String),
     Backup(backup::Error),
+    EncryptedBackup(encrypted_backup::Error),
     ParseXpub,
     XpubNetwork,
     TxidNotMatch,
     InsanePsbt,
     OutpointNotOwned,
+    UnknownFormat,
 }
 
 impl Display for Error {
@@ -154,6 +157,8 @@ impl Display for Error {
                 f,
                 "Import failed. The PSBT either doesn't belong to the wallet or has already been spent."
             ),
+            Error::EncryptedBackup(e) => write!(f, "Fail to encrypt backup: {e:?}"),
+            Error::UnknownFormat => write!(f, "Format of the file unknow"),
         }
     }
 }
@@ -163,7 +168,7 @@ pub enum ImportExportType {
     Transactions,
     ExportPsbt(String),
     ExportXpub(String),
-    ExportBackup(String),
+    ExportEncryptedDescriptor(Box<LianaDescriptor>),
     ExportProcessBackup(LianaDirectory, Network, Arc<Config>, Arc<Wallet>),
     ImportBackup {
         network_dir: NetworkDirectory,
@@ -171,7 +176,7 @@ pub enum ImportExportType {
         overwrite_labels: Option<Sender<bool>>,
         overwrite_aliases: Option<Sender<bool>>,
     },
-    WalletFromBackup,
+    FromBackup,
     Descriptor(LianaDescriptor),
     ExportLabels,
     ImportPsbt(Option<Txid>),
@@ -184,15 +189,15 @@ impl ImportExportType {
         match self {
             ImportExportType::Transactions
             | ImportExportType::ExportPsbt(_)
-            | ImportExportType::ExportBackup(_)
             | ImportExportType::Descriptor(_)
             | ImportExportType::ExportProcessBackup(..)
             | ImportExportType::ExportXpub(_)
+            | ImportExportType::ExportEncryptedDescriptor(_)
             | ImportExportType::ExportLabels => "Export successful!",
             ImportExportType::ImportBackup { .. }
             | ImportExportType::ImportPsbt(_)
             | ImportExportType::ImportXpub(_)
-            | ImportExportType::WalletFromBackup
+            | ImportExportType::FromBackup
             | ImportExportType::ImportDescriptor => "Import successful",
         }
     }
@@ -219,6 +224,12 @@ impl From<DaemonError> for Error {
 impl From<ExportError> for Error {
     fn from(value: ExportError) -> Self {
         Error::Bip329Export(format!("{:?}", value))
+    }
+}
+
+impl From<encrypted_backup::Error> for Error {
+    fn from(value: encrypted_backup::Error) -> Self {
+        Error::EncryptedBackup(value)
     }
 }
 
@@ -251,6 +262,7 @@ pub enum Progress {
             Backup,
         ),
     ),
+    EncryptedDescriptor(Vec<u8>),
 }
 
 pub struct Export {
@@ -295,7 +307,9 @@ impl Export {
             ImportExportType::ImportPsbt(txid) => import_psbt(daemon, &sender, path, txid).await,
             ImportExportType::ImportXpub(network) => import_xpub(&sender, path, network).await,
             ImportExportType::ImportDescriptor => import_descriptor(&sender, path).await,
-            ImportExportType::ExportBackup(str) => export_string(&sender, path, str).await,
+            ImportExportType::ExportEncryptedDescriptor(descr) => {
+                export_encrypted_descriptor(&sender, path, *descr).await
+            }
             ImportExportType::ExportXpub(xpub_str) => export_string(&sender, path, xpub_str).await,
             ImportExportType::ExportProcessBackup(datadir, network, config, wallet) => {
                 app_backup_export(
@@ -314,7 +328,7 @@ impl Export {
                 wallet,
                 ..
             } => import_backup(&network_dir, wallet, &sender, path, daemon).await,
-            ImportExportType::WalletFromBackup => wallet_from_backup(&sender, path).await,
+            ImportExportType::FromBackup => from_backup(&sender, path).await,
         } {
             if let Err(e) = sender.send(Progress::Error(e)) {
                 tracing::error!("Import/Export fail to send msg: {}", e);
@@ -575,8 +589,30 @@ pub async fn export_string(
     path: PathBuf,
     str: String,
 ) -> Result<(), Error> {
+    export_bytes(sender, path, str.as_bytes()).await
+}
+
+pub async fn export_bytes(
+    sender: &UnboundedSender<Progress>,
+    path: PathBuf,
+    bytes: &[u8],
+) -> Result<(), Error> {
     let mut file = open_file_write(&path).await?;
-    file.write_all(str.as_bytes())?;
+    file.write_all(bytes)?;
+    send_progress!(sender, Progress(100.0));
+    send_progress!(sender, Ended);
+    Ok(())
+}
+
+pub async fn export_encrypted_descriptor(
+    sender: &UnboundedSender<Progress>,
+    path: PathBuf,
+    descr: LianaDescriptor,
+) -> Result<(), Error> {
+    let descriptor = descr.policy().into_multipath_descriptor();
+    let bytes = EncryptedBackup::new().set_payload(&descriptor)?.encrypt()?;
+    let mut file = open_file_write(&path).await?;
+    file.write_all(&bytes)?;
     send_progress!(sender, Progress(100.0));
     send_progress!(sender, Ended);
     Ok(())
@@ -1027,22 +1063,36 @@ impl From<DaemonError> for RestoreBackupError {
     }
 }
 
-/// Create a wallet from a backup
-///    - load backup from file
-///    - extract descriptor
-///    - extract network
-///    - extract aliases
-pub async fn wallet_from_backup(
-    sender: &UnboundedSender<Progress>,
-    path: PathBuf,
-) -> Result<(), Error> {
-    // Load backup from file
+/// Try to import descriptor/backup from file, several input types are supported:
+///    - encrypted descriptor
+///    - liana wallet backup
+///    - plaintext descriptor
+pub async fn from_backup(sender: &UnboundedSender<Progress>, path: PathBuf) -> Result<(), Error> {
+    log::debug!("export::from_backup()");
+    // Load file
     let mut file = File::open(path)?;
 
-    let mut backup_str = String::new();
-    file.read_to_string(&mut backup_str)?;
-    backup_str = backup_str.trim().to_string();
+    let mut bytes = vec![];
+    if let Err(e) = file.read_to_end(&mut bytes) {
+        return Err(Error::Io(e.to_string()));
+    }
 
+    // first we try to parse as an encrypted backup
+    if EncryptedBackup::new().set_encrypted_payload(&bytes).is_ok() {
+        log::debug!("export::from_backup() => encrypted");
+        send_progress!(sender, EncryptedDescriptor(bytes));
+        send_progress!(sender, Progress(100.0));
+        send_progress!(sender, Ended);
+        return Ok(());
+    }
+
+    let backup_str = match String::from_utf8(bytes) {
+        Ok(s) => s,
+        Err(_) => return Err(Error::UnknownFormat),
+    };
+    log::debug!("export::from_backup() => not encrypted");
+
+    // else we try to parse as plaintetxt descriptor or backup file
     let backup: Result<Backup, _> = serde_json::from_str(&backup_str);
     let backup = match backup {
         Ok(b) => b,
@@ -1051,6 +1101,7 @@ pub async fn wallet_from_backup(
             let descr = LianaDescriptor::from_str(&backup_str);
             match descr {
                 Ok(descr) => {
+                    log::debug!("export::from_backup() => bare descriptor");
                     let network = if descr.all_xpubs_net_is(Network::Bitcoin) {
                         Network::Bitcoin
                     } else {
@@ -1284,9 +1335,8 @@ pub async fn app_backup(
     wallet: Arc<Wallet>,
     daemon: Arc<dyn Daemon + Sync + Send>,
     sender: &UnboundedSender<Progress>,
-) -> Result<String, backup::Error> {
-    let backup = Backup::from_app(datadir, network, config, wallet, daemon, sender).await?;
-    serde_json::to_string_pretty(&backup).map_err(|_| backup::Error::Json)
+) -> Result<Backup, backup::Error> {
+    Backup::from_app(datadir, network, config, wallet, daemon, sender).await
 }
 
 pub async fn app_backup_export(
@@ -1298,10 +1348,26 @@ pub async fn app_backup_export(
     path: PathBuf,
     sender: &UnboundedSender<Progress>,
 ) -> Result<(), Error> {
+    let descriptor = wallet
+        .main_descriptor
+        .clone()
+        .policy()
+        .into_multipath_descriptor();
     let backup = app_backup(datadir.clone(), network, config, wallet, daemon, sender)
         .await
         .map_err(Error::Backup)?;
-    export_string(sender, path, backup).await
+    let keys = ToPayload::keys(&descriptor).expect("cannot fail");
+    let deriv_paths = ToPayload::derivation_paths(&descriptor).expect("cannot fail");
+
+    let backup = EncryptedBackup::new()
+        .set_payload(&backup)
+        .expect("cannot fail")
+        .set_keys(keys)
+        .set_derivation_paths(deriv_paths)
+        .set_content_type(encrypted_backup::Content::WalletBackup)
+        .encrypt()?;
+
+    export_bytes(sender, path, &backup).await
 }
 
 #[cfg(test)]

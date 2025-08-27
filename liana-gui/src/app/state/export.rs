@@ -4,7 +4,7 @@ use std::{
 };
 
 use iced::{Subscription, Task};
-use liana_ui::{component::modal::Modal, widget::Element};
+use liana_ui::{widget::modal::Modal, widget::Element};
 use tokio::task::JoinHandle;
 
 use crate::{
@@ -76,15 +76,15 @@ impl ExportModal {
             ImportExportType::ExportPsbt(_) => "Export PSBT",
             ImportExportType::ExportXpub(_) => "Export Xpub",
             ImportExportType::ImportXpub(_) => "Import Xpub",
-            ImportExportType::ExportBackup(_) => "Export Backup",
             ImportExportType::Descriptor(_) => "Export Descriptor",
+            ImportExportType::ExportEncryptedDescriptor(_) => "Export Encrypted Descriptor",
             ImportExportType::ExportProcessBackup(..) | ImportExportType::ExportLabels => {
                 "Export Labels"
             }
             ImportExportType::ImportPsbt(_) => "Import PSBT",
             ImportExportType::ImportDescriptor => "Import Descriptor",
             ImportExportType::ImportBackup { .. } => "Restore Backup",
-            ImportExportType::WalletFromBackup => "Import existing wallet from backup",
+            ImportExportType::FromBackup => "Import existing wallet from backup",
         }
     }
 
@@ -105,13 +105,15 @@ impl ExportModal {
                     .to_string();
                 format!("liana-{}.txt", checksum)
             }
+            // TODO: update w/ BIP #
+            ImportExportType::ExportEncryptedDescriptor(_) => "liana.bipxxxx".into(),
             ImportExportType::ImportPsbt(_) => "psbt.psbt".into(),
             ImportExportType::ImportDescriptor => "descriptor.txt".into(),
             ImportExportType::ExportLabels => format!("liana-labels-{date}.jsonl"),
-            ImportExportType::ExportBackup(_) | ImportExportType::ExportProcessBackup(..) => {
+            ImportExportType::ExportProcessBackup(..) => {
                 format!("liana-backup-{date}.json")
             }
-            ImportExportType::WalletFromBackup | ImportExportType::ImportBackup { .. } => {
+            ImportExportType::FromBackup | ImportExportType::ImportBackup { .. } => {
                 "liana-backup.json".to_string()
             }
         }
@@ -191,8 +193,9 @@ impl ExportModal {
                         ImportExportMessage::UpdateAliases(map.clone()).into()
                     });
                 }
-                Progress::WalletFromBackup(_) => {}
-                Progress::Psbt(_) => {}
+                Progress::WalletFromBackup(_)
+                | Progress::EncryptedDescriptor(_)
+                | Progress::Psbt(_) => {}
             },
             ImportExportMessage::TimedOut => {
                 self.stop(ImportExportState::TimedOut);
