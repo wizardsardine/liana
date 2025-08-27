@@ -1,6 +1,9 @@
-use crate::{app::menu::Menu, export::ImportExportMessage, node::bitcoind::RpcAuthType};
-#[cfg(all(feature = "dev-coincube", not(any(feature = "dev-meld", feature = "dev-onramp"))))]
+#[cfg(all(
+    feature = "dev-coincube",
+    not(any(feature = "dev-meld", feature = "dev-onramp"))
+))]
 use crate::app::state::buysell::AccountType;
+use crate::{app::menu::Menu, export::ImportExportMessage, node::bitcoind::RpcAuthType};
 use liana::miniscript::bitcoin::{bip32::Fingerprint, Address, OutPoint};
 
 pub trait Close {
@@ -47,7 +50,6 @@ pub enum Message {
     OpenWebview(String),
     CloseWebview,
     ShowWebView,
-
 }
 
 impl Close for Message {
@@ -152,7 +154,10 @@ pub enum BuySellMessage {
     CloseModal,
     ShowAccountSelection,
     HideAccountSelection,
-    #[cfg(all(feature = "dev-coincube", not(any(feature = "dev-meld", feature = "dev-onramp"))))]
+    #[cfg(all(
+        feature = "dev-coincube",
+        not(any(feature = "dev-meld", feature = "dev-onramp"))
+    ))]
     SelectAccountType(AccountType),
     GetStarted,
     GoBack,

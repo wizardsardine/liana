@@ -1,15 +1,11 @@
-use iced::{Task, Subscription};
 use iced::alignment::Horizontal;
+use iced::{Subscription, Task};
 
 // Ultralight webview imports
-#[cfg(feature = "webview")]
-use iced_webview::{WebView, Ultralight, Action as WebviewAction};
 use iced::widget::Column;
-use liana_ui::{
-    color,
-    component::text,
-    widget::Element,
-};
+#[cfg(feature = "webview")]
+use iced_webview::{Action as WebviewAction, Ultralight, WebView};
+use liana_ui::{color, component::text, widget::Element};
 
 // Clean Ultralight webview implementation
 
@@ -131,20 +127,14 @@ impl WebviewComponent {
             .push(
                 text::text("Webview component placeholder")
                     .size(16)
-                    .color(color::GREY_2)
+                    .color(color::GREY_2),
             )
             .align_x(Horizontal::Center)
             .into()
     }
 }
 
-
-
-
-
 impl WebviewComponent {
-
-
     pub fn subscription(&self) -> Subscription<WebviewMessage> {
         if self.state.has_webview {
             // Subscribe to webview updates - disabled due to missing Action type
@@ -169,19 +159,30 @@ pub fn meld_webview_widget_ultralight<'a>(
     is_loading: bool,
     current_webview_index: Option<u32>,
 ) -> Element<'a, crate::app::view::Message> {
-    use iced::widget::{Container, Column, Row, Space};
-    use iced::{Length, Alignment};
-    use liana_ui::{color, component::{text::text, button::*}};
+    use iced::widget::{Column, Container, Row, Space};
+    use iced::{Alignment, Length};
+    use liana_ui::{
+        color,
+        component::{button::*, text::text},
+    };
 
     if is_loading {
         // Show loading state while webview is being created
         Container::new(
             Column::new()
-                .push(text("🌐 Loading Meld Widget...").size(16).color(color::GREEN))
+                .push(
+                    text("🌐 Loading Meld Widget...")
+                        .size(16)
+                        .color(color::GREEN),
+                )
                 .push(Space::with_height(Length::Fixed(10.0)))
-                .push(text("Creating embedded webview...").size(14).color(color::GREY_3))
+                .push(
+                    text("Creating embedded webview...")
+                        .size(14)
+                        .color(color::GREY_3),
+                )
                 .align_x(Alignment::Center)
-                .spacing(5)
+                .spacing(5),
         )
         .padding(20)
         .width(Length::Fill)
@@ -189,7 +190,9 @@ pub fn meld_webview_widget_ultralight<'a>(
         .center_x(Length::Fill)
         .center_y(Length::Fill)
         .style(|_theme| iced::widget::container::Style {
-            background: Some(iced::Background::Color(iced::Color::from_rgb(0.05, 0.05, 0.05))),
+            background: Some(iced::Background::Color(iced::Color::from_rgb(
+                0.05, 0.05, 0.05,
+            ))),
             border: iced::Border {
                 color: color::ORANGE,
                 width: 1.0,
@@ -212,17 +215,16 @@ pub fn meld_webview_widget_ultralight<'a>(
                             // .push(Space::with_width(Length::Fixed(10.0)))
                             // .push(text(format!("View: {}", current_webview_index.unwrap_or(0))).size(10).color(color::GREY_2))
                             .align_y(Alignment::Center)
-                            .padding([5, 10])
+                            .padding([5, 10]),
                     )
                     .push(
                         // The actual Ultralight webview content area
                         Container::new(
-                            webview.view()
-                                .map(|action| crate::app::view::Message::WebviewAction(action))
+                            webview.view().map(crate::app::view::Message::WebviewAction),
                         )
                         .width(Length::Fill)
-                        .height(Length::Fixed(800.0))
-                    )
+                        .height(Length::Fixed(500.0)),
+                    ),
             )
             .width(Length::Fill)
             .style(webview_container_style)
@@ -235,11 +237,11 @@ pub fn meld_webview_widget_ultralight<'a>(
                     .push(Space::with_height(Length::Fixed(10.0)))
                     .push(text("Webview not available").size(14).color(color::GREY_3))
                     .align_x(Alignment::Center)
-                    .spacing(5)
+                    .spacing(5),
             )
             .padding(20)
             .width(Length::Fill)
-            .height(Length::Fixed(800.0))
+            .height(Length::Fixed(500.0))
             .style(webview_placeholder_style)
             .into()
         }
@@ -247,13 +249,17 @@ pub fn meld_webview_widget_ultralight<'a>(
         // Webview is ready but no current view index set - show waiting for view switch
         Container::new(
             Column::new()
-                .push(text("🌐 Switching to Webview...").size(16).color(color::ORANGE))
+                .push(
+                    text("🌐 Switching to Webview...")
+                        .size(16)
+                        .color(color::ORANGE),
+                )
                 .push(Space::with_height(Length::Fixed(10.0)))
                 .push(text("Setting up view index").size(14).color(color::GREY_3))
                 .push(Space::with_height(Length::Fixed(10.0)))
                 .push(text("Please wait...").size(12).color(color::GREY_2))
                 .align_x(Alignment::Center)
-                .spacing(5)
+                .spacing(5),
         )
         .padding(20)
         .width(Length::Fill)
@@ -264,13 +270,21 @@ pub fn meld_webview_widget_ultralight<'a>(
         // Show initializing state when webview is being prepared
         Container::new(
             Column::new()
-                .push(text("🌐 Initializing Webview...").size(16).color(color::ORANGE))
+                .push(
+                    text("🌐 Initializing Webview...")
+                        .size(16)
+                        .color(color::ORANGE),
+                )
                 .push(Space::with_height(Length::Fixed(10.0)))
-                .push(text("Setting up payment interface").size(14).color(color::GREY_3))
+                .push(
+                    text("Setting up payment interface")
+                        .size(14)
+                        .color(color::GREY_3),
+                )
                 .push(Space::with_height(Length::Fixed(10.0)))
                 .push(text("Please wait...").size(12).color(color::GREY_2))
                 .align_x(Alignment::Center)
-                .spacing(5)
+                .spacing(5),
         )
         .padding(20)
         .width(Length::Fill)
@@ -283,15 +297,19 @@ pub fn meld_webview_widget_ultralight<'a>(
             Column::new()
                 .push(text("🌐 Meld Payment Ready").size(16).color(color::GREEN))
                 .push(Space::with_height(Length::Fixed(10.0)))
-                .push(text("Your payment session is ready").size(14).color(color::GREY_3))
+                .push(
+                    text("Your payment session is ready")
+                        .size(14)
+                        .color(color::GREY_3),
+                )
                 .push(Space::with_height(Length::Fixed(15.0)))
                 .push(
                     primary(None, "Show Payment Interface")
                         .on_press(crate::app::view::Message::ShowWebView)
-                        .width(Length::Fixed(200.0))
+                        .width(Length::Fixed(200.0)),
                 )
                 .align_x(Alignment::Center)
-                .spacing(5)
+                .spacing(5),
         )
         .padding(20)
         .width(Length::Fill)
@@ -304,11 +322,19 @@ pub fn meld_webview_widget_ultralight<'a>(
             Column::new()
                 .push(text("🌐 Meld Widget").size(16).color(color::GREEN))
                 .push(Space::with_height(Length::Fixed(10.0)))
-                .push(text("Payment interface will appear after session creation").size(14).color(color::GREY_3))
+                .push(
+                    text("Payment interface will appear after session creation")
+                        .size(14)
+                        .color(color::GREY_3),
+                )
                 .push(Space::with_height(Length::Fixed(15.0)))
-                .push(text("Generate a session to continue").size(12).color(color::GREY_2))
+                .push(
+                    text("Generate a session to continue")
+                        .size(12)
+                        .color(color::GREY_2),
+                )
                 .align_x(Alignment::Center)
-                .spacing(5)
+                .spacing(5),
         )
         .padding(20)
         .width(Length::Fill)
@@ -351,8 +377,8 @@ fn webview_placeholder_style(theme: &liana_ui::theme::Theme) -> iced::widget::co
 #[cfg(test)]
 mod tests {
     use super::*;
-    use liana_ui::theme::Theme;
     use crate::app::WebviewMessage;
+    use liana_ui::theme::Theme;
 
     #[test]
     fn test_webview_state_default() {

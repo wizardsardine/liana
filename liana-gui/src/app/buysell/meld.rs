@@ -103,7 +103,11 @@ impl MeldClient {
         let destination_currency = "BTC";
 
         // Debug logging to see what we're sending
-        tracing::info!("Creating Meld session with network: {:?}, currency: {}", network, destination_currency);
+        tracing::info!(
+            "Creating Meld session with network: {:?}, currency: {}",
+            network,
+            destination_currency
+        );
 
         // Generate unique customer ID for each request to ensure fresh sessions
         let timestamp = std::time::SystemTime::now()
@@ -129,7 +133,10 @@ impl MeldClient {
 
         // Debug logging
         tracing::info!("Sending request to: {}", url);
-        tracing::info!("Request body: {}", serde_json::to_string_pretty(&request).unwrap_or_default());
+        tracing::info!(
+            "Request body: {}",
+            serde_json::to_string_pretty(&request).unwrap_or_default()
+        );
 
         let response = self
             .client
@@ -144,12 +151,15 @@ impl MeldClient {
             let response_text = response.text().await?;
             tracing::info!("Meld API response: {}", response_text);
 
-            let session_response: MeldSessionResponse = serde_json::from_str(&response_text)
-                .map_err(|e| MeldError::Serialization(e))?;
+            let session_response: MeldSessionResponse =
+                serde_json::from_str(&response_text).map_err(|e| MeldError::Serialization(e))?;
             Ok(session_response)
         } else {
             let status = response.status();
-            let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
+            let error_text = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "Unknown error".to_string());
             tracing::error!("Meld API error: HTTP {}: {}", status, error_text);
             Err(MeldError::Api(format!("HTTP {}: {}", status, error_text)))
         }

@@ -9,11 +9,17 @@ use liana_ui::widget::Element;
 #[cfg(any(feature = "dev-meld", feature = "dev-onramp"))]
 use crate::{
     app::{
-        buysell::{ServiceProvider, meld::{MeldClient, MeldError}},
+        buysell::{
+            meld::{MeldClient, MeldError},
+            ServiceProvider,
+        },
         cache::Cache,
         message::Message,
         state::State,
-        view::{meld_buysell::{meld_buysell_view, MeldBuySellPanel}, MeldBuySellMessage, Message as ViewMessage},
+        view::{
+            meld_buysell::{meld_buysell_view, MeldBuySellPanel},
+            MeldBuySellMessage, Message as ViewMessage,
+        },
         wallet::Wallet,
     },
     daemon::Daemon,
@@ -48,22 +54,30 @@ impl State for MeldBuySellPanel {
                 // No longer needed - form is always visible
                 Task::none()
             }
-            Message::View(ViewMessage::MeldBuySell(MeldBuySellMessage::WalletAddressChanged(address))) => {
+            Message::View(ViewMessage::MeldBuySell(MeldBuySellMessage::WalletAddressChanged(
+                address,
+            ))) => {
                 self.set_wallet_address(address);
                 Task::none()
             }
-            Message::View(ViewMessage::MeldBuySell(MeldBuySellMessage::CountryCodeChanged(code))) => {
+            Message::View(ViewMessage::MeldBuySell(MeldBuySellMessage::CountryCodeChanged(
+                code,
+            ))) => {
                 self.set_country_code(code);
                 Task::none()
             }
-            Message::View(ViewMessage::MeldBuySell(MeldBuySellMessage::SourceAmountChanged(amount))) => {
+            Message::View(ViewMessage::MeldBuySell(MeldBuySellMessage::SourceAmountChanged(
+                amount,
+            ))) => {
                 self.set_source_amount(amount);
                 Task::none()
             }
 
             Message::View(ViewMessage::MeldBuySell(MeldBuySellMessage::CreateSession)) => {
                 if self.is_form_valid() {
-                    tracing::info!("🚀 [MELD] Creating new session - clearing any existing session data");
+                    tracing::info!(
+                        "🚀 [MELD] Creating new session - clearing any existing session data"
+                    );
 
                     // Ensure we start with a clean slate
                     self.widget_url = None;
@@ -77,40 +91,65 @@ impl State for MeldBuySellPanel {
                     // Use Transak as the default payment provider
                     let provider = ServiceProvider::Transak;
 
-                    tracing::info!("🚀 [MELD] Making fresh API call with: address={}, country={}, amount={}",
-                        wallet_address, country_code, source_amount);
+                    tracing::info!(
+                        "🚀 [MELD] Making fresh API call with: address={}, country={}, amount={}",
+                        wallet_address,
+                        country_code,
+                        source_amount
+                    );
 
                     // Add safety checks before making API call
-                    if wallet_address.is_empty() || country_code.is_empty() || source_amount.is_empty() {
+                    if wallet_address.is_empty()
+                        || country_code.is_empty()
+                        || source_amount.is_empty()
+                    {
                         tracing::error!("❌ [MELD] Invalid form data - cannot create session");
                         return Task::done(Message::View(ViewMessage::MeldBuySell(
-                            MeldBuySellMessage::SessionError("Invalid form data".to_string())
+                            MeldBuySellMessage::SessionError("Invalid form data".to_string()),
                         )));
                     }
 
                     Task::perform(
-                        create_meld_session(wallet_address, country_code, source_amount, provider, self.network),
+                        create_meld_session(
+                            wallet_address,
+                            country_code,
+                            source_amount,
+                            provider,
+                            self.network,
+                        ),
                         |result| match result {
                             Ok(widget_url) => {
-                                tracing::info!("✅ [MELD] New session created successfully: {}", widget_url);
-                                Message::View(ViewMessage::MeldBuySell(MeldBuySellMessage::SessionCreated(widget_url)))
-                            },
+                                tracing::info!(
+                                    "✅ [MELD] New session created successfully: {}",
+                                    widget_url
+                                );
+                                Message::View(ViewMessage::MeldBuySell(
+                                    MeldBuySellMessage::SessionCreated(widget_url),
+                                ))
+                            }
                             Err(error) => {
                                 tracing::error!("❌ [MELD] Session creation failed: {}", error);
-                                Message::View(ViewMessage::MeldBuySell(MeldBuySellMessage::SessionError(error)))
-                            },
-                        }
+                                Message::View(ViewMessage::MeldBuySell(
+                                    MeldBuySellMessage::SessionError(error),
+                                ))
+                            }
+                        },
                     )
                 } else {
                     tracing::warn!("⚠️ [MELD] Cannot create session - form validation failed");
                     Task::none()
                 }
             }
-            Message::View(ViewMessage::MeldBuySell(MeldBuySellMessage::SessionCreated(widget_url))) => {
+            Message::View(ViewMessage::MeldBuySell(MeldBuySellMessage::SessionCreated(
+                widget_url,
+            ))) => {
                 self.session_created(widget_url.clone());
 
                 // Immediately open the webview after session creation
-                tracing::info!("Auto-opening widget URL in embedded webview: {}", widget_url);
+                tracing::info!(
+                    "Auto-opening widget URL in embedded webview: {}",
+                    widget_url
+                );
                 return Task::done(Message::View(ViewMessage::OpenWebview(widget_url)));
             }
             Message::View(ViewMessage::MeldBuySell(MeldBuySellMessage::OpenWidget(widget_url))) => {
@@ -129,7 +168,7 @@ impl State for MeldBuySellPanel {
                 // Try WSL clipboard commands first
                 let powershell_cmd = format!("Set-Clipboard '{}'", widget_url);
                 let wsl_clipboard_commands = [
-                    ("clip.exe", vec![]),  // Windows clipboard via WSL
+                    ("clip.exe", vec![]), // Windows clipboard via WSL
                     ("powershell.exe", vec!["-c", &powershell_cmd]),
                 ];
 
@@ -138,15 +177,21 @@ impl State for MeldBuySellPanel {
                         // For clip.exe, we need to pipe the input
                         match std::process::Command::new(cmd)
                             .stdin(std::process::Stdio::piped())
-                            .spawn() {
+                            .spawn()
+                        {
                             Ok(mut child) => {
                                 if let Some(stdin) = child.stdin.take() {
                                     use std::io::Write;
-                                    if let Ok(mut stdin) = std::io::BufWriter::new(stdin).into_inner() {
+                                    if let Ok(mut stdin) =
+                                        std::io::BufWriter::new(stdin).into_inner()
+                                    {
                                         if stdin.write_all(widget_url.as_bytes()).is_ok() {
                                             drop(stdin);
                                             if child.wait().is_ok() {
-                                                tracing::info!("Successfully copied URL to clipboard with {}", cmd);
+                                                tracing::info!(
+                                                    "Successfully copied URL to clipboard with {}",
+                                                    cmd
+                                                );
                                                 success = true;
                                                 break;
                                             }
@@ -177,22 +222,28 @@ impl State for MeldBuySellPanel {
                     let linux_clipboard_commands = [
                         ("xclip", vec!["-selection", "clipboard"]),
                         ("xsel", vec!["--clipboard", "--input"]),
-                        ("pbcopy", vec![]),  // macOS
+                        ("pbcopy", vec![]), // macOS
                     ];
 
                     for (cmd, args) in &linux_clipboard_commands {
                         match std::process::Command::new(cmd)
                             .args(args)
                             .stdin(std::process::Stdio::piped())
-                            .spawn() {
+                            .spawn()
+                        {
                             Ok(mut child) => {
                                 if let Some(stdin) = child.stdin.take() {
                                     use std::io::Write;
-                                    if let Ok(mut stdin) = std::io::BufWriter::new(stdin).into_inner() {
+                                    if let Ok(mut stdin) =
+                                        std::io::BufWriter::new(stdin).into_inner()
+                                    {
                                         if stdin.write_all(widget_url.as_bytes()).is_ok() {
                                             drop(stdin);
                                             if child.wait().is_ok() {
-                                                tracing::info!("Successfully copied URL to clipboard with {}", cmd);
+                                                tracing::info!(
+                                                    "Successfully copied URL to clipboard with {}",
+                                                    cmd
+                                                );
                                                 success = true;
                                                 break;
                                             }
@@ -208,7 +259,9 @@ impl State for MeldBuySellPanel {
                 }
 
                 if !success {
-                    tracing::warn!("Could not copy to clipboard automatically. URL logged for manual copying.");
+                    tracing::warn!(
+                        "Could not copy to clipboard automatically. URL logged for manual copying."
+                    );
                     self.set_error("Could not copy to clipboard automatically. Please copy the URL manually from the display above.".to_string());
                 }
 
@@ -224,7 +277,9 @@ impl State for MeldBuySellPanel {
                 Task::none()
             }
             Message::View(ViewMessage::MeldBuySell(MeldBuySellMessage::CopyError)) => {
-                self.set_error("Failed to copy URL to clipboard. Please copy manually.".to_string());
+                self.set_error(
+                    "Failed to copy URL to clipboard. Please copy manually.".to_string(),
+                );
                 Task::none()
             }
             Message::View(ViewMessage::MeldBuySell(MeldBuySellMessage::ResetForm)) => {
@@ -250,16 +305,23 @@ impl State for MeldBuySellPanel {
                 // Also close the webview
                 Task::done(Message::View(ViewMessage::CloseWebview))
             }
-            Message::View(ViewMessage::MeldBuySell(MeldBuySellMessage::OpenWidgetInNewWindow(widget_url))) => {
+            Message::View(ViewMessage::MeldBuySell(MeldBuySellMessage::OpenWidgetInNewWindow(
+                widget_url,
+            ))) => {
                 // Open in a new window/browser tab - similar to OpenWidget but explicitly for new window
-                tracing::info!("Attempting to open widget URL in new window: {}", widget_url);
+                tracing::info!(
+                    "Attempting to open widget URL in new window: {}",
+                    widget_url
+                );
 
                 let mut success = false;
 
                 // Method 1: Try open::that_detached first (non-blocking)
                 match open::that_detached(&widget_url) {
                     Ok(_) => {
-                        tracing::info!("Successfully opened widget URL in new window with detached method");
+                        tracing::info!(
+                            "Successfully opened widget URL in new window with detached method"
+                        );
                         success = true;
                     }
                     Err(e) => {
@@ -344,14 +406,17 @@ async fn create_meld_session(
     network: liana::miniscript::bitcoin::Network,
 ) -> Result<String, String> {
     let client = MeldClient::new();
-    
-    match client.create_widget_session(
-        wallet_address,
-        country_code,
-        source_amount,
-        provider,
-        network,
-    ).await {
+
+    match client
+        .create_widget_session(
+            wallet_address,
+            country_code,
+            source_amount,
+            provider,
+            network,
+        )
+        .await
+    {
         Ok(response) => Ok(response.widget_url),
         Err(MeldError::Network(e)) => Err(format!("Network error: {}", e)),
         Err(MeldError::Serialization(e)) => Err(format!("Data error: {}", e)),

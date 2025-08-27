@@ -14,7 +14,7 @@ pub enum Menu {
     RefreshCoins(Vec<OutPoint>),
     PsbtPreSelected(Txid),
     #[cfg(feature = "dev-coincube")]
-    BuyAndSell,//(Option<AccountInfo>),
+    BuyAndSell, //(Option<AccountInfo>),
 }
 
 /// Pre-selectable settings options.

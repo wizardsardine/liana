@@ -43,10 +43,6 @@ pub use receive::ReceivePanel;
 pub use settings::SettingsState;
 pub use spend::CreateSpendPanel;
 pub use transactions::TransactionsPanel;
-#[cfg(all(feature = "dev-coincube", not(any(feature = "dev-meld", feature = "dev-onramp"))))]
-pub mod buysell;
-#[cfg(all(feature = "dev-coincube", not(any(feature = "dev-meld", feature = "dev-onramp"))))]
-pub use buysell::BuyAndSellPanel;
 
 pub trait State {
     fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, view::Message>;

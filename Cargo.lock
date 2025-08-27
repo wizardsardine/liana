@@ -2701,6 +2701,7 @@ dependencies = [
 [[package]]
 name = "iced_webview"
 version = "0.0.5"
+source = "git+https://github.com/coincubetech/iced_webview.git#fda6611ec8eacdead8fbd99febbbce2300544d3b"
 dependencies = [
  "clipboard-rs",
  "html",

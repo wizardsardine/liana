@@ -14,17 +14,19 @@ use std::io::Write;
 use std::sync::Arc;
 use std::time::Duration;
 
-#[cfg(all(feature = "dev-coincube", not(any(feature = "dev-meld", feature = "dev-onramp"))))]
+#[cfg(all(
+    feature = "dev-coincube",
+    not(any(feature = "dev-meld", feature = "dev-onramp"))
+))]
 use crate::app::state::BuyAndSellPanel;
 
-use iced::{clipboard, time, Subscription, Task, widget::Column};
+use iced::{clipboard, time, widget::Column, Subscription, Task};
 use tokio::runtime::Handle;
 use tracing::{error, info, warn};
 
-
 // Ultralight webview imports
 #[cfg(feature = "webview")]
-use iced_webview::{WebView, Ultralight, Action as WebviewAction, PageType};
+use iced_webview::{Action as WebviewAction, PageType, Ultralight, WebView};
 
 // Separate message type for webview that implements Clone
 #[cfg(feature = "webview")]
@@ -36,10 +38,7 @@ pub enum WebviewMessage {
 }
 
 pub use liana::miniscript::bitcoin;
-use liana_ui::{
-    component::network_banner,
-    widget::Element,
-};
+use liana_ui::{component::network_banner, widget::Element};
 pub use lianad::{commands::CoinStatus, config::Config as DaemonConfig};
 
 pub use config::Config;
@@ -75,7 +74,10 @@ struct Panels {
     receive: ReceivePanel,
     create_spend: CreateSpendPanel,
     settings: SettingsState,
-    #[cfg(all(feature = "dev-coincube", not(any(feature = "dev-meld", feature = "dev-onramp"))))]
+    #[cfg(all(
+        feature = "dev-coincube",
+        not(any(feature = "dev-meld", feature = "dev-onramp"))
+    ))]
     buy_and_sell: BuyAndSellPanel,
     #[cfg(any(feature = "dev-meld", feature = "dev-onramp"))]
     meld_buy_and_sell: crate::app::view::meld_buysell::MeldBuySellPanel,
@@ -131,7 +133,10 @@ impl Panels {
                 internal_bitcoind.is_some(),
                 config.clone(),
             ),
-            #[cfg(all(feature = "dev-coincube", not(any(feature = "dev-meld", feature = "dev-onramp"))))]
+            #[cfg(all(
+                feature = "dev-coincube",
+                not(any(feature = "dev-meld", feature = "dev-onramp"))
+            ))]
             buy_and_sell: BuyAndSellPanel::new(),
             #[cfg(any(feature = "dev-meld", feature = "dev-onramp"))]
             meld_buy_and_sell: crate::app::view::meld_buysell::MeldBuySellPanel::new(cache.network),
@@ -151,7 +156,10 @@ impl Panels {
             Menu::Recovery => &self.recovery,
             Menu::RefreshCoins(_) => &self.create_spend,
             Menu::PsbtPreSelected(_) => &self.psbts,
-            #[cfg(all(feature = "dev-coincube", not(any(feature = "dev-meld", feature = "dev-onramp"))))]
+            #[cfg(all(
+                feature = "dev-coincube",
+                not(any(feature = "dev-meld", feature = "dev-onramp"))
+            ))]
             Menu::BuyAndSell => &self.buy_and_sell,
             #[cfg(any(feature = "dev-meld", feature = "dev-onramp"))]
             Menu::BuyAndSell => &self.meld_buy_and_sell,
@@ -171,7 +179,10 @@ impl Panels {
             Menu::Recovery => &mut self.recovery,
             Menu::RefreshCoins(_) => &mut self.create_spend,
             Menu::PsbtPreSelected(_) => &mut self.psbts,
-            #[cfg(all(feature = "dev-coincube", not(any(feature = "dev-meld", feature = "dev-onramp"))))]
+            #[cfg(all(
+                feature = "dev-coincube",
+                not(any(feature = "dev-meld", feature = "dev-onramp"))
+            ))]
             Menu::BuyAndSell => &mut self.buy_and_sell,
             #[cfg(any(feature = "dev-meld", feature = "dev-onramp"))]
             Menu::BuyAndSell => &mut self.meld_buy_and_sell,
@@ -280,8 +291,6 @@ impl App {
         self.webview_loading
     }
 
-
-
     /// Map webview messages to main app messages (static version for Task::map)
     #[cfg(feature = "webview")]
     fn map_webview_message_static(webview_msg: WebviewMessage) -> Message {
@@ -368,7 +377,6 @@ impl App {
     }
 
     pub fn subscription(&self) -> Subscription<Message> {
-
         let mut subscriptions = vec![
             time::every(Duration::from_secs(
                 match sync_status(
@@ -410,7 +418,7 @@ impl App {
                     .map(|_| {
                         use iced_webview::Action as WebViewAction;
                         Message::View(view::Message::WebviewAction(WebViewAction::Update))
-                    })
+                    }),
             );
         }
 
@@ -528,15 +536,15 @@ impl App {
                     self.webview_loading_start = Some(std::time::Instant::now());
                     self.current_webview_url = Some(url.clone());
 
-
-
                     // Create webview with URL string and immediately update to ensure content loads
-                    let create_task = self.webview.update(WebviewAction::CreateView(PageType::Url(url)))
+                    let create_task = self
+                        .webview
+                        .update(WebviewAction::CreateView(PageType::Url(url)))
                         .map(Self::map_webview_message_static);
 
                     // Add immediate update to trigger content loading
                     let immediate_update = Task::done(Message::View(view::Message::WebviewAction(
-                        WebviewAction::Update
+                        WebviewAction::Update,
                     )));
 
                     Task::batch(vec![create_task, immediate_update])
@@ -552,19 +560,22 @@ impl App {
                 use iced_webview::Action as WebViewAction;
 
                 // Determine if this action needs a follow-up update for rendering
-                let needs_update = matches!(action,
-                    WebViewAction::CreateView(_) |
-                    WebViewAction::Resize(_) |
-                    WebViewAction::GoToUrl(_)
+                let needs_update = matches!(
+                    action,
+                    WebViewAction::CreateView(_)
+                        | WebViewAction::Resize(_)
+                        | WebViewAction::GoToUrl(_)
                 );
 
-                let main_task = self.webview.update(action)
+                let main_task = self
+                    .webview
+                    .update(action)
                     .map(Self::map_webview_message_static);
 
                 if needs_update {
                     // Add a single update after actions that change content/size
                     let update_task = Task::done(Message::View(view::Message::WebviewAction(
-                        WebViewAction::Update
+                        WebViewAction::Update,
                     )));
                     Task::batch(vec![main_task, update_task])
                 } else {
@@ -584,7 +595,7 @@ impl App {
                 // Switch to the first view and immediately update to display content
                 let switch_task = Task::done(Message::View(view::Message::SwitchToWebview(0)));
                 let update_task = Task::done(Message::View(view::Message::WebviewAction(
-                    iced_webview::Action::Update
+                    iced_webview::Action::Update,
                 )));
                 Task::batch(vec![switch_task, update_task])
             }
@@ -597,10 +608,12 @@ impl App {
 
                 // Send ChangeView action to webview and immediately update to display content
                 use iced_webview::Action as WebViewAction;
-                let change_task = self.webview.update(WebViewAction::ChangeView(index))
+                let change_task = self
+                    .webview
+                    .update(WebViewAction::ChangeView(index))
                     .map(Self::map_webview_message_static);
                 let update_task = Task::done(Message::View(view::Message::WebviewAction(
-                    WebViewAction::Update
+                    WebViewAction::Update,
                 )));
                 Task::batch(vec![change_task, update_task])
             }
@@ -644,12 +657,14 @@ impl App {
 
                     // Resize webview to match meld container size (800px width, 600px height for better fit)
                     let webview_size = Size::new(800, 600);
-                    let resize_task = self.webview.update(WebViewAction::Resize(webview_size))
+                    let resize_task = self
+                        .webview
+                        .update(WebViewAction::Resize(webview_size))
                         .map(Self::map_webview_message_static);
 
                     // Create the view with the URL - this will trigger the webview to initialize
                     let create_task = Task::done(Message::View(view::Message::WebviewAction(
-                        WebViewAction::CreateView(PageType::Url(url.clone()))
+                        WebViewAction::CreateView(PageType::Url(url.clone())),
                     )));
 
                     Task::batch(vec![resize_task, create_task])
@@ -659,7 +674,9 @@ impl App {
                 }
             }
             #[cfg(any(feature = "dev-meld", feature = "dev-onramp"))]
-            Message::View(view::Message::MeldBuySell(view::MeldBuySellMessage::SessionCreated(url))) => {
+            Message::View(view::Message::MeldBuySell(
+                view::MeldBuySellMessage::SessionCreated(url),
+            )) => {
                 tracing::info!("🌐 [LIANA] Meld session created with URL: {}", url);
                 // Set the URL and show webview immediately - no intermediate button needed
                 self.current_webview_url = Some(url.clone());
@@ -680,32 +697,32 @@ impl App {
 
                     // Set webview size to match the meld container (600px width, 600px height)
                     let container_size = Size::new(600, 600);
-                    let resize_task = self.webview.update(WebViewAction::Resize(container_size))
+                    let resize_task = self
+                        .webview
+                        .update(WebViewAction::Resize(container_size))
                         .map(Self::map_webview_message_static);
 
-                    let panel_update_task = self.panels
-                        .current_mut()
-                        .update(
-                            self.daemon.clone(),
-                            &self.cache,
-                            Message::View(view::Message::MeldBuySell(view::MeldBuySellMessage::SessionCreated(url)))
-                        );
+                    let panel_update_task = self.panels.current_mut().update(
+                        self.daemon.clone(),
+                        &self.cache,
+                        Message::View(view::Message::MeldBuySell(
+                            view::MeldBuySellMessage::SessionCreated(url),
+                        )),
+                    );
 
                     Task::batch(vec![resize_task, panel_update_task])
                 }
                 #[cfg(not(feature = "webview"))]
                 {
-                    self.panels
-                        .current_mut()
-                        .update(
-                            self.daemon.clone(),
-                            &self.cache,
-                            Message::View(view::Message::MeldBuySell(view::MeldBuySellMessage::SessionCreated(url)))
-                        )
+                    self.panels.current_mut().update(
+                        self.daemon.clone(),
+                        &self.cache,
+                        Message::View(view::Message::MeldBuySell(
+                            view::MeldBuySellMessage::SessionCreated(url),
+                        )),
+                    )
                 }
             }
-
-
 
             _ => self
                 .panels
@@ -750,44 +767,49 @@ impl App {
         #[cfg(feature = "webview")]
         {
             if self.webview_mode && matches!(self.panels.current, menu::Menu::BuyAndSell) {
-            // Create webview content that will be embedded below the "Previous" button
-            let webview_widget = {
-                use crate::app::view::webview::meld_webview_widget_ultralight;
-                Some(meld_webview_widget_ultralight(
-                    Some(&self.webview),
-                    self.current_webview_url.as_deref(),
-                    self.show_webview,
-                    self.webview_ready,
-                    self.webview_loading,
-                    self.current_webview_index,
-                ))
-            };
+                // Create webview content that will be embedded below the "Previous" button
+                let webview_widget = {
+                    use crate::app::view::webview::meld_webview_widget_ultralight;
+                    Some(meld_webview_widget_ultralight(
+                        Some(&self.webview),
+                        self.current_webview_url.as_deref(),
+                        self.show_webview,
+                        self.webview_ready,
+                        self.webview_loading,
+                        self.current_webview_index,
+                    ))
+                };
 
-            // Use meld buy/sell view with embedded webview for Buy/Sell panel in webview mode
-            let panel_content = {
-                use crate::app::view::meld_buysell::meld_buysell_view_with_webview;
-                #[cfg(any(feature = "dev-meld", feature = "dev-onramp"))]
-                {
-                    meld_buysell_view_with_webview(&self.panels.meld_buy_and_sell, webview_widget)
-                }
-                #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
-                {
-                    // Fallback to normal panel view if meld/onramp features are not enabled
-                    self.panels.current().view(&self.cache)
-                }
-            };
+                // Use meld buy/sell view with embedded webview for Buy/Sell panel in webview mode
+                let panel_content = {
+                    use crate::app::view::meld_buysell::meld_buysell_view_with_webview;
+                    #[cfg(any(feature = "dev-meld", feature = "dev-onramp"))]
+                    {
+                        meld_buysell_view_with_webview(
+                            &self.panels.meld_buy_and_sell,
+                            webview_widget,
+                        )
+                    }
+                    #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+                    {
+                        // Fallback to normal panel view if meld/onramp features are not enabled
+                        self.panels.current().view(&self.cache)
+                    }
+                };
 
-            // Apply dashboard layout once to maintain left sidebar
-            let dashboard_content = view::dashboard(&self.panels.current, &self.cache, None, panel_content);
+                // Apply dashboard layout once to maintain left sidebar
+                let dashboard_content =
+                    view::dashboard(&self.panels.current, &self.cache, None, panel_content);
 
-            if self.cache.network != bitcoin::Network::Bitcoin {
-                Column::with_children(vec![
-                    network_banner(self.cache.network).into(),
+                if self.cache.network != bitcoin::Network::Bitcoin {
+                    Column::with_children(vec![
+                        network_banner(self.cache.network).into(),
+                        dashboard_content.map(Message::View),
+                    ])
+                    .into()
+                } else {
                     dashboard_content.map(Message::View)
-                ]).into()
-            } else {
-                dashboard_content.map(Message::View)
-            }
+                }
             } else {
                 // Normal panel view without webview
                 let panel_content = self.panels.current().view(&self.cache);
@@ -804,8 +826,9 @@ impl App {
                 if self.cache.network != bitcoin::Network::Bitcoin {
                     Column::with_children(vec![
                         network_banner(self.cache.network).into(),
-                        final_view.map(Message::View)
-                    ]).into()
+                        final_view.map(Message::View),
+                    ])
+                    .into()
                 } else {
                     final_view.map(Message::View)
                 }
@@ -829,8 +852,9 @@ impl App {
             if self.cache.network != bitcoin::Network::Bitcoin {
                 Column::with_children(vec![
                     network_banner(self.cache.network).into(),
-                    final_view.map(Message::View)
-                ]).into()
+                    final_view.map(Message::View),
+                ])
+                .into()
             } else {
                 final_view.map(Message::View)
             }

@@ -16,9 +16,7 @@ use liana_ui::{
     widget::*,
 };
 
-use crate::app::{
-    view::{MeldBuySellMessage, Message as ViewMessage},
-};
+use crate::app::view::{MeldBuySellMessage, Message as ViewMessage};
 
 #[cfg(any(feature = "dev-meld", feature = "dev-onramp"))]
 #[derive(Debug, Clone)]
@@ -136,8 +134,6 @@ impl MeldBuySellPanel {
             !self.source_amount.value.is_empty() && self.source_amount.value.parse::<f64>().is_ok();
     }
 
-
-
     pub fn is_form_valid(&self) -> bool {
         self.wallet_address.valid
             && self.country_code.valid
@@ -156,7 +152,7 @@ pub fn meld_buysell_view(state: &MeldBuySellPanel) -> Element<'_, ViewMessage> {
 #[cfg(any(feature = "dev-meld", feature = "dev-onramp"))]
 pub fn meld_buysell_view_with_webview<'a>(
     state: &'a MeldBuySellPanel,
-    webview_widget: Option<Element<'a, ViewMessage>>
+    webview_widget: Option<Element<'a, ViewMessage>>,
 ) -> Element<'a, ViewMessage> {
     Container::new({
         let mut column = Column::new();
@@ -186,7 +182,7 @@ pub fn meld_buysell_view_with_webview<'a>(
                         .on_press(ViewMessage::MeldBuySell(MeldBuySellMessage::GoBackToForm)),
                     )
                     .push(Space::with_width(Length::Fill))
-                    .align_y(Alignment::Center)
+                    .align_y(Alignment::Center),
             );
         }
 
@@ -345,12 +341,16 @@ fn network_info_panel(state: &MeldBuySellPanel) -> Option<Element<'_, ViewMessag
                     .push(text("🌐 Mainnet Network").size(14).color(color::ORANGE))
                     .push(Space::with_height(Length::Fixed(5.0)))
                     .push(text("Using Bitcoin mainnet").size(12).color(color::GREY_3))
-                    .push(text("Address formats: 1..., 3..., bc1...").size(12).color(color::GREY_3))
-                    .spacing(2)
+                    .push(
+                        text("Address formats: 1..., 3..., bc1...")
+                            .size(12)
+                            .color(color::GREY_3),
+                    )
+                    .spacing(2),
             )
             .padding(10)
             .style(theme::card::simple)
-            .into()
+            .into(),
         ),
         _ => Some(
             Container::new(
@@ -358,13 +358,17 @@ fn network_info_panel(state: &MeldBuySellPanel) -> Option<Element<'_, ViewMessag
                     .push(text("🧪 Testnet Network").size(14).color(color::ORANGE))
                     .push(Space::with_height(Length::Fixed(5.0)))
                     .push(text("Using Bitcoin testnet").size(12).color(color::GREY_3))
-                    .push(text("Address formats: 2..., tb1..., bcrt1...").size(12).color(color::GREY_3))
-                    .spacing(2)
+                    .push(
+                        text("Address formats: 2..., tb1..., bcrt1...")
+                            .size(12)
+                            .color(color::GREY_3),
+                    )
+                    .spacing(2),
             )
             .padding(10)
             .style(theme::card::simple)
-            .into()
-        )
+            .into(),
+        ),
     }
 }
 
@@ -380,7 +384,11 @@ fn success_content(widget_url: &str) -> Element<'_, ViewMessage> {
                     Column::new()
                         .push(text("🌐 Meld Payment Widget").size(16).color(color::GREEN))
                         .push(Space::with_height(Length::Fixed(10.0)))
-                        .push(text("Webview integration active").size(14).color(color::GREY_3))
+                        .push(
+                            text("Webview integration active")
+                                .size(14)
+                                .color(color::GREY_3),
+                        )
                         .push(Space::with_height(Length::Fixed(15.0)))
                         .push(
                             ui_button::primary(None, "Open in Browser")
@@ -390,7 +398,7 @@ fn success_content(widget_url: &str) -> Element<'_, ViewMessage> {
                                 .width(Length::Fill),
                         )
                         .align_x(Alignment::Center)
-                        .spacing(5)
+                        .spacing(5),
                 )
                 .width(Length::Fill)
                 .height(Length::Fixed(350.0))
@@ -457,7 +465,7 @@ fn success_content(widget_url: &str) -> Element<'_, ViewMessage> {
         .push(
             ui_button::secondary(None, "Create Another Session")
                 .on_press(ViewMessage::MeldBuySell(MeldBuySellMessage::ResetForm))
-                .width(Length::Fill)
+                .width(Length::Fill),
         )
         .into()
 }
