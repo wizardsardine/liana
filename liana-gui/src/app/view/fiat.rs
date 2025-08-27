@@ -38,15 +38,16 @@ impl FiatAmountConverter {
     }
 }
 
-impl TryFrom<cache::FiatPrice> for FiatAmountConverter {
+impl TryFrom<&cache::FiatPrice> for FiatAmountConverter {
     type Error = String;
 
-    fn try_from(fiat_price: cache::FiatPrice) -> Result<Self, Self::Error> {
+    fn try_from(fiat_price: &cache::FiatPrice) -> Result<Self, Self::Error> {
         let cache::FiatPrice { res, request, .. } = fiat_price;
-        res.map(|price| FiatAmountConverter {
-            price_per_btc: price.value,
-            currency: request.currency,
-        })
-        .map_err(|e| e.to_string())
+        res.as_ref()
+            .map(|price| Self {
+                price_per_btc: price.value,
+                currency: request.currency,
+            })
+            .map_err(|e| e.to_string())
     }
 }

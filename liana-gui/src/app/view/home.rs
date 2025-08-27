@@ -1,5 +1,5 @@
 use chrono::{DateTime, Local, Utc};
-use std::{collections::HashMap, convert::TryInto, time::Duration, vec};
+use std::{collections::HashMap, time::Duration, vec};
 
 use iced::{
     alignment,
@@ -19,10 +19,10 @@ use liana_ui::{
 
 use crate::{
     app::{
-        cache::{Cache, FiatPrice},
+        cache::Cache,
         error::Error,
         menu::{self, Menu},
-        view::{coins, dashboard, fiat::FiatAmountConverter, label, message::Message},
+        view::{coins, dashboard, label, message::Message, FiatAmountConverter},
         wallet::SyncStatus,
     },
     daemon::model::{HistoryTransaction, Payment, PaymentKind, TransactionKind},
@@ -66,7 +66,7 @@ pub fn home_view<'a>(
     balance: &'a bitcoin::Amount,
     unconfirmed_balance: &'a bitcoin::Amount,
     remaining_sequence: &Option<u32>,
-    fiat_price: Option<FiatPrice>,
+    fiat_converter: Option<FiatAmountConverter>,
     expiring_coins: &[bitcoin::OutPoint],
     events: &'a [Payment],
     is_last_page: bool,
@@ -74,9 +74,8 @@ pub fn home_view<'a>(
     sync_status: &SyncStatus,
     show_rescan_warning: bool,
 ) -> Element<'a, Message> {
-    let converter: Option<FiatAmountConverter> = fiat_price.and_then(|fp| fp.try_into().ok());
-    let fiat_balance = converter.as_ref().map(|c| c.convert(*balance));
-    let fiat_unconfirmed = converter.map(|c| c.convert(*unconfirmed_balance));
+    let fiat_balance = fiat_converter.as_ref().map(|c| c.convert(*balance));
+    let fiat_unconfirmed = fiat_converter.map(|c| c.convert(*unconfirmed_balance));
     Column::new()
         .push(h3("Balance"))
         .push(
