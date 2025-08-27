@@ -23,7 +23,7 @@ use lianad::{
 };
 
 use crate::app;
-use crate::app::cache::DaemonCache;
+use crate::app::cache::{DaemonCache, FiatPriceCache};
 use crate::app::settings::WalletSettings;
 use crate::backup::Backup;
 use crate::dir::LianaDirectory;
@@ -431,6 +431,7 @@ pub async fn load_application(
 > {
     let wallet = Wallet::new(info.descriptors.main)
         .load_from_settings(wallet_settings)?
+        .or_default_fiat_price_setting(network, daemon.backend().is_remote())
         .load_hotsigners(&datadir_path, network)?;
 
     let coins = coins_to_cache(daemon.clone()).await.map(|res| res.coins)?;
@@ -447,6 +448,7 @@ pub async fn load_application(
             last_poll_timestamp: info.last_poll_timestamp,
             ..Default::default()
         },
+        fiat_price_cache: FiatPriceCache::default(),
     };
 
     Ok((Arc::new(wallet), cache, daemon, internal_bitcoind, backup))
