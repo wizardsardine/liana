@@ -45,7 +45,6 @@ use crate::{
     daemon::{embedded::EmbeddedDaemon, Daemon, DaemonBackend},
     dir::LianaDirectory,
     node::{bitcoind::Bitcoind, NodeType},
-    utils::now,
 };
 
 use self::state::SettingsState;
@@ -180,14 +179,17 @@ impl App {
         let mut cmds = vec![];
         cmds.push(panels.home.reload(daemon.clone(), wallet.clone()));
         // If the fiat price setting is enabled, fetch the fiat price when app starts.
-        if wallet
+        if let Some(sett) = wallet
             .fiat_price_setting
             .as_ref()
-            .is_some_and(|sett| sett.is_enabled)
+            .filter(|sett| sett.is_enabled)
         {
-            cmds.push(Task::perform(async move {}, |_| {
-                Message::Fiat(FiatMessage::GetPrice)
-            }));
+            let source = sett.source;
+            let currency = sett.currency;
+            cmds.push(Task::perform(
+                async move { (source, currency) },
+                |(source, currency)| Message::Fiat(FiatMessage::GetPrice(source, currency)),
+            ));
         }
         (
             Self {
@@ -212,6 +214,14 @@ impl App {
             }
         }
         "Liana wallet"
+    }
+
+    pub fn cache(&self) -> &Cache {
+        &self.cache
+    }
+
+    pub fn wallet(&self) -> &Wallet {
+        &self.wallet
     }
 
     fn set_current_panel(&mut self, menu: Menu) -> Task<Message> {
@@ -322,29 +332,19 @@ impl App {
             .map(|_| Message::Tick),
             self.panels.current().subscription(),
         ];
-        // Add fiat price subscription if enabled.
-        if let Some(sett) = self
-            .wallet
-            .fiat_price_setting
+        // Add fiat price subscription if the setting is enabled and matches what is already in the cache.
+        // This forces a new subscription to be created if the source or currency setting changes so that the first
+        // tick will occur `FIAT_PRICE_UPDATE_INTERVAL_SECS` seconds after the initial cache entry for this pair.
+        if self
+            .cache
+            .fiat_price
             .as_ref()
-            .filter(|sett| sett.is_enabled)
+            .is_some_and(|price| self.wallet.fiat_price_is_relevant(price))
         {
-            // Force a new subscription to be created if the source or currency changes. This way, the first tick
-            // will occur `FIAT_PRICE_UPDATE_INTERVAL_SECS` seconds after the initial cache entry for this pair.
-            if self
-                .cache
-                .fiat_price_cache
-                .fiat_price
-                .as_ref()
-                .is_some_and(|price| {
-                    price.source() == sett.source && price.currency() == sett.currency
-                })
-            {
-                subs.push(
-                    time::every(Duration::from_secs(FIAT_PRICE_UPDATE_INTERVAL_SECS))
-                        .map(|_| Message::Fiat(FiatMessage::GetPrice)),
-                )
-            }
+            subs.push(
+                time::every(Duration::from_secs(FIAT_PRICE_UPDATE_INTERVAL_SECS))
+                    .map(|_| Message::Fiat(FiatMessage::GetPriceTick)),
+            )
         }
         Subscription::batch(subs)
     }
@@ -388,77 +388,29 @@ impl App {
                     Message::UpdateDaemonCache,
                 )
             }
-            Message::Fiat(FiatMessage::GetPrice) => {
-                if let Some(price_setting) = self
+            Message::Fiat(FiatMessage::GetPriceTick) => {
+                if let Some(sett) = self
                     .wallet
                     .fiat_price_setting
                     .as_ref()
                     .filter(|sett| sett.is_enabled)
                 {
-                    let now = now().as_secs();
-                    // Do nothing if the last request was recent and was for the same source & currency, where
-                    // "recent" means within half the update interval.
-                    // Using half the update interval is sufficient as we are mostly concerned with preventing
-                    // multiple requests being sent within seconds of each other (e.g. after the GUI window is
-                    // inactive for an extended period). Using the full update interval could lead to a kind
-                    // of race condition and cause a regular subscription message to be missed.
-                    if let Some(recent_request) = self
-                        .cache
-                        .fiat_price_cache
-                        .last_request
-                        .as_ref()
-                        .filter(|req| {
-                            req.source == price_setting.source
-                                && req.currency == price_setting.currency
-                                && req.timestamp + FIAT_PRICE_UPDATE_INTERVAL_SECS / 2 > now
-                        })
-                    {
-                        // Cached request is still valid, no need to fetch a new one.
-                        tracing::debug!(
-                            "Using cached fiat price request for {} from {}",
-                            recent_request.currency,
-                            recent_request.source,
-                        );
-                        return Task::none();
-                    }
-                    let new_request = cache::FiatPriceRequest {
-                        source: price_setting.source,
-                        currency: price_setting.currency,
-                        timestamp: now,
-                    };
-                    self.cache.fiat_price_cache.last_request = Some(new_request.clone());
-                    tracing::debug!(
-                        "Getting fiat price in {} from {}",
-                        price_setting.currency,
-                        price_setting.source,
-                    );
-                    return Task::perform(
-                        async move { new_request.send_default().await },
-                        |fiat_price| Message::Fiat(FiatMessage::GetPriceResult(fiat_price)),
-                    );
+                    let source = sett.source;
+                    let currency = sett.currency;
+                    Task::perform(async move { (source, currency) }, |(source, currency)| {
+                        Message::Fiat(FiatMessage::GetPrice(source, currency))
+                    })
+                } else {
+                    Task::none()
                 }
-                Task::none()
             }
             Message::Fiat(FiatMessage::GetPriceResult(fiat_price)) => {
-                if Some(&fiat_price.request) != self.cache.fiat_price_cache.last_request.as_ref() {
-                    tracing::debug!(
-                        "Ignoring fiat price result for {} from {} as it is not the last request",
-                        fiat_price.currency(),
-                        fiat_price.source(),
-                    );
-                    return Task::none();
+                if self.wallet.fiat_price_is_relevant(&fiat_price) {
+                    self.cache.fiat_price = Some(fiat_price);
+                    Task::perform(async {}, |_| Message::CacheUpdated)
+                } else {
+                    Task::none()
                 }
-                if let Err(e) = fiat_price.res.as_ref() {
-                    tracing::error!(
-                        "Failed to get fiat price in {} from {}: {}",
-                        fiat_price.currency(),
-                        fiat_price.source(),
-                        e
-                    );
-                }
-                // Update the cache with the result even if there was an error.
-                self.cache.fiat_price_cache.fiat_price = Some(fiat_price);
-                Task::perform(async {}, |_| Message::CacheUpdated)
             }
             Message::UpdateDaemonCache(res) => {
                 match res {

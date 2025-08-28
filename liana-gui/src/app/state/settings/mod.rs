@@ -66,8 +66,6 @@ impl State for SettingsState {
     ) -> Task<Message> {
         match &message {
             Message::View(view::Message::Settings(view::SettingsMessage::GeneralSection)) => {
-                // TODO: It would be nice to keep the previous state, if any, in order not to have to fetch
-                // the currencies list again.
                 self.setting = Some(general::GeneralSettingsState::new(self.wallet.clone()).into());
                 let wallet = self.wallet.clone();
                 self.setting

@@ -23,7 +23,7 @@ pub struct Cache {
     /// The `last_poll_timestamp` when starting the application.
     pub last_poll_at_startup: Option<u32>,
     pub daemon_cache: DaemonCache,
-    pub fiat_price_cache: FiatPriceCache,
+    pub fiat_price: Option<FiatPrice>,
 }
 
 /// only used for tests.
@@ -34,7 +34,7 @@ impl std::default::Default for Cache {
             network: Network::Bitcoin,
             last_poll_at_startup: None,
             daemon_cache: DaemonCache::default(),
-            fiat_price_cache: FiatPriceCache::default(),
+            fiat_price: None,
         }
     }
 }
@@ -92,17 +92,6 @@ pub async fn coins_to_cache(
     daemon
         .list_coins(&[CoinStatus::Unconfirmed, CoinStatus::Confirmed], &[])
         .await
-}
-
-/// The cache for fiat price data.
-#[derive(Debug, Clone, Default)]
-pub struct FiatPriceCache {
-    /// The last fetched fiat price, if any.
-    pub fiat_price: Option<FiatPrice>,
-    /// A pending request, if any.
-    ///
-    /// This is the last request that may or may not yet have been completed.
-    pub last_request: Option<FiatPriceRequest>,
 }
 
 /// Represents a fiat price fetched from the API together with the request that was used to fetch it.

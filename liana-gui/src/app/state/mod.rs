@@ -80,7 +80,7 @@ pub fn fiat_price_for_wallet(wallet: &Wallet, cache: &Cache) -> Option<FiatPrice
         .as_ref()
         .filter(|sett| sett.is_enabled)
     {
-        if let Some(price) = cache.fiat_price_cache.fiat_price.as_ref() {
+        if let Some(price) = cache.fiat_price.as_ref() {
             if price.source() == sett.source && price.currency() == sett.currency {
                 fiat_price = Some(price.clone());
             }
