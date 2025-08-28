@@ -1,13 +1,9 @@
-#[cfg(any(feature = "dev-meld", feature = "dev-onramp"))]
 use iced::{
     widget::{text, Space},
     Alignment, Length,
 };
 
-#[cfg(any(feature = "dev-meld", feature = "dev-onramp"))]
 use liana::miniscript::bitcoin::Network;
-
-#[cfg(any(feature = "dev-meld", feature = "dev-onramp"))]
 use liana_ui::{
     color,
     component::{button as ui_button, form},
@@ -18,7 +14,6 @@ use liana_ui::{
 
 use crate::app::view::{MeldBuySellMessage, Message as ViewMessage};
 
-#[cfg(any(feature = "dev-meld", feature = "dev-onramp"))]
 #[derive(Debug, Clone)]
 pub struct MeldBuySellPanel {
     pub wallet_address: form::Value<String>,
@@ -31,7 +26,6 @@ pub struct MeldBuySellPanel {
     pub widget_session_created: Option<String>,
 }
 
-#[cfg(any(feature = "dev-meld", feature = "dev-onramp"))]
 impl MeldBuySellPanel {
     pub fn new(network: Network) -> Self {
         Self {
@@ -144,12 +138,10 @@ impl MeldBuySellPanel {
     }
 }
 
-#[cfg(any(feature = "dev-meld", feature = "dev-onramp"))]
 pub fn meld_buysell_view(state: &MeldBuySellPanel) -> Element<'_, ViewMessage> {
     meld_buysell_view_with_webview(state, None)
 }
 
-#[cfg(any(feature = "dev-meld", feature = "dev-onramp"))]
 pub fn meld_buysell_view_with_webview<'a>(
     state: &'a MeldBuySellPanel,
     webview_widget: Option<Element<'a, ViewMessage>>,
@@ -249,7 +241,6 @@ pub fn meld_buysell_view_with_webview<'a>(
     .into()
 }
 
-#[cfg(any(feature = "dev-meld", feature = "dev-onramp"))]
 fn meld_form_content(state: &MeldBuySellPanel) -> Element<'_, ViewMessage> {
     Column::new()
         .push_maybe(state.error.as_ref().map(|err| {
@@ -331,7 +322,6 @@ fn meld_form_content(state: &MeldBuySellPanel) -> Element<'_, ViewMessage> {
         .into()
 }
 
-#[cfg(any(feature = "dev-meld", feature = "dev-onramp"))]
 fn network_info_panel(state: &MeldBuySellPanel) -> Option<Element<'_, ViewMessage>> {
     // Simplified network info - Meld API handles provider-specific requirements
     match state.network {
@@ -372,7 +362,6 @@ fn network_info_panel(state: &MeldBuySellPanel) -> Option<Element<'_, ViewMessag
     }
 }
 
-#[cfg(feature = "dev-meld")]
 fn success_content(widget_url: &str) -> Element<'_, ViewMessage> {
     Column::new()
         .push({

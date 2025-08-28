@@ -1,12 +1,8 @@
-#[cfg(any(feature = "dev-meld", feature = "dev-onramp"))]
 use iced::Task;
-#[cfg(any(feature = "dev-meld", feature = "dev-onramp"))]
 use std::sync::Arc;
 
-#[cfg(any(feature = "dev-meld", feature = "dev-onramp"))]
 use liana_ui::widget::Element;
 
-#[cfg(any(feature = "dev-meld", feature = "dev-onramp"))]
 use crate::{
     app::{
         buysell::{
@@ -25,14 +21,12 @@ use crate::{
     daemon::Daemon,
 };
 
-#[cfg(any(feature = "dev-meld", feature = "dev-onramp"))]
 impl Default for MeldBuySellPanel {
     fn default() -> Self {
         Self::new(liana::miniscript::bitcoin::Network::Bitcoin)
     }
 }
 
-#[cfg(any(feature = "dev-meld", feature = "dev-onramp"))]
 impl State for MeldBuySellPanel {
     fn view<'a>(&'a self, _cache: &'a Cache) -> Element<'a, ViewMessage> {
         // Return the meld view directly - dashboard wrapper will be applied by app/mod.rs
@@ -397,7 +391,6 @@ impl State for MeldBuySellPanel {
     }
 }
 
-#[cfg(any(feature = "dev-meld", feature = "dev-onramp"))]
 async fn create_meld_session(
     wallet_address: String,
     country_code: String,

@@ -84,9 +84,8 @@ NIX_BUILD_DIR="$(nix path-info .#release)"
     unzip ../contrib/release/macos/Vault.app.zip
     sed -i "s/VERSION_PLACEHOLDER/$VERSION/g" ./Vault.app/Contents/Info.plist
 
-    lipo -create "$NIX_BUILD_DIR/aarch64-apple-darwin/coincube-vault" "$NIX_BUILD_DIR/x86_64-apple-darwin/coincube-vault" -output coincube-vault-universal
+    lipo -create "$NIX_BUILD_DIR/aarch64-apple-darwin/coincube-vault" "$NIX_BUILD_DIR/x86_64-apple-darwin/coincube-vault" -output ./Vault.app/Contents/MacOS/Vault
 
-    cp coincube-vault-universal ./Vault.app/Contents/MacOS/Vault
     zip_archive "$LIANA_PREFIX-macos-noncodesigned.zip" Vault.app
     mv "$LIANA_PREFIX-macos-noncodesigned.zip" "$RELEASE_DIR/"
 )

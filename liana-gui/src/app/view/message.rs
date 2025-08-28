@@ -37,7 +37,7 @@ pub enum Message {
     ImportPsbt,
     OpenUrl(String),
     BuySell(BuySellMessage),
-    #[cfg(any(feature = "dev-meld", feature = "dev-onramp"))]
+    #[cfg(feature = "dev-meld")]
     MeldBuySell(MeldBuySellMessage),
     #[cfg(feature = "webview")]
     WebviewAction(iced_webview::Action),
@@ -166,7 +166,7 @@ pub enum BuySellMessage {
     CreateAccount,
 }
 
-#[cfg(any(feature = "dev-meld", feature = "dev-onramp"))]
+#[cfg(feature = "dev-meld")]
 #[derive(Debug, Clone)]
 pub enum MeldBuySellMessage {
     ShowModal,
@@ -176,7 +176,7 @@ pub enum MeldBuySellMessage {
     SourceAmountChanged(String),
 
     CreateSession,
-    SessionCreated(String), // widget_url
+    SessionCreated(String),         // widget_url
     SessionError(String),
     OpenWidget(String),            // widget_url
     OpenWidgetInNewWindow(String), // widget_url

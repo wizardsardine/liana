@@ -7,7 +7,7 @@ pub mod coins;
 pub mod export;
 pub mod home;
 pub mod hw;
-#[cfg(any(feature = "dev-meld", feature = "dev-onramp"))]
+#[cfg(feature = "dev-meld")]
 pub mod meld_buysell;
 pub mod psbt;
 pub mod psbts;

@@ -14,12 +14,6 @@ use std::io::Write;
 use std::sync::Arc;
 use std::time::Duration;
 
-#[cfg(all(
-    feature = "dev-coincube",
-    not(any(feature = "dev-meld", feature = "dev-onramp"))
-))]
-use crate::app::state::BuyAndSellPanel;
-
 use iced::{clipboard, time, widget::Column, Subscription, Task};
 use tokio::runtime::Handle;
 use tracing::{error, info, warn};
@@ -74,12 +68,7 @@ struct Panels {
     receive: ReceivePanel,
     create_spend: CreateSpendPanel,
     settings: SettingsState,
-    #[cfg(all(
-        feature = "dev-coincube",
-        not(any(feature = "dev-meld", feature = "dev-onramp"))
-    ))]
-    buy_and_sell: BuyAndSellPanel,
-    #[cfg(any(feature = "dev-meld", feature = "dev-onramp"))]
+    #[cfg(feature = "dev-meld")]
     meld_buy_and_sell: crate::app::view::meld_buysell::MeldBuySellPanel,
 }
 
@@ -133,12 +122,7 @@ impl Panels {
                 internal_bitcoind.is_some(),
                 config.clone(),
             ),
-            #[cfg(all(
-                feature = "dev-coincube",
-                not(any(feature = "dev-meld", feature = "dev-onramp"))
-            ))]
-            buy_and_sell: BuyAndSellPanel::new(),
-            #[cfg(any(feature = "dev-meld", feature = "dev-onramp"))]
+            #[cfg(feature = "dev-meld")]
             meld_buy_and_sell: crate::app::view::meld_buysell::MeldBuySellPanel::new(cache.network),
         }
     }
@@ -156,12 +140,7 @@ impl Panels {
             Menu::Recovery => &self.recovery,
             Menu::RefreshCoins(_) => &self.create_spend,
             Menu::PsbtPreSelected(_) => &self.psbts,
-            #[cfg(all(
-                feature = "dev-coincube",
-                not(any(feature = "dev-meld", feature = "dev-onramp"))
-            ))]
-            Menu::BuyAndSell => &self.buy_and_sell,
-            #[cfg(any(feature = "dev-meld", feature = "dev-onramp"))]
+            #[cfg(feature = "dev-meld")]
             Menu::BuyAndSell => &self.meld_buy_and_sell,
         }
     }
@@ -179,12 +158,7 @@ impl Panels {
             Menu::Recovery => &mut self.recovery,
             Menu::RefreshCoins(_) => &mut self.create_spend,
             Menu::PsbtPreSelected(_) => &mut self.psbts,
-            #[cfg(all(
-                feature = "dev-coincube",
-                not(any(feature = "dev-meld", feature = "dev-onramp"))
-            ))]
-            Menu::BuyAndSell => &mut self.buy_and_sell,
-            #[cfg(any(feature = "dev-meld", feature = "dev-onramp"))]
+            #[cfg(feature = "dev-meld")]
             Menu::BuyAndSell => &mut self.meld_buy_and_sell,
         }
     }
@@ -673,7 +647,7 @@ impl App {
                     Task::none()
                 }
             }
-            #[cfg(any(feature = "dev-meld", feature = "dev-onramp"))]
+            #[cfg(feature = "dev-meld")]
             Message::View(view::Message::MeldBuySell(
                 view::MeldBuySellMessage::SessionCreated(url),
             )) => {
@@ -783,14 +757,14 @@ impl App {
                 // Use meld buy/sell view with embedded webview for Buy/Sell panel in webview mode
                 let panel_content = {
                     use crate::app::view::meld_buysell::meld_buysell_view_with_webview;
-                    #[cfg(any(feature = "dev-meld", feature = "dev-onramp"))]
+                    #[cfg(feature = "dev-meld")]
                     {
                         meld_buysell_view_with_webview(
                             &self.panels.meld_buy_and_sell,
                             webview_widget,
                         )
                     }
-                    #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+                    #[cfg(not(feature = "dev-coincube"))]
                     {
                         // Fallback to normal panel view if meld/onramp features are not enabled
                         self.panels.current().view(&self.cache)
