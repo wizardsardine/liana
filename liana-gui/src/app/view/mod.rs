@@ -1,10 +1,10 @@
-mod fiat;
 mod label;
 mod message;
 mod warning;
 
 pub mod coins;
 pub mod export;
+pub mod fiat;
 pub mod home;
 pub mod hw;
 pub mod psbt;
