@@ -53,11 +53,6 @@ impl MeldBuySellPanel {
         }
     }
 
-    pub fn start_session(&mut self) {
-        self.loading = true;
-        self.error = None;
-    }
-
     pub fn set_error(&mut self, error: String) {
         self.error = Some(error);
         self.loading = false;
@@ -314,7 +309,6 @@ fn meld_form_content(state: &MeldBuySellPanel) -> Element<'_, ViewMessage> {
         } else {
             ui_button::secondary(None, "Create Widget Session").width(Length::Fill)
         })
-        .push_maybe(network_info_panel(state))
         .align_x(Alignment::Center)
         .spacing(5)
         .max_width(500)
@@ -322,47 +316,8 @@ fn meld_form_content(state: &MeldBuySellPanel) -> Element<'_, ViewMessage> {
         .into()
 }
 
-fn network_info_panel(state: &MeldBuySellPanel) -> Option<Element<'_, ViewMessage>> {
-    // Simplified network info - Meld API handles provider-specific requirements
-    match state.network {
-        Network::Bitcoin => Some(
-            Container::new(
-                Column::new()
-                    .push(text("🌐 Mainnet Network").size(14).color(color::ORANGE))
-                    .push(Space::with_height(Length::Fixed(5.0)))
-                    .push(text("Using Bitcoin mainnet").size(12).color(color::GREY_3))
-                    .push(
-                        text("Address formats: 1..., 3..., bc1...")
-                            .size(12)
-                            .color(color::GREY_3),
-                    )
-                    .spacing(2),
-            )
-            .padding(10)
-            .style(theme::card::simple)
-            .into(),
-        ),
-        _ => Some(
-            Container::new(
-                Column::new()
-                    .push(text("🧪 Testnet Network").size(14).color(color::ORANGE))
-                    .push(Space::with_height(Length::Fixed(5.0)))
-                    .push(text("Using Bitcoin testnet").size(12).color(color::GREY_3))
-                    .push(
-                        text("Address formats: 2..., tb1..., bcrt1...")
-                            .size(12)
-                            .color(color::GREY_3),
-                    )
-                    .spacing(2),
-            )
-            .padding(10)
-            .style(theme::card::simple)
-            .into(),
-        ),
-    }
-}
-
-fn success_content(widget_url: &str) -> Element<'_, ViewMessage> {
+#[allow(unused)]
+fn _success_content(widget_url: &str) -> Element<'_, ViewMessage> {
     Column::new()
         .push({
             // Show the webview widget with a launch button

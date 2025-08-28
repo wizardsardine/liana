@@ -36,7 +36,6 @@ pub enum Message {
     ExportPsbt,
     ImportPsbt,
     OpenUrl(String),
-    BuySell(BuySellMessage),
     #[cfg(feature = "dev-meld")]
     MeldBuySell(MeldBuySellMessage),
     #[cfg(feature = "webview")]
@@ -148,29 +147,9 @@ pub enum CreateRbfMessage {
     Confirm,
 }
 
-#[derive(Debug, Clone)]
-pub enum BuySellMessage {
-    ShowModal,
-    CloseModal,
-    ShowAccountSelection,
-    HideAccountSelection,
-    #[cfg(all(
-        feature = "dev-coincube",
-        not(any(feature = "dev-meld", feature = "dev-onramp"))
-    ))]
-    SelectAccountType(AccountType),
-    GetStarted,
-    GoBack,
-    FormFieldEdited(String, String),
-    ToggleTermsAcceptance,
-    CreateAccount,
-}
-
 #[cfg(feature = "dev-meld")]
 #[derive(Debug, Clone)]
 pub enum MeldBuySellMessage {
-    ShowModal,
-    CloseModal,
     WalletAddressChanged(String),
     CountryCodeChanged(String),
     SourceAmountChanged(String),

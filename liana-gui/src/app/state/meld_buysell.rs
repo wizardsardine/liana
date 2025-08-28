@@ -40,31 +40,20 @@ impl State for MeldBuySellPanel {
         message: Message,
     ) -> Task<Message> {
         match message {
-            Message::View(ViewMessage::MeldBuySell(MeldBuySellMessage::ShowModal)) => {
-                // No longer needed - form is always visible
-                Task::none()
-            }
-            Message::View(ViewMessage::MeldBuySell(MeldBuySellMessage::CloseModal)) => {
-                // No longer needed - form is always visible
-                Task::none()
-            }
             Message::View(ViewMessage::MeldBuySell(MeldBuySellMessage::WalletAddressChanged(
                 address,
             ))) => {
                 self.set_wallet_address(address);
-                Task::none()
             }
             Message::View(ViewMessage::MeldBuySell(MeldBuySellMessage::CountryCodeChanged(
                 code,
             ))) => {
                 self.set_country_code(code);
-                Task::none()
             }
             Message::View(ViewMessage::MeldBuySell(MeldBuySellMessage::SourceAmountChanged(
                 amount,
             ))) => {
                 self.set_source_amount(amount);
-                Task::none()
             }
 
             Message::View(ViewMessage::MeldBuySell(MeldBuySellMessage::CreateSession)) => {
@@ -77,13 +66,12 @@ impl State for MeldBuySellPanel {
                     self.widget_url = None;
                     self.widget_session_created = None;
                     self.error = None;
+                    self.loading = true;
 
-                    self.start_session();
+                    // init session
                     let wallet_address = self.wallet_address.value.clone();
                     let country_code = self.country_code.value.clone();
                     let source_amount = self.source_amount.value.clone();
-                    // Use Transak as the default payment provider
-                    let provider = ServiceProvider::Transak;
 
                     tracing::info!(
                         "🚀 [MELD] Making fresh API call with: address={}, country={}, amount={}",
@@ -92,23 +80,13 @@ impl State for MeldBuySellPanel {
                         source_amount
                     );
 
-                    // Add safety checks before making API call
-                    if wallet_address.is_empty()
-                        || country_code.is_empty()
-                        || source_amount.is_empty()
-                    {
-                        tracing::error!("❌ [MELD] Invalid form data - cannot create session");
-                        return Task::done(Message::View(ViewMessage::MeldBuySell(
-                            MeldBuySellMessage::SessionError("Invalid form data".to_string()),
-                        )));
-                    }
-
-                    Task::perform(
+                    return Task::perform(
                         create_meld_session(
                             wallet_address,
                             country_code,
                             source_amount,
-                            provider,
+                            // Use Transak as the default payment provider
+                            ServiceProvider::Transak,
                             self.network,
                         ),
                         |result| match result {
@@ -128,10 +106,9 @@ impl State for MeldBuySellPanel {
                                 ))
                             }
                         },
-                    )
+                    );
                 } else {
                     tracing::warn!("⚠️ [MELD] Cannot create session - form validation failed");
-                    Task::none()
                 }
             }
             Message::View(ViewMessage::MeldBuySell(MeldBuySellMessage::SessionCreated(
@@ -144,14 +121,12 @@ impl State for MeldBuySellPanel {
                     "Auto-opening widget URL in embedded webview: {}",
                     widget_url
                 );
+
                 return Task::done(Message::View(ViewMessage::OpenWebview(widget_url)));
             }
             Message::View(ViewMessage::MeldBuySell(MeldBuySellMessage::OpenWidget(widget_url))) => {
                 // Log the URL we're trying to open
                 tracing::info!("Attempting to open widget URL: {}", widget_url);
-
-                // Use embedded webview - webview is mandatory
-                tracing::info!("Opening widget URL in embedded webview");
                 return Task::done(Message::View(ViewMessage::OpenWebview(widget_url)));
             }
             Message::View(ViewMessage::MeldBuySell(MeldBuySellMessage::CopyUrl(widget_url))) => {
@@ -258,29 +233,23 @@ impl State for MeldBuySellPanel {
                     );
                     self.set_error("Could not copy to clipboard automatically. Please copy the URL manually from the display above.".to_string());
                 }
-
-                Task::none()
             }
             Message::View(ViewMessage::MeldBuySell(MeldBuySellMessage::SessionError(error))) => {
                 self.set_error(error);
-                Task::none()
             }
             Message::View(ViewMessage::MeldBuySell(MeldBuySellMessage::UrlCopied)) => {
                 // Show success message for copied URL
                 tracing::info!("URL copied to clipboard successfully");
-                Task::none()
             }
             Message::View(ViewMessage::MeldBuySell(MeldBuySellMessage::CopyError)) => {
                 self.set_error(
                     "Failed to copy URL to clipboard. Please copy manually.".to_string(),
                 );
-                Task::none()
             }
             Message::View(ViewMessage::MeldBuySell(MeldBuySellMessage::ResetForm)) => {
                 self.error = None;
                 self.widget_url = None;
                 self.widget_session_created = None;
-                Task::none()
             }
             Message::View(ViewMessage::MeldBuySell(MeldBuySellMessage::GoBackToForm)) => {
                 tracing::info!("🔄 [MELD] Going back to form - clearing all session data");
@@ -297,7 +266,7 @@ impl State for MeldBuySellPanel {
                 tracing::info!("🔄 [MELD] Session data cleared, form reset to initial state");
 
                 // Also close the webview
-                Task::done(Message::View(ViewMessage::CloseWebview))
+                return Task::done(Message::View(ViewMessage::CloseWebview));
             }
             Message::View(ViewMessage::MeldBuySell(MeldBuySellMessage::OpenWidgetInNewWindow(
                 widget_url,
@@ -349,11 +318,11 @@ impl State for MeldBuySellPanel {
                     // If WSL commands failed, try Linux commands
                     if !success {
                         let linux_commands = [
-                            ("xdg-open", vec![&widget_url]),
-                            ("firefox", vec![&widget_url]),
-                            ("google-chrome", vec![&widget_url]),
-                            ("chromium", vec![&widget_url]),
-                            ("sensible-browser", vec![&widget_url]),
+                            ("xdg-open", [&widget_url]),
+                            ("firefox", [&widget_url]),
+                            ("google-chrome", [&widget_url]),
+                            ("chromium", [&widget_url]),
+                            ("sensible-browser", [&widget_url]),
                         ];
 
                         for (cmd, args) in &linux_commands {
@@ -375,11 +344,11 @@ impl State for MeldBuySellPanel {
                     tracing::error!("All browser opening methods failed for new window");
                     self.set_error("Could not open browser automatically. Please copy the URL manually and paste it into your browser.".to_string());
                 }
-
-                Task::none()
             }
-            _ => Task::none(),
-        }
+            _ => {}
+        };
+
+        Task::none()
     }
 
     fn reload(

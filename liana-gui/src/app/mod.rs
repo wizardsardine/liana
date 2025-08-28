@@ -1,3 +1,4 @@
+#[cfg(feature = "dev-coincube")]
 pub mod buysell;
 pub mod cache;
 pub mod config;
@@ -29,6 +30,15 @@ pub enum WebviewMessage {
     Action(WebviewAction),
     Created,
     UrlChanged(String),
+}
+
+// Create optimized webview with performance settings
+#[cfg(feature = "webview")]
+fn init_webview<E: iced_webview::Engine + Default>() -> iced_webview::WebView<E, WebviewMessage>
+{
+    WebView::new()
+        .on_create_view(WebviewMessage::Created)
+        .on_url_change(WebviewMessage::UrlChanged)
 }
 
 pub use liana::miniscript::bitcoin;
@@ -174,7 +184,7 @@ pub struct App {
 
     // Ultralight webview component for Meld widget integration with performance optimizations
     #[cfg(feature = "webview")]
-    webview: WebView<Ultralight, WebviewMessage>,
+    webview: Option<WebView<Ultralight, WebviewMessage>>,
 
     // Flag to indicate when webview should be rendered instead of normal panels
     webview_mode: bool,
@@ -228,12 +238,7 @@ impl App {
                 wallet,
                 internal_bitcoind,
                 #[cfg(feature = "webview")]
-                webview: {
-                    // Create optimized webview with performance settings
-                    WebView::new()
-                        .on_create_view(WebviewMessage::Created)
-                        .on_url_change(WebviewMessage::UrlChanged)
-                },
+                webview: None,
                 webview_mode: false,
                 webview_loading: false,
                 webview_ready: false,
@@ -501,6 +506,8 @@ impl App {
             Message::View(view::Message::Clipboard(text)) => clipboard::write(text),
 
             Message::View(view::Message::OpenWebview(url)) => {
+                tracing::info!("Opening widget URL in embedded webview");
+
                 // Load URL into Ultralight webview
                 #[cfg(feature = "webview")]
                 {
@@ -511,8 +518,8 @@ impl App {
                     self.current_webview_url = Some(url.clone());
 
                     // Create webview with URL string and immediately update to ensure content loads
-                    let create_task = self
-                        .webview
+                    let webview = self.webview.get_or_insert_with(init_webview);
+                    let create_task = webview
                         .update(WebviewAction::CreateView(PageType::Url(url)))
                         .map(Self::map_webview_message_static);
 
@@ -521,7 +528,7 @@ impl App {
                         WebviewAction::Update,
                     )));
 
-                    Task::batch(vec![create_task, immediate_update])
+                    Task::batch([create_task, immediate_update])
                 }
                 #[cfg(not(feature = "webview"))]
                 Task::none()
@@ -541,17 +548,15 @@ impl App {
                         | WebViewAction::GoToUrl(_)
                 );
 
-                let main_task = self
-                    .webview
-                    .update(action)
-                    .map(Self::map_webview_message_static);
+                let webview = self.webview.get_or_insert_with(init_webview);
+                let main_task = webview.update(action).map(Self::map_webview_message_static);
 
                 if needs_update {
                     // Add a single update after actions that change content/size
                     let update_task = Task::done(Message::View(view::Message::WebviewAction(
                         WebViewAction::Update,
                     )));
-                    Task::batch(vec![main_task, update_task])
+                    Task::batch([main_task, update_task])
                 } else {
                     main_task
                 }
@@ -571,7 +576,7 @@ impl App {
                 let update_task = Task::done(Message::View(view::Message::WebviewAction(
                     iced_webview::Action::Update,
                 )));
-                Task::batch(vec![switch_task, update_task])
+                Task::batch([switch_task, update_task])
             }
             #[cfg(feature = "webview")]
             Message::View(view::Message::SwitchToWebview(index)) => {
@@ -581,15 +586,14 @@ impl App {
                 self.current_webview_index = Some(index);
 
                 // Send ChangeView action to webview and immediately update to display content
-                use iced_webview::Action as WebViewAction;
-                let change_task = self
-                    .webview
-                    .update(WebViewAction::ChangeView(index))
+                let webview = self.webview.get_or_insert_with(init_webview);
+                let change_task = webview
+                    .update(WebviewAction::ChangeView(index))
                     .map(Self::map_webview_message_static);
                 let update_task = Task::done(Message::View(view::Message::WebviewAction(
-                    WebViewAction::Update,
+                    WebviewAction::Update,
                 )));
-                Task::batch(vec![change_task, update_task])
+                Task::batch([change_task, update_task])
             }
             #[cfg(feature = "webview")]
             Message::View(view::Message::WebviewUrlChanged(url)) => {
@@ -631,8 +635,8 @@ impl App {
 
                     // Resize webview to match meld container size (800px width, 600px height for better fit)
                     let webview_size = Size::new(800, 600);
-                    let resize_task = self
-                        .webview
+                    let webview = self.webview.get_or_insert_with(init_webview);
+                    let resize_task = webview
                         .update(WebViewAction::Resize(webview_size))
                         .map(Self::map_webview_message_static);
 
@@ -641,7 +645,7 @@ impl App {
                         WebViewAction::CreateView(PageType::Url(url.clone())),
                     )));
 
-                    Task::batch(vec![resize_task, create_task])
+                    Task::batch([resize_task, create_task])
                 } else {
                     tracing::warn!("🌐 [LIANA] No URL available for webview");
                     Task::none()
@@ -671,8 +675,8 @@ impl App {
 
                     // Set webview size to match the meld container (600px width, 600px height)
                     let container_size = Size::new(600, 600);
-                    let resize_task = self
-                        .webview
+                    let webview = self.webview.get_or_insert_with(init_webview);
+                    let resize_task = webview
                         .update(WebViewAction::Resize(container_size))
                         .map(Self::map_webview_message_static);
 
@@ -684,7 +688,7 @@ impl App {
                         )),
                     );
 
-                    Task::batch(vec![resize_task, panel_update_task])
+                    Task::batch([resize_task, panel_update_task])
                 }
                 #[cfg(not(feature = "webview"))]
                 {
@@ -745,7 +749,7 @@ impl App {
                 let webview_widget = {
                     use crate::app::view::webview::meld_webview_widget_ultralight;
                     Some(meld_webview_widget_ultralight(
-                        Some(&self.webview),
+                        self.webview.as_ref(),
                         self.current_webview_url.as_deref(),
                         self.show_webview,
                         self.webview_ready,
