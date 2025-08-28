@@ -7,7 +7,11 @@ use liana::miniscript::{
 };
 use std::collections::HashMap;
 
-use super::{context, Error};
+use super::{
+    context,
+    step::descriptor::editor::key::{EditKeyAliasMessage, SelectKeySourceMessage, SelectedKey},
+    Error,
+};
 use crate::{
     app::{
         settings::{self, ProviderKey},
@@ -17,7 +21,7 @@ use crate::{
     download::{DownloadError, Progress},
     export::ImportExportMessage,
     hw::HardwareWalletMessage,
-    installer::descriptor::{Key, PathKind},
+    installer::descriptor::PathKind,
     node::{
         bitcoind::{Bitcoind, ConfigField, RpcAuthType},
         electrum, NodeType,
@@ -68,6 +72,8 @@ pub enum Message {
     WalletAliasEdited(String),
     SelectAccount(Fingerprint, ChildNumber),
     OpenUrl(String),
+    SelectKeySource(SelectKeySourceMessage),
+    EditKeyAlias(EditKeyAliasMessage),
 }
 
 impl Close for Message {
@@ -160,14 +166,17 @@ pub enum InternalBitcoindMsg {
 pub enum DefineDescriptor {
     ChangeTemplate(context::DescriptorTemplate),
     ImportDescriptor(String),
-    KeysEdited(Vec<(usize, usize)>, Key),
+    // NOTE: KeysEdit & KeysEdited takes a Vec<coordinate>
+    // in order to assign a key to several path from a single
+    // modal call
+    KeysEdited(Vec<(usize, usize)>, SelectedKey),
     KeysEdit(PathKind, Vec<(usize, usize)>),
     Path(usize, DefinePath),
     AddRecoveryPath,
     AddSafetyNetPath,
-    KeyModal(ImportKeyModal),
     ThresholdSequenceModal(ThresholdSequenceModal),
     Reset,
+    AliasEdited(Fingerprint, String /* alias*/),
 }
 
 #[allow(clippy::large_enum_variant)]
@@ -186,21 +195,8 @@ pub enum DefinePath {
 pub enum DefineKey {
     Delete,
     Edit,
+    EditAlias,
     Clipboard(String),
-}
-
-#[derive(Debug, Clone)]
-pub enum ImportKeyModal {
-    FetchedKey(Result<Key, Error>),
-    XPubEdited(String),
-    NameEdited(String),
-    ManuallyImportXpub,
-    ConfirmXpub,
-    UseToken(services::keys::api::KeyKind),
-    TokenEdited(String),
-    ConfirmToken,
-    SelectKey(usize),
-    ImportXpub(Network),
 }
 
 #[derive(Debug, Clone)]

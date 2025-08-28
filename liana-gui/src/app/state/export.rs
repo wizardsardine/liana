@@ -4,7 +4,7 @@ use std::{
 };
 
 use iced::{Subscription, Task};
-use liana_ui::{component::modal::Modal, widget::Element};
+use liana_ui::{widget::modal::Modal, widget::Element};
 use tokio::task::JoinHandle;
 
 use crate::{

@@ -1,6 +1,7 @@
 mod cursor;
 mod editor;
 mod menu;
+pub mod modal;
 pub mod text_input;
 
 use crate::theme::Theme;

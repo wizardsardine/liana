@@ -6,9 +6,9 @@ use iced::{
 
 use liana::miniscript::bitcoin::Network;
 use liana_ui::{
-    component::{button, card, modal::Modal, network_banner, notification, text::*},
+    component::{button, card, network_banner, notification, text::*},
     icon, image, theme,
-    widget::*,
+    widget::{modal::Modal, Column, Container, Element, Row},
 };
 use lianad::config::ConfigError;
 use tokio::runtime::Handle;

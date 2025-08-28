@@ -11,7 +11,7 @@ use liana::{
 use lianad::commands::CoinStatus;
 
 use liana_ui::component::toast;
-use liana_ui::{component::modal, widget::Element};
+use liana_ui::{widget::modal, widget::Element};
 
 use crate::daemon::model::LabelsLoader;
 use crate::export::{ImportExportMessage, ImportExportType, Progress};

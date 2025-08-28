@@ -10,8 +10,8 @@ use liana::{
     spend::{SpendCreationError, MAX_FEERATE},
 };
 use liana_ui::{
-    component::{form, modal::Modal},
-    widget::*,
+    component::form,
+    widget::{modal::Modal, Element},
 };
 use lianad::commands::CoinStatus;
 

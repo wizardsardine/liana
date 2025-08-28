@@ -19,6 +19,10 @@ pub fn arrow_down() -> Text<'static> {
     bootstrap_icon('\u{F128}')
 }
 
+pub fn arrow_back() -> Text<'static> {
+    bootstrap_icon('\u{F12E}')
+}
+
 pub fn arrow_right() -> Text<'static> {
     bootstrap_icon('\u{F138}')
 }
@@ -137,6 +141,26 @@ pub fn wrench_icon() -> Text<'static> {
 
 pub fn link_icon() -> Text<'static> {
     bootstrap_icon('\u{F470}')
+}
+
+pub fn paste_icon() -> Text<'static> {
+    bootstrap_icon('\u{F72E}')
+}
+
+pub fn usb_icon() -> Text<'static> {
+    bootstrap_icon('\u{F6DC}')
+}
+
+pub fn usb_drive_icon() -> Text<'static> {
+    bootstrap_icon('\u{F6F2}')
+}
+
+pub fn hdd_icon() -> Text<'static> {
+    bootstrap_icon('\u{F412}')
+}
+
+pub fn enter_box_icon() -> Text<'static> {
+    bootstrap_icon('\u{F1BE}')
 }
 
 const ICONEX_ICONS: Font = Font::with_name("Untitled1");
