@@ -4,8 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::error::Error;
 use std::fmt;
 
-const MELD_API_BASE_URL: &str = "https://api-sb.meld.io";
-const MELD_API_ENDPOINT: &str = "/crypto/session/widget";
+const MELD_API_BASE_URL: &str = "https://api-sb.meld.io/crypto/session/widget";
 const MELD_AUTH_HEADER: &str = "BASIC WePYLDhjQ9xBCsedwgRGm5:3Jg4JnemxqoBPHTbHtcMuszbhkGHQmh";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -129,10 +128,8 @@ impl MeldClient {
             external_customer_id: unique_customer_id,
         };
 
-        let url = format!("{}{}", MELD_API_BASE_URL, MELD_API_ENDPOINT);
-
         // Debug logging
-        tracing::info!("Sending request to: {}", url);
+        tracing::info!("Sending request to: {}", MELD_API_BASE_URL);
         tracing::info!(
             "Request body: {}",
             serde_json::to_string_pretty(&request).unwrap_or_default()
@@ -140,7 +137,7 @@ impl MeldClient {
 
         let response = self
             .client
-            .post(&url)
+            .post(MELD_API_BASE_URL)
             .header("Authorization", MELD_AUTH_HEADER)
             .header("Content-Type", "application/json")
             .json(&request)
@@ -148,11 +145,9 @@ impl MeldClient {
             .await?;
 
         if response.status().is_success() {
-            let response_text = response.text().await?;
-            tracing::info!("Meld API response: {}", response_text);
+            let session_response: MeldSessionResponse = response.json().await?;
+            tracing::info!("Meld API response: {:?}", session_response);
 
-            let session_response: MeldSessionResponse =
-                serde_json::from_str(&response_text).map_err(|e| MeldError::Serialization(e))?;
             Ok(session_response)
         } else {
             let status = response.status();
@@ -161,7 +156,7 @@ impl MeldClient {
                 .await
                 .unwrap_or_else(|_| "Unknown error".to_string());
             tracing::error!("Meld API error: HTTP {}: {}", status, error_text);
-            Err(MeldError::Api(format!("HTTP {}: {}", status, error_text)))
+            Err(MeldError::Api(error_text))
         }
     }
 }

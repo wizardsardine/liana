@@ -8,8 +8,8 @@ mod settings;
 mod spend;
 mod transactions;
 
-#[cfg(feature = "dev-meld")]
-pub mod meld_buysell;
+#[cfg(feature = "dev-coincube")]
+pub mod buysell;
 
 use std::convert::TryInto;
 use std::sync::Arc;

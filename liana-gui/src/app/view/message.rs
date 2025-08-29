@@ -25,6 +25,8 @@ pub enum Message {
     Settings(SettingsMessage),
     CreateSpend(CreateSpendMessage),
     ImportSpend(ImportSpendMessage),
+    #[cfg(feature = "dev-coincube")]
+    BuySell(BuySellMessage),
     Spend(SpendTxMessage),
     Next,
     Previous,
@@ -36,19 +38,6 @@ pub enum Message {
     ExportPsbt,
     ImportPsbt,
     OpenUrl(String),
-    #[cfg(feature = "dev-meld")]
-    MeldBuySell(MeldBuySellMessage),
-    #[cfg(feature = "webview")]
-    WebviewAction(iced_webview::Action),
-    #[cfg(feature = "webview")]
-    WebviewCreated,
-    #[cfg(feature = "webview")]
-    WebviewUrlChanged(String),
-    #[cfg(feature = "webview")]
-    SwitchToWebview(u32),
-    OpenWebview(String),
-    CloseWebview,
-    ShowWebView,
 }
 
 impl Close for Message {
@@ -149,19 +138,22 @@ pub enum CreateRbfMessage {
 
 #[cfg(feature = "dev-meld")]
 #[derive(Debug, Clone)]
-pub enum MeldBuySellMessage {
+pub enum BuySellMessage {
     WalletAddressChanged(String),
     CountryCodeChanged(String),
     SourceAmountChanged(String),
 
     CreateSession,
-    SessionCreated(String),         // widget_url
     SessionError(String),
-    OpenWidget(String),            // widget_url
     OpenWidgetInNewWindow(String), // widget_url
-    CopyUrl(String),               // widget_url
-    UrlCopied,
-    CopyError,
+
     ResetForm,
     GoBackToForm,
+
+    // webview messages
+    WebviewCreated,
+    WebviewAction(iced_webview::Action),
+    WebviewUrlChanged(String),
+    WebviewOpenUrl(String),
+    CloseWebview,
 }

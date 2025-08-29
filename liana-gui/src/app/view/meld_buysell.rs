@@ -2,6 +2,7 @@ use iced::{
     widget::{text, Space},
     Alignment, Length,
 };
+use iced_webview::{Ultralight, WebView};
 
 use liana::miniscript::bitcoin::Network;
 use liana_ui::{
@@ -12,10 +13,9 @@ use liana_ui::{
     widget::*,
 };
 
-use crate::app::view::{MeldBuySellMessage, Message as ViewMessage};
+use crate::app::view::{BuySellMessage, Message as ViewMessage};
 
-#[derive(Debug, Clone)]
-pub struct MeldBuySellPanel {
+pub struct BuySellPanel {
     pub wallet_address: form::Value<String>,
     pub country_code: form::Value<String>,
     pub source_amount: form::Value<String>,
@@ -24,9 +24,25 @@ pub struct MeldBuySellPanel {
     pub network: Network,
     pub widget_url: Option<String>,
     pub widget_session_created: Option<String>,
+
+    // Ultralight webview component for Meld widget integration with performance optimizations
+    pub webview: Option<WebView<Ultralight, crate::app::state::buysell::WebviewMessage>>,
+
+    // Flag to track webview loading state
+    pub webview_loading: bool,
+
+    // Current webview URL for display
+    pub current_webview_url: Option<String>,
+
+    // Timestamp when webview loading started (for timeout detection)
+    pub webview_loading_start: Option<std::time::Instant>,
+
+    // Webview management fields (following iced_webview example pattern)
+    pub num_webviews: u32,
+    pub current_webview_index: Option<u32>,
 }
 
-impl MeldBuySellPanel {
+impl BuySellPanel {
     pub fn new(network: Network) -> Self {
         Self {
             wallet_address: form::Value {
@@ -50,6 +66,13 @@ impl MeldBuySellPanel {
             network,
             widget_url: None,
             widget_session_created: None,
+
+            webview: None,
+            webview_loading: false,
+            current_webview_url: None,
+            webview_loading_start: None,
+            num_webviews: 0,
+            current_webview_index: None,
         }
     }
 
@@ -133,12 +156,17 @@ impl MeldBuySellPanel {
     }
 }
 
-pub fn meld_buysell_view(state: &MeldBuySellPanel) -> Element<'_, ViewMessage> {
-    meld_buysell_view_with_webview(state, None)
+pub fn meld_buysell_view(state: &BuySellPanel) -> Element<'_, ViewMessage> {
+    let webview_element = state.webview.as_ref().map(|s| {
+        s.view()
+            .map(|a| ViewMessage::BuySell(BuySellMessage::WebviewAction(a)))
+    });
+
+    meld_buysell_view_with_webview(state, webview_element)
 }
 
 pub fn meld_buysell_view_with_webview<'a>(
-    state: &'a MeldBuySellPanel,
+    state: &'a BuySellPanel,
     webview_widget: Option<Element<'a, ViewMessage>>,
 ) -> Element<'a, ViewMessage> {
     Container::new({
@@ -166,7 +194,7 @@ pub fn meld_buysell_view_with_webview<'a>(
                             border: iced::Border::default(),
                             shadow: iced::Shadow::default(),
                         })
-                        .on_press(ViewMessage::MeldBuySell(MeldBuySellMessage::GoBackToForm)),
+                        .on_press(ViewMessage::BuySell(BuySellMessage::GoBackToForm)),
                     )
                     .push(Space::with_width(Length::Fill))
                     .align_y(Alignment::Center),
@@ -236,7 +264,7 @@ pub fn meld_buysell_view_with_webview<'a>(
     .into()
 }
 
-fn meld_form_content(state: &MeldBuySellPanel) -> Element<'_, ViewMessage> {
+fn meld_form_content(state: &BuySellPanel) -> Element<'_, ViewMessage> {
     Column::new()
         .push_maybe(state.error.as_ref().map(|err| {
             Container::new(text(err).size(14).color(color::RED))
@@ -255,7 +283,7 @@ fn meld_form_content(state: &MeldBuySellPanel) -> Element<'_, ViewMessage> {
                     };
 
                     form::Form::new_trimmed(placeholder, &state.wallet_address, |value| {
-                        ViewMessage::MeldBuySell(MeldBuySellMessage::WalletAddressChanged(value))
+                        ViewMessage::BuySell(BuySellMessage::WalletAddressChanged(value))
                     })
                     .size(16)
                     .padding(15)
@@ -271,9 +299,7 @@ fn meld_form_content(state: &MeldBuySellPanel) -> Element<'_, ViewMessage> {
                         .push(Space::with_height(Length::Fixed(5.0)))
                         .push(
                             form::Form::new_trimmed("US", &state.country_code, |value| {
-                                ViewMessage::MeldBuySell(MeldBuySellMessage::CountryCodeChanged(
-                                    value,
-                                ))
+                                ViewMessage::BuySell(BuySellMessage::CountryCodeChanged(value))
                             })
                             .size(16)
                             .padding(15),
@@ -288,9 +314,7 @@ fn meld_form_content(state: &MeldBuySellPanel) -> Element<'_, ViewMessage> {
                         .push(Space::with_height(Length::Fixed(5.0)))
                         .push(
                             form::Form::new_trimmed("60", &state.source_amount, |value| {
-                                ViewMessage::MeldBuySell(MeldBuySellMessage::SourceAmountChanged(
-                                    value,
-                                ))
+                                ViewMessage::BuySell(BuySellMessage::SourceAmountChanged(value))
                             })
                             .size(16)
                             .padding(15),
@@ -304,7 +328,7 @@ fn meld_form_content(state: &MeldBuySellPanel) -> Element<'_, ViewMessage> {
             ui_button::secondary(None, "Creating Session...").width(Length::Fill)
         } else if state.is_form_valid() {
             ui_button::primary(None, "Create Widget Session")
-                .on_press(ViewMessage::MeldBuySell(MeldBuySellMessage::CreateSession))
+                .on_press(ViewMessage::BuySell(BuySellMessage::CreateSession))
                 .width(Length::Fill)
         } else {
             ui_button::secondary(None, "Create Widget Session").width(Length::Fill)
@@ -313,103 +337,5 @@ fn meld_form_content(state: &MeldBuySellPanel) -> Element<'_, ViewMessage> {
         .spacing(5)
         .max_width(500)
         .width(Length::Fill)
-        .into()
-}
-
-#[allow(unused)]
-fn _success_content(widget_url: &str) -> Element<'_, ViewMessage> {
-    Column::new()
-        .push({
-            // Show the webview widget with a launch button
-            #[cfg(feature = "webview")]
-            {
-                // Webview widget placeholder - will be properly integrated later
-                let webview_container: Element<'_, ViewMessage> = Container::new(
-                    Column::new()
-                        .push(text("🌐 Meld Payment Widget").size(16).color(color::GREEN))
-                        .push(Space::with_height(Length::Fixed(10.0)))
-                        .push(
-                            text("Webview integration active")
-                                .size(14)
-                                .color(color::GREY_3),
-                        )
-                        .push(Space::with_height(Length::Fixed(15.0)))
-                        .push(
-                            ui_button::primary(None, "Open in Browser")
-                                .on_press(ViewMessage::MeldBuySell(MeldBuySellMessage::OpenWidget(
-                                    widget_url.to_string(),
-                                )))
-                                .width(Length::Fill),
-                        )
-                        .align_x(Alignment::Center)
-                        .spacing(5),
-                )
-                .width(Length::Fill)
-                .height(Length::Fixed(350.0))
-                .padding(20)
-                .style(theme::card::simple)
-                .into();
-                webview_container
-            }
-            #[cfg(not(feature = "webview"))]
-            {
-                // Fallback UI when webview is not available
-                Container::new(
-                    Column::new()
-                        .push(text("🌐 Meld Widget").size(16).color(color::GREEN))
-                        .push(Space::with_height(Length::Fixed(10.0)))
-                        .push(
-                            text("Webview not available. Choose how to open the widget:")
-                                .size(14)
-                                .color(color::GREY_3),
-                        )
-                        .push(Space::with_height(Length::Fixed(15.0)))
-                        .push(
-                            ui_button::primary(None, "Open in Browser")
-                                .on_press(ViewMessage::MeldBuySell(MeldBuySellMessage::OpenWidget(
-                                    widget_url.to_string(),
-                                )))
-                                .width(Length::Fill),
-                        )
-                        .push(Space::with_height(Length::Fixed(10.0)))
-                        .push(
-                            ui_button::secondary(None, "Open in New Window")
-                                .on_press(ViewMessage::MeldBuySell(
-                                    MeldBuySellMessage::OpenWidgetInNewWindow(
-                                        widget_url.to_string(),
-                                    ),
-                                ))
-                                .width(Length::Fill),
-                        )
-                        .push(Space::with_height(Length::Fixed(10.0)))
-                        .push(
-                            Container::new(text(widget_url).size(11).color(color::BLUE))
-                                .padding(10)
-                                .style(theme::card::simple)
-                                .width(Length::Fill),
-                        )
-                        .push(Space::with_height(Length::Fixed(10.0)))
-                        .push(
-                            ui_button::secondary(None, "Copy URL")
-                                .on_press(ViewMessage::MeldBuySell(MeldBuySellMessage::CopyUrl(
-                                    widget_url.to_string(),
-                                )))
-                                .width(Length::Fill),
-                        )
-                        .align_x(Alignment::Center),
-                )
-                .width(Length::Fill)
-                .height(Length::Fixed(350.0))
-                .padding(20)
-                .style(theme::card::simple)
-                .into()
-            }
-        })
-        .push(Space::with_height(Length::Fixed(15.0)))
-        .push(
-            ui_button::secondary(None, "Create Another Session")
-                .on_press(ViewMessage::MeldBuySell(MeldBuySellMessage::ResetForm))
-                .width(Length::Fill),
-        )
         .into()
 }

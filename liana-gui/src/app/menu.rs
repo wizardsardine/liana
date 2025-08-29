@@ -13,8 +13,7 @@ pub enum Menu {
     Recovery,
     RefreshCoins(Vec<OutPoint>),
     PsbtPreSelected(Txid),
-    #[cfg(feature = "dev-coincube")]
-    BuyAndSell, //(Option<AccountInfo>),
+    BuySell, //(Option<AccountInfo>),
 }
 
 /// Pre-selectable settings options.
