@@ -147,9 +147,6 @@ pub enum BuySellMessage {
     SessionError(String),
     OpenWidgetInNewWindow(String), // widget_url
 
-    ResetForm,
-    GoBackToForm,
-
     // webview messages
     WebviewCreated,
     WebviewAction(iced_webview::Action),

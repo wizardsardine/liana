@@ -87,30 +87,6 @@ impl State for BuySellPanel {
                 self.set_source_amount(amount);
             }
 
-            BuySellMessage::ResetForm => {
-                self.error = None;
-                self.widget_url = None;
-                self.widget_session_created = None;
-            }
-            BuySellMessage::GoBackToForm => {
-                tracing::info!("🔄 [MELD] Going back to form - clearing all session data");
-
-                // Complete session reset - clear all session-related data
-                self.widget_url = None;
-                self.error = None;
-                self.widget_session_created = None;
-                self.loading = false;
-
-                // Don't reset form validation - keep existing valid data
-                // Only reset session-related data, not form data
-
-                tracing::info!("🔄 [MELD] Session data cleared, form reset to initial state");
-
-                // Also close the webview
-                return Task::done(Message::View(ViewMessage::BuySell(
-                    BuySellMessage::CloseWebview,
-                )));
-            }
             BuySellMessage::OpenWidgetInNewWindow(widget_url) => {
                 // Open in a new window/browser tab - similar to OpenWidget but explicitly for new window
                 tracing::info!(
@@ -193,12 +169,6 @@ impl State for BuySellPanel {
                         "🚀 [MELD] Creating new session - clearing any existing session data"
                     );
 
-                    // Ensure we start with a clean slate
-                    self.widget_url = None;
-                    self.widget_session_created = None;
-                    self.error = None;
-                    self.loading = true;
-
                     // init session
                     let wallet_address = self.wallet_address.value.clone();
                     let country_code = self.country_code.value.clone();
@@ -256,7 +226,6 @@ impl State for BuySellPanel {
                 // Load URL into Ultralight webview
                 tracing::info!("🌐 [LIANA] Loading Ultralight webview with URL: {}", url);
 
-                self.webview_loading = true;
                 self.webview_loading_start = Some(std::time::Instant::now());
                 self.current_webview_url = Some(url.clone());
 
@@ -278,7 +247,7 @@ impl State for BuySellPanel {
             }
             BuySellMessage::WebviewCreated => {
                 tracing::info!("🌐 [LIANA] Webview created successfully");
-                self.webview_loading = false;
+                // self.webview_ready = true;
 
                 // Increment view count and switch to the first view (following iced_webview example pattern)
                 self.num_webviews += 1;
@@ -291,11 +260,10 @@ impl State for BuySellPanel {
                 tracing::info!("🌐 [LIANA] Closing webview");
 
                 self.webview = None;
-                self.webview_loading = false;
+                self.webview_ready = false;
                 self.current_webview_url = None;
                 self.webview_loading_start = None;
                 self.num_webviews = 0;
-                self.current_webview_index = None;
             }
         };
 
@@ -312,7 +280,7 @@ impl State for BuySellPanel {
 
     fn subscription(&self) -> iced::Subscription<Message> {
         // Add webview update subscription for smooth rendering when webview is active
-        if self.webview.is_some() && !self.webview_loading {
+        if self.webview.is_some() && self.webview_ready {
             // 24 FPS refresh rate
             iced::time::every(Duration::from_millis(40)).map(|_| {
                 Message::View(ViewMessage::BuySell(BuySellMessage::WebviewAction(

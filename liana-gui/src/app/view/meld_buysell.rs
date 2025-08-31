@@ -19,17 +19,14 @@ pub struct BuySellPanel {
     pub wallet_address: form::Value<String>,
     pub country_code: form::Value<String>,
     pub source_amount: form::Value<String>,
-    pub loading: bool,
     pub error: Option<String>,
     pub network: Network,
-    pub widget_url: Option<String>,
-    pub widget_session_created: Option<String>,
 
     // Ultralight webview component for Meld widget integration with performance optimizations
     pub webview: Option<WebView<Ultralight, crate::app::state::buysell::WebviewMessage>>,
 
     // Flag to track webview loading state
-    pub webview_loading: bool,
+    pub webview_ready: bool,
 
     // Current webview URL for display
     pub current_webview_url: Option<String>,
@@ -39,7 +36,6 @@ pub struct BuySellPanel {
 
     // Webview management fields (following iced_webview example pattern)
     pub num_webviews: u32,
-    pub current_webview_index: Option<u32>,
 }
 
 impl BuySellPanel {
@@ -61,31 +57,24 @@ impl BuySellPanel {
                 valid: true,
             },
 
-            loading: false,
             error: None,
             network,
-            widget_url: None,
-            widget_session_created: None,
 
             webview: None,
-            webview_loading: false,
+            webview_ready: false,
             current_webview_url: None,
             webview_loading_start: None,
             num_webviews: 0,
-            current_webview_index: None,
         }
     }
 
     pub fn set_error(&mut self, error: String) {
         self.error = Some(error);
-        self.loading = false;
     }
 
     pub fn session_created(&mut self, widget_url: String) {
-        self.loading = false;
         self.error = None;
-        self.widget_url = Some(widget_url.clone());
-        self.widget_session_created = Some(widget_url);
+        self.current_webview_url = Some(widget_url);
     }
 
     pub fn set_wallet_address(&mut self, address: String) {
@@ -156,20 +145,19 @@ impl BuySellPanel {
     }
 }
 
-pub fn meld_buysell_view(state: &BuySellPanel) -> Element<'_, ViewMessage> {
-    let webview_element = state.webview.as_ref().map(|s| {
-        s.view()
-            .map(|a| ViewMessage::BuySell(BuySellMessage::WebviewAction(a)))
-    });
-
-    meld_buysell_view_with_webview(state, webview_element)
-}
-
-pub fn meld_buysell_view_with_webview<'a>(
-    state: &'a BuySellPanel,
-    webview_widget: Option<Element<'a, ViewMessage>>,
-) -> Element<'a, ViewMessage> {
+pub fn meld_buysell_view<'a>(state: &'a BuySellPanel) -> Element<'a, ViewMessage> {
     Container::new({
+        // attempt to render webview
+        let webview_widget = state
+            .webview_ready
+            .then(|| {
+                state.webview.as_ref().map(|s| {
+                    s.view()
+                        .map(|a| ViewMessage::BuySell(BuySellMessage::WebviewAction(a)))
+                })
+            })
+            .flatten();
+
         let mut column = Column::new();
 
         // Check if webview widget is provided (before consuming it)
@@ -194,7 +182,7 @@ pub fn meld_buysell_view_with_webview<'a>(
                             border: iced::Border::default(),
                             shadow: iced::Shadow::default(),
                         })
-                        .on_press(ViewMessage::BuySell(BuySellMessage::GoBackToForm)),
+                        .on_press(ViewMessage::BuySell(BuySellMessage::CloseWebview)),
                     )
                     .push(Space::with_width(Length::Fill))
                     .align_y(Alignment::Center),
@@ -210,8 +198,8 @@ pub fn meld_buysell_view_with_webview<'a>(
 
         // Only show form content if no session has been created (i.e., no webview is active)
         column
-            .push_maybe(if state.widget_url.is_none() && !has_webview {
-                Some(
+            .push_maybe(
+                (state.current_webview_url.is_none() && !has_webview).then(|| {
                     Column::new()
                         .push(Space::with_height(Length::Fixed(10.0)))
                         .push(
@@ -239,21 +227,17 @@ pub fn meld_buysell_view_with_webview<'a>(
                                 )
                                 .push(Space::with_width(Length::Fill))
                                 .align_y(Alignment::Center),
-                        ),
-                )
-            } else {
-                None
-            })
-            .push_maybe(if state.widget_url.is_none() && !has_webview {
-                Some(Space::with_height(Length::Fixed(10.0)))
-            } else {
-                None
-            })
-            .push_maybe(if state.widget_url.is_none() && !has_webview {
-                Some(meld_form_content(state))
-            } else {
-                None
-            })
+                        )
+                }),
+            )
+            .push_maybe(
+                (state.current_webview_url.is_none() && !has_webview)
+                    .then(|| Space::with_height(Length::Fixed(10.0))),
+            )
+            .push_maybe(
+                (state.current_webview_url.is_none() && !has_webview)
+                    .then(|| meld_form_content(state)),
+            )
             .align_x(Alignment::Center)
             .spacing(5) // Reduced spacing for more compact layout
             .max_width(600)
@@ -324,7 +308,7 @@ fn meld_form_content(state: &BuySellPanel) -> Element<'_, ViewMessage> {
                 ),
         )
         .push(Space::with_height(Length::Fixed(30.0)))
-        .push(if state.loading {
+        .push(if state.current_webview_url.is_some() {
             ui_button::secondary(None, "Creating Session...").width(Length::Fill)
         } else if state.is_form_valid() {
             ui_button::primary(None, "Create Widget Session")
