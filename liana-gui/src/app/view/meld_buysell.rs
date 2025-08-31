@@ -158,17 +158,11 @@ pub fn meld_buysell_view<'a>(state: &'a BuySellPanel) -> Element<'a, ViewMessage
             })
             .flatten();
 
-        let mut column = Column::new();
-
-        // Check if webview widget is provided (before consuming it)
-        let has_webview = webview_widget.is_some();
-        dbg!(&has_webview);
-
-        // Only show Previous button if we have a webview session active
-        if has_webview {
-            column = column.push(
+        let column = match webview_widget {
+            Some(webview) => Column::new().push(
                 Row::new()
                     .push(
+                        // Only show Previous button if we have a webview session active
                         Button::new(
                             Row::new()
                                 .push(previous_icon().color(color::GREY_2))
@@ -185,22 +179,15 @@ pub fn meld_buysell_view<'a>(state: &'a BuySellPanel) -> Element<'a, ViewMessage
                         })
                         .on_press(ViewMessage::BuySell(BuySellMessage::CloseWebview)),
                     )
+                    // Insert webview widget right after the Previous button if provided
                     .push(Space::with_width(Length::Fill))
+                    .push(Space::with_height(Length::Fixed(20.0)))
+                    .push(webview)
                     .align_y(Alignment::Center),
-            );
-        }
-
-        // Insert webview widget right after the Previous button if provided
-        if let Some(webview) = webview_widget {
-            column = column
-                .push(Space::with_height(Length::Fixed(20.0)))
-                .push(webview);
-        }
-
-        // Only show form content if no session has been created (i.e., no webview is active)
-        column
-            .push_maybe(
-                (state.current_webview_url.is_none() && !has_webview).then(|| {
+            ),
+            // Only show form content if no session has been created (i.e., no webview is active)
+            None => Column::new()
+                .push(
                     Column::new()
                         .push(Space::with_height(Length::Fixed(10.0)))
                         .push(
@@ -228,17 +215,13 @@ pub fn meld_buysell_view<'a>(state: &'a BuySellPanel) -> Element<'a, ViewMessage
                                 )
                                 .push(Space::with_width(Length::Fill))
                                 .align_y(Alignment::Center),
-                        )
-                }),
-            )
-            .push_maybe(
-                (state.current_webview_url.is_none() && !has_webview)
-                    .then(|| Space::with_height(Length::Fixed(10.0))),
-            )
-            .push_maybe(
-                (state.current_webview_url.is_none() && !has_webview)
-                    .then(|| meld_form_content(state)),
-            )
+                        ),
+                )
+                .push(Space::with_height(Length::Fixed(10.0)))
+                .push(meld_form_content(state)),
+        };
+
+        column
             .align_x(Alignment::Center)
             .spacing(5) // Reduced spacing for more compact layout
             .max_width(600)
