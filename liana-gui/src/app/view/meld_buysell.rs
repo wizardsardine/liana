@@ -2,7 +2,7 @@ use iced::{
     widget::{text, Space},
     Alignment, Length,
 };
-use iced_webview::{Ultralight, WebView};
+use iced_webview::{advanced::WebView, Ultralight};
 
 use liana::miniscript::bitcoin::Network;
 use liana_ui::{
@@ -15,6 +15,11 @@ use liana_ui::{
 
 use crate::app::view::{BuySellMessage, Message as ViewMessage};
 
+pub struct ViewState {
+    url: String,
+    ready: bool,
+}
+
 pub struct BuySellPanel {
     pub wallet_address: form::Value<String>,
     pub country_code: form::Value<String>,
@@ -25,17 +30,11 @@ pub struct BuySellPanel {
     // Ultralight webview component for Meld widget integration with performance optimizations
     pub webview: Option<WebView<Ultralight, crate::app::state::buysell::WebviewMessage>>,
 
-    // Flag to track webview loading state
-    pub webview_ready: bool,
+    // Current webview page url
+    pub session_url: Option<String>,
 
-    // Current webview URL for display
-    pub current_webview_url: Option<String>,
-
-    // Timestamp when webview loading started (for timeout detection)
-    pub webview_loading_start: Option<std::time::Instant>,
-
-    // Webview management fields (following iced_webview example pattern)
-    pub num_webviews: u32,
+    // Current active webview "page": view_id
+    pub active_page: Option<iced_webview::ViewId>,
 }
 
 impl BuySellPanel {
@@ -61,20 +60,13 @@ impl BuySellPanel {
             network,
 
             webview: None,
-            webview_ready: false,
-            current_webview_url: None,
-            webview_loading_start: None,
-            num_webviews: 0,
+            session_url: None,
+            active_page: None,
         }
     }
 
     pub fn set_error(&mut self, error: String) {
         self.error = Some(error);
-    }
-
-    pub fn session_created(&mut self, widget_url: String) {
-        self.error = None;
-        self.current_webview_url = Some(widget_url);
     }
 
     pub fn set_wallet_address(&mut self, address: String) {
@@ -149,10 +141,11 @@ pub fn meld_buysell_view<'a>(state: &'a BuySellPanel) -> Element<'a, ViewMessage
     Container::new({
         // attempt to render webview
         let webview_widget = state
-            .webview_ready
-            .then(|| {
+            .active_page
+            .as_ref()
+            .map(|v| {
                 state.webview.as_ref().map(|s| {
-                    s.view()
+                    s.view(*v)
                         .map(|a| ViewMessage::BuySell(BuySellMessage::WebviewAction(a)))
                 })
             })
@@ -292,7 +285,7 @@ fn meld_form_content(state: &BuySellPanel) -> Element<'_, ViewMessage> {
                 ),
         )
         .push(Space::with_height(Length::Fixed(30.0)))
-        .push(if state.current_webview_url.is_some() {
+        .push(if state.active_page.is_some() {
             ui_button::secondary(None, "Creating Session...").width(Length::Fill)
         } else if state.is_form_valid() {
             ui_button::primary(None, "Create Widget Session")

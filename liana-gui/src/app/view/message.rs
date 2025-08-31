@@ -147,9 +147,8 @@ pub enum BuySellMessage {
     SessionError(String),
 
     // webview messages
-    WebviewCreated,
-    WebviewAction(iced_webview::Action),
-    WebviewUrlChanged(String),
+    WebviewCreated(iced_webview::ViewId),
+    WebviewAction(iced_webview::advanced::Action),
     WebviewOpenUrl(String),
     CloseWebview,
 }

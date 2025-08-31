@@ -59,7 +59,7 @@ impl fmt::Display for MeldError {
         match self {
             MeldError::Network(e) => write!(f, "Network error: {}", e),
             MeldError::Serialization(e) => write!(f, "Serialization error: {}", e),
-            MeldError::Api(msg) => write!(f, "API error: {}", msg),
+            MeldError::Api(msg) => fmt::Display::fmt(msg, f),
         }
     }
 }
@@ -150,13 +150,20 @@ impl MeldClient {
 
             Ok(session_response)
         } else {
+            #[derive(Deserialize, Debug)]
+            struct MeldErrorMessageExtract {
+                message: String,
+            }
+
             let status = response.status();
-            let error_text = response
-                .text()
-                .await
-                .unwrap_or_else(|_| "Unknown error".to_string());
-            tracing::error!("Meld API error: HTTP {}: {}", status, error_text);
-            Err(MeldError::Api(error_text))
+            let error_text = response.json::<MeldErrorMessageExtract>().await.ok();
+
+            tracing::error!("Meld API error: HTTP {}: {:?}", status, error_text);
+            Err(MeldError::Api(
+                error_text
+                    .map(|e| e.message)
+                    .unwrap_or("Unknown Meld API Error".to_string()),
+            ))
         }
     }
 }
