@@ -195,11 +195,13 @@ impl State for BuySellPanel {
         if self.webview.is_some() {
             if let Some(id) = self.active_page {
                 // 24 FPS refresh rate
-                return iced::time::every(Duration::from_millis(40)).map(move |_| {
-                    Message::View(ViewMessage::BuySell(BuySellMessage::WebviewAction(
-                        iced_webview::advanced::Action::Update(id),
-                    )))
-                });
+                return iced::time::every(Duration::from_millis(40))
+                    .with(id)
+                    .map(|(i, ..)| {
+                        Message::View(ViewMessage::BuySell(BuySellMessage::WebviewAction(
+                            iced_webview::advanced::Action::Update(i),
+                        )))
+                    });
             }
         };
 

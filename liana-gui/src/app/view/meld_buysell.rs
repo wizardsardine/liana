@@ -15,11 +15,6 @@ use liana_ui::{
 
 use crate::app::view::{BuySellMessage, Message as ViewMessage};
 
-pub struct ViewState {
-    url: String,
-    ready: bool,
-}
-
 pub struct BuySellPanel {
     pub wallet_address: form::Value<String>,
     pub country_code: form::Value<String>,
