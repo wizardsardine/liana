@@ -87,82 +87,6 @@ impl State for BuySellPanel {
                 self.set_source_amount(amount);
             }
 
-            BuySellMessage::OpenWidgetInNewWindow(widget_url) => {
-                // Open in a new window/browser tab - similar to OpenWidget but explicitly for new window
-                tracing::info!(
-                    "Attempting to open widget URL in new window: {}",
-                    widget_url
-                );
-
-                let mut success = false;
-
-                // Method 1: Try open::that_detached first (non-blocking)
-                match open::that_detached(&widget_url) {
-                    Ok(_) => {
-                        tracing::info!(
-                            "Successfully opened widget URL in new window with detached method"
-                        );
-                        success = true;
-                    }
-                    Err(e) => {
-                        tracing::warn!("Failed to open browser with detached method: {}", e);
-                    }
-                }
-
-                // Method 2: Try WSL-specific commands first, then Linux commands
-                if !success {
-                    // WSL-specific commands (these work better in WSL)
-                    let wsl_commands = [
-                        ("cmd.exe", vec!["/c", "start", &widget_url]),
-                        ("powershell.exe", vec!["-c", "Start-Process", &widget_url]),
-                        ("explorer.exe", vec![&widget_url]),
-                    ];
-
-                    // Try WSL commands first
-                    for (cmd, args) in &wsl_commands {
-                        match std::process::Command::new(cmd).args(args).spawn() {
-                            Ok(_) => {
-                                tracing::info!("Successfully opened widget URL in new window with WSL command: {}", cmd);
-                                success = true;
-                                break;
-                            }
-                            Err(_) => {
-                                tracing::debug!("WSL command {} not available", cmd);
-                            }
-                        }
-                    }
-
-                    // If WSL commands failed, try Linux commands
-                    if !success {
-                        let linux_commands = [
-                            ("xdg-open", [&widget_url]),
-                            ("firefox", [&widget_url]),
-                            ("google-chrome", [&widget_url]),
-                            ("chromium", [&widget_url]),
-                            ("sensible-browser", [&widget_url]),
-                        ];
-
-                        for (cmd, args) in &linux_commands {
-                            match std::process::Command::new(cmd).args(args).spawn() {
-                                Ok(_) => {
-                                    tracing::info!("Successfully opened widget URL in new window with Linux command: {}", cmd);
-                                    success = true;
-                                    break;
-                                }
-                                Err(_) => {
-                                    tracing::debug!("Linux command {} not available", cmd);
-                                }
-                            }
-                        }
-                    }
-                }
-
-                if !success {
-                    tracing::error!("All browser opening methods failed for new window");
-                    self.set_error("Could not open browser automatically. Please copy the URL manually and paste it into your browser.".to_string());
-                }
-            }
-
             BuySellMessage::CreateSession => {
                 if self.is_form_valid() {
                     tracing::info!(
@@ -247,7 +171,7 @@ impl State for BuySellPanel {
             }
             BuySellMessage::WebviewCreated => {
                 tracing::info!("🌐 [LIANA] Webview created successfully");
-                // self.webview_ready = true;
+                self.webview_ready = true;
 
                 // Increment view count and switch to the first view (following iced_webview example pattern)
                 self.num_webviews += 1;

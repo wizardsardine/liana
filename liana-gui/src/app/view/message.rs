@@ -145,7 +145,6 @@ pub enum BuySellMessage {
 
     CreateSession,
     SessionError(String),
-    OpenWidgetInNewWindow(String), // widget_url
 
     // webview messages
     WebviewCreated,

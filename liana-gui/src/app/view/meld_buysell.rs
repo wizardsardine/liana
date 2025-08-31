@@ -162,6 +162,7 @@ pub fn meld_buysell_view<'a>(state: &'a BuySellPanel) -> Element<'a, ViewMessage
 
         // Check if webview widget is provided (before consuming it)
         let has_webview = webview_widget.is_some();
+        dbg!(&has_webview);
 
         // Only show Previous button if we have a webview session active
         if has_webview {
