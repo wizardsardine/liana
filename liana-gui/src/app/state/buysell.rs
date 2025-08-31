@@ -1,10 +1,7 @@
 use iced::Task;
 use std::{sync::Arc, time::Duration};
 
-use iced_webview::{
-    advanced::{Action as WebviewAction, WebView},
-    PageType,
-};
+use iced_webview::{advanced::Action as WebviewAction, PageType};
 use liana_ui::widget::Element;
 
 use crate::{
@@ -32,12 +29,6 @@ use crate::{
 pub enum WebviewMessage {
     Action(iced_webview::advanced::Action),
     Created(iced_webview::ViewId),
-}
-
-/// Create optimized webview with performance settings
-fn init_webview<E: iced_webview::Engine + Default>(
-) -> iced_webview::advanced::WebView<E, WebviewMessage> {
-    WebView::new().on_create_view(WebviewMessage::Created)
 }
 
 /// Map webview messages to main app messages (static version for Task::map)
@@ -141,8 +132,7 @@ impl State for BuySellPanel {
 
             // webview logic
             BuySellMessage::WebviewAction(action) => {
-                let webview = self.webview.get_or_insert_with(init_webview);
-                return webview.update(action).map(map_webview_message_static);
+                return self.webview.update(action).map(map_webview_message_static);
             }
             BuySellMessage::WebviewOpenUrl(url) => {
                 // Load URL into Ultralight webview
@@ -150,9 +140,8 @@ impl State for BuySellPanel {
                 self.session_url = Some(url.clone());
 
                 // Create webview with URL string and immediately update to ensure content loads
-                let webview = self.webview.get_or_insert_with(init_webview);
-
-                return webview
+                return self
+                    .webview
                     .update(WebviewAction::CreateView(PageType::Url(url)))
                     .map(map_webview_message_static);
             }
@@ -165,7 +154,6 @@ impl State for BuySellPanel {
                 // resize webview to 600x600
                 let resize_task = self
                     .webview
-                    .get_or_insert_with(init_webview)
                     .update(WebviewAction::Resize(iced::Size::new(600, 600)))
                     .map(map_webview_message_static);
 
@@ -174,8 +162,12 @@ impl State for BuySellPanel {
             BuySellMessage::CloseWebview => {
                 tracing::info!("🌐 [LIANA] Closing webview");
 
-                self.webview = None;
-                self.active_page = None;
+                if let Some(id) = self.active_page.take() {
+                    return self
+                        .webview
+                        .update(WebviewAction::CloseView(id))
+                        .map(map_webview_message_static);
+                };
             }
         };
 
@@ -192,18 +184,16 @@ impl State for BuySellPanel {
 
     fn subscription(&self) -> iced::Subscription<Message> {
         // Add webview update subscription for smooth rendering when webview is active
-        if self.webview.is_some() {
-            if let Some(id) = self.active_page {
-                // 24 FPS refresh rate
-                return iced::time::every(Duration::from_millis(40))
-                    .with(id)
-                    .map(|(i, ..)| {
-                        Message::View(ViewMessage::BuySell(BuySellMessage::WebviewAction(
-                            iced_webview::advanced::Action::Update(i),
-                        )))
-                    });
-            }
-        };
+        if let Some(id) = self.active_page {
+            // 24 FPS refresh rate
+            return iced::time::every(Duration::from_millis(40))
+                .with(id)
+                .map(|(i, ..)| {
+                    Message::View(ViewMessage::BuySell(BuySellMessage::WebviewAction(
+                        iced_webview::advanced::Action::Update(i),
+                    )))
+                });
+        }
 
         iced::Subscription::none()
     }

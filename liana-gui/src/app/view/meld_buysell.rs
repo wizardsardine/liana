@@ -23,7 +23,7 @@ pub struct BuySellPanel {
     pub network: Network,
 
     // Ultralight webview component for Meld widget integration with performance optimizations
-    pub webview: Option<WebView<Ultralight, crate::app::state::buysell::WebviewMessage>>,
+    pub webview: WebView<Ultralight, crate::app::state::buysell::WebviewMessage>,
 
     // Current webview page url
     pub session_url: Option<String>,
@@ -54,7 +54,8 @@ impl BuySellPanel {
             error: None,
             network,
 
-            webview: None,
+            webview: WebView::new()
+                .on_create_view(crate::app::state::buysell::WebviewMessage::Created),
             session_url: None,
             active_page: None,
         }
@@ -135,16 +136,12 @@ impl BuySellPanel {
 pub fn meld_buysell_view<'a>(state: &'a BuySellPanel) -> Element<'a, ViewMessage> {
     Container::new({
         // attempt to render webview
-        let webview_widget = state
-            .active_page
-            .as_ref()
-            .map(|v| {
-                state.webview.as_ref().map(|s| {
-                    s.view(*v)
-                        .map(|a| ViewMessage::BuySell(BuySellMessage::WebviewAction(a)))
-                })
-            })
-            .flatten();
+        let webview_widget = state.active_page.as_ref().map(|v| {
+            state
+                .webview
+                .view(*v)
+                .map(|a| ViewMessage::BuySell(BuySellMessage::WebviewAction(a)))
+        });
 
         let column = match webview_widget {
             Some(webview) => Column::new().push(
