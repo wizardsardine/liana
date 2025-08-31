@@ -131,6 +131,10 @@ impl State for BuySellPanel {
             }
 
             // webview logic
+            BuySellMessage::ViewTick(id) => {
+                let action = WebviewAction::Update(id);
+                return self.webview.update(action).map(map_webview_message_static);
+            }
             BuySellMessage::WebviewAction(action) => {
                 return self.webview.update(action).map(map_webview_message_static);
             }
@@ -146,18 +150,10 @@ impl State for BuySellPanel {
                     .map(map_webview_message_static);
             }
             BuySellMessage::WebviewCreated(id) => {
-                tracing::info!("🌐 [LIANA] Webview created successfully");
+                tracing::info!("🌐 [LIANA] Activating Webview Page: {}", id);
 
                 // set active page to selected view id
                 self.active_page = Some(id);
-
-                // resize webview to 600x600
-                let resize_task = self
-                    .webview
-                    .update(WebviewAction::Resize(iced::Size::new(600, 600)))
-                    .map(map_webview_message_static);
-
-                return resize_task;
             }
             BuySellMessage::CloseWebview => {
                 tracing::info!("🌐 [LIANA] Closing webview");
@@ -186,13 +182,9 @@ impl State for BuySellPanel {
         // Add webview update subscription for smooth rendering when webview is active
         if let Some(id) = self.active_page {
             // 24 FPS refresh rate
-            return iced::time::every(Duration::from_millis(40))
+            return iced::time::every(Duration::from_millis(500))
                 .with(id)
-                .map(|(i, ..)| {
-                    Message::View(ViewMessage::BuySell(BuySellMessage::WebviewAction(
-                        iced_webview::advanced::Action::Update(i),
-                    )))
-                });
+                .map(|(i, ..)| Message::View(ViewMessage::BuySell(BuySellMessage::ViewTick(i))));
         }
 
         iced::Subscription::none()

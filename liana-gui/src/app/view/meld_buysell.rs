@@ -1,5 +1,5 @@
 use iced::{
-    widget::{text, Space},
+    widget::{container, text, Space},
     Alignment, Length,
 };
 use iced_webview::{advanced::WebView, Ultralight};
@@ -144,32 +144,37 @@ pub fn meld_buysell_view<'a>(state: &'a BuySellPanel) -> Element<'a, ViewMessage
         });
 
         let column = match webview_widget {
-            Some(webview) => Column::new().push(
-                Row::new()
-                    .push(
-                        // Only show Previous button if we have a webview session active
-                        Button::new(
-                            Row::new()
-                                .push(previous_icon().color(color::GREY_2))
-                                .push(Space::with_width(Length::Fixed(5.0)))
-                                .push(text("Previous").color(color::GREY_2))
-                                .spacing(5)
-                                .align_y(Alignment::Center),
+            Some(w) => Column::new()
+                .push(
+                    Row::new()
+                        .push(
+                            // Only show Previous button if we have a webview session active
+                            Button::new(
+                                Row::new()
+                                    .push(previous_icon().color(color::GREY_2))
+                                    .push(Space::with_width(Length::Fixed(5.0)))
+                                    .push(text("Previous").color(color::GREY_2))
+                                    .spacing(5)
+                                    .align_y(Alignment::Center),
+                            )
+                            .style(|_theme, _status| iced::widget::button::Style {
+                                background: None,
+                                text_color: color::GREY_2,
+                                border: iced::Border::default(),
+                                shadow: iced::Shadow::default(),
+                            })
+                            .on_press(ViewMessage::BuySell(BuySellMessage::CloseWebview)),
                         )
-                        .style(|_theme, _status| iced::widget::button::Style {
-                            background: None,
-                            text_color: color::GREY_2,
-                            border: iced::Border::default(),
-                            shadow: iced::Shadow::default(),
-                        })
-                        .on_press(ViewMessage::BuySell(BuySellMessage::CloseWebview)),
-                    )
-                    // Insert webview widget right after the Previous button if provided
-                    .push(Space::with_width(Length::Fill))
-                    .push(Space::with_height(Length::Fixed(20.0)))
-                    .push(webview)
-                    .align_y(Alignment::Center),
-            ),
+                        // Insert webview widget right after the Previous button if provided
+                        .push(Space::with_width(Length::Fill))
+                        .align_y(Alignment::Center),
+                )
+                .push(Space::with_height(Length::Fixed(20.0)))
+                .push(
+                    container(w)
+                        .width(Length::Fixed(600.0))
+                        .height(Length::Fixed(600.0)),
+                ),
             // Only show form content if no session has been created (i.e., no webview is active)
             None => Column::new()
                 .push(

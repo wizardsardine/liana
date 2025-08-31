@@ -148,6 +148,7 @@ pub enum BuySellMessage {
 
     // webview messages
     WebviewCreated(iced_webview::ViewId),
+    ViewTick(iced_webview::ViewId),
     WebviewAction(iced_webview::advanced::Action),
     WebviewOpenUrl(String),
     CloseWebview,
