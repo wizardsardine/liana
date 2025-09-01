@@ -64,11 +64,11 @@ impl State for BuySellPanel {
         _cache: &Cache,
         message: Message,
     ) -> Task<Message> {
-        tracing::info!("[BUYSELL]: {:?}", message);
-
         let Message::View(ViewMessage::BuySell(message)) = message else {
             return Task::none();
         };
+
+        tracing::info!("[BUYSELL]: {:?}", message);
 
         match message {
             BuySellMessage::WalletAddressChanged(address) => {
@@ -172,13 +172,13 @@ impl State for BuySellPanel {
             BuySellMessage::CloseWebview => {
                 tracing::info!("🌐 [LIANA] Closing webview");
 
-                if let Some(id) = self.active_page.take() {
-                    return self
-                        .webview
-                        .get_or_insert_with(init_webview)
+                self.session_url = None;
+                if let (Some(webview), Some(id)) = (self.webview.as_mut(), self.active_page.take())
+                {
+                    return webview
                         .update(WebviewAction::CloseView(id))
                         .map(map_webview_message_static);
-                };
+                }
             }
         };
 
