@@ -9,7 +9,10 @@ use std::{
     time,
 };
 
-use encrypted_backup::{EncryptedBackup, ToPayload};
+use encrypted_backup::{
+    descriptor::{descr_to_dpks, dpks_to_derivation_keys_paths},
+    Content, Decrypted, EncryptedBackup, ToPayload,
+};
 use tokio::sync::mpsc::{channel, unbounded_channel, Sender, UnboundedReceiver, UnboundedSender};
 
 use async_hwi::bitbox::api::btc::Fingerprint;
@@ -779,16 +782,52 @@ pub async fn import_backup(
     // Load backup from file
     let mut file = File::open(&path)?;
 
-    let mut backup_str = String::new();
-    file.read_to_string(&mut backup_str)?;
-    backup_str = backup_str.trim().to_string();
+    let mut backup_bytes = Vec::<u8>::new();
+    file.read_to_end(&mut backup_bytes)?;
 
-    let backup: Result<Backup, _> = serde_json::from_str(&backup_str);
-    let backup = match backup {
-        Ok(psbt) => psbt,
-        Err(e) => {
-            return Err(Error::BackupImport(format!("{:?}", e)));
+    let default_error = Error::BackupImport("Fail to import backup: unknown format".to_string());
+
+    // first try to parse as encrypted backup
+    let backup: Backup = if let Ok(mut encrypted_backup) =
+        EncryptedBackup::new().set_encrypted_payload(&backup_bytes)
+    {
+        if encrypted_backup.get_content() != Content::WalletBackup {
+            return Err(Error::BackupImport(
+                "Encrypted file does not contains a backup.".to_string(),
+            ));
         }
+        let descriptor = wallet.main_descriptor.descriptor();
+        let dpks = descr_to_dpks(descriptor).expect("descriptor always have valid keys");
+        let (keys, _) = dpks_to_derivation_keys_paths(&dpks);
+        encrypted_backup = encrypted_backup.set_keys(keys);
+        let decrypted = encrypted_backup
+            .decrypt()
+            .map_err(|_| Error::BackupImport("Fail to decrypt file.".to_string()))?;
+        let backup_bytes = if let Decrypted::WalletBackup(bytes) = decrypted {
+            bytes
+        } else {
+            return Err(Error::BackupImport(
+                "File decrypted but does not contains a backup payload.".to_string(),
+            ));
+        };
+        let mut backup_str = String::from_utf8(backup_bytes).map_err(|_| {
+            Error::BackupImport(
+                "File decrypted but does not contains a valid utf8 backup payload.".to_string(),
+            )
+        })?;
+        backup_str = backup_str.trim().to_string();
+
+        serde_json::from_str(&backup_str).map_err(|_| {
+            Error::BackupImport(
+                "File decrypted but does not contains a valid backup payload.".to_string(),
+            )
+        })?
+    } else {
+        // else we try to parse as unencrypted backup
+        let mut backup_str = String::from_utf8(backup_bytes).map_err(|_| default_error.clone())?;
+        backup_str = backup_str.trim().to_string();
+
+        serde_json::from_str(&backup_str).map_err(|_| default_error)?
     };
 
     // get backend info
