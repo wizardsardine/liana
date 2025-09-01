@@ -448,7 +448,6 @@ pub mod global {
         where
             F: FnMut(&mut GlobalSettings),
         {
-            log::info!("GLobalSettings::update() write: {write}");
             let exists = path.is_file();
 
             let (mut global_settings, file) = if exists {
