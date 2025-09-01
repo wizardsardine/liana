@@ -170,11 +170,11 @@ impl State for BuySellPanel {
                 self.active_page = Some(id);
             }
             BuySellMessage::CloseWebview => {
-                tracing::info!("🌐 [LIANA] Closing webview");
-
                 self.session_url = None;
+
                 if let (Some(webview), Some(id)) = (self.webview.as_mut(), self.active_page.take())
                 {
+                    tracing::info!("🌐 [LIANA] Closing webview");
                     return webview
                         .update(WebviewAction::CloseView(id))
                         .map(map_webview_message_static);
@@ -194,8 +194,8 @@ impl State for BuySellPanel {
     fn subscription(&self) -> iced::Subscription<Message> {
         // Add webview update subscription for smooth rendering when webview is active
         if let Some(id) = self.active_page {
-            // 24 FPS refresh rate
-            return iced::time::every(Duration::from_millis(500))
+            // 4 FPS refresh rate
+            return iced::time::every(Duration::from_millis(250))
                 .with(id)
                 .map(|(i, ..)| Message::View(ViewMessage::BuySell(BuySellMessage::ViewTick(i))));
         }
