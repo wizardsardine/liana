@@ -23,7 +23,7 @@ pub struct BuySellPanel {
     pub network: Network,
 
     // Ultralight webview component for Meld widget integration with performance optimizations
-    pub webview: WebView<Ultralight, crate::app::state::buysell::WebviewMessage>,
+    pub webview: Option<WebView<Ultralight, crate::app::state::buysell::WebviewMessage>>,
 
     // Current webview page url
     pub session_url: Option<String>,
@@ -54,8 +54,7 @@ impl BuySellPanel {
             error: None,
             network,
 
-            webview: WebView::new()
-                .on_create_view(crate::app::state::buysell::WebviewMessage::Created),
+            webview: None,
             session_url: None,
             active_page: None,
         }
@@ -131,169 +130,175 @@ impl BuySellPanel {
             && !self.country_code.value.is_empty()
             && !self.source_amount.value.is_empty()
     }
-}
 
-pub fn meld_buysell_view<'a>(state: &'a BuySellPanel) -> Element<'a, ViewMessage> {
-    Container::new({
-        // attempt to render webview
-        let webview_widget = state.active_page.as_ref().map(|v| {
-            state
-                .webview
-                .view(*v)
-                .map(|a| ViewMessage::BuySell(BuySellMessage::WebviewAction(a)))
-        });
+    pub fn view<'a>(&'a self) -> Container<'a, ViewMessage> {
+        Container::new({
+            // attempt to render webview
+            let webview_widget = self
+                .active_page
+                .as_ref()
+                .map(|v| {
+                    self.webview.as_ref().map(|s| {
+                        s.view(*v)
+                            .map(|a| ViewMessage::BuySell(BuySellMessage::WebviewAction(a)))
+                    })
+                })
+                .flatten();
 
-        let column = match webview_widget {
-            Some(w) => Column::new()
-                .push(
-                    Row::new()
-                        .push(
-                            // Only show Previous button if we have a webview session active
-                            Button::new(
-                                Row::new()
-                                    .push(previous_icon().color(color::GREY_2))
-                                    .push(Space::with_width(Length::Fixed(5.0)))
-                                    .push(text("Previous").color(color::GREY_2))
-                                    .spacing(5)
-                                    .align_y(Alignment::Center),
-                            )
-                            .style(|_theme, _status| iced::widget::button::Style {
-                                background: None,
-                                text_color: color::GREY_2,
-                                border: iced::Border::default(),
-                                shadow: iced::Shadow::default(),
-                            })
-                            .on_press(ViewMessage::BuySell(BuySellMessage::CloseWebview)),
-                        )
-                        // Insert webview widget right after the Previous button if provided
-                        .push(Space::with_width(Length::Fill))
-                        .align_y(Alignment::Center),
-                )
-                .push(Space::with_height(Length::Fixed(20.0)))
-                .push(
-                    container(w)
-                        .width(Length::Fixed(600.0))
-                        .height(Length::Fixed(600.0)),
-                ),
-            // Only show form content if no session has been created (i.e., no webview is active)
-            None => Column::new()
-                .push(
-                    Column::new()
-                        .push(Space::with_height(Length::Fixed(10.0)))
-                        .push(
-                            Row::new()
-                                .push(Space::with_width(Length::Fill))
-                                .push(
+            let column = match webview_widget {
+                Some(w) => Column::new()
+                    .push(
+                        Row::new()
+                            .push(
+                                // Only show Previous button if we have a webview session active
+                                Button::new(
                                     Row::new()
-                                        .push(
-                                            Container::new(bitcoin_icon().size(24))
-                                                .style(theme::container::border)
-                                                .padding(10),
-                                        )
-                                        .push(Space::with_width(Length::Fixed(15.0)))
-                                        .push(
-                                            Column::new()
-                                                .push(
-                                                    text("COINCUBE").size(16).color(color::ORANGE),
-                                                )
-                                                .push(
-                                                    text("BUY/SELL").size(14).color(color::GREY_3),
-                                                )
-                                                .spacing(2),
-                                        )
+                                        .push(previous_icon().color(color::GREY_2))
+                                        .push(Space::with_width(Length::Fixed(5.0)))
+                                        .push(text("Previous").color(color::GREY_2))
+                                        .spacing(5)
                                         .align_y(Alignment::Center),
                                 )
-                                .push(Space::with_width(Length::Fill))
-                                .align_y(Alignment::Center),
-                        ),
-                )
-                .push(Space::with_height(Length::Fixed(10.0)))
-                .push(meld_form_content(state)),
-        };
+                                .style(|_theme, _status| iced::widget::button::Style {
+                                    background: None,
+                                    text_color: color::GREY_2,
+                                    border: iced::Border::default(),
+                                    shadow: iced::Shadow::default(),
+                                })
+                                .on_press(ViewMessage::BuySell(BuySellMessage::CloseWebview)),
+                            )
+                            // Insert webview widget right after the Previous button if provided
+                            .push(Space::with_width(Length::Fill))
+                            .align_y(Alignment::Center),
+                    )
+                    .push(Space::with_height(Length::Fixed(20.0)))
+                    .push(
+                        container(w)
+                            .width(Length::Fixed(600.0))
+                            .height(Length::Fixed(600.0)),
+                    ),
+                // Only show form content if no session has been created (i.e., no webview is active)
+                None => Column::new()
+                    .push(
+                        Column::new()
+                            .push(Space::with_height(Length::Fixed(10.0)))
+                            .push(
+                                Row::new()
+                                    .push(Space::with_width(Length::Fill))
+                                    .push(
+                                        Row::new()
+                                            .push(
+                                                Container::new(bitcoin_icon().size(24))
+                                                    .style(theme::container::border)
+                                                    .padding(10),
+                                            )
+                                            .push(Space::with_width(Length::Fixed(15.0)))
+                                            .push(
+                                                Column::new()
+                                                    .push(
+                                                        text("COINCUBE")
+                                                            .size(16)
+                                                            .color(color::ORANGE),
+                                                    )
+                                                    .push(
+                                                        text("BUY/SELL")
+                                                            .size(14)
+                                                            .color(color::GREY_3),
+                                                    )
+                                                    .spacing(2),
+                                            )
+                                            .align_y(Alignment::Center),
+                                    )
+                                    .push(Space::with_width(Length::Fill))
+                                    .align_y(Alignment::Center),
+                            ),
+                    )
+                    .push(Space::with_height(Length::Fixed(10.0)))
+                    .push(self.form_view()),
+            };
 
-        column
-            .align_x(Alignment::Center)
-            .spacing(5) // Reduced spacing for more compact layout
-            .max_width(600)
-            .width(Length::Fill)
-    })
-    .padding(iced::Padding::new(2.0).left(40.0).right(40.0).bottom(20.0)) // further reduced padding for compact layout
-    .center_x(Length::Fill)
-    .into()
-}
-
-fn meld_form_content(state: &BuySellPanel) -> Element<'_, ViewMessage> {
-    Column::new()
-        .push_maybe(state.error.as_ref().map(|err| {
-            Container::new(text(err).size(14).color(color::RED))
-                .padding(10)
-                .style(theme::card::invalid)
-        }))
-        .push(Space::with_height(Length::Fixed(20.0)))
-        .push(
-            Column::new()
-                .push(text("Wallet Address").size(14).color(color::GREY_3))
-                .push(Space::with_height(Length::Fixed(5.0)))
-                .push({
-                    let placeholder = match state.network {
-                        Network::Bitcoin => "Enter mainnet Bitcoin address (1, 3, bc1)",
-                        _ => "Enter testnet Bitcoin address (2, tb1, bcrt1)",
-                    };
-
-                    form::Form::new_trimmed(placeholder, &state.wallet_address, |value| {
-                        ViewMessage::BuySell(BuySellMessage::WalletAddressChanged(value))
-                    })
-                    .size(16)
-                    .padding(15)
-                })
-                .spacing(5),
-        )
-        .push(Space::with_height(Length::Fixed(20.0)))
-        .push(
-            Row::new()
-                .push(
-                    Column::new()
-                        .push(text("Country Code").size(14).color(color::GREY_3))
-                        .push(Space::with_height(Length::Fixed(5.0)))
-                        .push(
-                            form::Form::new_trimmed("US", &state.country_code, |value| {
-                                ViewMessage::BuySell(BuySellMessage::CountryCodeChanged(value))
-                            })
-                            .size(16)
-                            .padding(15),
-                        )
-                        .spacing(5)
-                        .width(Length::FillPortion(1)),
-                )
-                .push(Space::with_width(Length::Fixed(20.0)))
-                .push(
-                    Column::new()
-                        .push(text("Amount (USD)").size(14).color(color::GREY_3))
-                        .push(Space::with_height(Length::Fixed(5.0)))
-                        .push(
-                            form::Form::new_trimmed("60", &state.source_amount, |value| {
-                                ViewMessage::BuySell(BuySellMessage::SourceAmountChanged(value))
-                            })
-                            .size(16)
-                            .padding(15),
-                        )
-                        .spacing(5)
-                        .width(Length::FillPortion(1)),
-                ),
-        )
-        .push(Space::with_height(Length::Fixed(30.0)))
-        .push(if state.active_page.is_some() {
-            ui_button::secondary(None, "Creating Session...").width(Length::Fill)
-        } else if state.is_form_valid() {
-            ui_button::primary(None, "Create Widget Session")
-                .on_press(ViewMessage::BuySell(BuySellMessage::CreateSession))
+            column
+                .align_x(Alignment::Center)
+                .spacing(5) // Reduced spacing for more compact layout
+                .max_width(600)
                 .width(Length::Fill)
-        } else {
-            ui_button::secondary(None, "Create Widget Session").width(Length::Fill)
         })
-        .align_x(Alignment::Center)
-        .spacing(5)
-        .max_width(500)
-        .width(Length::Fill)
-        .into()
+        .padding(iced::Padding::new(2.0).left(40.0).right(40.0).bottom(20.0)) // further reduced padding for compact layout
+        .center_x(Length::Fill)
+    }
+
+    fn form_view<'a>(&'a self) -> Column<'a, ViewMessage> {
+        Column::new()
+            .push_maybe(self.error.as_ref().map(|err| {
+                Container::new(text(err).size(14).color(color::RED))
+                    .padding(10)
+                    .style(theme::card::invalid)
+            }))
+            .push(Space::with_height(Length::Fixed(20.0)))
+            .push(
+                Column::new()
+                    .push(text("Wallet Address").size(14).color(color::GREY_3))
+                    .push(Space::with_height(Length::Fixed(5.0)))
+                    .push({
+                        let placeholder = match self.network {
+                            Network::Bitcoin => "Enter mainnet Bitcoin address (1, 3, bc1)",
+                            _ => "Enter testnet Bitcoin address (2, tb1, bcrt1)",
+                        };
+
+                        form::Form::new_trimmed(placeholder, &self.wallet_address, |value| {
+                            ViewMessage::BuySell(BuySellMessage::WalletAddressChanged(value))
+                        })
+                        .size(16)
+                        .padding(15)
+                    })
+                    .spacing(5),
+            )
+            .push(Space::with_height(Length::Fixed(20.0)))
+            .push(
+                Row::new()
+                    .push(
+                        Column::new()
+                            .push(text("Country Code").size(14).color(color::GREY_3))
+                            .push(Space::with_height(Length::Fixed(5.0)))
+                            .push(
+                                form::Form::new_trimmed("US", &self.country_code, |value| {
+                                    ViewMessage::BuySell(BuySellMessage::CountryCodeChanged(value))
+                                })
+                                .size(16)
+                                .padding(15),
+                            )
+                            .spacing(5)
+                            .width(Length::FillPortion(1)),
+                    )
+                    .push(Space::with_width(Length::Fixed(20.0)))
+                    .push(
+                        Column::new()
+                            .push(text("Amount (USD)").size(14).color(color::GREY_3))
+                            .push(Space::with_height(Length::Fixed(5.0)))
+                            .push(
+                                form::Form::new_trimmed("60", &self.source_amount, |value| {
+                                    ViewMessage::BuySell(BuySellMessage::SourceAmountChanged(value))
+                                })
+                                .size(16)
+                                .padding(15),
+                            )
+                            .spacing(5)
+                            .width(Length::FillPortion(1)),
+                    ),
+            )
+            .push(Space::with_height(Length::Fixed(30.0)))
+            .push(if self.active_page.is_some() {
+                ui_button::secondary(None, "Creating Session...").width(Length::Fill)
+            } else if self.is_form_valid() {
+                ui_button::primary(None, "Create Widget Session")
+                    .on_press(ViewMessage::BuySell(BuySellMessage::CreateSession))
+                    .width(Length::Fill)
+            } else {
+                ui_button::secondary(None, "Create Widget Session").width(Length::Fill)
+            })
+            .align_x(Alignment::Center)
+            .spacing(5)
+            .max_width(500)
+            .width(Length::Fill)
+    }
 }

@@ -409,7 +409,10 @@ impl App {
                     Message::WalletUpdated(Ok(wallet)),
                 )
             }
-            Message::View(view::Message::Menu(menu)) => self.set_current_panel(menu),
+            Message::View(view::Message::Menu(menu)) => Task::batch([
+                self.panels.current_mut().close(),
+                self.set_current_panel(menu),
+            ]),
             Message::View(view::Message::OpenUrl(url)) => {
                 if let Err(e) = open::that_detached(&url) {
                     tracing::error!("Error opening '{}': {}", url, e);

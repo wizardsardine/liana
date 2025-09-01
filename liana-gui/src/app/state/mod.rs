@@ -57,6 +57,10 @@ pub trait State {
     fn subscription(&self) -> Subscription<Message> {
         Subscription::none()
     }
+
+    fn close(&mut self) -> Task<Message> {
+        Task::none()
+    }
     fn interrupt(&mut self) {}
     fn reload(
         &mut self,

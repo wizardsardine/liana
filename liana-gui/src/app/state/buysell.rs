@@ -1,7 +1,10 @@
 use iced::Task;
 use std::{sync::Arc, time::Duration};
 
-use iced_webview::{advanced::Action as WebviewAction, PageType};
+use iced_webview::{
+    advanced::{Action as WebviewAction, WebView},
+    PageType,
+};
 use liana_ui::widget::Element;
 
 use crate::{
@@ -14,12 +17,7 @@ use crate::{
         cache::Cache,
         message::Message,
         state::State,
-        view::{
-            self,
-            meld_buysell::{meld_buysell_view, BuySellPanel},
-            BuySellMessage, Message as ViewMessage,
-        },
-        wallet::Wallet,
+        view::{self, meld_buysell::BuySellPanel, BuySellMessage, Message as ViewMessage},
     },
     daemon::Daemon,
 };
@@ -43,6 +41,11 @@ fn map_webview_message_static(webview_msg: WebviewMessage) -> Message {
     }
 }
 
+/// lazily initialize the webview to reduce latent memory usage
+fn init_webview() -> WebView<iced_webview::Ultralight, WebviewMessage> {
+    WebView::new().on_create_view(crate::app::state::buysell::WebviewMessage::Created)
+}
+
 impl Default for BuySellPanel {
     fn default() -> Self {
         Self::new(liana::miniscript::bitcoin::Network::Bitcoin)
@@ -52,7 +55,7 @@ impl Default for BuySellPanel {
 impl State for BuySellPanel {
     fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, ViewMessage> {
         // Return the meld view directly - dashboard wrapper will be applied by app/mod.rs
-        view::dashboard(&app::Menu::BuySell, cache, None, meld_buysell_view(self))
+        view::dashboard(&app::Menu::BuySell, cache, None, self.view())
     }
 
     fn update(
@@ -61,6 +64,8 @@ impl State for BuySellPanel {
         _cache: &Cache,
         message: Message,
     ) -> Task<Message> {
+        tracing::info!("[BUYSELL]: {:?}", message);
+
         let Message::View(ViewMessage::BuySell(message)) = message else {
             return Task::none();
         };
@@ -133,10 +138,18 @@ impl State for BuySellPanel {
             // webview logic
             BuySellMessage::ViewTick(id) => {
                 let action = WebviewAction::Update(id);
-                return self.webview.update(action).map(map_webview_message_static);
+                return self
+                    .webview
+                    .get_or_insert_with(init_webview)
+                    .update(action)
+                    .map(map_webview_message_static);
             }
             BuySellMessage::WebviewAction(action) => {
-                return self.webview.update(action).map(map_webview_message_static);
+                return self
+                    .webview
+                    .get_or_insert_with(init_webview)
+                    .update(action)
+                    .map(map_webview_message_static);
             }
             BuySellMessage::WebviewOpenUrl(url) => {
                 // Load URL into Ultralight webview
@@ -146,6 +159,7 @@ impl State for BuySellPanel {
                 // Create webview with URL string and immediately update to ensure content loads
                 return self
                     .webview
+                    .get_or_insert_with(init_webview)
                     .update(WebviewAction::CreateView(PageType::Url(url)))
                     .map(map_webview_message_static);
             }
@@ -161,6 +175,7 @@ impl State for BuySellPanel {
                 if let Some(id) = self.active_page.take() {
                     return self
                         .webview
+                        .get_or_insert_with(init_webview)
                         .update(WebviewAction::CloseView(id))
                         .map(map_webview_message_static);
                 };
@@ -170,12 +185,10 @@ impl State for BuySellPanel {
         Task::none()
     }
 
-    fn reload(
-        &mut self,
-        _daemon: Arc<dyn Daemon + Sync + Send>,
-        _wallet: Arc<Wallet>,
-    ) -> Task<Message> {
-        Task::none()
+    fn close(&mut self) -> Task<Message> {
+        Task::done(Message::View(ViewMessage::BuySell(
+            BuySellMessage::CloseWebview,
+        )))
     }
 
     fn subscription(&self) -> iced::Subscription<Message> {

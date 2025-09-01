@@ -34,19 +34,21 @@ hex = "0.4.3"
 iced = { version = "0.13.1", default-features = false, features = [
 	"tokio",
 	"svg",
-    "canvas",
+	"canvas",
 	"qr_code",
 	"image",
 	"lazy",
 	"advanced",
 	"wgpu",
-    "tiny-skia"
+	"tiny-skia",
 ] }
 iced_aw = { version = "0.12.2", features = ["context_menu"] }
 iced_runtime = "0.13.1"
 
 # Webview for embedded browser functionality (Ultralight-based)
-iced_webview = { git = "https://github.com/coincubetech/iced_webview.git", features = ["ultralight"], optional = true }
+iced_webview = { git = "https://github.com/coincubetech/iced_webview.git", features = [
+	"ultralight",
+], optional = true }
 
 # Used to verify RFC-compliance of an email
 email_address = "0.2.7"
@@ -84,10 +86,7 @@ fs2 = "0.4.3"
 
 # Used for opening URLs in browser
 open = "5.3"
-# Used for URL parsing in webview
-url = "2.5"
-# Used for JavaScript redirect detection in webview
-regex = "1.10"
+mimalloc = { version = "0.1.48", features = ["v3"] }
 
 [target.'cfg(windows)'.dependencies]
 zip = { version = "0.6", default-features = false, features = [
