@@ -23,19 +23,11 @@ use crate::{
     hw::{HardwareWallet, HardwareWalletMessage, HardwareWallets},
     installer::{
         message::{self, Message},
+        step::import_descriptor::{ImportDescriptorModal, BACKUP_NETWORK_NOT_MATCH},
         step::{Context, Step},
         view, Error,
     },
 };
-
-const BACKUP_NETWORK_NOT_MATCH: &str = "Backup network do not match the selected network!";
-
-#[derive(Debug)]
-pub enum ImportDescriptorModal {
-    None,
-    Export(ExportModal),
-    Decrypt(DecryptModal),
-}
 
 pub struct ImportDescriptor {
     network: Network,
@@ -95,23 +87,7 @@ impl Step for ImportDescriptor {
     }
 
     fn subscription(&self, hws: &HardwareWallets) -> Subscription<Message> {
-        if let ImportDescriptorModal::Export(modal) = &self.modal {
-            if let Some(sub) = modal.subscription() {
-                sub.map(|m| Message::ImportExport(ImportExportMessage::Progress(m)))
-            } else {
-                Subscription::none()
-            }
-        } else if let ImportDescriptorModal::Decrypt(modal) = &self.modal {
-            let mut batch = vec![hws.refresh().map(Message::HardwareWallets)];
-            if let Some(import_modal) = modal.modal.as_ref() {
-                if let Some(sub) = import_modal.subscription() {
-                    batch.push(sub.map(|p| Message::ImportExport(ImportExportMessage::Progress(p))))
-                }
-            }
-            Subscription::batch(batch)
-        } else {
-            Subscription::none()
-        }
+        self.modal.subscriptions(hws)
     }
 
     fn update(&mut self, hws: &mut HardwareWallets, message: Message) -> Task<Message> {
@@ -167,29 +143,7 @@ impl Step for ImportDescriptor {
                 self.modal = ImportDescriptorModal::Decrypt(DecryptModal::new(bytes, self.network));
                 None
             }
-            Message::ImportExport(ImportExportMessage::Progress(Progress::Xpub(xpub))) => {
-                if let ImportDescriptorModal::Decrypt(modal) = &mut self.modal {
-                    let _ = modal.update(Decrypt::CloseModal);
-                    Some(modal.update(Decrypt::Xpub(xpub)))
-                } else {
-                    None
-                }
-            }
-            Message::ImportExport(m) => {
-                if let ImportDescriptorModal::Export(modal) = &mut self.modal {
-                    let task: Task<Message> = modal.update(m);
-                    Some(task)
-                } else if let ImportDescriptorModal::Decrypt(modal) = &mut self.modal {
-                    if let Some(mo) = &mut modal.modal {
-                        let task: Task<Message> = mo.update(m);
-                        Some(task)
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
-            }
+            Message::ImportExport(m) => Some(self.modal.update(Message::ImportExport(m))),
             Message::HardwareWallets(HardwareWalletMessage::Update) => {
                 if let ImportDescriptorModal::Decrypt(modal) = &mut self.modal {
                     modal.update_devices(hws)
@@ -230,31 +184,7 @@ impl Step for ImportDescriptor {
                 }
                 None
             }
-            Message::Decrypt(msg) => {
-                if let ImportDescriptorModal::Decrypt(modal) = &mut self.modal {
-                    match msg {
-                        Decrypt::Fetched(_, _)
-                        | Decrypt::Xpub(_)
-                        | Decrypt::XpubError(_)
-                        | Decrypt::Mnemonic(_)
-                        | Decrypt::MnemonicStatus(_, _)
-                        | Decrypt::UnexpectedPayload(_)
-                        | Decrypt::InvalidDescriptor
-                        | Decrypt::ContentNotSupported
-                        | Decrypt::PasteXpub
-                        | Decrypt::SelectXpub
-                        | Decrypt::PasteMnemonic
-                        | Decrypt::SelectMnemonic
-                        | Decrypt::SelectImportXpub
-                        | Decrypt::None
-                        | Decrypt::CloseModal
-                        | Decrypt::ShowOptions(_) => Some(modal.update(msg)),
-                        Decrypt::Backup(_) | Decrypt::Close => None,
-                    }
-                } else {
-                    None
-                }
-            }
+            Message::Decrypt(msg) => Some(self.modal.update(Message::Decrypt(msg))),
             _ => None,
         };
         task.unwrap_or(Task::none())
@@ -306,11 +236,7 @@ impl Step for ImportDescriptor {
             self.wrong_network,
             self.error.as_ref(),
         );
-        match &self.modal {
-            ImportDescriptorModal::None => content,
-            ImportDescriptorModal::Export(modal) => modal.view(content),
-            ImportDescriptorModal::Decrypt(modal) => modal.view(content),
-        }
+        self.modal.view(content)
     }
 }
 
