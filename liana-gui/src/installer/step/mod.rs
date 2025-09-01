@@ -1,4 +1,5 @@
 pub mod descriptor;
+pub mod import_descriptor;
 
 mod backend;
 mod mnemonic;
