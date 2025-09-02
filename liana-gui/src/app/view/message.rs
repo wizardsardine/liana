@@ -142,3 +142,9 @@ pub enum FiatMessage {
     SourceEdited(PriceSource),
     CurrencyEdited(Currency),
 }
+
+impl From<FiatMessage> for Message {
+    fn from(msg: FiatMessage) -> Self {
+        Message::Settings(SettingsMessage::Fiat(msg))
+    }
+}
