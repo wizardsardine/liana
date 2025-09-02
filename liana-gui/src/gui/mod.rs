@@ -5,6 +5,7 @@ use iced::{
     Length, Size, Subscription, Task,
 };
 use iced_runtime::window;
+use std::time::{Duration, Instant};
 use tracing::{error, info};
 use tracing_subscriber::filter::LevelFilter;
 extern crate serde;
@@ -43,6 +44,7 @@ pub enum Key {
 #[derive(Debug)]
 pub enum Message {
     CtrlC,
+    Tick(Instant),
     FontLoaded(Result<(), iced::font::Error>),
     Pane(pane_grid::Pane, pane::Message),
     KeyPressed(Key),
@@ -326,13 +328,19 @@ impl GUI {
                 }
                 Task::none()
             }
+            Message::Tick(i) => Task::batch(
+                self.panes
+                    .iter_mut()
+                    .map(|(&id, p)| p.on_tick(i).map(move |msg| Message::Pane(id, msg))),
+            ),
             _ => Task::none(),
         }
     }
 
     pub fn subscription(&self) -> Subscription<Message> {
-        let mut vec = vec![iced::event::listen_with(|event, status, _| {
-            match (&event, status) {
+        let mut vec = vec![
+            iced::time::every(Duration::from_secs(1)).map(Message::Tick),
+            iced::event::listen_with(|event, status, _| match (&event, status) {
                 (
                     Event::Keyboard(keyboard::Event::KeyPressed {
                         key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Tab),
@@ -349,8 +357,8 @@ impl GUI {
                     Some(Message::WindowSize(*size))
                 }
                 _ => None,
-            }
-        })];
+            }),
+        ];
         for (id, pane) in self.panes.iter() {
             vec.push(
                 pane.subscription()

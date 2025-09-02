@@ -1,6 +1,7 @@
 use iced::{Length, Subscription, Task};
 use iced_aw::ContextMenu;
 use liana_ui::{component::text::*, icon::plus_icon, theme, widget::*};
+use std::time::Instant;
 
 use crate::gui::Config;
 
@@ -88,6 +89,13 @@ impl Pane {
         if self.focused_tab + focused_tab + 1 < self.tabs.len() {
             self.focused_tab += focused_tab + 1;
         }
+    }
+
+    pub fn on_tick(&mut self, i: Instant) -> Task<Message> {
+        Task::batch(self.tabs.iter_mut().map(|t| {
+            let id = t.id;
+            t.on_tick(i).map(move |msg| Message::Tab(id, msg))
+        }))
     }
 
     pub fn update(&mut self, message: Message, cfg: &Config) -> Task<Message> {

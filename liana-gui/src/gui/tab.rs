@@ -1,4 +1,4 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, sync::Arc, time::Instant};
 
 use iced::{Subscription, Task};
 use tracing::{error, info};
@@ -76,6 +76,15 @@ impl Tab {
             State::Launcher(_) => "Launcher",
             State::Login(_) => "Login",
             State::App(a) => a.title(),
+        }
+    }
+
+    pub fn on_tick(&mut self, i: std::time::Instant) -> Task<Message> {
+        // currently the Tick is only used by the app
+        if let State::App(app) = &mut self.state {
+            app.on_tick(i).map(|msg| Message::Run(Box::new(msg)))
+        } else {
+            Task::none()
         }
     }
 
@@ -361,6 +370,7 @@ pub fn create_app_with_remote_backend(
                 blockheight: wallet.tip_height.unwrap_or(0),
                 // We ignore last poll fields for remote backend.
                 last_poll_timestamp: None,
+                last_tick: Instant::now(),
             },
             fiat_price_cache: FiatPriceCache::default(),
         },
