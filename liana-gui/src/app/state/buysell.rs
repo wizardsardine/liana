@@ -7,17 +7,16 @@ use iced_webview::{
 };
 use liana_ui::widget::Element;
 
+#[cfg(feature = "dev-meld")]
+use crate::app::buysell::{meld::MeldError, ServiceProvider};
+
 use crate::{
     app::{
         self,
-        buysell::{
-            meld::{MeldClient, MeldError},
-            ServiceProvider,
-        },
         cache::Cache,
         message::Message,
         state::State,
-        view::{self, meld_buysell::BuySellPanel, BuySellMessage, Message as ViewMessage},
+        view::{self, buysell::BuySellPanel, BuySellMessage, Message as ViewMessage},
     },
     daemon::Daemon,
 };
@@ -81,10 +80,14 @@ impl State for BuySellPanel {
                 self.set_source_amount(amount);
             }
 
+            #[cfg(feature = "dev-onramp")]
+            BuySellMessage::CreateSession => {}
+
+            #[cfg(feature = "dev-meld")]
             BuySellMessage::CreateSession => {
                 if self.is_form_valid() {
                     tracing::info!(
-                        "🚀 [MELD] Creating new session - clearing any existing session data"
+                        "🚀 [BUYSELL] Creating new session - clearing any existing session data"
                     );
 
                     // init session
@@ -93,25 +96,45 @@ impl State for BuySellPanel {
                     let source_amount = self.source_amount.value.clone();
 
                     tracing::info!(
-                        "🚀 [MELD] Making fresh API call with: address={}, country={}, amount={}",
+                        "🚀 [BUYSELL] Making fresh API call with: address={}, country={}, amount={}",
                         wallet_address,
                         country_code,
                         source_amount
                     );
 
                     return Task::perform(
-                        create_meld_session(
-                            wallet_address,
-                            country_code,
-                            source_amount,
-                            // Use Transak as the default payment provider
-                            ServiceProvider::Transak,
-                            self.network,
-                        ),
+                        {
+                            // TODO: allow users to select source provider, in a drop down
+                            let provider = ServiceProvider::Transak;
+                            let network = self.network;
+                            let client = self.meld_client.clone();
+
+                            async move {
+                                match client
+                                    .create_widget_session(
+                                        wallet_address,
+                                        country_code,
+                                        source_amount,
+                                        provider,
+                                        network,
+                                    )
+                                    .await
+                                {
+                                    Ok(response) => Ok(response.widget_url),
+                                    Err(MeldError::Network(e)) => {
+                                        Err(format!("Network error: {}", e))
+                                    }
+                                    Err(MeldError::Serialization(e)) => {
+                                        Err(format!("Data error: {}", e))
+                                    }
+                                    Err(MeldError::Api(e)) => Err(format!("API error: {}", e)),
+                                }
+                            }
+                        },
                         |result| match result {
                             Ok(widget_url) => {
                                 tracing::info!(
-                                    "🌐 [LIANA] Meld session created with URL: {}",
+                                    "🌐 [BUYSELL] Meld session created with URL: {}",
                                     widget_url
                                 );
 
@@ -201,31 +224,5 @@ impl State for BuySellPanel {
         }
 
         iced::Subscription::none()
-    }
-}
-
-async fn create_meld_session(
-    wallet_address: String,
-    country_code: String,
-    source_amount: String,
-    provider: ServiceProvider,
-    network: liana::miniscript::bitcoin::Network,
-) -> Result<String, String> {
-    let client = MeldClient::new();
-
-    match client
-        .create_widget_session(
-            wallet_address,
-            country_code,
-            source_amount,
-            provider,
-            network,
-        )
-        .await
-    {
-        Ok(response) => Ok(response.widget_url),
-        Err(MeldError::Network(e)) => Err(format!("Network error: {}", e)),
-        Err(MeldError::Serialization(e)) => Err(format!("Data error: {}", e)),
-        Err(MeldError::Api(e)) => Err(format!("API error: {}", e)),
     }
 }

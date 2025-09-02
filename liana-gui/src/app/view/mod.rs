@@ -7,10 +7,8 @@ pub mod export;
 pub mod home;
 pub mod hw;
 
-#[cfg(feature = "dev-meld")]
-pub mod meld_buysell;
-#[cfg(feature = "dev-onramp")]
-pub mod onramper_buysell;
+#[cfg(feature = "dev-coincube")]
+pub mod buysell;
 
 pub mod psbt;
 pub mod psbts;

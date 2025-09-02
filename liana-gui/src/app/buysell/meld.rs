@@ -1,5 +1,4 @@
 use super::ServiceProvider;
-use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::error::Error;
 use std::fmt;
@@ -78,14 +77,15 @@ impl From<serde_json::Error> for MeldError {
     }
 }
 
+#[derive(Clone)]
 pub struct MeldClient {
-    client: Client,
+    client: reqwest::Client,
 }
 
 impl MeldClient {
     pub fn new() -> Self {
         Self {
-            client: Client::new(),
+            client: reqwest::Client::new(),
         }
     }
 

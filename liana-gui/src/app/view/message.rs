@@ -136,7 +136,7 @@ pub enum CreateRbfMessage {
     Confirm,
 }
 
-#[cfg(feature = "dev-meld")]
+#[cfg(feature = "dev-coincube")]
 #[derive(Debug, Clone)]
 pub enum BuySellMessage {
     WalletAddressChanged(String),

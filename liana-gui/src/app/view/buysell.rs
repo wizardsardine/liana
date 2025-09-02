@@ -13,14 +13,20 @@ use liana_ui::{
     widget::*,
 };
 
+#[cfg(feature = "dev-meld")]
+use crate::app::buysell::meld::MeldClient;
 use crate::app::view::{BuySellMessage, Message as ViewMessage};
 
 pub struct BuySellPanel {
     pub wallet_address: form::Value<String>,
     pub country_code: form::Value<String>,
     pub source_amount: form::Value<String>,
+
     pub error: Option<String>,
     pub network: Network,
+
+    #[cfg(feature = "dev-meld")]
+    pub meld_client: MeldClient,
 
     // Ultralight webview component for Meld widget integration with performance optimizations
     pub webview: Option<WebView<Ultralight, crate::app::state::buysell::WebviewMessage>>,
@@ -50,6 +56,9 @@ impl BuySellPanel {
                 warning: None,
                 valid: true,
             },
+
+            #[cfg(feature = "dev-meld")]
+            meld_client: MeldClient::new(),
 
             error: None,
             network,
@@ -288,13 +297,15 @@ impl BuySellPanel {
             )
             .push(Space::with_height(Length::Fixed(30.0)))
             .push(if self.active_page.is_some() {
-                ui_button::secondary(None, "Creating Session...").width(Length::Fill)
+                ui_button::secondary(Some(liana_ui::icon::globe_icon()), "Creating Session...")
+                    .width(Length::Fill)
             } else if self.is_form_valid() {
-                ui_button::primary(None, "Create Widget Session")
+                ui_button::primary(Some(liana_ui::icon::globe_icon()), "Create Widget Session")
                     .on_press(ViewMessage::BuySell(BuySellMessage::CreateSession))
                     .width(Length::Fill)
             } else {
-                ui_button::secondary(None, "Create Widget Session").width(Length::Fill)
+                ui_button::secondary(Some(liana_ui::icon::globe_icon()), "Create Widget Session")
+                    .width(Length::Fill)
             })
             .align_x(Alignment::Center)
             .spacing(5)

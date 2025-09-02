@@ -56,10 +56,8 @@ struct Panels {
     receive: ReceivePanel,
     create_spend: CreateSpendPanel,
     settings: SettingsState,
-    #[cfg(feature = "dev-meld")]
-    meld_buy_sell: crate::app::view::meld_buysell::BuySellPanel,
-    #[cfg(feature = "dev-onramp")]
-    onramper_buy_sell: crate::app::view::meld_buysell::BuySellPanel,
+    #[cfg(feature = "dev-coincube")]
+    buy_sell: crate::app::view::buysell::BuySellPanel,
 }
 
 impl Panels {
@@ -112,8 +110,8 @@ impl Panels {
                 internal_bitcoind.is_some(),
                 config.clone(),
             ),
-            #[cfg(feature = "dev-meld")]
-            meld_buy_sell: crate::app::view::meld_buysell::BuySellPanel::new(cache.network),
+            #[cfg(feature = "dev-coincube")]
+            buy_sell: crate::app::view::buysell::BuySellPanel::new(cache.network),
         }
     }
 
@@ -130,9 +128,9 @@ impl Panels {
             Menu::Recovery => &self.recovery,
             Menu::RefreshCoins(_) => &self.create_spend,
             Menu::PsbtPreSelected(_) => &self.psbts,
-            #[cfg(feature = "dev-meld")]
-            Menu::BuySell => &self.meld_buy_sell,
-            #[cfg(not(feature = "dev-meld"))]
+            #[cfg(feature = "dev-coincube")]
+            Menu::BuySell => &self.buy_sell,
+            #[cfg(not(feature = "dev-coincube"))]
             Menu::BuySell => panic!("BuySell feature disabled in this build"),
         }
     }
@@ -150,9 +148,9 @@ impl Panels {
             Menu::Recovery => &mut self.recovery,
             Menu::RefreshCoins(_) => &mut self.create_spend,
             Menu::PsbtPreSelected(_) => &mut self.psbts,
-            #[cfg(feature = "dev-meld")]
-            Menu::BuySell => &mut self.meld_buy_sell,
-            #[cfg(not(feature = "dev-meld"))]
+            #[cfg(feature = "dev-coincube")]
+            Menu::BuySell => &mut self.buy_sell,
+            #[cfg(not(feature = "dev-coincube"))]
             Menu::BuySell => panic!("BuySell feature disabled in this build"),
         }
     }
