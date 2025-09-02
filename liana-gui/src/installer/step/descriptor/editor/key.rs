@@ -900,8 +900,8 @@ impl SelectKeySource {
             .spacing(10)
             .push(header)
             .push_maybe(no_devices)
-            .push_maybe(keys)
             .push_maybe(devices)
+            .push_maybe(keys)
             .push(self.view_other_options())
             .align_x(Horizontal::Center)
             .width(modal::MODAL_WIDTH);
