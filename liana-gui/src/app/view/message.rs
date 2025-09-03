@@ -1,8 +1,3 @@
-#[cfg(all(
-    feature = "dev-coincube",
-    not(any(feature = "dev-meld", feature = "dev-onramp"))
-))]
-use crate::app::state::buysell::AccountType;
 use crate::{app::menu::Menu, export::ImportExportMessage, node::bitcoind::RpcAuthType};
 use liana::miniscript::bitcoin::{bip32::Fingerprint, Address, OutPoint};
 
