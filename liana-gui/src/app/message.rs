@@ -23,7 +23,6 @@ use crate::{
 
 #[derive(Debug)]
 pub enum Message {
-    Tick,
     UpdateDaemonCache(Result<DaemonCache, Error>),
     CacheUpdated,
     Fiat(FiatMessage),

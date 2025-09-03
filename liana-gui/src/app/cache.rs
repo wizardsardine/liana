@@ -13,6 +13,7 @@ use crate::{
 use liana::miniscript::bitcoin::Network;
 use lianad::commands::CoinStatus;
 use std::sync::Arc;
+use std::time::Instant;
 
 pub const FIAT_PRICE_UPDATE_INTERVAL_SECS: u64 = 300;
 
@@ -70,6 +71,7 @@ pub struct DaemonCache {
     pub sync_progress: f64,
     /// The most recent `last_poll_timestamp`.
     pub last_poll_timestamp: Option<u32>,
+    pub last_tick: std::time::Instant,
 }
 
 /// only used for tests.
@@ -81,6 +83,7 @@ impl std::default::Default for DaemonCache {
             rescan_progress: None,
             sync_progress: 1.0,
             last_poll_timestamp: None,
+            last_tick: Instant::now(),
         }
     }
 }
