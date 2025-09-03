@@ -124,8 +124,8 @@ impl FiatPrice {
         self.request.currency
     }
 
-    pub fn requested_at(&self) -> u64 {
-        self.request.timestamp
+    pub fn instant(&self) -> Instant {
+        self.request.instant
     }
 }
 
@@ -134,7 +134,7 @@ impl FiatPrice {
 pub struct FiatPriceRequest {
     pub source: PriceSource,
     pub currency: Currency,
-    pub timestamp: u64,
+    pub instant: Instant,
 }
 
 impl FiatPriceRequest {

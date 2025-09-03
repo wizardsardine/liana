@@ -12,7 +12,7 @@ mod error;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use iced::{clipboard, Subscription, Task};
 use tokio::runtime::Handle;
@@ -45,7 +45,6 @@ use crate::{
     daemon::{embedded::EmbeddedDaemon, Daemon, DaemonBackend},
     dir::LianaDirectory,
     node::{bitcoind::Bitcoind, NodeType},
-    utils::now,
 };
 
 use self::state::SettingsState;
@@ -405,7 +404,7 @@ impl App {
                     .as_ref()
                     .filter(|sett| sett.is_enabled)
                 {
-                    let now = now().as_secs();
+                    let now = Instant::now();
                     // Do nothing if the last request was recent and was for the same source & currency, where
                     // "recent" means within half the update interval.
                     // Using half the update interval is sufficient as we are mostly concerned with preventing
@@ -420,7 +419,8 @@ impl App {
                         .filter(|req| {
                             req.source == price_setting.source
                                 && req.currency == price_setting.currency
-                                && req.timestamp + FIAT_PRICE_UPDATE_INTERVAL_SECS / 2 > now
+                                && now.saturating_duration_since(req.instant)
+                                    < Duration::from_secs(FIAT_PRICE_UPDATE_INTERVAL_SECS / 2)
                         })
                     {
                         // Cached request is still valid, no need to fetch a new one.
@@ -434,7 +434,7 @@ impl App {
                     let new_request = cache::FiatPriceRequest {
                         source: price_setting.source,
                         currency: price_setting.currency,
-                        timestamp: now,
+                        instant: now,
                     };
                     self.cache.fiat_price_cache.last_request = Some(new_request.clone());
                     tracing::debug!(
