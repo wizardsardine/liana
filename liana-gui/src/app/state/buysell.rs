@@ -10,6 +10,9 @@ use liana_ui::widget::Element;
 #[cfg(feature = "dev-meld")]
 use crate::app::buysell::{meld::MeldError, ServiceProvider};
 
+#[cfg(feature = "dev-onramp")]
+use crate::app::buysell::onramper;
+
 use crate::{
     app::{
         self,
@@ -67,21 +70,45 @@ impl State for BuySellPanel {
             return Task::none();
         };
 
-        tracing::info!("[BUYSELL]: {:?}", message);
-
         match message {
             BuySellMessage::WalletAddressChanged(address) => {
                 self.set_wallet_address(address);
             }
+            #[cfg(feature = "dev-meld")]
             BuySellMessage::CountryCodeChanged(code) => {
                 self.set_country_code(code);
+            }
+            #[cfg(feature = "dev-onramp")]
+            BuySellMessage::FiatCurrencyChanged(fiat) => {
+                self.set_fiat_currency(fiat);
             }
             BuySellMessage::SourceAmountChanged(amount) => {
                 self.set_source_amount(amount);
             }
 
             #[cfg(feature = "dev-onramp")]
-            BuySellMessage::CreateSession => {}
+            BuySellMessage::CreateSession => {
+                if self.is_form_valid() {
+                    let onramper_url = onramper::create_widget_url(
+                        &self.fiat_currency.value,
+                        &self.source_amount.value,
+                        &self.wallet_address.value,
+                    );
+
+                    tracing::info!(
+                        "🚀 [BUYSELL] Creating new onramper widget session: {}",
+                        &onramper_url
+                    );
+
+                    let open_webview = Message::View(ViewMessage::BuySell(
+                        BuySellMessage::WebviewOpenUrl(onramper_url),
+                    ));
+
+                    return Task::done(open_webview);
+                } else {
+                    tracing::warn!("⚠️ [BUYSELL] Cannot create session - form validation failed");
+                }
+            }
 
             #[cfg(feature = "dev-meld")]
             BuySellMessage::CreateSession => {
@@ -151,7 +178,7 @@ impl State for BuySellPanel {
                         },
                     );
                 } else {
-                    tracing::warn!("⚠️ [MELD] Cannot create session - form validation failed");
+                    tracing::warn!("⚠️ [BUYSELL] Cannot create session - form validation failed");
                 }
             }
             BuySellMessage::SessionError(error) => {

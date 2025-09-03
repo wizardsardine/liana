@@ -140,7 +140,10 @@ pub enum CreateRbfMessage {
 #[derive(Debug, Clone)]
 pub enum BuySellMessage {
     WalletAddressChanged(String),
+    #[cfg(feature = "dev-meld")]
     CountryCodeChanged(String),
+    #[cfg(feature = "dev-onramp")]
+    FiatCurrencyChanged(String),
     SourceAmountChanged(String),
 
     CreateSession,

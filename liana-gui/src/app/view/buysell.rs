@@ -19,7 +19,10 @@ use crate::app::view::{BuySellMessage, Message as ViewMessage};
 
 pub struct BuySellPanel {
     pub wallet_address: form::Value<String>,
+    #[cfg(feature = "dev-meld")]
     pub country_code: form::Value<String>,
+    #[cfg(feature = "dev-onramp")]
+    pub fiat_currency: form::Value<String>,
     pub source_amount: form::Value<String>,
 
     pub error: Option<String>,
@@ -46,8 +49,15 @@ impl BuySellPanel {
                 warning: None,
                 valid: true,
             },
+            #[cfg(feature = "dev-meld")]
             country_code: form::Value {
                 value: "US".to_string(),
+                warning: None,
+                valid: true,
+            },
+            #[cfg(feature = "dev-onramp")]
+            fiat_currency: form::Value {
+                value: "USD".to_string(),
                 warning: None,
                 valid: true,
             },
@@ -120,9 +130,17 @@ impl BuySellPanel {
         };
     }
 
+    #[cfg(feature = "dev-meld")]
     pub fn set_country_code(&mut self, code: String) {
         self.country_code.value = code;
         self.country_code.valid = !self.country_code.value.is_empty();
+    }
+
+    #[cfg(feature = "dev-onramp")]
+    pub fn set_fiat_currency(&mut self, code: String) {
+        self.fiat_currency.value = code;
+        // TODO: Check if currency is valid using static array
+        self.fiat_currency.valid = true;
     }
 
     pub fn set_source_amount(&mut self, amount: String) {
@@ -132,11 +150,16 @@ impl BuySellPanel {
     }
 
     pub fn is_form_valid(&self) -> bool {
+        #[cfg(feature = "dev-meld")]
+        let locale_check = self.country_code.valid && !self.country_code.value.is_empty();
+
+        #[cfg(feature = "dev-onramp")]
+        let locale_check = self.fiat_currency.valid && !self.fiat_currency.value.is_empty();
+
         self.wallet_address.valid
-            && self.country_code.valid
+            && locale_check
             && self.source_amount.valid
             && !self.wallet_address.value.is_empty()
-            && !self.country_code.value.is_empty()
             && !self.source_amount.value.is_empty()
     }
 
@@ -267,22 +290,46 @@ impl BuySellPanel {
                 Row::new()
                     .push(
                         Column::new()
-                            .push(text("Country Code").size(14).color(color::GREY_3))
-                            .push(Space::with_height(Length::Fixed(5.0)))
                             .push(
-                                form::Form::new_trimmed("US", &self.country_code, |value| {
-                                    ViewMessage::BuySell(BuySellMessage::CountryCodeChanged(value))
-                                })
-                                .size(16)
-                                .padding(15),
+                                if cfg!(feature = "dev-onramp") {
+                                    text("Fiat Currency")
+                                } else {
+                                    text("Country Code")
+                                }
+                                .size(14)
+                                .color(color::GREY_3),
                             )
+                            .push(Space::with_height(Length::Fixed(5.0)))
+                            .push({
+                                #[cfg(feature = "dev-meld")]
+                                {
+                                    form::Form::new_trimmed("US", &self.country_code, |value| {
+                                        ViewMessage::BuySell(BuySellMessage::CountryCodeChanged(
+                                            value,
+                                        ))
+                                    })
+                                    .size(16)
+                                    .padding(15)
+                                }
+
+                                #[cfg(feature = "dev-onramp")]
+                                {
+                                    form::Form::new_trimmed("USD", &self.fiat_currency, |value| {
+                                        ViewMessage::BuySell(BuySellMessage::FiatCurrencyChanged(
+                                            value,
+                                        ))
+                                    })
+                                    .size(16)
+                                    .padding(15)
+                                }
+                            })
                             .spacing(5)
                             .width(Length::FillPortion(1)),
                     )
                     .push(Space::with_width(Length::Fixed(20.0)))
                     .push(
                         Column::new()
-                            .push(text("Amount (USD)").size(14).color(color::GREY_3))
+                            .push(text("Fiat Amount").size(14).color(color::GREY_3))
                             .push(Space::with_height(Length::Fixed(5.0)))
                             .push(
                                 form::Form::new_trimmed("60", &self.source_amount, |value| {
