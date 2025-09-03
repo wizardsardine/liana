@@ -289,32 +289,7 @@ impl App {
     }
 
     pub fn subscription(&self) -> Subscription<Message> {
-        let mut subs = vec![self.panels.current().subscription()];
-        // Add fiat price subscription if enabled.
-        if let Some(sett) = self
-            .wallet
-            .fiat_price_setting
-            .as_ref()
-            .filter(|sett| sett.is_enabled)
-        {
-            // Force a new subscription to be created if the source or currency changes. This way, the first tick
-            // will occur `FIAT_PRICE_UPDATE_INTERVAL_SECS` seconds after the initial cache entry for this pair.
-            if self
-                .cache
-                .fiat_price_cache
-                .fiat_price
-                .as_ref()
-                .is_some_and(|price| {
-                    price.source() == sett.source && price.currency() == sett.currency
-                })
-            {
-                subs.push(
-                    iced::time::every(Duration::from_secs(FIAT_PRICE_UPDATE_INTERVAL_SECS))
-                        .map(|_| Message::Fiat(FiatMessage::GetPrice)),
-                )
-            }
-        }
-        Subscription::batch(subs)
+        self.panels.current().subscription()
     }
 
     pub fn stop(&mut self) {
@@ -392,6 +367,31 @@ impl App {
                 },
                 Message::UpdateDaemonCache,
             ));
+        }
+        // Check if we need to update the fiat price.
+        if let Some(sett) = self
+            .wallet
+            .fiat_price_setting
+            .as_ref()
+            .filter(|sett| sett.is_enabled)
+        {
+            // If there is no existing cached price for this source and currency within the update interval, fetch a new price.
+            if !self
+                .cache
+                .fiat_price_cache
+                .fiat_price
+                .as_ref()
+                .is_some_and(|price| {
+                    price.source() == sett.source
+                        && price.currency() == sett.currency
+                        && tick.saturating_duration_since(price.instant())
+                            <= Duration::from_secs(FIAT_PRICE_UPDATE_INTERVAL_SECS)
+                })
+            {
+                tasks.push(Task::perform(async move {}, |_| {
+                    Message::Fiat(FiatMessage::GetPrice)
+                }));
+            }
         }
         Task::batch(tasks)
     }
