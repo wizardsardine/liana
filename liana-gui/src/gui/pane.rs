@@ -1,7 +1,6 @@
 use iced::{Length, Subscription, Task};
 use iced_aw::ContextMenu;
 use liana_ui::{component::text::*, icon::plus_icon, theme, widget::*};
-use std::time::Instant;
 
 use crate::gui::Config;
 
@@ -91,10 +90,10 @@ impl Pane {
         }
     }
 
-    pub fn on_tick(&mut self, i: Instant) -> Task<Message> {
+    pub fn on_tick(&mut self) -> Task<Message> {
         Task::batch(self.tabs.iter_mut().map(|t| {
             let id = t.id;
-            t.on_tick(i).map(move |msg| Message::Tab(id, msg))
+            t.on_tick().map(move |msg| Message::Tab(id, msg))
         }))
     }
 

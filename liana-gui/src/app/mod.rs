@@ -332,7 +332,8 @@ impl App {
         }
     }
 
-    pub fn on_tick(&mut self, tick: std::time::Instant) -> Task<Message> {
+    pub fn on_tick(&mut self) -> Task<Message> {
+        let tick = std::time::Instant::now();
         let duration = Duration::from_secs(
             match sync_status(
                 self.daemon.backend(),

@@ -79,10 +79,10 @@ impl Tab {
         }
     }
 
-    pub fn on_tick(&mut self, i: std::time::Instant) -> Task<Message> {
+    pub fn on_tick(&mut self) -> Task<Message> {
         // currently the Tick is only used by the app
         if let State::App(app) = &mut self.state {
-            app.on_tick(i).map(|msg| Message::Run(Box::new(msg)))
+            app.on_tick().map(|msg| Message::Run(Box::new(msg)))
         } else {
             Task::none()
         }

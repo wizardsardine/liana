@@ -5,7 +5,7 @@ use iced::{
     Length, Size, Subscription, Task,
 };
 use iced_runtime::window;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use tracing::{error, info};
 use tracing_subscriber::filter::LevelFilter;
 extern crate serde;
@@ -44,7 +44,7 @@ pub enum Key {
 #[derive(Debug)]
 pub enum Message {
     CtrlC,
-    Tick(Instant),
+    Tick,
     FontLoaded(Result<(), iced::font::Error>),
     Pane(pane_grid::Pane, pane::Message),
     KeyPressed(Key),
@@ -328,10 +328,10 @@ impl GUI {
                 }
                 Task::none()
             }
-            Message::Tick(i) => Task::batch(
+            Message::Tick => Task::batch(
                 self.panes
                     .iter_mut()
-                    .map(|(&id, p)| p.on_tick(i).map(move |msg| Message::Pane(id, msg))),
+                    .map(|(&id, p)| p.on_tick().map(move |msg| Message::Pane(id, msg))),
             ),
             _ => Task::none(),
         }
@@ -339,7 +339,7 @@ impl GUI {
 
     pub fn subscription(&self) -> Subscription<Message> {
         let mut vec = vec![
-            iced::time::every(Duration::from_secs(1)).map(Message::Tick),
+            iced::time::every(Duration::from_secs(1)).map(|_| Message::Tick),
             iced::event::listen_with(|event, status, _| match (&event, status) {
                 (
                     Event::Keyboard(keyboard::Event::KeyPressed {
