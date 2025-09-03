@@ -13,9 +13,10 @@ use crate::{
 use liana::miniscript::bitcoin::Network;
 use lianad::commands::CoinStatus;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
-pub const FIAT_PRICE_UPDATE_INTERVAL_SECS: u64 = 300;
+/// How long a cached fiat price is considered fresh.
+pub const FIAT_PRICE_TTL: Duration = Duration::from_secs(300);
 
 #[derive(Debug, Clone)]
 pub struct Cache {

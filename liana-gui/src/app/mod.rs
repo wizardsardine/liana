@@ -35,7 +35,7 @@ use wallet::{sync_status, SyncStatus};
 
 use crate::{
     app::{
-        cache::{Cache, DaemonCache, FIAT_PRICE_UPDATE_INTERVAL_SECS},
+        cache::{Cache, DaemonCache, FIAT_PRICE_TTL},
         error::Error,
         menu::Menu,
         message::FiatMessage,
@@ -374,8 +374,7 @@ impl App {
                 .is_some_and(|last_req| {
                     last_req.source == sett.source
                         && last_req.currency == sett.currency
-                        && tick.saturating_duration_since(last_req.instant)
-                            <= Duration::from_secs(FIAT_PRICE_UPDATE_INTERVAL_SECS)
+                        && tick.saturating_duration_since(last_req.instant) <= FIAT_PRICE_TTL
                 })
             {
                 let new_request = cache::FiatPriceRequest {
