@@ -130,18 +130,8 @@ impl State for GeneralSettingsState {
                 match res {
                     Ok(wallet) => {
                         self.error = None;
-                        // Get the fiat price if the setting is enabled and has changed.
-                        // This check should be done before updating self.wallet.
-                        let get_price = self.new_price_setting.is_enabled
-                            && Some(&self.new_price_setting)
-                                != self.wallet.fiat_price_setting.as_ref();
                         self.new_price_setting = wallet_price_setting_or_default(&wallet); // no change expected since wallet was updated with new price setting
                         self.wallet = wallet;
-                        if get_price {
-                            return Task::perform(async move {}, |_| {
-                                Message::Fiat(FiatMessage::GetPrice)
-                            });
-                        }
                     }
                     Err(e) => {
                         self.error = Some(e);

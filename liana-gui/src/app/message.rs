@@ -72,7 +72,6 @@ impl From<ImportExportMessage> for Message {
 
 #[derive(Debug)]
 pub enum FiatMessage {
-    GetPrice,
     GetPriceResult(FiatPrice),
     ListCurrencies(PriceSource),
     ListCurrenciesResult(

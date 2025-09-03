@@ -123,10 +123,6 @@ impl FiatPrice {
     pub fn currency(&self) -> Currency {
         self.request.currency
     }
-
-    pub fn instant(&self) -> Instant {
-        self.request.instant
-    }
 }
 
 /// Represents a fiat price request.
