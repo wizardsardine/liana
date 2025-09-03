@@ -391,7 +391,7 @@ impl App {
                 );
                 tasks.push(Task::perform(
                     async move { new_request.send_default().await },
-                    |fiat_price| Message::Fiat(FiatMessage::GetPriceResult(fiat_price)),
+                    |fiat_price| FiatMessage::GetPriceResult(fiat_price).into(),
                 ));
             }
         }
