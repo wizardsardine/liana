@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use iced::Task;
 use liana::miniscript::bitcoin::Network;
@@ -19,10 +20,9 @@ use crate::services::fiat::api::PriceApi;
 use crate::services::fiat::client::PriceClient;
 use crate::services::fiat::currency::Currency;
 use crate::services::fiat::source::PriceSource;
-use crate::utils::now;
 
 /// Time to live of the list of available currencies for a given `PriceSource`.
-const CURRENCIES_LIST_TTL_SECS: u64 = 3_600; // 1 hour
+const CURRENCIES_LIST_TTL: Duration = Duration::from_secs(3_600); // 1 hour
 
 async fn update_price_setting(
     data_dir: LianaDirectory,
@@ -61,7 +61,7 @@ fn wallet_price_setting_or_default(wallet: &Wallet) -> PriceSetting {
 pub struct GeneralSettingsState {
     wallet: Arc<Wallet>,
     new_price_setting: PriceSetting,
-    currencies_list: HashMap<PriceSource, (/* timestamp */ u64, Vec<Currency>)>,
+    currencies_list: HashMap<PriceSource, (Instant, Vec<Currency>)>,
     error: Option<Error>,
 }
 
@@ -193,7 +193,7 @@ impl State for GeneralSettingsState {
                             .is_some_and(|(old, _)| *old > requested_at)
                         {
                             tracing::debug!(
-                                "Updating currencies list for source '{}' as requested at {}.",
+                                "Updating currencies list for source '{}' as requested at {:?}.",
                                 source,
                                 requested_at,
                             );
@@ -213,9 +213,11 @@ impl State for GeneralSettingsState {
             Message::Fiat(FiatMessage::ListCurrencies(source)) => {
                 if self.new_price_setting.is_enabled {
                     // Update the currencies list if the cached list is stale.
-                    let now = now().as_secs();
+                    let now = Instant::now();
                     match self.currencies_list.get(&source) {
-                        Some((old, _)) if now.saturating_sub(*old) <= CURRENCIES_LIST_TTL_SECS => {
+                        Some((old, _))
+                            if now.saturating_duration_since(*old) <= CURRENCIES_LIST_TTL =>
+                        {
                             return Task::perform(async move {}, |_| {
                                 FiatMessage::ValidateCurrencySetting.into()
                             });
