@@ -18,7 +18,10 @@ use crate::{
     daemon::model::*,
     export::ImportExportMessage,
     hw::HardwareWalletMessage,
-    services::fiat::{api::ListCurrenciesResult, PriceSource},
+    services::fiat::{
+        api::{ListCurrenciesResult, PriceApiError},
+        PriceSource,
+    },
 };
 
 #[derive(Debug)]
@@ -77,7 +80,7 @@ pub enum FiatMessage {
     ListCurrenciesResult(
         PriceSource,
         /* timestamp */ u64,
-        Result<ListCurrenciesResult, Error>,
+        Result<ListCurrenciesResult, PriceApiError>,
     ),
     SaveChanges,
     ValidateCurrencySetting,

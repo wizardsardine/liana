@@ -205,7 +205,7 @@ impl State for GeneralSettingsState {
                         });
                     }
                     Err(e) => {
-                        self.error = Some(e);
+                        self.error = Some(e.into());
                     }
                 }
                 Task::none()
@@ -224,11 +224,7 @@ impl State for GeneralSettingsState {
                             return Task::perform(
                                 async move {
                                     let client = PriceClient::default_from_source(source);
-                                    (
-                                        source,
-                                        now,
-                                        client.list_currencies().await.map_err(Error::FiatPrice),
-                                    )
+                                    (source, now, client.list_currencies().await)
                                 },
                                 |(source, now, res)| {
                                     FiatMessage::ListCurrenciesResult(source, now, res).into()
