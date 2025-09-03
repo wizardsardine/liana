@@ -35,7 +35,7 @@ use wallet::{sync_status, SyncStatus};
 
 use crate::{
     app::{
-        cache::{Cache, DaemonCache, FIAT_PRICE_TTL},
+        cache::{Cache, DaemonCache},
         error::Error,
         menu::Menu,
         message::FiatMessage,
@@ -202,6 +202,14 @@ impl App {
         "Liana wallet"
     }
 
+    pub fn cache(&self) -> &Cache {
+        &self.cache
+    }
+
+    pub fn wallet(&self) -> &Wallet {
+        &self.wallet
+    }
+
     fn set_current_panel(&mut self, menu: Menu) -> Task<Message> {
         self.panels.current_mut().interrupt();
 
@@ -357,69 +365,25 @@ impl App {
                 Message::UpdateDaemonCache,
             ));
         }
-        // Check if we need to update the fiat price.
-        if let Some(sett) = self
-            .wallet
-            .fiat_price_setting
-            .as_ref()
-            .filter(|sett| sett.is_enabled)
-        {
-            // If there is no existing request for this source and currency within the update interval, fetch a new price.
-            // Note we check against the last request in case there is already a request in progress.
-            if !self
-                .cache
-                .fiat_price_cache
-                .last_request
-                .as_ref()
-                .is_some_and(|last_req| {
-                    last_req.source == sett.source
-                        && last_req.currency == sett.currency
-                        && tick.saturating_duration_since(last_req.instant) <= FIAT_PRICE_TTL
-                })
-            {
-                let new_request = cache::FiatPriceRequest {
-                    source: sett.source,
-                    currency: sett.currency,
-                    instant: tick,
-                };
-                // Store the request immediately to prevent multiple requests being sent.
-                self.cache.fiat_price_cache.last_request = Some(new_request.clone());
-                tracing::debug!(
-                    "Getting fiat price in {} from {}",
-                    new_request.currency,
-                    new_request.source,
-                );
-                tasks.push(Task::perform(
-                    async move { new_request.send_default().await },
-                    |fiat_price| FiatMessage::GetPriceResult(fiat_price).into(),
-                ));
-            }
-        }
         Task::batch(tasks)
     }
 
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::Fiat(FiatMessage::GetPriceResult(fiat_price)) => {
-                if Some(&fiat_price.request) != self.cache.fiat_price_cache.last_request.as_ref() {
-                    tracing::debug!(
-                        "Ignoring fiat price result for {} from {} as it is not the last request",
-                        fiat_price.currency(),
-                        fiat_price.source(),
-                    );
-                    return Task::none();
+                if self.wallet.fiat_price_is_relevant(&fiat_price)
+                    // make sure we only update if the price is newer than the cached one
+                    && !self.cache.fiat_price.as_ref().is_some_and(|cached| {
+                        cached.source() == fiat_price.source()
+                            && cached.currency() == fiat_price.currency()
+                            && cached.requested_at() >= fiat_price.requested_at()
+                    })
+                {
+                    self.cache.fiat_price = Some(fiat_price);
+                    Task::perform(async {}, |_| Message::CacheUpdated)
+                } else {
+                    Task::none()
                 }
-                if let Err(e) = fiat_price.res.as_ref() {
-                    tracing::error!(
-                        "Failed to get fiat price in {} from {}: {}",
-                        fiat_price.currency(),
-                        fiat_price.source(),
-                        e
-                    );
-                }
-                // Update the cache with the result even if there was an error.
-                self.cache.fiat_price_cache.fiat_price = Some(fiat_price);
-                Task::perform(async {}, |_| Message::CacheUpdated)
             }
             Message::UpdateDaemonCache(res) => {
                 match res {

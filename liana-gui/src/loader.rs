@@ -23,7 +23,7 @@ use lianad::{
 };
 
 use crate::app;
-use crate::app::cache::{DaemonCache, FiatPriceCache};
+use crate::app::cache::DaemonCache;
 use crate::app::settings::WalletSettings;
 use crate::backup::Backup;
 use crate::dir::LianaDirectory;
@@ -448,7 +448,7 @@ pub async fn load_application(
             last_poll_timestamp: info.last_poll_timestamp,
             ..Default::default()
         },
-        fiat_price_cache: FiatPriceCache::default(),
+        fiat_price: None,
     };
 
     Ok((Arc::new(wallet), cache, daemon, internal_bitcoind, backup))

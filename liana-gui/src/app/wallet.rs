@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
+use crate::app::cache::FiatPrice;
 use crate::dir::LianaDirectory;
 use crate::services::fiat::{Currency, PriceSource};
 use crate::{
@@ -231,6 +232,16 @@ impl Wallet {
         });
 
         map
+    }
+
+    /// Whether the wallet's fiat price setting is enabled and matches
+    /// the given fiat price's source and currency.
+    pub fn fiat_price_is_relevant(&self, fiat_price: &FiatPrice) -> bool {
+        self.fiat_price_setting.as_ref().is_some_and(|sett| {
+            sett.is_enabled
+                && sett.source == fiat_price.source()
+                && sett.currency == fiat_price.currency()
+        })
     }
 }
 

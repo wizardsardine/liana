@@ -5,6 +5,7 @@ use iced::{
     Length, Size, Subscription, Task,
 };
 use iced_runtime::window;
+use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 use tracing::{error, info};
 use tracing_subscriber::filter::LevelFilter;
@@ -14,14 +15,19 @@ extern crate serde_json;
 use liana::miniscript::bitcoin;
 use liana_ui::widget::{Column, Container, Element};
 
+mod cache;
 pub mod pane;
 pub mod tab;
 
 use crate::{
+    app::cache::{FiatPrice, FiatPriceRequest},
+    app::message::FiatMessage as AppFiatMessage,
     app::settings::global::{GlobalSettings, WindowConfig},
     dir::LianaDirectory,
+    gui::cache::GlobalCache,
     launcher,
     logger::setup_logger,
+    services::fiat::{Currency, PriceSource},
     VERSION,
 };
 
@@ -34,6 +40,7 @@ pub struct GUI {
     window_id: Option<Id>,
     window_init: Option<bool>,
     window_config: Option<WindowConfig>,
+    global_cache: GlobalCache,
 }
 
 #[derive(Debug)]
@@ -55,6 +62,19 @@ pub enum Message {
     Resized(pane_grid::ResizeEvent),
     Window(Option<Id>),
     WindowSize(Size),
+
+    Fiat(FiatMessage),
+}
+
+#[derive(Debug)]
+pub enum FiatMessage {
+    GetPriceResult(FiatPrice),
+}
+
+impl From<FiatMessage> for Message {
+    fn from(value: FiatMessage) -> Self {
+        Self::Fiat(value)
+    }
 }
 
 impl From<Result<(), iced::font::Error>> for Message {
@@ -99,6 +119,7 @@ impl GUI {
                 window_id: None,
                 window_init,
                 window_config,
+                global_cache: GlobalCache::default(),
             },
             Task::batch(cmds),
         )
@@ -190,6 +211,43 @@ impl GUI {
                 } else {
                     focus_next()
                 }
+            }
+            Message::Fiat(FiatMessage::GetPriceResult(price)) => {
+                if self
+                    .global_cache
+                    .pending_fiat_price_request(price.source(), price.currency())
+                    != Some(&price.request)
+                {
+                    tracing::debug!(
+                        "Ignoring fiat price result for {} from {} as it is not the last request",
+                        price.currency(),
+                        price.source(),
+                    );
+                    return Task::none();
+                }
+                match price.res.as_ref() {
+                    Ok(res) => {
+                        tracing::debug!(
+                            "Fiat price request for {} from {} completed successfully: {:?}",
+                            price.currency(),
+                            price.source(),
+                            res,
+                        );
+                    }
+                    Err(e) => {
+                        tracing::error!(
+                            "Fiat price request for {} from {} returned error: {}",
+                            price.currency(),
+                            price.source(),
+                            e
+                        );
+                    }
+                }
+                // Update the cache with the result even if there was an error.
+                self.global_cache
+                    .remove_fiat_price_request(price.source(), price.currency());
+                self.global_cache.insert_fiat_price(price);
+                Task::none()
             }
             Message::Pane(pane_id, pane::Message::View(pane::ViewMessage::SplitTab(i))) => {
                 if let Some(p) = self.panes.get_mut(pane_id) {
@@ -328,11 +386,74 @@ impl GUI {
                 }
                 Task::none()
             }
-            Message::Tick => Task::batch(
-                self.panes
-                    .iter_mut()
-                    .map(|(&id, p)| p.on_tick().map(move |msg| Message::Pane(id, msg))),
-            ),
+            Message::Tick => {
+                let mut tasks = vec![];
+
+                // These are the required (source, currency) pairs for which the global price is stale.
+                let mut stale_pairs = HashSet::<(PriceSource, Currency)>::new();
+                // These are the tabs that need the cached global price.
+                let mut need_cached = HashMap::<(pane_grid::Pane, usize), FiatPrice>::new();
+                for (&pane_id, pane) in self.panes.iter() {
+                    for tab in pane.tabs.iter() {
+                        if let Some(sett) = tab
+                            .wallet()
+                            .and_then(|w| w.fiat_price_setting.as_ref())
+                            .filter(|sett| sett.is_enabled)
+                        {
+                            if let Some(fresh_price) = self
+                                .global_cache
+                                .fresh_fiat_price(sett.source, sett.currency)
+                            {
+                                if !tab.cache().and_then(|c| c.fiat_price.as_ref()).is_some_and(
+                                    |tab_price| tab_price.request == fresh_price.request,
+                                ) {
+                                    need_cached.insert((pane_id, tab.id), fresh_price.clone());
+                                }
+                            } else if self
+                                .global_cache
+                                .pending_fiat_price_request(sett.source, sett.currency)
+                                .is_none()
+                            {
+                                stale_pairs.insert((sett.source, sett.currency));
+                            }
+                        }
+                    }
+                }
+                for (source, currency) in stale_pairs {
+                    let request = FiatPriceRequest::new(source, currency);
+                    // Store request immediately to avoid multiple requests for the same pair.
+                    self.global_cache.insert_fiat_price_request(request.clone());
+                    tasks.push(Task::perform(request.send_default(), |res| {
+                        FiatMessage::GetPriceResult(res).into()
+                    }));
+                }
+                for ((pane_id, tab_id), global_price) in need_cached {
+                    if let Some(pane) = self.panes.get_mut(pane_id) {
+                        // Return the cached global price to the tab.
+                        tracing::debug!(
+                            "Updating tab {} in pane {:?} with cached fiat price {:?}",
+                            tab_id,
+                            pane_id,
+                            global_price
+                        );
+                        tasks.push(
+                            pane.update_tab_with_app_msg(
+                                tab_id,
+                                AppFiatMessage::GetPriceResult(global_price),
+                                &self.config,
+                            )
+                            .map(move |msg| Message::Pane(pane_id, msg)),
+                        );
+                    }
+                }
+                tasks.extend(
+                    self.panes
+                        .iter_mut()
+                        .map(|(&id, p)| p.on_tick().map(move |msg| Message::Pane(id, msg))),
+                );
+
+                Task::batch(tasks)
+            }
             _ => Task::none(),
         }
     }
