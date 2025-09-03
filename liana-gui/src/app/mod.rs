@@ -333,6 +333,8 @@ impl App {
 
     pub fn on_tick(&mut self) -> Task<Message> {
         let tick = std::time::Instant::now();
+        let mut tasks = vec![];
+        // Check if we need to update the daemon cache.
         let duration = Duration::from_secs(
             match sync_status(
                 self.daemon.backend(),
@@ -361,38 +363,37 @@ impl App {
                 }
             },
         );
+        if self.cache.daemon_cache.last_tick + duration <= tick {
+            tracing::debug!("Updating daemon cache");
 
-        if self.cache.daemon_cache.last_tick + duration > tick {
-            return Task::none();
+            // We have to update here the last_tick to prevent that during a burst of events
+            // there is a race condition with the Task and too much tasks are triggered.
+            self.cache.daemon_cache.last_tick = tick;
+
+            let daemon = self.daemon.clone();
+            let datadir_path = self.cache.datadir_path.clone();
+            let network = self.cache.network;
+            tasks.push(Task::perform(
+                async move {
+                    // we check every 10 second if the daemon poller is alive
+                    // or if the access token is not expired.
+                    daemon.is_alive(&datadir_path, network).await?;
+
+                    let info = daemon.get_info().await?;
+                    let coins = cache::coins_to_cache(daemon).await?;
+                    Ok(DaemonCache {
+                        blockheight: info.block_height,
+                        coins: coins.coins,
+                        rescan_progress: info.rescan_progress,
+                        sync_progress: info.sync,
+                        last_poll_timestamp: info.last_poll_timestamp,
+                        last_tick: tick,
+                    })
+                },
+                Message::UpdateDaemonCache,
+            ));
         }
-        tracing::debug!("Updating daemon cache");
-
-        // We have to update here the last_tick to prevent that during a burst of events
-        // there is a race condition with the Task and too much tasks are triggered.
-        self.cache.daemon_cache.last_tick = tick;
-
-        let daemon = self.daemon.clone();
-        let datadir_path = self.cache.datadir_path.clone();
-        let network = self.cache.network;
-        Task::perform(
-            async move {
-                // we check every 10 second if the daemon poller is alive
-                // or if the access token is not expired.
-                daemon.is_alive(&datadir_path, network).await?;
-
-                let info = daemon.get_info().await?;
-                let coins = cache::coins_to_cache(daemon).await?;
-                Ok(DaemonCache {
-                    blockheight: info.block_height,
-                    coins: coins.coins,
-                    rescan_progress: info.rescan_progress,
-                    sync_progress: info.sync,
-                    last_poll_timestamp: info.last_poll_timestamp,
-                    last_tick: tick,
-                })
-            },
-            Message::UpdateDaemonCache,
-        )
+        Task::batch(tasks)
     }
 
     pub fn update(&mut self, message: Message) -> Task<Message> {
