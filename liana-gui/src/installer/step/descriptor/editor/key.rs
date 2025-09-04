@@ -1118,7 +1118,7 @@ impl SelectKeySource {
             bool, /* available */
         ),
     ) -> Element<Message> {
-        let (source, alias, fg, enable) = key;
+        let (source, alias, fg, available) = key;
         let icon = match source {
             KeySource::Device(..) => icon::usb_drive_icon(),
             KeySource::HotSigner => icon::round_key_icon().color(color::RED),
@@ -1132,9 +1132,12 @@ impl SelectKeySource {
                 None
             }
         } else {
-            (!enable).then_some("Key already used in this path".to_string())
+            (!available).then_some("Key already used in this path".to_string())
         };
         let fg_str = format!("#{}", fg);
+        let on_press = message
+            .is_none()
+            .then_some(move || Self::route(SelectKeySourceMessage::SelectKey(fg)));
         modal::key_entry(
             Some(icon),
             alias,
@@ -1142,7 +1145,7 @@ impl SelectKeySource {
             None,
             None,
             message,
-            Some(move || Self::route(SelectKeySourceMessage::SelectKey(fg))),
+            on_press,
         )
     }
     fn widget_load_key(&self) -> Element<Message> {
