@@ -1,6 +1,4 @@
-use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
 
 use iced::Task;
 use liana::miniscript::bitcoin::Network;
@@ -16,13 +14,7 @@ use crate::app::view;
 use crate::app::wallet::Wallet;
 use crate::daemon::Daemon;
 use crate::dir::LianaDirectory;
-use crate::services::fiat::api::PriceApi;
-use crate::services::fiat::client::PriceClient;
 use crate::services::fiat::currency::Currency;
-use crate::services::fiat::source::PriceSource;
-
-/// Time to live of the list of available currencies for a given `PriceSource`.
-const CURRENCIES_LIST_TTL: Duration = Duration::from_secs(3_600); // 1 hour
 
 async fn update_price_setting(
     data_dir: LianaDirectory,
@@ -61,7 +53,7 @@ fn wallet_price_setting_or_default(wallet: &Wallet) -> PriceSetting {
 pub struct GeneralSettingsState {
     wallet: Arc<Wallet>,
     new_price_setting: PriceSetting,
-    currencies_list: HashMap<PriceSource, (Instant, Vec<Currency>)>,
+    currencies: Vec<Currency>,
     error: Option<Error>,
 }
 
@@ -77,7 +69,7 @@ impl GeneralSettingsState {
         Self {
             wallet,
             new_price_setting,
-            currencies_list: HashMap::new(),
+            currencies: Vec::new(),
             error: None,
         }
     }
@@ -88,10 +80,7 @@ impl State for GeneralSettingsState {
         view::settings::general::general_section(
             cache,
             &self.new_price_setting,
-            self.currencies_list
-                .get(&self.new_price_setting.source)
-                .map(|(_, list)| &list[..])
-                .unwrap_or(&[]),
+            &self.currencies,
             self.error.as_ref(),
         )
     }
@@ -162,77 +151,38 @@ impl State for GeneralSettingsState {
                 Task::none()
             }
             Message::Fiat(FiatMessage::ValidateCurrencySetting) => {
-                if let Some((_, list)) = self.currencies_list.get(&self.new_price_setting.source) {
-                    self.error = None;
-                    // If the currently selected currency is not in the list of available currencies,
-                    // set it to the default currency if eligible or otherwise the first available currency.
-                    if !list.contains(&self.new_price_setting.currency) {
-                        if list.contains(&Currency::default()) {
-                            self.new_price_setting.currency = Currency::default();
-                        } else if let Some(curr) = list.first() {
-                            self.new_price_setting.currency = *curr;
-                        } else {
-                            self.error = Some(Error::Unexpected(
-                                "No available currencies in the list.".to_string(),
-                            ));
-                            return Task::none();
-                        }
+                self.error = None;
+                // If the currently selected currency is not in the list of available currencies,
+                // set it to the default currency if eligible or otherwise the first available currency.
+                if !self.currencies.contains(&self.new_price_setting.currency) {
+                    if self.currencies.contains(&Currency::default()) {
+                        self.new_price_setting.currency = Currency::default();
+                    } else if let Some(curr) = self.currencies.first() {
+                        self.new_price_setting.currency = *curr;
+                    } else {
+                        self.error = Some(Error::Unexpected(
+                            "No available currencies in the list.".to_string(),
+                        ));
+                        return Task::none();
                     }
-                    return Task::perform(async move {}, |_| FiatMessage::SaveChanges.into());
                 }
-                Task::none()
+                Task::perform(async move {}, |_| FiatMessage::SaveChanges.into())
             }
-            Message::Fiat(FiatMessage::ListCurrenciesResult(source, requested_at, res)) => {
+            Message::Fiat(FiatMessage::ListCurrenciesResult(source, res)) => {
+                if self.new_price_setting.source != source {
+                    // Ignore results for a source that is no longer selected.
+                    return Task::none();
+                }
                 match res {
                     Ok(list) => {
                         self.error = None;
-                        // Update the currencies list only if the requested_at is newer than the existing one.
-                        if !self
-                            .currencies_list
-                            .get(&source)
-                            .is_some_and(|(old, _)| *old > requested_at)
-                        {
-                            tracing::debug!(
-                                "Updating currencies list for source '{}' as requested at {:?}.",
-                                source,
-                                requested_at,
-                            );
-                            self.currencies_list
-                                .insert(source, (requested_at, list.currencies));
-                        }
+                        self.currencies = list.currencies;
                         return Task::perform(async move {}, |_| {
                             FiatMessage::ValidateCurrencySetting.into()
                         });
                     }
                     Err(e) => {
                         self.error = Some(e.into());
-                    }
-                }
-                Task::none()
-            }
-            Message::Fiat(FiatMessage::ListCurrencies(source)) => {
-                if self.new_price_setting.is_enabled {
-                    // Update the currencies list if the cached list is stale.
-                    let now = Instant::now();
-                    match self.currencies_list.get(&source) {
-                        Some((old, _))
-                            if now.saturating_duration_since(*old) <= CURRENCIES_LIST_TTL =>
-                        {
-                            return Task::perform(async move {}, |_| {
-                                FiatMessage::ValidateCurrencySetting.into()
-                            });
-                        }
-                        _ => {
-                            return Task::perform(
-                                async move {
-                                    let client = PriceClient::default_from_source(source);
-                                    (source, now, client.list_currencies().await)
-                                },
-                                |(source, now, res)| {
-                                    FiatMessage::ListCurrenciesResult(source, now, res).into()
-                                },
-                            );
-                        }
                     }
                 }
                 Task::none()

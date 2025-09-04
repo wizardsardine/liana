@@ -1,6 +1,5 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use std::time::Instant;
 
 use liana::miniscript::bitcoin::{
     bip32::{ChildNumber, Fingerprint},
@@ -78,11 +77,7 @@ impl From<ImportExportMessage> for Message {
 pub enum FiatMessage {
     GetPriceResult(FiatPrice),
     ListCurrencies(PriceSource),
-    ListCurrenciesResult(
-        PriceSource,
-        Instant,
-        Result<ListCurrenciesResult, PriceApiError>,
-    ),
+    ListCurrenciesResult(PriceSource, Result<ListCurrenciesResult, PriceApiError>),
     SaveChanges,
     ValidateCurrencySetting,
 }

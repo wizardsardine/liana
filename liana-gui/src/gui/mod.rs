@@ -6,7 +6,7 @@ use iced::{
 };
 use iced_runtime::window;
 use std::collections::{HashMap, HashSet};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tracing::{error, info};
 use tracing_subscriber::filter::LevelFilter;
 extern crate serde;
@@ -20,14 +20,19 @@ pub mod pane;
 pub mod tab;
 
 use crate::{
-    app::cache::{FiatPrice, FiatPriceRequest},
-    app::message::FiatMessage as AppFiatMessage,
-    app::settings::global::{GlobalSettings, WindowConfig},
+    app::{
+        cache::{FiatPrice, FiatPriceRequest},
+        message::{FiatMessage as AppFiatMessage, Message as AppMessage},
+        settings::global::{GlobalSettings, WindowConfig},
+    },
     dir::LianaDirectory,
     gui::cache::GlobalCache,
     launcher,
     logger::setup_logger,
-    services::fiat::{Currency, PriceSource},
+    services::fiat::{
+        api::{ListCurrenciesResult, PriceApi, PriceApiError},
+        Currency, PriceClient, PriceSource,
+    },
     VERSION,
 };
 
@@ -69,6 +74,16 @@ pub enum Message {
 #[derive(Debug)]
 pub enum FiatMessage {
     GetPriceResult(FiatPrice),
+    /// Result of a request for the list of available currencies for a given source.
+    ///
+    /// The pane and tab that requested the list are included to be able to return the result.
+    ListCurrenciesResult(
+        pane_grid::Pane,
+        usize, // tab id
+        PriceSource,
+        Instant,
+        Result<ListCurrenciesResult, PriceApiError>,
+    ),
 }
 
 impl From<FiatMessage> for Message {
@@ -249,6 +264,29 @@ impl GUI {
                 self.global_cache.insert_fiat_price(price);
                 Task::none()
             }
+            Message::Fiat(FiatMessage::ListCurrenciesResult(
+                pane_id,
+                tab_id,
+                source,
+                instant,
+                res,
+            )) => {
+                if let Ok(list) = res.as_ref() {
+                    self.global_cache
+                        .insert_currencies(source, instant, list.currencies.clone());
+                }
+                // Return the result to the tab even if there was an error.
+                if let Some(pane) = self.panes.get_mut(pane_id) {
+                    pane.update_tab_with_app_msg(
+                        tab_id,
+                        AppFiatMessage::ListCurrenciesResult(source, res),
+                        &self.config,
+                    )
+                    .map(move |msg| Message::Pane(pane_id, msg))
+                } else {
+                    Task::none()
+                }
+            }
             Message::Pane(pane_id, pane::Message::View(pane::ViewMessage::SplitTab(i))) => {
                 if let Some(p) = self.panes.get_mut(pane_id) {
                     if let Some(tab) = p.remove_tab(i) {
@@ -351,10 +389,62 @@ impl GUI {
                 Task::batch(tasks)
             }
             Message::Pane(i, msg) => {
-                if let Some(pane) = self.panes.get_mut(i) {
-                    return pane
-                        .update(msg, &self.config)
-                        .map(move |msg| Message::Pane(i, msg));
+                match msg {
+                    // Handle ListCurrencies requests separately.
+                    pane::Message::Tab(tab_id, tab::Message::Run(inner))
+                        if matches!(
+                            inner.as_ref(),
+                            AppMessage::Fiat(AppFiatMessage::ListCurrencies(_))
+                        ) =>
+                    {
+                        let AppMessage::Fiat(AppFiatMessage::ListCurrencies(source)) = *inner
+                        else {
+                            tracing::error!("Unexpected message type after unboxing");
+                            return Task::none();
+                        };
+                        // If we already have a fresh list of currencies for this source, return it directly to the tab.
+                        if let Some(fresh_list) = self.global_cache.fresh_currencies(source) {
+                            tracing::debug!("Using cached currencies list for {}", source,);
+                            if let Some(pane) = self.panes.get_mut(i) {
+                                return pane
+                                    .update_tab_with_app_msg(
+                                        tab_id,
+                                        AppFiatMessage::ListCurrenciesResult(
+                                            source,
+                                            Ok(ListCurrenciesResult {
+                                                currencies: fresh_list.clone(),
+                                            }),
+                                        ),
+                                        &self.config,
+                                    )
+                                    .map(move |msg| Message::Pane(i, msg));
+                            }
+                        } else {
+                            tracing::debug!("Requesting list of currencies from {}", source);
+                            return Task::perform(
+                                async move {
+                                    let client = PriceClient::default_from_source(source);
+                                    (
+                                        tab_id,
+                                        source,
+                                        Instant::now(),
+                                        client.list_currencies().await,
+                                    )
+                                },
+                                move |(tab_id, source, now, res)| {
+                                    FiatMessage::ListCurrenciesResult(i, tab_id, source, now, res)
+                                        .into()
+                                },
+                            );
+                        }
+                    }
+                    _ => {
+                        if let Some(pane) = self.panes.get_mut(i) {
+                            return pane
+                                .update(msg, &self.config)
+                                .map(move |msg| Message::Pane(i, msg));
+                        }
+                    }
                 }
                 Task::none()
             }
