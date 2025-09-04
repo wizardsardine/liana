@@ -103,7 +103,9 @@ impl Download {
 /// Default prune value used by internal bitcoind.
 pub const PRUNE_DEFAULT: u32 = 15_000;
 /// Default ports used by bitcoind across all networks.
-pub const BITCOIND_DEFAULT_PORTS: [u16; 8] = [8332, 8333, 18332, 18333, 18443, 18444, 38332, 38333];
+pub const BITCOIND_DEFAULT_PORTS: [u16; 10] = [
+    8332, 8333, 18332, 18333, 18443, 18444, 48332, 48333, 38332, 38333,
+];
 
 #[derive(Debug)]
 pub enum InstallState {
@@ -243,6 +245,7 @@ fn bitcoind_default_address(network: &Network) -> String {
     match network {
         Network::Bitcoin => "127.0.0.1:8332".to_string(),
         Network::Testnet => "127.0.0.1:18332".to_string(),
+        Network::Testnet4 => "127.0.0.1:48332".to_string(),
         Network::Regtest => "127.0.0.1:18443".to_string(),
         Network::Signet => "127.0.0.1:38332".to_string(),
         _ => "127.0.0.1:8332".to_string(),

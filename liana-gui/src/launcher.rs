@@ -21,15 +21,17 @@ use crate::{
     delete::{delete_wallet, DeleteError},
     dir::{LianaDirectory, NetworkDirectory},
     installer::UserFlow,
+    node::bitcoind::VERSION,
     services::connect::{
         client::{auth::AuthClient, backend::api::UserRole, get_service_config},
         login::{connect_with_credentials, BackendState},
     },
 };
 
-const NETWORKS: [Network; 4] = [
+const NETWORKS: [Network; 5] = [
     Network::Bitcoin,
     Network::Testnet,
+    Network::Testnet4,
     Network::Signet,
     Network::Regtest,
 ];
@@ -46,6 +48,7 @@ pub enum State {
 
 pub struct Launcher {
     state: State,
+    displayed_networks: Vec<Network>,
     network: Network,
     pub datadir_path: LianaDirectory,
     error: Option<String>,
@@ -71,6 +74,7 @@ impl Launcher {
         (
             Self {
                 state: State::Unchecked,
+                displayed_networks: displayed_networks(&datadir_path),
                 network,
                 datadir_path: datadir_path.clone(),
                 error: None,
@@ -233,7 +237,7 @@ impl Launcher {
                         )
                         .push(
                             pick_list(
-                                &NETWORKS[..],
+                                self.displayed_networks.as_slice(),
                                 Some(self.network),
                                 ViewMessage::SelectNetwork,
                             )
@@ -373,6 +377,7 @@ fn wallets_list_item(
                                         Network::Bitcoin => "Bitcoin",
                                         Network::Signet => "Signet",
                                         Network::Testnet => "Testnet",
+                                        Network::Testnet4 => "Testnet4",
                                         Network::Regtest => "Regtest",
                                         _ => "",
                                     }
@@ -403,6 +408,37 @@ fn wallets_list_item(
             ),
     )
     .into()
+}
+
+/// Returns the list of displayed networks.
+///
+/// `Testnet4` is excluded if the Bitcoin Core version is less than 28.0.
+/// `Testnet` is excluded if no wallet exists, `Testnet4` is prefered.
+fn displayed_networks(dir: &LianaDirectory) -> Vec<Network> {
+    let mut networks = NETWORKS.to_vec();
+
+    networks.retain(|&n| match n {
+        Network::Testnet4 => is_version_at_least_28_0() && dir.path().join(n.to_string()).exists(),
+        Network::Testnet => dir.path().join(n.to_string()).exists(),
+        _ => true,
+    });
+
+    if !networks
+        .iter()
+        .any(|&x| x == Network::Testnet || x == Network::Testnet4)
+    {
+        networks.push(if is_version_at_least_28_0() {
+            Network::Testnet4
+        } else {
+            Network::Testnet
+        });
+    }
+
+    networks
+}
+
+fn is_version_at_least_28_0() -> bool {
+    VERSION.parse::<f32>().map_or(false, |v| v >= 28.0)
 }
 
 #[allow(clippy::large_enum_variant)]
