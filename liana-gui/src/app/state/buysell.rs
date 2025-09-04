@@ -244,8 +244,15 @@ impl State for BuySellPanel {
     fn subscription(&self) -> iced::Subscription<Message> {
         // Add webview update subscription for smooth rendering when webview is active
         if let Some(id) = self.active_page {
-            // 4 FPS refresh rate
-            return iced::time::every(Duration::from_millis(250))
+            let interval = if cfg!(debug_assertions) {
+                // 4 FPS refresh rate
+                Duration::from_millis(250)
+            } else {
+                // 10 FPS for release
+                Duration::from_millis(100)
+            };
+
+            return iced::time::every(interval)
                 .with(id)
                 .map(|(i, ..)| Message::View(ViewMessage::BuySell(BuySellMessage::ViewTick(i))));
         }
