@@ -144,7 +144,7 @@ pub fn link_icon() -> Text<'static> {
 }
 
 pub fn paste_icon() -> Text<'static> {
-    bootstrap_icon('\u{F72E}')
+    bootstrap_icon('\u{F290}')
 }
 
 pub fn usb_icon() -> Text<'static> {

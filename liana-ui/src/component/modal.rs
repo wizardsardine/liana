@@ -108,8 +108,8 @@ where
         form::Form::new_disabled(&input_placeholder, input_value)
     }
     .padding(10);
-    let paste = paste_message
-        .map(|m| Button::new(icon::clipboard_icon().color(color::BLACK)).on_press(m()));
+    let paste =
+        paste_message.map(|m| Button::new(icon::paste_icon().color(color::BLACK)).on_press(m()));
 
     let icon = icon.map(|i| i.color(color::WHITE));
 
