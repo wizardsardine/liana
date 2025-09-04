@@ -2,7 +2,7 @@ use iced::{Length, Subscription, Task};
 use iced_aw::ContextMenu;
 use liana_ui::{component::text::*, icon::plus_icon, theme, widget::*};
 
-use crate::gui::Config;
+use crate::{app, gui::Config};
 
 use super::tab;
 
@@ -95,6 +95,19 @@ impl Pane {
             let id = t.id;
             t.on_tick().map(move |msg| Message::Tab(id, msg))
         }))
+    }
+
+    /// Helper to update a tab with an app message.
+    pub fn update_tab_with_app_msg(
+        &mut self,
+        tab_id: usize,
+        app_msg: impl Into<app::Message>,
+        cfg: &Config,
+    ) -> Task<Message> {
+        self.update(
+            Message::Tab(tab_id, tab::Message::Run(Box::new(app_msg.into()))),
+            cfg,
+        )
     }
 
     pub fn update(&mut self, message: Message, cfg: &Config) -> Task<Message> {

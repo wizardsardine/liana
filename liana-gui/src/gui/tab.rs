@@ -12,7 +12,7 @@ use lianad::commands::ListCoinsResult;
 use crate::{
     app::{
         self,
-        cache::{Cache, DaemonCache, FiatPriceCache},
+        cache::{Cache, DaemonCache},
         settings::{update_settings_file, WalletSettings},
         wallet::Wallet,
         App,
@@ -67,6 +67,22 @@ pub struct Tab {
 impl Tab {
     pub fn new(id: usize, state: State) -> Self {
         Tab { id, state }
+    }
+
+    pub fn cache(&self) -> Option<&Cache> {
+        if let State::App(ref app) = self.state {
+            Some(app.cache())
+        } else {
+            None
+        }
+    }
+
+    pub fn wallet(&self) -> Option<&Wallet> {
+        if let State::App(ref app) = self.state {
+            Some(app.wallet())
+        } else {
+            None
+        }
     }
 
     pub fn title(&self) -> &str {
@@ -372,7 +388,7 @@ pub fn create_app_with_remote_backend(
                 last_poll_timestamp: None,
                 last_tick: Instant::now(),
             },
-            fiat_price_cache: FiatPriceCache::default(),
+            fiat_price: None,
         },
         Arc::new(
             Wallet::new(wallet.descriptor)

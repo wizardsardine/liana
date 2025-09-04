@@ -82,3 +82,9 @@ pub enum FiatMessage {
     SaveChanges,
     ValidateCurrencySetting,
 }
+
+impl From<FiatMessage> for Message {
+    fn from(value: FiatMessage) -> Self {
+        Message::Fiat(value)
+    }
+}

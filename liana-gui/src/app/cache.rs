@@ -13,10 +13,7 @@ use crate::{
 use liana::miniscript::bitcoin::Network;
 use lianad::commands::CoinStatus;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
-
-/// How long a cached fiat price is considered fresh.
-pub const FIAT_PRICE_TTL: Duration = Duration::from_secs(300);
+use std::time::Instant;
 
 #[derive(Debug, Clone)]
 pub struct Cache {
@@ -25,7 +22,7 @@ pub struct Cache {
     /// The `last_poll_timestamp` when starting the application.
     pub last_poll_at_startup: Option<u32>,
     pub daemon_cache: DaemonCache,
-    pub fiat_price_cache: FiatPriceCache,
+    pub fiat_price: Option<FiatPrice>,
 }
 
 /// only used for tests.
@@ -36,7 +33,7 @@ impl std::default::Default for Cache {
             network: Network::Bitcoin,
             last_poll_at_startup: None,
             daemon_cache: DaemonCache::default(),
-            fiat_price_cache: FiatPriceCache::default(),
+            fiat_price: None,
         }
     }
 }
@@ -98,17 +95,6 @@ pub async fn coins_to_cache(
         .await
 }
 
-/// The cache for fiat price data.
-#[derive(Debug, Clone, Default)]
-pub struct FiatPriceCache {
-    /// The last fetched fiat price, if any.
-    pub fiat_price: Option<FiatPrice>,
-    /// A pending request, if any.
-    ///
-    /// This is the last request that may or may not yet have been completed.
-    pub last_request: Option<FiatPriceRequest>,
-}
-
 /// Represents a fiat price fetched from the API together with the request that was used to fetch it.
 #[derive(Debug, Clone)]
 pub struct FiatPrice {
@@ -124,6 +110,10 @@ impl FiatPrice {
     pub fn currency(&self) -> Currency {
         self.request.currency
     }
+
+    pub fn requested_at(&self) -> Instant {
+        self.request.instant
+    }
 }
 
 /// Represents a fiat price request.
@@ -135,6 +125,14 @@ pub struct FiatPriceRequest {
 }
 
 impl FiatPriceRequest {
+    pub fn new(source: PriceSource, currency: Currency) -> Self {
+        Self {
+            source,
+            currency,
+            instant: Instant::now(),
+        }
+    }
+
     /// Sends the request using the default client for the given source.
     pub async fn send_default(self) -> FiatPrice {
         let client = PriceClient::default_from_source(self.source);
