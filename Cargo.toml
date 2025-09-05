@@ -1,10 +1,4 @@
 [workspace]
 resolver = "2"
-members = [
-    "fuzz",
-    "liana",
-    "lianad",
-    "liana-gui",
-    "liana-ui",
-]
+members = ["fuzz", "liana", "lianad", "liana-gui", "liana-ui"]
 default-members = ["liana", "lianad", "liana-gui", "liana-ui"]

@@ -112,7 +112,7 @@ impl JsonRPCClient {
         if response
             .jsonrpc
             .as_ref()
-            .map_or(false, |version| version != "2.0")
+            .is_some_and(|version| version != "2.0")
         {
             return Err(Error::VersionMismatch);
         }

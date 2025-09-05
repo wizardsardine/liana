@@ -1,3 +1,6 @@
+#[cfg(all(feature = "dev-meld", feature = "dev-onramp"))]
+compile_error!("`dev-meld` and `dev-onramp` should be exclusive");
+
 use iced::{
     widget::{container, text, Space},
     Alignment, Length,

@@ -557,13 +557,9 @@ pub struct DummyLiana {
     pub handle: DaemonHandle,
 }
 
-static mut COUNTER: sync::atomic::AtomicUsize = sync::atomic::AtomicUsize::new(0);
 fn uid() -> usize {
-    unsafe {
-        let uid = COUNTER.load(sync::atomic::Ordering::Relaxed);
-        COUNTER.fetch_add(1, sync::atomic::Ordering::Relaxed);
-        uid
-    }
+    static COUNTER: sync::atomic::AtomicUsize = sync::atomic::AtomicUsize::new(0);
+    COUNTER.fetch_add(1, sync::atomic::Ordering::Relaxed)
 }
 
 pub fn tmp_dir() -> path::PathBuf {
@@ -638,6 +634,7 @@ impl DummyLiana {
     }
 
     /// Creates a new DummyLiana interface which also spins up an RPC server.
+    #[allow(dead_code)]
     pub fn new_server(
         bitcoin_interface: impl BitcoinInterface + 'static,
         database: impl DatabaseInterface + 'static,

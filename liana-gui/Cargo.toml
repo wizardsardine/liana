@@ -109,3 +109,11 @@ OriginalFilename = "coincube-vault.exe"
 FileDescription = "The missing safety net for your coins, Coincube's Fork"
 CompanyName = "Coincube"
 InternalName = "Liana"
+
+[lints.rust]
+mismatched_lifetime_syntaxes = "allow"
+
+[lints.clippy]
+uninlined_format_args = "allow"
+large_enum_variant = "allow"
+result_large_err = "allow"

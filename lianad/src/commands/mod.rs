@@ -1485,6 +1485,7 @@ pub struct ListCoinsResult {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(untagged)]
+#[allow(clippy::large_enum_variant)]
 pub enum CreateSpendResult {
     Success {
         #[serde(serialize_with = "ser_to_string", deserialize_with = "deser_fromstr")]

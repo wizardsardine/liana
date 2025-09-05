@@ -363,6 +363,7 @@ impl DaemonControl {
 
 /// The handle to a Liana daemon. It might either be the handle for a daemon which exposes a
 /// JSONRPC server or one which exposes its API through a `DaemonControl`.
+#[allow(clippy::large_enum_variant)]
 pub enum DaemonHandle {
     Controller {
         poller_sender: mpsc::SyncSender<poller::PollerMessage>,

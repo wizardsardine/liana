@@ -509,14 +509,11 @@ mod tests {
     };
     use std::collections::{BTreeMap, HashSet};
 
-    static mut COUNTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     fn uid() -> usize {
-        unsafe {
-            let uid = COUNTER.load(std::sync::atomic::Ordering::Relaxed);
-            COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            uid
-        }
+        static COUNTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     }
+
     fn tmp_dir() -> path::PathBuf {
         std::env::temp_dir().join(format!(
             "lianad-{}-{:?}-{}",

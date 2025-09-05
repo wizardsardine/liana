@@ -7,7 +7,14 @@ repository = "https://github.com/wizardsardine/liana"
 license-file = "LICENCE"
 keywords = ["bitcoin", "wallet", "miniscript", "inheritance", "recovery"]
 description = "COINCUBE Vault wallet daemon"
-exclude = [".github/", ".cirrus.yml", "tests/",  "test_data/", "contrib/", "pyproject.toml"]
+exclude = [
+	".github/",
+	".cirrus.yml",
+	"tests/",
+	"test_data/",
+	"contrib/",
+	"pyproject.toml",
+]
 
 [[bin]]
 name = "lianad"
@@ -31,7 +38,9 @@ miniscript = { version = "12.0", features = ["serde", "compiler", "base64"] }
 # in order to bump the electrum_client dependency to v0.21. This allows to use the "use-rustls-ring"
 # feature and avoid the default aws-ls-rs provider from rustls, which would break the reproducible build
 # (see https://github.com/aws/aws-lc-rs/issues/409).
-bdk_electrum = { git = "https://github.com/wizardsardine/bdk", branch = "release/1.0.0-alpha.13", default-features = false, features = [ "use-rustls-ring" ] }
+bdk_electrum = { git = "https://github.com/wizardsardine/bdk", branch = "release/1.0.0-alpha.13", default-features = false, features = [
+	"use-rustls-ring",
+] }
 
 # Don't reinvent the wheel
 dirs = "5.0"
@@ -55,7 +64,14 @@ backtrace = "0.3"
 rusqlite = { version = "0.30", features = ["bundled", "unlock_notify"] }
 
 # To talk to bitcoind
-jsonrpc = { version = "0.17", features = ["minreq_http"], default-features = false }
+jsonrpc = { version = "0.17", features = [
+	"minreq_http",
+], default-features = false }
 
 # import/export labels
 bip329 = { version = "0.3.0", default-features = false }
+
+[lints.clippy]
+uninlined_format_args = "allow"
+large_enum_variant = "allow"
+result_large_err = "allow"

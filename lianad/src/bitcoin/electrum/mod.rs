@@ -150,8 +150,8 @@ impl Electrum {
                 .index()
                 .inner() // we include lookahead SPKs
                 .all_spks()
-                .iter()
-                .map(|(_, script)| script.clone())
+                .values()
+                .cloned()
                 .collect();
             request = request.chain_spks(all_spks);
             log::debug!("num SPKs for sync: {}", request.spks.len());
