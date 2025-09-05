@@ -1,3 +1,4 @@
+use crate::utils::example_xpub;
 use std::{
     collections::HashMap,
     str::FromStr,
@@ -39,7 +40,6 @@ use crate::{
     installer::{
         descriptor::{Key, KeySource},
         message::{self, Message},
-        view::editor::example_xpub,
         Error, PathKind,
     },
     services::{

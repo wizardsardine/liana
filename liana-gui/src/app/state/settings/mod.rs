@@ -253,7 +253,9 @@ impl State for ImportExportSettingsState {
                     return modal.update(m);
                 };
             }
-            Message::View(view::Message::Settings(view::SettingsMessage::ExportDescriptor)) => {
+            Message::View(view::Message::Settings(
+                view::SettingsMessage::ExportEncryptedDescriptor,
+            )) => {
                 if self.modal.is_none() {
                     let modal = ExportModal::new(
                         Some(daemon),
