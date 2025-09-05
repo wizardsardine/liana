@@ -2,7 +2,7 @@ use chrono::{DateTime, Local, Utc};
 use std::{collections::HashMap, convert::TryInto, time::Duration, vec};
 
 use iced::{
-    alignment,
+    alignment::{self, Vertical},
     widget::{Container, Row, Space},
     Alignment::{self, Center},
     Length,
@@ -83,20 +83,25 @@ pub fn home_view<'a>(
             Column::new()
                 .push(if sync_status.is_synced() {
                     Row::new()
-                        .push(amount_with_size(balance, H1_SIZE))
+                        .align_y(Vertical::Center)
+                        .push(
+                            Container::new(amount_with_size(balance, H1_SIZE))
+                                .width(Length::FillPortion(3)),
+                        )
                         .push_maybe(fiat_balance.map(|fiat| {
-                            Row::new()
-                                .align_y(Alignment::Center)
-                                .push(Space::with_width(10))
-                                .push(
+                            Container::new(
+                                Row::new().align_y(Alignment::Center).push(
                                     text(format!(
-                                        "({} {})",
+                                        "{} {}",
                                         fiat.to_formatted_string(),
                                         fiat.currency
                                     ))
-                                    .size(H1_SIZE)
+                                    .size(H2_SIZE)
                                     .color(color::GREY_2),
-                                )
+                                ),
+                            )
+                            .width(Length::FillPortion(2))
+                            .align_x(Alignment::End)
                         }))
                 } else {
                     Row::new().push(spinner::Carousel::new(

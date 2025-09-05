@@ -14,12 +14,12 @@ impl DisplayAmount for Amount {
 }
 
 /// Amount with default size and colors.
-pub fn amount<'a, T: 'a>(a: &Amount) -> Row<'a, T> {
+pub fn amount<'a, T: 'a>(a: &Amount) -> Element<'a, T> {
     amount_with_size(a, P1_SIZE)
 }
 
 /// Amount with default colors.
-pub fn amount_with_size<'a, T: 'a>(a: &Amount, size: u16) -> Row<'a, T> {
+pub fn amount_with_size<'a, T: 'a>(a: &Amount, size: u16) -> Element<'a, T> {
     amount_with_size_and_colors(a, size, color::GREY_3, None)
 }
 
@@ -36,7 +36,7 @@ pub fn amount_with_size_and_colors<'a, T: 'a>(
     size: u16,
     color_before: Color,
     color_after: Option<Color>,
-) -> Row<'a, T> {
+) -> Element<'a, T> {
     render_amount(a.to_formatted_string(), size, color_before, color_after)
 }
 
@@ -119,7 +119,7 @@ fn render_amount<'a, T: 'a>(
     size: u16,
     color_before: Color,
     color_after: Option<Color>,
-) -> Row<'a, T> {
+) -> Element<'a, T> {
     let spacing = if size > P1_SIZE { 10 } else { 5 };
 
     let (before, after) = match split_at_first_non_zero(amount) {
@@ -141,6 +141,8 @@ fn render_amount<'a, T: 'a>(
     ])
     .spacing(spacing)
     .align_y(iced::Alignment::Center)
+    .wrap()
+    .into()
 }
 
 // Build the rendering elements for displaying a Bitcoin amount.
