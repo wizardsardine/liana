@@ -10,7 +10,7 @@ use miniscript::{
     miniscript::satisfy::Placeholder,
     plan::{Assets, CanSign},
     psbt::{PsbtInputExt, PsbtOutputExt},
-    translate_hash_clone, ForEachKey, TranslatePk, Translator,
+    translate_hash_clone, Descriptor, DescriptorPublicKey, ForEachKey, TranslatePk, Translator,
 };
 
 use std::{
@@ -248,6 +248,11 @@ impl LianaDescriptor {
             .get(&recovery_timelock)
             .map(|path_info| path_info.contains_fingerprint(fingerprint))
             .unwrap_or(false)
+    }
+
+    /// Get the multipath descriptor
+    pub fn descriptor(&self) -> &Descriptor<DescriptorPublicKey> {
+        &self.multi_desc
     }
 
     /// Get the descriptor for receiving addresses.
