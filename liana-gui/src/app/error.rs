@@ -105,3 +105,9 @@ impl From<SpendCreationError> for Error {
         Error::Spend(error)
     }
 }
+
+impl From<PriceApiError> for Error {
+    fn from(error: PriceApiError) -> Self {
+        Error::FiatPrice(error)
+    }
+}

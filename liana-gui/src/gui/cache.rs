@@ -1,8 +1,11 @@
 use std::collections::HashMap;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::app::cache::{FiatPrice, FiatPriceRequest};
 use crate::services::fiat::{Currency, PriceSource};
+
+/// Time to live of the list of available currencies for a given `PriceSource`.
+const CURRENCIES_TTL: Duration = Duration::from_secs(3_600); // 1 hour
 
 /// How long a cached fiat price is considered fresh.
 const FIAT_PRICE_TTL: Duration = Duration::from_secs(300);
@@ -28,6 +31,11 @@ impl GlobalCache {
         self.fiat_prices.pending_request(source, currency)
     }
 
+    /// Get available currencies for a given source if they exist and are not older than `CURRENCIES_TTL`.
+    pub fn fresh_currencies(&self, source: PriceSource) -> Option<&Vec<Currency>> {
+        self.fiat_prices.fresh_currencies(source)
+    }
+
     /// Insert a fiat price into the cache.
     pub fn insert_fiat_price(&mut self, fiat_price: FiatPrice) {
         self.fiat_prices.insert_price(fiat_price);
@@ -42,6 +50,17 @@ impl GlobalCache {
     pub fn remove_fiat_price_request(&mut self, source: PriceSource, currency: Currency) {
         self.fiat_prices.remove_price_request(source, currency);
     }
+
+    /// Insert available currencies for a given source into the cache.
+    pub fn insert_currencies(
+        &mut self,
+        source: PriceSource,
+        instant: Instant,
+        currencies: Vec<Currency>,
+    ) {
+        self.fiat_prices
+            .insert_currencies(source, instant, currencies);
+    }
 }
 
 #[derive(Default)]
@@ -50,6 +69,8 @@ struct FiatPricesCache {
     prices: HashMap<(PriceSource, Currency), FiatPrice>,
     /// Any pending requests that have not yet completed.
     pending_requests: HashMap<(PriceSource, Currency), FiatPriceRequest>,
+    /// Available currencies for each source, along with the instant of when they were fetched.
+    currencies: HashMap<PriceSource, (Instant, Vec<Currency>)>,
 }
 
 impl FiatPricesCache {
@@ -70,6 +91,13 @@ impl FiatPricesCache {
         self.pending_requests.get(&(source, currency))
     }
 
+    fn fresh_currencies(&self, source: PriceSource) -> Option<&Vec<Currency>> {
+        self.currencies
+            .get(&source)
+            .filter(|(instant, _)| instant.elapsed() <= CURRENCIES_TTL)
+            .map(|(_, list)| list)
+    }
+
     fn insert_price(&mut self, fiat_price: FiatPrice) {
         self.prices
             .insert((fiat_price.source(), fiat_price.currency()), fiat_price);
@@ -78,6 +106,15 @@ impl FiatPricesCache {
     fn insert_price_request(&mut self, request: FiatPriceRequest) {
         self.pending_requests
             .insert((request.source, request.currency), request);
+    }
+
+    fn insert_currencies(
+        &mut self,
+        source: PriceSource,
+        instant: Instant,
+        currencies: Vec<Currency>,
+    ) {
+        self.currencies.insert(source, (instant, currencies));
     }
 
     fn remove_price_request(&mut self, source: PriceSource, currency: Currency) {
