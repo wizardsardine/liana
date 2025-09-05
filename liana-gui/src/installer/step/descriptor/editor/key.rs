@@ -641,6 +641,7 @@ impl SelectKeySource {
                 };
                 if !self.form_xpub.valid {
                     self.form_xpub.warning = Some("Wrong network");
+                    self.form_xpub.valid = false;
                 }
                 if self.keys.contains_key(&fingerprint) {
                     self.form_xpub.warning = Some("Key already used");
@@ -656,6 +657,9 @@ impl SelectKeySource {
             }
         } else {
             self.form_xpub.valid = xpub.is_empty();
+            if !self.form_xpub.valid {
+                self.form_xpub.warning = Some("Invalid Xpub");
+            }
         }
         Task::none()
     }
