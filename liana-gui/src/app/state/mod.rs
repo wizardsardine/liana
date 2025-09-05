@@ -8,8 +8,8 @@ mod settings;
 mod spend;
 mod transactions;
 
-#[cfg(any(feature = "dev-meld", feature = "dev-onramp"))]
-pub mod meld_buysell;
+#[cfg(feature = "dev-coincube")]
+pub mod buysell;
 
 use std::convert::TryInto;
 use std::sync::Arc;
@@ -43,10 +43,6 @@ pub use receive::ReceivePanel;
 pub use settings::SettingsState;
 pub use spend::CreateSpendPanel;
 pub use transactions::TransactionsPanel;
-#[cfg(all(feature = "dev-coincube", not(any(feature = "dev-meld", feature = "dev-onramp"))))]
-pub mod buysell;
-#[cfg(all(feature = "dev-coincube", not(any(feature = "dev-meld", feature = "dev-onramp"))))]
-pub use buysell::BuyAndSellPanel;
 
 pub trait State {
     fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, view::Message>;
@@ -60,6 +56,10 @@ pub trait State {
     }
     fn subscription(&self) -> Subscription<Message> {
         Subscription::none()
+    }
+
+    fn close(&mut self) -> Task<Message> {
+        Task::none()
     }
     fn interrupt(&mut self) {}
     fn reload(

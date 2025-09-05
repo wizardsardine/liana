@@ -44,7 +44,7 @@ fn text_input(c: &TextInput, status: Status) -> Style {
     };
 
     match status {
-        Status::Active | Status::Hovered | Status::Focused { .. } => active,
+        Status::Active | Status::Hovered | Status::Focused => active,
         Status::Disabled => Style {
             background: Background::Color(c.disabled.background),
             border: if let Some(color) = c.disabled.border {

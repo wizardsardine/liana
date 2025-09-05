@@ -307,7 +307,9 @@ impl HotSigner {
                     if keypair.x_only_public_key().0 != *int_key {
                         return Err(SignerError::InsanePsbt);
                     }
-                    let keypair = keypair.tap_tweak(secp, psbt_in.tap_merkle_root).to_keypair();
+                    let keypair = keypair
+                        .tap_tweak(secp, psbt_in.tap_merkle_root)
+                        .to_keypair();
                     let sighash = sighash_cache
                         .taproot_key_spend_signature_hash(input_index, &prevouts, sighash_type)
                         .map_err(|_| SignerError::InsanePsbt)?;
@@ -507,14 +509,11 @@ mod tests {
     };
     use std::collections::{BTreeMap, HashSet};
 
-    static mut COUNTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     fn uid() -> usize {
-        unsafe {
-            let uid = COUNTER.load(std::sync::atomic::Ordering::Relaxed);
-            COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            uid
-        }
+        static COUNTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     }
+
     fn tmp_dir() -> path::PathBuf {
         std::env::temp_dir().join(format!(
             "lianad-{}-{:?}-{}",

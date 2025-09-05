@@ -1,6 +1,4 @@
 use crate::{app::menu::Menu, export::ImportExportMessage, node::bitcoind::RpcAuthType};
-#[cfg(all(feature = "dev-coincube", not(any(feature = "dev-meld", feature = "dev-onramp"))))]
-use crate::app::state::buysell::AccountType;
 use liana::miniscript::bitcoin::{bip32::Fingerprint, Address, OutPoint};
 
 pub trait Close {
@@ -22,6 +20,8 @@ pub enum Message {
     Settings(SettingsMessage),
     CreateSpend(CreateSpendMessage),
     ImportSpend(ImportSpendMessage),
+    #[cfg(feature = "dev-coincube")]
+    BuySell(BuySellMessage),
     Spend(SpendTxMessage),
     Next,
     Previous,
@@ -33,21 +33,6 @@ pub enum Message {
     ExportPsbt,
     ImportPsbt,
     OpenUrl(String),
-    BuySell(BuySellMessage),
-    #[cfg(any(feature = "dev-meld", feature = "dev-onramp"))]
-    MeldBuySell(MeldBuySellMessage),
-    #[cfg(feature = "webview")]
-    WebviewAction(iced_webview::Action),
-    #[cfg(feature = "webview")]
-    WebviewCreated,
-    #[cfg(feature = "webview")]
-    WebviewUrlChanged(String),
-    #[cfg(feature = "webview")]
-    SwitchToWebview(u32),
-    OpenWebview(String),
-    CloseWebview,
-    ShowWebView,
-
 }
 
 impl Close for Message {
@@ -146,38 +131,23 @@ pub enum CreateRbfMessage {
     Confirm,
 }
 
+#[cfg(feature = "dev-coincube")]
 #[derive(Debug, Clone)]
 pub enum BuySellMessage {
-    ShowModal,
-    CloseModal,
-    ShowAccountSelection,
-    HideAccountSelection,
-    #[cfg(all(feature = "dev-coincube", not(any(feature = "dev-meld", feature = "dev-onramp"))))]
-    SelectAccountType(AccountType),
-    GetStarted,
-    GoBack,
-    FormFieldEdited(String, String),
-    ToggleTermsAcceptance,
-    CreateAccount,
-}
-
-#[cfg(any(feature = "dev-meld", feature = "dev-onramp"))]
-#[derive(Debug, Clone)]
-pub enum MeldBuySellMessage {
-    ShowModal,
-    CloseModal,
     WalletAddressChanged(String),
+    #[cfg(feature = "dev-meld")]
     CountryCodeChanged(String),
+    #[cfg(feature = "dev-onramp")]
+    FiatCurrencyChanged(String),
     SourceAmountChanged(String),
 
     CreateSession,
-    SessionCreated(String), // widget_url
     SessionError(String),
-    OpenWidget(String),            // widget_url
-    OpenWidgetInNewWindow(String), // widget_url
-    CopyUrl(String),               // widget_url
-    UrlCopied,
-    CopyError,
-    ResetForm,
-    GoBackToForm,
+
+    // webview messages
+    WebviewCreated(iced_webview::ViewId),
+    ViewTick(iced_webview::ViewId),
+    WebviewAction(iced_webview::advanced::Action),
+    WebviewOpenUrl(String),
+    CloseWebview,
 }

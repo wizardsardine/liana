@@ -573,8 +573,7 @@ impl LianaDescriptor {
     /// latest available one. For instance:
     /// - If there is two recovery paths, and the PSBT's first input nSequence isn't set to unlock
     ///   any of them, prune all but the primary path's bip32 derivations.
-    /// - If there is two recovery paths, and the PSBT's first input nSequence is set to unlock the
-    ///     first one, prune all but the first recovery path's bip32 derivations.
+    /// - If there is two recovery paths, and the PSBT's first input nSequence is set to unlock the first one, prune all but the first recovery path's bip32 derivations.
     /// - Etc..
     pub fn prune_bip32_derivs_last_avail(&self, psbt: Psbt) -> Result<Psbt, LianaDescError> {
         let spend_info = self.partial_spend_info(&psbt)?;
@@ -1184,8 +1183,8 @@ mod tests {
     fn inheritance_descriptor_sat_size() {
         let desc = LianaDescriptor::from_str("wsh(or_d(pk([92162c45]tpubD6NzVbkrYhZ4WzTf9SsD6h7AH7oQEippXK2KP8qvhMMqFoNeN5YFVi7vRyeRSDGtgd2bPyMxUNmHui8t5yCgszxPPxMafu1VVzDpg9aruYW/<0;1>/*),and_v(v:pkh([abcdef01]tpubD6NzVbkrYhZ4Wdgu2yfdmrce5g4fiH1ZLmKhewsnNKupbi4sxjH1ZVAorkBLWSkhsjhg8kiq8C4BrBjMy3SjAKDyDdbuvUa1ToAHbiR98js/<0;1>/*),older(2))))#ravw7jw5").unwrap();
         // See the stack details below.
-        assert_eq!(desc.max_sat_vbytes(true), (1 + 66 + 73 + 3) / 4);
-        assert_eq!(desc.max_sat_vbytes(false), (1 + 66 + 1 + 34 + 73 + 3) / 4);
+        assert_eq!(desc.max_sat_vbytes(true), (1 + 66 + 73) / 4);
+        assert_eq!(desc.max_sat_vbytes(false), (3 + 1 + 66 + 1 + 34 + 73) / 4);
 
         // Maximum input size is (txid + vout + scriptsig + nSequence + max_sat).
         // Where max_sat is:
@@ -1232,12 +1231,12 @@ mod tests {
         );
 
         // If using the primary path, it's a keypath spend.
-        assert_eq!(desc.max_sat_vbytes(true), (1 + 65 + 3) / 4);
+        assert_eq!(desc.max_sat_vbytes(true), (3 + 1 + 65) / 4);
         // If using the recovery path, it's a script path spend. The script is 40 bytes long. The
         // control block is just the internal key and parity, so 33 bytes long.
         assert_eq!(
             desc.max_sat_vbytes(false),
-            (1 + 65 + 1 + 40 + 1 + 33 + 3) / 4
+            (3 + 1 + 65 + 1 + 40 + 1 + 33) / 4
         );
 
         // The same against the spender_input_size() helper, adding the size of the txin and

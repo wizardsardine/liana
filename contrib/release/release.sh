@@ -8,7 +8,7 @@
 set -ex
 
 VERSION="${VERSION:-"12.0"}"
-LIANA_PREFIX="liana-$VERSION"
+LIANA_PREFIX="coincube-vault-$VERSION"
 LINUX_DIR_NAME="$LIANA_PREFIX-x86_64-linux-gnu"
 LINUX_ARCHIVE="$LINUX_DIR_NAME.tar.gz"
 
@@ -49,13 +49,13 @@ NIX_BUILD_DIR="$(nix path-info .#release)"
 (
     cd "$BUILD_DIR"
     create_dir "$LINUX_DIR_NAME"
-    cp "$BUILD_DIR/x86_64-unknown-linux-gnu/release/lianad" "$BUILD_DIR/x86_64-unknown-linux-gnu/release/liana-cli" "$BUILD_DIR/x86_64-unknown-linux-gnu/release/liana-gui" ../README.md "$LINUX_DIR_NAME"
+    cp "$BUILD_DIR/x86_64-unknown-linux-gnu/release/lianad" "$BUILD_DIR/x86_64-unknown-linux-gnu/release/liana-cli" "$BUILD_DIR/x86_64-unknown-linux-gnu/release/coincube-vault" ../README.md "$LINUX_DIR_NAME"
     tar --mtime="@${SOURCE_DATE_EPOCH}" -czf "$LINUX_ARCHIVE" "$LINUX_DIR_NAME"
     mv "$LINUX_ARCHIVE" "$RELEASE_DIR"
 
     unzip ../contrib/release/debian/package.zip
     sed -i "s/VERSION_PLACEHOLDER/$VERSION/g" ./package/DEBIAN/control
-    cp "$BUILD_DIR/x86_64-unknown-linux-gnu/release/lianad" "$BUILD_DIR/x86_64-unknown-linux-gnu/release/liana-cli" "$BUILD_DIR/x86_64-unknown-linux-gnu/release/liana-gui" ../README.md ./package/usr/bin/
+    cp "$BUILD_DIR/x86_64-unknown-linux-gnu/release/lianad" "$BUILD_DIR/x86_64-unknown-linux-gnu/release/liana-cli" "$BUILD_DIR/x86_64-unknown-linux-gnu/release/coincube-vault" ../README.md ./package/usr/bin/
     DIRNAME="$LIANA_PREFIX-1_amd64"
     mv ./package "$DIRNAME"
     dpkg-deb -Zxz --build --root-owner-group "$DIRNAME"
@@ -65,29 +65,32 @@ NIX_BUILD_DIR="$(nix path-info .#release)"
 # Create the Windows archive and the raw executable
 (
     cd "$BUILD_DIR"
-    cp "$NIX_BUILD_DIR/x86_64-pc-windows-gnu/liana-gui.exe" "$RELEASE_DIR/$LIANA_PREFIX-noncodesigned.exe"
+    cp "$NIX_BUILD_DIR/x86_64-pc-windows-gnu/coincube-vault.exe" "$RELEASE_DIR/$LIANA_PREFIX-noncodesigned.exe"
 )
 
 # Create the MacOS archive and a zipped application bundle of liana-gui.
 (
     cd "$BUILD_DIR"
     create_dir "$LIANA_PREFIX-x86_64-apple-darwin"
-    cp "$NIX_BUILD_DIR/x86_64-apple-darwin/lianad" "$NIX_BUILD_DIR/x86_64-apple-darwin/liana-cli" "$NIX_BUILD_DIR/x86_64-apple-darwin/liana-gui" ../README.md "$LIANA_PREFIX-x86_64-apple-darwin"
+    cp "$NIX_BUILD_DIR/x86_64-apple-darwin/lianad" "$NIX_BUILD_DIR/x86_64-apple-darwin/liana-cli" "$NIX_BUILD_DIR/x86_64-apple-darwin/coincube-vault" ../README.md "$LIANA_PREFIX-x86_64-apple-darwin"
     tar --mtime="@${SOURCE_DATE_EPOCH}" -czf "$LIANA_PREFIX-x86_64-apple-darwin.tar.gz" "$LIANA_PREFIX-x86_64-apple-darwin"
     mv "$LIANA_PREFIX-x86_64-apple-darwin.tar.gz" "$RELEASE_DIR"
 
     create_dir "$LIANA_PREFIX-aarch64-apple-darwin"
-    cp "$NIX_BUILD_DIR/aarch64-apple-darwin/lianad" "$NIX_BUILD_DIR/aarch64-apple-darwin/liana-cli" "$NIX_BUILD_DIR/aarch64-apple-darwin/liana-gui" ../README.md "$LIANA_PREFIX-aarch64-apple-darwin"
+    cp "$NIX_BUILD_DIR/aarch64-apple-darwin/lianad" "$NIX_BUILD_DIR/aarch64-apple-darwin/liana-cli" "$NIX_BUILD_DIR/aarch64-apple-darwin/coincube-vault" ../README.md "$LIANA_PREFIX-aarch64-apple-darwin"
     tar --mtime="@${SOURCE_DATE_EPOCH}" -czf "$LIANA_PREFIX-aarch64-apple-darwin.tar.gz" "$LIANA_PREFIX-aarch64-apple-darwin"
     mv "$LIANA_PREFIX-aarch64-apple-darwin.tar.gz" "$RELEASE_DIR"
 
-    unzip ../contrib/release/macos/Liana.app.zip
-    sed -i "s/VERSION_PLACEHOLDER/$VERSION/g" ./Liana.app/Contents/Info.plist
-    cp "$NIX_BUILD_DIR/universal2-apple-darwin/liana-gui" ./Liana.app/Contents/MacOS/Liana
-    zip_archive "$LIANA_PREFIX-macos-noncodesigned.zip" Liana.app
+    unzip ../contrib/release/macos/Vault.app.zip
+    sed -i "s/VERSION_PLACEHOLDER/$VERSION/g" ./Vault.app/Contents/Info.plist
+
+    lipo -create "$NIX_BUILD_DIR/aarch64-apple-darwin/coincube-vault" "$NIX_BUILD_DIR/x86_64-apple-darwin/coincube-vault" -output ./Vault.app/Contents/MacOS/Vault
+
+    zip_archive "$LIANA_PREFIX-macos-noncodesigned.zip" Vault.app
     mv "$LIANA_PREFIX-macos-noncodesigned.zip" "$RELEASE_DIR/"
 )
 
+# Where is `$LIANA_PREFIX-shasums.txt` generated?
 find "$RELEASE_DIR" -type f ! -name "$LIANA_PREFIX-shasums.txt" -exec sha256sum {} + | sed "s|$RELEASE_DIR/||" | tee "$RELEASE_DIR/$LIANA_PREFIX-shasums.txt"
 
 set +ex

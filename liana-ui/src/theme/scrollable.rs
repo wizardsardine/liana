@@ -35,7 +35,7 @@ pub fn primary(theme: &Theme, status: Status) -> Style {
     };
 
     match status {
-        Status::Active { .. } | Status::Hovered { .. } | Status::Dragged { .. } => Style {
+        Status::Active | Status::Hovered { .. } | Status::Dragged { .. } => Style {
             container: container::Style {
                 text_color: None,
                 background: None,

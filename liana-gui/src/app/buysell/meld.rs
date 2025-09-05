@@ -1,11 +1,9 @@
 use super::ServiceProvider;
-use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::error::Error;
 use std::fmt;
 
-const MELD_API_BASE_URL: &str = "https://api-sb.meld.io";
-const MELD_API_ENDPOINT: &str = "/crypto/session/widget";
+const MELD_API_BASE_URL: &str = "https://api-sb.meld.io/crypto/session/widget";
 const MELD_AUTH_HEADER: &str = "BASIC WePYLDhjQ9xBCsedwgRGm5:3Jg4JnemxqoBPHTbHtcMuszbhkGHQmh";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -60,7 +58,7 @@ impl fmt::Display for MeldError {
         match self {
             MeldError::Network(e) => write!(f, "Network error: {}", e),
             MeldError::Serialization(e) => write!(f, "Serialization error: {}", e),
-            MeldError::Api(msg) => write!(f, "API error: {}", msg),
+            MeldError::Api(msg) => fmt::Display::fmt(msg, f),
         }
     }
 }
@@ -79,14 +77,15 @@ impl From<serde_json::Error> for MeldError {
     }
 }
 
+#[derive(Clone)]
 pub struct MeldClient {
-    client: Client,
+    client: reqwest::Client,
 }
 
 impl MeldClient {
     pub fn new() -> Self {
         Self {
-            client: Client::new(),
+            client: reqwest::Client::new(),
         }
     }
 
@@ -103,7 +102,11 @@ impl MeldClient {
         let destination_currency = "BTC";
 
         // Debug logging to see what we're sending
-        tracing::info!("Creating Meld session with network: {:?}, currency: {}", network, destination_currency);
+        tracing::info!(
+            "Creating Meld session with network: {:?}, currency: {}",
+            network,
+            destination_currency
+        );
 
         // Generate unique customer ID for each request to ensure fresh sessions
         let timestamp = std::time::SystemTime::now()
@@ -125,15 +128,16 @@ impl MeldClient {
             external_customer_id: unique_customer_id,
         };
 
-        let url = format!("{}{}", MELD_API_BASE_URL, MELD_API_ENDPOINT);
-
         // Debug logging
-        tracing::info!("Sending request to: {}", url);
-        tracing::info!("Request body: {}", serde_json::to_string_pretty(&request).unwrap_or_default());
+        tracing::info!("Sending request to: {}", MELD_API_BASE_URL);
+        tracing::info!(
+            "Request body: {}",
+            serde_json::to_string_pretty(&request).unwrap_or_default()
+        );
 
         let response = self
             .client
-            .post(&url)
+            .post(MELD_API_BASE_URL)
             .header("Authorization", MELD_AUTH_HEADER)
             .header("Content-Type", "application/json")
             .json(&request)
@@ -141,17 +145,25 @@ impl MeldClient {
             .await?;
 
         if response.status().is_success() {
-            let response_text = response.text().await?;
-            tracing::info!("Meld API response: {}", response_text);
+            let session_response: MeldSessionResponse = response.json().await?;
+            tracing::info!("Meld API response: {:?}", session_response);
 
-            let session_response: MeldSessionResponse = serde_json::from_str(&response_text)
-                .map_err(|e| MeldError::Serialization(e))?;
             Ok(session_response)
         } else {
+            #[derive(Deserialize, Debug)]
+            struct MeldErrorMessageExtract {
+                message: String,
+            }
+
             let status = response.status();
-            let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
-            tracing::error!("Meld API error: HTTP {}: {}", status, error_text);
-            Err(MeldError::Api(format!("HTTP {}: {}", status, error_text)))
+            let error_text = response.json::<MeldErrorMessageExtract>().await.ok();
+
+            tracing::error!("Meld API error: HTTP {}: {:?}", status, error_text);
+            Err(MeldError::Api(
+                error_text
+                    .map(|e| e.message)
+                    .unwrap_or("Unknown Meld API Error".to_string()),
+            ))
         }
     }
 }

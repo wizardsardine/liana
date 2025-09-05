@@ -3,7 +3,7 @@ use iced::{alignment, Font, Length};
 
 const BOOTSTRAP_ICONS: Font = Font::with_name("bootstrap-icons");
 
-fn bootstrap_icon(unicode: char) -> Text<'static> {
+fn bootstrap_icon<'a>(unicode: char) -> Text<'a> {
     Text::new(unicode)
         .font(BOOTSTRAP_ICONS)
         .width(Length::Fixed(20.0))
@@ -53,6 +53,10 @@ pub fn wallet_icon() -> Text<'static> {
 
 pub fn bitcoin_icon() -> Text<'static> {
     bootstrap_icon('\u{F635}')
+}
+
+pub fn globe_icon<'a>() -> Text<'a> {
+    bootstrap_icon('\u{F91B}')
 }
 
 pub fn block_icon() -> Text<'static> {

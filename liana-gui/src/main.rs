@@ -1,5 +1,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 use std::{error::Error, io::Write, path::PathBuf, process, str::FromStr};
 
 #[cfg(target_os = "linux")]
@@ -70,8 +73,6 @@ Options:
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
-    // CEF initialization removed - Ultralight doesn't require complex initialization
-
     let args = parse_args(std::env::args().collect())?;
     let config = match args.as_slice() {
         [] => {

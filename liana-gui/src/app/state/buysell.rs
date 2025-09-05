@@ -1,0 +1,262 @@
+use iced::Task;
+use std::{sync::Arc, time::Duration};
+
+use iced_webview::{
+    advanced::{Action as WebviewAction, WebView},
+    PageType,
+};
+use liana_ui::widget::Element;
+
+#[cfg(feature = "dev-meld")]
+use crate::app::buysell::{meld::MeldError, ServiceProvider};
+
+#[cfg(feature = "dev-onramp")]
+use crate::app::buysell::onramper;
+
+use crate::{
+    app::{
+        self,
+        cache::Cache,
+        message::Message,
+        state::State,
+        view::{self, buysell::BuySellPanel, BuySellMessage, Message as ViewMessage},
+    },
+    daemon::Daemon,
+};
+
+#[cfg(feature = "webview")]
+#[derive(Debug, Clone)]
+pub enum WebviewMessage {
+    Action(iced_webview::advanced::Action),
+    Created(iced_webview::ViewId),
+}
+
+/// Map webview messages to main app messages (static version for Task::map)
+fn map_webview_message_static(webview_msg: WebviewMessage) -> Message {
+    match webview_msg {
+        WebviewMessage::Action(action) => {
+            Message::View(ViewMessage::BuySell(BuySellMessage::WebviewAction(action)))
+        }
+        WebviewMessage::Created(id) => {
+            Message::View(ViewMessage::BuySell(BuySellMessage::WebviewCreated(id)))
+        }
+    }
+}
+
+/// lazily initialize the webview to reduce latent memory usage
+fn init_webview() -> WebView<iced_webview::Ultralight, WebviewMessage> {
+    WebView::new().on_create_view(crate::app::state::buysell::WebviewMessage::Created)
+}
+
+impl Default for BuySellPanel {
+    fn default() -> Self {
+        Self::new(liana::miniscript::bitcoin::Network::Bitcoin)
+    }
+}
+
+impl State for BuySellPanel {
+    fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, ViewMessage> {
+        // Return the meld view directly - dashboard wrapper will be applied by app/mod.rs
+        view::dashboard(&app::Menu::BuySell, cache, None, self.view())
+    }
+
+    fn update(
+        &mut self,
+        _daemon: Arc<dyn Daemon + Sync + Send>,
+        _cache: &Cache,
+        message: Message,
+    ) -> Task<Message> {
+        let Message::View(ViewMessage::BuySell(message)) = message else {
+            return Task::none();
+        };
+
+        match message {
+            BuySellMessage::WalletAddressChanged(address) => {
+                self.set_wallet_address(address);
+            }
+            #[cfg(feature = "dev-meld")]
+            BuySellMessage::CountryCodeChanged(code) => {
+                self.set_country_code(code);
+            }
+            #[cfg(feature = "dev-onramp")]
+            BuySellMessage::FiatCurrencyChanged(fiat) => {
+                self.set_fiat_currency(fiat);
+            }
+            BuySellMessage::SourceAmountChanged(amount) => {
+                self.set_source_amount(amount);
+            }
+
+            #[cfg(feature = "dev-onramp")]
+            BuySellMessage::CreateSession => {
+                if self.is_form_valid() {
+                    let onramper_url = onramper::create_widget_url(
+                        &self.fiat_currency.value,
+                        &self.source_amount.value,
+                        &self.wallet_address.value,
+                    );
+
+                    tracing::info!(
+                        "🚀 [BUYSELL] Creating new onramper widget session: {}",
+                        &onramper_url
+                    );
+
+                    let open_webview = Message::View(ViewMessage::BuySell(
+                        BuySellMessage::WebviewOpenUrl(onramper_url),
+                    ));
+
+                    return Task::done(open_webview);
+                } else {
+                    tracing::warn!("⚠️ [BUYSELL] Cannot create session - form validation failed");
+                }
+            }
+
+            #[cfg(feature = "dev-meld")]
+            BuySellMessage::CreateSession => {
+                if self.is_form_valid() {
+                    tracing::info!(
+                        "🚀 [BUYSELL] Creating new session - clearing any existing session data"
+                    );
+
+                    // init session
+                    let wallet_address = self.wallet_address.value.clone();
+                    let country_code = self.country_code.value.clone();
+                    let source_amount = self.source_amount.value.clone();
+
+                    tracing::info!(
+                        "🚀 [BUYSELL] Making fresh API call with: address={}, country={}, amount={}",
+                        wallet_address,
+                        country_code,
+                        source_amount
+                    );
+
+                    return Task::perform(
+                        {
+                            // TODO: allow users to select source provider, in a drop down
+                            let provider = ServiceProvider::Transak;
+                            let network = self.network;
+                            let client = self.meld_client.clone();
+
+                            async move {
+                                match client
+                                    .create_widget_session(
+                                        wallet_address,
+                                        country_code,
+                                        source_amount,
+                                        provider,
+                                        network,
+                                    )
+                                    .await
+                                {
+                                    Ok(response) => Ok(response.widget_url),
+                                    Err(MeldError::Network(e)) => {
+                                        Err(format!("Network error: {}", e))
+                                    }
+                                    Err(MeldError::Serialization(e)) => {
+                                        Err(format!("Data error: {}", e))
+                                    }
+                                    Err(MeldError::Api(e)) => Err(format!("API error: {}", e)),
+                                }
+                            }
+                        },
+                        |result| match result {
+                            Ok(widget_url) => {
+                                tracing::info!(
+                                    "🌐 [BUYSELL] Meld session created with URL: {}",
+                                    widget_url
+                                );
+
+                                Message::View(ViewMessage::BuySell(BuySellMessage::WebviewOpenUrl(
+                                    widget_url,
+                                )))
+                            }
+                            Err(error) => {
+                                tracing::error!("❌ [MELD] Session creation failed: {}", error);
+                                Message::View(ViewMessage::BuySell(BuySellMessage::SessionError(
+                                    error,
+                                )))
+                            }
+                        },
+                    );
+                } else {
+                    tracing::warn!("⚠️ [BUYSELL] Cannot create session - form validation failed");
+                }
+            }
+            BuySellMessage::SessionError(error) => {
+                self.set_error(error);
+            }
+
+            // webview logic
+            BuySellMessage::ViewTick(id) => {
+                let action = WebviewAction::Update(id);
+                return self
+                    .webview
+                    .get_or_insert_with(init_webview)
+                    .update(action)
+                    .map(map_webview_message_static);
+            }
+            BuySellMessage::WebviewAction(action) => {
+                return self
+                    .webview
+                    .get_or_insert_with(init_webview)
+                    .update(action)
+                    .map(map_webview_message_static);
+            }
+            BuySellMessage::WebviewOpenUrl(url) => {
+                // Load URL into Ultralight webview
+                tracing::info!("🌐 [LIANA] Loading Ultralight webview with URL: {}", url);
+                self.session_url = Some(url.clone());
+
+                // Create webview with URL string and immediately update to ensure content loads
+                return self
+                    .webview
+                    .get_or_insert_with(init_webview)
+                    .update(WebviewAction::CreateView(PageType::Url(url)))
+                    .map(map_webview_message_static);
+            }
+            BuySellMessage::WebviewCreated(id) => {
+                tracing::info!("🌐 [LIANA] Activating Webview Page: {}", id);
+
+                // set active page to selected view id
+                self.active_page = Some(id);
+            }
+            BuySellMessage::CloseWebview => {
+                self.session_url = None;
+
+                if let (Some(webview), Some(id)) = (self.webview.as_mut(), self.active_page.take())
+                {
+                    tracing::info!("🌐 [LIANA] Closing webview");
+                    return webview
+                        .update(WebviewAction::CloseView(id))
+                        .map(map_webview_message_static);
+                }
+            }
+        };
+
+        Task::none()
+    }
+
+    fn close(&mut self) -> Task<Message> {
+        Task::done(Message::View(ViewMessage::BuySell(
+            BuySellMessage::CloseWebview,
+        )))
+    }
+
+    fn subscription(&self) -> iced::Subscription<Message> {
+        // Add webview update subscription for smooth rendering when webview is active
+        if let Some(id) = self.active_page {
+            let interval = if cfg!(debug_assertions) {
+                // 4 FPS refresh rate
+                Duration::from_millis(250)
+            } else {
+                // 10 FPS for release
+                Duration::from_millis(100)
+            };
+
+            return iced::time::every(interval)
+                .with(id)
+                .map(|(i, ..)| Message::View(ViewMessage::BuySell(BuySellMessage::ViewTick(i))));
+        }
+
+        iced::Subscription::none()
+    }
+}

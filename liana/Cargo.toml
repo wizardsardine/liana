@@ -25,3 +25,8 @@ getrandom = "0.2"
 
 # Used for the hot signer
 bip39 = "2.0"
+
+[lints.clippy]
+uninlined_format_args = "allow"
+large_enum_variant = "allow"
+result_large_err = "allow"

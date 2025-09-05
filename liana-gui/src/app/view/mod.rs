@@ -1,15 +1,15 @@
 mod label;
 mod message;
 mod warning;
-pub mod webview;
 
-
-#[cfg(any(feature = "dev-meld", feature = "dev-onramp"))]
-pub mod meld_buysell;
 pub mod coins;
 pub mod export;
 pub mod home;
 pub mod hw;
+
+#[cfg(feature = "dev-coincube")]
+pub mod buysell;
+
 pub mod psbt;
 pub mod psbts;
 pub mod receive;
@@ -30,8 +30,8 @@ use liana_ui::{
     color,
     component::{button, text::*},
     icon::{
-        bitcoin_icon, coins_icon, cross_icon, history_icon, home_icon, receive_icon, recovery_icon, send_icon,
-        settings_icon,
+        bitcoin_icon, coins_icon, cross_icon, history_icon, home_icon, receive_icon, recovery_icon,
+        send_icon, settings_icon,
     },
     image::*,
     theme,
@@ -139,21 +139,21 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
             .width(iced::Length::Fill))
     };
 
-    let buy_sell_button = if *menu == Menu::BuyAndSell {
-        row!(
-            button::menu_active(Some(bitcoin_icon()), "Buy/Sell")
-                .on_press(Message::Reload)
-                .width(iced::Length::Fill),
-            menu_bar_highlight()
-        )
-    } else {
-        row!(button::menu(Some(bitcoin_icon()), "Buy/Sell")
-            .on_press(Message::Menu(Menu::BuyAndSell))
-            .width(iced::Length::Fill))
-    };
+    let buy_sell_button = cfg!(feature = "dev-coincube").then(|| {
+        if *menu == Menu::BuySell {
+            row!(
+                button::menu_active(Some(bitcoin_icon()), "Buy/Sell")
+                    .on_press(Message::Reload)
+                    .width(iced::Length::Fill),
+                menu_bar_highlight()
+            )
+        } else {
+            row!(button::menu(Some(bitcoin_icon()), "Buy/Sell")
+                .on_press(Message::Menu(Menu::BuySell))
+                .width(iced::Length::Fill))
+        }
+    });
 
-
-    
     let settings_button = if *menu == Menu::Settings {
         row!(
             button::menu_active(Some(settings_icon()), "Settings")
@@ -183,8 +183,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
                     .push(coins_button)
                     .push(transactions_button)
                     .push(psbt_button)
-                    .push(buy_sell_button)
-
+                    .push_maybe(buy_sell_button)
                     .height(Length::Fill),
             )
             .push(
@@ -298,8 +297,8 @@ pub fn small_sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message
             .on_press(Message::Menu(Menu::Recovery))
             .width(iced::Length::Fill))
     };
-    
-    let buy_sell_button = if *menu == Menu::BuyAndSell {
+
+    let buy_sell_button = if *menu == Menu::BuySell {
         row!(
             button::menu_active_small(bitcoin_icon())
                 .on_press(Message::Reload)
@@ -308,11 +307,9 @@ pub fn small_sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message
         )
     } else {
         row!(button::menu_small(bitcoin_icon())
-            .on_press(Message::Menu(Menu::BuyAndSell))
+            .on_press(Message::Menu(Menu::BuySell))
             .width(iced::Length::Fill))
     };
-
-
 
     let settings_button = if *menu == Menu::Settings {
         row!(
@@ -342,7 +339,6 @@ pub fn small_sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message
                     .push(transactions_button)
                     .push(psbt_button)
                     .push(buy_sell_button)
-
                     .align_x(iced::Alignment::Center)
                     .height(Length::Fill),
             )
@@ -396,12 +392,12 @@ pub fn dashboard<'a, T: Into<Element<'a, Message>>>(
                                         Container::new(content.into())
                                             .width(Length::FillPortion(8))
                                             .max_width(1500)
-                                            .height(Length::Shrink)
+                                            .height(Length::Shrink),
                                     )
-                                    .push(Space::with_width(Length::FillPortion(1)))
+                                    .push(Space::with_width(Length::FillPortion(1))),
                             )
                             .spacing(10)
-                            .height(Length::Shrink)
+                            .height(Length::Shrink),
                     ))
                     .center_x(Length::Fill)
                     .style(theme::container::background)

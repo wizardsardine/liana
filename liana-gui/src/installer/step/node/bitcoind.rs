@@ -62,7 +62,7 @@ impl Download {
 
     pub fn start(&mut self) {
         match self.state {
-            DownloadState::Idle { .. }
+            DownloadState::Idle
             | DownloadState::Finished { .. }
             | DownloadState::Errored { .. } => {
                 self.state = DownloadState::Downloading { progress: 0.0 };

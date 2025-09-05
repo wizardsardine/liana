@@ -44,23 +44,44 @@ pub fn alert<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> Button<'a, T
 }
 
 pub fn primary<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> Button<'a, T> {
-    Button::new(content(icon, text(t).font(MEDIUM))).style(theme::button::primary)
+    Button::new(content(
+        icon,
+        text(t)
+            .font(MEDIUM)
+            .align_y(iced::Alignment::Center)
+            .align_x(iced::Alignment::Center),
+    ))
+    .style(theme::button::primary)
 }
 
 pub fn transparent<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> Button<'a, T> {
-    Button::new(content(icon, text(t))).style(theme::button::container)
+    Button::new(content(
+        icon,
+        text(t)
+            .align_y(iced::Alignment::Center)
+            .align_x(iced::Alignment::Center),
+    ))
+    .style(theme::button::container)
 }
 
 pub fn secondary<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> Button<'a, T> {
-    Button::new(content(icon, text(t))).style(theme::button::secondary)
+    Button::new(content(
+        icon,
+        text(t)
+            .align_y(iced::Alignment::Center)
+            .align_x(iced::Alignment::Center),
+    ))
+    .style(theme::button::secondary)
 }
 
 pub fn border<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> Button<'a, T> {
-    Button::new(content(icon, text(t))).style(theme::button::secondary)
+    Button::new(content(icon, text(t).align_y(iced::Alignment::Center)))
+        .style(theme::button::secondary)
 }
 
 pub fn transparent_border<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> Button<'a, T> {
-    button(content(icon, text(t))).style(theme::button::container_border)
+    button(content(icon, text(t).align_y(iced::Alignment::Center)))
+        .style(theme::button::container_border)
 }
 
 pub fn link<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> Button<'a, T> {

@@ -95,12 +95,10 @@ impl DescKeyChecker {
     /// We require the descriptor key to:
     ///  - Be deriveable (to contain a wildcard)
     ///  - Be multipath (to contain a step in the derivation path with multiple indexes)
-    ///  - The multipath step to only contain two indexes. These can be any indexes, which is
-    ///     useful for deriving multiple keys from the same xpub.
+    ///  - The multipath step to only contain two indexes. These can be any indexes, which is useful for deriving multiple keys from the same xpub.
     ///  - Be 'signable' by an external signer (to contain an origin)
     ///
-    /// This returns the origin fingerprint for this xpub, to make it possible for the caller to
-    /// check the same signer is never used twice in the same spending path.
+    /// This returns the origin fingerprint for this xpub, to make it possible for the caller to check the same signer is never used twice in the same spending path.
     pub fn check(
         &mut self,
         key: &descriptor::DescriptorPublicKey,

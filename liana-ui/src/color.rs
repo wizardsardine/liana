@@ -21,4 +21,4 @@ pub const RED: Color = iced::color!(0xE24E1B);
 pub const ORANGE: Color = iced::color!(0xF7931B);
 pub const TRANSPARENT_ORANGE: Color = iced::color!(0xF7931B, 0.3);
 
-pub const BLUE: Color = iced::color!(0x7DD3Fc);
+pub const BLUE: Color = iced::color!(0x7DD3FC);

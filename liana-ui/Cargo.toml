@@ -13,3 +13,6 @@ iced_runtime = { version = "0.13.2" }
 unicode-segmentation = "1.0"
 bitcoin = "0.32"
 chrono = "0.4"
+
+[lints.clippy]
+uninlined_format_args = "allow"

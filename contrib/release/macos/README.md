@@ -26,6 +26,7 @@ certificate to distribute apps outside of the store.
 
 They ask for a "Certificate Signing Request (CSR)" that you need to generate on your Mac. I don't
 have a Mac. Generate it using OpenSSL:
+
 ```
 openssl genrsa -out wizardsardine_liana.key 2048
 openssl req -new -sha256 -key wizardsardine_liana.key -out wizardsardine_liana_codesigning.csr -subj "/emailAddress=antoine@wizardsardine.com, CN=Antoine Poinsot, C=FR"
@@ -40,14 +41,15 @@ Now you get to be able to download your certificate (I've stored it as
 so we don't even have to convert it to PEM.
 
 Download `rcodesign`:
+
 ```
 curl -OL https://github.com/indygreg/apple-platform-rs/releases/download/apple-codesign%2F0.22.0/apple-codesign-0.22.0-x86_64-unknown-linux-musl.tar.gz
 tar -xzf apple-codesign-0.22.0-x86_64-unknown-linux-musl.tar.gz
 ./apple-codesign-0.22.0-x86_64-unknown-linux-musl/rcodesign --help
 ```
 
-Sign the packaged application using the `sign` command (mind `--code-signature-flags for the
-necessary hardened runtime):
+Sign the packaged application using the `sign` command (mind `--code-signature-flags for the necessary hardened runtime):
+
 ```
 ./apple-codesign-0.22.0-x86_64-unknown-linux-musl/rcodesign sign --code-signature-flags runtime --pem-source wizardsardine_liana.key --der-source antoine_devid_liana_codesigning.cer Liana.app
 ```
