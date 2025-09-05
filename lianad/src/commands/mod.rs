@@ -9,7 +9,7 @@ use crate::{
     database::{Coin, DatabaseConnection, DatabaseInterface},
     miniscript::bitcoin::absolute::LockTime,
     poller::PollerMessage,
-    DaemonControl, VERSION,
+    DaemonControl, LIANA_VERSION,
 };
 
 pub use crate::database::{CoinStatus, LabelItem};
@@ -329,7 +329,7 @@ impl DaemonControl {
             .rescan_timestamp
             .map(|_| self.bitcoin.rescan_progress().unwrap_or(1.0));
         GetInfoResult {
-            version: VERSION.to_string(),
+            version: LIANA_VERSION.to_string(),
             network: self.config.bitcoin_config.network,
             block_height,
             sync: self.bitcoin.sync_progress().rounded_up_progress(),

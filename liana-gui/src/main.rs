@@ -18,8 +18,8 @@ use liana_gui::{
     dir::LianaDirectory,
     gui::{Config, GUI},
     node::bitcoind::delete_all_bitcoind_locks_for_process,
-    VERSION,
 };
+use lianad::LIANA_VERSION;
 
 #[derive(Debug, PartialEq)]
 enum Arg {
@@ -31,7 +31,7 @@ fn parse_args(args: Vec<String>) -> Result<Vec<Arg>, Box<dyn Error>> {
     let mut res = Vec::new();
 
     if args.len() > 1 && (args[1] == "--version" || args[1] == "-v") {
-        eprintln!("{}", VERSION);
+        eprintln!("{}", LIANA_VERSION);
         process::exit(1);
     }
 

@@ -5,10 +5,10 @@ use std::{
     process, thread, time,
 };
 
-use lianad::{config::Config, setup_panic_hook, DaemonHandle, VERSION};
+use lianad::{config::Config, setup_panic_hook, DaemonHandle, LIANA_VERSION};
 
 fn print_help_exit(code: i32) {
-    eprintln!("lianad version {}", VERSION);
+    eprintln!("lianad version {}", LIANA_VERSION);
     eprintln!("A TOML configuration file is required to run lianad. By default lianad looks for a 'config.toml' file in its data directory. A different one may be provided like so: '--conf <config file path>'.");
     eprintln!("A documented sample is available at 'contrib/lianad_config_example.toml' in the source tree (https://github.com/wizardsardine/liana/blob/v1.0/contrib/lianad_config_example.toml).");
     eprintln!("The default data directory path is a 'liana/' folder in the XDG standard configuration directory for all OSes but Linux ones, where it's '~/.liana/'.");
@@ -16,7 +16,7 @@ fn print_help_exit(code: i32) {
 }
 
 fn print_version() {
-    eprintln!("{}", VERSION);
+    eprintln!("{}", LIANA_VERSION);
     process::exit(0);
 }
 

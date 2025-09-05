@@ -26,7 +26,6 @@ MAX_DERIV = 2**31 - 1
 def test_getinfo(lianad):
     res = lianad.rpc.getinfo()
     assert "timestamp" in res.keys()
-    assert res["version"] == "12.0-dev"
     assert res["network"] == "regtest"
     wait_for(lambda: lianad.rpc.getinfo()["block_height"] == 101)
     res = lianad.rpc.getinfo()

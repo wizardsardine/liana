@@ -43,7 +43,7 @@
           "log_level": null,
           "start_internal_bitcoind": false
         },
-        "liana_version": "11.0",
+        "liana_version": "12.0",
         "settings": {
           "alias": "My Liana Regtest wallet",
           "descriptor_checksum": "jz5sm0xn",
