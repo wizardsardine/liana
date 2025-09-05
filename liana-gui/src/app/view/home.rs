@@ -91,7 +91,7 @@ pub fn home_view<'a>(
                                     text(format!(
                                         "({} {})",
                                         fiat.to_formatted_string(),
-                                        fiat.currency
+                                        fiat.currency()
                                     ))
                                     .size(H1_SIZE)
                                     .color(color::GREY_2),
@@ -155,7 +155,7 @@ pub fn home_view<'a>(
                                             text(format!(
                                                 "({} {})",
                                                 fiat.to_formatted_string(),
-                                                fiat.currency
+                                                fiat.currency()
                                             ))
                                             .size(H3_SIZE)
                                             .color(color::GREY_3),
