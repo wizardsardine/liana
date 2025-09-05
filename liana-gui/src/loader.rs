@@ -431,7 +431,6 @@ pub async fn load_application(
 > {
     let wallet = Wallet::new(info.descriptors.main)
         .load_from_settings(wallet_settings)?
-        .or_default_fiat_price_setting(network, daemon.backend().is_remote())
         .load_hotsigners(&datadir_path, network)?;
 
     let coins = coins_to_cache(daemon.clone()).await.map(|res| res.coins)?;
