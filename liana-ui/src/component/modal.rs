@@ -20,8 +20,8 @@ use crate::{
 
 use crate::widget::{Button, Column, Element, Row, Text};
 
-pub const MODAL_WIDTH: u16 = 550;
-pub const BTN_W: u16 = 400;
+pub const MODAL_WIDTH: u16 = 650;
+pub const BTN_W: u16 = 500;
 pub const BTN_H: u16 = 40;
 pub const V_SPACING: u16 = 10;
 pub const H_SPACING: u16 = 5;
@@ -159,7 +159,7 @@ where
     if error.is_some() {
         message = None;
     }
-    let message = message.map(text::p1_regular);
+    let message = message.map(text::p2_regular);
     let error = error.map(|e| text::p1_regular(e).color(color::ORANGE));
     let tt = tooltip_str.map(|s| tooltip(s));
 
@@ -167,7 +167,8 @@ where
         text::p1_bold(name),
         text::p1_regular(fingerprint.unwrap_or(" - ".to_string()))
     ]
-    .align_x(Horizontal::Center);
+    .align_x(Horizontal::Left)
+    .width(200);
     let row = Row::new()
         .push_maybe(icon.as_ref().map(|_| Space::with_width(H_SPACING)))
         .push_maybe(icon)

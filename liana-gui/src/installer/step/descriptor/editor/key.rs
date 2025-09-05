@@ -49,6 +49,7 @@ use crate::{
     signer::Signer,
 };
 
+const MAX_ALIAS_LEN: usize = 24;
 pub type FnMsg = fn() -> Message;
 
 pub fn new_multixkey_from_xpub(
@@ -766,9 +767,9 @@ impl SelectKeySource {
             );
             return Task::none();
         }
-        // TODO: which max length for an alias?
-        self.form_alias.valid = alias.len() < 30;
-        self.form_alias.value = alias;
+        if alias.chars().count() <= MAX_ALIAS_LEN {
+            self.form_alias.value = alias;
+        }
         Task::none()
     }
     fn on_account(&mut self, index: ChildNumber) -> Task<Message> {
@@ -1082,7 +1083,7 @@ impl SelectKeySource {
                         minimal_supported_version,
                     } => {
                         enabled = true;
-                        Some(format!("Device version not supported, you must upgrate to version > {minimal_supported_version}"))
+                        Some(format!("Device version not supported, you must upgrade to version > {minimal_supported_version}"))
                     }
                     UnsupportedReason::Method(m) => {
                         Some(format!("Device not supported, method: {m}"))
@@ -1107,7 +1108,15 @@ impl SelectKeySource {
             }
         }
         let fingerprint = fg.map(|fg| format!("#{fg}"));
-        modal::key_entry(None, alias, fingerprint, None, None, message, msg)
+        modal::key_entry(
+            Some(icon::usb_drive_icon()),
+            alias,
+            fingerprint,
+            None,
+            None,
+            message,
+            msg,
+        )
     }
     fn widget_key(
         &self,
@@ -1430,7 +1439,11 @@ impl super::DescriptorEditModal for EditKeyAlias {
     fn update(&mut self, _hws: &mut HardwareWallets, message: Message) -> Task<Message> {
         if let Message::EditKeyAlias(msg) = message {
             match msg {
-                EditKeyAliasMessage::Alias(alias) => self.form_alias.value = alias,
+                EditKeyAliasMessage::Alias(alias) => {
+                    if alias.chars().count() <= MAX_ALIAS_LEN {
+                        self.form_alias.value = alias
+                    }
+                }
                 EditKeyAliasMessage::Save => {
                     return Task::done(Message::DefineDescriptor(
                         message::DefineDescriptor::AliasEdited(
