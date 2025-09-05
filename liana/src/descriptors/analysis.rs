@@ -543,7 +543,7 @@ impl LianaPolicy {
             is_taproot,
         };
         if compile {
-            policy.clone().into_multipath_descriptor_fallible()?;
+            policy.clone().compile_multipath_descriptor_fallible()?;
         }
         Ok(policy)
     }
@@ -718,7 +718,7 @@ impl LianaPolicy {
             })
     }
 
-    fn into_multipath_descriptor_fallible(
+    fn compile_multipath_descriptor_fallible(
         self,
     ) -> Result<descriptor::Descriptor<descriptor::DescriptorPublicKey>, LianaPolicyError> {
         if self.is_taproot {
@@ -783,11 +783,19 @@ impl LianaPolicy {
     /// involves a Miniscript policy compilation: this function is **not deterministic**. If you
     /// are inferring a `LianaPolicy` from a descriptor, generating a descriptor from this
     /// `LianaPolicy` may not yield the same descriptor.
+    pub fn compile_multipath_descriptor(
+        self,
+    ) -> descriptor::Descriptor<descriptor::DescriptorPublicKey> {
+        self.compile_multipath_descriptor_fallible()
+            .expect("This is always checked when creating a LianaPolicy.")
+    }
+
+    #[deprecated]
+    /// Deprecated in favor of [`compile_multipath_descriptor()`]
     pub fn into_multipath_descriptor(
         self,
     ) -> descriptor::Descriptor<descriptor::DescriptorPublicKey> {
-        self.into_multipath_descriptor_fallible()
-            .expect("This is always checked when creating a LianaPolicy.")
+        self.compile_multipath_descriptor()
     }
 }
 
