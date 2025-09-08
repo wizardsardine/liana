@@ -129,15 +129,22 @@ where
 
 impl<'a, Message: 'a + Clone> From<Form<'a, Message>> for Element<'a, Message> {
     fn from(form: Form<'a, Message>) -> Element<'a, Message> {
+        form.into_container().into()
+    }
+}
+
+impl<'a, Message: 'a + Clone> Form<'a, Message> {
+    /// Converts the [`Form`] into a [`Container`].
+    pub fn into_container(self) -> Container<'a, Message> {
         Container::new(
             Column::new()
-                .push(if !form.valid {
-                    form.input.style(theme::text_input::invalid)
+                .push(if !self.valid {
+                    self.input.style(theme::text_input::invalid)
                 } else {
-                    form.input
+                    self.input
                 })
-                .push_maybe(if !form.valid {
-                    form.warning
+                .push_maybe(if !self.valid {
+                    self.warning
                         .map(|message| text::caption(message).color(color::RED))
                 } else {
                     None
@@ -146,6 +153,5 @@ impl<'a, Message: 'a + Clone> From<Form<'a, Message>> for Element<'a, Message> {
                 .spacing(5),
         )
         .width(Length::Fill)
-        .into()
     }
 }
