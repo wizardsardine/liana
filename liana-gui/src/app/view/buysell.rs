@@ -5,6 +5,7 @@ use iced::{
     widget::{container, text, Space},
     Alignment, Length,
 };
+#[cfg(feature = "webview")]
 use iced_webview::{advanced::WebView, Ultralight};
 
 use liana::miniscript::bitcoin::Network;
@@ -35,13 +36,20 @@ pub struct BuySellPanel {
     pub meld_client: MeldClient,
 
     // Ultralight webview component for Meld widget integration with performance optimizations
+    #[cfg(feature = "webview")]
     pub webview: Option<WebView<Ultralight, crate::app::state::buysell::WebviewMessage>>,
 
     // Current webview page url
+    #[cfg(feature = "webview")]
     pub session_url: Option<String>,
 
     // Current active webview "page": view_id
+    #[cfg(feature = "webview")]
     pub active_page: Option<iced_webview::ViewId>,
+
+    // Native login fields
+    pub login_username: form::Value<String>,
+    pub login_password: form::Value<String>,
 }
 
 impl BuySellPanel {
@@ -76,9 +84,15 @@ impl BuySellPanel {
             error: None,
             network,
 
+            #[cfg(feature = "webview")]
             webview: None,
+            #[cfg(feature = "webview")]
             session_url: None,
+            #[cfg(feature = "webview")]
             active_page: None,
+
+            login_username: form::Value { value: String::new(), warning: None, valid: false },
+            login_password: form::Value { value: String::new(), warning: None, valid: false },
         }
     }
 
@@ -117,6 +131,21 @@ impl BuySellPanel {
             }
             _ => false, // Unknown network
         }
+    }
+
+
+    pub fn set_login_username(&mut self, v: String) {
+        self.login_username.value = v;
+        self.login_username.valid = !self.login_username.value.is_empty();
+    }
+
+    pub fn set_login_password(&mut self, v: String) {
+        self.login_password.value = v;
+        self.login_password.valid = !self.login_password.value.is_empty();
+    }
+
+    pub fn is_login_form_valid(&self) -> bool {
+        self.login_username.valid && self.login_password.valid
     }
 
     fn update_wallet_address_warning(&mut self) {
@@ -168,7 +197,8 @@ impl BuySellPanel {
 
     pub fn view<'a>(&'a self) -> Container<'a, ViewMessage> {
         Container::new({
-            // attempt to render webview
+            // attempt to render webview (if available)
+            #[cfg(feature = "webview")]
             let webview_widget = self
                 .active_page
                 .as_ref()
@@ -180,6 +210,7 @@ impl BuySellPanel {
                 })
                 .flatten();
 
+            #[cfg(feature = "webview")]
             let column = match webview_widget {
                 Some(w) => Column::new()
                     .push(
@@ -220,6 +251,8 @@ impl BuySellPanel {
                             .push(
                                 Row::new()
                                     .push(Space::with_width(Length::Fill))
+
+
                                     .push(
                                         Row::new()
                                             .push(
@@ -357,6 +390,56 @@ impl BuySellPanel {
                 ui_button::secondary(Some(liana_ui::icon::globe_icon()), "Create Widget Session")
                     .width(Length::Fill)
             })
+            .align_x(Alignment::Center)
+            .spacing(5)
+            .max_width(500)
+            .width(Length::Fill)
+    }
+}
+
+
+#[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+impl BuySellPanel {
+    fn native_login_form<'a>(&'a self) -> Column<'a, ViewMessage> {
+        Column::new()
+            .push_maybe(self.error.as_ref().map(|err| {
+                Container::new(text(err).size(14).color(color::RED))
+                    .padding(10)
+                    .style(theme::card::invalid)
+            }))
+            .push(Space::with_height(Length::Fixed(20.0)))
+            .push(text("Username or Email").size(14).color(color::GREY_3))
+            .push(Space::with_height(Length::Fixed(5.0)))
+            .push(
+                form::Form::new_trimmed("you@example.com", &self.login_username, |v| {
+                    ViewMessage::BuySell(BuySellMessage::LoginUsernameChanged(v))
+                })
+                .size(16)
+                .padding(15),
+            )
+            .push(Space::with_height(Length::Fixed(10.0)))
+            .push(text("Password").size(14).color(color::GREY_3))
+            .push(Space::with_height(Length::Fixed(5.0)))
+            .push(
+                form::Form::new_trimmed("********", &self.login_password, |v| {
+                    ViewMessage::BuySell(BuySellMessage::LoginPasswordChanged(v))
+                })
+                .secure()
+                .size(16)
+                .padding(15),
+            )
+            .push(Space::with_height(Length::Fixed(20.0)))
+            .push(if self.is_login_form_valid() {
+                ui_button::primary(None, "Sign In")
+                    .on_press(ViewMessage::BuySell(BuySellMessage::SubmitLogin))
+                    .width(Length::Fill)
+            } else {
+                ui_button::secondary(None, "Sign In").width(Length::Fill)
+            })
+            .push(
+                ui_button::transparent(None, "Create Account")
+                    .on_press(ViewMessage::BuySell(BuySellMessage::CreateAccountPressed)),
+            )
             .align_x(Alignment::Center)
             .spacing(5)
             .max_width(500)
