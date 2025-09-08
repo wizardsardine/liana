@@ -190,6 +190,9 @@ impl BuySellPanel {
         #[cfg(feature = "dev-onramp")]
         let locale_check = self.fiat_currency.valid && !self.fiat_currency.value.is_empty();
 
+        #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+        let locale_check = true;
+
         self.wallet_address.valid
             && locale_check
             && self.source_amount.valid
@@ -297,6 +300,12 @@ impl BuySellPanel {
         .center_x(Length::Fill)
     }
 
+    #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+    fn form_view<'a>(&'a self) -> Column<'a, ViewMessage> {
+        self.native_login_form()
+    }
+
+    #[cfg(any(feature = "dev-meld", feature = "dev-onramp"))]
     fn form_view<'a>(&'a self) -> Column<'a, ViewMessage> {
         Column::new()
             .push_maybe(self.error.as_ref().map(|err| {

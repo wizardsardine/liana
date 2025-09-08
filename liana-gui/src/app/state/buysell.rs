@@ -1,6 +1,7 @@
 use iced::Task;
 use std::{sync::Arc, time::Duration};
 
+#[cfg(feature = "webview")]
 use iced_webview::{
     advanced::{Action as WebviewAction, WebView},
     PageType,
@@ -32,6 +33,7 @@ pub enum WebviewMessage {
 }
 
 /// Map webview messages to main app messages (static version for Task::map)
+#[cfg(feature = "webview")]
 fn map_webview_message_static(webview_msg: WebviewMessage) -> Message {
     match webview_msg {
         WebviewMessage::Action(action) => {
@@ -44,6 +46,7 @@ fn map_webview_message_static(webview_msg: WebviewMessage) -> Message {
 }
 
 /// lazily initialize the webview to reduce latent memory usage
+#[cfg(feature = "webview")]
 fn init_webview() -> WebView<iced_webview::Ultralight, WebviewMessage> {
     WebView::new().on_create_view(crate::app::state::buysell::WebviewMessage::Created)
 }
