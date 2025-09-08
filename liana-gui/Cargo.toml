@@ -14,10 +14,8 @@ name = "coincube-vault"
 path = "src/main.rs"
 
 [features]
-# New 3-feature structure from master with webview support
-dev-meld = ["webview", "dev-coincube"]
-dev-onramp = ["webview", "dev-coincube"]
-dev-coincube = []
+dev-meld = ["webview"]
+dev-onramp = ["webview"]
 webview = ["iced_webview"]
 
 [dependencies]
