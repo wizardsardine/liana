@@ -2,7 +2,6 @@ use std::{
     collections::{HashMap, HashSet},
     convert::TryInto,
     sync::Arc,
-    time::{SystemTime, UNIX_EPOCH},
 };
 
 use iced::Task;
@@ -11,8 +10,8 @@ use liana::{
     spend::{SpendCreationError, MAX_FEERATE},
 };
 use liana_ui::{
-    component::{form, modal::Modal},
-    widget::*,
+    component::form,
+    widget::{modal::Modal, Element},
 };
 use lianad::commands::CoinStatus;
 
@@ -29,6 +28,7 @@ use crate::{
     },
     daemon::model::{self, LabelsLoader},
     export::{ImportExportMessage, ImportExportType},
+    utils::now,
 };
 
 use crate::daemon::{
@@ -305,12 +305,7 @@ impl State for TransactionsPanel {
         _wallet: Arc<Wallet>,
     ) -> Task<Message> {
         self.selected_tx = None;
-        let now: u32 = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs()
-            .try_into()
-            .unwrap();
+        let now: u32 = now().as_secs().try_into().unwrap();
         Task::batch(vec![Task::perform(
             async move {
                 let mut txs = daemon

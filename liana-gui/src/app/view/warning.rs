@@ -51,6 +51,7 @@ impl From<&Error> for WarningMessage {
             Error::Spend(e) => WarningMessage(format!("Spend creation error: '{}'.", e)),
             Error::ImportExport(e) => WarningMessage(format!("{e}")),
             Error::RestoreBackup(e) => WarningMessage(format!("Failed to restore backup: {e}")),
+            Error::FiatPrice(e) => WarningMessage(format!("Fiat price error: {}", e)),
         }
     }
 }

@@ -1,4 +1,4 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, sync::Arc, time::Instant};
 
 use iced::{Subscription, Task};
 use tracing::{error, info};
@@ -69,6 +69,22 @@ impl Tab {
         Tab { id, state }
     }
 
+    pub fn cache(&self) -> Option<&Cache> {
+        if let State::App(ref app) = self.state {
+            Some(app.cache())
+        } else {
+            None
+        }
+    }
+
+    pub fn wallet(&self) -> Option<&Wallet> {
+        if let State::App(ref app) = self.state {
+            Some(app.wallet())
+        } else {
+            None
+        }
+    }
+
     pub fn title(&self) -> &str {
         match &self.state {
             State::Installer(_) => "Installer",
@@ -76,6 +92,15 @@ impl Tab {
             State::Launcher(_) => "Launcher",
             State::Login(_) => "Login",
             State::App(a) => a.title(),
+        }
+    }
+
+    pub fn on_tick(&mut self) -> Task<Message> {
+        // currently the Tick is only used by the app
+        if let State::App(app) = &mut self.state {
+            app.on_tick().map(|msg| Message::Run(Box::new(msg)))
+        } else {
+            Task::none()
         }
     }
 
@@ -361,7 +386,9 @@ pub fn create_app_with_remote_backend(
                 blockheight: wallet.tip_height.unwrap_or(0),
                 // We ignore last poll fields for remote backend.
                 last_poll_timestamp: None,
+                last_tick: Instant::now(),
             },
+            fiat_price: None,
         },
         Arc::new(
             Wallet::new(wallet.descriptor)
@@ -371,6 +398,8 @@ pub fn create_app_with_remote_backend(
                 .with_key_aliases(aliases)
                 .with_provider_keys(provider_keys)
                 .with_hardware_wallets(hws)
+                .with_fiat_price_setting(wallet_settings.fiat_price)
+                .or_default_fiat_price_setting(network, true)
                 .load_hotsigners(&liana_dir, network)
                 .expect("Datadir should be conform"),
         ),

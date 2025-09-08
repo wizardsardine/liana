@@ -30,7 +30,7 @@ impl error::Error for RandomnessError {}
 // Windows, and `getentropy()` / `/dev/random` on Mac.
 fn system_randomness() -> Result<[u8; 32], RandomnessError> {
     let mut buf = [0; 32];
-    getrandom::getrandom(&mut buf).map_err(|e| RandomnessError::Os(e.to_string()))?;
+    getrandom::fill(&mut buf).map_err(|e| RandomnessError::Os(e.to_string()))?;
     assert_ne!(buf, [0; 32]);
     Ok(buf)
 }

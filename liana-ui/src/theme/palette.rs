@@ -17,6 +17,7 @@ pub struct Palette {
     pub progress_bars: ProgressBars,
     pub rule: iced::Color,
     pub pane_grid: PaneGrid,
+    pub togglers: Togglers,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq)]
@@ -171,6 +172,20 @@ pub struct PaneGrid {
     pub highlight_background: iced::Color,
     pub picked_split: iced::Color,
     pub hovered_split: iced::Color,
+}
+
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub struct Togglers {
+    pub on: Toggler,
+    pub off: Toggler,
+}
+
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub struct Toggler {
+    pub background: iced::Color,
+    pub background_border: iced::Color,
+    pub foreground: iced::Color,
+    pub foreground_border: iced::Color,
 }
 
 impl std::default::Default for Palette {
@@ -567,6 +582,20 @@ impl std::default::Default for Palette {
                 highlight_background: color::TRANSPARENT_ORANGE,
                 picked_split: color::ORANGE,
                 hovered_split: color::ORANGE,
+            },
+            togglers: Togglers {
+                on: Toggler {
+                    background: color::GREEN,
+                    background_border: color::GREEN,
+                    foreground: color::WHITE,
+                    foreground_border: color::WHITE,
+                },
+                off: Toggler {
+                    background: color::GREY_2,
+                    background_border: color::GREY_2,
+                    foreground: color::WHITE,
+                    foreground_border: color::WHITE,
+                },
             },
         }
     }

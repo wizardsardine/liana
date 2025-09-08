@@ -6,7 +6,7 @@ use liana::miniscript::bitcoin::{
     bip32::{ChildNumber, Fingerprint},
     Address, Network,
 };
-use liana_ui::{component::modal, widget::*};
+use liana_ui::{widget::modal, widget::*};
 
 use crate::daemon::model::LabelsLoader;
 use crate::dir::LianaDirectory;

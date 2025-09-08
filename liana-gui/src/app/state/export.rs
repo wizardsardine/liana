@@ -4,7 +4,7 @@ use std::{
 };
 
 use iced::{Subscription, Task};
-use liana_ui::{component::modal::Modal, widget::Element};
+use liana_ui::{widget::modal::Modal, widget::Element};
 use tokio::task::JoinHandle;
 
 use crate::{
@@ -76,11 +76,11 @@ impl ExportModal {
             ImportExportType::ExportPsbt(_) => "Export PSBT",
             ImportExportType::ExportXpub(_) => "Export Xpub",
             ImportExportType::ImportXpub(_) => "Import Xpub",
-            ImportExportType::ExportBackup(_) => "Export Backup",
-            ImportExportType::Descriptor(_) => "Export Descriptor",
-            ImportExportType::ExportProcessBackup(..) | ImportExportType::ExportLabels => {
-                "Export Labels"
+            ImportExportType::ExportProcessBackup(..) | ImportExportType::ExportBackup(_) => {
+                "Export Backup"
             }
+            ImportExportType::Descriptor(_) => "Export Descriptor",
+            ImportExportType::ExportLabels => "Export Labels",
             ImportExportType::ImportPsbt(_) => "Import PSBT",
             ImportExportType::ImportDescriptor => "Import Descriptor",
             ImportExportType::ImportBackup { .. } => "Restore Backup",

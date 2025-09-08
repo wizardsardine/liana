@@ -717,7 +717,7 @@ pub fn parse_coldcard_xpub(coldcard_xpub: &str) -> Option<DescriptorPublicKey> {
 ///    - Load backup from file
 ///    - check if networks matches
 ///    - check if descriptors matches
-///    - check if labels can be imported w/o conflict, if conflic ask user to ACK
+///    - check if labels can be imported w/o conflict, if conflict ask user to ACK
 ///    - check if aliases can be imported w/o conflict, if conflict ask user to ACK
 ///    - update receive and change indexes
 ///    - parse psbt from backup

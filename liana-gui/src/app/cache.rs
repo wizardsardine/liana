@@ -4,10 +4,16 @@ use crate::{
         Daemon, DaemonError,
     },
     dir::LianaDirectory,
+    services::fiat::{
+        api::{GetPriceResult, PriceApi, PriceApiError},
+        client::PriceClient,
+        Currency, PriceSource,
+    },
 };
 use liana::miniscript::bitcoin::Network;
 use lianad::commands::CoinStatus;
 use std::sync::Arc;
+use std::time::Instant;
 
 #[derive(Debug, Clone)]
 pub struct Cache {
@@ -16,6 +22,7 @@ pub struct Cache {
     /// The `last_poll_timestamp` when starting the application.
     pub last_poll_at_startup: Option<u32>,
     pub daemon_cache: DaemonCache,
+    pub fiat_price: Option<FiatPrice>,
 }
 
 /// only used for tests.
@@ -26,6 +33,7 @@ impl std::default::Default for Cache {
             network: Network::Bitcoin,
             last_poll_at_startup: None,
             daemon_cache: DaemonCache::default(),
+            fiat_price: None,
         }
     }
 }
@@ -61,6 +69,7 @@ pub struct DaemonCache {
     pub sync_progress: f64,
     /// The most recent `last_poll_timestamp`.
     pub last_poll_timestamp: Option<u32>,
+    pub last_tick: std::time::Instant,
 }
 
 /// only used for tests.
@@ -72,6 +81,7 @@ impl std::default::Default for DaemonCache {
             rescan_progress: None,
             sync_progress: 1.0,
             last_poll_timestamp: None,
+            last_tick: Instant::now(),
         }
     }
 }
@@ -83,4 +93,52 @@ pub async fn coins_to_cache(
     daemon
         .list_coins(&[CoinStatus::Unconfirmed, CoinStatus::Confirmed], &[])
         .await
+}
+
+/// Represents a fiat price fetched from the API together with the request that was used to fetch it.
+#[derive(Debug, Clone)]
+pub struct FiatPrice {
+    pub res: Result<GetPriceResult, PriceApiError>, // also store error in case we want to display it to user
+    pub request: FiatPriceRequest,
+}
+
+impl FiatPrice {
+    pub fn source(&self) -> PriceSource {
+        self.request.source
+    }
+
+    pub fn currency(&self) -> Currency {
+        self.request.currency
+    }
+
+    pub fn requested_at(&self) -> Instant {
+        self.request.instant
+    }
+}
+
+/// Represents a fiat price request.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FiatPriceRequest {
+    pub source: PriceSource,
+    pub currency: Currency,
+    pub instant: Instant,
+}
+
+impl FiatPriceRequest {
+    pub fn new(source: PriceSource, currency: Currency) -> Self {
+        Self {
+            source,
+            currency,
+            instant: Instant::now(),
+        }
+    }
+
+    /// Sends the request using the default client for the given source.
+    pub async fn send_default(self) -> FiatPrice {
+        let client = PriceClient::default_from_source(self.source);
+        FiatPrice {
+            res: client.get_price(self.currency).await,
+            request: self,
+        }
+    }
 }

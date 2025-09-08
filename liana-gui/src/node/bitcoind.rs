@@ -12,7 +12,6 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 use std::thread;
 use std::time;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use tracing::{info, warn};
 
@@ -20,6 +19,7 @@ use tracing::{info, warn};
 use std::os::windows::process::CommandExt;
 
 use crate::dir::{BitcoindDirectory, LianaDirectory};
+use crate::utils::now_fallible;
 
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
@@ -572,7 +572,7 @@ impl LockFile {
         path.push(format!(
             "{}-{}.lock",
             std::process::id(),
-            SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs()
+            now_fallible()?.as_secs()
         ));
 
         std::fs::File::create(&path)?;

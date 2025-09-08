@@ -86,6 +86,10 @@ impl DaemonBackend {
         )
     }
 
+    pub fn is_remote(&self) -> bool {
+        matches!(self, DaemonBackend::RemoteBackend)
+    }
+
     pub fn node_type(&self) -> Option<node::NodeType> {
         if let DaemonBackend::EmbeddedLianad(node_type) = self {
             *node_type

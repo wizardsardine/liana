@@ -1,5 +1,5 @@
 use chrono::{DateTime, Local, Utc};
-use std::{collections::HashMap, time::Duration, vec};
+use std::{collections::HashMap, convert::TryInto, time::Duration, vec};
 
 use iced::{
     alignment,
@@ -19,10 +19,10 @@ use liana_ui::{
 
 use crate::{
     app::{
-        cache::Cache,
+        cache::{Cache, FiatPrice},
         error::Error,
         menu::{self, Menu},
-        view::{coins, dashboard, label, message::Message},
+        view::{coins, dashboard, fiat::FiatAmountConverter, label, message::Message},
         wallet::SyncStatus,
     },
     daemon::model::{HistoryTransaction, Payment, PaymentKind, TransactionKind},
@@ -66,6 +66,7 @@ pub fn home_view<'a>(
     balance: &'a bitcoin::Amount,
     unconfirmed_balance: &'a bitcoin::Amount,
     remaining_sequence: &Option<u32>,
+    fiat_price: Option<FiatPrice>,
     expiring_coins: &[bitcoin::OutPoint],
     events: &'a [Payment],
     is_last_page: bool,
@@ -73,12 +74,30 @@ pub fn home_view<'a>(
     sync_status: &SyncStatus,
     show_rescan_warning: bool,
 ) -> Element<'a, Message> {
+    let converter: Option<FiatAmountConverter> = fiat_price.and_then(|fp| fp.try_into().ok());
+    let fiat_balance = converter.as_ref().map(|c| c.convert(*balance));
+    let fiat_unconfirmed = converter.map(|c| c.convert(*unconfirmed_balance));
     Column::new()
         .push(h3("Balance"))
         .push(
             Column::new()
                 .push(if sync_status.is_synced() {
-                    amount_with_size(balance, H1_SIZE)
+                    Row::new()
+                        .push(amount_with_size(balance, H1_SIZE))
+                        .push_maybe(fiat_balance.map(|fiat| {
+                            Row::new()
+                                .align_y(Alignment::Center)
+                                .push(Space::with_width(10))
+                                .push(
+                                    text(format!(
+                                        "({} {})",
+                                        fiat.to_formatted_string(),
+                                        fiat.currency
+                                    ))
+                                    .size(H1_SIZE)
+                                    .color(color::GREY_2),
+                                )
+                        }))
                 } else {
                     Row::new().push(spinner::Carousel::new(
                         Duration::from_millis(1000),
@@ -128,7 +147,21 @@ pub fn home_view<'a>(
                                     text("unconfirmed")
                                         .size(H3_SIZE)
                                         .style(theme::text::secondary),
-                                ),
+                                )
+                                .push_maybe(fiat_unconfirmed.map(|fiat| {
+                                    Row::new()
+                                        .align_y(Alignment::Center)
+                                        .push(Space::with_width(10))
+                                        .push(
+                                            text(format!(
+                                                "({} {})",
+                                                fiat.to_formatted_string(),
+                                                fiat.currency
+                                            ))
+                                            .size(H3_SIZE)
+                                            .color(color::GREY_3),
+                                        )
+                                })),
                         )
                     } else {
                         None
