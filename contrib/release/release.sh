@@ -19,8 +19,6 @@ create_dir() {
     mkdir "$1"
 }
 
-
-
 # Determine the reference time used for determinism (overridable by environment)
 export SOURCE_DATE_EPOCH="$(git -c log.showsignature=false log --format=%at -1)"
 export TZ=UTC
@@ -45,7 +43,7 @@ OUT_DIR="$BUILD_DIR" ./contrib/reproducible/guix/guix-build.sh
 nix build .#release
 NIX_BUILD_DIR="$(nix path-info .#release)"
 
-#Create the Linux archive and Debian binary package.
+# Create the Linux archive and Debian binary package.
 (
     cd "$BUILD_DIR"
     create_dir "$LINUX_DIR_NAME"

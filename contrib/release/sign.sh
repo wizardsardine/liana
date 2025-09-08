@@ -112,5 +112,5 @@ case "$COMMAND" in
         ;;
 esac
 
-# Disable debugging and exit on success
+# Disable: debugging and exit on failure
 set +ex

@@ -10,39 +10,56 @@ on:
 
 env:
   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  ONRAMPER_API_KEY: ${{ secrets.ONRAMPER_API_KEY }}
+  ULTRALIGHT_RESOURCES_DIR: ./ultralight-sdk/resources/
   CARGO_INCREMENTAL: 0
   CARGO_TERM_COLOR: always
   CARGO_PROFILE_RELEASE_LTO: true
   CARGO_PROFILE_RELEASE_CODEGEN_UNITS: 1
 
 jobs:
-  upload-binaries:
-    name: upload-binaries
-    if: github.repository == 'coincubetech/liana'
+  download-ultralight-libraries:
     strategy:
       matrix:
         include:
-          - target: x86_64-unknown-linux-gnu
+          - target: linux-x64
             os: ubuntu-latest
-          - target: x86_64-pc-windows-msvc
+          - target: win-x64
             os: windows-latest
-          - target: x86_64-apple-darwin
+          - target: mac-x64
             os: macos-latest
-          - target: aarch64-apple-darwin
+          - target: mac-arm64
             os: macos-latest
+
+    name: download-ultralight-libraries
+    if: github.repository == 'coincubetech/liana'
     runs-on: ${{ matrix.os }}
+
     steps:
-      - uses: actions/checkout@v2
+      # Install Webview Libraries per platform
+      - uses: milliewalky/setup-7-zip@v2
+      - name: Download and Extract, Ultralight Webview client libraries
+        shell: bash
+        run: |
+          curl -L -O https://github.com/coincubetech/liana/releases/download/v0.0.1/ultralight-sdk-latest-${{ matrix.target }}.7z
+          7z x ultralight-sdk-latest-${{ matrix.target }}.7z -oultralight-sdk -y
+
+  upload-binaries:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+          - os: windows-latest
+          - os: macos-latest
+
+    name: upload-binaries
+    if: github.repository == 'coincubetech/liana'
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v5
         with:
           persist-credentials: false
-
-      - name: Install Linux dependencies
-        if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libudev-dev pkg-config
-
-      - uses: taiki-e/github-actions/install-rust@main
-        with:
-          toolchain: stable
 
       - name: Set development version
         shell: bash
@@ -53,10 +70,91 @@ jobs:
           title: ${{ env.version }}
           branch: master
 
+      # Install necessary tools
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-wix
+
+      # For Linux upload a statically linked musl libc binary in a compressed tarball
+      - name: Install Linux dependencies
+        if: matrix.os == 'ubuntu-latest'
+        run: sudo apt-get update && sudo apt-get install -y libudev-dev pkg-config
+
       - uses: taiki-e/upload-rust-binary-action@v1
+        if: matrix.os == 'ubuntu-latest'
         with:
           package: liana-gui
           bin: coincube-vault
-          target: ${{ matrix.target }}
-          checksum: sha512,md5
+          archive: coincube-vault-$tag-$target
+          target: x86_64-unknown-linux-musl
           locked: true
+
+      # Generate icons for macOS and Windows
+      - name: Generate Icons for Installers
+        if: matrix.os != 'macos-latest'
+        run: python ./contrib/release/macos/icns-creator.py
+
+      # For Windows upload an installer
+      - name: Package and release .msi installer for Windows
+        if: matrix.os == 'windows-latest'
+        run: |
+          choco install wixtoolset --version=3.14.1 --yes
+          cargo wix --package liana-gui --profile app-release --output "target\wix\Coincube Vault.msi" --include ./contrib/release/wix/main.wxs --nocapture -v
+
+      - name: Upload .msi to release
+        if: matrix.os == 'windows-latest'
+        uses: svenstaro/upload-release-action@v2
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: "target/wix/Coincube Vault.msi"
+          tag: ${{ github.ref }}
+          overwrite: true
+          body: "Windows x64 Installer"
+
+      # For macOS upload a signed and notarized dmg
+      - name: Compile Project for macOS x86 and arm64
+        if: matrix.os == 'macos-latest'
+        run: |
+          cargo build --package liana-gui --profile app-release --target aarch64-apple-darwin
+          cargo build --package liana-gui --profile app-release --target x86_64-apple-darwin
+          lipo -create "target/aarch64-apple-darwin/coincube-vault" "target/x86_64-apple-darwin/coincube-vault" -output Vault
+
+      - name: Copy Executable, Icons and Extra Metadata into .app folder
+        if: matrix.os == 'macos-latest'
+        run: |
+          unzip ./contrib/release/macos/Vault.app.zip
+          sed -i "s/VERSION_PLACEHOLDER/${{ github.tag }}/g" ./Vault.app/Contents/Info.plist
+          mv Vault ./Vault.app/Contents/MacOS/Vault
+          mv ./contrib/release/macos/Vault.icns ./Vault.app/Contents/Resources/Vault.icns
+
+      - name: Decode and Import macOS signing certificate
+        if: matrix.os == 'macos-latest'
+        env:
+          P12_BASE64: ${{ secrets.CERTIFICATE_P12_BASE64 }}
+          P12_PASSWORD: ${{ secrets.CERTIFICATE_P12_PASSWORD }}
+        run: |
+          echo "$P12_BASE64" | base64 - --decode > signing_certificate.p12
+          security create-keychain -p github actions.keychain
+          security import signing_certificate.p12 -k ~/Library/Keychains/actions.keychain -P "$P12_PASSWORD" -T /usr/bin/codesign
+          security set-keychain-settings ~/Library/Keychains/actions.keychain
+          security unlock-keychain -p github ~/Library/Keychains/actions.keychain
+          rm signing_certificate.p12
+
+      - name: CodeSign and Notarize .app folder bundle
+        if: matrix.os == 'macos-latest'
+        run: |
+          codesign --options runtime --deep --force --sign "Developer ID Application: COINCUBE TECHNOLOGY LLC (8UVR249AD5)" Vault.app
+          codesign --verify --deep --strict --verbose=2 Vault.app
+          echo "--NOTARIZATION FLOW PENDING--"
+          7z a Vault.app.zip Vault.app/
+
+      - name: Upload .app.zip file as Release Artefact
+        if: matrix.os == 'macos-latest'
+        uses: svenstaro/upload-release-action@v2
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: "Vault.app.zip"
+          tag: ${{ github.ref }}
+          overwrite: true
+          body: "Universal macOS App Bundle"
