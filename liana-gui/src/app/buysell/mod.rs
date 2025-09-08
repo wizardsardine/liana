@@ -69,7 +69,19 @@ impl ServiceProvider {
             },
 
             #[cfg(feature = "dev-onramp")]
-            onramper_provider => match onramper_provider {
+            onramper_provider @ (
+                ServiceProvider::BinanceP2P
+                | ServiceProvider::Coinify
+                | ServiceProvider::Dfx
+                | ServiceProvider::Fonbnk
+                | ServiceProvider::GateConnect
+                | ServiceProvider::GateFi
+                | ServiceProvider::LocalRamp
+                | ServiceProvider::Moonpay
+                | ServiceProvider::Neocrypto
+                | ServiceProvider::Onmeta
+                | ServiceProvider::Revolut
+            ) => match onramper_provider {
                 // onramper exclusive providers
                 ServiceProvider::BinanceP2P => "BINANCEP2P",
                 ServiceProvider::Coinify => "COINIFY",
@@ -109,7 +121,19 @@ impl ServiceProvider {
                 _ => unreachable!(),
             },
             #[cfg(feature = "dev-onramp")]
-            onramper_provider => match onramper_provider {
+            onramper_provider @ (
+                ServiceProvider::BinanceP2P
+                | ServiceProvider::Coinify
+                | ServiceProvider::Dfx
+                | ServiceProvider::Fonbnk
+                | ServiceProvider::GateConnect
+                | ServiceProvider::GateFi
+                | ServiceProvider::LocalRamp
+                | ServiceProvider::Moonpay
+                | ServiceProvider::Neocrypto
+                | ServiceProvider::Onmeta
+                | ServiceProvider::Revolut
+            ) => match onramper_provider {
                 // onramper exclusive providers
                 ServiceProvider::BinanceP2P => "Binance P2P",
                 ServiceProvider::Coinify => "Coinify",
