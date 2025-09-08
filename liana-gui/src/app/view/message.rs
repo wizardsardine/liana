@@ -25,7 +25,6 @@ pub enum Message {
     Settings(SettingsMessage),
     CreateSpend(CreateSpendMessage),
     ImportSpend(ImportSpendMessage),
-    #[cfg(feature = "dev-coincube")]
     BuySell(BuySellMessage),
     Spend(SpendTxMessage),
     Next,
@@ -138,9 +137,15 @@ pub enum CreateRbfMessage {
     Confirm,
 }
 
-#[cfg(feature = "dev-coincube")]
 #[derive(Debug, Clone)]
 pub enum BuySellMessage {
+    // Native login (default build)
+    LoginUsernameChanged(String),
+    LoginPasswordChanged(String),
+    SubmitLogin,
+    CreateAccountPressed,
+
+    // Shared form fields (for provider-integrated builds)
     WalletAddressChanged(String),
     #[cfg(feature = "dev-meld")]
     CountryCodeChanged(String),
@@ -151,11 +156,16 @@ pub enum BuySellMessage {
     CreateSession,
     SessionError(String),
 
-    // webview messages
+    // webview messages (gated)
+    #[cfg(feature = "webview")]
     WebviewCreated(iced_webview::ViewId),
+    #[cfg(feature = "webview")]
     ViewTick(iced_webview::ViewId),
+    #[cfg(feature = "webview")]
     WebviewAction(iced_webview::advanced::Action),
+    #[cfg(feature = "webview")]
     WebviewOpenUrl(String),
+    #[cfg(feature = "webview")]
     CloseWebview,
 }
 
