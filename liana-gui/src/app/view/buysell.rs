@@ -290,6 +290,10 @@ impl BuySellPanel {
                     .push(self.form_view()),
             };
 
+            #[cfg(not(feature = "webview"))]
+            let column = Column::new().push(self.form_view());
+
+
             column
                 .align_x(Alignment::Center)
                 .spacing(5) // Reduced spacing for more compact layout

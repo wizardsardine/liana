@@ -122,6 +122,12 @@ impl State for BuySellPanel {
                     return Task::done(open_webview);
                 } else {
                     tracing::warn!("⚠️ [BUYSELL] Cannot create session - form validation failed");
+            #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+            BuySellMessage::CreateSession => {
+                // No providers in default build; ignore or show error
+                self.set_error("No provider configured in this build".into());
+            }
+
                 }
             }
 
