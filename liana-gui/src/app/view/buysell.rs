@@ -183,6 +183,8 @@ impl BuySellPanel {
 
     pub fn is_form_valid(&self) -> bool {
         #[cfg(feature = "dev-meld")]
+        #[allow(unused_variables)]
+
         let locale_check = self.country_code.valid && !self.country_code.value.is_empty();
 
         #[cfg(feature = "dev-onramp")]
