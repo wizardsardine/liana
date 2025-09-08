@@ -56,7 +56,7 @@ where
     pub fn new_disabled(placeholder: &str, value: &Value<String>) -> Self {
         Self {
             input: text_input::TextInput::new(placeholder, &value.value),
-            warning: None,
+            warning: None, // no warning for disabled form
             valid: value.valid,
         }
     }
@@ -74,7 +74,7 @@ where
         Self {
             input: text_input::TextInput::new(placeholder, &value.value)
                 .on_input(move |s| on_change(s.trim().to_string())),
-            warning: None,
+            warning: value.warning,
             valid: value.valid,
         }
     }
@@ -97,7 +97,7 @@ where
                     on_change(value.value.clone())
                 }
             }),
-            warning: None,
+            warning: value.warning,
             valid: value.valid,
         }
     }
