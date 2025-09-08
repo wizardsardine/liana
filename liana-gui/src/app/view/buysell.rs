@@ -50,6 +50,12 @@ pub struct BuySellPanel {
     // Native login fields
     pub login_username: form::Value<String>,
     pub login_password: form::Value<String>,
+
+    // Default build: account type selection state
+    #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+    pub selected_account_type: Option<crate::app::view::message::AccountType>,
+
+
 }
 
 impl BuySellPanel {
@@ -80,6 +86,9 @@ impl BuySellPanel {
 
             #[cfg(feature = "dev-meld")]
             meld_client: MeldClient::new(),
+            #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+            selected_account_type: None,
+
 
             error: None,
             network,
@@ -395,6 +404,8 @@ impl BuySellPanel {
             )
             .push(Space::with_height(Length::Fixed(30.0)))
             .push(if self.active_page.is_some() {
+
+
                 ui_button::secondary(Some(liana_ui::icon::globe_icon()), "Creating Session...")
                     .width(Length::Fill)
             } else if self.is_form_valid() {
@@ -416,45 +427,79 @@ impl BuySellPanel {
 #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
 impl BuySellPanel {
     fn native_login_form<'a>(&'a self) -> Column<'a, ViewMessage> {
-        Column::new()
-            .push_maybe(self.error.as_ref().map(|err| {
-                Container::new(text(err).size(14).color(color::RED))
-                    .padding(10)
-                    .style(theme::card::invalid)
-            }))
-            .push(Space::with_height(Length::Fixed(20.0)))
-            .push(text("Username or Email").size(14).color(color::GREY_3))
-            .push(Space::with_height(Length::Fixed(5.0)))
-            .push(
-                form::Form::new_trimmed("you@example.com", &self.login_username, |v| {
-                    ViewMessage::BuySell(BuySellMessage::LoginUsernameChanged(v))
-                })
-                .size(16)
-                .padding(15),
-            )
-            .push(Space::with_height(Length::Fixed(10.0)))
-            .push(text("Password").size(14).color(color::GREY_3))
-            .push(Space::with_height(Length::Fixed(5.0)))
-            .push(
-                form::Form::new_trimmed("********", &self.login_password, |v| {
-                    ViewMessage::BuySell(BuySellMessage::LoginPasswordChanged(v))
-                })
-                .secure()
-                .size(16)
-                .padding(15),
-            )
-            .push(Space::with_height(Length::Fixed(20.0)))
-            .push(if self.is_login_form_valid() {
-                ui_button::primary(None, "Sign In")
-                    .on_press(ViewMessage::BuySell(BuySellMessage::SubmitLogin))
-                    .width(Length::Fill)
+        use liana_ui::component::card as ui_card;
+        use liana_ui::component::text as ui_text;
+        use liana_ui::icon::{building_icon, person_icon};
+
+        let header = Row::new()
+            .push(Row::new()
+                .push(ui_text::h4_bold("COIN").color(color::ORANGE))
+                .push(ui_text::h4_bold("CUBE").color(color::WHITE))
+                .spacing(0))
+            .push(Space::with_width(Length::Fixed(8.0)))
+            .push(ui_text::h5_regular("BUY/SELL").color(color::GREY_3));
+
+        let subheader = ui_text::p1_regular("Choose your account type").color(color::WHITE);
+
+        let is_individual = matches!(self.selected_account_type, Some(crate::app::view::message::AccountType::Individual));
+        let is_business = matches!(self.selected_account_type, Some(crate::app::view::message::AccountType::Business));
+
+        let make_card = |title: &str, desc: &str, icon: Element<'a, ViewMessage>, selected: bool, on_press: ViewMessage| -> Element<'a, ViewMessage> {
+            let content = Row::new()
+                .spacing(12)
+                .align_y(Alignment::Center)
+                .push(Container::new(icon).width(Length::Fixed(28.0)))
+                .push(Column::new()
+                    .push(ui_text::p1_bold(title).color(color::WHITE))
+                    .push(ui_text::p2_regular(desc).color(color::GREY_3))
+                    .spacing(2));
+            let card_body = ui_card::simple(content)
+                .style(if selected { theme::card::warning } else { theme::card::border })
+                .width(Length::Fill)
+                .height(Length::Fixed(84.0));
+            if selected {
+                card_body.into()
             } else {
-                ui_button::secondary(None, "Sign In").width(Length::Fill)
-            })
-            .push(
-                ui_button::transparent(None, "Create Account")
-                    .on_press(ViewMessage::BuySell(BuySellMessage::CreateAccountPressed)),
-            )
+                iced::widget::button(card_body)
+                    .style(theme::button::transparent_border)
+                    .on_press(on_press)
+                    .into()
+            }
+        };
+
+        let individual = make_card(
+            "Individual",
+            "For individuals who want to buy and manage Bitcoin",
+            Element::from(Container::new(person_icon())),
+            is_individual,
+            ViewMessage::BuySell(BuySellMessage::AccountTypeSelected(crate::app::view::message::AccountType::Individual)),
+        );
+        let business = make_card(
+            "Business",
+            "For LLCs, trusts, corporations, partnerships, and more who want to buy and manage Bitcoin.",
+            Element::from(Container::new(building_icon())),
+            is_business,
+            ViewMessage::BuySell(BuySellMessage::AccountTypeSelected(crate::app::view::message::AccountType::Business)),
+        );
+
+        let button = if self.selected_account_type.is_some() {
+            ui_button::primary(None, "Get Started")
+                .on_press(ViewMessage::BuySell(BuySellMessage::GetStarted))
+                .width(Length::Fill)
+        } else {
+            ui_button::secondary(None, "Get Started").width(Length::Fill)
+        };
+
+        Column::new()
+            .push(header)
+            .push(Space::with_height(Length::Fixed(10.0)))
+            .push(subheader)
+            .push(Space::with_height(Length::Fixed(20.0)))
+            .push(individual)
+            .push(Space::with_height(Length::Fixed(10.0)))
+            .push(business)
+            .push(Space::with_height(Length::Fixed(30.0)))
+            .push(button)
             .align_x(Alignment::Center)
             .spacing(5)
             .max_width(500)

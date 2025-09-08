@@ -97,6 +97,20 @@ impl State for BuySellPanel {
             BuySellMessage::FiatCurrencyChanged(fiat) => {
                 self.set_fiat_currency(fiat);
             }
+            #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+            BuySellMessage::AccountTypeSelected(t) => {
+                self.selected_account_type = Some(t);
+            }
+            #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+            BuySellMessage::GetStarted => {
+                if self.selected_account_type.is_none() {
+                    // button disabled; ignore
+                } else {
+                    // Placeholder: navigate or set error until next step is defined
+                    self.set_error(String::new());
+                }
+            }
+
             BuySellMessage::SourceAmountChanged(amount) => {
                 self.set_source_amount(amount);
             }

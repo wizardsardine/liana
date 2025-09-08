@@ -128,6 +128,13 @@ pub enum SettingsEditMessage {
     Confirm,
     Clipboard(String),
 }
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AccountType {
+    Individual,
+    Business,
+}
+
+
 
 #[derive(Debug, Clone)]
 pub enum CreateRbfMessage {
@@ -144,6 +151,13 @@ pub enum BuySellMessage {
     LoginPasswordChanged(String),
     SubmitLogin,
     CreateAccountPressed,
+
+
+    // Default build: account type selection
+    #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+    AccountTypeSelected(AccountType),
+    #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+    GetStarted,
 
     // Shared form fields (for provider-integrated builds)
     WalletAddressChanged(String),
