@@ -10,8 +10,8 @@ use liana::{
 };
 
 use liana_ui::{
-    component::{form, modal},
-    widget::Element,
+    component::form,
+    widget::{modal, Element},
 };
 
 use crate::{

@@ -1,4 +1,5 @@
 mod bitcoind;
+mod general;
 mod wallet;
 
 use std::convert::From;
@@ -64,6 +65,14 @@ impl State for SettingsState {
         message: Message,
     ) -> Task<Message> {
         match &message {
+            Message::View(view::Message::Settings(view::SettingsMessage::GeneralSection)) => {
+                self.setting = Some(general::GeneralSettingsState::new(self.wallet.clone()).into());
+                let wallet = self.wallet.clone();
+                self.setting
+                    .as_mut()
+                    .map(|s| s.reload(daemon, wallet))
+                    .unwrap_or_else(Task::none)
+            }
             Message::View(view::Message::Settings(view::SettingsMessage::EditBitcoindSettings)) => {
                 self.setting = Some(
                     BitcoindSettingsState::new(

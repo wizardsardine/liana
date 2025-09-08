@@ -1,7 +1,10 @@
 pub mod api;
+pub mod token;
 
 use reqwest::{self, IntoUrl, Method, RequestBuilder};
 use serde_json::json;
+
+use super::http::{NotSuccessResponseInfo, ResponseExt};
 
 const KEYS_API_URL: &str = "https://keys.wizardsardine.com";
 
@@ -24,14 +27,10 @@ impl From<reqwest::Error> for Error {
     }
 }
 
-async fn check_response_status(response: reqwest::Response) -> Result<reqwest::Response, Error> {
-    if !response.status().is_success() {
-        return Err(Error::Http(
-            Some(response.status().into()),
-            response.text().await?,
-        ));
+impl From<NotSuccessResponseInfo> for Error {
+    fn from(value: NotSuccessResponseInfo) -> Self {
+        Self::Http(Some(value.status_code), value.text)
     }
-    Ok(response)
 }
 
 fn request<U: reqwest::IntoUrl>(
@@ -72,8 +71,9 @@ impl Client {
             .await
             .query(&[("token", token)])
             .send()
+            .await?
+            .check_success()
             .await?;
-        let response = check_response_status(response).await?;
         let key = response.json().await?;
         Ok(key)
     }
@@ -89,8 +89,9 @@ impl Client {
                 "token": token,
             }))
             .send()
+            .await?
+            .check_success()
             .await?;
-        let response = check_response_status(response).await?;
         let key = response.json().await?;
         Ok(key)
     }

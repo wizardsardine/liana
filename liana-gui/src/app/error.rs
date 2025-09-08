@@ -8,6 +8,7 @@ use crate::{
     app::{settings::SettingsError, wallet::WalletError},
     daemon::DaemonError,
     export::{self, RestoreBackupError},
+    services::fiat::api::PriceApiError,
 };
 
 #[derive(Debug)]
@@ -21,6 +22,7 @@ pub enum Error {
     Spend(SpendCreationError),
     ImportExport(export::Error),
     RestoreBackup(RestoreBackupError),
+    FiatPrice(PriceApiError),
 }
 
 impl std::fmt::Display for Error {
@@ -63,6 +65,7 @@ impl std::fmt::Display for Error {
             Self::Desc(e) => write!(f, "Liana descriptor error: {}", e),
             Self::ImportExport(e) => write!(f, "{e}"),
             Self::RestoreBackup(e) => write!(f, "{e}"),
+            Self::FiatPrice(e) => write!(f, "Fiat price error: {}", e),
         }
     }
 }
@@ -100,5 +103,11 @@ impl From<async_hwi::Error> for Error {
 impl From<SpendCreationError> for Error {
     fn from(error: SpendCreationError) -> Self {
         Error::Spend(error)
+    }
+}
+
+impl From<PriceApiError> for Error {
+    fn from(error: PriceApiError) -> Self {
+        Error::FiatPrice(error)
     }
 }

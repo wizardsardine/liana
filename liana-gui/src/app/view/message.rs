@@ -1,4 +1,9 @@
-use crate::{app::menu::Menu, export::ImportExportMessage, node::bitcoind::RpcAuthType};
+use crate::{
+    app::menu::Menu,
+    export::ImportExportMessage,
+    node::bitcoind::RpcAuthType,
+    services::fiat::{Currency, PriceSource},
+};
 use liana::miniscript::bitcoin::{bip32::Fingerprint, Address, OutPoint};
 
 pub trait Close {
@@ -104,6 +109,8 @@ pub enum SettingsMessage {
     FingerprintAliasEdited(Fingerprint, String),
     WalletAliasEdited(String),
     Save,
+    GeneralSection,
+    Fiat(FiatMessage),
 }
 
 #[derive(Debug, Clone)]
@@ -150,4 +157,11 @@ pub enum BuySellMessage {
     WebviewAction(iced_webview::advanced::Action),
     WebviewOpenUrl(String),
     CloseWebview,
+}
+
+#[derive(Debug, Clone)]
+pub enum FiatMessage {
+    Enable(bool),
+    SourceEdited(PriceSource),
+    CurrencyEdited(Currency),
 }

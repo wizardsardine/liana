@@ -36,6 +36,7 @@ use crate::{
         cache::{Cache, DaemonCache},
         error::Error,
         menu::Menu,
+        message::FiatMessage,
         settings::WalletId,
         wallet::Wallet,
     },
@@ -212,6 +213,14 @@ impl App {
         "Coincube Vault Wallet"
     }
 
+    pub fn cache(&self) -> &Cache {
+        &self.cache
+    }
+
+    pub fn wallet(&self) -> &Wallet {
+        &self.wallet
+    }
+
     fn set_current_panel(&mut self, menu: Menu) -> Task<Message> {
         self.panels.current_mut().interrupt();
 
@@ -338,30 +347,87 @@ impl App {
         }
     }
 
+    pub fn on_tick(&mut self) -> Task<Message> {
+        let tick = std::time::Instant::now();
+        let mut tasks = vec![];
+        // Check if we need to update the daemon cache.
+        let duration = Duration::from_secs(
+            match sync_status(
+                self.daemon.backend(),
+                self.cache.blockheight(),
+                self.cache.sync_progress(),
+                self.cache.last_poll_timestamp(),
+                self.cache.last_poll_at_startup,
+            ) {
+                SyncStatus::BlockchainSync(_) => 5, // Only applies to local backends
+                SyncStatus::WalletFullScan
+                    if self.daemon.backend() == DaemonBackend::RemoteBackend =>
+                {
+                    10
+                } // If remote backend, don't ping too often
+                SyncStatus::WalletFullScan | SyncStatus::LatestWalletSync => 3,
+                SyncStatus::Synced => {
+                    if self.daemon.backend() == DaemonBackend::RemoteBackend {
+                        // Remote backend has no rescan feature. For a synced wallet,
+                        // cache refresh is only used to warn user about recovery availability.
+                        120
+                    } else {
+                        // For the rescan feature, we refresh more often in order
+                        // to give user an up-to-date view of the rescan progress.
+                        10
+                    }
+                }
+            },
+        );
+        if self.cache.daemon_cache.last_tick + duration <= tick {
+            tracing::debug!("Updating daemon cache");
+
+            // We have to update here the last_tick to prevent that during a burst of events
+            // there is a race condition with the Task and too much tasks are triggered.
+            self.cache.daemon_cache.last_tick = tick;
+
+            let daemon = self.daemon.clone();
+            let datadir_path = self.cache.datadir_path.clone();
+            let network = self.cache.network;
+            tasks.push(Task::perform(
+                async move {
+                    // we check every 10 second if the daemon poller is alive
+                    // or if the access token is not expired.
+                    daemon.is_alive(&datadir_path, network).await?;
+
+                    let info = daemon.get_info().await?;
+                    let coins = cache::coins_to_cache(daemon).await?;
+                    Ok(DaemonCache {
+                        blockheight: info.block_height,
+                        coins: coins.coins,
+                        rescan_progress: info.rescan_progress,
+                        sync_progress: info.sync,
+                        last_poll_timestamp: info.last_poll_timestamp,
+                        last_tick: tick,
+                    })
+                },
+                Message::UpdateDaemonCache,
+            ));
+        }
+        Task::batch(tasks)
+    }
+
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
-            Message::Tick => {
-                let daemon = self.daemon.clone();
-                let datadir_path = self.cache.datadir_path.clone();
-                let network = self.cache.network;
-                Task::perform(
-                    async move {
-                        // we check every 10 second if the daemon poller is alive
-                        // or if the access token is not expired.
-                        daemon.is_alive(&datadir_path, network).await?;
-
-                        let info = daemon.get_info().await?;
-                        let coins = cache::coins_to_cache(daemon).await?;
-                        Ok(DaemonCache {
-                            blockheight: info.block_height,
-                            coins: coins.coins,
-                            rescan_progress: info.rescan_progress,
-                            sync_progress: info.sync,
-                            last_poll_timestamp: info.last_poll_timestamp,
-                        })
-                    },
-                    Message::UpdateDaemonCache,
-                )
+            Message::Fiat(FiatMessage::GetPriceResult(fiat_price)) => {
+                if self.wallet.fiat_price_is_relevant(&fiat_price)
+                    // make sure we only update if the price is newer than the cached one
+                    && !self.cache.fiat_price.as_ref().is_some_and(|cached| {
+                        cached.source() == fiat_price.source()
+                            && cached.currency() == fiat_price.currency()
+                            && cached.requested_at() >= fiat_price.requested_at()
+                    })
+                {
+                    self.cache.fiat_price = Some(fiat_price);
+                    Task::perform(async {}, |_| Message::CacheUpdated)
+                } else {
+                    Task::none()
+                }
             }
             Message::UpdateDaemonCache(res) => {
                 match res {

@@ -223,6 +223,12 @@ impl PathSequence {
     }
 }
 
+impl From<PathSequence> for PathKind {
+    fn from(value: PathSequence) -> Self {
+        value.path_kind()
+    }
+}
+
 /// A path warning.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PathWarning {

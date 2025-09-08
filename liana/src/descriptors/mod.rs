@@ -179,7 +179,7 @@ impl ChangeOutput {
 impl LianaDescriptor {
     pub fn new(spending_policy: LianaPolicy) -> LianaDescriptor {
         // Get the descriptor from the chosen spending policy.
-        let multi_desc = spending_policy.into_multipath_descriptor();
+        let multi_desc = spending_policy.compile_multipath_descriptor();
 
         // Compute the receive and change "sub" descriptors right away. According to our pubkey
         // check above, there must be only two of those, 0 and 1.

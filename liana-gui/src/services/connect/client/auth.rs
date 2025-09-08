@@ -1,6 +1,8 @@
 use reqwest::{Error, IntoUrl, Method, RequestBuilder, Response};
 use serde::{Deserialize, Serialize};
 
+use crate::services::http::{NotSuccessResponseInfo, ResponseExt};
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SignInOtp<'a> {
     email: &'a str,
@@ -67,6 +69,15 @@ impl From<Error> for AuthError {
     }
 }
 
+impl From<NotSuccessResponseInfo> for AuthError {
+    fn from(value: NotSuccessResponseInfo) -> Self {
+        AuthError {
+            http_status: Some(value.status_code),
+            error: value.text,
+        }
+    }
+}
+
 impl AuthClient {
     pub fn new(url: String, api_public_key: String, email: String) -> Self {
         AuthClient {
@@ -91,27 +102,21 @@ impl AuthClient {
     /// that user is using the desktop to authenticate and will display the token
     /// instead of the confirmation link button.
     pub async fn sign_in_otp(&self) -> Result<(), AuthError> {
-        let response: Response = self
-            .request(
-                Method::POST,
-                format!(
-                    "{}/auth/v1/otp?redirect_to=https://desktop.lianalite.com",
-                    self.url
-                ),
-            )
-            .json(&SignInOtp {
-                email: &self.email,
-                create_user: true,
-            })
-            .send()
-            .await?;
-
-        if !response.status().is_success() {
-            return Err(AuthError {
-                http_status: Some(response.status().into()),
-                error: response.text().await?,
-            });
-        }
+        self.request(
+            Method::POST,
+            format!(
+                "{}/auth/v1/otp?redirect_to=https://desktop.lianalite.com",
+                self.url
+            ),
+        )
+        .json(&SignInOtp {
+            email: &self.email,
+            create_user: true,
+        })
+        .send()
+        .await?
+        .check_success()
+        .await?;
 
         Ok(())
     }
@@ -137,13 +142,9 @@ impl AuthClient {
                 kind: "email",
             })
             .send()
+            .await?
+            .check_success()
             .await?;
-        if !response.status().is_success() {
-            return Err(AuthError {
-                http_status: Some(response.status().into()),
-                error: response.text().await?,
-            });
-        }
 
         Ok(response.json().await?)
     }
@@ -162,13 +163,9 @@ impl AuthClient {
             .header("Content-Type", "application/json")
             .json(&RefreshToken { refresh_token })
             .send()
+            .await?
+            .check_success()
             .await?;
-        if !response.status().is_success() {
-            return Err(AuthError {
-                http_status: Some(response.status().into()),
-                error: response.text().await?,
-            });
-        }
         Ok(response.json().await?)
     }
 }

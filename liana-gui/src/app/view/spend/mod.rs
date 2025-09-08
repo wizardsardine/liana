@@ -438,7 +438,7 @@ pub fn recipient_view<'a>(
                     .push_maybe(if is_max_selected {
                         let amount_txt = Amount::from_str_in(&amount.value, Denomination::Bitcoin)
                             .ok()
-                            .map(amount_as_string)
+                            .map(|a| a.to_formatted_string())
                             .unwrap_or(amount.value.clone());
                         Some(
                             Container::new(
