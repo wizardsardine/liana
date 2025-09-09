@@ -54,8 +54,6 @@ pub struct BuySellPanel {
     // Default build: account type selection state
     #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
     pub selected_account_type: Option<crate::app::view::message::AccountType>,
-
-
 }
 
 impl BuySellPanel {
@@ -89,7 +87,6 @@ impl BuySellPanel {
             #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
             selected_account_type: None,
 
-
             error: None,
             network,
 
@@ -100,8 +97,16 @@ impl BuySellPanel {
             #[cfg(feature = "webview")]
             active_page: None,
 
-            login_username: form::Value { value: String::new(), warning: None, valid: false },
-            login_password: form::Value { value: String::new(), warning: None, valid: false },
+            login_username: form::Value {
+                value: String::new(),
+                warning: None,
+                valid: false,
+            },
+            login_password: form::Value {
+                value: String::new(),
+                warning: None,
+                valid: false,
+            },
         }
     }
 
@@ -141,7 +146,6 @@ impl BuySellPanel {
             _ => false, // Unknown network
         }
     }
-
 
     pub fn set_login_username(&mut self, v: String) {
         self.login_username.value = v;
@@ -193,7 +197,6 @@ impl BuySellPanel {
     pub fn is_form_valid(&self) -> bool {
         #[cfg(feature = "dev-meld")]
         #[allow(unused_variables)]
-
         let locale_check = self.country_code.valid && !self.country_code.value.is_empty();
 
         #[cfg(feature = "dev-onramp")]
@@ -265,8 +268,6 @@ impl BuySellPanel {
                             .push(
                                 Row::new()
                                     .push(Space::with_width(Length::Fill))
-
-
                                     .push(
                                         Row::new()
                                             .push(
@@ -301,7 +302,6 @@ impl BuySellPanel {
 
             #[cfg(not(feature = "webview"))]
             let column = Column::new().push(self.form_view());
-
 
             column
                 .align_x(Alignment::Center)
@@ -404,8 +404,6 @@ impl BuySellPanel {
             )
             .push(Space::with_height(Length::Fixed(30.0)))
             .push(if self.active_page.is_some() {
-
-
                 ui_button::secondary(Some(liana_ui::icon::globe_icon()), "Creating Session...")
                     .width(Length::Fill)
             } else if self.is_form_valid() {
@@ -423,7 +421,6 @@ impl BuySellPanel {
     }
 }
 
-
 #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
 impl BuySellPanel {
     fn native_login_form<'a>(&'a self) -> Column<'a, ViewMessage> {
@@ -432,29 +429,48 @@ impl BuySellPanel {
         use liana_ui::icon::{building_icon, person_icon};
 
         let header = Row::new()
-            .push(Row::new()
-                .push(ui_text::h4_bold("COIN").color(color::ORANGE))
-                .push(ui_text::h4_bold("CUBE").color(color::WHITE))
-                .spacing(0))
+            .push(
+                Row::new()
+                    .push(ui_text::h4_bold("COIN").color(color::ORANGE))
+                    .push(ui_text::h4_bold("CUBE").color(color::WHITE))
+                    .spacing(0),
+            )
             .push(Space::with_width(Length::Fixed(8.0)))
             .push(ui_text::h5_regular("BUY/SELL").color(color::GREY_3));
 
         let subheader = ui_text::p1_regular("Choose your account type").color(color::WHITE);
 
-        let is_individual = matches!(self.selected_account_type, Some(crate::app::view::message::AccountType::Individual));
-        let is_business = matches!(self.selected_account_type, Some(crate::app::view::message::AccountType::Business));
+        let is_individual = matches!(
+            self.selected_account_type,
+            Some(crate::app::view::message::AccountType::Individual)
+        );
+        let is_business = matches!(
+            self.selected_account_type,
+            Some(crate::app::view::message::AccountType::Business)
+        );
 
-        let make_card = |title: &str, desc: &str, icon: Element<'a, ViewMessage>, selected: bool, on_press: ViewMessage| -> Element<'a, ViewMessage> {
+        let make_card = |title: &str,
+                         desc: &str,
+                         icon: Element<'a, ViewMessage>,
+                         selected: bool,
+                         on_press: ViewMessage|
+         -> Element<'a, ViewMessage> {
             let content = Row::new()
                 .spacing(12)
                 .align_y(Alignment::Center)
                 .push(Container::new(icon).width(Length::Fixed(28.0)))
-                .push(Column::new()
-                    .push(ui_text::p1_bold(title).color(color::WHITE))
-                    .push(ui_text::p2_regular(desc).color(color::GREY_3))
-                    .spacing(2));
+                .push(
+                    Column::new()
+                        .push(ui_text::p1_bold(title).color(color::WHITE))
+                        .push(ui_text::p2_regular(desc).color(color::GREY_3))
+                        .spacing(2),
+                );
             let card_body = ui_card::simple(content)
-                .style(if selected { theme::card::warning } else { theme::card::border })
+                .style(if selected {
+                    theme::card::warning
+                } else {
+                    theme::card::border
+                })
                 .width(Length::Fill)
                 .height(Length::Fixed(84.0));
             if selected {
@@ -472,7 +488,9 @@ impl BuySellPanel {
             "For individuals who want to buy and manage Bitcoin",
             Element::from(Container::new(person_icon())),
             is_individual,
-            ViewMessage::BuySell(BuySellMessage::AccountTypeSelected(crate::app::view::message::AccountType::Individual)),
+            ViewMessage::BuySell(BuySellMessage::AccountTypeSelected(
+                crate::app::view::message::AccountType::Individual,
+            )),
         );
         let business = make_card(
             "Business",

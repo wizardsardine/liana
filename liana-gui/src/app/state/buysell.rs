@@ -297,9 +297,9 @@ impl State for BuySellPanel {
                 } else {
                     Duration::from_millis(100)
                 };
-                return iced::time::every(interval)
-                    .with(id)
-                    .map(|(i, ..)| Message::View(ViewMessage::BuySell(BuySellMessage::ViewTick(i))));
+                return iced::time::every(interval).with(id).map(|(i, ..)| {
+                    Message::View(ViewMessage::BuySell(BuySellMessage::ViewTick(i)))
+                });
             }
         }
         iced::Subscription::none()

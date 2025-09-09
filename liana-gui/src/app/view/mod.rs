@@ -183,7 +183,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
                     .push(coins_button)
                     .push(transactions_button)
                     .push(psbt_button)
-                    .push_maybe(Some(buy_sell_button))
+                    .push(buy_sell_button)
                     .height(Length::Fill),
             )
             .push(

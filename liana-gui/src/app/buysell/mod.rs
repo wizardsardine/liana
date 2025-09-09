@@ -96,7 +96,7 @@ impl ServiceProvider {
             ServiceProvider::BtcDirect => "BTC Direct",
             ServiceProvider::CoinbasePay => "Coinbase Pay",
             ServiceProvider::Guardarian => "Guardarian",
-                &ServiceProvider::OnrampMoney => "Onramp Money",
+            &ServiceProvider::OnrampMoney => "Onramp Money",
 
             ServiceProvider::Koywe => "Koywe",
             #[cfg(feature = "dev-meld")]

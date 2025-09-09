@@ -134,8 +134,6 @@ pub enum AccountType {
     Business,
 }
 
-
-
 #[derive(Debug, Clone)]
 pub enum CreateRbfMessage {
     New(bool),
@@ -151,7 +149,6 @@ pub enum BuySellMessage {
     LoginPasswordChanged(String),
     SubmitLogin,
     CreateAccountPressed,
-
 
     // Default build: account type selection
     #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
