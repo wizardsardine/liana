@@ -82,18 +82,19 @@ pub fn home_view<'a>(
             Column::new()
                 .push(if sync_status.is_synced() {
                     Row::new()
+                        .align_y(Alignment::Center)
                         .push(amount_with_size(balance, H1_SIZE))
                         .push_maybe(fiat_balance.map(|fiat| {
                             Row::new()
                                 .align_y(Alignment::Center)
-                                .push(Space::with_width(10))
+                                .push(Space::with_width(20))
                                 .push(
                                     text(format!(
-                                        "({} {})",
+                                        "~{} {}",
                                         fiat.to_formatted_string(),
                                         fiat.currency()
                                     ))
-                                    .size(H1_SIZE)
+                                    .size(H2_SIZE)
                                     .color(color::GREY_2),
                                 )
                         }))
@@ -140,6 +141,7 @@ pub fn home_view<'a>(
                         Some(
                             Row::new()
                                 .spacing(10)
+                                .align_y(Alignment::Center)
                                 .push(text("+").size(H3_SIZE).style(theme::text::secondary))
                                 .push(unconfirmed_amount_with_size(unconfirmed_balance, H3_SIZE))
                                 .push(
@@ -148,15 +150,18 @@ pub fn home_view<'a>(
                                         .style(theme::text::secondary),
                                 )
                                 .push_maybe(fiat_unconfirmed.map(|fiat| {
-                                    Row::new().align_y(Alignment::Center).push(
-                                        text(format!(
-                                            "({} {})",
-                                            fiat.to_formatted_string(),
-                                            fiat.currency()
-                                        ))
-                                        .size(H3_SIZE)
-                                        .color(color::GREY_3),
-                                    )
+                                    Row::new()
+                                        .align_y(Alignment::Center)
+                                        .push(Space::with_width(10)) // total spacing = 20 including row spacing
+                                        .push(
+                                            text(format!(
+                                                "~{} {}",
+                                                fiat.to_formatted_string(),
+                                                fiat.currency()
+                                            ))
+                                            .size(H4_SIZE)
+                                            .color(color::GREY_3),
+                                        )
                                 })),
                         )
                     } else {
