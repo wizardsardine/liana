@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum ServiceProvider {
     AlchemyPay,
     Banxa,
@@ -10,6 +10,7 @@ pub enum ServiceProvider {
     BinanceP2P,
     #[cfg(feature = "dev-meld")]
     BlockchainDotCom,
+    #[default]
     BtcDirect,
     CoinbasePay,
     #[cfg(feature = "dev-onramp")]
@@ -127,12 +128,6 @@ impl ServiceProvider {
                 _ => unreachable!(),
             },
         }
-    }
-}
-
-impl Default for ServiceProvider {
-    fn default() -> Self {
-        ServiceProvider::BtcDirect
     }
 }
 

@@ -1,10 +1,7 @@
 #[cfg(all(feature = "dev-meld", feature = "dev-onramp"))]
 compile_error!("`dev-meld` and `dev-onramp` should be exclusive");
 
-use iced::{
-    widget::{container, text, Space},
-    Alignment, Length,
-};
+use iced::{widget::Space, Alignment, Length};
 #[cfg(feature = "webview")]
 use iced_webview::{advanced::WebView, Ultralight};
 
@@ -12,7 +9,6 @@ use liana::miniscript::bitcoin::Network;
 use liana_ui::{
     color,
     component::{button as ui_button, form},
-    icon::{bitcoin_icon, previous_icon},
     theme,
     widget::*,
 };

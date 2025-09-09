@@ -1,5 +1,5 @@
 use iced::Task;
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
 
 #[cfg(feature = "webview")]
 use iced_webview::{
