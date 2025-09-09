@@ -148,18 +148,15 @@ pub fn home_view<'a>(
                                         .style(theme::text::secondary),
                                 )
                                 .push_maybe(fiat_unconfirmed.map(|fiat| {
-                                    Row::new()
-                                        .align_y(Alignment::Center)
-                                        .push(Space::with_width(10))
-                                        .push(
-                                            text(format!(
-                                                "({} {})",
-                                                fiat.to_formatted_string(),
-                                                fiat.currency()
-                                            ))
-                                            .size(H3_SIZE)
-                                            .color(color::GREY_3),
-                                        )
+                                    Row::new().align_y(Alignment::Center).push(
+                                        text(format!(
+                                            "({} {})",
+                                            fiat.to_formatted_string(),
+                                            fiat.currency()
+                                        ))
+                                        .size(H3_SIZE)
+                                        .color(color::GREY_3),
+                                    )
                                 })),
                         )
                     } else {
