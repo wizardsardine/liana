@@ -399,7 +399,6 @@ pub fn create_app_with_remote_backend(
                 .with_provider_keys(provider_keys)
                 .with_hardware_wallets(hws)
                 .with_fiat_price_setting(wallet_settings.fiat_price)
-                .or_default_fiat_price_setting(network, true)
                 .load_hotsigners(&liana_dir, network)
                 .expect("Datadir should be conform"),
         ),

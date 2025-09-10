@@ -40,8 +40,7 @@ async fn update_price_setting(
     Ok(Arc::new(wallet))
 }
 
-// Returns the wallet's fiat `PriceSetting` or the default value if not set. We only
-// expect it to be `None` if `Wallet::or_default_fiat_price_setting` left it so.
+// Returns the wallet's fiat `PriceSetting` or the default value if not set.
 fn wallet_price_setting_or_default(wallet: &Wallet) -> PriceSetting {
     wallet
         .fiat_price_setting
@@ -97,8 +96,8 @@ impl State for GeneralSettingsState {
                 FiatMessage::ListCurrencies(source).into()
             });
         } else if self.wallet.fiat_price_setting.is_none() {
-            // If the wallet does not have a fiat price setting, save the default disabled setting
-            // to indicate that the user has seen the setting option (and a notification is no longer required).
+            // If the wallet does not have a fiat price setting, save the default (disabled) setting
+            // to indicate that the user has seen the setting option.
             tracing::info!(
                 "Fiat price setting is missing for wallet '{}'. Saving default setting.",
                 self.wallet.id()
