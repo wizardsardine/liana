@@ -88,15 +88,7 @@ pub fn home_view<'a>(
                             Row::new()
                                 .align_y(Alignment::Center)
                                 .push(Space::with_width(20))
-                                .push(
-                                    text(format!(
-                                        "~{} {}",
-                                        fiat.to_formatted_string(),
-                                        fiat.currency()
-                                    ))
-                                    .size(H2_SIZE)
-                                    .color(color::GREY_2),
-                                )
+                                .push(fiat.to_text().size(H2_SIZE).color(color::GREY_2))
                         }))
                 } else {
                     Row::new().push(spinner::Carousel::new(
@@ -153,15 +145,7 @@ pub fn home_view<'a>(
                                     Row::new()
                                         .align_y(Alignment::Center)
                                         .push(Space::with_width(10)) // total spacing = 20 including row spacing
-                                        .push(
-                                            text(format!(
-                                                "~{} {}",
-                                                fiat.to_formatted_string(),
-                                                fiat.currency()
-                                            ))
-                                            .size(H4_SIZE)
-                                            .color(color::GREY_3),
-                                        )
+                                        .push(fiat.to_text().size(H4_SIZE).color(color::GREY_3))
                                 })),
                         )
                     } else {

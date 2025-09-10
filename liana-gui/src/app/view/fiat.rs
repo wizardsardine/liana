@@ -6,7 +6,7 @@ use liana::miniscript::bitcoin::Amount;
 use liana_ui::component::amount::{format_f64_as_string, DisplayAmount};
 use liana_ui::component::text::text;
 use liana_ui::theme;
-use liana_ui::widget::Container;
+use liana_ui::widget::{Container, Text};
 
 use crate::app::cache;
 use crate::services::fiat::{Currency, PriceSource};
@@ -62,6 +62,15 @@ impl FiatAmount {
     /// Format a fiat amount as a string with two decimal places and no thousands separator.
     pub fn to_rounded_string(&self) -> String {
         format_f64_as_string(self.amount, "", 2, false)
+    }
+
+    /// Format a fiat amount as a `Text` widget with a tilde (~) prefix to indicate approximation.
+    pub fn to_text(&self) -> Text<'static> {
+        text(format!(
+            "~{} {}",
+            self.to_formatted_string(),
+            self.currency(),
+        ))
     }
 }
 
