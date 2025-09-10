@@ -395,7 +395,7 @@ pub fn recipient_view<'a>(
                         Container::new(p1_bold("Address"))
                             .align_x(alignment::Horizontal::Right)
                             .padding(10)
-                            .width(Length::Fixed(110.0)),
+                            .width(Length::Fixed(130.0)),
                     )
                     .push(
                         form::Form::new_trimmed("Address", address, move |msg| {
@@ -414,7 +414,7 @@ pub fn recipient_view<'a>(
                         Container::new(p1_bold("Description"))
                             .align_x(alignment::Horizontal::Right)
                             .padding(10)
-                            .width(Length::Fixed(110.0)),
+                            .width(Length::Fixed(130.0)),
                     )
                     .push(
                         form::Form::new("Payment label", label, move |msg| {
@@ -430,10 +430,10 @@ pub fn recipient_view<'a>(
                     .align_y(Alignment::Center)
                     .spacing(10)
                     .push(
-                        Container::new(p1_bold("Amount"))
+                        Container::new(p1_bold("Amount (BTC)"))
                             .padding(10)
                             .align_x(alignment::Horizontal::Right)
-                            .width(Length::Fixed(110.0)),
+                            .width(Length::Fixed(130.0)),
                     )
                     .push_maybe(if is_max_selected {
                         let amount_txt = Amount::from_str_in(&amount.value, Denomination::Bitcoin)
