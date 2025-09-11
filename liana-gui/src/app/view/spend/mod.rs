@@ -237,19 +237,19 @@ pub fn create_spend_tx<'a>(
                     .push_maybe(fee_amount.map(|fee| {
                         Row::new()
                             .spacing(10)
+                            .align_y(Alignment::Center)
                             .push(p1_regular("Fee:").style(theme::text::secondary))
                             .push(amount_with_size(fee, P1_SIZE))
                             .push_maybe(fiat_converter.map(|conv| {
-                                Row::new().spacing(10).push(
-                                    text(format!(
-                                        "(~{} {})",
-                                        conv.convert(*fee).to_formatted_string(),
-                                        conv.currency()
-                                    ))
-                                    .style(theme::text::secondary),
+                                Row::new().spacing(10).align_y(Alignment::Center).push(
+                                    conv.convert(*fee)
+                                        .to_text()
+                                        .size(P2_SIZE)
+                                        .style(theme::text::secondary),
                                 )
                             }))
-                    })),
+                    }))
+                    .wrap(),
             )
             .push(
                 Container::new(
