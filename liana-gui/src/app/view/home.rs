@@ -80,30 +80,33 @@ pub fn home_view<'a>(
         .push(h3("Balance"))
         .push(
             Column::new()
-                .push(if sync_status.is_synced() {
-                    Row::new()
-                        .align_y(Alignment::Center)
-                        .push(amount_with_size(balance, H1_SIZE))
-                        .push_maybe(fiat_balance.map(|fiat| {
-                            Row::new()
-                                .align_y(Alignment::Center)
-                                .push(Space::with_width(20))
-                                .push(fiat.to_text().size(H2_SIZE).color(color::GREY_2))
-                        }))
-                } else {
-                    Row::new().push(spinner::Carousel::new(
-                        Duration::from_millis(1000),
-                        vec![
-                            amount_with_size(balance, H1_SIZE),
-                            amount_with_size_and_colors(
-                                balance,
-                                H1_SIZE,
-                                color::GREY_4,
-                                Some(color::GREY_2),
-                            ),
-                        ],
-                    ))
-                })
+                .push(
+                    if sync_status.is_synced() {
+                        Row::new()
+                            .align_y(Alignment::Center)
+                            .push(amount_with_size(balance, H1_SIZE))
+                            .push_maybe(fiat_balance.map(|fiat| {
+                                Row::new()
+                                    .align_y(Alignment::Center)
+                                    .push(Space::with_width(20))
+                                    .push(fiat.to_text().size(H2_SIZE).color(color::GREY_2))
+                            }))
+                    } else {
+                        Row::new().push(spinner::Carousel::new(
+                            Duration::from_millis(1000),
+                            vec![
+                                amount_with_size(balance, H1_SIZE),
+                                amount_with_size_and_colors(
+                                    balance,
+                                    H1_SIZE,
+                                    color::GREY_4,
+                                    Some(color::GREY_2),
+                                ),
+                            ],
+                        ))
+                    }
+                    .wrap(),
+                )
                 .push_maybe(if !sync_status.is_synced() {
                     Some(
                         Row::new()
@@ -146,7 +149,8 @@ pub fn home_view<'a>(
                                         .align_y(Alignment::Center)
                                         .push(Space::with_width(10)) // total spacing = 20 including row spacing
                                         .push(fiat.to_text().size(H4_SIZE).color(color::GREY_3))
-                                })),
+                                }))
+                                .wrap(),
                         )
                     } else {
                         None

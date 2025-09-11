@@ -248,7 +248,8 @@ pub fn create_spend_tx<'a>(
                                         .style(theme::text::secondary),
                                 )
                             }))
-                    })),
+                    }))
+                    .wrap(),
             )
             .push(
                 Container::new(
