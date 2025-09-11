@@ -117,7 +117,7 @@ impl FiatPrice {
 }
 
 /// Represents a fiat price request.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FiatPriceRequest {
     pub source: PriceSource,
     pub currency: Currency,

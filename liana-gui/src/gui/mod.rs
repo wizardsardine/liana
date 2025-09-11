@@ -512,7 +512,7 @@ impl GUI {
                 for (source, currency) in stale_pairs {
                     let request = FiatPriceRequest::new(source, currency);
                     // Store request immediately to avoid multiple requests for the same pair.
-                    self.global_cache.insert_fiat_price_request(request.clone());
+                    self.global_cache.insert_fiat_price_request(request);
                     tasks.push(Task::perform(request.send_default(), |res| {
                         FiatMessage::GetPriceResult(res).into()
                     }));

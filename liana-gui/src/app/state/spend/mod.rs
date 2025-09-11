@@ -32,13 +32,12 @@ pub struct CreateSpendPanel {
 impl CreateSpendPanel {
     /// Create a new instance to be used for a primary path spend.
     pub fn new(wallet: Arc<Wallet>, coins: &[Coin], blockheight: u32, network: Network) -> Self {
-        let descriptor = wallet.main_descriptor.clone();
         Self {
             draft: step::TransactionDraft::new(network, None),
             current: 0,
             steps: vec![
                 Box::new(
-                    step::DefineSpend::new(network, descriptor, coins, blockheight, None, true)
+                    step::DefineSpend::new(network, wallet.clone(), coins, blockheight, None, true)
                         .with_coins_sorted(blockheight),
                 ),
                 Box::new(step::SaveSpend::new(wallet)),
@@ -57,8 +56,7 @@ impl CreateSpendPanel {
         blockheight: u32,
         network: Network,
     ) -> Self {
-        let descriptor = wallet.main_descriptor.clone();
-        let timelock = descriptor.first_timelock_value();
+        let timelock = wallet.as_ref().main_descriptor.first_timelock_value();
         Self {
             draft: step::TransactionDraft::new(network, Some(timelock)),
             current: 0,
@@ -71,7 +69,7 @@ impl CreateSpendPanel {
                 Box::new(
                     step::DefineSpend::new(
                         network,
-                        descriptor,
+                        wallet.clone(),
                         coins,
                         blockheight,
                         Some(timelock), // the recovery timelock must always be set to a value
@@ -93,13 +91,12 @@ impl CreateSpendPanel {
         preselected_coins: &[OutPoint],
         network: Network,
     ) -> Self {
-        let descriptor = wallet.main_descriptor.clone();
         Self {
             draft: step::TransactionDraft::new(network, None),
             current: 0,
             steps: vec![
                 Box::new(
-                    step::DefineSpend::new(network, descriptor, coins, blockheight, None, true)
+                    step::DefineSpend::new(network, wallet.clone(), coins, blockheight, None, true)
                         .with_preselected_coins(preselected_coins)
                         .with_coins_sorted(blockheight)
                         .self_send(),

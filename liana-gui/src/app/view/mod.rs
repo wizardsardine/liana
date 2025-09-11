@@ -1,10 +1,10 @@
-mod fiat;
 mod label;
 mod message;
 mod warning;
 
 pub mod coins;
 pub mod export;
+pub mod fiat;
 pub mod home;
 pub mod hw;
 pub mod psbt;
@@ -15,6 +15,7 @@ pub mod settings;
 pub mod spend;
 pub mod transactions;
 
+pub use fiat::FiatAmountConverter;
 pub use message::*;
 use warning::warn;
 

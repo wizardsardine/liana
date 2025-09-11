@@ -1,5 +1,6 @@
 use crate::{
     app::menu::Menu,
+    app::view::FiatAmountConverter,
     export::ImportExportMessage,
     node::bitcoind::RpcAuthType,
     services::fiat::{Currency, PriceSource},
@@ -58,6 +59,7 @@ pub enum CreateSpendMessage {
     DeleteRecipient(usize),
     SelectCoin(usize),
     RecipientEdited(usize, &'static str, String),
+    RecipientFiatAmountEdited(usize, String, FiatAmountConverter),
     FeerateEdited(String),
     SelectPath(usize),
     Generate,
@@ -141,4 +143,10 @@ pub enum FiatMessage {
     Enable(bool),
     SourceEdited(PriceSource),
     CurrencyEdited(Currency),
+}
+
+impl From<FiatMessage> for Message {
+    fn from(msg: FiatMessage) -> Self {
+        Message::Settings(SettingsMessage::Fiat(msg))
+    }
 }

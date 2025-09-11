@@ -9,7 +9,6 @@ use std::{
 
 use iced::{Subscription, Task};
 use liana::{
-    descriptors::LianaDescriptor,
     miniscript::bitcoin::{
         address,
         bip32::{DerivationPath, Fingerprint},
@@ -23,7 +22,14 @@ use lianad::commands::ListCoinsEntry;
 use liana_ui::{component::form, widget::Element};
 
 use crate::{
-    app::{cache::Cache, error::Error, message::Message, state::psbt, view, wallet::Wallet},
+    app::{
+        cache::Cache,
+        error::Error,
+        message::Message,
+        state::{fiat_converter_for_wallet, psbt},
+        view::{self, fiat::FiatAmount},
+        wallet::Wallet,
+    },
     daemon::{
         model::{coin_is_owned, remaining_sequence, Coin, CreateSpendResult, SpendTx},
         Daemon,
@@ -141,7 +147,7 @@ pub struct DefineSpend {
     is_duplicate: bool,
 
     network: Network,
-    descriptor: LianaDescriptor,
+    wallet: Arc<Wallet>,
     curve: secp256k1::Secp256k1<secp256k1::VerifyOnly>,
     /// Leave as `None` for a primary path spend. Otherwise, this is the timelock
     /// corresponding to the recovery path to use for the spend.
@@ -166,7 +172,7 @@ pub struct DefineSpend {
 impl DefineSpend {
     pub fn new(
         network: Network,
-        descriptor: LianaDescriptor,
+        wallet: Arc<Wallet>,
         coins: &[Coin],
         tip_height: u32,
         recovery_timelock: Option<u16>,
@@ -181,7 +187,7 @@ impl DefineSpend {
 
         Self {
             network,
-            descriptor,
+            wallet,
             curve: secp256k1::Secp256k1::verification_only(),
             recovery_timelock,
             tip_height,
@@ -243,7 +249,7 @@ impl DefineSpend {
     /// timelock as used for the recovery.
     pub fn timelock(&self) -> u16 {
         self.recovery_timelock
-            .unwrap_or_else(|| self.descriptor.first_timelock_value())
+            .unwrap_or_else(|| self.wallet.main_descriptor.first_timelock_value())
     }
 
     // If `is_redraft`, the validation of recipients will take into account
@@ -393,7 +399,8 @@ impl DefineSpend {
                 .as_unchecked()
                 .clone()
         } else {
-            self.descriptor
+            self.wallet
+                .main_descriptor
                 .change_descriptor()
                 .derive(0.into(), &self.curve)
                 .address(self.network)
@@ -511,7 +518,7 @@ impl Step for DefineSpend {
                     // If the timelock has changed, reinitialise this step.
                     let new = Self::new(
                         self.network,
-                        self.descriptor.clone(),
+                        self.wallet.clone(),
                         coins,
                         tip_height as u32,
                         Some(new_tl),
@@ -559,7 +566,7 @@ impl Step for DefineSpend {
                     view::CreateSpendMessage::Clear => {
                         *self = Self::new(
                             self.network,
-                            self.descriptor.clone(),
+                            self.wallet.clone(),
                             self.coins
                                 .iter()
                                 .map(|(c, _)| c.clone())
@@ -595,13 +602,13 @@ impl Step for DefineSpend {
                             }
                         }
                     }
-                    view::CreateSpendMessage::RecipientEdited(i, _, _) => {
+                    view::CreateSpendMessage::RecipientEdited(i, _, _)
+                    | view::CreateSpendMessage::RecipientFiatAmountEdited(i, _, _) => {
                         self.recipients
                             .get_mut(i)
                             .unwrap()
                             .update(cache.network, msg);
                     }
-
                     view::CreateSpendMessage::FeerateEdited(s) => {
                         if let Ok(value) = s.parse::<u64>() {
                             self.feerate.value = s;
@@ -800,14 +807,16 @@ impl Step for DefineSpend {
     }
 
     fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, view::Message> {
+        let converter = fiat_converter_for_wallet(&self.wallet, cache);
         view::spend::create_spend_tx(
             cache,
+            converter.as_ref(),
             self.recipients
                 .iter()
                 .enumerate()
                 .map(|(i, recipient)| {
                     recipient
-                        .view(i, self.send_max_to_recipient == Some(i))
+                        .view(i, self.send_max_to_recipient == Some(i), converter.as_ref())
                         .map(view::Message::CreateSpend)
                 })
                 .collect(),
@@ -825,6 +834,10 @@ impl Step for DefineSpend {
             self.is_first_step,
         )
     }
+
+    fn reload_wallet(&mut self, wallet: Arc<Wallet>) {
+        self.wallet = wallet;
+    }
 }
 
 #[derive(Default, Clone)]
@@ -832,6 +845,9 @@ struct Recipient {
     label: form::Value<String>,
     address: form::Value<String>,
     amount: form::Value<String>,
+    // This is only `Some` if the user has entered a fiat amount directly.
+    fiat_amount: Option<form::Value<String>>,
+    fiat_converter: Option<view::FiatAmountConverter>, // the converter at the time of entering the fiat amount
     is_recovery: bool,
 }
 
@@ -897,7 +913,51 @@ impl Recipient {
                     self.address.valid = false;
                 }
             }
+            view::CreateSpendMessage::RecipientFiatAmountEdited(_, fiat_amt_str, converter) => {
+                self.fiat_converter = Some(converter);
+                if fiat_amt_str.is_empty() {
+                    self.fiat_amount = Some(form::Value::default());
+                    self.amount = form::Value::default(); // reset the BTC amount to be consistent
+                    return;
+                }
+                // Don't allow more than 2 decimal places for fiat amounts.
+                if fiat_amt_str
+                    .split_once(".")
+                    .filter(|(_, decimals)| decimals.len() > 2)
+                    .is_some()
+                {
+                    return;
+                }
+                let Ok(fiat_amount) = FiatAmount::from_str_in(&fiat_amt_str, converter.currency())
+                else {
+                    // We don't save the invalid fiat amount.
+                    return;
+                };
+                match converter.convert_to_btc(&fiat_amount) {
+                    Ok(btc_amount) => {
+                        // Update both BTC and fiat amounts.
+                        self.amount.value = btc_amount.to_btc().to_string();
+                        self.amount.valid = self.amount().is_ok();
+                        self.fiat_amount = Some(form::Value {
+                            value: fiat_amt_str,
+                            valid: true,
+                            warning: None,
+                        });
+                    }
+                    Err(e) => {
+                        // Probably the BTC amount is too large.
+                        tracing::debug!("Could not convert fiat to BTC: {e}");
+                        self.fiat_amount = Some(form::Value {
+                            value: fiat_amt_str,
+                            valid: false,
+                            warning: Some("Could not convert to BTC"),
+                        });
+                    }
+                }
+            }
             view::CreateSpendMessage::RecipientEdited(_, "amount", amount) => {
+                self.fiat_amount = None; // Clear any fiat amount to indicate BTC amount is now primary.
+                self.fiat_converter = None;
                 self.amount.value = amount;
                 if !self.amount.value.is_empty() {
                     self.amount.valid = self.amount().is_ok();
@@ -914,11 +974,37 @@ impl Recipient {
         };
     }
 
-    fn view(&self, i: usize, is_max_selected: bool) -> Element<view::CreateSpendMessage> {
+    fn view(
+        &self,
+        i: usize,
+        is_max_selected: bool,
+        fiat_converter: Option<&view::FiatAmountConverter>,
+    ) -> Element<view::CreateSpendMessage> {
+        let mut fiat_form_value = self.fiat_amount.as_ref();
+
+        // If we have a fiat converter, check if it has changed since the last time we set
+        // the fiat amount. If it has changed, we may need to update the fiat amount
+        // depending on whether the currency or price has changed.
+        if let (Some(current_conv), Some(prev_conv)) =
+            (fiat_converter, self.fiat_converter.as_ref())
+        {
+            if current_conv.currency() != prev_conv.currency() {
+                fiat_form_value = None; // convert any BTC amount to fiat in the new currency
+            } else if current_conv.price_per_btc() != prev_conv.price_per_btc() {
+                // If the fiat amount is not valid, keep it as is so the user can correct it.
+                // Else, convert any BTC amount to fiat at the new price.
+                if self.fiat_amount.as_ref().is_some_and(|fa| fa.valid) {
+                    fiat_form_value = None;
+                }
+            }
+        }
+
         view::spend::recipient_view(
             i,
             &self.address,
             &self.amount,
+            fiat_form_value,
+            fiat_converter,
             &self.label,
             is_max_selected,
             self.is_recovery,
