@@ -1,4 +1,5 @@
 use chrono::{Duration, Utc};
+use encrypted_backup::ToPayload;
 use liana::{
     descriptors::LianaDescriptor,
     miniscript::{
@@ -22,13 +23,12 @@ use tokio::sync::mpsc::UnboundedSender;
 use crate::{
     app::{
         settings::{Settings, WalletSettings},
-        wallet::{wallet_name, Wallet},
+        wallet::Wallet,
         Config,
     },
     daemon::{model::HistoryTransaction, Daemon, DaemonBackend, DaemonError},
     dir::LianaDirectory,
     export::Progress,
-    installer::Context,
     services::connect::client::backend::api::DEFAULT_LIMIT,
     utils::now,
     VERSION,
@@ -123,37 +123,6 @@ impl Backup {
             proprietary: Default::default(),
             version: default_version(),
         }
-    }
-    /// Create a Backup from the Installer context
-    ///
-    /// # Arguments
-    /// * `ctx` - the installer context
-    pub async fn from_installer_descriptor_step(ctx: Context) -> Result<Self, Error> {
-        let descriptor = ctx.descriptor.clone().ok_or(Error::DescriptorMissing)?;
-
-        let now = now().as_secs();
-        let name = Some(wallet_name(&descriptor));
-
-        let mut account = Account::new(descriptor.to_string());
-        account.name = name.clone();
-        account.timestamp = Some(now);
-        account
-            .proprietary
-            .insert(LIANA_VERSION_KEY.to_string(), liana_version().into());
-
-        ctx.keys.iter().for_each(|(k, s)| {
-            account.keys.insert(*k, s.to_backup());
-        });
-
-        Ok(Backup {
-            name,
-            alias: None,
-            accounts: vec![account],
-            network: ctx.network,
-            proprietary: serde_json::Map::new(),
-            date: Some(now),
-            version: 0,
-        })
     }
 
     /// Create a Backup from the Liana App context
@@ -480,6 +449,28 @@ pub enum KeyType {
     External,
     /// Service the user pay for
     ThirdParty,
+}
+
+impl ToPayload for Backup {
+    fn to_payload(&self) -> Result<Vec<u8>, encrypted_backup::Error> {
+        Ok(self.to_string().as_bytes().to_vec())
+    }
+
+    fn content_type(&self) -> encrypted_backup::Content {
+        encrypted_backup::Content::WalletBackup
+    }
+
+    fn derivation_paths(
+        &self,
+    ) -> Result<Vec<miniscript::bitcoin::bip32::DerivationPath>, encrypted_backup::Error> {
+        Ok(vec![])
+    }
+
+    fn keys(
+        &self,
+    ) -> Result<Vec<miniscript::bitcoin::secp256k1::PublicKey>, encrypted_backup::Error> {
+        Ok(vec![])
+    }
 }
 
 #[cfg(test)]
