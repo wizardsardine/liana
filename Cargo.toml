@@ -2,3 +2,11 @@
 resolver = "2"
 members = ["fuzz", "liana", "lianad", "liana-gui", "liana-ui"]
 default-members = ["liana", "lianad", "liana-gui", "liana-ui"]
+
+[profile.app-release]
+inherits = "release"
+opt-level = 3
+strip = "symbols"
+lto = "fat"
+codegen-units = 1
+panic = "abort"

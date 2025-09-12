@@ -118,11 +118,14 @@ impl State for BuySellPanel {
             #[cfg(feature = "dev-onramp")]
             BuySellMessage::CreateSession => {
                 if self.is_form_valid() {
-                    let onramper_url = onramper::create_widget_url(
+                    let Some(onramper_url) = onramper::create_widget_url(
                         &self.fiat_currency.value,
                         &self.source_amount.value,
                         &self.wallet_address.value,
-                    );
+                    ) else {
+                        self.error = Some("Onramper API key not set as an environment variable (ONRAMPER_API_KEY) at compile time".to_string());
+                        return Task::none();
+                    };
 
                     tracing::info!(
                         "🚀 [BUYSELL] Creating new onramper widget session: {}",

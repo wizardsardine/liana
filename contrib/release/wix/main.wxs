@@ -1,0 +1,178 @@
+<?xml version='1.0' encoding='windows-1252'?>
+<!--
+  Copyright (C) 2017 Christopher R. Field.
+
+  Licensed under the Apache License, Version 2.0 (the "License");
+  you may not use this file except in compliance with the License.
+  You may obtain a copy of the License at
+
+  http://www.apache.org/licenses/LICENSE-2.0
+
+  Unless required by applicable law or agreed to in writing, software
+  distributed under the License is distributed on an "AS IS" BASIS,
+  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+  See the License for the specific language governing permissions and
+  limitations under the License.
+-->
+
+<!--
+  The "cargo wix" subcommand provides a variety of predefined variables available
+  for customization of this template. The values for each variable are set at
+  installer creation time. The following variables are available:
+
+  TargetTriple      = The rustc target triple name.
+  TargetEnv         = The rustc target environment. This is typically either
+                      "msvc" or "gnu" depending on the toolchain downloaded and
+                      installed.
+  TargetVendor      = The rustc target vendor. This is typically "pc", but Rust
+                      does support other vendors, like "uwp".
+  CargoTargetBinDir = The complete path to the directory containing the
+                      binaries (exes) to include. The default would be
+                      "target\release\". If an explicit rustc target triple is
+                      used, i.e. cross-compiling, then the default path would
+                      be "target\<CARGO_TARGET>\<CARGO_PROFILE>",
+                      where "<CARGO_TARGET>" is replaced with the "CargoTarget"
+                      variable value and "<CARGO_PROFILE>" is replaced with the
+                      value from the "CargoProfile" variable. This can also
+                      be overridden manually with the "target-bin-dir" flag.
+  CargoTargetDir    = The path to the directory for the build artifacts, i.e.
+                      "target".
+  CargoProfile      = The cargo profile used to build the binaries
+                      (usually "debug" or "release").
+  Version           = The version for the installer. The default is the
+                      "Major.Minor.Fix" semantic versioning number of the Rust
+                      package.
+-->
+
+<!--
+  Please do not remove these pre-processor If-Else blocks. These are used with
+  the `cargo wix` subcommand to automatically determine the installation
+  destination for 32-bit versus 64-bit installers. Removal of these lines will
+  cause installation errors.
+-->
+<?if $(sys.BUILDARCH) = x64 or $(sys.BUILDARCH) = arm64?>
+    <?define PlatformProgramFilesFolder = "ProgramFiles64Folder"?>
+<?else?>
+    <?define PlatformProgramFilesFolder = "ProgramFilesFolder"?>
+<?endif?>
+
+<?define UltralightSdkPath="ultralight-sdk" ?>
+
+<Wix xmlns='http://schemas.microsoft.com/wix/2006/wi'>
+
+  <Product
+    Id='*'
+    Name='liana-gui'
+    UpgradeCode='046BC7BE-9EFD-46F0-95C4-93E4B7EBBED1'
+    Manufacturer='Edouard Paris'
+    Language='1033'
+    Codepage='1252'
+    Version='$(var.Version)'>
+
+    <Package Id='*'
+      Keywords='Installer'
+      Description='Liana GUI'
+      Manufacturer='Edouard Paris'
+      InstallerVersion='450'
+      Languages='1033'
+      Compressed='yes'
+      InstallScope='perMachine'
+      SummaryCodepage='1252'
+    />
+
+    <MajorUpgrade
+      Schedule='afterInstallInitialize'
+      DowngradeErrorMessage='A newer version of [ProductName] is already installed. Setup will now exit.' />
+
+    <Media Id='1' Cabinet='media1.cab' EmbedCab='yes' DiskPrompt='CD-ROM #1' />
+    <Property Id='DiskPrompt' Value='liana-gui Installation' />
+
+    <Directory Id='TARGETDIR' Name='SourceDir'>
+      <Directory Id='$(var.PlatformProgramFilesFolder)' Name='PFiles'>
+        <Directory Id='APPLICATIONFOLDER' Name='liana-gui'>
+          <Component Id='License' Guid='*'>
+            <File Id='LicenseFile'
+              Source='LICENCE'
+              KeyPath='yes' />
+          </Component>
+
+          <Directory Id='Bin' Name='bin'>
+            <Component Id='binary0' Guid='*'>
+              <File
+                Id='exe0'
+                Name='coincube-vault.exe'
+                Source='$(var.CargoTargetBinDir)\coincube-vault.exe'
+                KeyPath='yes' />
+            </Component>
+
+            <Component Id='binary1' Guid='*'>
+              <File
+                Id='dll0'
+                Name='AppCore.dll'
+                Source='$(var.UltralightSdkPath)\bin\AppCore.dll'
+                KeyPath='yes' />
+            </Component>
+
+            <Component Id='binary2' Guid='*'>
+              <File
+                Id='dll1'
+                Name='Ultralight.dll'
+                Source='$(var.UltralightSdkPath)\bin\Ultralight.dll'
+                KeyPath='yes' />
+            </Component>
+
+            <Component Id='binary3' Guid='*'>
+              <File
+                Id='dll2'
+                Name='UltralightCore.dll'
+                Source='$(var.UltralightSdkPath)\bin\UltralightCore.dll'
+                KeyPath='yes' />
+            </Component>
+
+            <Component Id='binary4' Guid='*'>
+              <File
+                Id='dll3'
+                Name='WebCore.dll'
+                Source='$(var.UltralightSdkPath)\bin\WebCore.dll'
+                KeyPath='yes' />
+            </Component>
+          </Directory>
+        </Directory>
+      </Directory>
+    </Directory>
+
+    <Feature
+      Id='Binaries'
+      Title='Application'
+      Description='Installs all binaries and the license.'
+      Level='1'
+      ConfigurableDirectory='APPLICATIONFOLDER'
+      AllowAdvertise='no'
+      Display='expand'
+      Absent='disallow'>
+
+      <ComponentRef Id='License' />
+      <ComponentRef Id='binary0' />
+      <ComponentRef Id='binary1' />
+      <ComponentRef Id='binary2' />
+      <ComponentRef Id='binary3' />
+      <ComponentRef Id='binary4' />
+
+    </Feature>
+
+    <SetProperty Id='ARPINSTALLLOCATION' Value='[APPLICATIONFOLDER]' After='CostFinalize' />
+
+    <Property Id='ARPHELPLINK' Value='https://github.com/coincubetech/liana' />
+
+    <UI>
+      <UIRef Id='WixUI_FeatureTree' />
+      <Publish Dialog='WelcomeDlg' Control='Next' Event='NewDialog' Value='CustomizeDlg' Order='99'>
+        1</Publish>
+      <Publish Dialog='CustomizeDlg' Control='Back' Event='NewDialog' Value='WelcomeDlg' Order='99'>
+        1</Publish>
+    </UI>
+
+
+  </Product>
+
+</Wix>

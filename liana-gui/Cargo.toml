@@ -4,7 +4,7 @@ version = "12.0.0"
 readme = "README.md"
 description = "Liana GUI"
 repository = "https://github.com/wizardsardine/liana"
-license = "BSD-3-Clause"
+license-file = "../LICENCE"
 authors = ["Edouard Paris <m@edouard.paris>"]
 edition = "2018"
 resolver = "2"
@@ -102,12 +102,6 @@ tokio = { version = "1", features = ["rt", "macros"] }
 [target.'cfg(windows)'.build-dependencies]
 winresource = "0.1"
 
-[package.metadata.winresource]
-OriginalFilename = "coincube-vault.exe"
-FileDescription = "The missing safety net for your coins, Coincube's Fork"
-CompanyName = "Coincube"
-InternalName = "Liana"
-
 [lints.rust]
 mismatched_lifetime_syntaxes = "allow"
 
@@ -115,3 +109,12 @@ mismatched_lifetime_syntaxes = "allow"
 uninlined_format_args = "allow"
 large_enum_variant = "allow"
 result_large_err = "allow"
+
+[package.metadata.winresource]
+OriginalFilename = "coincube-vault.exe"
+FileDescription = "The missing safety net for your coins, Coincube's Fork"
+CompanyName = "Coincube"
+InternalName = "Liana"
+
+[package.metadata.wix]
+eula = false
