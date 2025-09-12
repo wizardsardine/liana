@@ -81,8 +81,9 @@ which is currently possible through the Bitcoin Core daemon (`bitcoind`) or an E
 
 The chosen Bitcoin backend must be available while Liana is running.
 
-If using `bitcoind`, it must be running on your machine for the desired network (mainnet, signet, testnet or regtest)
-and may be pruned (note this may affect block chain rescans) up to the maximum (around 550MB of blocks).
+If using `bitcoind`, it must be running on your machine for the desired network (mainnet, signet, testnet, testnet4 or
+regtest). Note that testnet4 will only be available if Bitcoin Core version 28.0 or later is used. It may be pruned 
+(this may affect block chain rescans) up to the maximum (around 550MB of blocks).
 
 The minimum supported version of Bitcoin Core is `24.0.1` (if you want to use Taproot it's `26.0`).
 If you don't have Bitcoin Core installed on your machine yet, you can download it

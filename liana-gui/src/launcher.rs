@@ -27,9 +27,10 @@ use crate::{
     },
 };
 
-const NETWORKS: [Network; 4] = [
+const NETWORKS: [Network; 5] = [
     Network::Bitcoin,
     Network::Testnet,
+    Network::Testnet4,
     Network::Signet,
     Network::Regtest,
 ];
@@ -46,6 +47,7 @@ pub enum State {
 
 pub struct Launcher {
     state: State,
+    displayed_networks: Vec<Network>,
     network: Network,
     pub datadir_path: LianaDirectory,
     error: Option<String>,
@@ -57,13 +59,7 @@ impl Launcher {
         let network = network.unwrap_or(
             NETWORKS
                 .iter()
-                .find(|net| {
-                    datadir_path
-                        .path()
-                        .join(net.to_string())
-                        .join(settings::SETTINGS_FILE_NAME)
-                        .exists()
-                })
+                .find(|net| has_existing_wallet(&datadir_path, **net))
                 .cloned()
                 .unwrap_or(Network::Bitcoin),
         );
@@ -71,6 +67,7 @@ impl Launcher {
         (
             Self {
                 state: State::Unchecked,
+                displayed_networks: displayed_networks(&datadir_path),
                 network,
                 datadir_path: datadir_path.clone(),
                 error: None,
@@ -151,6 +148,11 @@ impl Launcher {
 
             Message::View(ViewMessage::DeleteWallet(DeleteWalletMessage::CloseModal)) => {
                 self.delete_wallet_modal = None;
+                if self.network == Network::Testnet
+                    && !has_existing_wallet(&self.datadir_path, Network::Testnet)
+                {
+                    self.network = Network::Testnet4;
+                }
                 Task::none()
             }
             Message::Checked(res) => match res {
@@ -233,7 +235,7 @@ impl Launcher {
                         )
                         .push(
                             pick_list(
-                                &NETWORKS[..],
+                                self.displayed_networks.as_slice(),
                                 Some(self.network),
                                 ViewMessage::SelectNetwork,
                             )
@@ -373,6 +375,7 @@ fn wallets_list_item(
                                         Network::Bitcoin => "Bitcoin",
                                         Network::Signet => "Signet",
                                         Network::Testnet => "Testnet",
+                                        Network::Testnet4 => "Testnet4",
                                         Network::Regtest => "Regtest",
                                         _ => "",
                                     }
@@ -403,6 +406,28 @@ fn wallets_list_item(
             ),
     )
     .into()
+}
+
+/// Returns the list of displayed networks.
+///
+/// `Testnet` is not displayed if no wallet already exists as `Testnet4` should be available.
+fn displayed_networks(dir: &LianaDirectory) -> Vec<Network> {
+    let mut networks = NETWORKS.to_vec();
+
+    networks.retain(|&n| match n {
+        Network::Testnet => has_existing_wallet(dir, Network::Testnet),
+        _ => true,
+    });
+
+    networks
+}
+
+fn has_existing_wallet(data_dir: &LianaDirectory, network: Network) -> bool {
+    data_dir
+        .path()
+        .join(network.to_string())
+        .join(settings::SETTINGS_FILE_NAME)
+        .exists()
 }
 
 #[allow(clippy::large_enum_variant)]

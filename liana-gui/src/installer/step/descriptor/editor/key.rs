@@ -1536,6 +1536,10 @@ mod tests {
             "48'/1'/0'/2'"
         );
         assert_eq!(
+            default_derivation_path(Network::Testnet4).to_string(),
+            "48'/1'/0'/2'"
+        );
+        assert_eq!(
             default_derivation_path(Network::Signet).to_string(),
             "48'/1'/0'/2'"
         );
