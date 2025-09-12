@@ -88,7 +88,9 @@ jobs:
           bin: coincube-vault
           archive: coincube-vault-$tag-$target
           target: x86_64-unknown-linux-gnu
-          asset: LICENSE,README.md,ultralight-sdk
+          include: LICENSE,README.md,ultralight-sdk
+          profile: app-release
+          checksum: sha256,md5
           locked: true
 
       # Generate icons for macOS and Windows
