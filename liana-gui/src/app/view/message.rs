@@ -171,6 +171,12 @@ pub enum BuySellMessage {
     TermsToggled(bool),
     #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
     SubmitRegistration,
+    #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+    VerificationCodeChanged(String),
+    #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+    ResendVerificationCode,
+    #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+    VerifyEmail,
 
     // Shared form fields (for provider-integrated builds)
     WalletAddressChanged(String),

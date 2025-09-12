@@ -68,6 +68,8 @@ pub struct BuySellPanel {
     pub password2: form::Value<String>,
     #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
     pub terms_accepted: bool,
+    #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+    pub verification_code: form::Value<String>,
 }
 
 #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
@@ -75,6 +77,7 @@ pub struct BuySellPanel {
 pub enum NativePage {
     AccountSelect,
     Register,
+    VerifyEmail,
 }
 
 impl BuySellPanel {
@@ -144,6 +147,8 @@ impl BuySellPanel {
             password2: form::Value::default(),
             #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
             terms_accepted: false,
+            #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+            verification_code: form::Value::default(),
         }
     }
 
@@ -355,6 +360,7 @@ impl BuySellPanel {
         match self.native_page {
             NativePage::AccountSelect => self.native_login_form(),
             NativePage::Register => self.native_register_form(),
+            NativePage::VerifyEmail => self.native_verify_email_form(),
         }
     }
 
@@ -727,7 +733,7 @@ impl BuySellPanel {
     }
 
     #[inline]
-    fn is_registration_valid(&self) -> bool {
+    pub fn is_registration_valid(&self) -> bool {
         let email_ok = self.email.value.contains('@') && self.email.value.contains('.');
         let pw_ok = self.password1.value.len() >= 8 && self.password1.value == self.password2.value;
         !self.first_name.value.is_empty()
@@ -735,5 +741,125 @@ impl BuySellPanel {
             && email_ok
             && pw_ok
             && self.terms_accepted
+    }
+
+    pub fn set_verification_code(&mut self, code: String) {
+        self.verification_code.value = code;
+        self.verification_code.valid = self.verification_code.value.len() == 6 && self.verification_code.value.chars().all(|c| c.is_ascii_digit());
+    }
+
+    #[inline] 
+    pub fn is_verification_code_valid(&self) -> bool {
+        self.verification_code.valid && self.verification_code.value.len() == 6
+    }
+
+    fn native_verify_email_form<'a>(&'a self) -> Column<'a, ViewMessage> {
+        use liana_ui::component::text as ui_text;
+        use liana_ui::component::text::text;
+        use liana_ui::icon::previous_icon;
+        use liana_ui::component::button as ui_button;
+
+        // Top bar with previous
+        let top_bar = Row::new()
+            .push(
+                Button::new(
+                    Row::new()
+                        .push(previous_icon().color(color::GREY_2))
+                        .push(Space::with_width(Length::Fixed(5.0)))
+                        .push(text("Previous").color(color::GREY_2))
+                        .spacing(5)
+                        .align_y(Alignment::Center),
+                )
+                .style(|_, _| iced::widget::button::Style {
+                    background: None,
+                    text_color: color::GREY_2,
+                    border: iced::Border::default(),
+                    shadow: iced::Shadow::default(),
+                })
+                .on_press(ViewMessage::Previous),
+            )
+            .align_y(Alignment::Center);
+
+        // Brand header
+        let brand = Row::new()
+            .push(Space::with_width(Length::Fill))
+            .push(
+                Row::new()
+                    .push(ui_text::h4_bold("COIN").color(color::ORANGE))
+                    .push(ui_text::h4_bold("CUBE").color(color::WHITE))
+                    .push(Space::with_width(Length::Fixed(8.0)))
+                    .push(ui_text::h5_regular("BUY/SELL").color(color::GREY_3))
+                    .spacing(0)
+                    .align_y(Alignment::Center),
+            )
+            .push(Space::with_width(Length::Fill))
+            .align_y(Alignment::Center);
+
+        // Title and subtitle
+        let title = Column::new()
+            .push(ui_text::h3("Verify Your Email").color(color::WHITE))
+            .push(
+                ui_text::p2_regular("We've sent a 6-digit verification code to your account email.")
+                .color(color::GREY_3),
+            )
+            .push(
+                ui_text::p2_regular("Enter the code below to continue setting up your COINCUBE account.")
+                .color(color::GREY_3),
+            )
+            .spacing(10)
+            .align_x(Alignment::Center);
+
+        // Email display
+        let email_display = Column::new()
+            .push(ui_text::p2_regular("Enter verification code").color(color::GREY_3))
+            .push(Space::with_height(Length::Fixed(5.0)))
+            .push(
+                form::Form::new("Enter code", &self.verification_code, |v| {
+                    ViewMessage::BuySell(BuySellMessage::VerificationCodeChanged(v))
+                })
+                .size(16)
+                .padding(15),
+            )
+            .spacing(5);
+
+        // Resend link
+        let resend = Row::new()
+            .push(Space::with_width(Length::Fill))
+            .push(
+                Row::new()
+                    .push(ui_text::p2_regular("Didn't receive the code? ").color(color::GREY_3))
+                    .push(
+                        ui_button::link(None, "Resend")
+                            .on_press(ViewMessage::BuySell(BuySellMessage::ResendVerificationCode))
+                    )
+            )
+            .push(Space::with_width(Length::Fill))
+            .align_y(Alignment::Center);
+
+        // Verify button
+        let verify_btn = if self.is_verification_code_valid() {
+            ui_button::primary(None, "Verify Email")
+                .on_press(ViewMessage::BuySell(BuySellMessage::VerifyEmail))
+                .width(Length::Fill)
+        } else {
+            ui_button::secondary(None, "Verify Email").width(Length::Fill)
+        };
+
+        Column::new()
+            .push(top_bar)
+            .push(Space::with_height(Length::Fixed(10.0)))
+            .push(brand)
+            .push(Space::with_height(Length::Fixed(30.0)))
+            .push(title)
+            .push(Space::with_height(Length::Fixed(30.0)))
+            .push(email_display)
+            .push(Space::with_height(Length::Fixed(20.0)))
+            .push(resend)
+            .push(Space::with_height(Length::Fixed(30.0)))
+            .push(verify_btn)
+            .align_x(Alignment::Center)
+            .spacing(5)
+            .max_width(500)
+            .width(Length::Fill)
     }
 }

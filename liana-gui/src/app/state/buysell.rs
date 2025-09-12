@@ -6,7 +6,7 @@ use iced_webview::{
     advanced::{Action as WebviewAction, WebView},
     PageType,
 };
-use liana_ui::widget::Element;
+use liana_ui::{component::form, widget::Element};
 
 #[cfg(feature = "dev-meld")]
 use crate::app::buysell::{meld::MeldError, ServiceProvider};
@@ -73,8 +73,10 @@ impl State for BuySellPanel {
         if let Message::View(ViewMessage::Previous) = &message {
             #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
             {
-                if self.native_page == NativePage::Register {
-                    self.native_page = NativePage::AccountSelect;
+                match self.native_page {
+                    NativePage::Register => self.native_page = NativePage::AccountSelect,
+                    NativePage::VerifyEmail => self.native_page = NativePage::Register,
+                    _ => {}
                 }
             }
             return Task::none();
@@ -150,8 +152,31 @@ impl State for BuySellPanel {
             }
             #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
             BuySellMessage::SubmitRegistration => {
-                // UI-only for now: validation happens in view; keep placeholder
-                // Future: trigger API call here
+                // Navigate to email verification after successful registration
+                if self.is_registration_valid() {
+                    self.native_page = NativePage::VerifyEmail;
+                    // Reset verification code when navigating to verify email page
+                    self.verification_code = form::Value::default();
+                }
+                // TODO: In the future, trigger actual registration API call here
+            }
+            #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+            BuySellMessage::VerificationCodeChanged(v) => {
+                self.set_verification_code(v);
+            }
+            #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+            BuySellMessage::ResendVerificationCode => {
+                // TODO: Implement resend verification code API call
+                // For now, just reset the form
+                self.verification_code = form::Value::default();
+            }
+            #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+            BuySellMessage::VerifyEmail => {
+                if self.is_verification_code_valid() {
+                    // TODO: Implement email verification API call
+                    // For now, just show success in error field (as placeholder)
+                    self.error = Some("Email verified successfully! (UI-only for now)".to_string());
+                }
             }
 
             BuySellMessage::SourceAmountChanged(amount) => {
