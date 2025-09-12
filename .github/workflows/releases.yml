@@ -44,7 +44,7 @@ jobs:
           curl -L -O https://github.com/coincubetech/liana/releases/download/v0.0.1/ultralight-sdk-latest-${{ matrix.target }}.7z
           7z x ultralight-sdk-latest-${{ matrix.target }}.7z -oultralight-sdk -y
 
-  upload-binaries:
+  compile-and-package:
     strategy:
       matrix:
         include:
@@ -76,7 +76,7 @@ jobs:
         with:
           tool: cargo-wix
 
-      # For Linux upload a statically linked musl libc binary in a compressed tarball
+      # For Linux upload binary and libraries in a compressed tarball
       - name: Install Linux dependencies
         if: matrix.os == 'ubuntu-latest'
         run: sudo apt-get update && sudo apt-get install -y libudev-dev pkg-config
@@ -87,7 +87,8 @@ jobs:
           package: liana-gui
           bin: coincube-vault
           archive: coincube-vault-$tag-$target
-          target: x86_64-unknown-linux-musl
+          target: x86_64-unknown-linux-gnu
+          asset: LICENSE,README.md,ultralight-sdk
           locked: true
 
       # Generate icons for macOS and Windows
@@ -146,7 +147,9 @@ jobs:
         run: |
           codesign --options runtime --deep --force --sign "Developer ID Application: COINCUBE TECHNOLOGY LLC (8UVR249AD5)" Vault.app
           codesign --verify --deep --strict --verbose=2 Vault.app
-          echo "--NOTARIZATION FLOW PENDING--"
+          xcrun notarytool submit Vault.app --apple-id "${{ secrets.APPLE_ID }}" --team-id "${{ secrets.APPLE_TEAM_ID }}" --password "${{ secrets.APPLE_APP_PASSWORD }}" --wait
+          xcrun stapler staple Vault.app
+          spctl --verbose=4 --assess --type execute Vault.app
           7z a Vault.app.zip Vault.app/
 
       - name: Upload .app.zip file as Release Artefact
