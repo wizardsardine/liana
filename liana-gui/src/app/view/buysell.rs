@@ -1,17 +1,20 @@
+#![allow(unused_imports)]
+
 #[cfg(all(feature = "dev-meld", feature = "dev-onramp"))]
 compile_error!("`dev-meld` and `dev-onramp` should be exclusive");
 
 use iced::{
-    widget::{container, text, Space},
+    widget::{container, Space},
     Alignment, Length,
 };
+#[cfg(feature = "webview")]
 use iced_webview::{advanced::WebView, Ultralight};
 
 use liana::miniscript::bitcoin::Network;
 use liana_ui::{
     color,
-    component::{button as ui_button, form},
-    icon::{bitcoin_icon, previous_icon},
+    component::{button as ui_button, form, text::text},
+    icon::*,
     theme,
     widget::*,
 };
@@ -35,13 +38,24 @@ pub struct BuySellPanel {
     pub meld_client: MeldClient,
 
     // Ultralight webview component for Meld widget integration with performance optimizations
+    #[cfg(feature = "webview")]
     pub webview: Option<WebView<Ultralight, crate::app::state::buysell::WebviewMessage>>,
 
     // Current webview page url
+    #[cfg(feature = "webview")]
     pub session_url: Option<String>,
 
     // Current active webview "page": view_id
+    #[cfg(feature = "webview")]
     pub active_page: Option<iced_webview::ViewId>,
+
+    // Native login fields
+    pub login_username: form::Value<String>,
+    pub login_password: form::Value<String>,
+
+    // Default build: account type selection state
+    #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+    pub selected_account_type: Option<crate::app::view::message::AccountType>,
 }
 
 impl BuySellPanel {
@@ -72,13 +86,29 @@ impl BuySellPanel {
 
             #[cfg(feature = "dev-meld")]
             meld_client: MeldClient::new(),
+            #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+            selected_account_type: None,
 
             error: None,
             network,
 
+            #[cfg(feature = "webview")]
             webview: None,
+            #[cfg(feature = "webview")]
             session_url: None,
+            #[cfg(feature = "webview")]
             active_page: None,
+
+            login_username: form::Value {
+                value: String::new(),
+                warning: None,
+                valid: false,
+            },
+            login_password: form::Value {
+                value: String::new(),
+                warning: None,
+                valid: false,
+            },
         }
     }
 
@@ -119,6 +149,20 @@ impl BuySellPanel {
         }
     }
 
+    pub fn set_login_username(&mut self, v: String) {
+        self.login_username.value = v;
+        self.login_username.valid = !self.login_username.value.is_empty();
+    }
+
+    pub fn set_login_password(&mut self, v: String) {
+        self.login_password.value = v;
+        self.login_password.valid = !self.login_password.value.is_empty();
+    }
+
+    pub fn is_login_form_valid(&self) -> bool {
+        self.login_username.valid && self.login_password.valid
+    }
+
     fn update_wallet_address_warning(&mut self) {
         if self.wallet_address.value.is_empty() {
             self.wallet_address.warning = None;
@@ -154,10 +198,14 @@ impl BuySellPanel {
 
     pub fn is_form_valid(&self) -> bool {
         #[cfg(feature = "dev-meld")]
+        #[allow(unused_variables)]
         let locale_check = self.country_code.valid && !self.country_code.value.is_empty();
 
         #[cfg(feature = "dev-onramp")]
         let locale_check = self.fiat_currency.valid && !self.fiat_currency.value.is_empty();
+
+        #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+        let locale_check = true;
 
         self.wallet_address.valid
             && locale_check
@@ -168,7 +216,8 @@ impl BuySellPanel {
 
     pub fn view<'a>(&'a self) -> Container<'a, ViewMessage> {
         Container::new({
-            // attempt to render webview
+            // attempt to render webview (if available)
+            #[cfg(feature = "webview")]
             let webview_widget = self
                 .active_page
                 .as_ref()
@@ -180,6 +229,7 @@ impl BuySellPanel {
                 })
                 .flatten();
 
+            #[cfg(feature = "webview")]
             let column = match webview_widget {
                 Some(w) => Column::new()
                     .push(
@@ -252,6 +302,9 @@ impl BuySellPanel {
                     .push(self.form_view()),
             };
 
+            #[cfg(not(feature = "webview"))]
+            let column = Column::new().push(self.form_view());
+
             column
                 .align_x(Alignment::Center)
                 .spacing(5) // Reduced spacing for more compact layout
@@ -262,6 +315,12 @@ impl BuySellPanel {
         .center_x(Length::Fill)
     }
 
+    #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+    fn form_view<'a>(&'a self) -> Column<'a, ViewMessage> {
+        self.native_login_form()
+    }
+
+    #[cfg(any(feature = "dev-meld", feature = "dev-onramp"))]
     fn form_view<'a>(&'a self) -> Column<'a, ViewMessage> {
         Column::new()
             .push_maybe(self.error.as_ref().map(|err| {
@@ -357,6 +416,110 @@ impl BuySellPanel {
                 ui_button::secondary(Some(liana_ui::icon::globe_icon()), "Create Widget Session")
                     .width(Length::Fill)
             })
+            .align_x(Alignment::Center)
+            .spacing(5)
+            .max_width(500)
+            .width(Length::Fill)
+    }
+}
+
+#[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+impl BuySellPanel {
+    fn native_login_form<'a>(&'a self) -> Column<'a, ViewMessage> {
+        use liana_ui::component::card as ui_card;
+        use liana_ui::component::text as ui_text;
+        use liana_ui::icon::{building_icon, person_icon};
+
+        let header = Row::new()
+            .push(
+                Row::new()
+                    .push(ui_text::h4_bold("COIN").color(color::ORANGE))
+                    .push(ui_text::h4_bold("CUBE").color(color::WHITE))
+                    .spacing(0),
+            )
+            .push(Space::with_width(Length::Fixed(8.0)))
+            .push(ui_text::h5_regular("BUY/SELL").color(color::GREY_3));
+
+        let subheader = ui_text::p1_regular("Choose your account type").color(color::WHITE);
+
+        let is_individual = matches!(
+            self.selected_account_type,
+            Some(crate::app::view::message::AccountType::Individual)
+        );
+        let is_business = matches!(
+            self.selected_account_type,
+            Some(crate::app::view::message::AccountType::Business)
+        );
+
+        let make_card = |title: &str,
+                         desc: &str,
+                         icon: Element<'a, ViewMessage>,
+                         selected: bool,
+                         on_press: ViewMessage|
+         -> Element<'a, ViewMessage> {
+            let content = Row::new()
+                .spacing(12)
+                .align_y(Alignment::Center)
+                .push(Container::new(icon).width(Length::Fixed(28.0)))
+                .push(
+                    Column::new()
+                        .push(ui_text::p1_bold(title).color(color::WHITE))
+                        .push(ui_text::p2_regular(desc).color(color::GREY_3))
+                        .spacing(2),
+                );
+            let card_body = ui_card::simple(content)
+                .style(if selected {
+                    theme::card::warning
+                } else {
+                    theme::card::border
+                })
+                .width(Length::Fill)
+                .height(Length::Fixed(84.0));
+            if selected {
+                card_body.into()
+            } else {
+                iced::widget::button(card_body)
+                    .style(theme::button::transparent_border)
+                    .on_press(on_press)
+                    .into()
+            }
+        };
+
+        let individual = make_card(
+            "Individual",
+            "For individuals who want to buy and manage Bitcoin",
+            Element::from(Container::new(person_icon())),
+            is_individual,
+            ViewMessage::BuySell(BuySellMessage::AccountTypeSelected(
+                crate::app::view::message::AccountType::Individual,
+            )),
+        );
+        let business = make_card(
+            "Business",
+            "For LLCs, trusts, corporations, partnerships, and more who want to buy and manage Bitcoin.",
+            Element::from(Container::new(building_icon())),
+            is_business,
+            ViewMessage::BuySell(BuySellMessage::AccountTypeSelected(crate::app::view::message::AccountType::Business)),
+        );
+
+        let button = if self.selected_account_type.is_some() {
+            ui_button::primary(None, "Get Started")
+                .on_press(ViewMessage::BuySell(BuySellMessage::GetStarted))
+                .width(Length::Fill)
+        } else {
+            ui_button::secondary(None, "Get Started").width(Length::Fill)
+        };
+
+        Column::new()
+            .push(header)
+            .push(Space::with_height(Length::Fixed(10.0)))
+            .push(subheader)
+            .push(Space::with_height(Length::Fixed(20.0)))
+            .push(individual)
+            .push(Space::with_height(Length::Fixed(10.0)))
+            .push(business)
+            .push(Space::with_height(Length::Fixed(30.0)))
+            .push(button)
             .align_x(Alignment::Center)
             .spacing(5)
             .max_width(500)

@@ -8,7 +8,6 @@ pub mod export;
 pub mod home;
 pub mod hw;
 
-#[cfg(feature = "dev-coincube")]
 pub mod buysell;
 
 pub mod psbt;
@@ -140,7 +139,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
             .width(iced::Length::Fill))
     };
 
-    let buy_sell_button = cfg!(feature = "dev-coincube").then(|| {
+    let buy_sell_button = {
         if *menu == Menu::BuySell {
             row!(
                 button::menu_active(Some(bitcoin_icon()), "Buy/Sell")
@@ -153,7 +152,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
                 .on_press(Message::Menu(Menu::BuySell))
                 .width(iced::Length::Fill))
         }
-    });
+    };
 
     let settings_button = if *menu == Menu::Settings {
         row!(
@@ -184,7 +183,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
                     .push(coins_button)
                     .push(transactions_button)
                     .push(psbt_button)
-                    .push_maybe(buy_sell_button)
+                    .push(buy_sell_button)
                     .height(Length::Fill),
             )
             .push(

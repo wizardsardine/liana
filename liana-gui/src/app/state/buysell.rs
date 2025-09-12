@@ -1,6 +1,7 @@
 use iced::Task;
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
 
+#[cfg(feature = "webview")]
 use iced_webview::{
     advanced::{Action as WebviewAction, WebView},
     PageType,
@@ -32,6 +33,7 @@ pub enum WebviewMessage {
 }
 
 /// Map webview messages to main app messages (static version for Task::map)
+#[cfg(feature = "webview")]
 fn map_webview_message_static(webview_msg: WebviewMessage) -> Message {
     match webview_msg {
         WebviewMessage::Action(action) => {
@@ -44,6 +46,7 @@ fn map_webview_message_static(webview_msg: WebviewMessage) -> Message {
 }
 
 /// lazily initialize the webview to reduce latent memory usage
+#[cfg(feature = "webview")]
 fn init_webview() -> WebView<iced_webview::Ultralight, WebviewMessage> {
     WebView::new().on_create_view(crate::app::state::buysell::WebviewMessage::Created)
 }
@@ -71,6 +74,18 @@ impl State for BuySellPanel {
         };
 
         match message {
+            BuySellMessage::LoginUsernameChanged(v) => {
+                self.set_login_username(v);
+            }
+            BuySellMessage::LoginPasswordChanged(v) => {
+                self.set_login_password(v);
+            }
+            BuySellMessage::SubmitLogin => {
+                return self.handle_native_login();
+            }
+            BuySellMessage::CreateAccountPressed => {
+                self.set_error("Create Account not implemented yet".to_string());
+            }
             BuySellMessage::WalletAddressChanged(address) => {
                 self.set_wallet_address(address);
             }
@@ -82,6 +97,20 @@ impl State for BuySellPanel {
             BuySellMessage::FiatCurrencyChanged(fiat) => {
                 self.set_fiat_currency(fiat);
             }
+            #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+            BuySellMessage::AccountTypeSelected(t) => {
+                self.selected_account_type = Some(t);
+            }
+            #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+            BuySellMessage::GetStarted => {
+                if self.selected_account_type.is_none() {
+                    // button disabled; ignore
+                } else {
+                    // Placeholder: navigate or set error until next step is defined
+                    self.set_error(String::new());
+                }
+            }
+
             BuySellMessage::SourceAmountChanged(amount) => {
                 self.set_source_amount(amount);
             }
@@ -111,6 +140,12 @@ impl State for BuySellPanel {
                 } else {
                     tracing::warn!("⚠️ [BUYSELL] Cannot create session - form validation failed");
                 }
+            }
+
+            #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+            BuySellMessage::CreateSession => {
+                // No providers in default build; ignore or show error
+                self.set_error("No provider configured in this build".into());
             }
 
             #[cfg(feature = "dev-meld")]
@@ -189,6 +224,7 @@ impl State for BuySellPanel {
             }
 
             // webview logic
+            #[cfg(feature = "webview")]
             BuySellMessage::ViewTick(id) => {
                 let action = WebviewAction::Update(id);
                 return self
@@ -197,6 +233,7 @@ impl State for BuySellPanel {
                     .update(action)
                     .map(map_webview_message_static);
             }
+            #[cfg(feature = "webview")]
             BuySellMessage::WebviewAction(action) => {
                 return self
                     .webview
@@ -204,6 +241,7 @@ impl State for BuySellPanel {
                     .update(action)
                     .map(map_webview_message_static);
             }
+            #[cfg(feature = "webview")]
             BuySellMessage::WebviewOpenUrl(url) => {
                 // Load URL into Ultralight webview
                 tracing::info!("🌐 [LIANA] Loading Ultralight webview with URL: {}", url);
@@ -216,12 +254,14 @@ impl State for BuySellPanel {
                     .update(WebviewAction::CreateView(PageType::Url(url)))
                     .map(map_webview_message_static);
             }
+            #[cfg(feature = "webview")]
             BuySellMessage::WebviewCreated(id) => {
                 tracing::info!("🌐 [LIANA] Activating Webview Page: {}", id);
 
                 // set active page to selected view id
                 self.active_page = Some(id);
             }
+            #[cfg(feature = "webview")]
             BuySellMessage::CloseWebview => {
                 self.session_url = None;
 
@@ -239,27 +279,47 @@ impl State for BuySellPanel {
     }
 
     fn close(&mut self) -> Task<Message> {
-        Task::done(Message::View(ViewMessage::BuySell(
-            BuySellMessage::CloseWebview,
-        )))
+        #[cfg(feature = "webview")]
+        {
+            return Task::done(Message::View(ViewMessage::BuySell(
+                BuySellMessage::CloseWebview,
+            )));
+        }
+        #[cfg(not(feature = "webview"))]
+        {
+            Task::none()
+        }
     }
 
     fn subscription(&self) -> iced::Subscription<Message> {
-        // Add webview update subscription for smooth rendering when webview is active
-        if let Some(id) = self.active_page {
-            let interval = if cfg!(debug_assertions) {
-                // 4 FPS refresh rate
-                Duration::from_millis(250)
-            } else {
-                // 10 FPS for release
-                Duration::from_millis(100)
-            };
+        #[cfg(feature = "webview")]
+        {
+            use std::time::Duration;
 
-            return iced::time::every(interval)
-                .with(id)
-                .map(|(i, ..)| Message::View(ViewMessage::BuySell(BuySellMessage::ViewTick(i))));
+            if let Some(id) = self.active_page {
+                let interval = if cfg!(debug_assertions) {
+                    Duration::from_millis(250)
+                } else {
+                    Duration::from_millis(100)
+                };
+                return iced::time::every(interval).with(id).map(|(i, ..)| {
+                    Message::View(ViewMessage::BuySell(BuySellMessage::ViewTick(i)))
+                });
+            }
         }
 
         iced::Subscription::none()
+    }
+}
+
+impl BuySellPanel {
+    pub fn handle_native_login(&mut self) -> Task<Message> {
+        if self.is_login_form_valid() {
+            self.error = None;
+        } else {
+            self.set_error("Please enter username and password".into());
+        }
+
+        Task::none()
     }
 }

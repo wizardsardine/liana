@@ -8,7 +8,6 @@ mod settings;
 mod spend;
 mod transactions;
 
-#[cfg(feature = "dev-coincube")]
 pub mod buysell;
 
 use std::convert::TryInto;
