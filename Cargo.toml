@@ -7,6 +7,6 @@ default-members = ["liana", "lianad", "liana-gui", "liana-ui"]
 inherits = "release"
 opt-level = 3
 strip = "symbols"
-lto = "thin"
+lto = "fat"
 codegen-units = 1
 panic = "abort"
