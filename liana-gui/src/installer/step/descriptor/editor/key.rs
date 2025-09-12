@@ -1471,19 +1471,6 @@ impl super::DescriptorEditModal for EditKeyAlias {
     }
 }
 
-pub fn default_derivation_path(network: Network) -> DerivationPath {
-    // Note that "m" is ignored when parsing string and could be removed:
-    // https://github.com/rust-bitcoin/rust-bitcoin/pull/2677
-    DerivationPath::from_str({
-        if network == Network::Bitcoin {
-            "m/48'/0'/0'/2'"
-        } else {
-            "m/48'/1'/0'/2'"
-        }
-    })
-    .unwrap()
-}
-
 pub fn derivation_path(network: Network, account: ChildNumber) -> DerivationPath {
     assert!(account.is_hardened());
     let network = if network == Network::Bitcoin {
@@ -1523,6 +1510,8 @@ pub async fn get_extended_pubkey(
 
 #[cfg(test)]
 mod tests {
+    use crate::utils::default_derivation_path;
+
     use super::*;
 
     #[test]
