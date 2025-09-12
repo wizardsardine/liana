@@ -923,7 +923,10 @@ impl Recipient {
                 // Don't allow more than 2 decimal places for fiat amounts.
                 if fiat_amt_str
                     .split_once(".")
-                    .filter(|(_, decimals)| decimals.len() > 2)
+                    .filter(|(_, decimals)| {
+                        converter.currency().decimals() == 0
+                            || decimals.len() > converter.currency().decimals()
+                    })
                     .is_some()
                 {
                     return;
