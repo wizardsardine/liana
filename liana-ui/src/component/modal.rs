@@ -26,7 +26,7 @@ pub const BTN_H: u16 = 40;
 pub const V_SPACING: u16 = 10;
 pub const H_SPACING: u16 = 5;
 
-fn widget_style(theme: &Theme, status: Status) -> Style {
+pub fn widget_style(theme: &Theme, status: Status) -> Style {
     theme::button::secondary(theme, status)
 }
 

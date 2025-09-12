@@ -9,6 +9,7 @@ use std::{
     time,
 };
 
+use encrypted_backup::EncryptedBackup;
 use tokio::sync::mpsc::{channel, unbounded_channel, Sender, UnboundedReceiver, UnboundedSender};
 
 use async_hwi::bitbox::api::btc::Fingerprint;
@@ -122,11 +123,13 @@ pub enum Error {
     Bip329Export(String),
     BackupImport(String),
     Backup(backup::Error),
+    EncryptedBackup(encrypted_backup::Error),
     ParseXpub,
     XpubNetwork,
     TxidNotMatch,
     InsanePsbt,
     OutpointNotOwned,
+    UnknownFormat,
 }
 
 impl Display for Error {
@@ -154,6 +157,8 @@ impl Display for Error {
                 f,
                 "Import failed. The PSBT either doesn't belong to the wallet or has already been spent."
             ),
+            Error::EncryptedBackup(e) => write!(f, "Failed to encrypt backup: {e:?}"),
+            Error::UnknownFormat => write!(f, "Format of the file unknown"),
         }
     }
 }
@@ -163,7 +168,7 @@ pub enum ImportExportType {
     Transactions,
     ExportPsbt(String),
     ExportXpub(String),
-    ExportBackup(String),
+    ExportEncryptedDescriptor(Box<LianaDescriptor>),
     ExportProcessBackup(LianaDirectory, Network, Arc<Config>, Arc<Wallet>),
     ImportBackup {
         network_dir: NetworkDirectory,
@@ -171,7 +176,7 @@ pub enum ImportExportType {
         overwrite_labels: Option<Sender<bool>>,
         overwrite_aliases: Option<Sender<bool>>,
     },
-    WalletFromBackup,
+    FromBackup,
     Descriptor(LianaDescriptor),
     ExportLabels,
     ImportPsbt(Option<Txid>),
@@ -184,15 +189,15 @@ impl ImportExportType {
         match self {
             ImportExportType::Transactions
             | ImportExportType::ExportPsbt(_)
-            | ImportExportType::ExportBackup(_)
             | ImportExportType::Descriptor(_)
             | ImportExportType::ExportProcessBackup(..)
             | ImportExportType::ExportXpub(_)
+            | ImportExportType::ExportEncryptedDescriptor(_)
             | ImportExportType::ExportLabels => "Export successful!",
             ImportExportType::ImportBackup { .. }
             | ImportExportType::ImportPsbt(_)
             | ImportExportType::ImportXpub(_)
-            | ImportExportType::WalletFromBackup
+            | ImportExportType::FromBackup
             | ImportExportType::ImportDescriptor => "Import successful",
         }
     }
@@ -219,6 +224,12 @@ impl From<DaemonError> for Error {
 impl From<ExportError> for Error {
     fn from(value: ExportError) -> Self {
         Error::Bip329Export(format!("{:?}", value))
+    }
+}
+
+impl From<encrypted_backup::Error> for Error {
+    fn from(value: encrypted_backup::Error) -> Self {
+        Error::EncryptedBackup(value)
     }
 }
 
@@ -251,6 +262,7 @@ pub enum Progress {
             Backup,
         ),
     ),
+    EncryptedFile(Vec<u8>),
 }
 
 pub struct Export {
@@ -295,7 +307,9 @@ impl Export {
             ImportExportType::ImportPsbt(txid) => import_psbt(daemon, &sender, path, txid).await,
             ImportExportType::ImportXpub(network) => import_xpub(&sender, path, network).await,
             ImportExportType::ImportDescriptor => import_descriptor(&sender, path).await,
-            ImportExportType::ExportBackup(str) => export_string(&sender, path, str).await,
+            ImportExportType::ExportEncryptedDescriptor(descr) => {
+                export_encrypted_descriptor(&sender, path, *descr).await
+            }
             ImportExportType::ExportXpub(xpub_str) => export_string(&sender, path, xpub_str).await,
             ImportExportType::ExportProcessBackup(datadir, network, config, wallet) => {
                 app_backup_export(
@@ -314,7 +328,7 @@ impl Export {
                 wallet,
                 ..
             } => import_backup(&network_dir, wallet, &sender, path, daemon).await,
-            ImportExportType::WalletFromBackup => wallet_from_backup(&sender, path).await,
+            ImportExportType::FromBackup => from_backup(&sender, path).await,
         } {
             if let Err(e) = sender.send(Progress::Error(e)) {
                 tracing::error!("Import/Export fail to send msg: {}", e);
@@ -577,6 +591,20 @@ pub async fn export_string(
 ) -> Result<(), Error> {
     let mut file = open_file_write(&path).await?;
     file.write_all(str.as_bytes())?;
+    send_progress!(sender, Progress(100.0));
+    send_progress!(sender, Ended);
+    Ok(())
+}
+
+pub async fn export_encrypted_descriptor(
+    sender: &UnboundedSender<Progress>,
+    path: PathBuf,
+    descr: LianaDescriptor,
+) -> Result<(), Error> {
+    let descriptor = descr.descriptor();
+    let bytes = EncryptedBackup::new().set_payload(descriptor)?.encrypt()?;
+    let mut file = open_file_write(&path).await?;
+    file.write_all(&bytes)?;
     send_progress!(sender, Progress(100.0));
     send_progress!(sender, Ended);
     Ok(())
@@ -1027,22 +1055,33 @@ impl From<DaemonError> for RestoreBackupError {
     }
 }
 
-/// Create a wallet from a backup
-///    - load backup from file
-///    - extract descriptor
-///    - extract network
-///    - extract aliases
-pub async fn wallet_from_backup(
-    sender: &UnboundedSender<Progress>,
-    path: PathBuf,
-) -> Result<(), Error> {
-    // Load backup from file
+/// Try to import descriptor/backup from file, several input types are supported:
+///    - encrypted file
+///    - liana wallet backup
+///    - plaintext descriptor
+pub async fn from_backup(sender: &UnboundedSender<Progress>, path: PathBuf) -> Result<(), Error> {
+    // Load file
     let mut file = File::open(path)?;
 
-    let mut backup_str = String::new();
-    file.read_to_string(&mut backup_str)?;
-    backup_str = backup_str.trim().to_string();
+    let mut bytes = vec![];
+    if let Err(e) = file.read_to_end(&mut bytes) {
+        return Err(Error::Io(e.to_string()));
+    }
 
+    // first we try to parse as an encrypted backup
+    if EncryptedBackup::new().set_encrypted_payload(&bytes).is_ok() {
+        send_progress!(sender, EncryptedFile(bytes));
+        send_progress!(sender, Progress(100.0));
+        send_progress!(sender, Ended);
+        return Ok(());
+    }
+
+    let backup_str = match String::from_utf8(bytes) {
+        Ok(s) => s,
+        Err(_) => return Err(Error::UnknownFormat),
+    };
+
+    // else we try to parse as plaintetxt descriptor or backup file
     let backup: Result<Backup, _> = serde_json::from_str(&backup_str);
     let backup = match backup {
         Ok(b) => b,

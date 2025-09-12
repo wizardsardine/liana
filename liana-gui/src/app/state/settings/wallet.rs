@@ -54,7 +54,7 @@ pub struct WalletSettingsState {
     modal: Modal,
     processing: bool,
     updated: bool,
-    config: Arc<Config>,
+    _config: Arc<Config>,
 }
 
 impl WalletSettingsState {
@@ -73,7 +73,7 @@ impl WalletSettingsState {
             modal: Modal::None,
             processing: false,
             updated: false,
-            config,
+            _config: config,
         }
     }
 
@@ -271,41 +271,20 @@ impl State for WalletSettingsState {
                     Task::none()
                 }
             }
-            Message::View(view::Message::Settings(view::SettingsMessage::ExportWallet)) => {
+            Message::View(view::Message::Settings(
+                view::SettingsMessage::ExportEncryptedDescriptor,
+            )) => {
                 if self.modal.is_none() {
-                    let datadir = cache.datadir_path.clone();
-                    let network = cache.network;
-                    let config = self.config.clone();
-                    let wallet = self.wallet.clone();
-                    let daemon = daemon.clone();
+                    let descriptor = self.wallet.main_descriptor.clone();
                     let modal = ExportModal::new(
                         Some(daemon),
-                        ImportExportType::ExportProcessBackup(datadir, network, config, wallet),
+                        ImportExportType::ExportEncryptedDescriptor(Box::new(descriptor)),
                     );
                     let launch = modal.launch(true);
                     self.modal = Modal::ImportExport(modal);
-                    launch
-                } else {
-                    Task::none()
+                    return launch;
                 }
-            }
-            Message::View(view::Message::Settings(view::SettingsMessage::ImportWallet)) => {
-                if self.modal.is_none() {
-                    let modal = ExportModal::new(
-                        Some(daemon),
-                        ImportExportType::ImportBackup {
-                            network_dir: cache.datadir_path.network_directory(cache.network),
-                            wallet: self.wallet.clone(),
-                            overwrite_labels: None,
-                            overwrite_aliases: None,
-                        },
-                    );
-                    let launch = modal.launch(false);
-                    self.modal = Modal::ImportExport(modal);
-                    launch
-                } else {
-                    Task::none()
-                }
+                Task::none()
             }
             _ => match &mut self.modal {
                 Modal::RegisterWallet(m) => m.update(daemon, cache, message),
