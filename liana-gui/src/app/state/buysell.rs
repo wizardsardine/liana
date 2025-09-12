@@ -291,6 +291,8 @@ impl State for BuySellPanel {
     fn subscription(&self) -> iced::Subscription<Message> {
         #[cfg(feature = "webview")]
         {
+            use std::time::Duration;
+
             if let Some(id) = self.active_page {
                 let interval = if cfg!(debug_assertions) {
                     Duration::from_millis(250)
@@ -302,6 +304,7 @@ impl State for BuySellPanel {
                 });
             }
         }
+
         iced::Subscription::none()
     }
 }
@@ -313,6 +316,7 @@ impl BuySellPanel {
         } else {
             self.set_error("Please enter username and password".into());
         }
+
         Task::none()
     }
 }
