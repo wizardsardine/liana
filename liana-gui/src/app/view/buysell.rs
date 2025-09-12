@@ -1,3 +1,5 @@
+#![allow(unused_imports)]
+
 #[cfg(all(feature = "dev-meld", feature = "dev-onramp"))]
 compile_error!("`dev-meld` and `dev-onramp` should be exclusive");
 

@@ -316,6 +316,7 @@ impl BuySellPanel {
         } else {
             self.set_error("Please enter username and password".into());
         }
+
         Task::none()
     }
 }
