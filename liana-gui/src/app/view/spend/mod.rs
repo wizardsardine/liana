@@ -501,7 +501,7 @@ pub fn recipient_view<'a>(
                                         } else if let Some(btc_amt) = btc_amt {
                                             let fa = conv.convert(btc_amt);
                                             &form::Value {
-                                                value: fa.to_rounded_string(), // 2 decimal places
+                                                value: fa.to_rounded_string(), // required decimal places for currency
                                                 warning: None,
                                                 valid: true,
                                             }

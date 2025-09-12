@@ -59,9 +59,9 @@ impl FiatAmount {
         self.currency
     }
 
-    /// Format a fiat amount as a string with two decimal places and no thousands separator.
+    /// Format a fiat amount as a string with required decimal places for currency and no thousands separator.
     pub fn to_rounded_string(&self) -> String {
-        format_f64_as_string(self.amount, "", 2, false)
+        format_f64_as_string(self.amount, "", self.currency().decimals(), false)
     }
 
     /// Format a fiat amount as a `Text` widget with a tilde (~) prefix to indicate approximation.
@@ -74,10 +74,10 @@ impl FiatAmount {
     }
 }
 
-// Format a fiat amount as a string with two decimal places and a comma as the thousands separator.
+// Format a fiat amount as a string with required decimal places for currency and a comma as the thousands separator.
 impl DisplayAmount for FiatAmount {
     fn to_formatted_string(&self) -> String {
-        format_f64_as_string(self.amount, ",", 2, false)
+        format_f64_as_string(self.amount, ",", self.currency().decimals(), false)
     }
 }
 
