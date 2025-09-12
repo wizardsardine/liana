@@ -20,7 +20,7 @@ use crate::{
         cache::Cache,
         message::Message,
         state::State,
-        view::{self, buysell::BuySellPanel, BuySellMessage, Message as ViewMessage},
+        view::{self, buysell::{BuySellPanel, NativePage}, BuySellMessage, Message as ViewMessage},
     },
     daemon::Daemon,
 };
@@ -69,9 +69,18 @@ impl State for BuySellPanel {
         _cache: &Cache,
         message: Message,
     ) -> Task<Message> {
-        let Message::View(ViewMessage::BuySell(message)) = message else {
+        // Handle global navigation for native flow (Previous)
+        if let Message::View(ViewMessage::Previous) = &message {
+            #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+            {
+                if self.native_page == NativePage::Register {
+                    self.native_page = NativePage::AccountSelect;
+                }
+            }
             return Task::none();
-        };
+        }
+
+        let Message::View(ViewMessage::BuySell(message)) = message else { return Task::none(); };
 
         match message {
             BuySellMessage::LoginUsernameChanged(v) => {
@@ -106,9 +115,43 @@ impl State for BuySellPanel {
                 if self.selected_account_type.is_none() {
                     // button disabled; ignore
                 } else {
-                    // Placeholder: navigate or set error until next step is defined
-                    self.set_error(String::new());
+                    // Navigate to registration page (native flow)
+                    self.native_page = NativePage::Register;
                 }
+            }
+            #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+            BuySellMessage::FirstNameChanged(v) => {
+                self.first_name.value = v;
+                self.first_name.valid = !self.first_name.value.is_empty();
+            }
+            #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+            BuySellMessage::LastNameChanged(v) => {
+                self.last_name.value = v;
+                self.last_name.valid = !self.last_name.value.is_empty();
+            }
+            #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+            BuySellMessage::EmailChanged(v) => {
+                self.email.value = v;
+                self.email.valid = self.email.value.contains('@') && self.email.value.contains('.')
+            }
+            #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+            BuySellMessage::Password1Changed(v) => {
+                self.password1.value = v;
+                self.password1.valid = self.password1.value.len() >= 8;
+            }
+            #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+            BuySellMessage::Password2Changed(v) => {
+                self.password2.value = v;
+                self.password2.valid = self.password2.value == self.password1.value && !self.password2.value.is_empty();
+            }
+            #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+            BuySellMessage::TermsToggled(b) => {
+                self.terms_accepted = b;
+            }
+            #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+            BuySellMessage::SubmitRegistration => {
+                // UI-only for now: validation happens in view; keep placeholder
+                // Future: trigger API call here
             }
 
             BuySellMessage::SourceAmountChanged(amount) => {

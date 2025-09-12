@@ -156,6 +156,22 @@ pub enum BuySellMessage {
     #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
     GetStarted,
 
+    // Default build: registration form (native flow)
+    #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+    FirstNameChanged(String),
+    #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+    LastNameChanged(String),
+    #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+    EmailChanged(String),
+    #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+    Password1Changed(String),
+    #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+    Password2Changed(String),
+    #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+    TermsToggled(bool),
+    #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+    SubmitRegistration,
+
     // Shared form fields (for provider-integrated builds)
     WalletAddressChanged(String),
     #[cfg(feature = "dev-meld")]

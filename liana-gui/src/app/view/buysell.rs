@@ -50,6 +50,31 @@ pub struct BuySellPanel {
     // Default build: account type selection state
     #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
     pub selected_account_type: Option<crate::app::view::message::AccountType>,
+
+    // Native flow current page
+    #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+    pub native_page: NativePage,
+
+    // Registration fields (native flow)
+    #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+    pub first_name: form::Value<String>,
+    #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+    pub last_name: form::Value<String>,
+    #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+    pub email: form::Value<String>,
+    #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+    pub password1: form::Value<String>,
+    #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+    pub password2: form::Value<String>,
+    #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+    pub terms_accepted: bool,
+}
+
+#[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NativePage {
+    AccountSelect,
+    Register,
 }
 
 impl BuySellPanel {
@@ -82,6 +107,8 @@ impl BuySellPanel {
             meld_client: MeldClient::new(),
             #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
             selected_account_type: None,
+            #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+            native_page: NativePage::AccountSelect,
 
             error: None,
             network,
@@ -103,6 +130,20 @@ impl BuySellPanel {
                 warning: None,
                 valid: false,
             },
+
+            // Native registration defaults
+            #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+            first_name: form::Value::default(),
+            #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+            last_name: form::Value::default(),
+            #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+            email: form::Value::default(),
+            #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+            password1: form::Value::default(),
+            #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+            password2: form::Value::default(),
+            #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+            terms_accepted: false,
         }
     }
 
@@ -267,7 +308,7 @@ impl BuySellPanel {
                                     .push(
                                         Row::new()
                                             .push(
-                                                Container::new(bitcoin_icon().size(24))
+                                                Container::new(liana_ui::icon::bitcoin_icon().size(24))
                                                     .style(theme::container::border)
                                                     .padding(10),
                                             )
@@ -311,7 +352,10 @@ impl BuySellPanel {
 
     #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
     fn form_view<'a>(&'a self) -> Column<'a, ViewMessage> {
-        self.native_login_form()
+        match self.native_page {
+            NativePage::AccountSelect => self.native_login_form(),
+            NativePage::Register => self.native_register_form(),
+        }
     }
 
     #[cfg(any(feature = "dev-meld", feature = "dev-onramp"))]
@@ -518,5 +562,178 @@ impl BuySellPanel {
             .spacing(5)
             .max_width(500)
             .width(Length::Fill)
+    }
+}
+
+#[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+impl BuySellPanel {
+    fn native_register_form<'a>(&'a self) -> Column<'a, ViewMessage> {
+        use liana_ui::component::text as ui_text;
+        use liana_ui::component::text::text;
+        use liana_ui::icon::{globe_icon, previous_icon};
+        use liana_ui::component::button as ui_button;
+        use iced::widget::checkbox;
+
+        // Top bar with previous
+        let top_bar = Row::new()
+            .push(
+                Button::new(
+                    Row::new()
+                        .push(previous_icon().color(color::GREY_2))
+                        .push(Space::with_width(Length::Fixed(5.0)))
+                        .push(text("Previous").color(color::GREY_2))
+                        .spacing(5)
+                        .align_y(Alignment::Center),
+                )
+                .style(|_, _| iced::widget::button::Style {
+                    background: None,
+                    text_color: color::GREY_2,
+                    border: iced::Border::default(),
+                    shadow: iced::Shadow::default(),
+                })
+                .on_press(ViewMessage::Previous),
+            )
+            .align_y(Alignment::Center);
+
+        // Brand header
+        let brand = Row::new()
+            .push(Space::with_width(Length::Fill))
+            .push(
+                Row::new()
+                    .push(ui_text::h4_bold("COIN").color(color::ORANGE))
+                    .push(ui_text::h4_bold("CUBE").color(color::WHITE))
+                    .push(Space::with_width(Length::Fixed(8.0)))
+                    .push(ui_text::h5_regular("BUY/SELL").color(color::GREY_3))
+                    .spacing(0)
+                    .align_y(Alignment::Center),
+            )
+            .push(Space::with_width(Length::Fill))
+            .align_y(Alignment::Center);
+
+        // Title and subtitle
+        let title = Column::new()
+            .push(ui_text::h3("Create an Account").color(color::WHITE))
+            .push(
+                ui_text::p2_regular(
+                    "Get started with your personal Bitcoin wallet. Buy, store, and manage crypto securely, all in one place.",
+                )
+                .color(color::GREY_3),
+            )
+            .spacing(10)
+            .align_x(Alignment::Center);
+
+        // Continue with Google (placeholder)
+        let google = ui_button::secondary(Some(globe_icon()), "Continue with Google").width(Length::Fill);
+
+        // Divider "Or"
+        let divider = Row::new()
+            .push(Container::new(Space::with_height(Length::Fixed(1.0))).width(Length::Fill))
+            .push(text("  Or  ").color(color::GREY_3))
+            .push(Container::new(Space::with_height(Length::Fixed(1.0))).width(Length::Fill));
+
+        let name_row = Row::new()
+            .push(
+                Container::new(
+                    form::Form::new("First Name", &self.first_name, |v| {
+                        ViewMessage::BuySell(BuySellMessage::FirstNameChanged(v))
+                    })
+                    .size(16)
+                    .padding(15),
+                )
+                .width(Length::FillPortion(1)),
+            )
+            .push(Space::with_width(Length::Fixed(12.0)))
+            .push(
+                Container::new(
+                    form::Form::new("Last Name", &self.last_name, |v| {
+                        ViewMessage::BuySell(BuySellMessage::LastNameChanged(v))
+                    })
+                    .size(16)
+                    .padding(15),
+                )
+                .width(Length::FillPortion(1)),
+            );
+
+        let email = form::Form::new("Email Address", &self.email, |v| {
+            ViewMessage::BuySell(BuySellMessage::EmailChanged(v))
+        })
+        .size(16)
+        .padding(15);
+
+        let password = form::Form::new("Password", &self.password1, |v| {
+            ViewMessage::BuySell(BuySellMessage::Password1Changed(v))
+        })
+        .size(16)
+        .padding(15)
+        .secure();
+
+        let confirm = form::Form::new("Confirm Password", &self.password2, |v| {
+            ViewMessage::BuySell(BuySellMessage::Password2Changed(v))
+        })
+        .size(16)
+        .padding(15)
+        .secure();
+
+        let terms = Row::new()
+            .push(
+                checkbox("", self.terms_accepted).on_toggle(|b| {
+                    ViewMessage::BuySell(BuySellMessage::TermsToggled(b))
+                }),
+            )
+            .push(Space::with_width(Length::Fixed(8.0)))
+            .push(
+                Row::new()
+                    .push(ui_text::p2_regular("I agree to COINCUBE's ").color(color::GREY_3))
+                    .push(ui_text::p2_regular("Terms of Service").color(color::ORANGE))
+                    .push(ui_text::p2_regular(" and ").color(color::GREY_3))
+                    .push(ui_text::p2_regular("Privacy Policy").color(color::ORANGE)),
+            )
+            .align_y(Alignment::Center);
+
+        let create_btn = if self.is_registration_valid() {
+            ui_button::primary(None, "Create Account")
+                .on_press(ViewMessage::BuySell(BuySellMessage::SubmitRegistration))
+                .width(Length::Fill)
+        } else {
+            ui_button::secondary(None, "Create Account").width(Length::Fill)
+        };
+
+        Column::new()
+            .push(top_bar)
+            .push(Space::with_height(Length::Fixed(10.0)))
+            .push(brand)
+            .push(Space::with_height(Length::Fixed(30.0)))
+            .push(title)
+            .push(Space::with_height(Length::Fixed(20.0)))
+            .push(google)
+            .push(Space::with_height(Length::Fixed(10.0)))
+            .push(divider)
+            .push(Space::with_height(Length::Fixed(10.0)))
+            .push(name_row)
+            .push(Space::with_height(Length::Fixed(10.0)))
+            .push(email)
+            .push(Space::with_height(Length::Fixed(10.0)))
+            .push(password)
+            .push(Space::with_height(Length::Fixed(10.0)))
+            .push(confirm)
+            .push(Space::with_height(Length::Fixed(10.0)))
+            .push(terms)
+            .push(Space::with_height(Length::Fixed(20.0)))
+            .push(create_btn)
+            .align_x(Alignment::Center)
+            .spacing(5)
+            .max_width(500)
+            .width(Length::Fill)
+    }
+
+    #[inline]
+    fn is_registration_valid(&self) -> bool {
+        let email_ok = self.email.value.contains('@') && self.email.value.contains('.');
+        let pw_ok = self.password1.value.len() >= 8 && self.password1.value == self.password2.value;
+        !self.first_name.value.is_empty()
+            && !self.last_name.value.is_empty()
+            && email_ok
+            && pw_ok
+            && self.terms_accepted
     }
 }
