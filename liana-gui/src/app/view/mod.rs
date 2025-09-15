@@ -355,13 +355,16 @@ pub fn dashboard<'a, T: Into<Element<'a, Message>>>(
             Column::new()
                 .push(warn(warning))
                 .push(
-                    Container::new(scrollable(row!(
-                        Space::with_width(Length::FillPortion(1)),
-                        column!(Space::with_height(Length::Fixed(150.0)), content.into())
-                            .width(Length::FillPortion(8))
-                            .max_width(1500),
-                        Space::with_width(Length::FillPortion(1)),
-                    )))
+                    Container::new(
+                        scrollable(row!(
+                            Space::with_width(Length::FillPortion(1)),
+                            column!(Space::with_height(Length::Fixed(150.0)), content.into())
+                                .width(Length::FillPortion(8))
+                                .max_width(1500),
+                            Space::with_width(Length::FillPortion(1)),
+                        ))
+                        .on_scroll(|w| Message::Scroll(w.absolute_offset().y)),
+                    )
                     .center_x(Length::Fill)
                     .style(theme::container::background)
                     .height(Length::Fill),

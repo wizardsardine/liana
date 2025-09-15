@@ -13,6 +13,7 @@ pub trait Close {
 
 #[derive(Debug, Clone)]
 pub enum Message {
+    Scroll(f32),
     Reload,
     Clipboard(String),
     Menu(Menu),
