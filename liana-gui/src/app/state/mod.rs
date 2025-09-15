@@ -366,7 +366,10 @@ impl State for Home {
                 self.selected_event = None;
             }
             Message::View(view::Message::Scroll(offset)) => {
-                if offset == 0.0 && Instant::now() > self.last_reload + HOME_RELOAD_MIN_TTL {
+                if offset == 0.0
+                    && (self.payments.loaded_page_count > 1
+                        || Instant::now() > self.last_reload + HOME_RELOAD_MIN_TTL)
+                {
                     return self.reload(daemon, self.wallet.clone());
                 }
             }
