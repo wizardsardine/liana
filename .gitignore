@@ -19,5 +19,6 @@ release_assets
 liana-gui/default
 contrib/release/macos/certificates.p12
 contrib/release/macos/Vault.icns
+contrib/release/wix/Vault.ico
 contrib/icons
 ultralight-sdk

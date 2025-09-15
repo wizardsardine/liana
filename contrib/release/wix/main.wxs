@@ -56,13 +56,13 @@
     <?define PlatformProgramFilesFolder = "ProgramFilesFolder"?>
 <?endif?>
 
-<?define UltralightSdkPath="ultralight-sdk" ?>
+<?define UltralightSdkPath="ultralight-sdk"?>
 
 <Wix xmlns='http://schemas.microsoft.com/wix/2006/wi'>
 
   <Product
     Id='*'
-    Name='liana-gui'
+    Name='Coincube Vault'
     UpgradeCode='046BC7BE-9EFD-46F0-95C4-93E4B7EBBED1'
     Manufacturer='Edouard Paris'
     Language='1033'
@@ -71,12 +71,12 @@
 
     <Package Id='*'
       Keywords='Installer'
-      Description='Liana GUI'
+      Description='The missing safety net for your coins'
       Manufacturer='Edouard Paris'
       InstallerVersion='450'
       Languages='1033'
       Compressed='yes'
-      InstallScope='perMachine'
+      InstallScope='perUser'
       SummaryCodepage='1252'
     />
 
@@ -85,11 +85,12 @@
       DowngradeErrorMessage='A newer version of [ProductName] is already installed. Setup will now exit.' />
 
     <Media Id='1' Cabinet='media1.cab' EmbedCab='yes' DiskPrompt='CD-ROM #1' />
-    <Property Id='DiskPrompt' Value='liana-gui Installation' />
+    <Property Id='DiskPrompt' Value='Coincube Vault Installation' />
 
     <Directory Id='TARGETDIR' Name='SourceDir'>
+      <Directory Id="ProgramMenuFolder" />
       <Directory Id='$(var.PlatformProgramFilesFolder)' Name='PFiles'>
-        <Directory Id='APPLICATIONFOLDER' Name='liana-gui'>
+        <Directory Id='APPLICATIONFOLDER' Name='Coincube Vault'>
           <Component Id='License' Guid='*'>
             <File Id='LicenseFile'
               Source='LICENCE'
@@ -103,6 +104,13 @@
                 Name='coincube-vault.exe'
                 Source='$(var.CargoTargetBinDir)\coincube-vault.exe'
                 KeyPath='yes' />
+
+              <Shortcut
+                Id="StartMenuShortcut"
+                Directory="ProgramMenuFolder"
+                Advertise="yes"
+                Name="Coincube Vault"
+                WorkingDirectory="APPLICATIONFOLDER" />
             </Component>
 
             <Component Id='binary1' Guid='*'>
@@ -160,9 +168,11 @@
 
     </Feature>
 
+    <Icon Id="AppIcon" SourceFile="contrib\release\wix\Vault.ico" />
     <SetProperty Id='ARPINSTALLLOCATION' Value='[APPLICATIONFOLDER]' After='CostFinalize' />
 
     <Property Id='ARPHELPLINK' Value='https://github.com/coincubetech/liana' />
+    <Property Id="ARPPRODUCTICON" Value="AppIcon" />
 
     <UI>
       <UIRef Id='WixUI_FeatureTree' />

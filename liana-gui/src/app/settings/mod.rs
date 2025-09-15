@@ -388,7 +388,7 @@ impl std::fmt::Display for SettingsError {
 pub mod global {
     use crate::dir::LianaDirectory;
     use async_hwi::bitbox::{ConfigError, NoiseConfig, NoiseConfigData};
-    use fs2::FileExt;
+    use fs4::fs_std::FileExt;
     use serde::{Deserialize, Serialize};
     use std::fs::{File, OpenOptions};
     use std::io::{Read, Seek, SeekFrom, Write};
