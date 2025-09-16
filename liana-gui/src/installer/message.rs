@@ -61,6 +61,7 @@ pub enum Message {
     DefineDescriptor(DefineDescriptor),
     ImportXpub(Fingerprint, Result<DescriptorPublicKey, Error>),
     HardwareWallets(HardwareWalletMessage),
+    HardwareWalletUpdate,
     WalletRegistered(Result<(Fingerprint, Option<[u8; 32]>), Error>),
     MnemonicWord(usize, String),
     ImportMnemonic(bool),

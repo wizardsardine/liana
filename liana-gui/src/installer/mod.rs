@@ -255,7 +255,7 @@ impl Installer {
                                 .update(
                                     &mut self.hws,
                                     // We notify downstream that the the list have been updated
-                                    Message::HardwareWallets(HardwareWalletMessage::Update),
+                                    Message::HardwareWalletUpdate,
                                 );
                         }
                         Task::batch(vec![task_1, task_2])

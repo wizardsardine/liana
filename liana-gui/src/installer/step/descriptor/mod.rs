@@ -20,7 +20,7 @@ use crate::{
     backup::Backup,
     decrypt::{Decrypt, DecryptModal},
     export::{ImportExportMessage, ImportExportType, Progress},
-    hw::{HardwareWallet, HardwareWalletMessage, HardwareWallets},
+    hw::{HardwareWallet, HardwareWallets},
     installer::{
         message::{self, Message},
         step::import_descriptor::{ImportDescriptorModal, BACKUP_NETWORK_NOT_MATCH},
@@ -144,7 +144,7 @@ impl Step for ImportDescriptor {
                 None
             }
             Message::ImportExport(m) => Some(self.modal.update(Message::ImportExport(m))),
-            Message::HardwareWallets(HardwareWalletMessage::Update) => {
+            Message::HardwareWalletUpdate => {
                 if let ImportDescriptorModal::Decrypt(modal) = &mut self.modal {
                     modal.update_devices(hws)
                 } else {

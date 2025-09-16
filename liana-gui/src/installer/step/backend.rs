@@ -1,6 +1,5 @@
 use crate::{
     decrypt::{Decrypt, DecryptModal},
-    hw::HardwareWalletMessage,
     installer::step::import_descriptor::ImportDescriptorModal,
 };
 use std::str::FromStr;
@@ -536,7 +535,7 @@ impl Step for ImportRemoteWallet {
                 self.modal = ImportDescriptorModal::Decrypt(DecryptModal::new(bytes, self.network));
             }
             Message::ImportExport(m) => return self.modal.update(Message::ImportExport(m)),
-            Message::HardwareWallets(HardwareWalletMessage::Update) => {
+            Message::HardwareWalletUpdate => {
                 if let ImportDescriptorModal::Decrypt(modal) = &mut self.modal {
                     return modal.update_devices(hws).unwrap_or(Task::none());
                 }

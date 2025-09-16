@@ -9,13 +9,13 @@ use std::{
     time,
 };
 
-use encrypted_backup::EncryptedBackup;
+use encrypted_backup::{descriptor::dpk_to_pk, Decrypted, EncryptedBackup};
 use tokio::sync::mpsc::{channel, unbounded_channel, Sender, UnboundedReceiver, UnboundedSender};
 
 use async_hwi::bitbox::api::btc::Fingerprint;
 use chrono::{DateTime, Duration, Utc};
 use liana::{
-    descriptors::LianaDescriptor,
+    descriptors::{bip341_nums, LianaDescriptor},
     miniscript::{
         bitcoin::{Amount, Network, Psbt, Txid},
         DescriptorPublicKey,
@@ -124,6 +124,7 @@ pub enum Error {
     BackupImport(String),
     Backup(backup::Error),
     EncryptedBackup(encrypted_backup::Error),
+    EncryptionFailed,
     ParseXpub,
     XpubNetwork,
     TxidNotMatch,
@@ -159,6 +160,7 @@ impl Display for Error {
             ),
             Error::EncryptedBackup(e) => write!(f, "Failed to encrypt backup: {e:?}"),
             Error::UnknownFormat => write!(f, "Format of the file unknown"),
+            Error::EncryptionFailed => write!(f, "Encryption failed, please contact Wizarsardine team.")
         }
     }
 }
@@ -603,6 +605,45 @@ pub async fn export_encrypted_descriptor(
 ) -> Result<(), Error> {
     let descriptor = descr.descriptor();
     let bytes = EncryptedBackup::new().set_payload(descriptor)?.encrypt()?;
+
+    send_progress!(sender, Progress(30.0));
+    // verify we can decrypt with any keys from the descriptor
+    for key in descr.spendable_keys() {
+        let decrypted = EncryptedBackup::new()
+            .set_encrypted_payload(&bytes)
+            .map_err(|_| Error::EncryptionFailed)?
+            .set_keys(vec![dpk_to_pk(&key)])
+            .decrypt()
+            .map_err(|_| Error::EncryptionFailed)?;
+        if let Decrypted::Descriptor(d) = decrypted {
+            if descr.to_string() != d.to_string() {
+                return Err(Error::EncryptionFailed);
+            }
+        } else {
+            return Err(Error::EncryptionFailed);
+        }
+    }
+
+    // verify we can NOT decrypt w/ unspendable key or BIP341 NUMS
+    if let Some(unspendable) = descr.process_unspendable_key() {
+        let unspendable = dpk_to_pk(&unspendable);
+        let encrypted = EncryptedBackup::new()
+            .set_encrypted_payload(&bytes)
+            .map_err(|_| Error::EncryptionFailed)?
+            .set_keys(vec![unspendable]);
+        if encrypted.decrypt().is_ok() {
+            return Err(Error::EncryptionFailed);
+        }
+    }
+    let nums = bip341_nums();
+    let encrypted = EncryptedBackup::new()
+        .set_encrypted_payload(&bytes)
+        .map_err(|_| Error::EncryptionFailed)?
+        .set_keys(vec![nums]);
+    if encrypted.decrypt().is_ok() {
+        return Err(Error::EncryptionFailed);
+    }
+
     let mut file = open_file_write(&path).await?;
     file.write_all(&bytes)?;
     send_progress!(sender, Progress(100.0));
