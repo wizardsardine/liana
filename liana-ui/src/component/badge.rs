@@ -78,7 +78,9 @@ pub fn badge_pill<'a, T: 'a>(label: &'a str, tooltip: &'a str) -> Container<'a, 
                 .padding(10)
                 .center_x(Length::Shrink)
                 .style(theme::pill::simple),
-            tooltip,
+            Container::new(text::p1_regular(tooltip))
+                .padding(10)
+                .style(theme::card::simple),
             tooltip::Position::Top,
         )
     })
