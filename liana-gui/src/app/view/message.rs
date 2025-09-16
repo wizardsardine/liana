@@ -172,11 +172,21 @@ pub enum BuySellMessage {
     #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
     SubmitRegistration,
     #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
-    VerificationCodeChanged(String),
+    CheckEmailVerificationStatus,
     #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
-    ResendVerificationCode,
+    ResendVerificationEmail,
     #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
-    VerifyEmail,
+    RegistrationSuccess,
+    #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+    RegistrationError(String),
+    #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+    EmailVerificationStatusChecked(bool),
+    #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+    EmailVerificationStatusError(String),
+    #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+    ResendEmailSuccess,
+    #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+    ResendEmailError(String),
 
     // Shared form fields (for provider-integrated builds)
     WalletAddressChanged(String),

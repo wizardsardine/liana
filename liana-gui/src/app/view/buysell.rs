@@ -47,6 +47,10 @@ pub struct BuySellPanel {
     pub login_username: form::Value<String>,
     pub login_password: form::Value<String>,
 
+    // API client for registration calls
+    #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+    pub registration_client: crate::services::registration::RegistrationClient,
+
     // Default build: account type selection state
     #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
     pub selected_account_type: Option<crate::app::view::message::AccountType>,
@@ -69,7 +73,7 @@ pub struct BuySellPanel {
     #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
     pub terms_accepted: bool,
     #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
-    pub verification_code: form::Value<String>,
+    pub email_verification_status: Option<bool>, // None = checking, Some(true) = verified, Some(false) = pending
 }
 
 #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
@@ -148,7 +152,11 @@ impl BuySellPanel {
             #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
             terms_accepted: false,
             #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
-            verification_code: form::Value::default(),
+            email_verification_status: None,
+            #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+            registration_client: crate::services::registration::RegistrationClient::new(
+                "https://dev-api.coincube.io/api/v1".to_string(),
+            ),
         }
     }
 
@@ -720,6 +728,10 @@ impl BuySellPanel {
             .push(email)
             .push(Space::with_height(Length::Fixed(10.0)))
             .push(password)
+            .push_maybe(self.get_password_validation_message().map(|msg| {
+                Container::new(ui_text::p2_regular(&msg).color(color::RED))
+                    .padding(iced::Padding::new(2.0).top(2.0))
+            }))
             .push(Space::with_height(Length::Fixed(10.0)))
             .push(confirm)
             .push(Space::with_height(Length::Fixed(10.0)))
@@ -735,7 +747,7 @@ impl BuySellPanel {
     #[inline]
     pub fn is_registration_valid(&self) -> bool {
         let email_ok = self.email.value.contains('@') && self.email.value.contains('.');
-        let pw_ok = self.password1.value.len() >= 8 && self.password1.value == self.password2.value;
+        let pw_ok = self.is_password_valid() && self.password1.value == self.password2.value;
         !self.first_name.value.is_empty()
             && !self.last_name.value.is_empty()
             && email_ok
@@ -743,20 +755,60 @@ impl BuySellPanel {
             && self.terms_accepted
     }
 
-    pub fn set_verification_code(&mut self, code: String) {
-        self.verification_code.value = code;
-        self.verification_code.valid = self.verification_code.value.len() == 6 && self.verification_code.value.chars().all(|c| c.is_ascii_digit());
+    #[inline]
+    pub fn is_password_valid(&self) -> bool {
+        let password = &self.password1.value;
+        if password.len() < 8 {
+            return false;
+        }
+
+        let has_upper = password.chars().any(|c| c.is_ascii_uppercase());
+        let has_lower = password.chars().any(|c| c.is_ascii_lowercase());
+        let has_digit = password.chars().any(|c| c.is_ascii_digit());
+        let has_special = password.chars().any(|c| !c.is_ascii_alphanumeric());
+
+        has_upper && has_lower && has_digit && has_special
     }
 
-    #[inline] 
-    pub fn is_verification_code_valid(&self) -> bool {
-        self.verification_code.valid && self.verification_code.value.len() == 6
+    pub fn get_password_validation_message(&self) -> Option<String> {
+        let password = &self.password1.value;
+        if password.is_empty() {
+            return None;
+        }
+
+        let mut issues = Vec::new();
+
+        if password.len() < 8 {
+            issues.push("at least 8 characters");
+        }
+        if !password.chars().any(|c| c.is_ascii_uppercase()) {
+            issues.push("1 uppercase letter");
+        }
+        if !password.chars().any(|c| c.is_ascii_lowercase()) {
+            issues.push("1 lowercase letter");
+        }
+        if !password.chars().any(|c| c.is_ascii_digit()) {
+            issues.push("1 number");
+        }
+        if !password.chars().any(|c| !c.is_ascii_alphanumeric()) {
+            issues.push("1 special character");
+        }
+
+        if issues.is_empty() {
+            None
+        } else {
+            Some(format!("Password must contain: {}", issues.join(", ")))
+        }
+    }
+
+    pub fn set_email_verification_status(&mut self, verified: Option<bool>) {
+        self.email_verification_status = verified;
     }
 
     fn native_verify_email_form<'a>(&'a self) -> Column<'a, ViewMessage> {
         use liana_ui::component::text as ui_text;
         use liana_ui::component::text::text;
-        use liana_ui::icon::previous_icon;
+        use liana_ui::icon::{previous_icon, reload_icon, check_icon};
         use liana_ui::component::button as ui_button;
 
         // Top bar with previous
@@ -795,54 +847,81 @@ impl BuySellPanel {
             .push(Space::with_width(Length::Fill))
             .align_y(Alignment::Center);
 
-        // Title and subtitle
-        let title = Column::new()
-            .push(ui_text::h3("Verify Your Email").color(color::WHITE))
-            .push(
-                ui_text::p2_regular("We've sent a 6-digit verification code to your account email.")
-                .color(color::GREY_3),
-            )
-            .push(
-                ui_text::p2_regular("Enter the code below to continue setting up your COINCUBE account.")
-                .color(color::GREY_3),
-            )
-            .spacing(10)
-            .align_x(Alignment::Center);
+        // Title and status-dependent subtitle
+        let title = match self.email_verification_status {
+            Some(true) => Column::new()
+                .push(ui_text::h3("Email Verified!").color(color::GREEN))
+                .push(
+                    ui_text::p2_regular("Your email has been successfully verified. You can now continue.")
+                    .color(color::GREY_3),
+                )
+                .spacing(10)
+                .align_x(Alignment::Center),
+            _ => Column::new()
+                .push(ui_text::h3("Verify Your Email").color(color::WHITE))
+                .push(
+                    ui_text::p2_regular("We've sent a verification email to your account.")
+                    .color(color::GREY_3),
+                )
+                .push(
+                    ui_text::p2_regular("Check your inbox and click the verification link to continue.")
+                    .color(color::GREY_3),
+                )
+                .spacing(10)
+                .align_x(Alignment::Center),
+        };
 
         // Email display
         let email_display = Column::new()
-            .push(ui_text::p2_regular("Enter verification code").color(color::GREY_3))
-            .push(Space::with_height(Length::Fixed(5.0)))
-            .push(
-                form::Form::new("Enter code", &self.verification_code, |v| {
-                    ViewMessage::BuySell(BuySellMessage::VerificationCodeChanged(v))
-                })
-                .size(16)
-                .padding(15),
-            )
-            .spacing(5);
+            .push(ui_text::p2_regular(&format!("Email sent to: {}", self.email.value)).color(color::WHITE))
+            .spacing(10)
+            .align_x(Alignment::Center);
 
-        // Resend link
-        let resend = Row::new()
-            .push(Space::with_width(Length::Fill))
-            .push(
-                Row::new()
-                    .push(ui_text::p2_regular("Didn't receive the code? ").color(color::GREY_3))
-                    .push(
-                        ui_button::link(None, "Resend")
-                            .on_press(ViewMessage::BuySell(BuySellMessage::ResendVerificationCode))
-                    )
-            )
-            .push(Space::with_width(Length::Fill))
-            .align_y(Alignment::Center);
+        // Status indicator and instructions
+        let status_section = match self.email_verification_status {
+            None => Column::new()
+                .push(ui_text::p2_regular("Checking verification status...").color(color::ORANGE))
+                .spacing(10)
+                .align_x(Alignment::Center),
+            Some(true) => Column::new()
+                .push(
+                    Row::new()
+                        .push(check_icon().color(color::GREEN))
+                        .push(Space::with_width(Length::Fixed(8.0)))
+                        .push(ui_text::p1_bold("Email verified successfully!").color(color::GREEN))
+                        .align_y(Alignment::Center)
+                )
+                .spacing(10)
+                .align_x(Alignment::Center),
+            Some(false) => Column::new()
+                .push(ui_text::p2_regular("Waiting for email verification...").color(color::GREY_3))
+                .push(ui_text::p2_regular("Click the link in your email to verify your account.").color(color::GREY_3))
+                .spacing(10)
+                .align_x(Alignment::Center),
+        };
 
-        // Verify button
-        let verify_btn = if self.is_verification_code_valid() {
-            ui_button::primary(None, "Verify Email")
-                .on_press(ViewMessage::BuySell(BuySellMessage::VerifyEmail))
-                .width(Length::Fill)
-        } else {
-            ui_button::secondary(None, "Verify Email").width(Length::Fill)
+        // Action buttons
+        let action_buttons = match self.email_verification_status {
+            Some(true) => Row::new()
+                .push(
+                    ui_button::primary(None, "Continue")
+                        .on_press(ViewMessage::Next) // This would proceed to next step
+                        .width(Length::Fill)
+                )
+                .spacing(10),
+            _ => Row::new()
+                .push(
+                    ui_button::secondary(Some(reload_icon()), "Check Status")
+                        .on_press(ViewMessage::BuySell(BuySellMessage::CheckEmailVerificationStatus))
+                        .width(Length::FillPortion(1))
+                )
+                .push(Space::with_width(Length::Fixed(10.0)))
+                .push(
+                    ui_button::link(None, "Resend Email")
+                        .on_press(ViewMessage::BuySell(BuySellMessage::ResendVerificationEmail))
+                )
+                .spacing(10)
+                .align_y(Alignment::Center),
         };
 
         Column::new()
@@ -854,9 +933,9 @@ impl BuySellPanel {
             .push(Space::with_height(Length::Fixed(30.0)))
             .push(email_display)
             .push(Space::with_height(Length::Fixed(20.0)))
-            .push(resend)
+            .push(status_section)
             .push(Space::with_height(Length::Fixed(30.0)))
-            .push(verify_btn)
+            .push(action_buttons)
             .align_x(Alignment::Center)
             .spacing(5)
             .max_width(500)

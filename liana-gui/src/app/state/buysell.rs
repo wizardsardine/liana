@@ -6,7 +6,7 @@ use iced_webview::{
     advanced::{Action as WebviewAction, WebView},
     PageType,
 };
-use liana_ui::{component::form, widget::Element};
+use liana_ui::widget::Element;
 
 #[cfg(feature = "dev-meld")]
 use crate::app::buysell::{meld::MeldError, ServiceProvider};
@@ -139,7 +139,7 @@ impl State for BuySellPanel {
             #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
             BuySellMessage::Password1Changed(v) => {
                 self.password1.value = v;
-                self.password1.valid = self.password1.value.len() >= 8;
+                self.password1.valid = self.is_password_valid();
             }
             #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
             BuySellMessage::Password2Changed(v) => {
@@ -152,31 +152,150 @@ impl State for BuySellPanel {
             }
             #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
             BuySellMessage::SubmitRegistration => {
-                // Navigate to email verification after successful registration
+                tracing::info!("🔍 [REGISTRATION] Submit registration button clicked");
+
                 if self.is_registration_valid() {
-                    self.native_page = NativePage::VerifyEmail;
-                    // Reset verification code when navigating to verify email page
-                    self.verification_code = form::Value::default();
+                    tracing::info!("✅ [REGISTRATION] Form validation passed, submitting registration");
+                    let client = self.registration_client.clone();
+                    let account_type = if self.selected_account_type == Some(crate::app::view::AccountType::Individual) {
+                        "personal"
+                    } else {
+                        "business"
+                    }.to_string();
+
+                    let email = self.email.value.clone();
+                    let first_name = self.first_name.value.clone();
+                    let last_name = self.last_name.value.clone();
+                    let password = self.password1.value.clone();
+
+                    tracing::info!("📤 [REGISTRATION] Making API call with account_type: {}, email: {}", account_type, email);
+
+                    return Task::perform(
+                        async move {
+                            let request = crate::services::registration::SignUpRequest {
+                                account_type,
+                                email,
+                                first_name,
+                                last_name,
+                                auth_details: vec![crate::services::registration::AuthDetail {
+                                    provider: 1, // EmailProvider = 1
+                                    password,
+                                }],
+                            };
+
+                            tracing::info!("🚀 [REGISTRATION] Sending request to API");
+                            let result = client.sign_up(request).await;
+                            tracing::info!("📥 [REGISTRATION] API response received: {:?}", result.is_ok());
+                            result
+                        },
+                        |result| match result {
+                            Ok(_response) => {
+                                tracing::info!("🎉 [REGISTRATION] Registration successful!");
+                                // Registration successful, navigate to email verification
+                                Message::View(ViewMessage::BuySell(BuySellMessage::RegistrationSuccess))
+                            }
+                            Err(error) => {
+                                tracing::error!("❌ [REGISTRATION] Registration failed: {}", error.error);
+                                // Registration failed, show error
+                                Message::View(ViewMessage::BuySell(BuySellMessage::RegistrationError(error.error)))
+                            }
+                        },
+                    );
+                } else {
+                    tracing::warn!("⚠️ [REGISTRATION] Form validation failed - button should be disabled");
+                    tracing::warn!("   - First name: '{}' (valid: {})", self.first_name.value, !self.first_name.value.is_empty());
+                    tracing::warn!("   - Last name: '{}' (valid: {})", self.last_name.value, !self.last_name.value.is_empty());
+                    tracing::warn!("   - Email: '{}' (valid: {})", self.email.value, self.email.value.contains('@') && self.email.value.contains('.'));
+                    tracing::warn!("   - Password length: {} (valid: {})", self.password1.value.len(), self.password1.value.len() >= 8);
+                    tracing::warn!("   - Passwords match: {}", self.password1.value == self.password2.value);
+                    tracing::warn!("   - Terms accepted: {}", self.terms_accepted);
                 }
-                // TODO: In the future, trigger actual registration API call here
             }
             #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
-            BuySellMessage::VerificationCodeChanged(v) => {
-                self.set_verification_code(v);
+            BuySellMessage::RegistrationSuccess => {
+                // Registration successful, navigate to email verification
+                self.native_page = NativePage::VerifyEmail;
+                self.email_verification_status = Some(false); // pending verification
+                self.error = None;
             }
             #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
-            BuySellMessage::ResendVerificationCode => {
-                // TODO: Implement resend verification code API call
-                // For now, just reset the form
-                self.verification_code = form::Value::default();
+            BuySellMessage::RegistrationError(error) => {
+                self.error = Some(format!("Registration failed: {}", error));
             }
             #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
-            BuySellMessage::VerifyEmail => {
-                if self.is_verification_code_valid() {
-                    // TODO: Implement email verification API call
-                    // For now, just show success in error field (as placeholder)
-                    self.error = Some("Email verified successfully! (UI-only for now)".to_string());
+            BuySellMessage::CheckEmailVerificationStatus => {
+                tracing::info!("🔍 [EMAIL_VERIFICATION] Checking email verification status for: {}", self.email.value);
+                // Set to "checking" state
+                self.email_verification_status = None;
+                let client = self.registration_client.clone();
+                let email = self.email.value.clone();
+
+                return Task::perform(
+                    async move {
+                        tracing::info!("🚀 [EMAIL_VERIFICATION] Making API call to check status");
+                        let result = client.check_email_verification_status(&email).await;
+                        tracing::info!("📥 [EMAIL_VERIFICATION] API response received: {:?}", result.is_ok());
+                        result
+                    },
+                    |result| match result {
+                        Ok(response) => {
+                            tracing::info!("✅ [EMAIL_VERIFICATION] Status check successful: verified={}", response.email_verified);
+                            Message::View(ViewMessage::BuySell(BuySellMessage::EmailVerificationStatusChecked(response.email_verified)))
+                        }
+                        Err(error) => {
+                            tracing::error!("❌ [EMAIL_VERIFICATION] Status check failed: {}", error.error);
+                            Message::View(ViewMessage::BuySell(BuySellMessage::EmailVerificationStatusError(error.error)))
+                        }
+                    },
+                );
+            }
+            #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+            BuySellMessage::EmailVerificationStatusChecked(verified) => {
+                self.email_verification_status = Some(verified);
+                if verified {
+                    self.error = Some("Email verified successfully!".to_string());
+                } else {
+                    self.error = None;
                 }
+            }
+            #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+            BuySellMessage::EmailVerificationStatusError(error) => {
+                self.email_verification_status = Some(false); // fallback to pending
+                self.error = Some(format!("Error checking verification status: {}", error));
+            }
+            #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+            BuySellMessage::ResendVerificationEmail => {
+                tracing::info!("📧 [RESEND_EMAIL] Resending verification email to: {}", self.email.value);
+                let client = self.registration_client.clone();
+                let email = self.email.value.clone();
+
+                return Task::perform(
+                    async move {
+                        tracing::info!("🚀 [RESEND_EMAIL] Making API call to resend email");
+                        let result = client.resend_verification_email(&email).await;
+                        tracing::info!("📥 [RESEND_EMAIL] API response received: {:?}", result.is_ok());
+                        result
+                    },
+                    |result| match result {
+                        Ok(_response) => {
+                            tracing::info!("✅ [RESEND_EMAIL] Email resent successfully");
+                            Message::View(ViewMessage::BuySell(BuySellMessage::ResendEmailSuccess))
+                        }
+                        Err(error) => {
+                            tracing::error!("❌ [RESEND_EMAIL] Failed to resend email: {}", error.error);
+                            Message::View(ViewMessage::BuySell(BuySellMessage::ResendEmailError(error.error)))
+                        }
+                    },
+                );
+            }
+            #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+            BuySellMessage::ResendEmailSuccess => {
+                self.email_verification_status = Some(false); // back to pending
+                self.error = Some("Verification email resent successfully!".to_string());
+            }
+            #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+            BuySellMessage::ResendEmailError(error) => {
+                self.error = Some(format!("Error resending email: {}", error));
             }
 
             BuySellMessage::SourceAmountChanged(amount) => {
