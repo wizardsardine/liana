@@ -186,10 +186,11 @@ where
 
         let toasts = (!self.toasts.is_empty()).then(|| {
             overlay::Element::new(Box::new(Overlay {
-                position: layout.bounds().position() + translation,
+                position: layout.position() + translation,
                 toasts: &mut self.toasts,
                 state: toasts_state,
                 instants,
+                size: layout.bounds().size(),
             }))
         });
         let overlays = content.into_iter().chain(toasts).collect::<Vec<_>>();
@@ -203,6 +204,7 @@ struct Overlay<'a, 'b, Message, Theme, Renderer> {
     toasts: &'b mut [Element<'a, Message, Theme, Renderer>],
     state: &'b mut [Tree],
     instants: &'b mut [Option<Instant>],
+    size: Size,
 }
 
 impl<'a, 'b, Message, Theme, Renderer> overlay::Overlay<Message, Theme, Renderer>
@@ -210,8 +212,8 @@ impl<'a, 'b, Message, Theme, Renderer> overlay::Overlay<Message, Theme, Renderer
 where
     Renderer: iced::advanced::Renderer,
 {
-    fn layout(&mut self, renderer: &Renderer, bounds: Size) -> layout::Node {
-        let limits = layout::Limits::new(Size::ZERO, bounds)
+    fn layout(&mut self, renderer: &Renderer, _bounds: Size) -> layout::Node {
+        let limits = layout::Limits::new(Size::ZERO, self.size)
             .width(Length::Fill)
             .height(Length::Fill);
 

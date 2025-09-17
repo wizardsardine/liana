@@ -383,8 +383,13 @@ impl Step for DefineDescriptor {
                                     if let Some(Some(key)) = path.keys.get(j) {
                                         let fg = key.fingerprint;
                                         let alias = key.name.clone();
-                                        let modal =
-                                            EditKeyAlias::new(fg, alias, path_kind, coordinates);
+                                        let modal = EditKeyAlias::new(
+                                            self.keys(),
+                                            fg,
+                                            alias,
+                                            path_kind,
+                                            coordinates,
+                                        );
                                         self.modal = Some(Box::new(modal));
                                         return Task::none();
                                     }

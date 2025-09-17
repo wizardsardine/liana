@@ -51,11 +51,7 @@ pub fn fiat_price<'a>(
                     .push(Space::with_width(Length::Fill))
                     .push(
                         Toggler::new(new_price_setting.is_enabled)
-                            .on_toggle(|new_selection| {
-                                Message::Settings(SettingsMessage::Fiat(FiatMessage::Enable(
-                                    new_selection,
-                                )))
-                            })
+                            .on_toggle(|new_selection| FiatMessage::Enable(new_selection).into())
                             .style(theme::toggler::primary),
                     ),
             )
@@ -70,11 +66,7 @@ pub fn fiat_price<'a>(
                             pick_list(
                                 &ALL_PRICE_SOURCES[..],
                                 Some(new_price_setting.source),
-                                |source| {
-                                    Message::Settings(SettingsMessage::Fiat(
-                                        FiatMessage::SourceEdited(source),
-                                    ))
-                                },
+                                |source| FiatMessage::SourceEdited(source).into(),
                             )
                             .style(theme::pick_list::primary)
                             .padding(10),
@@ -92,11 +84,7 @@ pub fn fiat_price<'a>(
                             pick_list(
                                 currencies_list,
                                 Some(new_price_setting.currency),
-                                |currency| {
-                                    Message::Settings(SettingsMessage::Fiat(
-                                        FiatMessage::CurrencyEdited(currency),
-                                    ))
-                                },
+                                |currency| FiatMessage::CurrencyEdited(currency).into(),
                             )
                             .style(theme::pick_list::primary)
                             .padding(10),

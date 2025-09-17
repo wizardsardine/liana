@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use iced::{
     alignment,
-    widget::{checkbox, scrollable, tooltip, Space},
+    widget::{checkbox, scrollable, tooltip, Column, Container, Row, Space},
     Alignment, Length,
 };
 
@@ -22,7 +22,7 @@ use crate::{
         cache::Cache,
         error::Error,
         menu::Menu,
-        view::{coins, dashboard, message::*, psbt},
+        view::{coins, dashboard, message::*, psbt, FiatAmountConverter},
     },
     daemon::model::{remaining_sequence, Coin, SpendTx},
 };
@@ -141,6 +141,7 @@ pub fn spend_view<'a>(
 #[allow(clippy::too_many_arguments)]
 pub fn create_spend_tx<'a>(
     cache: &'a Cache,
+    fiat_converter: Option<&FiatAmountConverter>,
     recipients: Vec<Element<'a, Message>>,
     is_valid: bool,
     duplicate: bool,
@@ -236,9 +237,19 @@ pub fn create_spend_tx<'a>(
                     .push_maybe(fee_amount.map(|fee| {
                         Row::new()
                             .spacing(10)
+                            .align_y(Alignment::Center)
                             .push(p1_regular("Fee:").style(theme::text::secondary))
                             .push(amount_with_size(fee, P1_SIZE))
-                    })),
+                            .push_maybe(fiat_converter.map(|conv| {
+                                Row::new().spacing(10).align_y(Alignment::Center).push(
+                                    conv.convert(*fee)
+                                        .to_text()
+                                        .size(P2_SIZE)
+                                        .style(theme::text::secondary),
+                                )
+                            }))
+                    }))
+                    .wrap(),
             )
             .push(
                 Container::new(
@@ -365,14 +376,19 @@ pub fn create_spend_tx<'a>(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn recipient_view<'a>(
     index: usize,
     address: &'a form::Value<String>,
     amount: &'a form::Value<String>,
+    fiat_form_value: Option<&'a form::Value<String>>,
+    fiat_converter: Option<&FiatAmountConverter>,
     label: &'a form::Value<String>,
     is_max_selected: bool,
     is_recovery: bool,
 ) -> Element<'a, CreateSpendMessage> {
+    let btc_amt = Amount::from_str_in(&amount.value, Denomination::Bitcoin).ok();
+
     Container::new(
         Column::new()
             .spacing(10)
@@ -395,7 +411,7 @@ pub fn recipient_view<'a>(
                         Container::new(p1_bold("Address"))
                             .align_x(alignment::Horizontal::Right)
                             .padding(10)
-                            .width(Length::Fixed(110.0)),
+                            .width(Length::Fixed(130.0)),
                     )
                     .push(
                         form::Form::new_trimmed("Address", address, move |msg| {
@@ -414,7 +430,7 @@ pub fn recipient_view<'a>(
                         Container::new(p1_bold("Description"))
                             .align_x(alignment::Horizontal::Right)
                             .padding(10)
-                            .width(Length::Fixed(110.0)),
+                            .width(Length::Fixed(130.0)),
                     )
                     .push(
                         form::Form::new("Payment label", label, move |msg| {
@@ -430,38 +446,89 @@ pub fn recipient_view<'a>(
                     .align_y(Alignment::Center)
                     .spacing(10)
                     .push(
-                        Container::new(p1_bold("Amount"))
+                        Container::new(p1_bold("Amount (BTC)"))
                             .padding(10)
                             .align_x(alignment::Horizontal::Right)
-                            .width(Length::Fixed(110.0)),
+                            .width(Length::Fixed(130.0)),
                     )
-                    .push_maybe(if is_max_selected {
-                        let amount_txt = Amount::from_str_in(&amount.value, Denomination::Bitcoin)
-                            .ok()
-                            .map(|a| a.to_formatted_string())
-                            .unwrap_or(amount.value.clone());
-                        Some(
-                            Container::new(
-                                text(amount_txt).size(P1_SIZE).style(theme::text::secondary),
-                            )
-                            .padding(10)
-                            .width(Length::Fill),
-                        )
-                    } else {
-                        None
-                    })
-                    .push_maybe(if !is_max_selected {
-                        Some(form::Form::new_amount_btc("0.001 (in BTC)", amount, move |msg| {
-                            CreateSpendMessage::RecipientEdited(index, "amount", msg)
-                        })
-                        .warning(
-                            "Invalid amount. (Note amounts lower than 0.00005 BTC are invalid.)",
-                        )
-                        .size(P1_SIZE)
-                        .padding(10))
-                    } else {
-                        None
-                    })
+                    .push(
+                        Row::new()
+                            .align_y(Alignment::Center)
+                            .spacing(5)
+                            .push(if is_max_selected {
+                                let amount_txt = btc_amt
+                                    .map(|a| a.to_formatted_string())
+                                    .unwrap_or(amount.value.clone());
+                                Container::new(
+                                    text(amount_txt).size(P1_SIZE).style(theme::text::secondary),
+                                )
+                                .width(Length::Fill)
+                            } else {
+                                form::Form::new_amount_btc("0.001 (in BTC)", amount, move |msg| {
+                                    CreateSpendMessage::RecipientEdited(index, "amount", msg)
+                                })
+                                .warning(
+                                    "Invalid amount. (Note amounts lower than 0.00005 BTC are invalid.)",
+                                )
+                                .size(P1_SIZE)
+                                .padding(10)
+                                .into_container()
+                            })
+                            .push_maybe(fiat_converter.map(|conv| {
+                                Row::new()
+                                    .align_y(Alignment::Center)
+                                    .spacing(5)
+                                    .push(Space::with_width(Length::Fixed(20.0))) // add some space between BTC and fiat amounts
+                                    .push(p1_bold(format!("~{}", conv.currency())))
+                                    .push(Space::with_width(Length::Fixed(5.0)))
+                                    .push(if is_max_selected {
+                                        let fiat_from_btc = btc_amt
+                                            .map(|a| conv.convert(a))
+                                            .map(|fa| fa.to_formatted_string())
+                                            .unwrap_or_default();
+                                        Container::new(
+                                            text(fiat_from_btc)
+                                                .size(P1_SIZE)
+                                                .style(theme::text::secondary),
+                                        )
+                                        .width(Length::Fill)
+                                    } else {
+                                        let conv = *conv;
+                                        // The particular form shown depends on whether the user has entered a fiat amount or
+                                        // if we are instead converting the BTC amount.
+                                        let fiat_form = if let Some(val) = fiat_form_value {
+                                            val
+                                        } else if let Some(btc_amt) = btc_amt {
+                                            let fa = conv.convert(btc_amt);
+                                            &form::Value {
+                                                value: fa.to_rounded_string(), // 2 decimal places
+                                                warning: None,
+                                                valid: true,
+                                            }
+                                        } else {
+                                            &form::Value::default()
+                                        };
+                                        form::Form::new_trimmed(
+                                            &format!("Enter amount in {}", conv.currency()),
+                                            fiat_form,
+                                            move |msg| {
+                                                CreateSpendMessage::RecipientFiatAmountEdited(
+                                                    index, msg, conv,
+                                                )
+                                            },
+                                        )
+                                        .size(P1_SIZE)
+                                        .padding(10)
+                                        .into_container()
+                                    })
+                                    .push(tooltip::Tooltip::new(
+                                        icon::tooltip_icon(),
+                                        conv.to_container_summary(),
+                                        tooltip::Position::Bottom,
+                                    ))
+                                    .push(Space::with_width(Length::Fixed(10.0)))
+                            })),
+                    )
                     .push_maybe(
                         // The MAX option cannot be edited for recovery recipients.
                         (!is_recovery).then_some(tooltip::Tooltip::new(

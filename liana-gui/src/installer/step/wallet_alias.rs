@@ -32,7 +32,8 @@ impl Step for WalletAlias {
                     match ctx.network {
                         Network::Bitcoin => "Bitcoin",
                         Network::Signet => "Signet",
-                        Network::Testnet4 | Network::Testnet => "Testnet",
+                        Network::Testnet => "Testnet",
+                        Network::Testnet4 => "Testnet4",
                         Network::Regtest => "Regtest",
                     }
                 );
