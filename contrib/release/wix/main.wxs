@@ -64,7 +64,7 @@
     Id='*'
     Name='Coincube Vault'
     UpgradeCode='046BC7BE-9EFD-46F0-95C4-93E4B7EBBED1'
-    Manufacturer='Edouard Paris'
+    Manufacturer='Eduardo Paris'
     Language='1033'
     Codepage='1252'
     Version='$(var.Version)'>
@@ -76,7 +76,7 @@
       InstallerVersion='450'
       Languages='1033'
       Compressed='yes'
-      InstallScope='perUser'
+      InstallScope='perMachine'
       SummaryCodepage='1252'
     />
 
