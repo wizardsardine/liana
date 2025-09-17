@@ -767,6 +767,20 @@ impl SelectKeySource {
             );
             return Task::none();
         }
+        self.form_alias.warning = None;
+        self.form_alias.valid = true;
+
+        if let Some(fg) = match &self.selected_key {
+            SelectedKey::None => None,
+            SelectedKey::Existing(fg) => Some(*fg),
+            SelectedKey::New(k) => Some(k.fingerprint),
+        } {
+            if alias_already_exists(&alias, fg, &self.keys) {
+                self.form_alias.warning = Some("This alias is already used for another key");
+                self.form_alias.valid = false;
+            }
+        }
+
         if alias.chars().count() <= MAX_ALIAS_LEN {
             self.form_alias.value = alias;
         }
@@ -1408,6 +1422,7 @@ pub enum EditKeyAliasMessage {
 }
 
 pub struct EditKeyAlias {
+    keys: HashMap<Fingerprint, (Vec<(usize, usize)>, Key)>,
     fingerprint: Fingerprint,
     form_alias: form::Value<String>,
     path_kind: PathKind,
@@ -1416,6 +1431,7 @@ pub struct EditKeyAlias {
 
 impl EditKeyAlias {
     pub fn new(
+        keys: HashMap<Fingerprint, (Vec<(usize, usize)>, Key)>,
         fingerprint: Fingerprint,
         alias: String,
         path_kind: PathKind,
@@ -1427,6 +1443,7 @@ impl EditKeyAlias {
             valid: true,
         };
         Self {
+            keys,
             fingerprint,
             form_alias,
             path_kind,
@@ -1440,6 +1457,14 @@ impl super::DescriptorEditModal for EditKeyAlias {
         if let Message::EditKeyAlias(msg) = message {
             match msg {
                 EditKeyAliasMessage::Alias(alias) => {
+                    self.form_alias.warning = None;
+                    self.form_alias.valid = true;
+
+                    if alias_already_exists(&alias, self.fingerprint, &self.keys) {
+                        self.form_alias.warning =
+                            Some("This alias is already used for another key");
+                        self.form_alias.valid = false;
+                    }
                     if alias.chars().count() <= MAX_ALIAS_LEN {
                         self.form_alias.value = alias
                     }
@@ -1471,13 +1496,27 @@ impl super::DescriptorEditModal for EditKeyAlias {
             header,
             None,
             &self.form_alias,
-            self.form_alias.warning.map(|s| s.to_string()),
+            None,
             |s| Message::EditKeyAlias(EditKeyAliasMessage::Alias(s)),
             Some(Message::EditKeyAlias(EditKeyAliasMessage::Save)),
             None,
             Some(Message::EditKeyAlias(EditKeyAliasMessage::Replace)),
         )
     }
+}
+
+#[allow(clippy::type_complexity)]
+fn alias_already_exists(
+    alias: &str,
+    fingerprint: Fingerprint,
+    keys: &HashMap<Fingerprint, (Vec<(usize, usize)>, Key)>,
+) -> bool {
+    for (fg, (_, key)) in keys {
+        if *fg != fingerprint && alias == key.name {
+            return true;
+        }
+    }
+    false
 }
 
 pub fn default_derivation_path(network: Network) -> DerivationPath {
