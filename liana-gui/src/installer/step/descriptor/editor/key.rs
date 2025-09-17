@@ -1087,7 +1087,7 @@ impl SelectKeySource {
                         minimal_supported_version,
                     } => {
                         enabled = true;
-                        Some(format!("Device version not supported, you must upgrade to version > {minimal_supported_version}"))
+                        Some(format!("Device version not supported, upgrade to version > {minimal_supported_version}"))
                     }
                     UnsupportedReason::Method(m) => {
                         Some(format!("Device not supported, method: {m}"))
