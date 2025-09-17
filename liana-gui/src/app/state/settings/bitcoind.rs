@@ -597,6 +597,14 @@ impl RescanSetting {
                                 date
                             }
                         }
+                        Network::Testnet4 => {
+                            if date < TESTNET4_GENESIS_BLOCK_TIMESTAMP {
+                                info!("Date {} prior to genesis block, using genesis block timestamp {}", date, TESTNET4_GENESIS_BLOCK_TIMESTAMP);
+                                TESTNET4_GENESIS_BLOCK_TIMESTAMP
+                            } else {
+                                date
+                            }
+                        }
                         Network::Signet => {
                             if date < SIGNET_GENESIS_BLOCK_TIMESTAMP {
                                 info!("Date {} prior to genesis block, using genesis block timestamp {}", date, SIGNET_GENESIS_BLOCK_TIMESTAMP);
@@ -660,4 +668,5 @@ impl RescanSetting {
 /// Use bitcoin-cli getblock $(bitcoin-cli getblockhash 0) | jq .time
 const MAINNET_GENESIS_BLOCK_TIMESTAMP: i64 = 1231006505;
 const TESTNET3_GENESIS_BLOCK_TIMESTAMP: i64 = 1296688602;
+const TESTNET4_GENESIS_BLOCK_TIMESTAMP: i64 = 1714777860;
 const SIGNET_GENESIS_BLOCK_TIMESTAMP: i64 = 1598918400;

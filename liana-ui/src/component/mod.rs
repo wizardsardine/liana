@@ -37,6 +37,7 @@ pub fn network_banner<'a, T: 'a>(network: Network) -> Container<'a, T> {
                 text::text(match network {
                     Network::Signet => "SIGNET WALLET",
                     Network::Testnet => "TESTNET WALLET",
+                    Network::Testnet4 => "TESTNET4 WALLET",
                     Network::Regtest => "REGTEST WALLET",
                     _ => unreachable!(),
                 })

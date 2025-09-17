@@ -1,10 +1,10 @@
-mod fiat;
 mod label;
 mod message;
 mod warning;
 
 pub mod coins;
 pub mod export;
+pub mod fiat;
 pub mod home;
 pub mod hw;
 
@@ -18,11 +18,12 @@ pub mod settings;
 pub mod spend;
 pub mod transactions;
 
+pub use fiat::FiatAmountConverter;
 pub use message::*;
 use warning::warn;
 
 use iced::{
-    widget::{responsive, row, scrollable, Space},
+    widget::{column, responsive, row, scrollable, Space},
     Length,
 };
 
@@ -382,23 +383,16 @@ pub fn dashboard<'a, T: Into<Element<'a, Message>>>(
             Column::new()
                 .push(warn(warning))
                 .push(
-                    Container::new(scrollable(
-                        Column::new()
-                            .push(Space::with_height(Length::Fixed(150.0)))
-                            .push(
-                                Row::new()
-                                    .push(Space::with_width(Length::FillPortion(1)))
-                                    .push(
-                                        Container::new(content.into())
-                                            .width(Length::FillPortion(8))
-                                            .max_width(1500)
-                                            .height(Length::Shrink),
-                                    )
-                                    .push(Space::with_width(Length::FillPortion(1))),
-                            )
-                            .spacing(10)
-                            .height(Length::Shrink),
-                    ))
+                    Container::new(
+                        scrollable(row!(
+                            Space::with_width(Length::FillPortion(1)),
+                            column!(Space::with_height(Length::Fixed(150.0)), content.into())
+                                .width(Length::FillPortion(8))
+                                .max_width(1500),
+                            Space::with_width(Length::FillPortion(1)),
+                        ))
+                        .on_scroll(|w| Message::Scroll(w.absolute_offset().y)),
+                    )
                     .center_x(Length::Fill)
                     .style(theme::container::background)
                     .height(Length::Fill),

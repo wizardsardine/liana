@@ -12,6 +12,7 @@ pub mod buysell;
 
 use std::convert::TryInto;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use iced::{Subscription, Task};
 use liana::miniscript::bitcoin::{Amount, OutPoint};
@@ -28,8 +29,9 @@ use super::{
 };
 
 pub const HISTORY_EVENT_PAGE_SIZE: u64 = 20;
+const HOME_RELOAD_MAX_TTL: Duration = Duration::from_secs(10);
+const HOME_RELOAD_MIN_TTL: Duration = Duration::from_secs(3);
 
-use crate::app::cache::FiatPrice;
 use crate::daemon::model::{coin_is_owned, LabelsLoader};
 use crate::daemon::{
     model::{remaining_sequence, Coin, HistoryTransaction, Payment},
@@ -78,21 +80,16 @@ pub fn redirect(menu: Menu) -> Task<Message> {
     })
 }
 
-/// Returns fiat price if the wallet setting is enabled and the cached price matches the setting.
-pub fn fiat_price_for_wallet(wallet: &Wallet, cache: &Cache) -> Option<FiatPrice> {
-    let mut fiat_price = None;
-    if let Some(sett) = wallet
-        .fiat_price_setting
+/// Returns fiat converter if the wallet setting is enabled and the cached price matches the setting.
+pub fn fiat_converter_for_wallet(
+    wallet: &Wallet,
+    cache: &Cache,
+) -> Option<view::FiatAmountConverter> {
+    cache
+        .fiat_price
         .as_ref()
-        .filter(|sett| sett.is_enabled)
-    {
-        if let Some(price) = cache.fiat_price.as_ref() {
-            if price.source() == sett.source && price.currency() == sett.currency {
-                fiat_price = Some(price.clone());
-            }
-        }
-    }
-    fiat_price
+        .filter(|p| wallet.fiat_price_is_relevant(p))
+        .and_then(|p| p.try_into().ok())
 }
 
 /// Returns the confirmed and unconfirmed balances from `coins`, as well
@@ -144,18 +141,27 @@ fn coins_summary(
     (balance, unconfirmed_balance, expiring_coins, remaining_seq)
 }
 
+#[derive(Default)]
+pub struct Payments {
+    list: Vec<Payment>,
+    is_last_page: bool,
+    loaded_page_count: usize,
+}
+
 pub struct Home {
-    wallet: Arc<Wallet>,
     sync_status: SyncStatus,
+    last_reload: Instant,
+
+    wallet: Arc<Wallet>,
     balance: Amount,
     unconfirmed_balance: Amount,
     remaining_sequence: Option<u32>,
     expiring_coins: Vec<OutPoint>,
-    events: Vec<Payment>,
-    is_last_page: bool,
+    payments: Payments,
     processing: bool,
     selected_event: Option<(HistoryTransaction, usize)>,
     labels_edited: LabelsEdited,
+
     warning: Option<Error>,
     show_rescan_warning: bool,
 }
@@ -182,19 +188,19 @@ impl Home {
             remaining_sequence: remaining_seq,
             expiring_coins,
             selected_event: None,
-            events: Vec::new(),
+            payments: Payments::default(),
             labels_edited: LabelsEdited::default(),
             warning: None,
-            is_last_page: false,
             processing: false,
             show_rescan_warning,
+            last_reload: Instant::now(),
         }
     }
 }
 
 impl State for Home {
     fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, view::Message> {
-        let fiat_price = fiat_price_for_wallet(&self.wallet, cache);
+        let converter = fiat_converter_for_wallet(&self.wallet, cache);
         if let Some((tx, output_index)) = &self.selected_event {
             view::home::payment_view(
                 cache,
@@ -212,10 +218,10 @@ impl State for Home {
                     &self.balance,
                     &self.unconfirmed_balance,
                     &self.remaining_sequence,
-                    fiat_price,
+                    converter,
                     &self.expiring_coins,
-                    &self.events,
-                    self.is_last_page,
+                    &self.payments.list,
+                    self.payments.is_last_page,
                     self.processing,
                     &self.sync_status,
                     self.show_rescan_warning,
@@ -231,6 +237,17 @@ impl State for Home {
         message: Message,
     ) -> Task<Message> {
         match message {
+            Message::Tick => {
+                // we reload the page only when the user is not exploring the history
+                // looking at a selected event
+                // or when the last reload was less than the defined TTL.
+                if self.payments.loaded_page_count == 1
+                    && self.selected_event.is_none()
+                    && Instant::now() > self.last_reload + HOME_RELOAD_MAX_TTL
+                {
+                    return self.reload(daemon, self.wallet.clone());
+                }
+            }
             Message::Coins(res) => match res {
                 Err(e) => self.warning = Some(e),
                 Ok(coins) => {
@@ -251,8 +268,10 @@ impl State for Home {
                 Err(e) => self.warning = Some(e),
                 Ok(events) => {
                     self.warning = None;
-                    self.events = events;
-                    self.is_last_page = (self.events.len() as u64) < HISTORY_EVENT_PAGE_SIZE;
+                    self.payments.list = events;
+                    self.payments.loaded_page_count = 1;
+                    self.payments.is_last_page =
+                        (self.payments.list.len() as u64) < HISTORY_EVENT_PAGE_SIZE;
                 }
             },
             Message::PaymentsExtension(res) => match res {
@@ -260,24 +279,26 @@ impl State for Home {
                 Ok(events) => {
                     self.processing = false;
                     self.warning = None;
-                    self.is_last_page = (events.len() as u64) < HISTORY_EVENT_PAGE_SIZE;
+                    self.payments.loaded_page_count += 1;
+                    self.payments.is_last_page = (events.len() as u64) < HISTORY_EVENT_PAGE_SIZE;
                     if let Some(event) = events.first() {
                         if let Some(position) = self
-                            .events
+                            .payments
+                            .list
                             .iter()
                             .position(|event2| event2.outpoint == event.outpoint)
                         {
-                            let len = self.events.len();
+                            let len = self.payments.list.len();
                             for event in events {
-                                if !self.events[position..len]
+                                if !self.payments.list[position..len]
                                     .iter()
                                     .any(|event2| event2.outpoint == event.outpoint)
                                 {
-                                    self.events.push(event);
+                                    self.payments.list.push(event);
                                 }
                             }
                         } else {
-                            self.events.extend(events);
+                            self.payments.list.extend(events);
                         }
                     }
                 }
@@ -320,7 +341,8 @@ impl State for Home {
                 match self.labels_edited.update(
                     daemon,
                     message,
-                    self.events
+                    self.payments
+                        .list
                         .iter_mut()
                         .map(|tx| tx as &mut dyn LabelsLoader)
                         .chain(
@@ -343,9 +365,16 @@ impl State for Home {
             Message::View(view::Message::Close) => {
                 self.selected_event = None;
             }
-
+            Message::View(view::Message::Scroll(offset)) => {
+                if offset == 0.0
+                    && (self.payments.loaded_page_count > 1
+                        || Instant::now() > self.last_reload + HOME_RELOAD_MIN_TTL)
+                {
+                    return self.reload(daemon, self.wallet.clone());
+                }
+            }
             Message::View(view::Message::Next) => {
-                if let Some(last) = self.events.last() {
+                if let Some(last) = self.payments.list.last() {
                     let daemon = daemon.clone();
                     let last_event_date = last.time.unwrap();
                     self.processing = true;
@@ -407,8 +436,10 @@ impl State for Home {
         }
         self.selected_event = None;
         self.wallet = wallet;
+        self.payments.loaded_page_count = 0;
         let daemon2 = daemon.clone();
         let now: u32 = now().as_secs().try_into().unwrap();
+        self.last_reload = Instant::now();
         Task::batch(vec![
             Task::perform(
                 async move {

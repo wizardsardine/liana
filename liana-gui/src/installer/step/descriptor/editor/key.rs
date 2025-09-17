@@ -49,6 +49,7 @@ use crate::{
     signer::Signer,
 };
 
+const MAX_ALIAS_LEN: usize = 24;
 pub type FnMsg = fn() -> Message;
 
 pub fn new_multixkey_from_xpub(
@@ -641,6 +642,7 @@ impl SelectKeySource {
                 };
                 if !self.form_xpub.valid {
                     self.form_xpub.warning = Some("Wrong network");
+                    self.form_xpub.valid = false;
                 }
                 if self.keys.contains_key(&fingerprint) {
                     self.form_xpub.warning = Some("Key already used");
@@ -656,6 +658,9 @@ impl SelectKeySource {
             }
         } else {
             self.form_xpub.valid = xpub.is_empty();
+            if !self.form_xpub.valid {
+                self.form_xpub.warning = Some("Invalid Xpub");
+            }
         }
         Task::none()
     }
@@ -766,9 +771,23 @@ impl SelectKeySource {
             );
             return Task::none();
         }
-        // TODO: which max length for an alias?
-        self.form_alias.valid = alias.len() < 30;
-        self.form_alias.value = alias;
+        self.form_alias.warning = None;
+        self.form_alias.valid = true;
+
+        if let Some(fg) = match &self.selected_key {
+            SelectedKey::None => None,
+            SelectedKey::Existing(fg) => Some(*fg),
+            SelectedKey::New(k) => Some(k.fingerprint),
+        } {
+            if alias_already_exists(&alias, fg, &self.keys) {
+                self.form_alias.warning = Some("This alias is already used for another key");
+                self.form_alias.valid = false;
+            }
+        }
+
+        if alias.chars().count() <= MAX_ALIAS_LEN {
+            self.form_alias.value = alias;
+        }
         Task::none()
     }
     fn on_account(&mut self, index: ChildNumber) -> Task<Message> {
@@ -1082,7 +1101,7 @@ impl SelectKeySource {
                         minimal_supported_version,
                     } => {
                         enabled = true;
-                        Some(format!("Device version not supported, you must upgrate to version > {minimal_supported_version}"))
+                        Some(format!("Device version not supported, upgrade to version > {minimal_supported_version}"))
                     }
                     UnsupportedReason::Method(m) => {
                         Some(format!("Device not supported, method: {m}"))
@@ -1107,7 +1126,15 @@ impl SelectKeySource {
             }
         }
         let fingerprint = fg.map(|fg| format!("#{fg}"));
-        modal::key_entry(None, alias, fingerprint, None, None, message, msg)
+        modal::key_entry(
+            Some(icon::usb_drive_icon()),
+            alias,
+            fingerprint,
+            None,
+            None,
+            message,
+            msg,
+        )
     }
     fn widget_key(
         &self,
@@ -1399,6 +1426,7 @@ pub enum EditKeyAliasMessage {
 }
 
 pub struct EditKeyAlias {
+    keys: HashMap<Fingerprint, (Vec<(usize, usize)>, Key)>,
     fingerprint: Fingerprint,
     form_alias: form::Value<String>,
     path_kind: PathKind,
@@ -1407,6 +1435,7 @@ pub struct EditKeyAlias {
 
 impl EditKeyAlias {
     pub fn new(
+        keys: HashMap<Fingerprint, (Vec<(usize, usize)>, Key)>,
         fingerprint: Fingerprint,
         alias: String,
         path_kind: PathKind,
@@ -1418,6 +1447,7 @@ impl EditKeyAlias {
             valid: true,
         };
         Self {
+            keys,
             fingerprint,
             form_alias,
             path_kind,
@@ -1430,7 +1460,19 @@ impl super::DescriptorEditModal for EditKeyAlias {
     fn update(&mut self, _hws: &mut HardwareWallets, message: Message) -> Task<Message> {
         if let Message::EditKeyAlias(msg) = message {
             match msg {
-                EditKeyAliasMessage::Alias(alias) => self.form_alias.value = alias,
+                EditKeyAliasMessage::Alias(alias) => {
+                    self.form_alias.warning = None;
+                    self.form_alias.valid = true;
+
+                    if alias_already_exists(&alias, self.fingerprint, &self.keys) {
+                        self.form_alias.warning =
+                            Some("This alias is already used for another key");
+                        self.form_alias.valid = false;
+                    }
+                    if alias.chars().count() <= MAX_ALIAS_LEN {
+                        self.form_alias.value = alias
+                    }
+                }
                 EditKeyAliasMessage::Save => {
                     return Task::done(Message::DefineDescriptor(
                         message::DefineDescriptor::AliasEdited(
@@ -1458,13 +1500,27 @@ impl super::DescriptorEditModal for EditKeyAlias {
             header,
             None,
             &self.form_alias,
-            self.form_alias.warning.map(|s| s.to_string()),
+            None,
             |s| Message::EditKeyAlias(EditKeyAliasMessage::Alias(s)),
             Some(Message::EditKeyAlias(EditKeyAliasMessage::Save)),
             None,
             Some(Message::EditKeyAlias(EditKeyAliasMessage::Replace)),
         )
     }
+}
+
+#[allow(clippy::type_complexity)]
+fn alias_already_exists(
+    alias: &str,
+    fingerprint: Fingerprint,
+    keys: &HashMap<Fingerprint, (Vec<(usize, usize)>, Key)>,
+) -> bool {
+    for (fg, (_, key)) in keys {
+        if *fg != fingerprint && alias == key.name {
+            return true;
+        }
+    }
+    false
 }
 
 pub fn default_derivation_path(network: Network) -> DerivationPath {
@@ -1529,6 +1585,10 @@ mod tests {
         );
         assert_eq!(
             default_derivation_path(Network::Testnet).to_string(),
+            "48'/1'/0'/2'"
+        );
+        assert_eq!(
+            default_derivation_path(Network::Testnet4).to_string(),
             "48'/1'/0'/2'"
         );
         assert_eq!(

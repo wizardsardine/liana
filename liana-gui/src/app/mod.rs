@@ -340,7 +340,12 @@ impl App {
 
     pub fn on_tick(&mut self) -> Task<Message> {
         let tick = std::time::Instant::now();
-        let mut tasks = vec![];
+        let mut tasks =
+            vec![self
+                .panels
+                .current_mut()
+                .update(self.daemon.clone(), &self.cache, Message::Tick)];
+
         // Check if we need to update the daemon cache.
         let duration = Duration::from_secs(
             match sync_status(
