@@ -46,6 +46,7 @@ use crate::{
 
 type FnMsg = fn() -> installer::Message;
 
+#[allow(unused, clippy::enum_variant_names)]
 #[derive(Debug, Clone, Copy)]
 pub enum Error {
     InvalidEncoding,
@@ -116,13 +117,6 @@ impl From<Decrypt> for installer::Message {
     fn from(value: Decrypt) -> Self {
         installer::Message::Decrypt(value)
     }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Status {
-    None,
-    Busy,
-    NotMatch,
 }
 
 pub fn decrypt_descriptor_with_pk(bytes: &[u8], pk: secp256k1::PublicKey) -> Option<Decrypt> {

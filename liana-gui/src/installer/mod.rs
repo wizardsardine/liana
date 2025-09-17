@@ -1,4 +1,5 @@
 mod context;
+mod decrypt;
 mod descriptor;
 mod message;
 mod prompt;

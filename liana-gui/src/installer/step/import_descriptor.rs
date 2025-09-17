@@ -3,10 +3,12 @@ use liana_ui::widget::Element;
 
 use crate::{
     app::state::export::ExportModal,
-    decrypt::{Decrypt, DecryptModal},
     export::{ImportExportMessage, Progress},
     hw::HardwareWallets,
-    installer,
+    installer::{
+        self,
+        decrypt::{Decrypt, DecryptModal},
+    },
 };
 
 pub const BACKUP_NETWORK_NOT_MATCH: &str = "Backup network do not match the selected network!";

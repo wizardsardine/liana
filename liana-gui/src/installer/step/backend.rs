@@ -1,6 +1,6 @@
-use crate::{
+use crate::installer::{
     decrypt::{Decrypt, DecryptModal},
-    installer::step::import_descriptor::ImportDescriptorModal,
+    step::import_descriptor::ImportDescriptorModal,
 };
 use std::str::FromStr;
 

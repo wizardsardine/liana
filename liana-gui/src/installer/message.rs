@@ -1,4 +1,3 @@
-use crate::decrypt::Decrypt;
 use liana::{
     descriptors::LianaDescriptor,
     miniscript::{
@@ -25,7 +24,7 @@ use crate::{
     download::{DownloadError, Progress},
     export::ImportExportMessage,
     hw::HardwareWalletMessage,
-    installer::descriptor::PathKind,
+    installer::{decrypt::Decrypt, descriptor::PathKind},
     node::{
         bitcoind::{Bitcoind, ConfigField, RpcAuthType},
         electrum, NodeType,

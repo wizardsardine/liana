@@ -18,10 +18,10 @@ use async_hwi::DeviceKind;
 use crate::{
     app::{settings::KeySetting, state::export::ExportModal, wallet::wallet_name},
     backup::Backup,
-    decrypt::{Decrypt, DecryptModal},
     export::{ImportExportMessage, ImportExportType, Progress},
     hw::{HardwareWallet, HardwareWallets},
     installer::{
+        decrypt::{Decrypt, DecryptModal},
         message::{self, Message},
         step::import_descriptor::{ImportDescriptorModal, BACKUP_NETWORK_NOT_MATCH},
         step::{Context, Step},
