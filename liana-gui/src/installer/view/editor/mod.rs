@@ -5,13 +5,11 @@ pub mod template;
 use iced::widget::{container, pick_list, slider, Button, Space};
 use iced::{alignment, Alignment, Length};
 
-use liana::miniscript::bitcoin::Network;
 use liana_ui::component::text::{p1_bold, p2_regular, H3_SIZE};
 use std::borrow::Cow;
 use std::fmt::Display;
 use std::str::FromStr;
 
-use liana::miniscript::bitcoin::{self};
 use liana_ui::{
     component::{
         button, card, form, separation,
@@ -253,12 +251,6 @@ pub fn undefined_key<'a>(
             }),
     )
     .into()
-}
-
-pub fn example_xpub(network: Network) -> String {
-    format!("[aabbccdd/42'/0']{}pub6DAkq8LWw91WGgUGnkR5Sbzjev5JCsXaTVZQ9MwsPV4BkNFKygtJ8GHodfDVx1udR723nT7JASqGPpKvz7zQ25pUTW6zVEBdiWoaC4aUqik",
-        if network == bitcoin::Network::Bitcoin { "x" } else { "t" }
-    )
 }
 
 /// returns y,m,d,h,m

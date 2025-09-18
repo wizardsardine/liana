@@ -1,16 +1,16 @@
 use miniscript::{
     bitcoin::{
         self,
-        bip32::{self, Fingerprint},
+        bip32::{self, DerivationPath, Fingerprint},
         constants::WITNESS_SCALE_FACTOR,
         psbt::{Input as PsbtIn, Output as PsbtOut, Psbt},
         secp256k1,
     },
-    descriptor,
+    descriptor::{self, DescriptorXKey, Wildcard},
     miniscript::satisfy::Placeholder,
     plan::{Assets, CanSign},
     psbt::{PsbtInputExt, PsbtOutputExt},
-    translate_hash_clone, ForEachKey, TranslatePk, Translator,
+    translate_hash_clone, Descriptor, DescriptorPublicKey, ForEachKey, TranslatePk, Translator,
 };
 
 use std::{
@@ -250,6 +250,11 @@ impl LianaDescriptor {
             .unwrap_or(false)
     }
 
+    /// Get the multipath descriptor
+    pub fn descriptor(&self) -> &Descriptor<DescriptorPublicKey> {
+        &self.multi_desc
+    }
+
     /// Get the descriptor for receiving addresses.
     pub fn receive_descriptor(&self) -> &SinglePathLianaDesc {
         &self.receive_desc
@@ -264,6 +269,42 @@ impl LianaDescriptor {
     pub fn policy(&self) -> LianaPolicy {
         LianaPolicy::from_multipath_descriptor(&self.multi_desc)
             .expect("We never create a Liana descriptor with an invalid Liana policy.")
+    }
+
+    /// Get the set of Xpubs that can sign (excluding unspendable key) in the form of an
+    /// DescriptorPublicKey::XPub with empty derivation path, in order to avoid duplicates.
+    pub fn spendable_keys(&self) -> Vec<DescriptorPublicKey> {
+        let mut keys = BTreeSet::new();
+        let nums = bip341_nums();
+        self.multi_desc.for_each_key(|k| {
+            if let DescriptorPublicKey::MultiXPub(multixkey) = k {
+                let key = DescriptorPublicKey::XPub(DescriptorXKey {
+                    origin: multixkey.origin.clone(),
+                    xkey: multixkey.xkey,
+                    derivation_path: DerivationPath::default(),
+                    wildcard: Wildcard::None,
+                });
+
+                if multixkey.xkey.public_key != nums {
+                    keys.insert(key.clone());
+                }
+            } else {
+                unreachable!("all keys must be of MultiXpub type");
+            }
+            true
+        });
+        keys.into_iter().collect()
+    }
+
+    /// Get the unspendable key from this descriptor if the descriptor is of taproot type.
+    /// Note: an unspendable key is always returned from a taproot descriptor even if not
+    /// part of the policy.
+    pub fn process_unspendable_key(&self) -> Option<DescriptorPublicKey> {
+        if let Descriptor::Tr(tr_descriptor) = &self.multi_desc {
+            unspendable_internal_key(tr_descriptor)
+        } else {
+            None
+        }
     }
 
     /// Get the value (in blocks) of the smallest relative timelock of the recovery paths.
@@ -2357,6 +2398,40 @@ mod tests {
             Fingerprint::from_str("ffffffff").unwrap(),
             52596
         ));
+    }
+
+    #[test]
+    fn test_descriptor_keys() {
+        let xpub = bip32::Xpub::from_str("xpub6Eze7yAT3Y1wGrnzedCNVYDXUqa9NmHVWck5emBaTbXtURbe1NWZbK9bsz1TiVE7Cz341PMTfYgFw1KdLWdzcM1UMFTcdQfCYhhXZ2HJvTW").unwrap();
+        let fg = Fingerprint::from_str("abcdef01").unwrap();
+        let deriv = DerivationPath::from_str("0/0/0").unwrap();
+        let key = DescriptorPublicKey::XPub(DescriptorXKey {
+            origin: Some((fg, deriv)),
+            xkey: xpub,
+            derivation_path: DerivationPath::default(),
+            wildcard: Wildcard::None,
+        });
+        let key_str = "[abcdef01/0/0/0]xpub6Eze7yAT3Y1wGrnzedCNVYDXUqa9NmHVWck5emBaTbXtURbe1NWZbK9bsz1TiVE7Cz341PMTfYgFw1KdLWdzcM1UMFTcdQfCYhhXZ2HJvTW";
+        assert_eq!(key.to_string(), key_str);
+
+        let descr_str = "tr(tpubD6NzVbkrYhZ4XokGX5s1FcKj2ozqibXqXc79NkzEbNQvT1j9F7YWe3fPp3eDeMVypHXocGWUkVaC6ZUqMqyQRS27XJcujQLbrqzpoYYLGW5/<0;1>/*,{and_v(v:multi_a(1,[37435aca/48'/1'/0'/2']tpubDEcZc7Um5KPZLF11qLYNgcteH1PH7CSKtTFTuTYuL6jqsP73gBHvLY42FuyvkTWN8C4q1YiDAUAeEuA78CDuuD2x17UKJymkBacCJz8P6NU/<2;3>/*,[05813578/48'/1'/0'/2']tpubDEymPgUFZDLzEePYsai2ZXc9ntsnZBohJvGuHgpZsY5bsUDJMD6de6tevVd1z1EdGPYLdNaPvD4Ck7NgcteYDUPWwExvscfaSUu19k48Mvp/<2;3>/*),older(52596)),and_v(v:pk([37435aca/48'/1'/0'/2']tpubDEcZc7Um5KPZLF11qLYNgcteH1PH7CSKtTFTuTYuL6jqsP73gBHvLY42FuyvkTWN8C4q1YiDAUAeEuA78CDuuD2x17UKJymkBacCJz8P6NU/<0;1>/*),pk([05813578/48'/1'/0'/2']tpubDEymPgUFZDLzEePYsai2ZXc9ntsnZBohJvGuHgpZsY5bsUDJMD6de6tevVd1z1EdGPYLdNaPvD4Ck7NgcteYDUPWwExvscfaSUu19k48Mvp/<0;1>/*))})#ffdmpxzr";
+        let liana_descriptor = LianaDescriptor::from_str(descr_str).unwrap();
+        let key1_str = "[37435aca/48'/1'/0'/2']tpubDEcZc7Um5KPZLF11qLYNgcteH1PH7CSKtTFTuTYuL6jqsP73gBHvLY42FuyvkTWN8C4q1YiDAUAeEuA78CDuuD2x17UKJymkBacCJz8P6NU";
+        let key2_str = "[05813578/48'/1'/0'/2']tpubDEymPgUFZDLzEePYsai2ZXc9ntsnZBohJvGuHgpZsY5bsUDJMD6de6tevVd1z1EdGPYLdNaPvD4Ck7NgcteYDUPWwExvscfaSUu19k48Mvp";
+        let unspendable_str = "tpubD6NzVbkrYhZ4XokGX5s1FcKj2ozqibXqXc79NkzEbNQvT1j9F7YWe3fPp3eDeMVypHXocGWUkVaC6ZUqMqyQRS27XJcujQLbrqzpoYYLGW5/<0;1>/*";
+        let key1 = DescriptorPublicKey::from_str(key1_str).unwrap();
+        let key2 = DescriptorPublicKey::from_str(key2_str).unwrap();
+        let unspendable = DescriptorPublicKey::from_str(unspendable_str).unwrap();
+
+        let keys = liana_descriptor.spendable_keys();
+        // no duplicates
+        assert_eq!(keys.len(), 2);
+        assert!(keys.contains(&key1));
+        assert!(keys.contains(&key2));
+        assert!(!keys.contains(&unspendable));
+
+        let p_unspendable = liana_descriptor.process_unspendable_key().unwrap();
+        assert_eq!(p_unspendable, unspendable);
     }
 
     // TODO: test error conditions of deserialization.
