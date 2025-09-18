@@ -637,6 +637,8 @@ pub fn decrypt_view<'a>(state: &DecryptModal) -> Container<'a, installer::Messag
 
     let content = scrollable(content);
 
+    let content = row![Space::with_width(50), content,];
+
     let column = Column::new()
         .push(header)
         .push(content)

@@ -216,9 +216,9 @@ where
         .align_y(Vertical::Center)
         .height(BTN_H);
 
-    let col = Column::new().push(row).push_maybe(error).width(BTN_W);
+    let col = Column::new().push(row).push_maybe(error);
 
-    let mut btn = Button::new(container(col)).style(widget_style);
+    let mut btn = Button::new(container(col)).style(widget_style).width(BTN_W);
     if let Some(msg) = on_press {
         let msg = msg();
         btn = btn.on_press(msg);
