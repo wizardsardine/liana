@@ -1388,6 +1388,8 @@ pub async fn app_backup_export(
 mod tests {
     use std::env;
 
+    use encrypted_backup::Version;
+
     use super::*;
 
     #[tokio::test]
@@ -1493,5 +1495,41 @@ mod tests {
         "#;
         let expected = "[c658b283/48'/1'/3'/2']tpubDFmeRMxr4X7dxNKxxBKWXu1rskHEQYB8vY5PYPmiB74EjyrE814HHpQzh2XEFpm3z5uJpk7Cjt2hmhcMYmBbot6CmRHn3CKK2K6vzLPBMbH".to_string();
         assert_eq!(expected, parse_coldcard_xpub(raw).unwrap().to_string());
+    }
+
+    #[test]
+    fn test_import_encrypted_descriptor_v0() {
+        let descr_str = "tr(tpubD6NzVbkrYhZ4XYBa9huubPUVRzmGGJoEjFF4i93okdJUBSiDenCbHMAZkjWYWiWoruNEgXouXEdKBL9gDWuxem4gwJMBEs3TVhhNw7AybcA/<0;1>/*,{and_v(v:multi_a(1,[bf3891f9/48'/1'/0'/2']tpubDF8FX2wbUi7rFS4xC8BfYDu6AScYFvRQBwouJeu2DzE55gJgQk2mSa56D9VbyU9YVdWNqWdFBqhWtV9ixZGbd83SRhr7EZUvGJ8QfYazwks/<2;3>/*,[08d94091/48'/1'/0'/2']tpubDEPcGiMo7Z9bwxKvqGU6Zwis2xoESJGKmbcX9Eu6puUgriny9UDCHCF1CpZyGT8s1Kj5diyT2kbe7tj1caWwVb2UYNF129rwNobcq4KTQbs/<2;3>/*),older(52596)),and_v(v:pk([bf3891f9/48'/1'/0'/2']tpubDF8FX2wbUi7rFS4xC8BfYDu6AScYFvRQBwouJeu2DzE55gJgQk2mSa56D9VbyU9YVdWNqWdFBqhWtV9ixZGbd83SRhr7EZUvGJ8QfYazwks/<0;1>/*),pk([08d94091/48'/1'/0'/2']tpubDEPcGiMo7Z9bwxKvqGU6Zwis2xoESJGKmbcX9Eu6puUgriny9UDCHCF1CpZyGT8s1Kj5diyT2kbe7tj1caWwVb2UYNF129rwNobcq4KTQbs/<0;1>/*))})#dn0kkwfc";
+
+        let descriptor = LianaDescriptor::from_str(descr_str).unwrap();
+        let keys = descriptor
+            .spendable_keys()
+            .into_iter()
+            .map(|k| dpk_to_pk(&k))
+            .collect::<Vec<_>>();
+
+        let path = env::current_dir()
+            .unwrap()
+            .join("test_assets")
+            .join("v0.bed");
+
+        let mut file = File::open(path).unwrap();
+        let mut bytes: Vec<u8> = vec![];
+        file.read_to_end(&mut bytes).unwrap();
+
+        let backp = EncryptedBackup::new()
+            .set_encrypted_payload(&bytes)
+            .unwrap();
+
+        assert_eq!(backp.get_version(), Version::V0);
+
+        for k in keys {
+            let descr = backp.clone().set_keys(vec![k]).decrypt().unwrap();
+            if let Decrypted::Descriptor(d) = descr {
+                assert_eq!(d.to_string(), descriptor.to_string());
+            } else {
+                panic!("not a descriptor")
+            }
+        }
     }
 }
