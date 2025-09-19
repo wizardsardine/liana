@@ -27,6 +27,7 @@ pub enum Message {
     Settings(SettingsMessage),
     CreateSpend(CreateSpendMessage),
     ImportSpend(ImportSpendMessage),
+    #[cfg(feature = "buysell")]
     BuySell(BuySellMessage),
     Spend(SpendTxMessage),
     Next,
@@ -131,6 +132,7 @@ pub enum SettingsEditMessage {
     Confirm,
     Clipboard(String),
 }
+#[cfg(feature = "buysell")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AccountType {
     Individual,
@@ -145,6 +147,7 @@ pub enum CreateRbfMessage {
     Confirm,
 }
 
+#[cfg(feature = "buysell")]
 #[derive(Debug, Clone)]
 pub enum BuySellMessage {
     // Native login (default build)
