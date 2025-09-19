@@ -8,6 +8,7 @@ pub mod fiat;
 pub mod home;
 pub mod hw;
 
+#[cfg(feature = "buysell")]
 pub mod buysell;
 
 pub mod psbt;
@@ -31,13 +32,16 @@ use liana_ui::{
     color,
     component::{button, text::*},
     icon::{
-        bitcoin_icon, coins_icon, cross_icon, history_icon, home_icon, receive_icon, recovery_icon,
-        send_icon, settings_icon,
+        coins_icon, cross_icon, history_icon, home_icon, receive_icon, recovery_icon, send_icon,
+        settings_icon,
     },
     image::*,
     theme,
     widget::*,
 };
+
+#[cfg(feature = "buysell")]
+use liana_ui::icon::bitcoin_icon;
 
 use crate::app::{cache::Cache, error::Error, menu::Menu};
 
@@ -140,6 +144,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
             .width(iced::Length::Fill))
     };
 
+    #[cfg(feature = "buysell")]
     let buy_sell_button = {
         if *menu == Menu::BuySell {
             row!(
@@ -184,7 +189,16 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
                     .push(coins_button)
                     .push(transactions_button)
                     .push(psbt_button)
-                    .push(buy_sell_button)
+                    .push_maybe({
+                        #[cfg(feature = "buysell")]
+                        {
+                            Some(buy_sell_button)
+                        }
+                        #[cfg(not(feature = "buysell"))]
+                        {
+                            None::<Row<'_, Message>>
+                        }
+                    })
                     .height(Length::Fill),
             )
             .push(
@@ -299,6 +313,7 @@ pub fn small_sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message
             .width(iced::Length::Fill))
     };
 
+    #[cfg(feature = "buysell")]
     let buy_sell_button = if *menu == Menu::BuySell {
         row!(
             button::menu_active_small(bitcoin_icon())
@@ -339,7 +354,16 @@ pub fn small_sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message
                     .push(coins_button)
                     .push(transactions_button)
                     .push(psbt_button)
-                    .push(buy_sell_button)
+                    .push_maybe({
+                        #[cfg(feature = "buysell")]
+                        {
+                            Some(buy_sell_button)
+                        }
+                        #[cfg(not(feature = "buysell"))]
+                        {
+                            None::<Row<'_, Message>>
+                        }
+                    })
                     .align_x(iced::Alignment::Center)
                     .height(Length::Fill),
             )

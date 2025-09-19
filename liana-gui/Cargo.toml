@@ -17,6 +17,7 @@ path = "src/main.rs"
 dev-meld = ["webview"]
 dev-onramp = ["webview"]
 webview = ["iced_webview"]
+buysell = []
 
 [dependencies]
 async-trait = "0.1"
