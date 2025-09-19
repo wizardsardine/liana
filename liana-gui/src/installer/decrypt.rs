@@ -8,7 +8,8 @@ use std::{
 use async_hwi::{bitbox::api::btc::Fingerprint, DeviceKind, Version, HWI};
 use encrypted_backup::{Decrypted, EncryptedBackup};
 use iced::{
-    alignment, clipboard,
+    alignment::{self, Horizontal},
+    clipboard,
     widget::{column, row, scrollable, Column, Space},
     Length, Task,
 };
@@ -67,7 +68,13 @@ pub struct DecryptModal {
     error: Option<Error>,
     bytes: Vec<u8>,
     derivation_paths: HashSet<DerivationPath>,
-    cant_fetch: BTreeMap<String /* id */, String /* name */>,
+    cant_fetch: BTreeMap<
+        String, /* id */
+        (
+            String,         /* name */
+            Option<String>, /* pairing code */
+        ),
+    >,
     fetching: BTreeMap<Fingerprint, String /* name */>,
     fetched: BTreeMap<Fingerprint, String /* name */>,
     show_options: bool,
@@ -350,10 +357,15 @@ impl DecryptModal {
                 HardwareWallet::Unsupported {
                     id, kind, version, ..
                 } => {
-                    new_cant_fetch.insert(id.clone(), name(*kind, version.clone()));
+                    new_cant_fetch.insert(id.clone(), (name(*kind, version.clone()), None));
                 }
-                HardwareWallet::Locked { id, kind, .. } => {
-                    new_cant_fetch.insert(id.clone(), name(*kind, None));
+                HardwareWallet::Locked {
+                    id,
+                    kind,
+                    pairing_code,
+                    ..
+                } => {
+                    new_cant_fetch.insert(id.clone(), (name(*kind, None), pairing_code.clone()));
                 }
                 d => {
                     if let HardwareWallet::Supported { fingerprint, .. } = d {
@@ -503,8 +515,17 @@ fn widget_signing_device(
     name: String,
     fingerprint: Option<Fingerprint>,
     message: &str,
+    pairing_code: Option<String>,
 ) -> Button<'_, installer::Message> {
-    let message = p1_regular(message);
+    let message = if let Some(code) = pairing_code {
+        column![
+            p1_regular(message),
+            p1_regular(format!("Pairing code: {code}")),
+        ]
+    } else {
+        column![p1_regular(message)]
+    }
+    .align_x(Horizontal::Center);
     let fg = if let Some(fg) = fingerprint {
         format!("#{fg}")
     } else {
@@ -523,30 +544,34 @@ fn widget_signing_device(
     Button::new(row).style(widget_style).width(BTN_W)
 }
 
-fn cant_fetch_device(name: String) -> Button<'static, installer::Message> {
+fn cant_fetch_device(
+    name: String,
+    pairing_code: Option<String>,
+) -> Button<'static, installer::Message> {
     let message = "Please unlock or open app on the device";
-    widget_signing_device(name, None, message)
+    widget_signing_device(name, None, message, pairing_code)
 }
 
 fn fetching_device(name: String, fingerprint: Fingerprint) -> Button<'static, installer::Message> {
     let message = "Try to decrypt with this device...";
-    widget_signing_device(name, Some(fingerprint), message)
+    widget_signing_device(name, Some(fingerprint), message, None)
 }
 
 fn fetched_device(name: String, fingerprint: Fingerprint) -> Button<'static, installer::Message> {
     let message = "Failed to decrypt file with this device";
-    widget_signing_device(name, Some(fingerprint), message)
+    widget_signing_device(name, Some(fingerprint), message, None)
 }
 
 fn valid_content(state: &DecryptModal) -> Container<'static, installer::Message> {
-    let description = text::text("Plug in and unlock a hardware device belonging to this setup to automatically decrypt the backup");
+    let description = text::text("Plug in and unlock a hardware device belonging to this setup to \nautomatically decrypt the backup");
     let mut devices = state
         .fetching
         .iter()
         .map(|(fg, name)| fetching_device(name.clone(), *fg))
         .collect::<Vec<_>>();
     for d in &state.cant_fetch {
-        devices.push(cant_fetch_device(d.1.clone()));
+        let (msg, pairing_code) = d.1.clone();
+        devices.push(cant_fetch_device(msg, pairing_code));
     }
     for (fg, name) in &state.fetched {
         devices.push(fetched_device(name.clone(), *fg));
@@ -636,6 +661,8 @@ pub fn decrypt_view<'a>(state: &DecryptModal) -> Container<'a, installer::Messag
     };
 
     let content = scrollable(content);
+
+    let content = row![Space::with_width(50), content];
 
     let column = Column::new()
         .push(header)
