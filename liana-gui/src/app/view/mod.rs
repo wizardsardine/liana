@@ -32,8 +32,8 @@ use liana_ui::{
     color,
     component::{button, text::*},
     icon::{
-        coins_icon, cross_icon, history_icon, home_icon, receive_icon, recovery_icon,
-        send_icon, settings_icon,
+        coins_icon, cross_icon, history_icon, home_icon, receive_icon, recovery_icon, send_icon,
+        settings_icon,
     },
     image::*,
     theme,
@@ -191,9 +191,13 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
                     .push(psbt_button)
                     .push_maybe({
                         #[cfg(feature = "buysell")]
-                        { Some(buy_sell_button) }
+                        {
+                            Some(buy_sell_button)
+                        }
                         #[cfg(not(feature = "buysell"))]
-                        { None::<Row<'_, Message>> }
+                        {
+                            None::<Row<'_, Message>>
+                        }
                     })
                     .height(Length::Fill),
             )
@@ -352,9 +356,13 @@ pub fn small_sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message
                     .push(psbt_button)
                     .push_maybe({
                         #[cfg(feature = "buysell")]
-                        { Some(buy_sell_button) }
+                        {
+                            Some(buy_sell_button)
+                        }
                         #[cfg(not(feature = "buysell"))]
-                        { None::<Row<'_, Message>> }
+                        {
+                            None::<Row<'_, Message>>
+                        }
                     })
                     .align_x(iced::Alignment::Center)
                     .height(Length::Fill),
