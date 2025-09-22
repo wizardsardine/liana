@@ -8,7 +8,7 @@ use std::{
 use async_hwi::{bitbox::api::btc::Fingerprint, DeviceKind, Version, HWI};
 use encrypted_backup::{Decrypted, EncryptedBackup};
 use iced::{
-    alignment::{self, Horizontal},
+    alignment::{self, Horizontal, Vertical},
     clipboard,
     widget::{column, row, scrollable, tooltip, Column, Space},
     Length, Task,
@@ -26,14 +26,15 @@ use liana::{
     },
 };
 use liana_ui::{
+    color,
     component::{
         card,
-        form::Value,
-        modal::{self, widget_style, BTN_W},
+        form::{self, Value},
+        modal::{self, widget_style, BTN_H, BTN_W, V_SPACING},
         text::{self, p1_regular},
     },
     icon, theme,
-    widget::{modal::Modal, Button, Container, Element, Row},
+    widget::{modal::Modal, Button, CheckBox, Container, Element, Row},
 };
 
 use crate::{
@@ -82,6 +83,7 @@ pub struct DecryptModal {
     xpub: Value<String>,
     xpub_busy: bool,
     mnemonic: Value<String>,
+    mnemonic_ack: bool,
     mnemonic_busy: bool,
     focus: Focus,
     pub modal: Option<ExportModal>,
@@ -110,6 +112,7 @@ pub enum Decrypt {
     PasteMnemonic,
     SelectMnemonic,
     MnemonicStatus(Option<&'static str> /* error */, Option<Fingerprint>),
+    MnemonicAck(bool),
     SelectImportXpub,
     UnexpectedPayload(Decrypted),
     InvalidDescriptor,
@@ -201,6 +204,7 @@ impl DecryptModal {
             xpub_busy: false,
             mnemonic: Value::default(),
             mnemonic_busy: false,
+            mnemonic_ack: false,
             focus: Focus::None,
             modal: None,
         }
@@ -285,6 +289,10 @@ impl DecryptModal {
             }
             Decrypt::CloseModal => {
                 self.modal = None;
+                Task::none()
+            }
+            Decrypt::MnemonicAck(ack) => {
+                self.mnemonic_ack = ack;
                 Task::none()
             }
             Decrypt::None
@@ -633,15 +641,10 @@ fn optional_content(state: &DecryptModal) -> Container<'static, installer::Messa
         || Decrypt::SelectXpub.into(),
     );
 
-    let mnemonic = modal::collapsible_input_button(
+    let mnemonic = mnemonic_input_button(
         state.focus == Focus::Mnemonic,
-        Some(icon::pencil_icon()),
-        "Enter mnemonic of one of the keys".to_string(),
-        "code code code code code code code code code code code brave".to_string(),
+        state.mnemonic_ack,
         &state.mnemonic,
-        Some(|s| Decrypt::Mnemonic(s).into()),
-        Some(|| Decrypt::PasteMnemonic.into()),
-        || Decrypt::SelectMnemonic.into(),
     );
 
     let col = column![
@@ -651,10 +654,71 @@ fn optional_content(state: &DecryptModal) -> Container<'static, installer::Messa
         Space::with_height(modal::V_SPACING),
         xpub,
         Space::with_height(modal::V_SPACING),
-        mnemonic
+        mnemonic,
+        Space::with_height(modal::V_SPACING),
     ];
 
     Container::new(col)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn mnemonic_input_button<'a>(
+    collapsed: bool,
+    ack: bool,
+    input_value: &Value<String>,
+) -> Element<'a, installer::Message> {
+    let icon = icon::pencil_icon().color(color::WHITE);
+    let label = "UNSAFE: Enter mnemonic of one of the keys";
+    let input_placeholder = "code code code code code code code code code code code brave";
+    let disclaimer = " This option is not secure. I understand that entering a mnemonic on a computer may result in theft of my funds.";
+    let paste_message = Decrypt::PasteMnemonic.into();
+    let collapse_message = Decrypt::SelectMnemonic.into();
+
+    let form = if ack {
+        form::Form::new(input_placeholder, input_value, |s| {
+            Decrypt::Mnemonic(s).into()
+        })
+    } else {
+        form::Form::new_disabled(input_placeholder, input_value)
+    }
+    .padding(10);
+    let paste = Button::new(icon::paste_icon().color(color::BLACK)).on_press(paste_message);
+
+    if collapsed {
+        let line = Row::new().push(form).push(paste).spacing(V_SPACING);
+        let check_box =
+            CheckBox::new(disclaimer, ack).on_toggle(|ack| Decrypt::MnemonicAck(ack).into());
+        let col = Column::new()
+            .push(row![
+                text::p1_regular(label).color(color::WHITE),
+                Space::with_width(Length::Fill)
+            ])
+            .push(line);
+        let content = if ack {
+            Container::new(col)
+        } else {
+            Container::new(check_box)
+        };
+        let row = Row::new()
+            .push(icon)
+            .push(content)
+            .align_y(Vertical::Center)
+            .spacing(V_SPACING);
+
+        Button::new(row).style(widget_style)
+    } else {
+        let row = Row::new()
+            .push(icon)
+            .push(text::p1_regular(label))
+            .height(BTN_H)
+            .spacing(V_SPACING)
+            .align_y(Vertical::Center);
+        Button::new(row)
+            .on_press(collapse_message)
+            .style(widget_style)
+    }
+    .width(BTN_W)
+    .into()
 }
 
 /// Return the modal view for an export task
