@@ -383,7 +383,6 @@ fn wallets_list_item(
                                         Network::Testnet => "Testnet",
                                         Network::Testnet4 => "Testnet4",
                                         Network::Regtest => "Regtest",
-                                        _ => "",
                                     }
                                 ))
                             })

@@ -35,12 +35,12 @@ iced = { version = "0.13.1", default-features = false, features = [
 	"svg",
 	"canvas",
 	"qr_code",
-	"image",
+	"image-without-codecs",
 	"lazy",
 	"advanced",
 	"wgpu",
-	"tiny-skia",
 ] }
+image = { version = "*", default-features = false, features = ["png"] }
 iced_aw = { version = "0.12.2", features = ["context_menu"] }
 iced_runtime = "0.13.1"
 

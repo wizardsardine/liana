@@ -721,7 +721,6 @@ impl BitcoinD {
             bitcoin::Network::Testnet4 => "testnet4",
             bitcoin::Network::Regtest => "regtest",
             bitcoin::Network::Signet => "signet",
-            _ => "Unknown network, undefined at the time of writing",
         };
         if bitcoind_net != bip70_net {
             return Err(BitcoindError::NetworkMismatch(

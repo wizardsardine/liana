@@ -3274,6 +3274,7 @@ dependencies = [
  "iced_aw",
  "iced_runtime",
  "iced_webview",
+ "image 0.24.9",
  "jsonrpc 0.12.1",
  "liana",
  "liana-ui",
