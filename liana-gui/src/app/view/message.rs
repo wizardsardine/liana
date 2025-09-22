@@ -162,6 +162,38 @@ pub enum BuySellMessage {
     #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
     GetStarted,
 
+    // Default build: registration form (native flow)
+    #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+    FirstNameChanged(String),
+    #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+    LastNameChanged(String),
+    #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+    EmailChanged(String),
+    #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+    Password1Changed(String),
+    #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+    Password2Changed(String),
+    #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+    TermsToggled(bool),
+    #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+    SubmitRegistration,
+    #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+    CheckEmailVerificationStatus,
+    #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+    ResendVerificationEmail,
+    #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+    RegistrationSuccess,
+    #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+    RegistrationError(String),
+    #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+    EmailVerificationStatusChecked(bool),
+    #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+    EmailVerificationStatusError(String),
+    #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+    ResendEmailSuccess,
+    #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+    ResendEmailError(String),
+
     // Shared form fields (for provider-integrated builds)
     WalletAddressChanged(String),
     #[cfg(feature = "dev-meld")]
