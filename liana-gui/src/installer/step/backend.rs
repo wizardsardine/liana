@@ -570,6 +570,11 @@ impl Step for ImportRemoteWallet {
                     self.error = Some("Backup imported but descriptor missing!".into());
                 }
             }
+            Message::Decrypt(m) => {
+                if let ImportDescriptorModal::Decrypt(modal) = &mut self.modal {
+                    return modal.update(m);
+                }
+            }
             Message::ImportRemoteWallet(message::ImportRemoteWallet::ImportDescriptor(desc)) => {
                 self.imported_descriptor.value = desc;
                 if !self.imported_descriptor.value.is_empty() {
