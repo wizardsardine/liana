@@ -10,7 +10,7 @@ use encrypted_backup::{Decrypted, EncryptedBackup};
 use iced::{
     alignment::{self, Horizontal},
     clipboard,
-    widget::{column, row, scrollable, Column, Space},
+    widget::{column, row, scrollable, tooltip, Column, Space},
     Length, Task,
 };
 use liana::{
@@ -32,8 +32,8 @@ use liana_ui::{
         modal::{self, widget_style, BTN_W},
         text::{self, p1_regular},
     },
-    icon,
-    widget::{modal::Modal, Button, Container, Element},
+    icon, theme,
+    widget::{modal::Modal, Button, Container, Element, Row},
 };
 
 use crate::{
@@ -596,6 +596,24 @@ fn valid_content(state: &DecryptModal) -> Container<'static, installer::Message>
 }
 
 fn optional_content(state: &DecryptModal) -> Container<'static, installer::Message> {
+    let mut tt = Column::new().push(text::text("Using an air-gapped device? Export the xpub from your device, then use the upload or paste option. If you don’t know the correct derivation path, try with the following:"));
+    for d in &state.derivation_paths {
+        tt = tt.push(text::text(format!("{d}")));
+    }
+    let tt = Container::new(tt)
+        .style(theme::card::simple)
+        .padding(10)
+        .width(300);
+
+    let airgap_hint = Row::new()
+        .push(p1_regular("Provide one of the xpubs used in this wallet."))
+        .push(tooltip::Tooltip::new(
+            icon::tooltip_icon(),
+            tt,
+            tooltip::Position::Bottom,
+        ))
+        .spacing(5);
+
     let import = modal::button_entry(
         Some(icon::import_icon()),
         "Upload extended public key file",
@@ -627,6 +645,8 @@ fn optional_content(state: &DecryptModal) -> Container<'static, installer::Messa
     );
 
     let col = column![
+        airgap_hint,
+        Space::with_height(modal::V_SPACING),
         import,
         Space::with_height(modal::V_SPACING),
         xpub,
