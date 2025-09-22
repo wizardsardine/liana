@@ -680,7 +680,7 @@ pub fn decrypt_view<'a>(state: &DecryptModal) -> Container<'a, installer::Messag
         None => valid_content(state),
     };
 
-    let content = scrollable(content);
+    let content = scrollable(Container::new(content).padding(15));
 
     let content = row![Space::with_width(50), content];
 
