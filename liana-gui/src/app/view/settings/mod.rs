@@ -217,8 +217,8 @@ pub fn import_export<'a>(cache: &'a Cache, warning: Option<&Error>) -> Element<'
         .push(Space::with_width(Length::Fill));
 
     let export_descriptor = export_section(
-        "Descriptor only",
-        "Plain-text descriptor file only, to use with other wallets.",
+        "Descriptor only - plain-text",
+        "Plain-text (not encrypted) descriptor file only, to use with other wallets.",
         icon::backup_icon(),
         Message::Settings(SettingsMessage::ExportEncryptedDescriptor),
     );
