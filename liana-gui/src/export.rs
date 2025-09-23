@@ -9,12 +9,13 @@ use std::{
     time,
 };
 
+use encrypted_backup::{descriptor::dpk_to_pk, Decrypted, EncryptedBackup};
 use tokio::sync::mpsc::{channel, unbounded_channel, Sender, UnboundedReceiver, UnboundedSender};
 
 use async_hwi::bitbox::api::btc::Fingerprint;
 use chrono::{DateTime, Duration, Utc};
 use liana::{
-    descriptors::LianaDescriptor,
+    descriptors::{bip341_nums, LianaDescriptor},
     miniscript::{
         bitcoin::{Amount, Network, Psbt, Txid},
         DescriptorPublicKey,
@@ -122,11 +123,14 @@ pub enum Error {
     Bip329Export(String),
     BackupImport(String),
     Backup(backup::Error),
+    EncryptedBackup(encrypted_backup::Error),
+    EncryptionFailed,
     ParseXpub,
     XpubNetwork,
     TxidNotMatch,
     InsanePsbt,
     OutpointNotOwned,
+    UnknownFormat,
 }
 
 impl Display for Error {
@@ -154,6 +158,9 @@ impl Display for Error {
                 f,
                 "Import failed. The PSBT either doesn't belong to the wallet or has already been spent."
             ),
+            Error::EncryptedBackup(e) => write!(f, "Failed to encrypt backup: {e:?}"),
+            Error::UnknownFormat => write!(f, "Format of the file unknown"),
+            Error::EncryptionFailed => write!(f, "Encryption failed, please contact Wizarsardine team.")
         }
     }
 }
@@ -163,7 +170,7 @@ pub enum ImportExportType {
     Transactions,
     ExportPsbt(String),
     ExportXpub(String),
-    ExportBackup(String),
+    ExportEncryptedDescriptor(Box<LianaDescriptor>),
     ExportProcessBackup(LianaDirectory, Network, Arc<Config>, Arc<Wallet>),
     ImportBackup {
         network_dir: NetworkDirectory,
@@ -171,7 +178,7 @@ pub enum ImportExportType {
         overwrite_labels: Option<Sender<bool>>,
         overwrite_aliases: Option<Sender<bool>>,
     },
-    WalletFromBackup,
+    FromBackup,
     Descriptor(LianaDescriptor),
     ExportLabels,
     ImportPsbt(Option<Txid>),
@@ -184,15 +191,15 @@ impl ImportExportType {
         match self {
             ImportExportType::Transactions
             | ImportExportType::ExportPsbt(_)
-            | ImportExportType::ExportBackup(_)
             | ImportExportType::Descriptor(_)
             | ImportExportType::ExportProcessBackup(..)
             | ImportExportType::ExportXpub(_)
+            | ImportExportType::ExportEncryptedDescriptor(_)
             | ImportExportType::ExportLabels => "Export successful!",
             ImportExportType::ImportBackup { .. }
             | ImportExportType::ImportPsbt(_)
             | ImportExportType::ImportXpub(_)
-            | ImportExportType::WalletFromBackup
+            | ImportExportType::FromBackup
             | ImportExportType::ImportDescriptor => "Import successful",
         }
     }
@@ -219,6 +226,12 @@ impl From<DaemonError> for Error {
 impl From<ExportError> for Error {
     fn from(value: ExportError) -> Self {
         Error::Bip329Export(format!("{:?}", value))
+    }
+}
+
+impl From<encrypted_backup::Error> for Error {
+    fn from(value: encrypted_backup::Error) -> Self {
+        Error::EncryptedBackup(value)
     }
 }
 
@@ -251,6 +264,7 @@ pub enum Progress {
             Backup,
         ),
     ),
+    EncryptedFile(Vec<u8>),
 }
 
 pub struct Export {
@@ -295,7 +309,9 @@ impl Export {
             ImportExportType::ImportPsbt(txid) => import_psbt(daemon, &sender, path, txid).await,
             ImportExportType::ImportXpub(network) => import_xpub(&sender, path, network).await,
             ImportExportType::ImportDescriptor => import_descriptor(&sender, path).await,
-            ImportExportType::ExportBackup(str) => export_string(&sender, path, str).await,
+            ImportExportType::ExportEncryptedDescriptor(descr) => {
+                export_encrypted_descriptor(&sender, path, *descr).await
+            }
             ImportExportType::ExportXpub(xpub_str) => export_string(&sender, path, xpub_str).await,
             ImportExportType::ExportProcessBackup(datadir, network, config, wallet) => {
                 app_backup_export(
@@ -314,7 +330,7 @@ impl Export {
                 wallet,
                 ..
             } => import_backup(&network_dir, wallet, &sender, path, daemon).await,
-            ImportExportType::WalletFromBackup => wallet_from_backup(&sender, path).await,
+            ImportExportType::FromBackup => from_backup(&sender, path).await,
         } {
             if let Err(e) = sender.send(Progress::Error(e)) {
                 tracing::error!("Import/Export fail to send msg: {}", e);
@@ -577,6 +593,59 @@ pub async fn export_string(
 ) -> Result<(), Error> {
     let mut file = open_file_write(&path).await?;
     file.write_all(str.as_bytes())?;
+    send_progress!(sender, Progress(100.0));
+    send_progress!(sender, Ended);
+    Ok(())
+}
+
+pub async fn export_encrypted_descriptor(
+    sender: &UnboundedSender<Progress>,
+    path: PathBuf,
+    descr: LianaDescriptor,
+) -> Result<(), Error> {
+    let descriptor = descr.descriptor();
+    let bytes = EncryptedBackup::new().set_payload(descriptor)?.encrypt()?;
+
+    send_progress!(sender, Progress(30.0));
+    // verify we can decrypt with any keys from the descriptor
+    for key in descr.spendable_keys() {
+        let decrypted = EncryptedBackup::new()
+            .set_encrypted_payload(&bytes)
+            .map_err(|_| Error::EncryptionFailed)?
+            .set_keys(vec![dpk_to_pk(&key)])
+            .decrypt()
+            .map_err(|_| Error::EncryptionFailed)?;
+        if let Decrypted::Descriptor(d) = decrypted {
+            if descr.to_string() != d.to_string() {
+                return Err(Error::EncryptionFailed);
+            }
+        } else {
+            return Err(Error::EncryptionFailed);
+        }
+    }
+
+    // verify we can NOT decrypt w/ unspendable key or BIP341 NUMS
+    if let Some(unspendable) = descr.process_unspendable_key() {
+        let unspendable = dpk_to_pk(&unspendable);
+        let encrypted = EncryptedBackup::new()
+            .set_encrypted_payload(&bytes)
+            .map_err(|_| Error::EncryptionFailed)?
+            .set_keys(vec![unspendable]);
+        if encrypted.decrypt().is_ok() {
+            return Err(Error::EncryptionFailed);
+        }
+    }
+    let nums = bip341_nums();
+    let encrypted = EncryptedBackup::new()
+        .set_encrypted_payload(&bytes)
+        .map_err(|_| Error::EncryptionFailed)?
+        .set_keys(vec![nums]);
+    if encrypted.decrypt().is_ok() {
+        return Err(Error::EncryptionFailed);
+    }
+
+    let mut file = open_file_write(&path).await?;
+    file.write_all(&bytes)?;
     send_progress!(sender, Progress(100.0));
     send_progress!(sender, Ended);
     Ok(())
@@ -1027,22 +1096,33 @@ impl From<DaemonError> for RestoreBackupError {
     }
 }
 
-/// Create a wallet from a backup
-///    - load backup from file
-///    - extract descriptor
-///    - extract network
-///    - extract aliases
-pub async fn wallet_from_backup(
-    sender: &UnboundedSender<Progress>,
-    path: PathBuf,
-) -> Result<(), Error> {
-    // Load backup from file
+/// Try to import descriptor/backup from file, several input types are supported:
+///    - encrypted file
+///    - liana wallet backup
+///    - plaintext descriptor
+pub async fn from_backup(sender: &UnboundedSender<Progress>, path: PathBuf) -> Result<(), Error> {
+    // Load file
     let mut file = File::open(path)?;
 
-    let mut backup_str = String::new();
-    file.read_to_string(&mut backup_str)?;
-    backup_str = backup_str.trim().to_string();
+    let mut bytes = vec![];
+    if let Err(e) = file.read_to_end(&mut bytes) {
+        return Err(Error::Io(e.to_string()));
+    }
 
+    // first we try to parse as an encrypted backup
+    if EncryptedBackup::new().set_encrypted_payload(&bytes).is_ok() {
+        send_progress!(sender, EncryptedFile(bytes));
+        send_progress!(sender, Progress(100.0));
+        send_progress!(sender, Ended);
+        return Ok(());
+    }
+
+    let backup_str = match String::from_utf8(bytes) {
+        Ok(s) => s,
+        Err(_) => return Err(Error::UnknownFormat),
+    };
+
+    // else we try to parse as plaintetxt descriptor or backup file
     let backup: Result<Backup, _> = serde_json::from_str(&backup_str);
     let backup = match backup {
         Ok(b) => b,
@@ -1308,6 +1388,8 @@ pub async fn app_backup_export(
 mod tests {
     use std::env;
 
+    use encrypted_backup::Version;
+
     use super::*;
 
     #[tokio::test]
@@ -1413,5 +1495,41 @@ mod tests {
         "#;
         let expected = "[c658b283/48'/1'/3'/2']tpubDFmeRMxr4X7dxNKxxBKWXu1rskHEQYB8vY5PYPmiB74EjyrE814HHpQzh2XEFpm3z5uJpk7Cjt2hmhcMYmBbot6CmRHn3CKK2K6vzLPBMbH".to_string();
         assert_eq!(expected, parse_coldcard_xpub(raw).unwrap().to_string());
+    }
+
+    #[test]
+    fn test_import_encrypted_descriptor_v0() {
+        let descr_str = "tr(tpubD6NzVbkrYhZ4XYBa9huubPUVRzmGGJoEjFF4i93okdJUBSiDenCbHMAZkjWYWiWoruNEgXouXEdKBL9gDWuxem4gwJMBEs3TVhhNw7AybcA/<0;1>/*,{and_v(v:multi_a(1,[bf3891f9/48'/1'/0'/2']tpubDF8FX2wbUi7rFS4xC8BfYDu6AScYFvRQBwouJeu2DzE55gJgQk2mSa56D9VbyU9YVdWNqWdFBqhWtV9ixZGbd83SRhr7EZUvGJ8QfYazwks/<2;3>/*,[08d94091/48'/1'/0'/2']tpubDEPcGiMo7Z9bwxKvqGU6Zwis2xoESJGKmbcX9Eu6puUgriny9UDCHCF1CpZyGT8s1Kj5diyT2kbe7tj1caWwVb2UYNF129rwNobcq4KTQbs/<2;3>/*),older(52596)),and_v(v:pk([bf3891f9/48'/1'/0'/2']tpubDF8FX2wbUi7rFS4xC8BfYDu6AScYFvRQBwouJeu2DzE55gJgQk2mSa56D9VbyU9YVdWNqWdFBqhWtV9ixZGbd83SRhr7EZUvGJ8QfYazwks/<0;1>/*),pk([08d94091/48'/1'/0'/2']tpubDEPcGiMo7Z9bwxKvqGU6Zwis2xoESJGKmbcX9Eu6puUgriny9UDCHCF1CpZyGT8s1Kj5diyT2kbe7tj1caWwVb2UYNF129rwNobcq4KTQbs/<0;1>/*))})#dn0kkwfc";
+
+        let descriptor = LianaDescriptor::from_str(descr_str).unwrap();
+        let keys = descriptor
+            .spendable_keys()
+            .into_iter()
+            .map(|k| dpk_to_pk(&k))
+            .collect::<Vec<_>>();
+
+        let path = env::current_dir()
+            .unwrap()
+            .join("test_assets")
+            .join("v0.bed");
+
+        let mut file = File::open(path).unwrap();
+        let mut bytes: Vec<u8> = vec![];
+        file.read_to_end(&mut bytes).unwrap();
+
+        let backp = EncryptedBackup::new()
+            .set_encrypted_payload(&bytes)
+            .unwrap();
+
+        assert_eq!(backp.get_version(), Version::V0);
+
+        for k in keys {
+            let descr = backp.clone().set_keys(vec![k]).decrypt().unwrap();
+            if let Decrypted::Descriptor(d) = descr {
+                assert_eq!(d.to_string(), descriptor.to_string());
+            } else {
+                panic!("not a descriptor")
+            }
+        }
     }
 }

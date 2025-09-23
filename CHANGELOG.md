@@ -1,4 +1,31 @@
+
 # Liana daemon and GUI release notes
+
+## 13.0
+
+This release mostly modifies liana-gui by adding new features:
+
+* Encrypted descriptor support:  Implemented encrypted descriptor backup and import functionality for enhanced
+  privacy. Encryption keys are derived from the lexicographically‑sorted public keys inside the descriptor or policy,
+  so any party who already holds one of those keys can later decrypt the backup without extra secrets or round‑trips
+  For more information please read [the draft BIP](https://github.com/pythcoiner/bips/blob/encrypted_descriptor/bip-encrypted-backup.md)
+* Fiat currency features:  Added fiat price display on home page, edit fiat amounts on send page, and
+  automatic refresh of price information. User can modify in the settings the source of the fiat price.
+  This feature is optional and disabled by default.
+* Testnet4 support: Added support for Bitcoin testnet4 network.
+
+And some improvements:
+
+* Home page refresh: Added automatic refresh every 10 seconds and manual refresh when scrolling to top.
+* Installer key selection modal rework: Improvement of the user flow while importing Xpub in the descriptor editor.
+* UI improvements: Fixed badge tooltips, improved modal layouts, updated paste icon, added toggler widget and
+  wrench icon
+* Network validation: Display errors for xpubs from wrong network or invalid xpubs in installer
+* Bug fixes: Fixed widget toast bounds, missing tab closing with wallet loading, loader button wording, and
+  removed forgotten logs
+* Code refactoring: Added formatting traits, moved utilities, improved cache management, and updated deprecated
+  methods
+* Wallet management: Added deletion confirmation message for wallet members
 
 ## 12.0
 

@@ -17,13 +17,11 @@ use crate::{
     hw::{HardwareWallet, HardwareWallets},
     installer::{
         message::Message,
-        step::{
-            descriptor::editor::key::{default_derivation_path, get_extended_pubkey},
-            Context, Step,
-        },
+        step::{descriptor::editor::key::get_extended_pubkey, Context, Step},
         view, Error,
     },
     signer::Signer,
+    utils::default_derivation_path,
 };
 
 pub struct HardwareWalletXpubs {

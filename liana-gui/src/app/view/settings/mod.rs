@@ -218,9 +218,9 @@ pub fn import_export<'a>(cache: &'a Cache, warning: Option<&Error>) -> Element<'
 
     let export_descriptor = export_section(
         "Descriptor only",
-        "Descriptor file only, to use with other wallets.",
+        "Plain-text descriptor file only, to use with other wallets.",
         icon::backup_icon(),
-        Message::Settings(SettingsMessage::ExportDescriptor),
+        Message::Settings(SettingsMessage::ExportEncryptedDescriptor),
     );
 
     let export_transactions = export_section(
@@ -238,14 +238,14 @@ pub fn import_export<'a>(cache: &'a Cache, warning: Option<&Error>) -> Element<'
     );
 
     let export_wallet = export_section(
-        "Back up wallet",
-        "File with wallet info needed to restore on other devices (no private keys).",
+        "Export wallet",
+        "File with wallet info useful to sync labels and data on other devices.",
         icon::backup_icon(),
         Message::Settings(SettingsMessage::ExportWallet),
     );
 
     let import_wallet = export_section(
-        "Restore wallet",
+        "Import wallet",
         "Upload a backup file to update wallet info.",
         icon::restore_icon(),
         Message::Settings(SettingsMessage::ImportWallet),
@@ -1010,18 +1010,6 @@ pub fn wallet_settings<'a>(
 ) -> Element<'a, Message> {
     let header = header("Wallet", SettingsMessage::EditWalletSettings);
 
-    let import_export = Row::new()
-        .push(
-            button::secondary(Some(icon::backup_icon()), "Backup")
-                .on_press(Message::Settings(SettingsMessage::ExportWallet)),
-        )
-        .push(Space::with_width(10))
-        .push(
-            button::secondary(Some(icon::restore_icon()), "Restore")
-                .on_press(Message::Settings(SettingsMessage::ImportWallet)),
-        )
-        .push(Space::with_width(Length::Fill));
-
     let descr = card::simple(
         Column::new()
             .push(text("Wallet descriptor:").bold())
@@ -1039,6 +1027,12 @@ pub fn wallet_settings<'a>(
                 Row::new()
                     .spacing(10)
                     .push(Column::new().width(Length::Fill))
+                    .push(
+                        button::secondary(Some(icon::backup_icon()), "Back up Descriptor")
+                            .on_press(Message::Settings(
+                                SettingsMessage::ExportEncryptedDescriptor,
+                            )),
+                    )
                     .push(
                         button::secondary(Some(icon::clipboard_icon()), "Copy")
                             .on_press(Message::Clipboard(descriptor.to_string())),
@@ -1118,7 +1112,6 @@ pub fn wallet_settings<'a>(
         Column::new()
             .spacing(20)
             .push(header)
-            .push(import_export)
             .push(descr)
             .push(
                 card::simple(display_policy(

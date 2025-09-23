@@ -1,6 +1,6 @@
 [package]
 name = "liana-gui"
-version = "12.0.0"
+version = "13.0.0"
 readme = "README.md"
 description = "Liana GUI"
 repository = "https://github.com/wizardsardine/liana"
@@ -86,6 +86,8 @@ fs4 = { version = "0.13", features = ["sync"] }
 # Used for opening URLs in browser
 open = "5.3"
 mimalloc = { version = "0.1.48", features = ["v3"] }
+
+encrypted_backup = { version = "0.0.1", default-features=false, features = ["miniscript_12_0"], package = "bitcoin-encrypted-backup" }
 
 [target.'cfg(windows)'.dependencies]
 zip = { version = "0.6", default-features = false, features = [
