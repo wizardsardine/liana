@@ -88,3 +88,14 @@ currency_enum!(Currency {
     ZAR,
     ZMW,
 });
+
+impl Currency {
+    /// Returns the number of decimals required for the minor unit.
+    pub fn decimals(&self) -> usize {
+        match self {
+            Currency::CLP | Currency::JPY | Currency::KRW | Currency::VND => 0,
+            Currency::BHD | Currency::KWD => 3,
+            _ => 2,
+        }
+    }
+}

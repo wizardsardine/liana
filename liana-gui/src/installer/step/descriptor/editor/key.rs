@@ -1,3 +1,4 @@
+use crate::utils::example_xpub;
 use std::{
     collections::HashMap,
     str::FromStr,
@@ -39,7 +40,6 @@ use crate::{
     installer::{
         descriptor::{Key, KeySource},
         message::{self, Message},
-        view::editor::example_xpub,
         Error, PathKind,
     },
     services::{
@@ -1523,19 +1523,6 @@ fn alias_already_exists(
     false
 }
 
-pub fn default_derivation_path(network: Network) -> DerivationPath {
-    // Note that "m" is ignored when parsing string and could be removed:
-    // https://github.com/rust-bitcoin/rust-bitcoin/pull/2677
-    DerivationPath::from_str({
-        if network == Network::Bitcoin {
-            "m/48'/0'/0'/2'"
-        } else {
-            "m/48'/1'/0'/2'"
-        }
-    })
-    .unwrap()
-}
-
 pub fn derivation_path(network: Network, account: ChildNumber) -> DerivationPath {
     assert!(account.is_hardened());
     let network = if network == Network::Bitcoin {
@@ -1575,6 +1562,8 @@ pub async fn get_extended_pubkey(
 
 #[cfg(test)]
 mod tests {
+    use crate::utils::default_derivation_path;
+
     use super::*;
 
     #[test]
