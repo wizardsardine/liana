@@ -129,6 +129,7 @@ pub fn internal_bitcoind_debug_log_path(
     debug_log_path
 }
 
+#[allow(unreachable_patterns)]
 pub fn bitcoind_network_dir(network: &Network) -> Option<String> {
     let dir = match network {
         Network::Bitcoin => {

@@ -431,7 +431,7 @@ impl BuySellPanel {
                                         ))
                                     })
                                     .size(16)
-                                    .padding(15)
+                                    .padding(15);
                                 }
 
                                 #[cfg(feature = "dev-onramp")]

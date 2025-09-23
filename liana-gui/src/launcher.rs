@@ -359,6 +359,7 @@ fn add_wallet_menu<'a>() -> Element<'a, ViewMessage> {
         .into()
 }
 
+#[allow(unreachable_patterns)]
 fn wallets_list_item(
     network: Network,
     settings: &WalletSettings,

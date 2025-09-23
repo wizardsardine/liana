@@ -699,6 +699,7 @@ impl BitcoinD {
     }
 
     /// Perform various non-wallet-related sanity checks on the bitcoind instance.
+    #[allow(unreachable_patterns)]
     pub fn node_sanity_checks(
         &self,
         config_network: bitcoin::Network,

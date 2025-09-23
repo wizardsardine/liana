@@ -11,8 +11,11 @@ use liana_ui::widget::Element;
 #[cfg(feature = "dev-meld")]
 use crate::app::buysell::{meld::MeldError, ServiceProvider};
 
-#[cfg(feature = "dev-onramp")]
+#[cfg(all(feature = "dev-onramp", not(feature = "dev-meld")))]
 use crate::app::buysell::onramper;
+
+#[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+use crate::app::view::buysell::NativePage;
 
 use crate::{
     app::{
@@ -20,11 +23,7 @@ use crate::{
         cache::Cache,
         message::Message,
         state::State,
-        view::{
-            self,
-            buysell::{BuySellPanel, NativePage},
-            BuySellMessage, Message as ViewMessage,
-        },
+        view::{self, buysell::BuySellPanel, BuySellMessage, Message as ViewMessage},
     },
     daemon::Daemon,
 };
@@ -378,7 +377,13 @@ impl State for BuySellPanel {
                 self.set_source_amount(amount);
             }
 
-            #[cfg(feature = "dev-onramp")]
+            #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+            BuySellMessage::CreateSession => {
+                // No providers in default build; ignore or show error
+                self.set_error("No provider configured in this build".into());
+            }
+
+            #[cfg(all(feature = "dev-onramp", not(feature = "dev-meld")))]
             BuySellMessage::CreateSession => {
                 if self.is_form_valid() {
                     let Some(onramper_url) = onramper::create_widget_url(
@@ -403,12 +408,6 @@ impl State for BuySellPanel {
                 } else {
                     tracing::warn!("⚠️ [BUYSELL] Cannot create session - form validation failed");
                 }
-            }
-
-            #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
-            BuySellMessage::CreateSession => {
-                // No providers in default build; ignore or show error
-                self.set_error("No provider configured in this build".into());
             }
 
             #[cfg(feature = "dev-meld")]

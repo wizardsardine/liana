@@ -58,7 +58,7 @@ impl ServiceProvider {
             ServiceProvider::Guardarian => "GUARDARIAN",
             ServiceProvider::Koywe => "KOYWE",
             ServiceProvider::OnrampMoney => "ONRAMPMONEY",
-            #[cfg(feature = "dev-meld")]
+            #[cfg(all(feature = "dev-meld", not(feature = "dev-onramp")))]
             meld_provider => match meld_provider {
                 // meld exclusive providers
                 ServiceProvider::BlockchainDotCom => "BLOCKCHAINDOTCOM",
@@ -100,7 +100,7 @@ impl ServiceProvider {
             &ServiceProvider::OnrampMoney => "Onramp Money",
 
             ServiceProvider::Koywe => "Koywe",
-            #[cfg(feature = "dev-meld")]
+            #[cfg(all(feature = "dev-meld", not(feature = "dev-onramp")))]
             meld_provider => match meld_provider {
                 // meld exclusive providers
                 ServiceProvider::BlockchainDotCom => "Blockchain.com",
