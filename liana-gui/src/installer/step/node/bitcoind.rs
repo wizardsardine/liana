@@ -241,6 +241,7 @@ fn bitcoind_default_cookie_path(network: &Network) -> Option<String> {
     None
 }
 
+#[allow(unreachable_patterns)]
 fn bitcoind_default_address(network: &Network) -> String {
     match network {
         Network::Bitcoin => "127.0.0.1:8332".to_string(),

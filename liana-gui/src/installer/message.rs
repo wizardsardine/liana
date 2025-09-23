@@ -1,9 +1,12 @@
-use liana::miniscript::{
-    bitcoin::{
-        bip32::{ChildNumber, Fingerprint},
-        Network,
+use liana::{
+    descriptors::LianaDescriptor,
+    miniscript::{
+        bitcoin::{
+            bip32::{ChildNumber, Fingerprint},
+            Network,
+        },
+        DescriptorPublicKey,
     },
-    DescriptorPublicKey,
 };
 use std::collections::HashMap;
 
@@ -17,11 +20,11 @@ use crate::{
         settings::{self, ProviderKey},
         view::Close,
     },
-    backup::{self, Backup},
+    backup::Backup,
     download::{DownloadError, Progress},
     export::ImportExportMessage,
     hw::HardwareWalletMessage,
-    installer::descriptor::PathKind,
+    installer::{decrypt::Decrypt, descriptor::PathKind},
     node::{
         bitcoind::{Bitcoind, ConfigField, RpcAuthType},
         electrum, NodeType,
@@ -57,14 +60,15 @@ pub enum Message {
     DefineDescriptor(DefineDescriptor),
     ImportXpub(Fingerprint, Result<DescriptorPublicKey, Error>),
     HardwareWallets(HardwareWalletMessage),
+    HardwareWalletUpdate,
     WalletRegistered(Result<(Fingerprint, Option<[u8; 32]>), Error>),
     MnemonicWord(usize, String),
     ImportMnemonic(bool),
     RedeemNextKey,
     KeyRedeemed(ProviderKey, Result<(), services::keys::Error>),
     AllKeysRedeemed,
-    BackupWallet,
-    ExportWallet(Result<String, backup::Error>),
+    BackupDescriptor,
+    ExportEncryptedDescriptor(Result<Box<LianaDescriptor>, encrypted_backup::Error>),
     ExportXpub(String),
     ImportExport(ImportExportMessage),
     ImportBackup,
@@ -74,6 +78,8 @@ pub enum Message {
     OpenUrl(String),
     SelectKeySource(SelectKeySourceMessage),
     EditKeyAlias(EditKeyAliasMessage),
+    Decrypt(Decrypt),
+    None,
 }
 
 impl Close for Message {

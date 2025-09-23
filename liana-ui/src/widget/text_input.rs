@@ -297,7 +297,7 @@ where
     /// [`Value`] if provided.
     ///
     /// [`Renderer`]: text::Renderer
-    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments, clippy::manual_is_multiple_of)]
     pub fn draw(
         &self,
         tree: &Tree,

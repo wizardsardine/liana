@@ -920,10 +920,13 @@ impl Recipient {
                     self.amount = form::Value::default(); // reset the BTC amount to be consistent
                     return;
                 }
-                // Don't allow more than 2 decimal places for fiat amounts.
+                // Don't allow more than currency's decimal places for fiat amounts.
                 if fiat_amt_str
                     .split_once(".")
-                    .filter(|(_, decimals)| decimals.len() > 2)
+                    .filter(|(_, decimals)| {
+                        converter.currency().decimals() == 0
+                            || decimals.len() > converter.currency().decimals()
+                    })
                     .is_some()
                 {
                     return;
