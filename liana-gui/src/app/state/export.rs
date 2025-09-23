@@ -108,10 +108,10 @@ impl ExportModal {
             ImportExportType::ImportPsbt(_) => "psbt.psbt".into(),
             ImportExportType::ImportDescriptor => "descriptor.txt".into(),
             ImportExportType::ExportLabels => format!("liana-labels-{date}.jsonl"),
-            ImportExportType::ExportBackup(_) | ImportExportType::ExportProcessBackup(..) => {
+            ImportExportType::ExportProcessBackup(..) => {
                 format!("coincube-vault-backup-{date}.json")
             }
-            ImportExportType::WalletFromBackup | ImportExportType::ImportBackup { .. } => {
+            ImportExportType::FromBackup | ImportExportType::ImportBackup { .. } => {
                 "coincube-vault-backup.json".to_string()
             }
         }

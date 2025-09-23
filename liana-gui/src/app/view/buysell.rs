@@ -327,9 +327,11 @@ impl BuySellPanel {
                                     .push(
                                         Row::new()
                                             .push(
-                                                Container::new(liana_ui::icon::bitcoin_icon().size(24))
-                                                    .style(theme::container::border)
-                                                    .padding(10),
+                                                Container::new(
+                                                    liana_ui::icon::bitcoin_icon().size(24),
+                                                )
+                                                .style(theme::container::border)
+                                                .padding(10),
                                             )
                                             .push(Space::with_width(Length::Fixed(15.0)))
                                             .push(
@@ -588,11 +590,11 @@ impl BuySellPanel {
 #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
 impl BuySellPanel {
     fn native_register_form<'a>(&'a self) -> Column<'a, ViewMessage> {
+        use iced::widget::checkbox;
+        use liana_ui::component::button as ui_button;
         use liana_ui::component::text as ui_text;
         use liana_ui::component::text::text;
         use liana_ui::icon::{globe_icon, previous_icon};
-        use liana_ui::component::button as ui_button;
-        use iced::widget::checkbox;
 
         // Top bar with previous
         let top_bar = Row::new()
@@ -643,7 +645,8 @@ impl BuySellPanel {
             .align_x(Alignment::Center);
 
         // Continue with Google (placeholder)
-        let google = ui_button::secondary(Some(globe_icon()), "Continue with Google").width(Length::Fill);
+        let google =
+            ui_button::secondary(Some(globe_icon()), "Continue with Google").width(Length::Fill);
 
         // Divider "Or"
         let divider = Row::new()
@@ -696,9 +699,8 @@ impl BuySellPanel {
 
         let terms = Row::new()
             .push(
-                checkbox("", self.terms_accepted).on_toggle(|b| {
-                    ViewMessage::BuySell(BuySellMessage::TermsToggled(b))
-                }),
+                checkbox("", self.terms_accepted)
+                    .on_toggle(|b| ViewMessage::BuySell(BuySellMessage::TermsToggled(b))),
             )
             .push(Space::with_width(Length::Fixed(8.0)))
             .push(
@@ -812,10 +814,10 @@ impl BuySellPanel {
     }
 
     fn native_verify_email_form<'a>(&'a self) -> Column<'a, ViewMessage> {
+        use liana_ui::component::button as ui_button;
         use liana_ui::component::text as ui_text;
         use liana_ui::component::text::text;
-        use liana_ui::icon::{previous_icon, reload_icon, check_icon};
-        use liana_ui::component::button as ui_button;
+        use liana_ui::icon::{check_icon, previous_icon, reload_icon};
 
         // Top bar with previous
         let top_bar = Row::new()
@@ -858,7 +860,9 @@ impl BuySellPanel {
             Some(true) => Column::new()
                 .push(ui_text::h3("Email Verified!").color(color::GREEN))
                 .push(
-                    ui_text::p2_regular("Your email has been successfully verified. You can now continue.")
+                    ui_text::p2_regular(
+                        "Your email has been successfully verified. You can now continue.",
+                    )
                     .color(color::GREY_3),
                 )
                 .spacing(10)
@@ -867,10 +871,12 @@ impl BuySellPanel {
                 .push(ui_text::h3("Verify Your Email").color(color::WHITE))
                 .push(
                     ui_text::p2_regular("We've sent a verification email to your account.")
-                    .color(color::GREY_3),
+                        .color(color::GREY_3),
                 )
                 .push(
-                    ui_text::p2_regular("Check your inbox and click the verification link to continue.")
+                    ui_text::p2_regular(
+                        "Check your inbox and click the verification link to continue.",
+                    )
                     .color(color::GREY_3),
                 )
                 .spacing(10)
@@ -879,7 +885,10 @@ impl BuySellPanel {
 
         // Email display
         let email_display = Column::new()
-            .push(ui_text::p2_regular(&format!("Email sent to: {}", self.email.value)).color(color::WHITE))
+            .push(
+                ui_text::p2_regular(&format!("Email sent to: {}", self.email.value))
+                    .color(color::WHITE),
+            )
             .spacing(10)
             .align_x(Alignment::Center);
 
@@ -895,13 +904,16 @@ impl BuySellPanel {
                         .push(check_icon().color(color::GREEN))
                         .push(Space::with_width(Length::Fixed(8.0)))
                         .push(ui_text::p1_bold("Email verified successfully!").color(color::GREEN))
-                        .align_y(Alignment::Center)
+                        .align_y(Alignment::Center),
                 )
                 .spacing(10)
                 .align_x(Alignment::Center),
             Some(false) => Column::new()
                 .push(ui_text::p2_regular("Waiting for email verification...").color(color::GREY_3))
-                .push(ui_text::p2_regular("Click the link in your email to verify your account.").color(color::GREY_3))
+                .push(
+                    ui_text::p2_regular("Click the link in your email to verify your account.")
+                        .color(color::GREY_3),
+                )
                 .spacing(10)
                 .align_x(Alignment::Center),
         };
@@ -912,19 +924,22 @@ impl BuySellPanel {
                 .push(
                     ui_button::primary(None, "Continue")
                         .on_press(ViewMessage::Next) // This would proceed to next step
-                        .width(Length::Fill)
+                        .width(Length::Fill),
                 )
                 .spacing(10),
             _ => Row::new()
                 .push(
                     ui_button::secondary(Some(reload_icon()), "Check Status")
-                        .on_press(ViewMessage::BuySell(BuySellMessage::CheckEmailVerificationStatus))
-                        .width(Length::FillPortion(1))
+                        .on_press(ViewMessage::BuySell(
+                            BuySellMessage::CheckEmailVerificationStatus,
+                        ))
+                        .width(Length::FillPortion(1)),
                 )
                 .push(Space::with_width(Length::Fixed(10.0)))
                 .push(
-                    ui_button::link(None, "Resend Email")
-                        .on_press(ViewMessage::BuySell(BuySellMessage::ResendVerificationEmail))
+                    ui_button::link(None, "Resend Email").on_press(ViewMessage::BuySell(
+                        BuySellMessage::ResendVerificationEmail,
+                    )),
                 )
                 .spacing(10)
                 .align_y(Alignment::Center),

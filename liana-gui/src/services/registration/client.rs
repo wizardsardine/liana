@@ -112,10 +112,13 @@ impl RegistrationClient {
         }
     }
 
-
-    async fn post_json<T: Serialize>(&self, endpoint: &str, body: &T) -> Result<Response, RegistrationError> {
+    async fn post_json<T: Serialize>(
+        &self,
+        endpoint: &str,
+        body: &T,
+    ) -> Result<Response, RegistrationError> {
         let url = format!("{}/auth/{}", self.base_url, endpoint);
-        
+
         let response = self
             .http
             .post(&url)
@@ -127,7 +130,10 @@ impl RegistrationClient {
         Ok(response)
     }
 
-    pub async fn sign_up(&self, request: SignUpRequest) -> Result<SignUpResponse, RegistrationError> {
+    pub async fn sign_up(
+        &self,
+        request: SignUpRequest,
+    ) -> Result<SignUpResponse, RegistrationError> {
         let response = self
             .post_json("signup", &request)
             .await?
@@ -138,7 +144,10 @@ impl RegistrationClient {
         Ok(signup_response)
     }
 
-    pub async fn check_email_verification_status(&self, email: &str) -> Result<EmailVerificationStatusResponse, RegistrationError> {
+    pub async fn check_email_verification_status(
+        &self,
+        email: &str,
+    ) -> Result<EmailVerificationStatusResponse, RegistrationError> {
         let request = EmailVerificationStatusRequest {
             email: email.to_string(),
         };
@@ -153,7 +162,10 @@ impl RegistrationClient {
         Ok(status_response)
     }
 
-    pub async fn resend_verification_email(&self, email: &str) -> Result<ResendEmailResponse, RegistrationError> {
+    pub async fn resend_verification_email(
+        &self,
+        email: &str,
+    ) -> Result<ResendEmailResponse, RegistrationError> {
         let request = ResendVerificationEmailRequest {
             email: email.to_string(),
         };

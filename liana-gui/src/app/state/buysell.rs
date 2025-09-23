@@ -20,7 +20,11 @@ use crate::{
         cache::Cache,
         message::Message,
         state::State,
-        view::{self, buysell::{BuySellPanel, NativePage}, BuySellMessage, Message as ViewMessage},
+        view::{
+            self,
+            buysell::{BuySellPanel, NativePage},
+            BuySellMessage, Message as ViewMessage,
+        },
     },
     daemon::Daemon,
 };
@@ -82,7 +86,9 @@ impl State for BuySellPanel {
             return Task::none();
         }
 
-        let Message::View(ViewMessage::BuySell(message)) = message else { return Task::none(); };
+        let Message::View(ViewMessage::BuySell(message)) = message else {
+            return Task::none();
+        };
 
         match message {
             BuySellMessage::LoginUsernameChanged(v) => {
@@ -144,7 +150,8 @@ impl State for BuySellPanel {
             #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
             BuySellMessage::Password2Changed(v) => {
                 self.password2.value = v;
-                self.password2.valid = self.password2.value == self.password1.value && !self.password2.value.is_empty();
+                self.password2.valid = self.password2.value == self.password1.value
+                    && !self.password2.value.is_empty();
             }
             #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
             BuySellMessage::TermsToggled(b) => {
@@ -155,20 +162,29 @@ impl State for BuySellPanel {
                 tracing::info!("🔍 [REGISTRATION] Submit registration button clicked");
 
                 if self.is_registration_valid() {
-                    tracing::info!("✅ [REGISTRATION] Form validation passed, submitting registration");
+                    tracing::info!(
+                        "✅ [REGISTRATION] Form validation passed, submitting registration"
+                    );
                     let client = self.registration_client.clone();
-                    let account_type = if self.selected_account_type == Some(crate::app::view::AccountType::Individual) {
+                    let account_type = if self.selected_account_type
+                        == Some(crate::app::view::AccountType::Individual)
+                    {
                         "personal"
                     } else {
                         "business"
-                    }.to_string();
+                    }
+                    .to_string();
 
                     let email = self.email.value.clone();
                     let first_name = self.first_name.value.clone();
                     let last_name = self.last_name.value.clone();
                     let password = self.password1.value.clone();
 
-                    tracing::info!("📤 [REGISTRATION] Making API call with account_type: {}, email: {}", account_type, email);
+                    tracing::info!(
+                        "📤 [REGISTRATION] Making API call with account_type: {}, email: {}",
+                        account_type,
+                        email
+                    );
 
                     return Task::perform(
                         async move {
@@ -185,29 +201,60 @@ impl State for BuySellPanel {
 
                             tracing::info!("🚀 [REGISTRATION] Sending request to API");
                             let result = client.sign_up(request).await;
-                            tracing::info!("📥 [REGISTRATION] API response received: {:?}", result.is_ok());
+                            tracing::info!(
+                                "📥 [REGISTRATION] API response received: {:?}",
+                                result.is_ok()
+                            );
                             result
                         },
                         |result| match result {
                             Ok(_response) => {
                                 tracing::info!("🎉 [REGISTRATION] Registration successful!");
                                 // Registration successful, navigate to email verification
-                                Message::View(ViewMessage::BuySell(BuySellMessage::RegistrationSuccess))
+                                Message::View(ViewMessage::BuySell(
+                                    BuySellMessage::RegistrationSuccess,
+                                ))
                             }
                             Err(error) => {
-                                tracing::error!("❌ [REGISTRATION] Registration failed: {}", error.error);
+                                tracing::error!(
+                                    "❌ [REGISTRATION] Registration failed: {}",
+                                    error.error
+                                );
                                 // Registration failed, show error
-                                Message::View(ViewMessage::BuySell(BuySellMessage::RegistrationError(error.error)))
+                                Message::View(ViewMessage::BuySell(
+                                    BuySellMessage::RegistrationError(error.error),
+                                ))
                             }
                         },
                     );
                 } else {
-                    tracing::warn!("⚠️ [REGISTRATION] Form validation failed - button should be disabled");
-                    tracing::warn!("   - First name: '{}' (valid: {})", self.first_name.value, !self.first_name.value.is_empty());
-                    tracing::warn!("   - Last name: '{}' (valid: {})", self.last_name.value, !self.last_name.value.is_empty());
-                    tracing::warn!("   - Email: '{}' (valid: {})", self.email.value, self.email.value.contains('@') && self.email.value.contains('.'));
-                    tracing::warn!("   - Password length: {} (valid: {})", self.password1.value.len(), self.password1.value.len() >= 8);
-                    tracing::warn!("   - Passwords match: {}", self.password1.value == self.password2.value);
+                    tracing::warn!(
+                        "⚠️ [REGISTRATION] Form validation failed - button should be disabled"
+                    );
+                    tracing::warn!(
+                        "   - First name: '{}' (valid: {})",
+                        self.first_name.value,
+                        !self.first_name.value.is_empty()
+                    );
+                    tracing::warn!(
+                        "   - Last name: '{}' (valid: {})",
+                        self.last_name.value,
+                        !self.last_name.value.is_empty()
+                    );
+                    tracing::warn!(
+                        "   - Email: '{}' (valid: {})",
+                        self.email.value,
+                        self.email.value.contains('@') && self.email.value.contains('.')
+                    );
+                    tracing::warn!(
+                        "   - Password length: {} (valid: {})",
+                        self.password1.value.len(),
+                        self.password1.value.len() >= 8
+                    );
+                    tracing::warn!(
+                        "   - Passwords match: {}",
+                        self.password1.value == self.password2.value
+                    );
                     tracing::warn!("   - Terms accepted: {}", self.terms_accepted);
                 }
             }
@@ -224,7 +271,10 @@ impl State for BuySellPanel {
             }
             #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
             BuySellMessage::CheckEmailVerificationStatus => {
-                tracing::info!("🔍 [EMAIL_VERIFICATION] Checking email verification status for: {}", self.email.value);
+                tracing::info!(
+                    "🔍 [EMAIL_VERIFICATION] Checking email verification status for: {}",
+                    self.email.value
+                );
                 // Set to "checking" state
                 self.email_verification_status = None;
                 let client = self.registration_client.clone();
@@ -234,17 +284,32 @@ impl State for BuySellPanel {
                     async move {
                         tracing::info!("🚀 [EMAIL_VERIFICATION] Making API call to check status");
                         let result = client.check_email_verification_status(&email).await;
-                        tracing::info!("📥 [EMAIL_VERIFICATION] API response received: {:?}", result.is_ok());
+                        tracing::info!(
+                            "📥 [EMAIL_VERIFICATION] API response received: {:?}",
+                            result.is_ok()
+                        );
                         result
                     },
                     |result| match result {
                         Ok(response) => {
-                            tracing::info!("✅ [EMAIL_VERIFICATION] Status check successful: verified={}", response.email_verified);
-                            Message::View(ViewMessage::BuySell(BuySellMessage::EmailVerificationStatusChecked(response.email_verified)))
+                            tracing::info!(
+                                "✅ [EMAIL_VERIFICATION] Status check successful: verified={}",
+                                response.email_verified
+                            );
+                            Message::View(ViewMessage::BuySell(
+                                BuySellMessage::EmailVerificationStatusChecked(
+                                    response.email_verified,
+                                ),
+                            ))
                         }
                         Err(error) => {
-                            tracing::error!("❌ [EMAIL_VERIFICATION] Status check failed: {}", error.error);
-                            Message::View(ViewMessage::BuySell(BuySellMessage::EmailVerificationStatusError(error.error)))
+                            tracing::error!(
+                                "❌ [EMAIL_VERIFICATION] Status check failed: {}",
+                                error.error
+                            );
+                            Message::View(ViewMessage::BuySell(
+                                BuySellMessage::EmailVerificationStatusError(error.error),
+                            ))
                         }
                     },
                 );
@@ -265,7 +330,10 @@ impl State for BuySellPanel {
             }
             #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
             BuySellMessage::ResendVerificationEmail => {
-                tracing::info!("📧 [RESEND_EMAIL] Resending verification email to: {}", self.email.value);
+                tracing::info!(
+                    "📧 [RESEND_EMAIL] Resending verification email to: {}",
+                    self.email.value
+                );
                 let client = self.registration_client.clone();
                 let email = self.email.value.clone();
 
@@ -273,7 +341,10 @@ impl State for BuySellPanel {
                     async move {
                         tracing::info!("🚀 [RESEND_EMAIL] Making API call to resend email");
                         let result = client.resend_verification_email(&email).await;
-                        tracing::info!("📥 [RESEND_EMAIL] API response received: {:?}", result.is_ok());
+                        tracing::info!(
+                            "📥 [RESEND_EMAIL] API response received: {:?}",
+                            result.is_ok()
+                        );
                         result
                     },
                     |result| match result {
@@ -282,8 +353,13 @@ impl State for BuySellPanel {
                             Message::View(ViewMessage::BuySell(BuySellMessage::ResendEmailSuccess))
                         }
                         Err(error) => {
-                            tracing::error!("❌ [RESEND_EMAIL] Failed to resend email: {}", error.error);
-                            Message::View(ViewMessage::BuySell(BuySellMessage::ResendEmailError(error.error)))
+                            tracing::error!(
+                                "❌ [RESEND_EMAIL] Failed to resend email: {}",
+                                error.error
+                            );
+                            Message::View(ViewMessage::BuySell(BuySellMessage::ResendEmailError(
+                                error.error,
+                            )))
                         }
                     },
                 );
