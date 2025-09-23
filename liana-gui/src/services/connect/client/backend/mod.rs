@@ -797,9 +797,7 @@ impl Daemon for BackendWalletClient {
             })
             .send()
             .await?
-            .check_success()
-            .await?
-            .json()
+            .json() // no need to check success before parsing the json as it could be an error variant
             .await?;
 
         match res {
@@ -840,9 +838,7 @@ impl Daemon for BackendWalletClient {
             })
             .send()
             .await?
-            .check_success()
-            .await?
-            .json()
+            .json() // no need to check success before parsing the json as it could be an error variant
             .await?;
 
         match res {
