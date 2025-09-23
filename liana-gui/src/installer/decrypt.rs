@@ -600,7 +600,7 @@ fn valid_content(state: &DecryptModal) -> Container<'static, installer::Message>
         col = col.push(optional_content(state));
     }
 
-    Container::new(col)
+    Container::new(col).width(BTN_W)
 }
 
 fn optional_content(state: &DecryptModal) -> Container<'static, installer::Message> {
@@ -744,9 +744,11 @@ pub fn decrypt_view<'a>(state: &DecryptModal) -> Container<'a, installer::Messag
         None => valid_content(state),
     };
 
-    let content = scrollable(Container::new(content).padding(15));
-
-    let content = row![Space::with_width(50), content];
+    let content = scrollable(
+        Container::new(content)
+            .padding(15)
+            .align_x(Horizontal::Center),
+    );
 
     let column = Column::new()
         .push(header)
