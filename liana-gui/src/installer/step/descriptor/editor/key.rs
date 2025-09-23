@@ -1393,7 +1393,7 @@ where
             Space::with_width(Length::Fill)
         ])
         .push(row![
-            p1_regular("Give this key a friendly name. it helps you identify it later:"),
+            p1_regular("Give this key a friendly name. It helps you identify it later:"),
             Space::with_width(Length::Fill)
         ])
         .push(
