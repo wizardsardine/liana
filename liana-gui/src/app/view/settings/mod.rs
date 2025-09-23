@@ -3,8 +3,8 @@ pub mod general;
 use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
 
-use iced::alignment::Vertical;
-use iced::widget::{Column, Rule};
+use iced::alignment::{Horizontal, Vertical};
+use iced::widget::{container, Column, Rule};
 use iced::{
     alignment,
     widget::{radio, scrollable, tooltip as iced_tooltip, Space},
@@ -1009,6 +1009,26 @@ pub fn wallet_settings<'a>(
     updated: bool,
 ) -> Element<'a, Message> {
     let header = header("Wallet", SettingsMessage::EditWalletSettings);
+    let r = Row::new().spacing(10).align_y(Vertical::Center)
+        .push(icon::backup_icon())
+        .push(text("Back up encrypted descriptor"))
+        .push(
+
+    Container::new(
+        iced::widget::tooltip::Tooltip::new(
+            icon::tooltip_icon(),
+            "An encrypted descriptor file (.bed) you can store anywhere. To decrypt it, you need one of your signing devices or xpubs.",
+            iced::widget::tooltip::Position::Bottom,
+        )
+        .style(theme::card::simple),
+    )
+        );
+    let back_up_encrypted_descriptor =
+        Button::new(container(r).align_x(Horizontal::Center).padding(5))
+            .on_press(Message::Settings(
+                SettingsMessage::ExportEncryptedDescriptor,
+            ))
+            .style(theme::button::secondary);
 
     let descr = card::simple(
         Column::new()
@@ -1027,12 +1047,7 @@ pub fn wallet_settings<'a>(
                 Row::new()
                     .spacing(10)
                     .push(Column::new().width(Length::Fill))
-                    .push(
-                        button::secondary(Some(icon::backup_icon()), "Back up Descriptor")
-                            .on_press(Message::Settings(
-                                SettingsMessage::ExportEncryptedDescriptor,
-                            )),
-                    )
+                    .push(back_up_encrypted_descriptor)
                     .push(
                         button::secondary(Some(icon::clipboard_icon()), "Copy")
                             .on_press(Message::Clipboard(descriptor.to_string())),
