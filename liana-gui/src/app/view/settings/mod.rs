@@ -216,11 +216,18 @@ pub fn import_export<'a>(cache: &'a Cache, warning: Option<&Error>) -> Element<'
         ))
         .push(Space::with_width(Length::Fill));
 
+    let export_encrypted_descriptor = export_section(
+        "Encrypted descriptor",
+        ".bed file, can be decrypted with one of your signing devices or xpubs.",
+        icon::backup_icon(),
+        Message::Settings(SettingsMessage::ExportEncryptedDescriptor),
+    );
+
     let export_descriptor = export_section(
         "Descriptor only - plain-text",
         "Plain-text (not encrypted) descriptor file only, to use with other wallets.",
         icon::backup_icon(),
-        Message::Settings(SettingsMessage::ExportEncryptedDescriptor),
+        Message::Settings(SettingsMessage::ExportPlaintextDescriptor),
     );
 
     let export_transactions = export_section(
@@ -267,6 +274,7 @@ pub fn import_export<'a>(cache: &'a Cache, warning: Option<&Error>) -> Element<'
             .spacing(20)
             .push(header)
             .push(description)
+            .push(export_encrypted_descriptor)
             .push(export_wallet)
             .push(import_wallet)
             .push(separator)
