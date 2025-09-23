@@ -239,7 +239,7 @@ pub fn import_export<'a>(cache: &'a Cache, warning: Option<&Error>) -> Element<'
 
     let export_wallet = export_section(
         "Export wallet",
-        "File with wallet info useful to sync labels and data on other devices.",
+        "File (not encrypted) with wallet info useful to sync labels and data on other devices.",
         icon::backup_icon(),
         Message::Settings(SettingsMessage::ExportWallet),
     );
