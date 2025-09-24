@@ -70,3 +70,7 @@ flate2 = { version = "1.0", default-features = false }
 winresource = "0.1.24"
 unicode-segmentation = "1.0"
 bitcoin = "0.32"
+
+# dev dependencies
+anyhow = "1"
+tempfile = "3.23"
