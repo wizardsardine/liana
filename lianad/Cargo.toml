@@ -59,3 +59,12 @@ jsonrpc = { version = "0.17", features = ["minreq_http"], default-features = fal
 
 # import/export labels
 bip329 = { version = "0.3.0", default-features = false }
+
+[dev-dependencies]
+# Cross-platform test dependencies
+anyhow = "1"
+tempfile = "3.23"
+
+# Platform-specific test dependencies (excluded on Windows)
+[target.'cfg(not(windows))'.dev-dependencies]
+electrsd = { version = "0.36", default-features = false, features = ["electrs_0_10_6", "corepc-node_29_0"] }
