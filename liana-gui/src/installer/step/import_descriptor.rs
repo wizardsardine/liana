@@ -93,6 +93,7 @@ impl ImportDescriptorModal {
                         | Decrypt::SelectImportXpub
                         | Decrypt::None
                         | Decrypt::CloseModal
+                        | Decrypt::MnemonicAck(_)
                         | Decrypt::ShowOptions(_) => return modal.update(msg),
                         Decrypt::Backup(_) | Decrypt::Close => {}
                     }

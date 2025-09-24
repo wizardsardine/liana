@@ -259,6 +259,19 @@ impl State for ImportExportSettingsState {
                 if self.modal.is_none() {
                     let modal = ExportModal::new(
                         Some(daemon),
+                        ImportExportType::ExportEncryptedDescriptor(Box::new(
+                            self.wallet.main_descriptor.clone(),
+                        )),
+                    );
+                    launch!(self, modal, true);
+                }
+            }
+            Message::View(view::Message::Settings(
+                view::SettingsMessage::ExportPlaintextDescriptor,
+            )) => {
+                if self.modal.is_none() {
+                    let modal = ExportModal::new(
+                        Some(daemon),
                         ImportExportType::Descriptor(self.wallet.main_descriptor.clone()),
                     );
                     launch!(self, modal, true);
