@@ -5,15 +5,15 @@
 
 # Liana
 
-*The missing safety net for your bitcoins*.
+*A simple to use bitcoin wallet with advanced security features. Timelocked inheritance, multisig, disaster recovery, miniscript and more.*.
 
 </div>
 
 
 ## About
 
-Liana is a simple Bitcoin wallet. Like other Bitcoin wallets you have one key which can spend the
-funds in the wallet immediately. Unlike other wallets, Liana lets you in addition specify one key
+Liana is a simple to use, desktop Bitcoin wallet. Like other Bitcoin wallets you have one key which can spend the
+funds in the wallet immediately, or a combination of keys if you prefer multisig. Unlike other wallets, Liana lets you in addition specify one or more keys
 which can only spend the coins after the wallet has been inactive for some time.
 
 We refer to these as the primary spending path (always accessible) and the recovery path (only
@@ -27,20 +27,19 @@ Here is an example of a Liana wallet configuration:
   (after 1 year and 3 months)
 
 The lockup period is enforced onchain by the Bitcoin network. This is achieved by leveraging
-timelock capabilities of Bitcoin smart contracts (Script).
+timelock capabilities of Bitcoin smart contracts (Script), with Miniscript.
 
-Liana can be used for **trustless inheritance**, **loss protection** or **safer backups**. Visit
+Liana can be used for **trustless inheritance**, **loss protection and disaster recovery**, and generally **safer wallets and backups**. Liana is built for both indiduals and organizations, it is already used to secure thousands of bitcoins. Visit
 [our website](https://wizardsardine.com/liana) for more information.
 
 
 ## Usage
 
 Liana is available on Windows, Mac and Linux. To install and start using it see
-[`doc/USAGE.md`](doc/USAGE.md). A more accessible version of Liana is also available as a web
-application [here](https://lianalite.com/).
+[`doc/USAGE.md`](doc/USAGE.md). A demo of a web
+application is also available [here](https://lianalite.com/).
 
 If you just want to quickly try out Liana on Bitcoin Signet, see [`doc/TRY.md`](doc/TRY.md).
-
 
 ## Hacking on Liana
 
