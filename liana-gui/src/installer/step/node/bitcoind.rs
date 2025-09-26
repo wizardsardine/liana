@@ -4,7 +4,7 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, TcpListener};
 use std::path::PathBuf;
 use std::str::FromStr;
 
-use bitcoin_hashes::{sha256, Hash};
+use bitcoin_hashes::sha256;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 use flate2::read::GzDecoder;
 use iced::{Subscription, Task};
@@ -379,7 +379,7 @@ impl DefineBitcoind {
                 .timeout(std::time::Duration::from_secs(3))
                 .build(),
         );
-        client.send_request(client.build_request("echo", &[]))?;
+        client.send_request(client.build_request("echo", None))?;
         Ok(())
     }
 

@@ -19,7 +19,7 @@ VERBOSE = os.getenv("VERBOSE", "0") == "1"
 LOG_LEVEL = os.getenv("LOG_LEVEL", "debug")
 assert LOG_LEVEL in ["trace", "debug", "info", "warn", "error"]
 DEFAULT_MS_PATH = os.path.join(
-    os.path.dirname(__file__), "..", "..", "target/debug/lianad"
+    os.path.dirname(__file__), "..", "..", "target/release/lianad"
 )
 LIANAD_PATH = os.getenv("LIANAD_PATH", DEFAULT_MS_PATH)
 

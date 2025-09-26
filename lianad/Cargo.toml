@@ -43,33 +43,31 @@ bdk_electrum = { git = "https://github.com/wizardsardine/bdk", branch = "release
 ] }
 
 # Don't reinvent the wheel
-dirs = "5.0"
+dirs = "6"
 
 # We use TOML for the config, and JSON for RPC
 serde = { version = "1.0", features = ["derive"] }
-toml = "0.5"
+toml = "0.9"
 serde_json = { version = "1.0", features = ["raw_value"] }
 
 # Logging stuff
 log = "0.4"
-fern = "0.6"
+fern = "0.7"
 
 # In order to have a backtrace on panic, because the
 # stdlib does not have a programmatic interface yet
 # to work with our custom panic hook.
 backtrace = "0.3"
 
-# Pinned to this version because they keep breaking their MSRV in point releases...
-# FIXME: this is unfortunate, we don't receive the updates (sometimes critical) from SQLite.
-rusqlite = { version = "0.30", features = ["bundled", "unlock_notify"] }
+rusqlite = { version = "0.37", features = ["bundled", "unlock_notify"] }
 
 # To talk to bitcoind
-jsonrpc = { version = "0.17", features = [
+jsonrpc = { version = "0.18", features = [
 	"minreq_http",
 ], default-features = false }
 
 # import/export labels
-bip329 = { version = "0.3.0", default-features = false }
+bip329 = { version = "0.4", default-features = false }
 
 [lints.clippy]
 uninlined_format_args = "allow"

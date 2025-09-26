@@ -1,12 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-#[global_allocator]
-static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
-
 use std::{error::Error, io::Write, path::PathBuf, process, str::FromStr};
 
-#[cfg(target_os = "linux")]
-use iced::window::settings::PlatformSpecific;
 use iced::{Settings, Size};
 use tracing::error;
 use tracing_subscriber::filter::LevelFilter;
@@ -123,10 +118,10 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut window_settings = iced::window::Settings {
         size: initial_size,
         icon: Some(image::liana_window_icon()),
-        position: iced::window::Position::Default,
+        position: iced::window::Position::Centered,
         min_size: Some(Size {
-            width: 1000.0,
-            height: 650.0,
+            width: 1024.0,
+            height: 768.0,
         }),
         exit_on_close_request: false,
         ..Default::default()
@@ -134,7 +129,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     #[cfg(target_os = "linux")]
     {
-        window_settings.platform_specific = PlatformSpecific {
+        window_settings.platform_specific = iced::window::settings::PlatformSpecific {
             application_id: "Liana".to_string(),
             ..Default::default()
         };

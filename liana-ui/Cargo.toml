@@ -6,7 +6,15 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-iced = { version = "0.13.1", default-features = false, features = ["svg", "image", "lazy", "qr_code", "advanced"] }
+iced = { version = "0.13.1", default-features = false, features = [
+	"svg",
+	"image-without-codecs",
+	"lazy",
+	"qr_code",
+	"advanced",
+] }
+image = { version = "*", default-features = false, features = ["png", "ico"] }
+
 iced_aw = { version = "0.12.2", features = ["context_menu"] }
 iced_core = { version = "0.13.2" }
 iced_runtime = { version = "0.13.2" }

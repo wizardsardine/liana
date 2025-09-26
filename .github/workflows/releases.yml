@@ -53,6 +53,7 @@ jobs:
         uses: actions/cache@v4
         with:
           key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: cargo-${{ runner.os }}-
           path: ./target
 
       # Create gh release

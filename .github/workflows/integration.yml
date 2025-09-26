@@ -6,12 +6,7 @@ on:
 
 jobs:
   functional-tests:
-    runs-on: self-hosted
-    timeout-minutes: 90
-
-    # NOTE: uncomment this to enable docker
-    # container:
-    #   image: rust:1-bookworm
+    runs-on: ubuntu-latest
 
     strategy:
       matrix:
@@ -43,60 +38,30 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # NOTE: uncomment this if docker enabled
-      # - name: Install system dependencies
-      #   run: |
-      #     apt update
-      #     apt install -y python3 python3-pip unzip curl
-
-      - name: cleanup /tmp
-        run: |
-          find /tmp -maxdepth 1 -type d -name 'lianad*' -mtime +0 -exec rm -rf {} +
-
       - name: Setup Python dependencies
-        run: |
-          pip install --break-system-packages -r tests/requirements.txt
+        run: pip install --break-system-packages -r tests/requirements.txt
 
       - name: Add local bin to PATH
         run: echo "$HOME/.local/bin" >> $GITHUB_PATH
-
-      - name: Cache Cargo registry
-        uses: actions/cache@v4
-        with:
-          path: ~/.cargo/registry
-          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-registry-
-
-      - name: Cache Cargo git
-        uses: actions/cache@v4
-        with:
-          path: ~/.cargo/git
-          key: ${{ runner.os }}-cargo-git-${{ hashFiles('Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-git-
 
       - name: Cache target/
         uses: actions/cache@v4
         with:
           path: target
           key: ${{ runner.os }}-target-${{ hashFiles('Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-target-
+          restore-keys: ${{ runner.os }}-target-
 
       - name: Cache pip
         uses: actions/cache@v4
         with:
           path: ~/.cache/pip
           key: ${{ runner.os }}-pip-${{ hashFiles('tests/requirements.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-pip-
+          restore-keys: ${{ runner.os }}-pip-
 
       - name: Build lianad and taproot_signer
         run: |
-          cd lianad
-          cargo build --release
-          cd ../tests/tools/taproot_signer
+          cargo build --release --package lianad
+          cd ./tests/tools/taproot_signer
           cargo build --release
 
       - name: Prepare and run functional tests
@@ -131,8 +96,5 @@ jobs:
           tar -xzf liana-0.3.1-x86_64-linux-gnu.tar.gz
           export OLD_LIANAD_PATH="$PWD/liana-0.3.1-x86_64-linux-gnu/lianad"
 
-          # Clean Cargo index before cache save
-          rm -rf ~/.cargo/registry/index
-
           # Run the functional tests
-          LIANAD_PATH=$PWD/target/release/lianad pytest tests/ -vvv -n 8
+          pytest tests/ -vvv -n 8
