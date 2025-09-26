@@ -558,6 +558,9 @@ impl Step for ImportRemoteWallet {
                         // as non Mainnet keys / descriptor are parsed as Signet
                         backup.network = self.network;
 
+                        // NOTE: a check that the descriptor is a valid LianaDescriptor have
+                        // already been processed at backup import.
+                        self.descriptor = LianaDescriptor::from_str(&desc).ok();
                         self.imported_descriptor.value = desc;
                         self.modal = ImportDescriptorModal::None;
                         return Task::perform(async {}, |_| Message::Next);
