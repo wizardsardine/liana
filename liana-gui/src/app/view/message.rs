@@ -151,47 +151,52 @@ pub enum CreateRbfMessage {
 #[derive(Debug, Clone)]
 pub enum BuySellMessage {
     // Native login (default build)
+    #[cfg(all(feature = "buysell", not(feature = "webview")))]
     LoginUsernameChanged(String),
+    #[cfg(all(feature = "buysell", not(feature = "webview")))]
     LoginPasswordChanged(String),
+
+    #[cfg(all(feature = "buysell", not(feature = "webview")))]
     SubmitLogin,
+    #[cfg(all(feature = "buysell", not(feature = "webview")))]
     CreateAccountPressed,
 
     // Default build: account type selection
-    #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+    #[cfg(all(feature = "buysell", not(feature = "webview")))]
     AccountTypeSelected(AccountType),
-    #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+    #[cfg(all(feature = "buysell", not(feature = "webview")))]
     GetStarted,
 
     // Default build: registration form (native flow)
-    #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+    #[cfg(all(feature = "buysell", not(feature = "webview")))]
     FirstNameChanged(String),
-    #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+    #[cfg(all(feature = "buysell", not(feature = "webview")))]
     LastNameChanged(String),
-    #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+    #[cfg(all(feature = "buysell", not(feature = "webview")))]
     EmailChanged(String),
-    #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+    #[cfg(all(feature = "buysell", not(feature = "webview")))]
     Password1Changed(String),
-    #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+    #[cfg(all(feature = "buysell", not(feature = "webview")))]
     Password2Changed(String),
-    #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+    #[cfg(all(feature = "buysell", not(feature = "webview")))]
     TermsToggled(bool),
-    #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+    #[cfg(all(feature = "buysell", not(feature = "webview")))]
     SubmitRegistration,
-    #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+    #[cfg(all(feature = "buysell", not(feature = "webview")))]
     CheckEmailVerificationStatus,
-    #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+    #[cfg(all(feature = "buysell", not(feature = "webview")))]
     ResendVerificationEmail,
-    #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+    #[cfg(all(feature = "buysell", not(feature = "webview")))]
     RegistrationSuccess,
-    #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+    #[cfg(all(feature = "buysell", not(feature = "webview")))]
     RegistrationError(String),
-    #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+    #[cfg(all(feature = "buysell", not(feature = "webview")))]
     EmailVerificationStatusChecked(bool),
-    #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+    #[cfg(all(feature = "buysell", not(feature = "webview")))]
     EmailVerificationStatusError(String),
-    #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+    #[cfg(all(feature = "buysell", not(feature = "webview")))]
     ResendEmailSuccess,
-    #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+    #[cfg(all(feature = "buysell", not(feature = "webview")))]
     ResendEmailError(String),
 
     // Shared form fields (for provider-integrated builds)

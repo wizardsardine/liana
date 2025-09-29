@@ -10,17 +10,12 @@ Credits: this test framework was taken and adapted from revaultd, which was itse
 
 ### Building the project for testing
 
-To run the tests, we must build the debug version of `lianad`. Follow the instructions at [`doc/BUILD.md`](../doc/BUILD.md) but instead of running
+To run the tests, we must build `lianad`.
 ```
 $ cargo build --release
 ```
-Run
-```
-$ cargo build
-```
-to build the daemon for testing.  
-The `lianad` and `liana-cli` binaries will be in the `target/debug` directory at the root of the
-repository.
+
+The `lianad` and `liana-cli` binaries will be in the `target/release` directory at the root of the repository.
 
 ### Test dependencies
 
@@ -32,7 +27,8 @@ sudo apt install build-essential libssl-dev libffi-dev python3-dev
 sudo apt install autoconf automake libtool
 ```
 
-Functional tests dependencies can be installed using `pip`. Use a virtual environment.
+Functional tests dependencies can be installed using `pip`. Use a virtual environment:
+
 ```
 # Create a new virtual environment, preferably.
 python3 -m venv venv

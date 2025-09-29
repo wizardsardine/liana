@@ -14,8 +14,8 @@ name = "coincube-vault"
 path = "src/main.rs"
 
 [features]
-dev-meld = ["webview"]
-dev-onramp = ["webview"]
+dev-meld = ["webview", "buysell"]
+dev-onramp = ["webview", "buysell"]
 webview = ["iced_webview"]
 buysell = []
 
@@ -35,12 +35,12 @@ iced = { version = "0.13.1", default-features = false, features = [
 	"svg",
 	"canvas",
 	"qr_code",
-	"image",
+	"image-without-codecs",
 	"lazy",
 	"advanced",
-	"wgpu",
 	"tiny-skia",
 ] }
+image = { version = "*", default-features = false, features = ["png"] }
 iced_aw = { version = "0.12.2", features = ["context_menu"] }
 iced_runtime = "0.13.1"
 
@@ -58,36 +58,36 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 
 # Used to ping bitcoind node
-jsonrpc = "0.12"
+jsonrpc = "0.18"
 
 # Logging stuff
-tracing = "0.1.37"
-tracing-subscriber = "0.3.16"
+tracing = "0.1.41"
+tracing-subscriber = "0.3.20"
 log = "0.4"
 
-dirs = "3.0.1"
-toml = "0.5"
+dirs = "6"
+toml = "0.9"
 
 chrono = "0.4.38"
 
 # Used for managing internal bitcoind
-libc = "0.2"
-base64 = "0.21"
-bitcoin_hashes = "0.12"
-reqwest = { version = "0.11", default-features = false, features = [
+base64 = "0.22"
+bitcoin_hashes = "0.16"
+reqwest = { version = "0.12", default-features = false, features = [
 	"json",
 	"rustls-tls",
 	"stream",
 ] }
-rust-ini = "0.19.0"
+rust-ini = "0.21"
 rfd = "0.15.1"
 fs4 = { version = "0.13", features = ["sync"] }
 
 # Used for opening URLs in browser
 open = "5.3"
-mimalloc = { version = "0.1.48", features = ["v3"] }
 
-encrypted_backup = { version = "0.0.1", default-features=false, features = ["miniscript_12_0"], package = "bitcoin-encrypted-backup" }
+encrypted_backup = { version = "0.0.1", default-features = false, features = [
+	"miniscript_12_0",
+], package = "bitcoin-encrypted-backup" }
 
 [target.'cfg(windows)'.dependencies]
 zip = { version = "0.6", default-features = false, features = [
@@ -96,6 +96,7 @@ zip = { version = "0.6", default-features = false, features = [
 ] }
 
 [target.'cfg(unix)'.dependencies]
+libc = "0.2"
 tar = { version = "0.4", default-features = false }
 flate2 = { version = "1.0", default-features = false }
 
@@ -109,6 +110,7 @@ winresource = "0.1"
 mismatched_lifetime_syntaxes = "allow"
 
 [lints.clippy]
+unknown_lints = "allow"
 uninlined_format_args = "allow"
 large_enum_variant = "allow"
 result_large_err = "allow"

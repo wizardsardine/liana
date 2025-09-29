@@ -1,5 +1,5 @@
 use base64::Engine;
-use bitcoin_hashes::{sha256, Hash, HashEngine, Hmac, HmacEngine};
+use bitcoin_hashes::{sha256, HashEngine, HmacEngine, HmacSha256};
 use liana::{
     miniscript::bitcoin::{self, Network},
     random::{random_bytes, RandomnessError},
@@ -139,7 +139,6 @@ pub fn bitcoind_network_dir(network: &Network) -> Option<String> {
         Network::Testnet4 => "testnet4",
         Network::Regtest => "regtest",
         Network::Signet => "signet",
-        _ => panic!("Directory required for this network is unknown."),
     };
     Some(dir.to_string())
 }
@@ -185,13 +184,13 @@ impl RpcAuth {
         let salt = random_bytes().map(|bytes| hex::encode(&bytes[..16]))?;
         let mut engine = HmacEngine::<sha256::Hash>::new(salt.as_bytes());
         engine.input(password.as_bytes());
-        let password_hmac = Hmac::<sha256::Hash>::from_engine(engine);
+        let password_hmac = <HmacSha256 as bitcoin_hashes::GeneralHash>::from_engine(engine);
 
         Ok((
             Self {
                 user: user.to_string(),
                 salt,
-                password_hmac: hex::encode(&password_hmac[..]),
+                password_hmac: hex::encode(&password_hmac.as_ref()),
             },
             password,
         ))

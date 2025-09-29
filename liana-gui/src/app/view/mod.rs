@@ -1,5 +1,5 @@
 mod label;
-mod message;
+pub mod message;
 mod warning;
 
 pub mod coins;

@@ -8,8 +8,6 @@ use std::fmt::Debug;
 use std::io::ErrorKind;
 use std::iter::FromIterator;
 
-use async_trait::async_trait;
-
 use liana::miniscript::bitcoin::{
     address,
     bip32::{ChildNumber, Fingerprint},
@@ -99,7 +97,7 @@ impl DaemonBackend {
     }
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 pub trait Daemon: Debug {
     fn backend(&self) -> DaemonBackend;
     fn config(&self) -> Option<&Config>;

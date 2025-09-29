@@ -13,7 +13,6 @@ pub enum Menu {
     Recovery,
     RefreshCoins(Vec<OutPoint>),
     PsbtPreSelected(Txid),
-    #[cfg(feature = "buysell")]
     BuySell, //(Option<AccountInfo>),
 }
 

@@ -11,10 +11,10 @@ use liana_ui::widget::Element;
 #[cfg(feature = "dev-meld")]
 use crate::app::buysell::{meld::MeldError, ServiceProvider};
 
-#[cfg(all(feature = "dev-onramp", not(feature = "dev-meld")))]
+#[cfg(feature = "dev-onramp")]
 use crate::app::buysell::onramper;
 
-#[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+#[cfg(all(feature = "buysell", not(feature = "webview")))]
 use crate::app::view::buysell::NativePage;
 
 use crate::{
@@ -72,33 +72,40 @@ impl State for BuySellPanel {
         _cache: &Cache,
         message: Message,
     ) -> Task<Message> {
-        // Handle global navigation for native flow (Previous)
-        if let Message::View(ViewMessage::Previous) = &message {
-            #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
-            {
-                match self.native_page {
-                    NativePage::Register => self.native_page = NativePage::AccountSelect,
-                    NativePage::VerifyEmail => self.native_page = NativePage::Register,
+        let message = match message {
+            // Handle global navigation for native flow (Previous)
+            #[cfg(all(feature = "buysell", not(feature = "webview")))]
+            Message::View(ViewMessage::Previous) => {
+                match self.registration_state.native_page {
+                    NativePage::Register => {
+                        self.registration_state.native_page = NativePage::AccountSelect
+                    }
+                    NativePage::VerifyEmail => {
+                        self.registration_state.native_page = NativePage::Register
+                    }
                     _ => {}
                 }
-            }
-            return Task::none();
-        }
 
-        let Message::View(ViewMessage::BuySell(message)) = message else {
-            return Task::none();
+                return Task::none();
+            }
+            Message::View(ViewMessage::BuySell(message)) => message,
+            _ => return Task::none(),
         };
 
         match message {
+            #[cfg(all(feature = "buysell", not(feature = "webview")))]
             BuySellMessage::LoginUsernameChanged(v) => {
                 self.set_login_username(v);
             }
+            #[cfg(all(feature = "buysell", not(feature = "webview")))]
             BuySellMessage::LoginPasswordChanged(v) => {
                 self.set_login_password(v);
             }
+            #[cfg(all(feature = "buysell", not(feature = "webview")))]
             BuySellMessage::SubmitLogin => {
                 return self.handle_native_login();
             }
+            #[cfg(all(feature = "buysell", not(feature = "webview")))]
             BuySellMessage::CreateAccountPressed => {
                 self.set_error("Create Account not implemented yet".to_string());
             }
@@ -113,50 +120,53 @@ impl State for BuySellPanel {
             BuySellMessage::FiatCurrencyChanged(fiat) => {
                 self.set_fiat_currency(fiat);
             }
-            #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+            #[cfg(all(feature = "buysell", not(feature = "webview")))]
             BuySellMessage::AccountTypeSelected(t) => {
-                self.selected_account_type = Some(t);
+                self.registration_state.selected_account_type = Some(t);
             }
-            #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+            #[cfg(all(feature = "buysell", not(feature = "webview")))]
             BuySellMessage::GetStarted => {
-                if self.selected_account_type.is_none() {
-                    // button disabled; ignore
-                } else {
+                if self.registration_state.selected_account_type.is_some() {
                     // Navigate to registration page (native flow)
-                    self.native_page = NativePage::Register;
+                    self.registration_state.native_page = NativePage::Register;
                 }
             }
-            #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+            #[cfg(all(feature = "buysell", not(feature = "webview")))]
             BuySellMessage::FirstNameChanged(v) => {
-                self.first_name.value = v;
-                self.first_name.valid = !self.first_name.value.is_empty();
+                self.registration_state.first_name.value = v;
+                self.registration_state.first_name.valid =
+                    !self.registration_state.first_name.value.is_empty();
             }
-            #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+            #[cfg(all(feature = "buysell", not(feature = "webview")))]
             BuySellMessage::LastNameChanged(v) => {
-                self.last_name.value = v;
-                self.last_name.valid = !self.last_name.value.is_empty();
+                self.registration_state.last_name.value = v;
+                self.registration_state.last_name.valid =
+                    !self.registration_state.last_name.value.is_empty();
             }
-            #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+            #[cfg(all(feature = "buysell", not(feature = "webview")))]
             BuySellMessage::EmailChanged(v) => {
-                self.email.value = v;
-                self.email.valid = self.email.value.contains('@') && self.email.value.contains('.')
+                self.registration_state.email.value = v;
+                self.registration_state.email.valid =
+                    self.registration_state.email.value.contains('@')
+                        && self.registration_state.email.value.contains('.')
             }
-            #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+            #[cfg(all(feature = "buysell", not(feature = "webview")))]
             BuySellMessage::Password1Changed(v) => {
-                self.password1.value = v;
-                self.password1.valid = self.is_password_valid();
+                self.registration_state.password1.value = v;
+                self.registration_state.password1.valid = self.is_password_valid();
             }
-            #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+            #[cfg(all(feature = "buysell", not(feature = "webview")))]
             BuySellMessage::Password2Changed(v) => {
-                self.password2.value = v;
-                self.password2.valid = self.password2.value == self.password1.value
-                    && !self.password2.value.is_empty();
+                self.registration_state.password2.value = v;
+                self.registration_state.password2.valid = self.registration_state.password2.value
+                    == self.registration_state.password1.value
+                    && !self.registration_state.password2.value.is_empty();
             }
-            #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+            #[cfg(all(feature = "buysell", not(feature = "webview")))]
             BuySellMessage::TermsToggled(b) => {
-                self.terms_accepted = b;
+                self.registration_state.terms_accepted = b;
             }
-            #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+            #[cfg(all(feature = "buysell", not(feature = "webview")))]
             BuySellMessage::SubmitRegistration => {
                 tracing::info!("🔍 [REGISTRATION] Submit registration button clicked");
 
@@ -164,8 +174,8 @@ impl State for BuySellPanel {
                     tracing::info!(
                         "✅ [REGISTRATION] Form validation passed, submitting registration"
                     );
-                    let client = self.registration_client.clone();
-                    let account_type = if self.selected_account_type
+                    let client = self.registration_state.client.clone();
+                    let account_type = if self.registration_state.selected_account_type
                         == Some(crate::app::view::AccountType::Individual)
                     {
                         "personal"
@@ -174,10 +184,10 @@ impl State for BuySellPanel {
                     }
                     .to_string();
 
-                    let email = self.email.value.clone();
-                    let first_name = self.first_name.value.clone();
-                    let last_name = self.last_name.value.clone();
-                    let password = self.password1.value.clone();
+                    let email = self.registration_state.email.value.clone();
+                    let first_name = self.registration_state.first_name.value.clone();
+                    let last_name = self.registration_state.last_name.value.clone();
+                    let password = self.registration_state.password1.value.clone();
 
                     tracing::info!(
                         "📤 [REGISTRATION] Making API call with account_type: {}, email: {}",
@@ -232,52 +242,57 @@ impl State for BuySellPanel {
                     );
                     tracing::warn!(
                         "   - First name: '{}' (valid: {})",
-                        self.first_name.value,
-                        !self.first_name.value.is_empty()
+                        self.registration_state.first_name.value,
+                        !self.registration_state.first_name.value.is_empty()
                     );
                     tracing::warn!(
                         "   - Last name: '{}' (valid: {})",
-                        self.last_name.value,
-                        !self.last_name.value.is_empty()
+                        self.registration_state.last_name.value,
+                        !self.registration_state.last_name.value.is_empty()
                     );
                     tracing::warn!(
                         "   - Email: '{}' (valid: {})",
-                        self.email.value,
-                        self.email.value.contains('@') && self.email.value.contains('.')
+                        self.registration_state.email.value,
+                        self.registration_state.email.value.contains('@')
+                            && self.registration_state.email.value.contains('.')
                     );
                     tracing::warn!(
                         "   - Password length: {} (valid: {})",
-                        self.password1.value.len(),
-                        self.password1.value.len() >= 8
+                        self.registration_state.password1.value.len(),
+                        self.registration_state.password1.value.len() >= 8
                     );
                     tracing::warn!(
                         "   - Passwords match: {}",
-                        self.password1.value == self.password2.value
+                        self.registration_state.password1.value
+                            == self.registration_state.password2.value
                     );
-                    tracing::warn!("   - Terms accepted: {}", self.terms_accepted);
+                    tracing::warn!(
+                        "   - Terms accepted: {}",
+                        self.registration_state.terms_accepted
+                    );
                 }
             }
-            #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+            #[cfg(all(feature = "buysell", not(feature = "webview")))]
             BuySellMessage::RegistrationSuccess => {
                 // Registration successful, navigate to email verification
-                self.native_page = NativePage::VerifyEmail;
-                self.email_verification_status = Some(false); // pending verification
+                self.registration_state.native_page = NativePage::VerifyEmail;
+                self.registration_state.email_verification_status = Some(false); // pending verification
                 self.error = None;
             }
-            #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+            #[cfg(all(feature = "buysell", not(feature = "webview")))]
             BuySellMessage::RegistrationError(error) => {
                 self.error = Some(format!("Registration failed: {}", error));
             }
-            #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+            #[cfg(all(feature = "buysell", not(feature = "webview")))]
             BuySellMessage::CheckEmailVerificationStatus => {
                 tracing::info!(
                     "🔍 [EMAIL_VERIFICATION] Checking email verification status for: {}",
-                    self.email.value
+                    self.registration_state.email.value
                 );
                 // Set to "checking" state
-                self.email_verification_status = None;
-                let client = self.registration_client.clone();
-                let email = self.email.value.clone();
+                self.registration_state.email_verification_status = None;
+                let client = self.registration_state.client.clone();
+                let email = self.registration_state.email.value.clone();
 
                 return Task::perform(
                     async move {
@@ -313,28 +328,28 @@ impl State for BuySellPanel {
                     },
                 );
             }
-            #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+            #[cfg(all(feature = "buysell", not(feature = "webview")))]
             BuySellMessage::EmailVerificationStatusChecked(verified) => {
-                self.email_verification_status = Some(verified);
+                self.registration_state.email_verification_status = Some(verified);
                 if verified {
                     self.error = Some("Email verified successfully!".to_string());
                 } else {
                     self.error = None;
                 }
             }
-            #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+            #[cfg(all(feature = "buysell", not(feature = "webview")))]
             BuySellMessage::EmailVerificationStatusError(error) => {
-                self.email_verification_status = Some(false); // fallback to pending
+                self.registration_state.email_verification_status = Some(false); // fallback to pending
                 self.error = Some(format!("Error checking verification status: {}", error));
             }
-            #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+            #[cfg(all(feature = "buysell", not(feature = "webview")))]
             BuySellMessage::ResendVerificationEmail => {
                 tracing::info!(
                     "📧 [RESEND_EMAIL] Resending verification email to: {}",
-                    self.email.value
+                    self.registration_state.email.value
                 );
-                let client = self.registration_client.clone();
-                let email = self.email.value.clone();
+                let client = self.registration_state.client.clone();
+                let email = self.registration_state.email.value.clone();
 
                 return Task::perform(
                     async move {
@@ -363,12 +378,12 @@ impl State for BuySellPanel {
                     },
                 );
             }
-            #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+            #[cfg(all(feature = "buysell", not(feature = "webview")))]
             BuySellMessage::ResendEmailSuccess => {
-                self.email_verification_status = Some(false); // back to pending
+                self.registration_state.email_verification_status = Some(false); // back to pending
                 self.error = Some("Verification email resent successfully!".to_string());
             }
-            #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+            #[cfg(all(feature = "buysell", not(feature = "webview")))]
             BuySellMessage::ResendEmailError(error) => {
                 self.error = Some(format!("Error resending email: {}", error));
             }
@@ -377,7 +392,7 @@ impl State for BuySellPanel {
                 self.set_source_amount(amount);
             }
 
-            #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+            #[cfg(all(feature = "buysell", not(feature = "webview")))]
             BuySellMessage::CreateSession => {
                 // No providers in default build; ignore or show error
                 self.set_error("No provider configured in this build".into());
@@ -574,6 +589,7 @@ impl State for BuySellPanel {
     }
 }
 
+#[cfg(all(feature = "buysell", not(feature = "webview")))]
 impl BuySellPanel {
     pub fn handle_native_login(&mut self) -> Task<Message> {
         if self.is_login_form_valid() {
