@@ -14,8 +14,8 @@ name = "coincube-vault"
 path = "src/main.rs"
 
 [features]
-dev-meld = ["webview"]
-dev-onramp = ["webview"]
+dev-meld = ["webview", "buysell"]
+dev-onramp = ["webview", "buysell"]
 webview = ["iced_webview"]
 buysell = []
 

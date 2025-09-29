@@ -1,7 +1,7 @@
 #![allow(unused_imports)]
 
 #[cfg(all(feature = "dev-meld", feature = "dev-onramp"))]
-compile_error!("`dev-meld` and `dev-onramp` should be exclusive");
+compile_error!("`dev-meld` and `dev-onramp` features should be exclusive");
 
 use iced::{
     widget::{container, Space},
@@ -49,40 +49,12 @@ pub struct BuySellPanel {
     #[cfg(feature = "webview")]
     pub active_page: Option<iced_webview::ViewId>,
 
-    // Native login fields
-    pub login_username: form::Value<String>,
-    pub login_password: form::Value<String>,
-
-    // API client for registration calls
-    #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
-    pub registration_client: crate::services::registration::RegistrationClient,
-
-    // Default build: account type selection state
-    #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
-    pub selected_account_type: Option<crate::app::view::message::AccountType>,
-
-    // Native flow current page
-    #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
-    pub native_page: NativePage,
-
-    // Registration fields (native flow)
-    #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
-    pub first_name: form::Value<String>,
-    #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
-    pub last_name: form::Value<String>,
-    #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
-    pub email: form::Value<String>,
-    #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
-    pub password1: form::Value<String>,
-    #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
-    pub password2: form::Value<String>,
-    #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
-    pub terms_accepted: bool,
-    #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
-    pub email_verification_status: Option<bool>, // None = checking, Some(true) = verified, Some(false) = pending
+    // Native buysell
+    #[cfg(all(feature = "buysell", not(feature = "webview")))]
+    pub registration_state: crate::services::registration::RegistrationState,
 }
 
-#[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+#[cfg(all(feature = "buysell", not(feature = "webview")))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NativePage {
     AccountSelect,
@@ -118,10 +90,6 @@ impl BuySellPanel {
 
             #[cfg(feature = "dev-meld")]
             meld_client: MeldClient::new(),
-            #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
-            selected_account_type: None,
-            #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
-            native_page: NativePage::AccountSelect,
 
             error: None,
             network,
@@ -133,36 +101,8 @@ impl BuySellPanel {
             #[cfg(feature = "webview")]
             active_page: None,
 
-            login_username: form::Value {
-                value: String::new(),
-                warning: None,
-                valid: false,
-            },
-            login_password: form::Value {
-                value: String::new(),
-                warning: None,
-                valid: false,
-            },
-
-            // Native registration defaults
-            #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
-            first_name: form::Value::default(),
-            #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
-            last_name: form::Value::default(),
-            #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
-            email: form::Value::default(),
-            #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
-            password1: form::Value::default(),
-            #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
-            password2: form::Value::default(),
-            #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
-            terms_accepted: false,
-            #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
-            email_verification_status: None,
-            #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
-            registration_client: crate::services::registration::RegistrationClient::new(
-                "https://dev-api.coincube.io/api/v1".to_string(),
-            ),
+            #[cfg(all(feature = "buysell", not(feature = "webview")))]
+            registration_state: Default::default(),
         }
     }
 
@@ -203,18 +143,23 @@ impl BuySellPanel {
         }
     }
 
+    #[cfg(all(feature = "buysell", not(feature = "webview")))]
     pub fn set_login_username(&mut self, v: String) {
-        self.login_username.value = v;
-        self.login_username.valid = !self.login_username.value.is_empty();
+        self.registration_state.login_username.value = v;
+        self.registration_state.login_username.valid =
+            !self.registration_state.login_username.value.is_empty();
     }
 
+    #[cfg(all(feature = "buysell", not(feature = "webview")))]
     pub fn set_login_password(&mut self, v: String) {
-        self.login_password.value = v;
-        self.login_password.valid = !self.login_password.value.is_empty();
+        self.registration_state.login_password.value = v;
+        self.registration_state.login_password.valid =
+            !self.registration_state.login_password.value.is_empty();
     }
 
+    #[cfg(all(feature = "buysell", not(feature = "webview")))]
     pub fn is_login_form_valid(&self) -> bool {
-        self.login_username.valid && self.login_password.valid
+        self.registration_state.login_username.valid && self.registration_state.login_password.valid
     }
 
     fn update_wallet_address_warning(&mut self) {
@@ -258,7 +203,7 @@ impl BuySellPanel {
         #[cfg(feature = "dev-onramp")]
         let locale_check = self.fiat_currency.valid && !self.fiat_currency.value.is_empty();
 
-        #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+        #[cfg(all(feature = "buysell", not(feature = "webview")))]
         let locale_check = true;
 
         self.wallet_address.valid
@@ -371,9 +316,9 @@ impl BuySellPanel {
         .center_x(Length::Fill)
     }
 
-    #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+    #[cfg(all(feature = "buysell", not(feature = "webview")))]
     fn form_view<'a>(&'a self) -> Column<'a, ViewMessage> {
-        match self.native_page {
+        match self.registration_state.native_page {
             NativePage::AccountSelect => self.native_login_form(),
             NativePage::Register => self.native_register_form(),
             NativePage::VerifyEmail => self.native_verify_email_form(),
@@ -424,18 +369,18 @@ impl BuySellPanel {
                             .push(Space::with_height(Length::Fixed(5.0)))
                             .push({
                                 #[cfg(feature = "dev-meld")]
-                                {
+                                let form = {
                                     form::Form::new_trimmed("US", &self.country_code, |value| {
                                         ViewMessage::BuySell(BuySellMessage::CountryCodeChanged(
                                             value,
                                         ))
                                     })
                                     .size(16)
-                                    .padding(15);
-                                }
+                                    .padding(15)
+                                };
 
                                 #[cfg(feature = "dev-onramp")]
-                                {
+                                let form = {
                                     form::Form::new_trimmed("USD", &self.fiat_currency, |value| {
                                         ViewMessage::BuySell(BuySellMessage::FiatCurrencyChanged(
                                             value,
@@ -443,7 +388,9 @@ impl BuySellPanel {
                                     })
                                     .size(16)
                                     .padding(15)
-                                }
+                                };
+
+                                form
                             })
                             .spacing(5)
                             .width(Length::FillPortion(1)),
@@ -483,7 +430,7 @@ impl BuySellPanel {
     }
 }
 
-#[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
+#[cfg(all(feature = "buysell", not(feature = "webview")))]
 impl BuySellPanel {
     fn native_login_form<'a>(&'a self) -> Column<'a, ViewMessage> {
         use liana_ui::component::card as ui_card;
@@ -503,11 +450,11 @@ impl BuySellPanel {
         let subheader = ui_text::p1_regular("Choose your account type").color(color::WHITE);
 
         let is_individual = matches!(
-            self.selected_account_type,
+            self.registration_state.selected_account_type,
             Some(crate::app::view::message::AccountType::Individual)
         );
         let is_business = matches!(
-            self.selected_account_type,
+            self.registration_state.selected_account_type,
             Some(crate::app::view::message::AccountType::Business)
         );
 
@@ -562,7 +509,7 @@ impl BuySellPanel {
             ViewMessage::BuySell(BuySellMessage::AccountTypeSelected(crate::app::view::message::AccountType::Business)),
         );
 
-        let button = if self.selected_account_type.is_some() {
+        let button = if self.registration_state.selected_account_type.is_some() {
             ui_button::primary(None, "Get Started")
                 .on_press(ViewMessage::BuySell(BuySellMessage::GetStarted))
                 .width(Length::Fill)
@@ -585,10 +532,7 @@ impl BuySellPanel {
             .max_width(500)
             .width(Length::Fill)
     }
-}
 
-#[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
-impl BuySellPanel {
     fn native_register_form<'a>(&'a self) -> Column<'a, ViewMessage> {
         use iced::widget::checkbox;
         use liana_ui::component::button as ui_button;
@@ -657,7 +601,7 @@ impl BuySellPanel {
         let name_row = Row::new()
             .push(
                 Container::new(
-                    form::Form::new("First Name", &self.first_name, |v| {
+                    form::Form::new("First Name", &self.registration_state.first_name, |v| {
                         ViewMessage::BuySell(BuySellMessage::FirstNameChanged(v))
                     })
                     .size(16)
@@ -668,7 +612,7 @@ impl BuySellPanel {
             .push(Space::with_width(Length::Fixed(12.0)))
             .push(
                 Container::new(
-                    form::Form::new("Last Name", &self.last_name, |v| {
+                    form::Form::new("Last Name", &self.registration_state.last_name, |v| {
                         ViewMessage::BuySell(BuySellMessage::LastNameChanged(v))
                     })
                     .size(16)
@@ -677,29 +621,31 @@ impl BuySellPanel {
                 .width(Length::FillPortion(1)),
             );
 
-        let email = form::Form::new("Email Address", &self.email, |v| {
+        let email = form::Form::new("Email Address", &self.registration_state.email, |v| {
             ViewMessage::BuySell(BuySellMessage::EmailChanged(v))
         })
         .size(16)
         .padding(15);
 
-        let password = form::Form::new("Password", &self.password1, |v| {
+        let password = form::Form::new("Password", &self.registration_state.password1, |v| {
             ViewMessage::BuySell(BuySellMessage::Password1Changed(v))
         })
         .size(16)
         .padding(15)
         .secure();
 
-        let confirm = form::Form::new("Confirm Password", &self.password2, |v| {
-            ViewMessage::BuySell(BuySellMessage::Password2Changed(v))
-        })
+        let confirm = form::Form::new(
+            "Confirm Password",
+            &self.registration_state.password2,
+            |v| ViewMessage::BuySell(BuySellMessage::Password2Changed(v)),
+        )
         .size(16)
         .padding(15)
         .secure();
 
         let terms = Row::new()
             .push(
-                checkbox("", self.terms_accepted)
+                checkbox("", self.registration_state.terms_accepted)
                     .on_toggle(|b| ViewMessage::BuySell(BuySellMessage::TermsToggled(b))),
             )
             .push(Space::with_width(Length::Fixed(8.0)))
@@ -754,18 +700,20 @@ impl BuySellPanel {
 
     #[inline]
     pub fn is_registration_valid(&self) -> bool {
-        let email_ok = self.email.value.contains('@') && self.email.value.contains('.');
-        let pw_ok = self.is_password_valid() && self.password1.value == self.password2.value;
-        !self.first_name.value.is_empty()
-            && !self.last_name.value.is_empty()
+        let email_ok = self.registration_state.email.value.contains('@')
+            && self.registration_state.email.value.contains('.');
+        let pw_ok = self.is_password_valid()
+            && self.registration_state.password1.value == self.registration_state.password2.value;
+        !self.registration_state.first_name.value.is_empty()
+            && !self.registration_state.last_name.value.is_empty()
             && email_ok
             && pw_ok
-            && self.terms_accepted
+            && self.registration_state.terms_accepted
     }
 
     #[inline]
     pub fn is_password_valid(&self) -> bool {
-        let password = &self.password1.value;
+        let password = &self.registration_state.password1.value;
         if password.len() < 8 {
             return false;
         }
@@ -779,7 +727,7 @@ impl BuySellPanel {
     }
 
     pub fn get_password_validation_message(&self) -> Option<String> {
-        let password = &self.password1.value;
+        let password = &self.registration_state.password1.value;
         if password.is_empty() {
             return None;
         }
@@ -810,7 +758,7 @@ impl BuySellPanel {
     }
 
     pub fn set_email_verification_status(&mut self, verified: Option<bool>) {
-        self.email_verification_status = verified;
+        self.registration_state.email_verification_status = verified;
     }
 
     fn native_verify_email_form<'a>(&'a self) -> Column<'a, ViewMessage> {
@@ -856,7 +804,7 @@ impl BuySellPanel {
             .align_y(Alignment::Center);
 
         // Title and status-dependent subtitle
-        let title = match self.email_verification_status {
+        let title = match self.registration_state.email_verification_status {
             Some(true) => Column::new()
                 .push(ui_text::h3("Email Verified!").color(color::GREEN))
                 .push(
@@ -886,14 +834,17 @@ impl BuySellPanel {
         // Email display
         let email_display = Column::new()
             .push(
-                ui_text::p2_regular(&format!("Email sent to: {}", self.email.value))
-                    .color(color::WHITE),
+                ui_text::p2_regular(&format!(
+                    "Email sent to: {}",
+                    self.registration_state.email.value
+                ))
+                .color(color::WHITE),
             )
             .spacing(10)
             .align_x(Alignment::Center);
 
         // Status indicator and instructions
-        let status_section = match self.email_verification_status {
+        let status_section = match self.registration_state.email_verification_status {
             None => Column::new()
                 .push(ui_text::p2_regular("Checking verification status...").color(color::ORANGE))
                 .spacing(10)
@@ -919,7 +870,7 @@ impl BuySellPanel {
         };
 
         // Action buttons
-        let action_buttons = match self.email_verification_status {
+        let action_buttons = match self.registration_state.email_verification_status {
             Some(true) => Row::new()
                 .push(
                     ui_button::primary(None, "Continue")
