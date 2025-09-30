@@ -15,8 +15,8 @@ use liana_ui::{
     widget::*,
 };
 
+use super::flow_state::{AfricaFlowState, BuySellFlowState, InternationalFlowState, NativePage};
 use crate::app::view::{BuySellMessage, Message as ViewMessage};
-use super::flow_state::{BuySellFlowState, AfricaFlowState, InternationalFlowState, NativePage};
 
 pub struct BuySellPanel {
     // Common fields (always present)
@@ -310,7 +310,11 @@ impl BuySellPanel {
     fn render_loading<'a>(&'a self) -> Column<'a, ViewMessage> {
         Column::new()
             .push(Space::with_height(Length::Fixed(50.0)))
-            .push(text("Detecting your region...").size(16).color(color::GREY_3))
+            .push(
+                text("Detecting your region...")
+                    .size(16)
+                    .color(color::GREY_3),
+            )
             .push(Space::with_height(Length::Fixed(20.0)))
             .align_x(Alignment::Center)
             .spacing(10)
@@ -329,7 +333,10 @@ impl BuySellPanel {
     fn provider_selection_form<'a>(&'a self) -> Column<'a, ViewMessage> {
         use liana_ui::component::{button as ui_button, text as ui_text};
         let info = if let Some(country) = &self.detected_country {
-            format!("International region detected (country: {}). Choose a provider:", country)
+            format!(
+                "International region detected (country: {}). Choose a provider:",
+                country
+            )
         } else {
             "Choose a provider:".to_string()
         };
@@ -358,11 +365,13 @@ impl BuySellPanel {
             .max_width(500)
             .width(Length::Fill)
     }
-
 }
 
 impl BuySellPanel {
-    fn native_account_select_form<'a>(&'a self, state: &'a AfricaFlowState) -> Column<'a, ViewMessage> {
+    fn native_account_select_form<'a>(
+        &'a self,
+        state: &'a AfricaFlowState,
+    ) -> Column<'a, ViewMessage> {
         use liana_ui::component::card as ui_card;
         use liana_ui::component::text as ui_text;
         use liana_ui::icon::{building_icon, person_icon};
@@ -524,7 +533,6 @@ impl BuySellPanel {
     }
 }
 
-#[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
 impl BuySellPanel {
     fn native_register_form<'a>(&'a self, state: &'a AfricaFlowState) -> Column<'a, ViewMessage> {
         use iced::widget::checkbox;
@@ -752,7 +760,10 @@ impl BuySellPanel {
         }
     }
 
-    fn native_verify_email_form<'a>(&'a self, state: &'a AfricaFlowState) -> Column<'a, ViewMessage> {
+    fn native_verify_email_form<'a>(
+        &'a self,
+        state: &'a AfricaFlowState,
+    ) -> Column<'a, ViewMessage> {
         use liana_ui::component::button as ui_button;
         use liana_ui::component::text as ui_text;
         use liana_ui::component::text::text;
@@ -902,7 +913,6 @@ impl BuySellPanel {
             .width(Length::Fill)
     }
 
-    #[cfg(not(any(feature = "dev-meld", feature = "dev-onramp")))]
     fn coincube_pay_form<'a>(&'a self, state: &'a AfricaFlowState) -> Column<'a, ViewMessage> {
         use liana_ui::component::{button as ui_button, text as ui_text};
 

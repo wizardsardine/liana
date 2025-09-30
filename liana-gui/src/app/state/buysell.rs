@@ -9,9 +9,8 @@ use iced_webview::{
 };
 use liana_ui::widget::Element;
 
-use crate::app::buysell::{meld::MeldError, onramper, ServiceProvider};
-use crate::app::view::buysell::{BuySellFlowState, NativePage, InternationalProvider};
-
+use crate::app::buysell::{onramper, ServiceProvider};
+use crate::app::view::buysell::{BuySellFlowState, InternationalProvider, NativePage};
 
 use crate::{
     app::{
@@ -59,34 +58,32 @@ impl State for BuySellPanel {
         view::dashboard(&app::Menu::BuySell, cache, None, self.view())
     }
 
-        fn reload(
-            &mut self,
-            _daemon: Arc<dyn Daemon + Sync + Send>,
-            _wallet: Arc<crate::app::wallet::Wallet>,
-        ) -> Task<Message> {
-            let locator = crate::services::geolocation::CachedGeoLocator::new_from_env();
-            Task::perform(
-                async move { locator.detect_region().await },
-                |result| match result {
-                    Ok((region, country)) => {
-                        let region_str = match region {
-                            crate::services::geolocation::Region::Africa => "africa".to_string(),
-                            crate::services::geolocation::Region::International => {
-                                "international".to_string()
-                            }
-                        };
-                        Message::View(ViewMessage::BuySell(BuySellMessage::RegionDetected(
-                            region_str,
-                            country,
-                        )))
-                    }
-                    Err(error) => Message::View(ViewMessage::BuySell(
-                        BuySellMessage::RegionDetectionError(error),
-                    )),
-                },
-            )
-        }
-
+    fn reload(
+        &mut self,
+        _daemon: Arc<dyn Daemon + Sync + Send>,
+        _wallet: Arc<crate::app::wallet::Wallet>,
+    ) -> Task<Message> {
+        let locator = crate::services::geolocation::CachedGeoLocator::new_from_env();
+        Task::perform(
+            async move { locator.detect_region().await },
+            |result| match result {
+                Ok((region, country)) => {
+                    let region_str = match region {
+                        crate::services::geolocation::Region::Africa => "africa".to_string(),
+                        crate::services::geolocation::Region::International => {
+                            "international".to_string()
+                        }
+                    };
+                    Message::View(ViewMessage::BuySell(BuySellMessage::RegionDetected(
+                        region_str, country,
+                    )))
+                }
+                Err(error) => Message::View(ViewMessage::BuySell(
+                    BuySellMessage::RegionDetectionError(error),
+                )),
+            },
+        )
+    }
 
     fn update(
         &mut self,
@@ -174,7 +171,8 @@ impl State for BuySellPanel {
             BuySellMessage::EmailChanged(v) => {
                 if let BuySellFlowState::Africa(ref mut state) = self.flow_state {
                     state.email.value = v;
-                    state.email.valid = state.email.value.contains('@') && state.email.value.contains('.')
+                    state.email.valid =
+                        state.email.value.contains('@') && state.email.value.contains('.')
                 }
             }
             BuySellMessage::Password1Changed(v) => {
@@ -321,7 +319,9 @@ impl State for BuySellPanel {
 
                     return Task::perform(
                         async move {
-                            tracing::info!("🚀 [EMAIL_VERIFICATION] Making API call to check status");
+                            tracing::info!(
+                                "🚀 [EMAIL_VERIFICATION] Making API call to check status"
+                            );
                             let result = client.check_email_verification_status(&email).await;
                             tracing::info!(
                                 "📥 [EMAIL_VERIFICATION] API response received: {:?}",
@@ -400,16 +400,18 @@ impl State for BuySellPanel {
                         |result| match result {
                             Ok(_response) => {
                                 tracing::info!("✅ [RESEND_EMAIL] Email resent successfully");
-                                Message::View(ViewMessage::BuySell(BuySellMessage::ResendEmailSuccess))
+                                Message::View(ViewMessage::BuySell(
+                                    BuySellMessage::ResendEmailSuccess,
+                                ))
                             }
                             Err(error) => {
                                 tracing::error!(
                                     "❌ [RESEND_EMAIL] Failed to resend email: {}",
                                     error.error
                                 );
-                                Message::View(ViewMessage::BuySell(BuySellMessage::ResendEmailError(
-                                    error.error,
-                                )))
+                                Message::View(ViewMessage::BuySell(
+                                    BuySellMessage::ResendEmailError(error.error),
+                                ))
                             }
                         },
                     );
@@ -426,7 +428,9 @@ impl State for BuySellPanel {
             }
             BuySellMessage::LoginSuccess(response) => {
                 if let BuySellFlowState::Africa(ref mut state) = self.flow_state {
-                    tracing::info!("✅ [LOGIN] Login successful, checking email verification status");
+                    tracing::info!(
+                        "✅ [LOGIN] Login successful, checking email verification status"
+                    );
                     self.error = None;
 
                     // Check if 2FA is required
@@ -472,8 +476,7 @@ impl State for BuySellPanel {
             BuySellMessage::SourceAmountChanged(amount) => {
                 self.set_source_amount(amount);
             }
-            BuySellMessage::CountryCodeChanged(_)
-            | BuySellMessage::FiatCurrencyChanged(_) => {
+            BuySellMessage::CountryCodeChanged(_) | BuySellMessage::FiatCurrencyChanged(_) => {
                 // Legacy inputs retained for backward compatibility; runtime flow now uses
                 // geolocation-derived country and provider defaults. No-op in new architecture.
             }
@@ -556,13 +559,15 @@ impl State for BuySellPanel {
             BuySellMessage::MavapaySourceCurrencyChanged(currency) => {
                 if let BuySellFlowState::Africa(ref mut state) = self.flow_state {
                     state.mavapay_source_currency.value = currency;
-                    state.mavapay_source_currency.valid = !state.mavapay_source_currency.value.is_empty();
+                    state.mavapay_source_currency.valid =
+                        !state.mavapay_source_currency.value.is_empty();
                 }
             }
             BuySellMessage::MavapayTargetCurrencyChanged(currency) => {
                 if let BuySellFlowState::Africa(ref mut state) = self.flow_state {
                     state.mavapay_target_currency.value = currency;
-                    state.mavapay_target_currency.valid = !state.mavapay_target_currency.value.is_empty();
+                    state.mavapay_target_currency.valid =
+                        !state.mavapay_target_currency.value.is_empty();
                 }
             }
             BuySellMessage::MavapayBankAccountNumberChanged(account) => {
@@ -757,9 +762,9 @@ impl State for BuySellPanel {
             } else {
                 Duration::from_millis(100)
             };
-            return iced::time::every(interval).with(id).map(|(i, ..)| {
-                Message::View(ViewMessage::BuySell(BuySellMessage::ViewTick(i)))
-            });
+            return iced::time::every(interval)
+                .with(id)
+                .map(|(i, ..)| Message::View(ViewMessage::BuySell(BuySellMessage::ViewTick(i))));
         }
 
         iced::Subscription::none()
@@ -789,7 +794,9 @@ impl BuySellPanel {
                     match client.login(&email, &password).await {
                         Ok(response) => {
                             tracing::info!("✅ [LOGIN] Login successful for user: {}", email);
-                            Message::View(ViewMessage::BuySell(BuySellMessage::LoginSuccess(response)))
+                            Message::View(ViewMessage::BuySell(BuySellMessage::LoginSuccess(
+                                response,
+                            )))
                         }
                         Err(e) => {
                             tracing::error!("❌ [LOGIN] Login failed for user {}: {}", email, e);
@@ -980,13 +987,12 @@ impl BuySellPanel {
             async move { client.create_payment_link(request).await },
             |result| match result {
                 Ok(url) => Message::View(ViewMessage::BuySell(BuySellMessage::WebviewOpenUrl(url))),
-                Err(error) => Message::View(ViewMessage::BuySell(BuySellMessage::MavapayQuoteError(
-                    format!("Payment link error: {}", error)
-                ))),
+                Err(error) => Message::View(ViewMessage::BuySell(
+                    BuySellMessage::MavapayQuoteError(format!("Payment link error: {}", error)),
+                )),
             },
         )
     }
-
 
     fn handle_mavapay_get_price(&self) -> Task<Message> {
         let Some(state) = self.africa_state() else {

@@ -14,6 +14,7 @@ fuzz/corpus
 result
 release_build
 release_assets
+.env
 
 .vscode
 liana-gui/default

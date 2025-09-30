@@ -32,6 +32,13 @@ pub struct ResendVerificationEmailRequest {
     pub email: String,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct LoginRequest {
+    pub provider: u8, // 1 for email provider
+    pub email: String,
+    pub password: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct User {
     pub id: u32,
@@ -64,6 +71,14 @@ pub struct EmailVerificationStatusResponse {
 pub struct ResendEmailResponse {
     pub message: String,
     pub email: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LoginResponse {
+    #[serde(rename = "requires_2fa")]
+    pub requires_two_factor: bool,
+    pub token: Option<String>, // JWT token for authenticated requests
+    pub user: Option<User>,    // User data when login is successful
 }
 
 #[derive(Debug, Clone)]
@@ -178,5 +193,26 @@ impl RegistrationClient {
 
         let resend_response: ResendEmailResponse = response.json().await?;
         Ok(resend_response)
+    }
+
+    pub async fn login(
+        &self,
+        email: &str,
+        password: &str,
+    ) -> Result<LoginResponse, RegistrationError> {
+        let request = LoginRequest {
+            provider: 1, // EmailProvider = 1
+            email: email.to_string(),
+            password: password.to_string(),
+        };
+
+        let response = self
+            .post_json("login", &request)
+            .await?
+            .check_success()
+            .await?;
+
+        let login_response: LoginResponse = response.json().await?;
+        Ok(login_response)
     }
 }

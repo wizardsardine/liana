@@ -46,9 +46,10 @@ impl HttpGeoLocator {
             return Err(format!("server returned status {}", res.status()));
         }
 
-        let body = res.json::<RegionResponse>().await.map_err(|e| {
-            format!("invalid response: {}", e)
-        })?;
+        let body = res
+            .json::<RegionResponse>()
+            .await
+            .map_err(|e| format!("invalid response: {}", e))?;
 
         let region = match body.region.to_ascii_lowercase().as_str() {
             "africa" => Region::Africa,

@@ -9,7 +9,11 @@ const MELD_API_BASE_URL: &str = "https://api-sb.meld.io/crypto/session/widget";
 fn meld_auth_header() -> Option<String> {
     if cfg!(debug_assertions) {
         std::env::var("MELD_API_KEY").ok().and_then(|v| {
-            if v.is_empty() { None } else { Some(v.trim().to_string()) }
+            if v.is_empty() {
+                None
+            } else {
+                Some(v.trim().to_string())
+            }
         })
     } else {
         option_env!("MELD_API_KEY").map(|s| s.trim().to_string())
@@ -156,7 +160,9 @@ impl MeldClient {
         let auth = match meld_auth_header() {
             Some(h) => h,
             None => {
-                tracing::error!("Meld API key not configured: set MELD_API_KEY in .env or build env");
+                tracing::error!(
+                    "Meld API key not configured: set MELD_API_KEY in .env or build env"
+                );
                 return Err(MeldError::Api("Meld API key not configured".to_string()));
             }
         };

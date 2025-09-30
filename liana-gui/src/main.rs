@@ -68,6 +68,8 @@ Options:
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
+    // Load environment variables from .env file
+    dotenv::dotenv().ok();
     let args = parse_args(std::env::args().collect())?;
     let config = match args.as_slice() {
         [] => {
