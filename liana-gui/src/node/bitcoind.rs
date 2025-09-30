@@ -190,7 +190,7 @@ impl RpcAuth {
             Self {
                 user: user.to_string(),
                 salt,
-                password_hmac: hex::encode(&password_hmac.as_ref()),
+                password_hmac: hex::encode(password_hmac.as_ref()),
             },
             password,
         ))

@@ -107,7 +107,6 @@ winresource = "0.1"
 mismatched_lifetime_syntaxes = "allow"
 
 [lints.clippy]
-unknown_lints = "allow"
 uninlined_format_args = "allow"
 large_enum_variant = "allow"
 result_large_err = "allow"

@@ -56,13 +56,10 @@ impl MavapayClient {
             &self.api_key[..self.api_key.len().min(8)]
         );
 
-        let req = self
-            .http
+        self.http
             .request(method, &url)
             .header("x-api-key", &self.api_key)
-            .header("Content-Type", "application/json");
-
-        req
+            .header("Content-Type", "application/json")
     }
 
     /// Get current Bitcoin price in specified currency
@@ -357,7 +354,7 @@ impl MavapayClient {
             .get("data")
             .and_then(|d| d.get("accountName"))
             .and_then(|n| n.as_str())
-            .ok_or_else(|| MavapayError::BankAccountValidationFailed)?;
+            .ok_or(MavapayError::BankAccountValidationFailed)?;
 
         Ok(account_name.to_string())
     }

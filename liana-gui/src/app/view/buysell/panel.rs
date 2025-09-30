@@ -200,16 +200,12 @@ impl BuySellPanel {
     pub fn view<'a>(&'a self) -> Container<'a, ViewMessage> {
         Container::new({
             // attempt to render webview (if available)
-            let webview_widget = self
-                .active_page
-                .as_ref()
-                .map(|v| {
-                    self.webview.as_ref().map(|s| {
-                        s.view(*v)
-                            .map(|a| ViewMessage::BuySell(BuySellMessage::WebviewAction(a)))
-                    })
+            let webview_widget = self.active_page.as_ref().and_then(|v| {
+                self.webview.as_ref().map(|s| {
+                    s.view(*v)
+                        .map(|a| ViewMessage::BuySell(BuySellMessage::WebviewAction(a)))
                 })
-                .flatten();
+            });
 
             let column = match webview_widget {
                 Some(w) => Column::new()
@@ -836,7 +832,7 @@ impl BuySellPanel {
         // Email display
         let email_display = Column::new()
             .push(
-                ui_text::p2_regular(&format!("Email sent to: {}", state.email.value))
+                ui_text::p2_regular(format!("Email sent to: {}", state.email.value))
                     .color(color::WHITE),
             )
             .spacing(10)
