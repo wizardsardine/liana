@@ -6,16 +6,28 @@ The Liana graphical interface.
 
 You will need a few dependencies in order to run correctly this software. For Linux systems, those
 are:
+
 - [`fontconfig`](https://www.freedesktop.org/wiki/Software/fontconfig/) for access to fonts (On Debian/Ubuntu `apt install libfontconfig1-dev`)
 - [`libudev-dev`](https://www.freedesktop.org/software/systemd/man/libudev.html) to communicate with devices through USB (On Debian/Ubuntu `apt install libudev-dev`)
 
 In addition, if you want to build the project from source, you will need:
+
 - [`pkg-config`](https://www.freedesktop.org/wiki/Software/pkg-config/) (On Debian/Ubuntu `apt install pkg-config`)
 
+## Development
+
+To run the native with buy/sell feature, simply run:
+cargo run --release --features buysell
+
+For onramper:
+env ONRAMPER_API_KEY="..." ULTRALIGHT_RESOURCES_DIR="path/to/ultralight-free-sdk-1.4.0/resources" cargo run --release --features dev-onramp --bin coincube-vault
+
+For meld:
+env ULTRALIGHT_RESOURCES_DIR="path/to/ultralight-free-sdk-1.4.0/resources" cargo run --release --features dev-meld --bin coincube-vault
 
 ## Usage
 
-*For a quick guide to try out the software see [../doc/TRY.md](../doc/TRY.md).*
+_For a quick guide to try out the software see [../doc/TRY.md](../doc/TRY.md)._
 
 ```
 liana-gui --datadir <datadir> --<network>
