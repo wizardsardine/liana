@@ -5,6 +5,8 @@ use crate::{
     node::bitcoind::RpcAuthType,
     services::fiat::{Currency, PriceSource},
 };
+
+use crate::services::mavapay::{PaymentStatusResponse, PriceResponse, QuoteResponse, Transaction};
 use liana::miniscript::bitcoin::{bip32::Fingerprint, Address, OutPoint};
 
 pub trait Close {
@@ -27,7 +29,6 @@ pub enum Message {
     Settings(SettingsMessage),
     CreateSpend(CreateSpendMessage),
     ImportSpend(ImportSpendMessage),
-    #[cfg(feature = "buysell")]
     BuySell(BuySellMessage),
     Spend(SpendTxMessage),
     Next,
@@ -132,7 +133,6 @@ pub enum SettingsEditMessage {
     Confirm,
     Clipboard(String),
 }
-#[cfg(feature = "buysell")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AccountType {
     Individual,
@@ -147,79 +147,94 @@ pub enum CreateRbfMessage {
     Confirm,
 }
 
-#[cfg(feature = "buysell")]
+// TODO(Option B): Consider splitting BuySellMessage into sub-enums for clearer flow separation:
+// - BuySellMessage::Shared(SharedMsg)
+// - BuySellMessage::Africa(AfricaMsg)
+// - BuySellMessage::International(InternationalMsg)
+// This would reduce unrelated match arms and better reflect the runtime flow_state boundaries.
 #[derive(Debug, Clone)]
 pub enum BuySellMessage {
     // Native login (default build)
-    #[cfg(all(feature = "buysell", not(feature = "webview")))]
     LoginUsernameChanged(String),
-    #[cfg(all(feature = "buysell", not(feature = "webview")))]
     LoginPasswordChanged(String),
-
-    #[cfg(all(feature = "buysell", not(feature = "webview")))]
     SubmitLogin,
-    #[cfg(all(feature = "buysell", not(feature = "webview")))]
     CreateAccountPressed,
 
     // Default build: account type selection
-    #[cfg(all(feature = "buysell", not(feature = "webview")))]
     AccountTypeSelected(AccountType),
-    #[cfg(all(feature = "buysell", not(feature = "webview")))]
     GetStarted,
 
+    // Geolocation detection
+    DetectRegion,
+    RegionDetected(String, String), // (region, country)
+    RegionDetectionError(String),
+
     // Default build: registration form (native flow)
-    #[cfg(all(feature = "buysell", not(feature = "webview")))]
     FirstNameChanged(String),
-    #[cfg(all(feature = "buysell", not(feature = "webview")))]
     LastNameChanged(String),
-    #[cfg(all(feature = "buysell", not(feature = "webview")))]
     EmailChanged(String),
-    #[cfg(all(feature = "buysell", not(feature = "webview")))]
     Password1Changed(String),
-    #[cfg(all(feature = "buysell", not(feature = "webview")))]
     Password2Changed(String),
-    #[cfg(all(feature = "buysell", not(feature = "webview")))]
     TermsToggled(bool),
-    #[cfg(all(feature = "buysell", not(feature = "webview")))]
     SubmitRegistration,
-    #[cfg(all(feature = "buysell", not(feature = "webview")))]
     CheckEmailVerificationStatus,
-    #[cfg(all(feature = "buysell", not(feature = "webview")))]
     ResendVerificationEmail,
-    #[cfg(all(feature = "buysell", not(feature = "webview")))]
     RegistrationSuccess,
-    #[cfg(all(feature = "buysell", not(feature = "webview")))]
     RegistrationError(String),
-    #[cfg(all(feature = "buysell", not(feature = "webview")))]
     EmailVerificationStatusChecked(bool),
-    #[cfg(all(feature = "buysell", not(feature = "webview")))]
     EmailVerificationStatusError(String),
-    #[cfg(all(feature = "buysell", not(feature = "webview")))]
     ResendEmailSuccess,
-    #[cfg(all(feature = "buysell", not(feature = "webview")))]
     ResendEmailError(String),
+    LoginSuccess(crate::services::registration::LoginResponse),
+    LoginError(String),
+
+    // Mavapay-specific messages (native flow)
+    MavapayDashboard,
+    MavapayAmountChanged(String),
+    MavapaySourceCurrencyChanged(String),
+    MavapayTargetCurrencyChanged(String),
+    MavapayBankAccountNumberChanged(String),
+    MavapayBankAccountNameChanged(String),
+    MavapayBankCodeChanged(String),
+    MavapayBankNameChanged(String),
+    MavapayCreateQuote,
+    MavapayOpenPaymentLink,
+    MavapayQuoteCreated(QuoteResponse),
+    MavapayQuoteError(String),
+    MavapayConfirmQuote,
+    MavapayGetPrice,
+    MavapayPriceReceived(PriceResponse),
+    MavapayPriceError(String),
+    MavapayGetTransactions,
+    MavapayTransactionsReceived(Vec<Transaction>),
+    MavapayTransactionsError(String),
+    MavapayConfirmPayment(String), // quote_id
+    MavapayPaymentConfirmed(PaymentStatusResponse),
+    MavapayPaymentConfirmationError(String),
+    MavapayCheckPaymentStatus(String), // quote_id
+    MavapayPaymentStatusUpdated(PaymentStatusResponse),
+    MavapayPaymentStatusError(String),
+    MavapayStartPolling(String), // quote_id
+    MavapayStopPolling,
 
     // Shared form fields (for provider-integrated builds)
     WalletAddressChanged(String),
-    #[cfg(feature = "dev-meld")]
     CountryCodeChanged(String),
-    #[cfg(feature = "dev-onramp")]
     FiatCurrencyChanged(String),
     SourceAmountChanged(String),
 
     CreateSession,
+    // Provider selection for international users
+    OpenMeld,
+    OpenOnramper,
+
     SessionError(String),
 
     // webview messages (gated)
-    #[cfg(feature = "webview")]
     WebviewCreated(iced_webview::ViewId),
-    #[cfg(feature = "webview")]
     ViewTick(iced_webview::ViewId),
-    #[cfg(feature = "webview")]
     WebviewAction(iced_webview::advanced::Action),
-    #[cfg(feature = "webview")]
     WebviewOpenUrl(String),
-    #[cfg(feature = "webview")]
     CloseWebview,
 }
 

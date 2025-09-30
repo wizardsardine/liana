@@ -1,132 +1,99 @@
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
+/// Service providers supported by Meld and/or Onramper
+/// Note: Meld and Onramper have different provider support, so we keep all variants
+/// and use them based on which aggregator (Meld/Onramper) is selected at runtime
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum ServiceProvider {
+    // Universal providers (supported by both)
     AlchemyPay,
     Banxa,
     BinanceConnect,
-    #[cfg(feature = "dev-onramp")]
-    BinanceP2P,
-    #[cfg(feature = "dev-meld")]
-    BlockchainDotCom,
     #[default]
     BtcDirect,
     CoinbasePay,
-    #[cfg(feature = "dev-onramp")]
-    Coinify,
-    #[cfg(feature = "dev-onramp")]
-    Dfx,
-    #[cfg(feature = "dev-onramp")]
-    Fonbnk,
-    #[cfg(feature = "dev-onramp")]
-    GateConnect,
-    #[cfg(feature = "dev-onramp")]
-    GateFi,
     Guardarian,
     Koywe,
-    #[cfg(feature = "dev-onramp")]
-    LocalRamp,
-    #[cfg(feature = "dev-meld")]
-    Mesh,
-    #[cfg(feature = "dev-meld")]
-    Meso,
-    #[cfg(feature = "dev-onramp")]
-    Moonpay,
-    #[cfg(feature = "dev-onramp")]
-    Neocrypto,
-    #[cfg(feature = "dev-onramp")]
-    Onmeta,
     OnrampMoney,
-    #[cfg(feature = "dev-meld")]
+
+    // Meld-specific providers
+    BlockchainDotCom,
+    Mesh,
+    Meso,
     Paybis,
-    #[cfg(feature = "dev-onramp")]
-    Revolut,
-    #[cfg(feature = "dev-meld")]
     Transak,
+
+    // Onramper-specific providers
+    BinanceP2P,
+    Coinify,
+    Dfx,
+    Fonbnk,
+    GateConnect,
+    GateFi,
+    LocalRamp,
+    Moonpay,
+    Neocrypto,
+    Onmeta,
+    Revolut,
 }
 
 impl ServiceProvider {
     pub fn as_str(&self) -> &'static str {
         match self {
-            // universal providers
             ServiceProvider::AlchemyPay => "ALCHEMYPAY",
             ServiceProvider::Banxa => "BANXA",
             ServiceProvider::BinanceConnect => "BINANCECONNECT",
+            ServiceProvider::BinanceP2P => "BINANCEP2P",
+            ServiceProvider::BlockchainDotCom => "BLOCKCHAINDOTCOM",
             ServiceProvider::BtcDirect => "BTCDIRECT",
             ServiceProvider::CoinbasePay => "COINBASEPAY",
+            ServiceProvider::Coinify => "COINIFY",
+            ServiceProvider::Dfx => "DFX",
+            ServiceProvider::Fonbnk => "FONBNK",
+            ServiceProvider::GateConnect => "GATECONNECT",
+            ServiceProvider::GateFi => "GATEFI",
             ServiceProvider::Guardarian => "GUARDARIAN",
             ServiceProvider::Koywe => "KOYWE",
+            ServiceProvider::LocalRamp => "LOCALRAMP",
+            ServiceProvider::Mesh => "MESH",
+            ServiceProvider::Meso => "MESO",
+            ServiceProvider::Moonpay => "MOONPAY",
+            ServiceProvider::Neocrypto => "NEOCRYPTO",
+            ServiceProvider::Onmeta => "ONMETA",
             ServiceProvider::OnrampMoney => "ONRAMPMONEY",
-            #[cfg(all(feature = "dev-meld", not(feature = "dev-onramp")))]
-            meld_provider => match meld_provider {
-                // meld exclusive providers
-                ServiceProvider::BlockchainDotCom => "BLOCKCHAINDOTCOM",
-                ServiceProvider::Mesh => "MESH",
-                ServiceProvider::Meso => "MESO",
-                ServiceProvider::Paybis => "PAYBIS",
-                ServiceProvider::Transak => "TRANSAK",
-                _ => unreachable!(),
-            },
-
-            #[cfg(feature = "dev-onramp")]
-            onramper_provider => match onramper_provider {
-                // onramper exclusive providers
-                ServiceProvider::BinanceP2P => "BINANCEP2P",
-                ServiceProvider::Coinify => "COINIFY",
-                ServiceProvider::Dfx => "DFX",
-                ServiceProvider::Fonbnk => "FONBNK",
-                ServiceProvider::GateConnect => "GATECONNECT",
-                ServiceProvider::GateFi => "GATEFI",
-                ServiceProvider::LocalRamp => "LOCALRAMP",
-                ServiceProvider::Moonpay => "MOONPAY",
-                ServiceProvider::Neocrypto => "NEOCRYPTO",
-                ServiceProvider::Onmeta => "ONMETA",
-                ServiceProvider::Revolut => "REVOLUT",
-                _ => unreachable!(),
-            },
+            ServiceProvider::Paybis => "PAYBIS",
+            ServiceProvider::Revolut => "REVOLUT",
+            ServiceProvider::Transak => "TRANSAK",
         }
     }
 
     pub fn display_name(&self) -> &'static str {
         match self {
-            // universal providers
             ServiceProvider::AlchemyPay => "Alchemy Pay",
             ServiceProvider::Banxa => "Banxa",
             ServiceProvider::BinanceConnect => "Binance Connect",
+            ServiceProvider::BinanceP2P => "Binance P2P",
+            ServiceProvider::BlockchainDotCom => "Blockchain.com",
             ServiceProvider::BtcDirect => "BTC Direct",
             ServiceProvider::CoinbasePay => "Coinbase Pay",
+            ServiceProvider::Coinify => "Coinify",
+            ServiceProvider::Dfx => "DFX",
+            ServiceProvider::Fonbnk => "Fonbnk",
+            ServiceProvider::GateConnect => "GateConnect",
+            ServiceProvider::GateFi => "Unlimit",
             ServiceProvider::Guardarian => "Guardarian",
-            &ServiceProvider::OnrampMoney => "Onramp Money",
-
             ServiceProvider::Koywe => "Koywe",
-            #[cfg(all(feature = "dev-meld", not(feature = "dev-onramp")))]
-            meld_provider => match meld_provider {
-                // meld exclusive providers
-                ServiceProvider::BlockchainDotCom => "Blockchain.com",
-                ServiceProvider::Mesh => "Mesh",
-                ServiceProvider::Meso => "Meso",
-                ServiceProvider::OnrampMoney => "Onramp Money",
-                ServiceProvider::Paybis => "Paybis",
-                ServiceProvider::Transak => "Transak",
-                _ => unreachable!(),
-            },
-            #[cfg(feature = "dev-onramp")]
-            onramper_provider => match onramper_provider {
-                // onramper exclusive providers
-                ServiceProvider::BinanceP2P => "Binance P2P",
-                ServiceProvider::Coinify => "Coinify",
-                ServiceProvider::Dfx => "DFX",
-                ServiceProvider::Fonbnk => "Fonbnk",
-                ServiceProvider::GateConnect => "GateConnect",
-                ServiceProvider::GateFi => "Unlimit",
-                ServiceProvider::LocalRamp => "LocalRamp",
-                ServiceProvider::Moonpay => "MoonPay",
-                ServiceProvider::Neocrypto => "Neocrypto",
-                ServiceProvider::Onmeta => "Onmeta",
-                ServiceProvider::Revolut => "Revolut",
-                _ => unreachable!(),
-            },
+            ServiceProvider::LocalRamp => "LocalRamp",
+            ServiceProvider::Mesh => "Mesh",
+            ServiceProvider::Meso => "Meso",
+            ServiceProvider::Moonpay => "MoonPay",
+            ServiceProvider::Neocrypto => "Neocrypto",
+            ServiceProvider::Onmeta => "Onmeta",
+            ServiceProvider::OnrampMoney => "Onramp Money",
+            ServiceProvider::Paybis => "Paybis",
+            ServiceProvider::Revolut => "Revolut",
+            ServiceProvider::Transak => "Transak",
         }
     }
 }
@@ -137,8 +104,5 @@ impl fmt::Display for ServiceProvider {
     }
 }
 
-#[cfg(feature = "dev-meld")]
 pub mod meld;
-
-#[cfg(feature = "dev-onramp")]
 pub mod onramper;

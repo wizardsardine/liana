@@ -1,5 +1,5 @@
 mod label;
-pub mod message;
+mod message;
 mod warning;
 
 pub mod coins;
@@ -8,7 +8,6 @@ pub mod fiat;
 pub mod home;
 pub mod hw;
 
-#[cfg(feature = "buysell")]
 pub mod buysell;
 
 pub mod psbt;
@@ -40,7 +39,6 @@ use liana_ui::{
     widget::*,
 };
 
-#[cfg(feature = "buysell")]
 use liana_ui::icon::bitcoin_icon;
 
 use crate::app::{cache::Cache, error::Error, menu::Menu};
@@ -144,7 +142,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
             .width(iced::Length::Fill))
     };
 
-    #[cfg(feature = "buysell")]
+    #[cfg(debug_assertions)]
     let buy_sell_button = {
         if *menu == Menu::BuySell {
             row!(
@@ -190,11 +188,11 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
                     .push(transactions_button)
                     .push(psbt_button)
                     .push_maybe({
-                        #[cfg(feature = "buysell")]
+                        #[cfg(debug_assertions)]
                         {
                             Some(buy_sell_button)
                         }
-                        #[cfg(not(feature = "buysell"))]
+                        #[cfg(not(debug_assertions))]
                         {
                             None::<Row<'_, Message>>
                         }
@@ -313,7 +311,7 @@ pub fn small_sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message
             .width(iced::Length::Fill))
     };
 
-    #[cfg(feature = "buysell")]
+    #[cfg(debug_assertions)]
     let buy_sell_button = if *menu == Menu::BuySell {
         row!(
             button::menu_active_small(bitcoin_icon())
@@ -355,11 +353,11 @@ pub fn small_sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message
                     .push(transactions_button)
                     .push(psbt_button)
                     .push_maybe({
-                        #[cfg(feature = "buysell")]
+                        #[cfg(debug_assertions)]
                         {
                             Some(buy_sell_button)
                         }
-                        #[cfg(not(feature = "buysell"))]
+                        #[cfg(not(debug_assertions))]
                         {
                             None::<Row<'_, Message>>
                         }
