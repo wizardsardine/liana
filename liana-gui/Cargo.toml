@@ -9,6 +9,9 @@ authors = ["Edouard Paris <m@edouard.paris>"]
 edition = "2018"
 resolver = "2"
 
+[package.metadata.winres]
+LegalCopyright = "Copyright © 2025"
+
 [[bin]]
 name = "liana-gui"
 path = "src/main.rs"
@@ -67,6 +70,9 @@ zip = { version = "0.6", default-features=false, features = ["bzip2", "deflate"]
 [target.'cfg(unix)'.dependencies]
 tar = { version = "0.4", default-features=false }
 flate2 = { version = "1.0", default-features=false }
+
+[build-dependencies]
+winresource = "0.1.23"
 
 [dev-dependencies]
 tokio = {version = "1.9.0", features = ["rt", "macros"]}
