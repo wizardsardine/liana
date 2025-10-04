@@ -43,9 +43,12 @@ pub struct AfricaFlowState {
     pub email_verification_status: Option<bool>,
 
     // Mavapay-specific fields
+    pub mavapay_flow_mode: MavapayFlowMode,
     pub mavapay_amount: form::Value<String>,
     pub mavapay_source_currency: form::Value<String>,
     pub mavapay_target_currency: form::Value<String>,
+    pub mavapay_settlement_currency: form::Value<String>,
+    pub mavapay_payment_method: MavapayPaymentMethod,
     pub mavapay_bank_account_number: form::Value<String>,
     pub mavapay_bank_account_name: form::Value<String>,
     pub mavapay_bank_code: form::Value<String>,
@@ -59,6 +62,57 @@ pub struct AfricaFlowState {
     // API clients
     pub registration_client: RegistrationClient,
     pub mavapay_client: MavapayClient,
+}
+
+/// Mavapay flow mode selection
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MavapayFlowMode {
+    CreateQuote,
+    SecureCheckout,
+}
+
+impl MavapayFlowMode {
+    pub fn all() -> &'static [MavapayFlowMode] {
+        &[MavapayFlowMode::CreateQuote, MavapayFlowMode::SecureCheckout]
+    }
+}
+
+impl std::fmt::Display for MavapayFlowMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            MavapayFlowMode::CreateQuote => write!(f, "Create Quote"),
+            MavapayFlowMode::SecureCheckout => write!(f, "One-time Checkout"),
+        }
+    }
+}
+
+/// Payment method for secure checkout
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MavapayPaymentMethod {
+    BankTransfer,
+    Lightning,
+}
+
+impl MavapayPaymentMethod {
+    pub fn all() -> &'static [MavapayPaymentMethod] {
+        &[MavapayPaymentMethod::BankTransfer, MavapayPaymentMethod::Lightning]
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            MavapayPaymentMethod::BankTransfer => "BANKTRANSFER",
+            MavapayPaymentMethod::Lightning => "LIGHTNING",
+        }
+    }
+}
+
+impl std::fmt::Display for MavapayPaymentMethod {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            MavapayPaymentMethod::BankTransfer => write!(f, "Bank Transfer"),
+            MavapayPaymentMethod::Lightning => write!(f, "Lightning Network"),
+        }
+    }
 }
 
 /// State specific to International (Meld/Onramper) flow
@@ -99,6 +153,7 @@ impl AfricaFlowState {
             password2: form::Value::default(),
             terms_accepted: false,
             email_verification_status: None,
+            mavapay_flow_mode: MavapayFlowMode::CreateQuote,
             mavapay_amount: form::Value {
                 value: "100000".to_string(), // 100,000 sats default
                 warning: None,
@@ -114,6 +169,12 @@ impl AfricaFlowState {
                 warning: None,
                 valid: true,
             },
+            mavapay_settlement_currency: form::Value {
+                value: "BTC".to_string(),
+                warning: None,
+                valid: true,
+            },
+            mavapay_payment_method: MavapayPaymentMethod::Lightning,
             mavapay_bank_account_number: form::Value::default(),
             mavapay_bank_account_name: form::Value::default(),
             mavapay_bank_code: form::Value::default(),

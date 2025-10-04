@@ -49,11 +49,12 @@ impl MavapayClient {
     fn request(&self, method: Method, endpoint: &str) -> RequestBuilder {
         let url = format!("{}/{}", self.base_url, endpoint.trim_start_matches('/'));
 
-        tracing::debug!(
-            "Mavapay API request: {} {} with API key: {}...",
+        #[cfg(debug_assertions)]
+        tracing::info!(
+            "[MAVAPAY] {} {} | API key: {}***",
             method,
             url,
-            &self.api_key[..self.api_key.len().min(8)]
+            &self.api_key[..self.api_key.len().min(4)]
         );
 
         self.http
@@ -231,23 +232,53 @@ impl MavapayClient {
 
     /// Create a quote for currency conversion
     pub async fn create_quote(&self, request: QuoteRequest) -> Result<QuoteResponse, MavapayError> {
+        #[cfg(debug_assertions)]
+        {
+            let request_json = serde_json::to_string_pretty(&request).unwrap_or_default();
+            tracing::info!("[MAVAPAY] Creating quote with request:\n{}", request_json);
+        }
+
         let response = self
             .request(Method::POST, "quote")
             .json(&request)
             .send()
-            .await?
-            .check_success()
             .await?;
 
-        let api_response: ApiResponse<QuoteResponse> = response.json().await.map_err(|e| {
-            MavapayError::InvalidResponse(format!("Failed to parse quote response: {}", e))
+        #[cfg(debug_assertions)]
+        {
+            let status = response.status();
+            tracing::info!("[MAVAPAY] Quote response status: {}", status);
+        }
+
+        let response = response.check_success().await?;
+
+        // Read raw response body for debugging
+        let response_text = response.text().await?;
+
+        #[cfg(debug_assertions)]
+        tracing::info!("[MAVAPAY] Raw quote response body:\n{}", response_text);
+
+        // Parse the response
+        let api_response: ApiResponse<QuoteResponse> = serde_json::from_str(&response_text).map_err(|e| {
+            #[cfg(debug_assertions)]
+            tracing::error!("[MAVAPAY] Failed to deserialize quote response: {}\nResponse was: {}", e, response_text);
+            MavapayError::InvalidResponse(format!("Failed to parse quote response: {} | Response: {}", e, response_text))
         })?;
 
-        if api_response.status != "ok" {
+        if api_response.status != "ok" && api_response.status != "success" {
             return Err(MavapayError::InvalidResponse(
-                "API returned non-ok status".to_string(),
+                format!("API returned status: {}", api_response.status),
             ));
         }
+
+        #[cfg(debug_assertions)]
+        tracing::info!(
+            "[MAVAPAY] Quote created successfully: {} {} -> {} {}",
+            request.amount,
+            request.source_currency.as_str(),
+            api_response.data.amount_in_target_currency,
+            request.target_currency.as_str()
+        );
 
         Ok(api_response.data)
     }
@@ -258,45 +289,49 @@ impl MavapayClient {
         request: PaymentLinkRequest,
     ) -> Result<String, MavapayError> {
         #[cfg(debug_assertions)]
-        tracing::debug!(
-            "[PAYMENT_LINK] Request: {}",
-            serde_json::to_string_pretty(&request).unwrap_or_default()
-        );
+        {
+            let request_json = serde_json::to_string_pretty(&request).unwrap_or_default();
+            tracing::info!("[MAVAPAY] Creating payment link with request:\n{}", request_json);
+        }
 
         let response = self
             .request(Method::POST, "paymentlink")
             .json(&request)
             .send()
-            .await?
-            .check_success()
             .await?;
 
-        // Try to parse standard { status, data } wrapper
-        let try_wrapped: Result<ApiResponse<PaymentLinkResponse>, _> = response.json().await;
-        if let Ok(api_response) = try_wrapped {
-            if api_response.status != "ok" {
-                return Err(MavapayError::InvalidResponse(
-                    "API returned non-ok status".to_string(),
-                ));
-            }
-            return Ok(api_response.data.url);
+        #[cfg(debug_assertions)]
+        {
+            let status = response.status();
+            tracing::info!("[MAVAPAY] Payment link response status: {}", status);
         }
 
-        // Fallback: parse as plain { url: "..." }
-        let fallback: PaymentLinkResponse = self
-            .request(Method::POST, "paymentlink")
-            .json(&request)
-            .send()
-            .await?
-            .check_success()
-            .await?
-            .json()
-            .await
-            .map_err(|e| {
-                MavapayError::InvalidResponse(format!("Failed to parse payment link: {}", e))
-            })?;
+        let response = response.check_success().await?;
 
-        Ok(fallback.url)
+        // Read raw response body for debugging
+        let response_text = response.text().await?;
+
+        #[cfg(debug_assertions)]
+        tracing::info!("[MAVAPAY] Raw payment link response body:\n{}", response_text);
+
+        // Try to parse standard { status, data } wrapper
+        let api_response: ApiResponse<PaymentLinkResponse> = serde_json::from_str(&response_text).map_err(|e| {
+            #[cfg(debug_assertions)]
+            tracing::error!("[MAVAPAY] Failed to deserialize payment link response: {}\nResponse was: {}", e, response_text);
+            MavapayError::InvalidResponse(format!("Failed to parse payment link response: {} | Response: {}", e, response_text))
+        })?;
+
+        if api_response.status != "ok" && api_response.status != "success" {
+            return Err(MavapayError::InvalidResponse(
+                format!("API returned status: {}", api_response.status),
+            ));
+        }
+
+        #[cfg(debug_assertions)]
+        tracing::info!("[MAVAPAY] Payment link created successfully: {} (ref: {})",
+            api_response.data.payment_link, api_response.data.payment_ref);
+
+        Ok(api_response.data.payment_link)
     }
 
     /// Get list of supported banks for a country

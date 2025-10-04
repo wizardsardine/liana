@@ -190,9 +190,12 @@ pub enum BuySellMessage {
 
     // Mavapay-specific messages (native flow)
     MavapayDashboard,
+    MavapayFlowModeChanged(crate::app::view::buysell::flow_state::MavapayFlowMode),
     MavapayAmountChanged(String),
     MavapaySourceCurrencyChanged(String),
     MavapayTargetCurrencyChanged(String),
+    MavapaySettlementCurrencyChanged(String),
+    MavapayPaymentMethodChanged(crate::app::view::buysell::flow_state::MavapayPaymentMethod),
     MavapayBankAccountNumberChanged(String),
     MavapayBankAccountNameChanged(String),
     MavapayBankCodeChanged(String),
@@ -236,6 +239,7 @@ pub enum BuySellMessage {
     WebviewAction(iced_webview::advanced::Action),
     WebviewOpenUrl(String),
     CloseWebview,
+    DestroyWebview, // Destroy webview instance after closing view
 }
 
 #[derive(Debug, Clone)]

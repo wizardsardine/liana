@@ -85,6 +85,43 @@ impl Currency {
             Currency::KenyanShillingCent => "KES",
         }
     }
+
+    /// Get settlement currency format (NGN, BTC, ZAR, KES) for payment links
+    pub fn to_settlement_currency(&self) -> &'static str {
+        match self {
+            Currency::BitcoinSatoshi => "BTC",
+            Currency::NigerianNairaKobo => "NGN",
+            Currency::SouthAfricanRandCent => "ZAR",
+            Currency::KenyanShillingCent => "KES",
+        }
+    }
+
+    /// Get all available currencies
+    pub fn all() -> &'static [Currency] {
+        &[
+            Currency::BitcoinSatoshi,
+            Currency::NigerianNairaKobo,
+            Currency::SouthAfricanRandCent,
+            Currency::KenyanShillingCent,
+        ]
+    }
+
+    /// Parse currency from string
+    pub fn from_str(s: &str) -> Option<Currency> {
+        match s {
+            "BTCSAT" => Some(Currency::BitcoinSatoshi),
+            "NGNKOBO" => Some(Currency::NigerianNairaKobo),
+            "ZARCENT" => Some(Currency::SouthAfricanRandCent),
+            "KESCENT" => Some(Currency::KenyanShillingCent),
+            _ => None,
+        }
+    }
+}
+
+impl std::fmt::Display for Currency {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.display_name())
+    }
 }
 
 /// Payment methods
@@ -150,31 +187,47 @@ pub struct QuoteRequest {
     #[serde(rename = "paymentCurrency")]
     pub payment_currency: Currency,
     pub autopayout: bool,
-    #[serde(rename = "customerInternalFee")]
-    pub customer_internal_fee: String,
-    pub beneficiary: Beneficiary,
+    #[serde(rename = "customerInternalFee", skip_serializing_if = "Option::is_none")]
+    pub customer_internal_fee: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub beneficiary: Option<Beneficiary>,
+}
+
+/// Payment link type
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum PaymentLinkType {
+    #[serde(rename = "One_Time")]
+    OneTime,
+    #[serde(rename = "Recurring")]
+    Recurring,
 }
 
 /// Payment link request (hosted checkout)
+/// Based on actual API spec from Postman collection
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PaymentLinkRequest {
-    pub amount: String,
-    #[serde(rename = "sourceCurrency")]
-    pub source_currency: Currency,
-    #[serde(rename = "targetCurrency")]
-    pub target_currency: Currency,
-    #[serde(rename = "paymentMethod")]
-    pub payment_method: PaymentMethod,
-    #[serde(rename = "paymentCurrency")]
-    pub payment_currency: Currency,
-    pub beneficiary: Beneficiary,
+    pub name: String,
+    pub description: String,
+    #[serde(rename = "type")]
+    pub link_type: PaymentLinkType,
+    #[serde(rename = "addFeeToTotalCost")]
+    pub add_fee_to_total_cost: bool,
+    #[serde(rename = "settlementCurrency")]
+    pub settlement_currency: String, // e.g., "BTC", "NGN"
+    #[serde(rename = "paymentMethods")]
+    pub payment_methods: Vec<String>, // e.g., ["LIGHTNING", "BANKTRANSFER"]
+    pub amount: u64,
+    #[serde(rename = "callbackUrl", skip_serializing_if = "Option::is_none")]
+    pub callback_url: Option<String>,
 }
 
 /// Payment link response
 #[derive(Debug, Clone, Deserialize)]
 pub struct PaymentLinkResponse {
-    #[serde(rename = "url")]
-    pub url: String,
+    #[serde(rename = "paymentLink")]
+    pub payment_link: String,
+    #[serde(rename = "paymentRef")]
+    pub payment_ref: String,
 }
 
 /// Quote response
@@ -186,35 +239,43 @@ pub struct QuoteResponse {
     #[serde(rename = "usdToTargetCurrencyRate")]
     pub usd_to_target_currency_rate: f64,
     #[serde(rename = "sourceCurrency")]
-    pub source_currency: Currency,
+    pub source_currency: String, // Changed to String to handle any currency code
     #[serde(rename = "targetCurrency")]
-    pub target_currency: Currency,
+    pub target_currency: String, // Changed to String to handle any currency code
     #[serde(rename = "transactionFeesInSourceCurrency")]
-    pub transaction_fees_in_source_currency: u64,
+    pub transaction_fees_in_source_currency: u64, // API returns integer
     #[serde(rename = "transactionFeesInTargetCurrency")]
-    pub transaction_fees_in_target_currency: u64,
+    pub transaction_fees_in_target_currency: u64, // API returns integer
     #[serde(rename = "amountInSourceCurrency")]
     pub amount_in_source_currency: u64,
     #[serde(rename = "amountInTargetCurrency")]
-    pub amount_in_target_currency: u64,
+    pub amount_in_target_currency: u64, // API returns integer
     #[serde(rename = "paymentMethod")]
-    pub payment_method: PaymentMethod,
+    pub payment_method: String, // Changed to String to handle any payment method
     pub expiry: String,
     #[serde(rename = "isValid")]
     pub is_valid: bool,
-    pub invoice: Option<String>, // Lightning invoice for BTC payments
-    pub hash: Option<String>,
+    #[serde(default)]
+    pub invoice: String, // Lightning invoice for BTC payments - empty string if not present
+    #[serde(default)]
+    pub hash: String, // Payment hash
     #[serde(rename = "totalAmountInSourceCurrency")]
     pub total_amount_in_source_currency: u64,
     #[serde(rename = "customerInternalFee")]
-    pub customer_internal_fee: String,
-    // NGN specific fields
-    #[serde(rename = "bankName")]
-    pub bank_name: Option<String>,
-    #[serde(rename = "ngnBankAccountNumber")]
-    pub ngn_bank_account_number: Option<String>,
-    #[serde(rename = "ngnAccountName")]
-    pub ngn_account_name: Option<String>,
+    pub customer_internal_fee: u64, // API returns this as number
+    #[serde(rename = "estimatedRoutingFee", default)]
+    pub estimated_routing_fee: u64,
+    #[serde(rename = "orderId", default)]
+    pub order_id: String,
+    // NGN specific fields for buy-BTC flow (when API returns bank details to pay Mavapay)
+    #[serde(rename = "bankName", default)]
+    pub bank_name: String,
+    #[serde(rename = "ngnBankAccountNumber", default)]
+    pub ngn_bank_account_number: String,
+    #[serde(rename = "ngnAccountName", default)]
+    pub ngn_account_name: String,
+    #[serde(rename = "ngnBankCode", default)]
+    pub ngn_bank_code: String, // Also present in the response
 }
 
 /// API response wrapper

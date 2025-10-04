@@ -1,7 +1,7 @@
 use iced::Task;
 use std::sync::Arc;
 
-use crate::services::mavapay::{BankAccount, Beneficiary};
+// BankAccount and Beneficiary are used via fully qualified paths below
 
 use iced_webview::{
     advanced::{Action as WebviewAction, WebView},
@@ -556,6 +556,11 @@ impl State for BuySellPanel {
                         && state.mavapay_amount.value.parse::<u64>().is_ok();
                 }
             }
+            BuySellMessage::MavapayFlowModeChanged(mode) => {
+                if let BuySellFlowState::Africa(ref mut state) = self.flow_state {
+                    state.mavapay_flow_mode = mode;
+                }
+            }
             BuySellMessage::MavapaySourceCurrencyChanged(currency) => {
                 if let BuySellFlowState::Africa(ref mut state) = self.flow_state {
                     state.mavapay_source_currency.value = currency;
@@ -568,6 +573,18 @@ impl State for BuySellPanel {
                     state.mavapay_target_currency.value = currency;
                     state.mavapay_target_currency.valid =
                         !state.mavapay_target_currency.value.is_empty();
+                }
+            }
+            BuySellMessage::MavapaySettlementCurrencyChanged(currency) => {
+                if let BuySellFlowState::Africa(ref mut state) = self.flow_state {
+                    state.mavapay_settlement_currency.value = currency;
+                    state.mavapay_settlement_currency.valid =
+                        !state.mavapay_settlement_currency.value.is_empty();
+                }
+            }
+            BuySellMessage::MavapayPaymentMethodChanged(method) => {
+                if let BuySellFlowState::Africa(ref mut state) = self.flow_state {
+                    state.mavapay_payment_method = method;
                 }
             }
             BuySellMessage::MavapayBankAccountNumberChanged(account) => {
@@ -712,35 +729,53 @@ impl State for BuySellPanel {
             }
             BuySellMessage::WebviewOpenUrl(url) => {
                 // Load URL into Ultralight webview
-                #[cfg(debug_assertions)]
-                tracing::info!("🌐 [LIANA] Loading Ultralight webview with URL: {}", url);
-                #[cfg(not(debug_assertions))]
-                tracing::info!("🌐 [LIANA] Opening embedded webview");
+                if cfg!(debug_assertions) {
+                    tracing::info!("🌐 [LIANA] Loading Ultralight webview with URL: {}", url);
+                } else {
+                    tracing::info!("🌐 [LIANA] Opening embedded webview");
+                }
+
                 self.session_url = Some(url.clone());
 
-                // Create webview with URL string and immediately update to ensure content loads
+                // If there's an active page, close it first before creating new one
+                if let Some(old_id) = self.active_page.take() {
+                    if cfg!(debug_assertions) {
+                        tracing::info!("🌐 [LIANA] Closing old view {} before creating new one", old_id);
+                    }
+
+                    if let Some(webview) = self.webview.as_mut() {
+                        // Close old view (don't wait for result)
+                        let _ = webview.update(WebviewAction::CloseView(old_id));
+                    }
+                }
+
+                // Create new view on the same webview instance
                 return self
                     .webview
                     .get_or_insert_with(init_webview)
                     .update(WebviewAction::CreateView(PageType::Url(url)))
                     .map(map_webview_message_static);
             }
+
             BuySellMessage::WebviewCreated(id) => {
                 tracing::info!("🌐 [LIANA] Activating Webview Page: {}", id);
 
-                // set active page to selected view id
+                // set active page to newly created view id
                 self.active_page = Some(id);
             }
             BuySellMessage::CloseWebview => {
-                self.session_url = None;
-
-                if let (Some(webview), Some(id)) = (self.webview.as_mut(), self.active_page.take())
-                {
-                    tracing::info!("🌐 [LIANA] Closing webview");
-                    return webview
-                        .update(WebviewAction::CloseView(id))
-                        .map(map_webview_message_static);
+                if cfg!(debug_assertions) {
+                    tracing::info!("🌐 [LIANA] Closing webview - clearing state only");
                 }
+
+                // Just clear the state - don't try to close view or destroy webview
+                // The WebviewOpenUrl handler will close the old view when creating a new one
+                self.session_url = None;
+                self.active_page = None;
+                self.pending_close_view = None;
+            }
+            BuySellMessage::DestroyWebview => {
+                // Not used anymore - kept for compatibility
             }
         };
 
@@ -819,30 +854,6 @@ impl BuySellPanel {
             return Task::none();
         };
 
-        // Validate required bank account fields
-        if state.mavapay_bank_account_number.value.is_empty() {
-            return Task::done(Message::View(ViewMessage::BuySell(
-                BuySellMessage::MavapayQuoteError("Bank account number is required".to_string()),
-            )));
-        }
-
-        if state.mavapay_bank_account_name.value.is_empty() {
-            return Task::done(Message::View(ViewMessage::BuySell(
-                BuySellMessage::MavapayQuoteError("Bank account name is required".to_string()),
-            )));
-        }
-
-        if state.mavapay_bank_code.value.is_empty() {
-            return Task::done(Message::View(ViewMessage::BuySell(
-                BuySellMessage::MavapayQuoteError("Bank code is required".to_string()),
-            )));
-        }
-
-        if state.mavapay_bank_name.value.is_empty() {
-            return Task::done(Message::View(ViewMessage::BuySell(
-                BuySellMessage::MavapayQuoteError("Bank name is required".to_string()),
-            )));
-        }
 
         let amount = match state.mavapay_amount.value.parse::<u64>() {
             Ok(amt) => amt,
@@ -877,20 +888,59 @@ impl BuySellPanel {
             }
         };
 
+        // Determine flow by payment currency: if user pays in BTCSAT (sell BTC), require bank beneficiary and autopayout=true
+        let pay_in_btcsat = matches!(source_currency, Currency::BitcoinSatoshi);
+        if pay_in_btcsat {
+            if state.mavapay_bank_account_number.value.is_empty() {
+                return Task::done(Message::View(ViewMessage::BuySell(
+                    BuySellMessage::MavapayQuoteError("Bank account number is required".to_string()),
+                )));
+            }
+            if state.mavapay_bank_account_name.value.is_empty() {
+                return Task::done(Message::View(ViewMessage::BuySell(
+                    BuySellMessage::MavapayQuoteError("Bank account name is required".to_string()),
+                )));
+            }
+            if state.mavapay_bank_name.value.is_empty() {
+                return Task::done(Message::View(ViewMessage::BuySell(
+                    BuySellMessage::MavapayQuoteError("Bank name is required".to_string()),
+                )));
+            }
+        }
+
+        let buy_btc = matches!(target_currency, Currency::BitcoinSatoshi);
+        let (payment_method, payment_currency, autopayout, beneficiary) = if pay_in_btcsat {
+            // Sell BTC for fiat: Lightning pay-in (BTCSAT), autopayout to bank beneficiary
+            (
+                PaymentMethod::Lightning,
+                source_currency,
+                true,
+                Some(crate::services::mavapay::Beneficiary::Bank(
+                    crate::services::mavapay::BankAccount {
+                        account_number: state.mavapay_bank_account_number.value.clone(),
+                        account_name: state.mavapay_bank_account_name.value.clone(),
+                        bank_code: state.mavapay_bank_code.value.clone(),
+                        bank_name: state.mavapay_bank_name.value.clone(),
+                    },
+                )),
+            )
+        } else if buy_btc {
+            // Buy BTC with bank transfer: pay in fiat (source), no beneficiary, autopayout=false
+            (PaymentMethod::BankTransfer, source_currency, false, None)
+        } else {
+            // Fallback: other flows without autopayout
+            (PaymentMethod::BankTransfer, source_currency, false, None)
+        };
+
         let request = QuoteRequest {
             amount: amount.to_string(),
             source_currency,
             target_currency,
-            payment_method: PaymentMethod::Lightning, // Default to Lightning
-            payment_currency: target_currency,
-            autopayout: true,
-            customer_internal_fee: "0".to_string(),
-            beneficiary: Beneficiary::Bank(BankAccount {
-                account_number: state.mavapay_bank_account_number.value.clone(),
-                account_name: state.mavapay_bank_account_name.value.clone(),
-                bank_code: state.mavapay_bank_code.value.clone(),
-                bank_name: state.mavapay_bank_name.value.clone(),
-            }),
+            payment_method,
+            payment_currency,
+            autopayout,
+            customer_internal_fee: if autopayout { Some("0".to_string()) } else { None },
+            beneficiary,
         };
 
         let client = state.mavapay_client.clone();
@@ -907,24 +957,14 @@ impl BuySellPanel {
         )
     }
     fn handle_mavapay_open_payment_link(&self) -> Task<Message> {
-        use crate::services::mavapay::{Currency, PaymentLinkRequest, PaymentMethod};
+        use crate::services::mavapay::PaymentLinkRequest;
 
         let Some(state) = self.africa_state() else {
             return Task::none();
         };
 
-        // Validate minimally required fields (reuse validations from quote creation)
-        if state.mavapay_bank_account_number.value.is_empty()
-            || state.mavapay_bank_account_name.value.is_empty()
-            || state.mavapay_bank_code.value.is_empty()
-            || state.mavapay_bank_name.value.is_empty()
-        {
-            return Task::done(Message::View(ViewMessage::BuySell(
-                BuySellMessage::MavapayQuoteError(
-                    "Missing required bank account details for payment link".to_string(),
-                ),
-            )));
-        }
+        // No bank account validation needed for secure checkout
+        // The hosted checkout page handles all payment details
 
         let amount = match state.mavapay_amount.value.parse::<u64>() {
             Ok(amt) => amt,
@@ -935,54 +975,36 @@ impl BuySellPanel {
             }
         };
 
-        let source_currency = match state.mavapay_source_currency.value.as_str() {
-            "BTCSAT" => Currency::BitcoinSatoshi,
-            "NGNKOBO" => Currency::NigerianNairaKobo,
-            "ZARCENT" => Currency::SouthAfricanRandCent,
-            "KESCENT" => Currency::KenyanShillingCent,
-            _ => {
-                return Task::done(Message::View(ViewMessage::BuySell(
-                    BuySellMessage::MavapayQuoteError("Invalid source currency".to_string()),
-                )));
-            }
-        };
+        // Validate settlement currency
+        let settlement_currency = &state.mavapay_settlement_currency.value;
+        if settlement_currency.is_empty() {
+            return Task::done(Message::View(ViewMessage::BuySell(
+                BuySellMessage::MavapayQuoteError("Please select a settlement currency".to_string()),
+            )));
+        }
 
-        let target_currency = match state.mavapay_target_currency.value.as_str() {
-            "BTCSAT" => Currency::BitcoinSatoshi,
-            "NGNKOBO" => Currency::NigerianNairaKobo,
-            "ZARCENT" => Currency::SouthAfricanRandCent,
-            "KESCENT" => Currency::KenyanShillingCent,
-            _ => {
-                return Task::done(Message::View(ViewMessage::BuySell(
-                    BuySellMessage::MavapayQuoteError("Invalid target currency".to_string()),
-                )));
-            }
-        };
+        // Get payment method
+        let payment_method = state.mavapay_payment_method.as_str().to_string();
 
         let request = PaymentLinkRequest {
-            amount: amount.to_string(),
-            source_currency,
-            target_currency,
-            payment_method: PaymentMethod::Lightning,
-            payment_currency: target_currency,
-            beneficiary: crate::services::mavapay::Beneficiary::Bank(
-                crate::services::mavapay::BankAccount {
-                    account_number: state.mavapay_bank_account_number.value.clone(),
-                    account_name: state.mavapay_bank_account_name.value.clone(),
-                    bank_code: state.mavapay_bank_code.value.clone(),
-                    bank_name: state.mavapay_bank_name.value.clone(),
-                },
-            ),
+            name: format!("Liana Wallet - {} Payment", settlement_currency),
+            description: format!("One-time payment of {} {}", amount, settlement_currency),
+            link_type: crate::services::mavapay::PaymentLinkType::OneTime,
+            add_fee_to_total_cost: false,
+            settlement_currency: settlement_currency.clone(),
+            payment_methods: vec![payment_method],
+            amount,
+            callback_url: None, // TODO: Implement callback mechanism for desktop app
         };
 
         let client = state.mavapay_client.clone();
-        #[cfg(debug_assertions)]
-        tracing::info!(
-            "[PAYMENT_LINK] Creating link with {}/{} amount {}",
-            request.source_currency.as_str(),
-            request.target_currency.as_str(),
-            request.amount
-        );
+        if cfg!(debug_assertions) {
+            tracing::info!(
+                "[PAYMENT_LINK] Creating link: {} - amount {}",
+                request.name,
+                request.amount
+            );
+        }
         Task::perform(
             async move { client.create_payment_link(request).await },
             |result| match result {
