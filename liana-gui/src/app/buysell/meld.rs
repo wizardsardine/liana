@@ -107,6 +107,7 @@ impl MeldClient {
         &self,
         wallet_address: String,
         country_code: String,
+        source_currency_code: String,
         source_amount: String,
         service_provider: ServiceProvider,
         network: liana::miniscript::bitcoin::Network,
@@ -117,9 +118,10 @@ impl MeldClient {
 
         // Debug logging to see what we're sending
         tracing::info!(
-            "Creating Meld session with network: {:?}, currency: {}",
+            "Creating Meld session with network: {:?}, currency: {}, source_currency: {}",
             network,
-            destination_currency
+            destination_currency,
+            source_currency_code
         );
 
         // Generate unique customer ID for each request to ensure fresh sessions
@@ -133,7 +135,7 @@ impl MeldClient {
             session_data: SessionData {
                 wallet_address,
                 country_code,
-                source_currency_code: "USD".to_string(),
+                source_currency_code,
                 source_amount,
                 destination_currency_code: destination_currency.to_string(),
                 service_provider: service_provider.as_str().to_string(),

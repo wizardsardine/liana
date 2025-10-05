@@ -165,9 +165,9 @@ pub enum BuySellMessage {
     GetStarted,
 
     // Geolocation detection
-    DetectRegion,
-    RegionDetected(String, String), // (region, country)
-    RegionDetectionError(String),
+    DetectCountry,
+    CountryDetected(String, String), // (country_name, iso_code)
+    CountryDetectionError(String),
 
     // Default build: registration form (native flow)
     FirstNameChanged(String),

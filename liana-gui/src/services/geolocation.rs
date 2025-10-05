@@ -2,16 +2,11 @@ use serde::Deserialize;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Region {
-    Africa,
-    International,
-}
-
 #[derive(Debug, Clone, Deserialize)]
-struct RegionResponse {
-    region: String,
-    country: String,
+struct CountryResponse {
+    country: String,      // Country name (e.g., "United States")
+    #[serde(rename = "isoCode")]
+    iso_code: String,     // ISO 3166-1 alpha-2 code (e.g., "US")
 }
 
 #[derive(Clone)]
@@ -29,9 +24,10 @@ impl HttpGeoLocator {
         Self { base_url, client }
     }
 
-    pub async fn detect(&self) -> Result<(Region, String), String> {
+    /// Detects the user's country and returns (country_name, iso_code)
+    pub async fn detect(&self) -> Result<(String, String), String> {
         let url = format!(
-            "{}/api/v1/geolocation/region",
+            "{}/api/v1/geolocation/country",
             self.base_url.trim_end_matches('/')
         );
         let res = self
@@ -47,23 +43,18 @@ impl HttpGeoLocator {
         }
 
         let body = res
-            .json::<RegionResponse>()
+            .json::<CountryResponse>()
             .await
             .map_err(|e| format!("invalid response: {}", e))?;
 
-        let region = match body.region.to_ascii_lowercase().as_str() {
-            "africa" => Region::Africa,
-            _ => Region::International,
-        };
-
-        Ok((region, body.country))
+        Ok((body.country, body.iso_code))
     }
 }
 
 #[derive(Debug, Clone)]
 struct CacheEntry {
-    region: Region,
-    country: String,
+    country_name: String,
+    iso_code: String,
     cached_at: Instant,
 }
 
@@ -85,64 +76,70 @@ impl CachedGeoLocator {
         }
     }
 
-    pub async fn detect_region(&self) -> Result<(Region, String), String> {
-        // Developer override for testing (preferred)
-        if let Ok(force) = std::env::var("FORCE_REGION") {
-            let f = force.to_ascii_lowercase();
-            let region = match f.as_str() {
-                "africa" => Some(Region::Africa),
-                "international" => Some(Region::International),
-                _ => None,
-            };
-            if let Some(r) = region {
-                // Allow overriding country for testing; else use reasonable defaults per region
-                let forced_country = std::env::var("FORCE_COUNTRY").ok();
-                let country = forced_country
-                    .map(|c| c.trim().to_uppercase())
-                    .filter(|c| c.len() == 2)
-                    .unwrap_or_else(|| match r {
-                        Region::Africa => "NG".to_string(),
-                        Region::International => "US".to_string(),
-                    });
-                return Ok((r, country));
-            }
+    /// Returns a default country name for common ISO codes (for debugging)
+    fn default_country_name(iso_code: &str) -> String {
+        match iso_code {
+            "NG" => "Nigeria",
+            "KE" => "Kenya",
+            "ZA" => "South Africa",
+            "US" => "United States",
+            "GB" => "United Kingdom",
+            "DE" => "Germany",
+            "FR" => "France",
+            "IT" => "Italy",
+            "ES" => "Spain",
+            "JP" => "Japan",
+            "CN" => "China",
+            "IN" => "India",
+            "BR" => "Brazil",
+            "CA" => "Canada",
+            "AU" => "Australia",
+            _ => iso_code,
         }
+        .to_string()
+    }
 
-        // Backward-compat: support older env name
-        if let Ok(force) = std::env::var("FORCE_PROVIDER") {
-            let f = force.to_ascii_lowercase();
-            let region = match f.as_str() {
-                "africa" => Some(Region::Africa),
-                "international" => Some(Region::International),
-                _ => None,
-            };
-            if let Some(r) = region {
-                let forced_country = std::env::var("FORCE_COUNTRY").ok();
-                let country = forced_country
-                    .map(|c| c.trim().to_uppercase())
-                    .filter(|c| c.len() == 2)
-                    .unwrap_or_else(|| match r {
-                        Region::Africa => "NG".to_string(),
-                        Region::International => "US".to_string(),
-                    });
-                return Ok((r, country));
+    /// Detects the user's country and returns (country_name, iso_code)
+    pub async fn detect_country(&self) -> Result<(String, String), String> {
+        // Developer override for testing
+        // FORCE_ISOCODE: Set the ISO code (e.g., "NG", "US", "GB")
+        // FORCE_COUNTRY: Set the country name (optional, will derive from ISO if not set)
+        if let Ok(forced_iso) = std::env::var("FORCE_ISOCODE") {
+            let iso = forced_iso.trim().to_uppercase();
+            if !iso.is_empty() && iso.len() == 2 {
+                // Check if country name is also forced
+                let country_name = if let Ok(forced_name) = std::env::var("FORCE_COUNTRY") {
+                    let name = forced_name.trim();
+                    if !name.is_empty() {
+                        name.to_string()
+                    } else {
+                        // Derive from ISO code
+                        Self::default_country_name(&iso)
+                    }
+                } else {
+                    // Derive from ISO code
+                    Self::default_country_name(&iso)
+                };
+
+                tracing::info!("🔧 [DEBUG] Forced country: {} ({})", country_name, iso);
+                return Ok((country_name, iso));
             }
         }
 
         // Check cache
         if let Some(entry) = self.cache.lock().expect("poisoned").as_ref() {
             if entry.cached_at.elapsed() < self.ttl {
-                return Ok((entry.region.clone(), entry.country.clone()));
+                return Ok((entry.country_name.clone(), entry.iso_code.clone()));
             }
         }
 
         // Fetch fresh
         let result = self.inner.detect().await;
-        if let Ok((region, country)) = result.clone() {
+        if let Ok((country_name, iso_code)) = result.clone() {
             let mut guard = self.cache.lock().expect("poisoned");
             *guard = Some(CacheEntry {
-                region: region.clone(),
-                country: country.clone(),
+                country_name: country_name.clone(),
+                iso_code: iso_code.clone(),
                 cached_at: Instant::now(),
             });
         }

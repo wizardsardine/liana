@@ -10,8 +10,8 @@ use crate::services::registration::RegistrationClient;
 /// Represents the runtime state of the Buy/Sell panel based on geolocation detection
 #[derive(Debug, Clone)]
 pub enum BuySellFlowState {
-    /// Before geolocation detection completes
-    DetectingRegion,
+    /// Before country detection completes
+    DetectingCountry,
 
     /// African users: Mavapay native login/registration flow
     Africa(AfricaFlowState),
@@ -68,12 +68,12 @@ pub struct AfricaFlowState {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MavapayFlowMode {
     CreateQuote,
-    SecureCheckout,
+    OneTimePayment,
 }
 
 impl MavapayFlowMode {
     pub fn all() -> &'static [MavapayFlowMode] {
-        &[MavapayFlowMode::CreateQuote, MavapayFlowMode::SecureCheckout]
+        &[MavapayFlowMode::CreateQuote, MavapayFlowMode::OneTimePayment]
     }
 }
 
@@ -81,12 +81,12 @@ impl std::fmt::Display for MavapayFlowMode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             MavapayFlowMode::CreateQuote => write!(f, "Create Quote"),
-            MavapayFlowMode::SecureCheckout => write!(f, "One-time Checkout"),
+            MavapayFlowMode::OneTimePayment => write!(f, "One-time Payment"),
         }
     }
 }
 
-/// Payment method for secure checkout
+/// Payment method for one-time payment
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MavapayPaymentMethod {
     BankTransfer,
@@ -185,7 +185,9 @@ impl AfricaFlowState {
             mavapay_payment_status: None,
             mavapay_polling_active: false,
             registration_client: RegistrationClient::new(
-                "https://dev-api.coincube.io/api/v1".to_string(),
+                std::env::var("COINCUBE_API_URL")
+                    .unwrap_or_else(|_| "https://dev-api.coincube.io".to_string())
+                    + "/api/v1",
             ),
             mavapay_client: MavapayClient::new(std::env::var("MAVAPAY_API_KEY").unwrap_or_else(
                 |_| {
@@ -220,6 +222,6 @@ impl Default for InternationalFlowState {
 
 impl Default for BuySellFlowState {
     fn default() -> Self {
-        Self::DetectingRegion
+        Self::DetectingCountry
     }
 }

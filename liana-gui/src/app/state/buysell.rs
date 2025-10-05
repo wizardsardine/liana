@@ -65,21 +65,16 @@ impl State for BuySellPanel {
     ) -> Task<Message> {
         let locator = crate::services::geolocation::CachedGeoLocator::new_from_env();
         Task::perform(
-            async move { locator.detect_region().await },
+            async move { locator.detect_country().await },
             |result| match result {
-                Ok((region, country)) => {
-                    let region_str = match region {
-                        crate::services::geolocation::Region::Africa => "africa".to_string(),
-                        crate::services::geolocation::Region::International => {
-                            "international".to_string()
-                        }
-                    };
-                    Message::View(ViewMessage::BuySell(BuySellMessage::RegionDetected(
-                        region_str, country,
+                Ok((country_name, iso_code)) => {
+                    Message::View(ViewMessage::BuySell(BuySellMessage::CountryDetected(
+                        country_name,
+                        iso_code,
                     )))
                 }
                 Err(error) => Message::View(ViewMessage::BuySell(
-                    BuySellMessage::RegionDetectionError(error),
+                    BuySellMessage::CountryDetectionError(error),
                 )),
             },
         )
@@ -147,17 +142,17 @@ impl State for BuySellPanel {
                     state.first_name.valid = !state.first_name.value.is_empty();
                 }
             }
-            BuySellMessage::DetectRegion => {
+            BuySellMessage::DetectCountry => {
                 // Detection is automatically triggered by reload(); nothing to do here
             }
-            BuySellMessage::RegionDetected(region, country) => {
-                // Do not log IP addresses. Region/country are fine.
-                tracing::info!("region = {}, country = {}", region, country);
-                self.handle_region_detected(&region, country);
+            BuySellMessage::CountryDetected(country_name, iso_code) => {
+                // Do not log IP addresses. Country name/ISO are fine.
+                tracing::info!("country = {}, iso_code = {}", country_name, iso_code);
+                self.handle_country_detected(country_name, iso_code);
             }
-            BuySellMessage::RegionDetectionError(_error) => {
+            BuySellMessage::CountryDetectionError(_error) => {
                 // Graceful fallback: show provider selection, no blocking error
-                self.region_detection_failed = true;
+                self.country_detection_failed = true;
                 self.flow_state = BuySellFlowState::DetectionFailed;
                 self.error = None;
             }
@@ -484,9 +479,16 @@ impl State for BuySellPanel {
             // International provider handlers
             BuySellMessage::OpenOnramper => {
                 if let BuySellFlowState::International(ref mut state) = self.flow_state {
+                    use crate::services::fiat::currency_for_country;
+
                     state.selected_provider = Some(InternationalProvider::Onramper);
                     // Build Onramper widget URL and open in embedded webview
-                    let currency = "USD".to_string();
+                    // Use detected country to determine currency
+                    let iso_code = self.detected_country_iso.clone().unwrap_or_else(|| "US".to_string());
+                    let currency = currency_for_country(&iso_code).to_string();
+
+                    tracing::info!("🌍 [ONRAMPER] ISO: {}, Currency: {}", iso_code, currency);
+
                     let amount = if self.source_amount.value.is_empty() {
                         "50".to_string()
                     } else {
@@ -504,13 +506,21 @@ impl State for BuySellPanel {
             }
             BuySellMessage::OpenMeld => {
                 if let BuySellFlowState::International(ref mut state) = self.flow_state {
+                    use crate::services::fiat::currency_for_country;
+
                     state.selected_provider = Some(InternationalProvider::Meld);
                     // Create Meld widget session via API and open in embedded webview
                     let wallet_address = self.wallet_address.value.clone();
                     let country_code = self
-                        .detected_country
+                        .detected_country_iso
                         .clone()
                         .unwrap_or_else(|| "US".to_string());
+
+                    // Derive currency from detected country
+                    let source_currency_code = currency_for_country(&country_code).to_string();
+
+                    tracing::info!("🌍 [MELD] Country: {}, Currency: {}", country_code, source_currency_code);
+
                     let source_amount = if self.source_amount.value.is_empty() {
                         "50".to_string()
                     } else {
@@ -524,6 +534,7 @@ impl State for BuySellPanel {
                                 .create_widget_session(
                                     wallet_address,
                                     country_code,
+                                    source_currency_code,
                                     source_amount,
                                     ServiceProvider::Transak,
                                     network,

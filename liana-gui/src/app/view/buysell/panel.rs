@@ -1,7 +1,7 @@
 #![allow(unused_imports)]
 
 use iced::{
-    widget::{checkbox, container, pick_list, Space},
+    widget::{container, pick_list, radio, Space},
     Alignment, Length,
 };
 use iced_webview::{advanced::WebView, Ultralight};
@@ -27,9 +27,9 @@ pub struct BuySellPanel {
     pub network: Network,
 
     // Geolocation detection state
-    pub detected_region: Option<String>,
-    pub detected_country: Option<String>,
-    pub region_detection_failed: bool,
+    pub detected_country_name: Option<String>,
+    pub detected_country_iso: Option<String>,
+    pub country_detection_failed: bool,
 
     // Webview (used by international flow)
     pub webview: Option<WebView<Ultralight, crate::app::state::buysell::WebviewMessage>>,
@@ -56,29 +56,53 @@ impl BuySellPanel {
             },
             error: None,
             network,
-            detected_region: None,
-            detected_country: None,
-            region_detection_failed: false,
+            detected_country_name: None,
+            detected_country_iso: None,
+            country_detection_failed: false,
             webview: None,
             session_url: None,
             pending_close_view: None,
             active_page: None,
             // Start in detecting state
-            flow_state: BuySellFlowState::DetectingRegion,
+            flow_state: BuySellFlowState::DetectingCountry,
         }
     }
 
-    /// Handle geolocation result and transition to appropriate flow state
-    pub fn handle_region_detected(&mut self, region: &str, country: String) {
-        self.detected_region = Some(region.to_string());
-        self.detected_country = Some(country);
+    /// Handle country detection result and transition to appropriate flow state
+    pub fn handle_country_detected(&mut self, country_name: String, iso_code: String) {
+        use crate::services::fiat::{is_african_country, mavapay_minor_unit_for_country, mavapay_major_unit_for_country};
+
+        self.detected_country_name = Some(country_name);
+        self.detected_country_iso = Some(iso_code.clone());
         self.error = None;
 
-        self.flow_state = match region {
-            "africa" => BuySellFlowState::Africa(AfricaFlowState::new()),
-            "international" => BuySellFlowState::International(InternationalFlowState::new()),
-            _ => BuySellFlowState::DetectionFailed,
-        };
+        // Determine flow based on ISO code
+        if is_african_country(&iso_code) {
+            // African flow: Mavapay with auto-populated currency
+            let mut africa_state = AfricaFlowState::new();
+
+            // Set default currencies based on detected country
+            africa_state.mavapay_source_currency = form::Value {
+                value: mavapay_minor_unit_for_country(&iso_code).to_string(),
+                warning: None,
+                valid: true,
+            };
+            africa_state.mavapay_target_currency = form::Value {
+                value: "BTCSAT".to_string(),
+                warning: None,
+                valid: true,
+            };
+            africa_state.mavapay_settlement_currency = form::Value {
+                value: mavapay_major_unit_for_country(&iso_code).to_string(),
+                warning: None,
+                valid: true,
+            };
+
+            self.flow_state = BuySellFlowState::Africa(africa_state);
+        } else {
+            // International flow: Meld/Onramper
+            self.flow_state = BuySellFlowState::International(InternationalFlowState::new());
+        }
     }
 
     // Helper methods to access Africa flow state fields (for backward compatibility during migration)
@@ -299,7 +323,7 @@ impl BuySellPanel {
 
     fn form_view<'a>(&'a self) -> Column<'a, ViewMessage> {
         match &self.flow_state {
-            BuySellFlowState::DetectingRegion => self.render_loading(),
+            BuySellFlowState::DetectingCountry => self.render_loading(),
             BuySellFlowState::Africa(state) => self.render_africa_flow(state),
             BuySellFlowState::International(_state) => self.provider_selection_form(),
             BuySellFlowState::DetectionFailed => self.provider_selection_form(),
@@ -331,10 +355,10 @@ impl BuySellPanel {
 
     fn provider_selection_form<'a>(&'a self) -> Column<'a, ViewMessage> {
         use liana_ui::component::{button as ui_button, text as ui_text};
-        let info = if let Some(country) = &self.detected_country {
+        let info = if let Some(country_name) = &self.detected_country_name {
             format!(
-                "International region detected (country: {}). Choose a provider:",
-                country
+                "Country detected: {}. Choose a provider:",
+                country_name
             )
         } else {
             "Choose a provider:".to_string()
@@ -957,25 +981,36 @@ impl BuySellPanel {
                 .push(Space::with_height(Length::Fixed(15.0)));
         }
 
-        // Exchange form with one-time payment toggle
-        let is_one_time_payment = state.mavapay_flow_mode == MavapayFlowMode::SecureCheckout;
-
+        // Exchange form with payment mode radio buttons
         let mut form_column = Column::new()
             .push(Space::with_height(Length::Fixed(15.0)))
-            // One-time payment toggle
+            // Payment mode selection with radio buttons
+            .push(text("Payment Mode").size(14).color(color::GREY_3))
+            .push(Space::with_height(Length::Fixed(8.0)))
             .push(
-                checkbox("One-time Payment", is_one_time_payment)
-                    .on_toggle(|enabled| {
-                        ViewMessage::BuySell(BuySellMessage::MavapayFlowModeChanged(
-                            if enabled {
-                                MavapayFlowMode::SecureCheckout
-                            } else {
-                                MavapayFlowMode::CreateQuote
-                            }
-                        ))
-                    })
-                    .size(16)
-                    .text_size(14)
+                Row::new()
+                    .push(
+                        radio(
+                            "Create Quote",
+                            MavapayFlowMode::CreateQuote,
+                            Some(state.mavapay_flow_mode),
+                            |mode| ViewMessage::BuySell(BuySellMessage::MavapayFlowModeChanged(mode))
+                        )
+                        .size(16)
+                        .text_size(14)
+                    )
+                    .push(Space::with_width(Length::Fixed(20.0)))
+                    .push(
+                        radio(
+                            "One-time Payment",
+                            MavapayFlowMode::OneTimePayment,
+                            Some(state.mavapay_flow_mode),
+                            |mode| ViewMessage::BuySell(BuySellMessage::MavapayFlowModeChanged(mode))
+                        )
+                        .size(16)
+                        .text_size(14)
+                    )
+                    .align_y(Alignment::Center)
             )
             .push(Space::with_height(Length::Fixed(15.0)))
             // Amount field (common to both modes)
@@ -1146,8 +1181,8 @@ impl BuySellPanel {
                         .push(Space::with_height(Length::Fixed(15.0)));
                 }
             }
-            MavapayFlowMode::SecureCheckout => {
-                // Show Settlement Currency and Payment Method for secure checkout
+            MavapayFlowMode::OneTimePayment => {
+                // Show Settlement Currency and Payment Method for one-time payment
                 form_column = form_column
                     .push(text("Settlement Currency").size(14).color(color::GREY_3))
                     .push(Space::with_height(Length::Fixed(5.0)))
@@ -1191,7 +1226,7 @@ impl BuySellPanel {
 
         let button_message = match state.mavapay_flow_mode {
             MavapayFlowMode::CreateQuote => BuySellMessage::MavapayCreateQuote,
-            MavapayFlowMode::SecureCheckout => BuySellMessage::MavapayOpenPaymentLink,
+            MavapayFlowMode::OneTimePayment => BuySellMessage::MavapayOpenPaymentLink,
         };
 
         form_column = form_column
