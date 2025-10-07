@@ -110,7 +110,7 @@ impl BitcoindError {
             if let Some(minreq_http::Error::Http(minreq_http::HttpError { status_code, .. })) =
                 e.downcast_ref::<minreq_http::Error>()
             {
-                return status_code == &402;
+                return status_code == &401;
             }
         }
         false

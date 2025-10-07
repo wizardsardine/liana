@@ -488,6 +488,7 @@ impl Bitcoind {
         // We've started bitcoind in the background, however it may fail to start for whatever
         // reason. And we need its JSONRPC interface to be available to continue. Thus wait for
         // the interface to be created successfully, regularly checking it did not fail to start.
+        let mut try_count = 0;
         loop {
             match process.try_wait() {
                 Ok(None) => {}
@@ -511,9 +512,12 @@ impl Bitcoind {
                     // Assume cookie file has not been created yet and try again.
                 }
                 Err(e) => {
-                    if !e.is_transient() {
+                    if !e.is_transient() && (!e.is_unauthorized() || try_count > 10) {
                         // Non-transient error could happen, e.g., if RPC auth credentials are wrong.
                         // Kill process now in case it's not possible to do via RPC command later.
+                        // If the auth credentials are wrong, it is possible that liana-gui is
+                        // reading the previous state of the .cookie file and not the new generated
+                        // one.
                         if let Err(e) = process.kill() {
                             log::error!("Error trying to kill bitcoind process: '{}'", e);
                         }
@@ -521,6 +525,7 @@ impl Bitcoind {
                     }
                 }
             }
+            try_count += 1;
             log::info!("Waiting for bitcoind to start.");
             thread::sleep(time::Duration::from_millis(500));
         }
