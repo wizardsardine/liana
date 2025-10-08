@@ -3083,7 +3083,7 @@ dependencies = [
 
 [[package]]
 name = "liana-gui"
-version = "13.0.0"
+version = "13.1.0"
 dependencies = [
  "async-fd-lock",
  "async-hwi",
@@ -3137,7 +3137,7 @@ dependencies = [
 
 [[package]]
 name = "lianad"
-version = "13.0.0"
+version = "13.1.0"
 dependencies = [
  "backtrace",
  "bdk_electrum",
