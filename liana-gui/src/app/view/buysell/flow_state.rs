@@ -3,7 +3,7 @@ use liana_ui::component::form;
 use crate::app::buysell::meld::MeldClient;
 use crate::app::view::message::AccountType;
 use crate::services::mavapay::{
-    MavapayClient, PaymentStatusResponse, PriceResponse, QuoteResponse, Transaction,
+    MavapayClient, PriceResponse, QuoteResponse, Transaction,
 };
 use crate::services::registration::RegistrationClient;
 

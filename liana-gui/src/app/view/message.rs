@@ -6,7 +6,7 @@ use crate::{
     services::fiat::{Currency, PriceSource},
 };
 
-use crate::services::mavapay::{PaymentStatusResponse, PriceResponse, QuoteResponse, Transaction};
+use crate::services::mavapay::{PriceResponse, QuoteResponse, Transaction};
 use liana::miniscript::bitcoin::{bip32::Fingerprint, Address, OutPoint};
 
 pub trait Close {

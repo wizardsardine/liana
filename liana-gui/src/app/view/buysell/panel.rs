@@ -1303,13 +1303,8 @@ impl BuySellPanel {
                     );
             }
 
-            quote_column = quote_column
-                .push(Space::with_height(Length::Fixed(15.0)))
-                .push(
-                    ui_button::primary(None, "Confirm Payment")
-                        .on_press(ViewMessage::BuySell(BuySellMessage::MavapayConfirmQuote))
-                        .width(Length::Fill),
-                );
+            // Note: "Confirm Payment" button removed - payment page opens automatically
+            // after quote creation in the simplified flow
 
             let quote_display = Container::new(quote_column.spacing(5))
                 .padding(20)

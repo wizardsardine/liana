@@ -10,6 +10,7 @@ pub struct CoincubeClient {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SaveQuoteRequest {
     pub quote_id: String,
+    pub hash: String,
     pub user_id: Option<String>,
     pub amount: u64,
     pub source_currency: String,

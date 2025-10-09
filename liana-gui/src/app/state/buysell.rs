@@ -630,6 +630,9 @@ impl State for BuySellPanel {
                 return self.handle_mavapay_create_quote();
             }
             BuySellMessage::MavapayQuoteCreated(quote) => {
+                // This handler is kept for backward compatibility but is no longer used
+                // in the simplified flow. The quote is now saved and webview opened
+                // directly in handle_mavapay_create_quote.
                 if let BuySellFlowState::Africa(ref mut state) = self.flow_state {
                     state.mavapay_current_quote = Some(quote);
                     self.error = None;
@@ -914,12 +917,92 @@ impl BuySellPanel {
         };
 
         let client = state.mavapay_client.clone();
+        let coincube_client = state.coincube_client.clone();
+        let wallet_address = self.wallet_address.value.clone();
+
+        // Get user ID from state if available
+        let user_id = if let BuySellFlowState::Africa(ref state) = self.flow_state {
+            state.current_user.as_ref().map(|user| user.id.to_string())
+        } else {
+            None
+        };
+
+        // Get bank details from state for the save request
+        let bank_account_number = if let BuySellFlowState::Africa(ref state) = self.flow_state {
+            state.mavapay_bank_account_number.value.clone()
+        } else {
+            String::new()
+        };
+        let bank_account_name = if let BuySellFlowState::Africa(ref state) = self.flow_state {
+            state.mavapay_bank_account_name.value.clone()
+        } else {
+            String::new()
+        };
+        let bank_code = if let BuySellFlowState::Africa(ref state) = self.flow_state {
+            state.mavapay_bank_code.value.clone()
+        } else {
+            String::new()
+        };
+        let bank_name = if let BuySellFlowState::Africa(ref state) = self.flow_state {
+            state.mavapay_bank_name.value.clone()
+        } else {
+            String::new()
+        };
+
         Task::perform(
-            async move { client.create_quote(request).await },
-            |result| match result {
-                Ok(quote) => Message::View(ViewMessage::BuySell(
-                    BuySellMessage::MavapayQuoteCreated(quote),
-                )),
+            async move {
+                use crate::services::coincube::client::SaveQuoteRequest;
+
+                // Step 1: Create quote with Mavapay
+                let quote = client.create_quote(request).await?;
+
+                tracing::info!("✅ [MAVAPAY] Quote created: {}, hash: {}", quote.id, quote.hash);
+
+                // Step 2: Save quote to coincube-api
+                let save_request = SaveQuoteRequest {
+                    quote_id: quote.id.clone(),
+                    hash: quote.hash.clone(),
+                    user_id,
+                    amount: quote.amount_in_source_currency,
+                    source_currency: quote.source_currency.clone(),
+                    target_currency: quote.target_currency.clone(),
+                    payment_currency: quote.payment_currency.clone(),
+                    exchange_rate: quote.exchange_rate,
+                    usd_to_target_currency_rate: quote.usd_to_target_currency_rate,
+                    transaction_fees_in_source_currency: quote.transaction_fees_in_source_currency,
+                    transaction_fees_in_target_currency: quote.transaction_fees_in_target_currency,
+                    amount_in_source_currency: quote.amount_in_source_currency,
+                    amount_in_target_currency: quote.amount_in_target_currency,
+                    total_amount_in_source_currency: quote.total_amount_in_source_currency,
+                    total_amount_in_target_currency: quote.total_amount_in_target_currency.or(Some(
+                        quote.amount_in_target_currency + quote.transaction_fees_in_target_currency
+                    )),
+                    bank_account_number: Some(bank_account_number),
+                    bank_account_name: Some(bank_account_name),
+                    bank_code: Some(bank_code),
+                    bank_name: Some(bank_name),
+                    payment_method: "bank_transfer".to_string(),
+                    wallet_address: Some(wallet_address),
+                };
+
+                coincube_client.save_quote(save_request).await
+                    .map_err(|e| crate::services::mavapay::MavapayError::Http(None, format!("Failed to save quote: {}", e)))?;
+
+                tracing::info!("✅ [COINCUBE] Quote saved to database");
+
+                // Step 3: Build quote display URL using quote_id
+                let url = coincube_client.get_quote_display_url(&quote.id);
+
+                Ok((quote, url))
+            },
+            |result: Result<(crate::services::mavapay::QuoteResponse, String), crate::services::mavapay::MavapayError>| match result {
+                Ok((_quote, url)) => {
+                    tracing::info!("🌍 [MAVAPAY] Opening quote display URL: {}", url);
+                    // Open webview directly - no need to store quote since it's in the database
+                    Message::View(ViewMessage::BuySell(
+                        BuySellMessage::WebviewOpenUrl(url)
+                    ))
+                }
                 Err(error) => Message::View(ViewMessage::BuySell(
                     BuySellMessage::MavapayQuoteError(error.to_string()),
                 )),
@@ -1032,6 +1115,8 @@ impl BuySellPanel {
     }
 
     fn handle_mavapay_confirm_quote(&self) -> Task<Message> {
+        // This function is deprecated in the simplified flow but kept for backward compatibility
+        // The quote is now saved and webview opened directly in handle_mavapay_create_quote
         use crate::services::coincube::client::SaveQuoteRequest;
 
         let Some(state) = self.africa_state() else {
@@ -1054,6 +1139,7 @@ impl BuySellPanel {
 
         let request = SaveQuoteRequest {
             quote_id: quote.id.clone(),
+            hash: quote.hash.clone(), // Use hash as the stable identifier
             user_id,
             amount: quote.amount_in_source_currency,
             source_currency: quote.source_currency.clone(),
@@ -1085,7 +1171,7 @@ impl BuySellPanel {
                 // Save quote to coincube-api
                 coincube_client.save_quote(request).await?;
 
-                // Build quote display URL
+                // Build quote display URL using quote_id
                 let url = coincube_client.get_quote_display_url(&quote_id);
 
                 Ok(url)
