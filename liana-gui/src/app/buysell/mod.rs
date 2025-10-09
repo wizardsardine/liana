@@ -1,12 +1,11 @@
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
-/// Service providers supported by Meld and/or Onramper
-/// Note: Meld and Onramper have different provider support, so we keep all variants
-/// and use them based on which aggregator (Meld/Onramper) is selected at runtime
+/// Service providers supported by Onramper
+/// Note: We keep all provider variants for potential future use
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum ServiceProvider {
-    // Universal providers (supported by both)
+    // Onramper-supported providers
     AlchemyPay,
     Banxa,
     BinanceConnect,
@@ -17,14 +16,6 @@ pub enum ServiceProvider {
     Koywe,
     OnrampMoney,
 
-    // Meld-specific providers
-    BlockchainDotCom,
-    Mesh,
-    Meso,
-    Paybis,
-    Transak,
-
-    // Onramper-specific providers
     BinanceP2P,
     Coinify,
     Dfx,
@@ -45,7 +36,6 @@ impl ServiceProvider {
             ServiceProvider::Banxa => "BANXA",
             ServiceProvider::BinanceConnect => "BINANCECONNECT",
             ServiceProvider::BinanceP2P => "BINANCEP2P",
-            ServiceProvider::BlockchainDotCom => "BLOCKCHAINDOTCOM",
             ServiceProvider::BtcDirect => "BTCDIRECT",
             ServiceProvider::CoinbasePay => "COINBASEPAY",
             ServiceProvider::Coinify => "COINIFY",
@@ -56,15 +46,11 @@ impl ServiceProvider {
             ServiceProvider::Guardarian => "GUARDARIAN",
             ServiceProvider::Koywe => "KOYWE",
             ServiceProvider::LocalRamp => "LOCALRAMP",
-            ServiceProvider::Mesh => "MESH",
-            ServiceProvider::Meso => "MESO",
             ServiceProvider::Moonpay => "MOONPAY",
             ServiceProvider::Neocrypto => "NEOCRYPTO",
             ServiceProvider::Onmeta => "ONMETA",
             ServiceProvider::OnrampMoney => "ONRAMPMONEY",
-            ServiceProvider::Paybis => "PAYBIS",
             ServiceProvider::Revolut => "REVOLUT",
-            ServiceProvider::Transak => "TRANSAK",
         }
     }
 
@@ -74,7 +60,6 @@ impl ServiceProvider {
             ServiceProvider::Banxa => "Banxa",
             ServiceProvider::BinanceConnect => "Binance Connect",
             ServiceProvider::BinanceP2P => "Binance P2P",
-            ServiceProvider::BlockchainDotCom => "Blockchain.com",
             ServiceProvider::BtcDirect => "BTC Direct",
             ServiceProvider::CoinbasePay => "Coinbase Pay",
             ServiceProvider::Coinify => "Coinify",
@@ -85,15 +70,11 @@ impl ServiceProvider {
             ServiceProvider::Guardarian => "Guardarian",
             ServiceProvider::Koywe => "Koywe",
             ServiceProvider::LocalRamp => "LocalRamp",
-            ServiceProvider::Mesh => "Mesh",
-            ServiceProvider::Meso => "Meso",
             ServiceProvider::Moonpay => "MoonPay",
             ServiceProvider::Neocrypto => "Neocrypto",
             ServiceProvider::Onmeta => "Onmeta",
             ServiceProvider::OnrampMoney => "Onramp Money",
-            ServiceProvider::Paybis => "Paybis",
             ServiceProvider::Revolut => "Revolut",
-            ServiceProvider::Transak => "Transak",
         }
     }
 }
@@ -104,5 +85,4 @@ impl fmt::Display for ServiceProvider {
     }
 }
 
-pub mod meld;
 pub mod onramper;

@@ -9,8 +9,8 @@ use iced_webview::{
 };
 use liana_ui::widget::Element;
 
-use crate::app::buysell::{onramper, ServiceProvider};
-use crate::app::view::buysell::{BuySellFlowState, InternationalProvider, NativePage};
+use crate::app::buysell::onramper;
+use crate::app::view::buysell::{BuySellFlowState, NativePage};
 
 use crate::{
     app::{
@@ -54,7 +54,7 @@ impl Default for BuySellPanel {
 
 impl State for BuySellPanel {
     fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, ViewMessage> {
-        // Return the meld view directly - dashboard wrapper will be applied by app/mod.rs
+        // Return the buy/sell view - dashboard wrapper will be applied by app/mod.rs
         view::dashboard(&app::Menu::BuySell, cache, None, self.view())
     }
 
@@ -148,13 +148,38 @@ impl State for BuySellPanel {
             BuySellMessage::CountryDetected(country_name, iso_code) => {
                 // Do not log IP addresses. Country name/ISO are fine.
                 tracing::info!("country = {}, iso_code = {}", country_name, iso_code);
-                self.handle_country_detected(country_name, iso_code);
+                return self.handle_country_detected(country_name, iso_code)
+                    .map(|msg| Message::View(msg));
             }
             BuySellMessage::CountryDetectionError(_error) => {
-                // Graceful fallback: show provider selection, no blocking error
+                // Graceful fallback: automatically open Onramper
+                use crate::services::fiat::currency_for_country;
+
                 self.country_detection_failed = true;
                 self.flow_state = BuySellFlowState::DetectionFailed;
                 self.error = None;
+
+                // Build Onramper URL directly and open it (default to US)
+                let iso_code = "US".to_string();
+                let currency = currency_for_country(&iso_code).to_string();
+                let amount = if self.source_amount.value.is_empty() {
+                    "50".to_string()
+                } else {
+                    self.source_amount.value.clone()
+                };
+                let wallet = self.wallet_address.value.clone();
+
+                tracing::info!("🌍 [ONRAMPER] Country detection failed, auto-opening with default: {}", iso_code);
+
+                if let Some(url) = onramper::create_widget_url(&currency, &amount, &wallet) {
+                    tracing::info!("🌍 [ONRAMPER] Opening URL: {}", url);
+                    return Task::done(Message::View(ViewMessage::BuySell(
+                        BuySellMessage::WebviewOpenUrl(url),
+                    )));
+                } else {
+                    tracing::error!("🌍 [ONRAMPER] API key not configured");
+                    self.set_error("Onramper API key not configured. Please set ONRAMPER_API_KEY in .env".to_string());
+                }
             }
 
             BuySellMessage::LastNameChanged(v) => {
@@ -478,12 +503,15 @@ impl State for BuySellPanel {
                 self.set_source_amount(amount);
             }
 
-            // International provider handlers
+            // International provider - Onramper only
             BuySellMessage::OpenOnramper => {
-                if let BuySellFlowState::International(ref mut state) = self.flow_state {
+                // Works for both International and DetectionFailed states
+                if matches!(
+                    &self.flow_state,
+                    BuySellFlowState::International(_) | BuySellFlowState::DetectionFailed
+                ) {
                     use crate::services::fiat::currency_for_country;
 
-                    state.selected_provider = Some(InternationalProvider::Onramper);
                     // Build Onramper widget URL and open in embedded webview
                     // Use detected country to determine currency
                     let iso_code = self.detected_country_iso.clone().unwrap_or_else(|| "US".to_string());
@@ -497,65 +525,21 @@ impl State for BuySellPanel {
                         self.source_amount.value.clone()
                     };
                     let wallet = self.wallet_address.value.clone();
+
+                    tracing::info!("🌍 [ONRAMPER] Creating widget URL with wallet: {}", wallet);
+
                     if let Some(url) = onramper::create_widget_url(&currency, &amount, &wallet) {
+                        tracing::info!("🌍 [ONRAMPER] Opening URL: {}", url);
                         return Task::done(Message::View(ViewMessage::BuySell(
                             BuySellMessage::WebviewOpenUrl(url),
                         )));
                     } else {
-                        self.set_error("Onramper API key not configured".to_string());
+                        tracing::error!("🌍 [ONRAMPER] API key not configured");
+                        self.set_error("Onramper API key not configured. Please set ONRAMPER_API_KEY in .env".to_string());
                     }
                 }
             }
-            BuySellMessage::OpenMeld => {
-                if let BuySellFlowState::International(ref mut state) = self.flow_state {
-                    use crate::services::fiat::currency_for_country;
 
-                    state.selected_provider = Some(InternationalProvider::Meld);
-                    // Create Meld widget session via API and open in embedded webview
-                    let wallet_address = self.wallet_address.value.clone();
-                    let country_code = self
-                        .detected_country_iso
-                        .clone()
-                        .unwrap_or_else(|| "US".to_string());
-
-                    // Derive currency from detected country
-                    let source_currency_code = currency_for_country(&country_code).to_string();
-
-                    tracing::info!("🌍 [MELD] Country: {}, Currency: {}", country_code, source_currency_code);
-
-                    let source_amount = if self.source_amount.value.is_empty() {
-                        "50".to_string()
-                    } else {
-                        self.source_amount.value.clone()
-                    };
-                    let network = self.network;
-                    let client = state.meld_client.clone();
-                    return Task::perform(
-                        async move {
-                            client
-                                .create_widget_session(
-                                    wallet_address,
-                                    country_code,
-                                    source_currency_code,
-                                    source_amount,
-                                    ServiceProvider::Transak,
-                                    network,
-                                )
-                                .await
-                                .map(|resp| resp.widget_url)
-                                .map_err(|e| format!("{}", e))
-                        },
-                        |result| match result {
-                            Ok(widget_url) => Message::View(ViewMessage::BuySell(
-                                BuySellMessage::WebviewOpenUrl(widget_url),
-                            )),
-                            Err(error) => Message::View(ViewMessage::BuySell(
-                                BuySellMessage::SessionError(error),
-                            )),
-                        },
-                    );
-                }
-            }
 
             BuySellMessage::MavapayDashboard => {
                 if let BuySellFlowState::Africa(ref mut state) = self.flow_state {
@@ -674,12 +658,9 @@ impl State for BuySellPanel {
             }
 
             BuySellMessage::CreateSession => {
-                // Legacy handler - now use OpenMeld/OpenOnramper instead
-                self.set_error("Please select a provider (Meld or Onramper)".into());
+                // Legacy handler - now use OpenOnramper instead
+                self.set_error("Please use Onramper to buy Bitcoin".into());
             }
-
-            // Legacy Meld session handler removed after runtime flow-state migration
-            // BuySellMessage::_LegacyMeldSession => { /* removed */ }
             BuySellMessage::SessionError(error) => {
                 self.set_error(error);
             }

@@ -69,8 +69,10 @@ impl BuySellPanel {
     }
 
     /// Handle country detection result and transition to appropriate flow state
-    pub fn handle_country_detected(&mut self, country_name: String, iso_code: String) {
-        use crate::services::fiat::{is_african_country, mavapay_minor_unit_for_country, mavapay_major_unit_for_country};
+    /// Returns a Task that automatically opens Onramper for international users
+    pub fn handle_country_detected(&mut self, country_name: String, iso_code: String) -> iced::Task<ViewMessage> {
+        use crate::services::fiat::{is_african_country, mavapay_minor_unit_for_country, mavapay_major_unit_for_country, currency_for_country};
+        use crate::app::buysell::onramper;
 
         self.detected_country_name = Some(country_name);
         self.detected_country_iso = Some(iso_code.clone());
@@ -99,9 +101,30 @@ impl BuySellPanel {
             };
 
             self.flow_state = BuySellFlowState::Africa(africa_state);
+            iced::Task::none()
         } else {
-            // International flow: Meld/Onramper
+            // International flow: Automatically open Onramper
             self.flow_state = BuySellFlowState::International(InternationalFlowState::new());
+
+            // Build Onramper URL directly and open it
+            let currency = currency_for_country(&iso_code).to_string();
+            let amount = if self.source_amount.value.is_empty() {
+                "50".to_string()
+            } else {
+                self.source_amount.value.clone()
+            };
+            let wallet = self.wallet_address.value.clone();
+
+            tracing::info!("🌍 [ONRAMPER] Auto-opening for country: {}, currency: {}", iso_code, currency);
+
+            if let Some(url) = onramper::create_widget_url(&currency, &amount, &wallet) {
+                tracing::info!("🌍 [ONRAMPER] Opening URL: {}", url);
+                iced::Task::done(ViewMessage::BuySell(BuySellMessage::WebviewOpenUrl(url)))
+            } else {
+                tracing::error!("🌍 [ONRAMPER] API key not configured");
+                self.error = Some("Onramper API key not configured. Please set ONRAMPER_API_KEY in .env".to_string());
+                iced::Task::none()
+            }
         }
     }
 
@@ -203,7 +226,7 @@ impl BuySellPanel {
             return;
         }
 
-        // Simplified validation - Meld API handles network-specific requirements
+        // Simplified validation - Onramper handles network-specific requirements
         self.wallet_address.warning = if self.validate_wallet_address() {
             None
         } else {
@@ -325,8 +348,8 @@ impl BuySellPanel {
         match &self.flow_state {
             BuySellFlowState::DetectingCountry => self.render_loading(),
             BuySellFlowState::Africa(state) => self.render_africa_flow(state),
-            BuySellFlowState::International(_state) => self.provider_selection_form(),
-            BuySellFlowState::DetectionFailed => self.provider_selection_form(),
+            BuySellFlowState::International(_state) => self.render_loading_onramper(),
+            BuySellFlowState::DetectionFailed => self.render_loading_onramper(),
         }
     }
 
@@ -353,15 +376,12 @@ impl BuySellPanel {
         }
     }
 
-    fn provider_selection_form<'a>(&'a self) -> Column<'a, ViewMessage> {
-        use liana_ui::component::{button as ui_button, text as ui_text};
+    fn render_loading_onramper<'a>(&'a self) -> Column<'a, ViewMessage> {
+        use liana_ui::component::text as ui_text;
         let info = if let Some(country_name) = &self.detected_country_name {
-            format!(
-                "Country detected: {}. Choose a provider:",
-                country_name
-            )
+            format!("Country detected: {}. Opening Onramper...", country_name)
         } else {
-            "Choose a provider:".to_string()
+            "Opening Onramper...".to_string()
         };
         Column::new()
             .push_maybe(self.error.as_ref().map(|err| {
@@ -369,20 +389,10 @@ impl BuySellPanel {
                     .padding(10)
                     .style(theme::card::simple)
             }))
-            .push(Space::with_height(Length::Fixed(10.0)))
+            .push(Space::with_height(Length::Fixed(30.0)))
             .push(ui_text::p1_bold(&info).color(color::WHITE))
-            .push(Space::with_height(Length::Fixed(15.0)))
-            .push(
-                ui_button::primary(None, "Continue with Meld")
-                    .on_press(ViewMessage::BuySell(BuySellMessage::OpenMeld))
-                    .width(Length::Fill),
-            )
-            .push(Space::with_height(Length::Fixed(10.0)))
-            .push(
-                ui_button::primary(None, "Continue with Onramper")
-                    .on_press(ViewMessage::BuySell(BuySellMessage::OpenOnramper))
-                    .width(Length::Fill),
-            )
+            .push(Space::with_height(Length::Fixed(20.0)))
+            .push(text("Loading...").size(14).color(color::GREY_3))
             .align_x(Alignment::Center)
             .spacing(10)
             .max_width(500)

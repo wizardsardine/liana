@@ -217,8 +217,7 @@ pub enum BuySellMessage {
     SourceAmountChanged(String),
 
     CreateSession,
-    // Provider selection for international users
-    OpenMeld,
+    // International users - Onramper only
     OpenOnramper,
 
     SessionError(String),

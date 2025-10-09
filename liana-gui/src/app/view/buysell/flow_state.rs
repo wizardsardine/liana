@@ -1,6 +1,5 @@
 use liana_ui::component::form;
 
-use crate::app::buysell::meld::MeldClient;
 use crate::app::view::message::AccountType;
 use crate::services::mavapay::{
     MavapayClient, PriceResponse, QuoteResponse, Transaction,
@@ -16,10 +15,10 @@ pub enum BuySellFlowState {
     /// African users: Mavapay native login/registration flow
     Africa(AfricaFlowState),
 
-    /// International users: Provider selection + embedded webview
+    /// International users: Onramper embedded webview
     International(InternationalFlowState),
 
-    /// Geolocation detection failed - show provider selection as fallback
+    /// Geolocation detection failed - show Onramper as fallback
     DetectionFailed,
 }
 
@@ -118,18 +117,10 @@ impl std::fmt::Display for MavapayPaymentMethod {
     }
 }
 
-/// State specific to International (Meld/Onramper) flow
+/// State specific to International (Onramper) flow
 #[derive(Debug, Clone)]
 pub struct InternationalFlowState {
-    pub meld_client: MeldClient,
-    pub selected_provider: Option<InternationalProvider>,
-}
-
-/// International payment providers
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum InternationalProvider {
-    Meld,
-    Onramper,
+    // Onramper doesn't need a client - we build the URL directly
 }
 
 /// Pages in the native African flow
@@ -214,10 +205,7 @@ impl Default for AfricaFlowState {
 
 impl InternationalFlowState {
     pub fn new() -> Self {
-        Self {
-            meld_client: MeldClient::new(),
-            selected_provider: None,
-        }
+        Self {}
     }
 }
 
