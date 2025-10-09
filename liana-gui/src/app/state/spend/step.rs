@@ -1,7 +1,7 @@
 use std::{
     cmp::Ordering,
     collections::{HashMap, HashSet},
-    convert::TryInto,
+    convert::{TryFrom, TryInto},
     iter::FromIterator,
     str::FromStr,
     sync::Arc,
@@ -17,9 +17,10 @@ use liana::{
     },
     spend::{SpendCreationError, MAX_FEERATE},
 };
-use lianad::commands::ListCoinsEntry;
+use lianad::{commands::ListCoinsEntry, payjoin::types::PayjoinStatus};
 
 use liana_ui::{component::form, widget::Element};
+use payjoin::Uri;
 
 use crate::{
     app::{
@@ -609,6 +610,38 @@ impl Step for DefineSpend {
                             .unwrap()
                             .update(cache.network, msg);
                     }
+                    view::CreateSpendMessage::Bip21Edited(i, bip21) => {
+                        if let Some(recipient) = self.recipients.get_mut(i) {
+                            recipient.bip21.value = bip21.clone();
+                            if let Ok(uri) = Uri::try_from(bip21.as_str()) {
+                                if let Ok(address) = uri.address.require_network(cache.network) {
+                                    recipient.address.value = address.to_string();
+                                    recipient.update(
+                                        cache.network,
+                                        view::CreateSpendMessage::RecipientEdited(
+                                            i,
+                                            "address",
+                                            address.to_string(),
+                                        ),
+                                    );
+                                }
+                                if let Some(amount) = uri.amount {
+                                    recipient.amount.value =
+                                        amount.to_string_in(Denomination::Bitcoin);
+                                    recipient.update(
+                                        cache.network,
+                                        view::CreateSpendMessage::RecipientEdited(
+                                            i,
+                                            "amount",
+                                            amount.to_string_in(Denomination::Bitcoin),
+                                        ),
+                                    );
+                                }
+                            } else {
+                                self.warning = Some(SpendCreationError::InvalidBip21.into());
+                            }
+                        }
+                    }
                     view::CreateSpendMessage::FeerateEdited(s) => {
                         if let Ok(value) = s.parse::<u64>() {
                             self.feerate.value = s;
@@ -848,6 +881,7 @@ struct Recipient {
     // This is only `Some` if the user has entered a fiat amount directly.
     fiat_amount: Option<form::Value<String>>,
     fiat_converter: Option<view::FiatAmountConverter>, // the converter at the time of entering the fiat amount
+    bip21: form::Value<String>,
     is_recovery: bool,
 }
 
@@ -973,6 +1007,9 @@ impl Recipient {
                 self.label.valid = label.len() <= 100;
                 self.label.value = label;
             }
+            view::CreateSpendMessage::Bip21Edited(_, bip21) => {
+                self.bip21.value = bip21;
+            }
             _ => {}
         };
     }
@@ -1011,6 +1048,7 @@ impl Recipient {
             &self.label,
             is_max_selected,
             self.is_recovery,
+            &self.bip21,
         )
     }
 }
@@ -1034,6 +1072,25 @@ impl SaveSpend {
 impl Step for SaveSpend {
     fn load(&mut self, _coins: &[Coin], _tip_height: i32, draft: &TransactionDraft) {
         let (psbt, warnings) = draft.generated.clone().unwrap();
+
+        let bip21 = draft
+            .recipients
+            .first()
+            .expect("one recipient")
+            .bip21
+            .value
+            .clone();
+
+        let payjoin_status = if let Ok(uri) = Uri::try_from(bip21.as_str()) {
+            if uri.assume_checked().extras.pj_is_supported() {
+                Some(PayjoinStatus::Pending)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
         let mut tx = SpendTx::new(
             None,
             psbt,
@@ -1041,6 +1098,7 @@ impl Step for SaveSpend {
             &self.wallet.main_descriptor,
             &self.curve,
             draft.network,
+            payjoin_status,
         );
         tx.labels.clone_from(&draft.labels);
 
@@ -1060,7 +1118,12 @@ impl Step for SaveSpend {
         }
 
         self.spend = Some((
-            psbt::PsbtState::new(self.wallet.clone(), tx, false),
+            psbt::PsbtState::new(
+                self.wallet.clone(),
+                tx,
+                false,
+                if bip21.is_empty() { None } else { Some(bip21) },
+            ),
             warnings,
         ));
     }

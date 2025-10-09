@@ -486,6 +486,40 @@ fn get_labels_bip329(control: &DaemonControl, params: Params) -> Result<serde_js
     Ok(serde_json::json!(control.get_labels_bip329(offset, limit)))
 }
 
+fn receive_payjoin(control: &DaemonControl) -> Result<serde_json::Value, Error> {
+    let res = control.receive_payjoin()?;
+    Ok(serde_json::json!(&res))
+}
+
+fn send_payjoin(control: &DaemonControl, params: Params) -> Result<serde_json::Value, Error> {
+    let bip21 = params
+        .get(0, "bip21")
+        .ok_or_else(|| Error::invalid_params("Missing 'bip21' parameter."))?
+        .as_str()
+        .ok_or_else(|| Error::invalid_params("Invalid 'bip21' parameter."))?;
+    let psbt = params
+        .get(1, "psbt")
+        .ok_or_else(|| Error::invalid_params("Missing 'psbt' parameter."))?
+        .as_str()
+        .ok_or_else(|| Error::invalid_params("Invalid 'psbt' parameter."))?;
+    let psbt =
+        Psbt::from_str(psbt).map_err(|_| Error::invalid_params("Invalid 'psbt' parameter."))?;
+    control.init_payjoin_sender(bip21.to_string(), &psbt)?;
+    Ok(serde_json::json!({}))
+}
+
+fn get_payjoin_info(control: &DaemonControl, params: Params) -> Result<serde_json::Value, Error> {
+    let txid = params
+        .get(0, "txid")
+        .ok_or_else(|| Error::invalid_params("Missing 'txid' parameter."))?
+        .as_str()
+        .ok_or_else(|| Error::invalid_params("Invalid 'txid' parameter."))?;
+    let txid = bitcoin::Txid::from_str(txid)
+        .map_err(|_| Error::invalid_params("Invalid 'txid' parameter."))?;
+    let res = control.get_payjoin_info(&txid)?;
+    Ok(serde_json::json!(&res))
+}
+
 /// Handle an incoming JSONRPC2 request.
 pub fn handle_request(control: &mut DaemonControl, req: Request) -> Result<Response, Error> {
     let result = match req.method.as_str() {
@@ -592,6 +626,19 @@ pub fn handle_request(control: &mut DaemonControl, req: Request) -> Result<Respo
                 .params
                 .ok_or_else(|| Error::invalid_params("Missing 'offset' and 'limit' parameters."))?;
             get_labels_bip329(control, params)?
+        }
+        "receivepayjoin" => receive_payjoin(control)?,
+        "sendpayjoin" => {
+            let params = req
+                .params
+                .ok_or_else(|| Error::invalid_params("Missing 'payjoin_url' parameter."))?;
+            send_payjoin(control, params)?
+        }
+        "getpayjoininfo" => {
+            let params = req
+                .params
+                .ok_or_else(|| Error::invalid_params("Missing 'txid' parameter."))?;
+            get_payjoin_info(control, params)?
         }
         _ => {
             return Err(Error::method_not_found());

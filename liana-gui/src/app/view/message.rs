@@ -33,11 +33,13 @@ pub enum Message {
     SelectHardwareWallet(usize),
     CreateRbf(CreateRbfMessage),
     ShowQrCode(usize),
+    ShowBip21QrCode(usize),
     ImportExport(ImportExportMessage),
     HideRescanWarning,
     ExportPsbt,
     ImportPsbt,
     OpenUrl(String),
+    PayjoinInitiate,
 }
 
 impl Close for Message {
@@ -66,6 +68,7 @@ pub enum CreateSpendMessage {
     Generate,
     SendMaxToRecipient(usize),
     Clear,
+    Bip21Edited(usize, String),
 }
 
 #[derive(Debug, Clone)]
@@ -87,6 +90,8 @@ pub enum SpendTxMessage {
     EditPsbt,
     PsbtEdited(String),
     Next,
+    SendPayjoin,
+    PayjoinInitiated,
 }
 
 #[derive(Debug, Clone)]

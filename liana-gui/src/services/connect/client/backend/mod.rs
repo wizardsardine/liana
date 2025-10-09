@@ -17,6 +17,7 @@ use lianad::{
     bip329::Labels,
     commands::{CoinStatus, GetInfoDescriptors, LCSpendInfo, LabelItem, UpdateDerivIndexesResult},
     config::Config,
+    payjoin::types::PayjoinStatus,
 };
 use reqwest::{Error, IntoUrl, Method, RequestBuilder, Response};
 use tokio::sync::RwLock;
@@ -610,6 +611,7 @@ impl Daemon for BackendWalletClient {
         Ok(GetAddressResult {
             address: res.address,
             derivation_index: res.derivation_index,
+            bip21: None,
         })
     }
 
@@ -658,6 +660,18 @@ impl Daemon for BackendWalletClient {
                 .collect(),
             continue_from: res.continue_from,
         })
+    }
+
+    async fn receive_payjoin(&self) -> Result<GetAddressResult, DaemonError> {
+        unimplemented!()
+    }
+
+    async fn send_payjoin(&self, _bip21: String, _psbt: &Psbt) -> Result<(), DaemonError> {
+        unimplemented!()
+    }
+
+    async fn get_payjoin_info(&self, _txid: &Txid) -> Result<PayjoinStatus, DaemonError> {
+        unimplemented!()
     }
 
     async fn update_deriv_indexes(
@@ -1256,6 +1270,8 @@ fn spend_tx_from_api(
         desc,
         secp,
         network,
+        // TODO: Payjoin status is getting set to None and so is bip21
+        None,
     );
     tx.load_labels(&labels);
     tx

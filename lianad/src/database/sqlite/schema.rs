@@ -1,5 +1,6 @@
 use bip329::Label;
 use liana::descriptors::LianaDescriptor;
+use payjoin::bitcoin::{consensus::Decodable, io::Cursor};
 
 use std::{convert::TryFrom, str::FromStr};
 
@@ -87,6 +88,16 @@ CREATE TABLE coins (
         ON DELETE RESTRICT
 );
 
+/* Seen Payjoin outpoints
+ *
+ * The 'added_at' field is simply the time that this outpoint is added to the table for 
+ * tracking.
+ */
+CREATE TABLE payjoin_outpoints (
+    outpoint BLOB NOT NULL PRIMARY KEY,
+    added_at INTEGER NOT NULL
+);
+
 /* A mapping from descriptor address to derivation index. Necessary until
  * we can get the derivation index from the parent descriptor from bitcoind.
  */
@@ -121,6 +132,50 @@ CREATE TABLE labels (
     item_kind INTEGER NOT NULL CHECK (item_kind IN (0,1,2)),
     item TEXT UNIQUE NOT NULL,
     value TEXT NOT NULL
+);
+
+/* Payjoin OHttpKeys */
+CREATE TABLE payjoin_ohttp_keys (
+    id INTEGER PRIMARY KEY NOT NULL,
+    relay_url TEXT UNIQUE NOT NULL,
+    timestamp INTEGER NOT NULL,
+    key BLOB NOT NULL
+);
+
+/* Payjoin senders */
+CREATE TABLE payjoin_senders (
+    id INTEGER PRIMARY KEY NOT NULL,
+    created_at INTEGER NOT NULL,
+    original_txid BLOB NOT NULL,
+    proposed_txid BLOB,
+    completed_at INTEGER
+);
+
+/* Payjoin Sender session events */
+CREATE TABLE payjoin_sender_events (
+    id INTEGER PRIMARY KEY NOT NULL,
+    session_id INTEGER NOT NULL,
+    created_at INTEGER NOT NULL,
+    event BLOB NOT NULL,
+    FOREIGN KEY (session_id) REFERENCES payjoin_senders (id)
+);
+
+/* Payjoin receivers */
+CREATE TABLE payjoin_receivers (
+    id INTEGER PRIMARY KEY NOT NULL,
+    original_txid BLOB,
+    proposed_txid BLOB,
+    created_at INTEGER NOT NULL,
+    completed_at INTEGER
+);
+
+/* Payjoin Receiver session events */
+CREATE TABLE payjoin_receiver_events (
+    id INTEGER PRIMARY KEY NOT NULL,
+    session_id INTEGER NOT NULL,
+    created_at INTEGER NOT NULL,
+    event BLOB NOT NULL,
+    FOREIGN KEY (session_id) REFERENCES payjoin_receivers (id)
 );
 ";
 
@@ -454,5 +509,26 @@ impl TryFrom<&rusqlite::Row<'_>> for DbWalletTransaction {
             transaction,
             block_info,
         })
+    }
+}
+
+/// An outpoint we have seen before in payjoin transactions
+#[derive(Clone, Debug, PartialEq)]
+pub struct DbPayjoinOutpoint {
+    pub outpoint: bitcoin::OutPoint,
+    pub added_at: Option<u32>,
+}
+
+impl TryFrom<&rusqlite::Row<'_>> for DbPayjoinOutpoint {
+    type Error = rusqlite::Error;
+
+    fn try_from(row: &rusqlite::Row) -> Result<Self, Self::Error> {
+        let outpoint: Vec<u8> = row.get(0)?;
+        let outpoint = bitcoin::OutPoint::consensus_decode(&mut Cursor::new(outpoint))
+            .expect("Outpoint should be decodable");
+
+        let added_at = row.get(1)?;
+
+        Ok(DbPayjoinOutpoint { outpoint, added_at })
     }
 }

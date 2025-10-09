@@ -36,7 +36,7 @@ pub enum Message {
     DaemonConfigLoaded(Result<(), Error>),
     LoadWallet(Wallet),
     Info(Result<GetInfoResult, Error>),
-    ReceiveAddress(Result<(Address, ChildNumber), Error>),
+    ReceiveAddress(Result<(Address, ChildNumber, Option<String>), Error>),
     /// Revealed addresses. The second element contains the start index used for the request.
     RevealedAddresses(
         Result<ListRevealedAddressesResult, Error>,
@@ -66,6 +66,8 @@ pub enum Message {
     BroadcastModal(Result<HashSet<Txid>, Error>),
     RbfModal(Box<HistoryTransaction>, bool, Result<HashSet<Txid>, Error>),
     Export(ImportExportMessage),
+    SendPayjoin(Result<(), Error>),
+    PayjoinInitiated(Result<String, Error>),
 }
 
 impl From<ImportExportMessage> for Message {
