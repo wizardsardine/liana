@@ -37,7 +37,6 @@ use std::{
     collections::{hash_map, HashMap, HashSet},
     convert::{TryFrom, TryInto},
     fmt,
-    str::FromStr,
     sync::{self, mpsc, Arc},
     time::SystemTime,
 };
@@ -52,9 +51,9 @@ use miniscript::{
 };
 use payjoin::{
     bitcoin::{key::Secp256k1, FeeRate},
-    receive::v2::{replay_event_log as replay_receiver_event_log, Receiver, UninitializedReceiver},
+    receive::v2::{replay_event_log as replay_receiver_event_log, ReceiverBuilder},
     send::v2::{replay_event_log as replay_sender_event_log, SenderBuilder},
-    Uri, UriExt, Url,
+    Uri, UriExt,
 };
 use serde::{Deserialize, Serialize};
 
@@ -91,6 +90,7 @@ pub enum CommandError {
     // Same FIXME as `SpendFinalization`
     FailedToPostOriginalPayjoinProposal(String),
     ReplayError(String),
+    IntoUrlError(String),
 }
 
 impl fmt::Display for CommandError {
@@ -155,6 +155,9 @@ impl fmt::Display for CommandError {
             }
             Self::ReplayError(e) => {
                 write!(f, "Payjoin replay failed: '{}'.", e)
+            }
+            Self::IntoUrlError(e) => {
+                write!(f, "Payjoin into url failed: '{}'.", e)
             }
         }
     }
@@ -414,19 +417,16 @@ impl DaemonControl {
             .address(self.config.bitcoin_config.network);
 
         let persister = ReceiverPersister::new(Arc::new(self.db.clone()));
-        let session = Receiver::<UninitializedReceiver>::create_session(
-            address.clone(),
-            PAYJOIN_DIRECTORY,
-            ohttp_keys.clone(),
-            None,
-        )
-        .save(&persister)
-        .unwrap();
+        let session = ReceiverBuilder::new(address.clone(), PAYJOIN_DIRECTORY, ohttp_keys.clone())
+            .map_err(|e| CommandError::IntoUrlError(e.to_string()))?
+            .build()
+            .save(&persister)
+            .unwrap();
 
         Ok(GetAddressResult::new(
             address,
             new_index,
-            Some(Url::from_str(session.pj_uri().to_string().as_str()).expect("Should be valid")),
+            Some(session.pj_uri().to_string()),
         ))
     }
 
@@ -460,6 +460,7 @@ impl DaemonControl {
         let persister = SenderPersister::new(Arc::new(self.db.clone()), &original_txid);
         let _sender = SenderBuilder::new(original_psbt.clone(), uri)
             .build_recommended(FeeRate::BROADCAST_MIN)
+            .map_err(|e| CommandError::IntoUrlError(e.to_string()))?
             .save(&persister)
             .unwrap();
 
@@ -1499,14 +1500,14 @@ pub struct GetAddressResult {
     #[serde(deserialize_with = "deser_addr_assume_checked")]
     pub address: bitcoin::Address,
     pub derivation_index: bip32::ChildNumber,
-    pub bip21: Option<Url>,
+    pub bip21: Option<String>,
 }
 
 impl GetAddressResult {
     pub fn new(
         address: bitcoin::Address,
         derivation_index: bip32::ChildNumber,
-        bip21: Option<Url>,
+        bip21: Option<String>,
     ) -> Self {
         Self {
             address,

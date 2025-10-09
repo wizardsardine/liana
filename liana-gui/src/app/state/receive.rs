@@ -7,7 +7,6 @@ use liana::miniscript::bitcoin::{
     Address, Network,
 };
 use liana_ui::{widget::modal, widget::*};
-use payjoin::Url;
 
 use crate::daemon::model::LabelsLoader;
 use crate::dir::LianaDirectory;
@@ -41,7 +40,7 @@ pub enum Modal {
 #[derive(Debug, Default)]
 pub struct Addresses {
     list: Vec<Address>,
-    bip21s: HashMap<Address, Url>,
+    bip21s: HashMap<Address, String>,
     derivation_indexes: Vec<ChildNumber>,
     labels: HashMap<String, String>,
 }
@@ -477,7 +476,7 @@ pub struct ShowBip21QrCodeModal {
 }
 
 impl ShowBip21QrCodeModal {
-    pub fn new(bip21: &payjoin::Url, _index: ChildNumber) -> Option<Self> {
+    pub fn new(bip21: &String, _index: ChildNumber) -> Option<Self> {
         qr_code::Data::new(format!("{}", bip21))
             .ok()
             .map(|qr_code| Self {

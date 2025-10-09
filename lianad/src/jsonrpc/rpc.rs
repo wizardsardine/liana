@@ -51,6 +51,7 @@ pub struct Request {
 /// A failure to broadcast a transaction to the P2P network.
 const BROADCAST_ERROR: i64 = 1_000;
 const REPLAY_ERROR: i64 = 1_001;
+const INTO_URL_ERROR: i64 = 1_002;
 
 /// JSONRPC2 error codes. See https://www.jsonrpc.org/specification#error_object.
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -180,6 +181,9 @@ impl From<commands::CommandError> for Error {
             }
             commands::CommandError::ReplayError(_) => {
                 Error::new(ErrorCode::ServerError(REPLAY_ERROR), e.to_string())
+            }
+            commands::CommandError::IntoUrlError(_) => {
+                Error::new(ErrorCode::ServerError(INTO_URL_ERROR), e.to_string())
             }
         }
     }
