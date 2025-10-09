@@ -1,3 +1,4 @@
+pub mod coincube;
 pub mod connect;
 pub mod fiat;
 pub mod geolocation;

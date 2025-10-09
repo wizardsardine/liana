@@ -33,6 +33,10 @@ pub struct AfricaFlowState {
     pub login_username: form::Value<String>,
     pub login_password: form::Value<String>,
 
+    // Authenticated user data
+    pub current_user: Option<crate::services::registration::User>,
+    pub auth_token: Option<String>,
+
     // Registration fields
     pub first_name: form::Value<String>,
     pub last_name: form::Value<String>,
@@ -56,12 +60,11 @@ pub struct AfricaFlowState {
     pub mavapay_current_quote: Option<QuoteResponse>,
     pub mavapay_current_price: Option<PriceResponse>,
     pub mavapay_transactions: Vec<Transaction>,
-    pub mavapay_payment_status: Option<PaymentStatusResponse>,
-    pub mavapay_polling_active: bool,
 
     // API clients
     pub registration_client: RegistrationClient,
     pub mavapay_client: MavapayClient,
+    pub coincube_client: crate::services::coincube::CoincubeClient,
 }
 
 /// Mavapay flow mode selection
@@ -146,6 +149,8 @@ impl AfricaFlowState {
             selected_account_type: None,
             login_username: form::Value::default(),
             login_password: form::Value::default(),
+            current_user: None,
+            auth_token: None,
             first_name: form::Value::default(),
             last_name: form::Value::default(),
             email: form::Value::default(),
@@ -182,8 +187,6 @@ impl AfricaFlowState {
             mavapay_current_quote: None,
             mavapay_current_price: None,
             mavapay_transactions: Vec::new(),
-            mavapay_payment_status: None,
-            mavapay_polling_active: false,
             registration_client: RegistrationClient::new(
                 std::env::var("COINCUBE_API_URL")
                     .unwrap_or_else(|_| "https://dev-api.coincube.io".to_string())
@@ -195,6 +198,10 @@ impl AfricaFlowState {
                     String::new()
                 },
             )),
+            coincube_client: crate::services::coincube::CoincubeClient::new(
+                std::env::var("COINCUBE_API_URL")
+                    .unwrap_or_else(|_| "https://dev-api.coincube.io".to_string()),
+            ),
         }
     }
 }

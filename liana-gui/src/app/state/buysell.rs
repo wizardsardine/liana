@@ -438,7 +438,13 @@ impl State for BuySellPanel {
                     }
 
                     // Check if we have user data and token
-                    if let (Some(user), Some(_token)) = (&response.user, &response.token) {
+                    if let (Some(user), Some(token)) = (&response.user, &response.token) {
+                        // Store user data and token in state
+                        state.current_user = Some(user.clone());
+                        state.auth_token = Some(token.clone());
+
+                        tracing::info!("✅ [LOGIN] Stored user ID: {} and auth token", user.id);
+
                         // Check if email is verified and route accordingly
                         if user.email_verified {
                             tracing::info!(
@@ -470,10 +476,6 @@ impl State for BuySellPanel {
 
             BuySellMessage::SourceAmountChanged(amount) => {
                 self.set_source_amount(amount);
-            }
-            BuySellMessage::CountryCodeChanged(_) | BuySellMessage::FiatCurrencyChanged(_) => {
-                // Legacy inputs retained for backward compatibility; runtime flow now uses
-                // geolocation-derived country and provider defaults. No-op in new architecture.
             }
 
             // International provider handlers
@@ -637,8 +639,7 @@ impl State for BuySellPanel {
                 self.error = Some(format!("Quote error: {}", error));
             }
             BuySellMessage::MavapayConfirmQuote => {
-                // TODO: Implement quote confirmation
-                self.error = Some("Quote confirmation not yet implemented".to_string());
+                return self.handle_mavapay_confirm_quote();
             }
             BuySellMessage::MavapayGetPrice => {
                 return self.handle_mavapay_get_price();
@@ -663,48 +664,6 @@ impl State for BuySellPanel {
             }
             BuySellMessage::MavapayTransactionsError(error) => {
                 self.error = Some(format!("Transactions error: {}", error));
-            }
-            BuySellMessage::MavapayConfirmPayment(quote_id) => {
-                return self.handle_mavapay_confirm_payment(quote_id);
-            }
-            BuySellMessage::MavapayPaymentConfirmed(status) => {
-                if let BuySellFlowState::Africa(ref mut state) = self.flow_state {
-                    state.mavapay_payment_status = Some(status);
-                    self.error = None;
-                    // Start polling for status updates
-                    let quote_id = state
-                        .mavapay_payment_status
-                        .as_ref()
-                        .unwrap()
-                        .quote_id
-                        .clone();
-                    return Task::done(Message::View(ViewMessage::BuySell(
-                        BuySellMessage::MavapayStartPolling(quote_id),
-                    )));
-                }
-            }
-            BuySellMessage::MavapayPaymentConfirmationError(error) => {
-                self.error = Some(format!("Payment confirmation error: {}", error));
-            }
-            BuySellMessage::MavapayCheckPaymentStatus(quote_id) => {
-                return self.handle_mavapay_check_payment_status(quote_id);
-            }
-            BuySellMessage::MavapayPaymentStatusUpdated(status) => {
-                if let BuySellFlowState::Africa(ref mut state) = self.flow_state {
-                    state.mavapay_payment_status = Some(status);
-                    self.error = None;
-                }
-            }
-            BuySellMessage::MavapayPaymentStatusError(error) => {
-                self.error = Some(format!("Payment status error: {}", error));
-            }
-            BuySellMessage::MavapayStartPolling(quote_id) => {
-                return self.handle_mavapay_start_polling(quote_id);
-            }
-            BuySellMessage::MavapayStopPolling => {
-                if let BuySellFlowState::Africa(ref mut state) = self.flow_state {
-                    state.mavapay_polling_active = false;
-                }
             }
 
             BuySellMessage::MavapayOpenPaymentLink => {
@@ -1017,9 +976,14 @@ impl BuySellPanel {
             );
         }
         Task::perform(
-            async move { client.create_payment_link(request).await },
+            async move { client.create_payment_link_with_ref(request).await },
             |result| match result {
-                Ok(url) => Message::View(ViewMessage::BuySell(BuySellMessage::WebviewOpenUrl(url))),
+                Ok((payment_link, _payment_ref)) => {
+                    tracing::info!("🌍 [MAVAPAY] Opening Mavapay payment link directly");
+
+                    // Open Mavapay's hosted checkout page directly
+                    Message::View(ViewMessage::BuySell(BuySellMessage::WebviewOpenUrl(payment_link)))
+                },
                 Err(error) => Message::View(ViewMessage::BuySell(
                     BuySellMessage::MavapayQuoteError(format!("Payment link error: {}", error)),
                 )),
@@ -1067,58 +1031,72 @@ impl BuySellPanel {
         )
     }
 
-    fn handle_mavapay_confirm_payment(&self, quote_id: String) -> Task<Message> {
-        let Some(state) = self.africa_state() else {
-            return Task::none();
-        };
-        let client = state.mavapay_client.clone();
-        Task::perform(
-            async move { client.confirm_quote(quote_id).await },
-            |result| match result {
-                Ok(status) => Message::View(ViewMessage::BuySell(
-                    BuySellMessage::MavapayPaymentConfirmed(status),
-                )),
-                Err(error) => Message::View(ViewMessage::BuySell(
-                    BuySellMessage::MavapayPaymentConfirmationError(error.to_string()),
-                )),
-            },
-        )
-    }
+    fn handle_mavapay_confirm_quote(&self) -> Task<Message> {
+        use crate::services::coincube::client::SaveQuoteRequest;
 
-    fn handle_mavapay_check_payment_status(&self, quote_id: String) -> Task<Message> {
         let Some(state) = self.africa_state() else {
             return Task::none();
         };
-        let client = state.mavapay_client.clone();
-        Task::perform(
-            async move { client.get_payment_status(&quote_id).await },
-            |result| match result {
-                Ok(status) => Message::View(ViewMessage::BuySell(
-                    BuySellMessage::MavapayPaymentStatusUpdated(status),
-                )),
-                Err(error) => Message::View(ViewMessage::BuySell(
-                    BuySellMessage::MavapayPaymentStatusError(error.to_string()),
-                )),
-            },
-        )
-    }
 
-    fn handle_mavapay_start_polling(&self, quote_id: String) -> Task<Message> {
-        let Some(state) = self.africa_state() else {
-            return Task::none();
+        let Some(quote) = &state.mavapay_current_quote else {
+            return Task::done(Message::View(ViewMessage::BuySell(
+                BuySellMessage::MavapayQuoteError("No quote available".to_string()),
+            )));
         };
-        let client = state.mavapay_client.clone();
+
+        // Build save quote request
+        // Get user ID from state if available
+        let user_id = if let BuySellFlowState::Africa(ref state) = self.flow_state {
+            state.current_user.as_ref().map(|user| user.id.to_string())
+        } else {
+            None
+        };
+
+        let request = SaveQuoteRequest {
+            quote_id: quote.id.clone(),
+            user_id,
+            amount: quote.amount_in_source_currency,
+            source_currency: quote.source_currency.clone(),
+            target_currency: quote.target_currency.clone(),
+            payment_currency: quote.payment_currency.clone(),
+            exchange_rate: quote.exchange_rate,
+            usd_to_target_currency_rate: quote.usd_to_target_currency_rate,
+            transaction_fees_in_source_currency: quote.transaction_fees_in_source_currency,
+            transaction_fees_in_target_currency: quote.transaction_fees_in_target_currency,
+            amount_in_source_currency: quote.amount_in_source_currency,
+            amount_in_target_currency: quote.amount_in_target_currency,
+            total_amount_in_source_currency: quote.total_amount_in_source_currency,
+            total_amount_in_target_currency: quote.total_amount_in_target_currency.or(Some(
+                quote.amount_in_target_currency + quote.transaction_fees_in_target_currency
+            )),
+            bank_account_number: Some(state.mavapay_bank_account_number.value.clone()),
+            bank_account_name: Some(state.mavapay_bank_account_name.value.clone()),
+            bank_code: Some(state.mavapay_bank_code.value.clone()),
+            bank_name: Some(state.mavapay_bank_name.value.clone()),
+            payment_method: "bank_transfer".to_string(),
+            wallet_address: Some(self.wallet_address.value.clone()),
+        };
+
+        let coincube_client = state.coincube_client.clone();
+        let quote_id = quote.id.clone();
+
         Task::perform(
             async move {
-                // Poll every 5 seconds for up to 20 attempts (100 seconds total)
-                client.poll_transaction_status(&quote_id, 20, 5).await
+                // Save quote to coincube-api
+                coincube_client.save_quote(request).await?;
+
+                // Build quote display URL
+                let url = coincube_client.get_quote_display_url(&quote_id);
+
+                Ok(url)
             },
-            |result| match result {
-                Ok(status) => Message::View(ViewMessage::BuySell(
-                    BuySellMessage::MavapayPaymentStatusUpdated(status),
-                )),
+            |result: Result<String, crate::services::coincube::client::CoincubeError>| match result {
+                Ok(url) => {
+                    tracing::info!("🌍 [MAVAPAY] Opening quote display URL: {}", url);
+                    Message::View(ViewMessage::BuySell(BuySellMessage::WebviewOpenUrl(url)))
+                }
                 Err(error) => Message::View(ViewMessage::BuySell(
-                    BuySellMessage::MavapayPaymentStatusError(error.to_string()),
+                    BuySellMessage::MavapayQuoteError(format!("Failed to save quote: {}", error)),
                 )),
             },
         )

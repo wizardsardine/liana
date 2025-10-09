@@ -1307,9 +1307,7 @@ impl BuySellPanel {
                 .push(Space::with_height(Length::Fixed(15.0)))
                 .push(
                     ui_button::primary(None, "Confirm Payment")
-                        .on_press(ViewMessage::BuySell(BuySellMessage::MavapayConfirmPayment(
-                            quote.id.clone(),
-                        )))
+                        .on_press(ViewMessage::BuySell(BuySellMessage::MavapayConfirmQuote))
                         .width(Length::Fill),
                 );
 
@@ -1320,81 +1318,6 @@ impl BuySellPanel {
             column = column
                 .push(Space::with_height(Length::Fixed(15.0)))
                 .push(quote_display);
-        }
-
-        // Payment status display
-        if let Some(payment_status) = &state.mavapay_payment_status {
-            let status_color = match payment_status.status.as_str() {
-                "PAID" | "SUCCESS" => color::GREEN,
-                "FAILED" => color::RED,
-                "PENDING" => color::ORANGE,
-                _ => color::GREY_3,
-            };
-
-            let mut status_column = Column::new()
-                .push(
-                    Row::new()
-                        .push(text("💳").size(20))
-                        .push(Space::with_width(Length::Fixed(10.0)))
-                        .push(ui_text::h5_medium("Payment Status").color(color::WHITE))
-                        .align_y(Alignment::Center),
-                )
-                .push(Space::with_height(Length::Fixed(10.0)))
-                .push(
-                    Row::new()
-                        .push(text("Status: ").size(14).color(color::GREY_3))
-                        .push(text(&payment_status.status).size(14).color(status_color)),
-                )
-                .push(
-                    Row::new()
-                        .push(text("Amount: ").size(14).color(color::GREY_3))
-                        .push(
-                            text(format!(
-                                "{} {}",
-                                payment_status.amount, payment_status.currency
-                            ))
-                            .size(14)
-                            .color(color::WHITE),
-                        ),
-                );
-
-            if state.mavapay_polling_active {
-                status_column = status_column
-                    .push(Space::with_height(Length::Fixed(10.0)))
-                    .push(
-                        Row::new()
-                            .push(text("🔄").size(16))
-                            .push(Space::with_width(Length::Fixed(5.0)))
-                            .push(text("Monitoring payment...").size(14).color(color::ORANGE))
-                            .align_y(Alignment::Center),
-                    )
-                    .push(Space::with_height(Length::Fixed(10.0)))
-                    .push(
-                        ui_button::secondary(None, "Stop Monitoring")
-                            .on_press(ViewMessage::BuySell(BuySellMessage::MavapayStopPolling))
-                            .width(Length::Fill),
-                    );
-            } else if payment_status.status == "PENDING" {
-                status_column = status_column
-                    .push(Space::with_height(Length::Fixed(10.0)))
-                    .push(
-                        ui_button::primary(None, "Check Status")
-                            .on_press(ViewMessage::BuySell(
-                                BuySellMessage::MavapayCheckPaymentStatus(
-                                    payment_status.quote_id.clone(),
-                                ),
-                            ))
-                            .width(Length::Fill),
-                    );
-            }
-
-            let status_display = Container::new(status_column.spacing(5))
-                .padding(20)
-                .style(theme::card::simple);
-
-            column = column
-                .push(Space::with_height(Length::Fixed(15.0)))
-                .push(status_display);
         }
 
         column.spacing(10)

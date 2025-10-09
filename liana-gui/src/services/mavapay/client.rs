@@ -334,6 +334,57 @@ impl MavapayClient {
         Ok(api_response.data.payment_link)
     }
 
+    /// Create a hosted checkout payment link and return both URL and reference
+    pub async fn create_payment_link_with_ref(
+        &self,
+        request: PaymentLinkRequest,
+    ) -> Result<(String, String), MavapayError> {
+        #[cfg(debug_assertions)]
+        {
+            let request_json = serde_json::to_string_pretty(&request).unwrap_or_default();
+            tracing::info!("[MAVAPAY] Creating payment link with request:\n{}", request_json);
+        }
+
+        let response = self
+            .request(Method::POST, "paymentlink")
+            .json(&request)
+            .send()
+            .await?;
+
+        #[cfg(debug_assertions)]
+        {
+            let status = response.status();
+            tracing::info!("[MAVAPAY] Payment link response status: {}", status);
+        }
+
+        let response = response.check_success().await?;
+
+        // Read raw response body for debugging
+        let response_text = response.text().await?;
+
+        #[cfg(debug_assertions)]
+        tracing::info!("[MAVAPAY] Raw payment link response body:\n{}", response_text);
+
+        // Try to parse standard { status, data } wrapper
+        let api_response: ApiResponse<PaymentLinkResponse> = serde_json::from_str(&response_text).map_err(|e| {
+            #[cfg(debug_assertions)]
+            tracing::error!("[MAVAPAY] Failed to deserialize payment link response: {}\nResponse was: {}", e, response_text);
+            MavapayError::InvalidResponse(format!("Failed to parse payment link response: {} | Response: {}", e, response_text))
+        })?;
+
+        if api_response.status != "ok" && api_response.status != "success" {
+            return Err(MavapayError::InvalidResponse(
+                format!("API returned status: {}", api_response.status),
+            ));
+        }
+
+        #[cfg(debug_assertions)]
+        tracing::info!("[MAVAPAY] Payment link created successfully: {} (ref: {})",
+            api_response.data.payment_link, api_response.data.payment_ref);
+
+        Ok((api_response.data.payment_link, api_response.data.payment_ref))
+    }
+
     /// Get list of supported banks for a country
     pub async fn get_banks(&self, country_code: &str) -> Result<Vec<BankInfo>, MavapayError> {
         let response = self
@@ -521,65 +572,6 @@ impl MavapayClient {
         Ok(tx_list)
     }
 
-    /// Confirm a quote and initiate payment processing
-    pub async fn confirm_quote(
-        &self,
-        quote_id: String,
-    ) -> Result<PaymentStatusResponse, MavapayError> {
-        let request = PaymentConfirmationRequest { quote_id };
-
-        let response = self
-            .request(Method::POST, "quote/confirm")
-            .json(&request)
-            .send()
-            .await?
-            .check_success()
-            .await?;
-
-        let api_response: ApiResponse<PaymentStatusResponse> =
-            response.json().await.map_err(|e| {
-                MavapayError::InvalidResponse(format!(
-                    "Failed to parse confirmation response: {}",
-                    e
-                ))
-            })?;
-
-        if api_response.status != "ok" {
-            return Err(MavapayError::InvalidResponse(
-                "API returned non-ok status".to_string(),
-            ));
-        }
-
-        Ok(api_response.data)
-    }
-
-    /// Get payment status by quote ID
-    pub async fn get_payment_status(
-        &self,
-        quote_id: &str,
-    ) -> Result<PaymentStatusResponse, MavapayError> {
-        let response = self
-            .request(Method::GET, "payment/status")
-            .query(&[("quoteId", quote_id)])
-            .send()
-            .await?
-            .check_success()
-            .await?;
-
-        let api_response: ApiResponse<PaymentStatusResponse> =
-            response.json().await.map_err(|e| {
-                MavapayError::InvalidResponse(format!("Failed to parse status response: {}", e))
-            })?;
-
-        if api_response.status != "ok" {
-            return Err(MavapayError::InvalidResponse(
-                "API returned non-ok status".to_string(),
-            ));
-        }
-
-        Ok(api_response.data)
-    }
-
     /// Get single transaction by ID
     pub async fn get_transaction(&self, transaction_id: &str) -> Result<Transaction, MavapayError> {
         let response = self
@@ -600,86 +592,5 @@ impl MavapayClient {
         }
 
         Ok(api_response.data)
-    }
-
-    /// Register webhook URL for real-time notifications
-    pub async fn register_webhook(&self, url: &str, secret: &str) -> Result<(), MavapayError> {
-        let request = serde_json::json!({
-            "url": url,
-            "secret": secret
-        });
-
-        let response = self
-            .request(Method::POST, "webhook/register")
-            .json(&request)
-            .send()
-            .await?
-            .check_success()
-            .await?;
-
-        let api_response: ApiResponse<serde_json::Value> = response.json().await.map_err(|e| {
-            MavapayError::InvalidResponse(format!("Failed to parse webhook response: {}", e))
-        })?;
-
-        if api_response.status != "ok" {
-            return Err(MavapayError::InvalidResponse(
-                "Failed to register webhook".to_string(),
-            ));
-        }
-
-        Ok(())
-    }
-
-    /// Poll transaction status with automatic retries
-    pub async fn poll_transaction_status(
-        &self,
-        quote_id: &str,
-        max_attempts: u32,
-        interval_seconds: u64,
-    ) -> Result<PaymentStatusResponse, MavapayError> {
-        use tokio::time::{sleep, Duration};
-
-        for attempt in 1..=max_attempts {
-            tracing::debug!(
-                "Polling payment status, attempt {}/{}",
-                attempt,
-                max_attempts
-            );
-
-            match self.get_payment_status(quote_id).await {
-                Ok(status) => match status.status.as_str() {
-                    "PAID" | "SUCCESS" => {
-                        tracing::info!("Payment completed with status: {}", status.status);
-                        return Ok(status);
-                    }
-                    "FAILED" => {
-                        tracing::error!("Payment failed for quote: {}", quote_id);
-                        return Err(MavapayError::PaymentFailed);
-                    }
-                    "PENDING" => {
-                        tracing::debug!("Payment still pending, will retry...");
-                        if attempt < max_attempts {
-                            sleep(Duration::from_secs(interval_seconds)).await;
-                        }
-                    }
-                    _ => {
-                        tracing::warn!("Unknown payment status: {}", status.status);
-                        if attempt < max_attempts {
-                            sleep(Duration::from_secs(interval_seconds)).await;
-                        }
-                    }
-                },
-                Err(e) => {
-                    tracing::error!("Error polling payment status: {}", e);
-                    if attempt < max_attempts {
-                        sleep(Duration::from_secs(interval_seconds)).await;
-                    } else {
-                        return Err(e);
-                    }
-                }
-            }
-        }
-
-        Err(MavapayError::PaymentTimeout)
     }
 }

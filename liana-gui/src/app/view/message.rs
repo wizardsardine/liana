@@ -211,19 +211,9 @@ pub enum BuySellMessage {
     MavapayGetTransactions,
     MavapayTransactionsReceived(Vec<Transaction>),
     MavapayTransactionsError(String),
-    MavapayConfirmPayment(String), // quote_id
-    MavapayPaymentConfirmed(PaymentStatusResponse),
-    MavapayPaymentConfirmationError(String),
-    MavapayCheckPaymentStatus(String), // quote_id
-    MavapayPaymentStatusUpdated(PaymentStatusResponse),
-    MavapayPaymentStatusError(String),
-    MavapayStartPolling(String), // quote_id
-    MavapayStopPolling,
 
     // Shared form fields (for provider-integrated builds)
     WalletAddressChanged(String),
-    CountryCodeChanged(String),
-    FiatCurrencyChanged(String),
     SourceAmountChanged(String),
 
     CreateSession,

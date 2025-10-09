@@ -261,6 +261,10 @@ pub struct QuoteResponse {
     pub hash: String, // Payment hash
     #[serde(rename = "totalAmountInSourceCurrency")]
     pub total_amount_in_source_currency: u64,
+    #[serde(rename = "totalAmountInTargetCurrency", default)]
+    pub total_amount_in_target_currency: Option<u64>,
+    #[serde(rename = "paymentCurrency", default)]
+    pub payment_currency: Option<String>,
     #[serde(rename = "customerInternalFee")]
     pub customer_internal_fee: u64, // API returns this as number
     #[serde(rename = "estimatedRoutingFee", default)]
