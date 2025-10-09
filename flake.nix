@@ -39,6 +39,7 @@
           };
           strictDeps = true;
           doCheck = false;
+          cargoLock = ./Cargo.lock;
         };
 
         x86_64-pc-windows-gnu = craneLib.buildPackage {
