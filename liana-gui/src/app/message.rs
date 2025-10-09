@@ -7,7 +7,6 @@ use liana::miniscript::bitcoin::{
     Address, Txid,
 };
 use lianad::config::Config as DaemonConfig;
-use payjoin::Url;
 
 use crate::{
     app::{
@@ -37,7 +36,7 @@ pub enum Message {
     DaemonConfigLoaded(Result<(), Error>),
     LoadWallet(Wallet),
     Info(Result<GetInfoResult, Error>),
-    ReceiveAddress(Result<(Address, ChildNumber, Option<Url>), Error>),
+    ReceiveAddress(Result<(Address, ChildNumber, Option<String>), Error>),
     /// Revealed addresses. The second element contains the start index used for the request.
     RevealedAddresses(
         Result<ListRevealedAddressesResult, Error>,

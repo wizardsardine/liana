@@ -23,7 +23,6 @@ use liana_ui::{
     icon, theme,
     widget::*,
 };
-use payjoin::Url;
 
 use crate::{
     app::{
@@ -38,7 +37,7 @@ use super::message::Message;
 fn address_card<'a>(
     row_index: usize,
     address: &'a bitcoin::Address,
-    maybe_bip21: Option<&Url>,
+    maybe_bip21: Option<&String>,
     labels: &'a HashMap<String, String>,
     labels_editing: &'a HashMap<String, form::Value<String>>,
 ) -> Container<'a, Message> {
@@ -132,7 +131,7 @@ fn address_card<'a>(
 #[allow(clippy::too_many_arguments)]
 pub fn receive<'a>(
     addresses: &'a [bitcoin::Address],
-    bip21s: &'a HashMap<Address, Url>,
+    bip21s: &'a HashMap<Address, String>,
     labels: &'a HashMap<String, String>,
     prev_addresses: &'a [bitcoin::Address],
     prev_labels: &'a HashMap<String, String>,

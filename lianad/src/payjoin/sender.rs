@@ -8,14 +8,14 @@ use std::sync::{self, Arc};
 
 use payjoin::bitcoin::Psbt;
 use payjoin::persist::OptionalTransitionOutcome;
-use payjoin::send::v2::{replay_event_log, SendSession, SessionHistory, V2GetContext};
+use payjoin::send::v2::{replay_event_log, PollingForProposal, SendSession, SessionHistory};
 use payjoin::send::v2::{Sender, WithReplyKey};
 
 use super::db::SenderPersister;
 use super::helpers::OHTTP_RELAY;
 
 fn get_proposed_payjoin_psbt(
-    context: Sender<V2GetContext>,
+    context: Sender<PollingForProposal>,
     persister: &SenderPersister,
     // TODO: replace with specific error
 ) -> Result<Option<Psbt>, Box<dyn Error>> {
@@ -50,10 +50,7 @@ fn update_db_with_psbt(
     session_id: &SessionId,
     psbt: Psbt,
 ) {
-    let original_txid = session_history
-        .fallback_tx()
-        .map(|tx| tx.compute_txid())
-        .expect("fallback tx should be present");
+    let original_txid = session_history.fallback_tx().compute_txid();
 
     log::info!("[Payjoin] Deleting original Payjoin psbt (txid={original_txid})");
     db_conn.delete_spend(&original_txid);
@@ -106,7 +103,7 @@ fn process_sender_session(
             }
             Ok(())
         }
-        SendSession::V2GetContext(context) => {
+        SendSession::PollingForProposal(context) => {
             log::info!("[Payjoin] SenderState::V2GetContext");
             if let Ok(Some(psbt)) = get_proposed_payjoin_psbt(context, persister) {
                 update_db_with_psbt(db_conn, &session_history, &session_id, psbt);

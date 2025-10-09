@@ -15,8 +15,8 @@ use payjoin::{
     receive::{
         v2::{
             replay_event_log, Initialized, MaybeInputsOwned, MaybeInputsSeen, OutputsUnknown,
-            PayjoinProposal, ProvisionalProposal, ReceiveSession, Receiver, UncheckedProposal,
-            WantsFeeRange, WantsInputs, WantsOutputs,
+            PayjoinProposal, ProvisionalProposal, ReceiveSession, Receiver,
+            UncheckedOriginalPayload, WantsFeeRange, WantsInputs, WantsOutputs,
         },
         InputPair,
     },
@@ -39,7 +39,7 @@ fn read_from_directory(
     desc: &descriptors::LianaDescriptor,
     secp: &secp256k1::Secp256k1<secp256k1::VerifyOnly>,
 ) -> Result<(), Box<dyn Error>> {
-    let mut receiver = receiver;
+    let receiver = receiver;
     let (req, context) = receiver
         .create_poll_request(OHTTP_RELAY)
         .map_err(|e| format!("Failed to extract request: {:?}", e))?;
@@ -64,7 +64,7 @@ fn read_from_directory(
 }
 
 fn check_proposal(
-    proposal: Receiver<UncheckedProposal>,
+    proposal: Receiver<UncheckedOriginalPayload>,
     persister: &ReceiverPersister,
     db_conn: &mut Box<dyn DatabaseConnection>,
     bit: &mut sync::Arc<sync::Mutex<dyn BitcoinInterface>>,
@@ -242,10 +242,7 @@ fn apply_fee_range(
     secp: &secp256k1::Secp256k1<secp256k1::VerifyOnly>,
 ) -> Result<(), Box<dyn Error>> {
     let proposal = proposal.apply_fee_range(None, None).save(persister)?;
-    let (_, session_history) = replay_event_log(persister)?;
-    let psbt = session_history
-        .psbt_ready_for_signing()
-        .expect("Just added fee applied psbt");
+    let psbt = proposal.psbt_to_sign();
 
     let txid = psbt.unsigned_tx.compute_txid();
     db_conn.save_receiver_session_original_txid(&persister.session_id, &txid);
@@ -262,10 +259,7 @@ fn finalize_proposal(
     db_conn: &mut Box<dyn DatabaseConnection>,
     secp: &secp256k1::Secp256k1<secp256k1::VerifyOnly>,
 ) -> Result<(), Box<dyn Error>> {
-    let (_, session_history) = replay_event_log(persister)?;
-    let psbt = session_history
-        .psbt_ready_for_signing()
-        .expect("Just added fee applied psbt");
+    let psbt = proposal.psbt_to_sign();
 
     let txid = psbt.unsigned_tx.compute_txid();
     if let Some(psbt) = db_conn.spend_tx(&txid) {
@@ -296,7 +290,7 @@ fn finalize_proposal(
 }
 
 fn send_payjoin_proposal(
-    mut proposal: Receiver<PayjoinProposal>,
+    proposal: Receiver<PayjoinProposal>,
     persister: &ReceiverPersister,
 ) -> Result<(), Box<dyn Error>> {
     let (req, ctx) = proposal
@@ -330,7 +324,7 @@ fn process_receiver_session(
         ReceiveSession::Initialized(context) => {
             read_from_directory(context, &persister, db_conn, bit, desc, secp)?;
         }
-        ReceiveSession::UncheckedProposal(proposal) => {
+        ReceiveSession::UncheckedOriginalPayload(proposal) => {
             check_proposal(proposal, &persister, db_conn, bit, desc, secp)?;
         }
         ReceiveSession::MaybeInputsOwned(proposal) => {

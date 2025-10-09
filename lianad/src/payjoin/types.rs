@@ -1,4 +1,7 @@
-use payjoin::{receive::v2::ReceiveSession, send::v2::SendSession};
+use payjoin::{
+    receive::v2::ReceiveSession, receive::v2::SessionOutcome as ReceiveSessionOutcome,
+    send::v2::SendSession, send::v2::SessionOutcome as SendSessionOutcome,
+};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -13,9 +16,8 @@ pub enum PayjoinStatus {
 impl From<ReceiveSession> for PayjoinStatus {
     fn from(session: ReceiveSession) -> Self {
         match session {
-            ReceiveSession::Uninitialized(_)
-            | ReceiveSession::Initialized(_)
-            | ReceiveSession::UncheckedProposal(_)
+            ReceiveSession::Initialized(_)
+            | ReceiveSession::UncheckedOriginalPayload(_)
             | ReceiveSession::MaybeInputsOwned(_)
             | ReceiveSession::MaybeInputsSeen(_)
             | ReceiveSession::OutputsUnknown(_)
@@ -24,7 +26,12 @@ impl From<ReceiveSession> for PayjoinStatus {
             | ReceiveSession::WantsFeeRange(_) => PayjoinStatus::Pending,
             ReceiveSession::ProvisionalProposal(_) => PayjoinStatus::WaitingToSign,
             ReceiveSession::PayjoinProposal(_) => PayjoinStatus::Success,
-            ReceiveSession::TerminalFailure => PayjoinStatus::Failed,
+            ReceiveSession::HasReplyableError(_) => PayjoinStatus::Failed,
+            ReceiveSession::Closed(outcome) => match outcome {
+                ReceiveSessionOutcome::Success(_) => PayjoinStatus::Success,
+                _ => PayjoinStatus::Failed,
+            },
+            ReceiveSession::Monitor(_) => PayjoinStatus::Unknown,
         }
     }
 }
@@ -33,11 +40,14 @@ impl From<ReceiveSession> for PayjoinStatus {
 impl From<SendSession> for PayjoinStatus {
     fn from(session: SendSession) -> Self {
         match session {
-            SendSession::Uninitialized
-            | SendSession::WithReplyKey(_)
-            | SendSession::V2GetContext(_) => PayjoinStatus::Pending,
+            SendSession::WithReplyKey(_) | SendSession::PollingForProposal(_) => {
+                PayjoinStatus::Pending
+            }
             SendSession::ProposalReceived(_) => PayjoinStatus::WaitingToSign,
-            SendSession::TerminalFailure => PayjoinStatus::Failed,
+            SendSession::Closed(outcome) => match outcome {
+                SendSessionOutcome::Success => PayjoinStatus::Success,
+                _ => PayjoinStatus::Failed,
+            },
         }
     }
 }

@@ -59,10 +59,10 @@ impl SessionPersister for ReceiverPersister {
 
     fn save_event(
         &self,
-        event: &Self::SessionEvent,
+        event: Self::SessionEvent,
     ) -> std::result::Result<(), Self::InternalStorageError> {
         let mut db_conn = self.db.connection();
-        let event_ser = serde_json::to_vec(event).map_err(PersisterError::Serialize)?;
+        let event_ser = serde_json::to_vec(&event).map_err(PersisterError::Serialize)?;
         db_conn.save_receiver_session_event(&self.session_id, event_ser);
         Ok(())
     }
@@ -113,10 +113,10 @@ impl SessionPersister for SenderPersister {
 
     fn save_event(
         &self,
-        event: &Self::SessionEvent,
+        event: Self::SessionEvent,
     ) -> std::result::Result<(), Self::InternalStorageError> {
         let mut db_conn = self.db.connection();
-        let event_ser = serde_json::to_vec(event).map_err(PersisterError::Serialize)?;
+        let event_ser = serde_json::to_vec(&event).map_err(PersisterError::Serialize)?;
         db_conn.save_sender_session_event(&self.session_id, event_ser);
         Ok(())
     }
