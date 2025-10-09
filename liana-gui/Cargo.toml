@@ -103,7 +103,7 @@ tar = { version = "0.4", default-features = false }
 flate2 = { version = "1.0", default-features = false }
 
 [build-dependencies]
-winresource = "0.1.23"
+winresource = { git = "https://github.com/edouardparis/winresource", branch = "replace-hashmap-btreemap" }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt", "macros"] }
