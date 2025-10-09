@@ -40,6 +40,9 @@
           strictDeps = true;
           doCheck = false;
           cargoLock = ./Cargo.lock;
+          cargoVendorDir = craneLib.vendorCargoDeps {
+            src = ./.;
+          };
         };
 
         x86_64-pc-windows-gnu = craneLib.buildPackage {
