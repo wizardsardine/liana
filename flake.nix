@@ -44,6 +44,7 @@
         x86_64-pc-windows-gnu = craneLib.buildPackage {
           inherit (commonBuildSettings) src strictDeps doCheck;
 
+          SOURCE_DATE_EPOCH = 1;
           CARGO_BUILD_TARGET = "x86_64-pc-windows-gnu";
           CARGO_BUILD_RUSTFLAGS = "-C link-arg=-Wl,--no-insert-timestamp";
           TARGET_CC = "${pkgs.pkgsCross.mingwW64.stdenv.cc}/bin/${pkgs.pkgsCross.mingwW64.stdenv.cc.targetPrefix}cc";
