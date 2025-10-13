@@ -187,7 +187,10 @@ pub struct QuoteRequest {
     #[serde(rename = "paymentCurrency")]
     pub payment_currency: Currency,
     pub autopayout: bool,
-    #[serde(rename = "customerInternalFee", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "customerInternalFee",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub customer_internal_fee: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub beneficiary: Option<Beneficiary>,

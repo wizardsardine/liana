@@ -1,6 +1,5 @@
 /// Maps ISO 3166-1 alpha-2 country codes to their primary fiat currency codes
 /// and currency symbols for display purposes.
-
 use super::Currency;
 
 /// Returns the primary fiat currency for a given country ISO code
@@ -10,7 +9,7 @@ pub fn currency_for_country(iso_code: &str) -> Currency {
         "NG" => Currency::NGN, // Nigeria
         "KE" => Currency::KES, // Kenya
         "ZA" => Currency::ZAR, // South Africa
-        
+
         // North America
         "US" => Currency::USD, // United States
         "CA" => Currency::CAD, // Canada
@@ -20,7 +19,7 @@ pub fn currency_for_country(iso_code: &str) -> Currency {
         "CR" => Currency::CRC, // Costa Rica
         "DO" => Currency::DOP, // Dominican Republic
         "SV" => Currency::SVC, // El Salvador
-        
+
         // Europe
         "GB" => Currency::GBP, // United Kingdom
         "CH" => Currency::CHF, // Switzerland
@@ -36,11 +35,11 @@ pub fn currency_for_country(iso_code: &str) -> Currency {
         "RU" => Currency::RUB, // Russia
         "TR" => Currency::TRY, // Turkey
         "GE" => Currency::GEL, // Georgia
-        
+
         // Eurozone countries
-        "AT" | "BE" | "CY" | "EE" | "FI" | "FR" | "DE" | "GR" | "IE" | "IT" | 
-        "LV" | "LT" | "LU" | "MT" | "NL" | "PT" | "SK" | "SI" | "ES" => Currency::EUR,
-        
+        "AT" | "BE" | "CY" | "EE" | "FI" | "FR" | "DE" | "GR" | "IE" | "IT" | "LV" | "LT"
+        | "LU" | "MT" | "NL" | "PT" | "SK" | "SI" | "ES" => Currency::EUR,
+
         // Asia
         "CN" => Currency::CNY, // China
         "JP" => Currency::JPY, // Japan
@@ -65,7 +64,7 @@ pub fn currency_for_country(iso_code: &str) -> Currency {
         "BH" => Currency::BHD, // Bahrain
         "LB" => Currency::LBP, // Lebanon
         "AM" => Currency::AMD, // Armenia
-        
+
         // South America
         "BR" => Currency::BRL, // Brazil
         "AR" => Currency::ARS, // Argentina
@@ -73,14 +72,14 @@ pub fn currency_for_country(iso_code: &str) -> Currency {
         "CO" => Currency::COP, // Colombia
         "PE" => Currency::PEN, // Peru
         "VE" => Currency::VEF, // Venezuela
-        
+
         // Oceania
         "AU" => Currency::AUD, // Australia
         "NZ" => Currency::NZD, // New Zealand
-        
+
         // Africa (additional)
         "ZM" => Currency::ZMW, // Zambia
-        
+
         // Default to USD for unknown countries
         _ => Currency::USD,
     }
@@ -94,10 +93,10 @@ pub fn currency_symbol_for_country(iso_code: &str) -> &'static str {
         "KE" => "KSh", // Kenyan Shilling
         "ZA" => "R",   // South African Rand
         "ZM" => "ZK",  // Zambian Kwacha
-        
+
         // North America
         "US" | "CA" | "MX" | "GT" | "HN" | "CR" | "DO" | "SV" => "$",
-        
+
         // Europe
         "GB" => "£",   // British Pound
         "CH" => "CHF", // Swiss Franc
@@ -113,11 +112,11 @@ pub fn currency_symbol_for_country(iso_code: &str) -> &'static str {
         "RU" => "₽",   // Russian Ruble
         "TR" => "₺",   // Turkish Lira
         "GE" => "₾",   // Georgian Lari
-        
+
         // Eurozone
-        "AT" | "BE" | "CY" | "EE" | "FI" | "FR" | "DE" | "GR" | "IE" | "IT" | 
-        "LV" | "LT" | "LU" | "MT" | "NL" | "PT" | "SK" | "SI" | "ES" => "€",
-        
+        "AT" | "BE" | "CY" | "EE" | "FI" | "FR" | "DE" | "GR" | "IE" | "IT" | "LV" | "LT"
+        | "LU" | "MT" | "NL" | "PT" | "SK" | "SI" | "ES" => "€",
+
         // Asia
         "CN" => "¥",   // Chinese Yuan
         "JP" => "¥",   // Japanese Yen
@@ -142,19 +141,19 @@ pub fn currency_symbol_for_country(iso_code: &str) -> &'static str {
         "BH" => "د.ب", // Bahraini Dinar
         "LB" => "ل.ل", // Lebanese Pound
         "AM" => "֏",   // Armenian Dram
-        
+
         // South America
-        "BR" => "R$",  // Brazilian Real
-        "AR" => "$",   // Argentine Peso
-        "CL" => "$",   // Chilean Peso
-        "CO" => "$",   // Colombian Peso
-        "PE" => "S/",  // Peruvian Sol
-        "VE" => "Bs",  // Venezuelan Bolívar
-        
+        "BR" => "R$", // Brazilian Real
+        "AR" => "$",  // Argentine Peso
+        "CL" => "$",  // Chilean Peso
+        "CO" => "$",  // Colombian Peso
+        "PE" => "S/", // Peruvian Sol
+        "VE" => "Bs", // Venezuelan Bolívar
+
         // Oceania
         "AU" => "A$",  // Australian Dollar
         "NZ" => "NZ$", // New Zealand Dollar
-        
+
         // Default
         _ => "$",
     }
@@ -195,7 +194,7 @@ mod tests {
         assert_eq!(currency_for_country("NG"), Currency::NGN);
         assert_eq!(currency_for_country("KE"), Currency::KES);
         assert_eq!(currency_for_country("ZA"), Currency::ZAR);
-        
+
         assert!(is_african_country("NG"));
         assert!(is_african_country("KE"));
         assert!(is_african_country("ZA"));
@@ -215,7 +214,7 @@ mod tests {
         assert_eq!(mavapay_minor_unit_for_country("NG"), "NGNKOBO");
         assert_eq!(mavapay_minor_unit_for_country("KE"), "KESCENT");
         assert_eq!(mavapay_minor_unit_for_country("ZA"), "ZARCENT");
-        
+
         assert_eq!(mavapay_major_unit_for_country("NG"), "NGN");
         assert_eq!(mavapay_major_unit_for_country("KE"), "KES");
         assert_eq!(mavapay_major_unit_for_country("ZA"), "ZAR");
@@ -229,4 +228,3 @@ mod tests {
         assert_eq!(currency_symbol_for_country("DE"), "€");
     }
 }
-

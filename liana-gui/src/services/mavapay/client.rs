@@ -259,16 +259,25 @@ impl MavapayClient {
         tracing::info!("[MAVAPAY] Raw quote response body:\n{}", response_text);
 
         // Parse the response
-        let api_response: ApiResponse<QuoteResponse> = serde_json::from_str(&response_text).map_err(|e| {
-            #[cfg(debug_assertions)]
-            tracing::error!("[MAVAPAY] Failed to deserialize quote response: {}\nResponse was: {}", e, response_text);
-            MavapayError::InvalidResponse(format!("Failed to parse quote response: {} | Response: {}", e, response_text))
-        })?;
+        let api_response: ApiResponse<QuoteResponse> = serde_json::from_str(&response_text)
+            .map_err(|e| {
+                #[cfg(debug_assertions)]
+                tracing::error!(
+                    "[MAVAPAY] Failed to deserialize quote response: {}\nResponse was: {}",
+                    e,
+                    response_text
+                );
+                MavapayError::InvalidResponse(format!(
+                    "Failed to parse quote response: {} | Response: {}",
+                    e, response_text
+                ))
+            })?;
 
         if api_response.status != "ok" && api_response.status != "success" {
-            return Err(MavapayError::InvalidResponse(
-                format!("API returned status: {}", api_response.status),
-            ));
+            return Err(MavapayError::InvalidResponse(format!(
+                "API returned status: {}",
+                api_response.status
+            )));
         }
 
         #[cfg(debug_assertions)]
@@ -291,7 +300,10 @@ impl MavapayClient {
         #[cfg(debug_assertions)]
         {
             let request_json = serde_json::to_string_pretty(&request).unwrap_or_default();
-            tracing::info!("[MAVAPAY] Creating payment link with request:\n{}", request_json);
+            tracing::info!(
+                "[MAVAPAY] Creating payment link with request:\n{}",
+                request_json
+            );
         }
 
         let response = self
@@ -312,24 +324,39 @@ impl MavapayClient {
         let response_text = response.text().await?;
 
         #[cfg(debug_assertions)]
-        tracing::info!("[MAVAPAY] Raw payment link response body:\n{}", response_text);
+        tracing::info!(
+            "[MAVAPAY] Raw payment link response body:\n{}",
+            response_text
+        );
 
         // Try to parse standard { status, data } wrapper
-        let api_response: ApiResponse<PaymentLinkResponse> = serde_json::from_str(&response_text).map_err(|e| {
+        let api_response: ApiResponse<PaymentLinkResponse> = serde_json::from_str(&response_text)
+            .map_err(|e| {
             #[cfg(debug_assertions)]
-            tracing::error!("[MAVAPAY] Failed to deserialize payment link response: {}\nResponse was: {}", e, response_text);
-            MavapayError::InvalidResponse(format!("Failed to parse payment link response: {} | Response: {}", e, response_text))
+            tracing::error!(
+                "[MAVAPAY] Failed to deserialize payment link response: {}\nResponse was: {}",
+                e,
+                response_text
+            );
+            MavapayError::InvalidResponse(format!(
+                "Failed to parse payment link response: {} | Response: {}",
+                e, response_text
+            ))
         })?;
 
         if api_response.status != "ok" && api_response.status != "success" {
-            return Err(MavapayError::InvalidResponse(
-                format!("API returned status: {}", api_response.status),
-            ));
+            return Err(MavapayError::InvalidResponse(format!(
+                "API returned status: {}",
+                api_response.status
+            )));
         }
 
         #[cfg(debug_assertions)]
-        tracing::info!("[MAVAPAY] Payment link created successfully: {} (ref: {})",
-            api_response.data.payment_link, api_response.data.payment_ref);
+        tracing::info!(
+            "[MAVAPAY] Payment link created successfully: {} (ref: {})",
+            api_response.data.payment_link,
+            api_response.data.payment_ref
+        );
 
         Ok(api_response.data.payment_link)
     }
@@ -342,7 +369,10 @@ impl MavapayClient {
         #[cfg(debug_assertions)]
         {
             let request_json = serde_json::to_string_pretty(&request).unwrap_or_default();
-            tracing::info!("[MAVAPAY] Creating payment link with request:\n{}", request_json);
+            tracing::info!(
+                "[MAVAPAY] Creating payment link with request:\n{}",
+                request_json
+            );
         }
 
         let response = self
@@ -363,26 +393,44 @@ impl MavapayClient {
         let response_text = response.text().await?;
 
         #[cfg(debug_assertions)]
-        tracing::info!("[MAVAPAY] Raw payment link response body:\n{}", response_text);
+        tracing::info!(
+            "[MAVAPAY] Raw payment link response body:\n{}",
+            response_text
+        );
 
         // Try to parse standard { status, data } wrapper
-        let api_response: ApiResponse<PaymentLinkResponse> = serde_json::from_str(&response_text).map_err(|e| {
+        let api_response: ApiResponse<PaymentLinkResponse> = serde_json::from_str(&response_text)
+            .map_err(|e| {
             #[cfg(debug_assertions)]
-            tracing::error!("[MAVAPAY] Failed to deserialize payment link response: {}\nResponse was: {}", e, response_text);
-            MavapayError::InvalidResponse(format!("Failed to parse payment link response: {} | Response: {}", e, response_text))
+            tracing::error!(
+                "[MAVAPAY] Failed to deserialize payment link response: {}\nResponse was: {}",
+                e,
+                response_text
+            );
+            MavapayError::InvalidResponse(format!(
+                "Failed to parse payment link response: {} | Response: {}",
+                e, response_text
+            ))
         })?;
 
         if api_response.status != "ok" && api_response.status != "success" {
-            return Err(MavapayError::InvalidResponse(
-                format!("API returned status: {}", api_response.status),
-            ));
+            return Err(MavapayError::InvalidResponse(format!(
+                "API returned status: {}",
+                api_response.status
+            )));
         }
 
         #[cfg(debug_assertions)]
-        tracing::info!("[MAVAPAY] Payment link created successfully: {} (ref: {})",
-            api_response.data.payment_link, api_response.data.payment_ref);
+        tracing::info!(
+            "[MAVAPAY] Payment link created successfully: {} (ref: {})",
+            api_response.data.payment_link,
+            api_response.data.payment_ref
+        );
 
-        Ok((api_response.data.payment_link, api_response.data.payment_ref))
+        Ok((
+            api_response.data.payment_link,
+            api_response.data.payment_ref,
+        ))
     }
 
     /// Get list of supported banks for a country

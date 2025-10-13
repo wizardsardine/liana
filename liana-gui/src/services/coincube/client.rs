@@ -159,10 +159,7 @@ impl CoincubeClient {
 
         #[cfg(debug_assertions)]
         {
-            tracing::info!(
-                "[COINCUBE] Payment link status: {:?}",
-                status_response
-            );
+            tracing::info!("[COINCUBE] Payment link status: {:?}", status_response);
         }
 
         Ok(status_response)

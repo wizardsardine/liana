@@ -4,9 +4,9 @@ use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone, Deserialize)]
 struct CountryResponse {
-    country: String,      // Country name (e.g., "United States")
+    country: String, // Country name (e.g., "United States")
     #[serde(rename = "isoCode")]
-    iso_code: String,     // ISO 3166-1 alpha-2 code (e.g., "US")
+    iso_code: String, // ISO 3166-1 alpha-2 code (e.g., "US")
 }
 
 #[derive(Clone)]

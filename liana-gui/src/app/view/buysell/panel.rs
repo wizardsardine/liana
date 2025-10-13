@@ -15,7 +15,10 @@ use liana_ui::{
     widget::*,
 };
 
-use super::flow_state::{AfricaFlowState, BuySellFlowState, InternationalFlowState, NativePage, MavapayFlowMode, MavapayPaymentMethod};
+use super::flow_state::{
+    AfricaFlowState, BuySellFlowState, InternationalFlowState, MavapayFlowMode,
+    MavapayPaymentMethod, NativePage,
+};
 use crate::app::view::{BuySellMessage, Message as ViewMessage};
 use crate::services::mavapay::api::Currency;
 
@@ -70,9 +73,16 @@ impl BuySellPanel {
 
     /// Handle country detection result and transition to appropriate flow state
     /// Returns a Task that automatically opens Onramper for international users
-    pub fn handle_country_detected(&mut self, country_name: String, iso_code: String) -> iced::Task<ViewMessage> {
-        use crate::services::fiat::{is_african_country, mavapay_minor_unit_for_country, mavapay_major_unit_for_country, currency_for_country};
+    pub fn handle_country_detected(
+        &mut self,
+        country_name: String,
+        iso_code: String,
+    ) -> iced::Task<ViewMessage> {
         use crate::app::buysell::onramper;
+        use crate::services::fiat::{
+            currency_for_country, is_african_country, mavapay_major_unit_for_country,
+            mavapay_minor_unit_for_country,
+        };
 
         self.detected_country_name = Some(country_name);
         self.detected_country_iso = Some(iso_code.clone());
@@ -115,14 +125,21 @@ impl BuySellPanel {
             };
             let wallet = self.wallet_address.value.clone();
 
-            tracing::info!("🌍 [ONRAMPER] Auto-opening for country: {}, currency: {}", iso_code, currency);
+            tracing::info!(
+                "🌍 [ONRAMPER] Auto-opening for country: {}, currency: {}",
+                iso_code,
+                currency
+            );
 
             if let Some(url) = onramper::create_widget_url(&currency, &amount, &wallet) {
                 tracing::info!("🌍 [ONRAMPER] Opening URL: {}", url);
                 iced::Task::done(ViewMessage::BuySell(BuySellMessage::WebviewOpenUrl(url)))
             } else {
                 tracing::error!("🌍 [ONRAMPER] API key not configured");
-                self.error = Some("Onramper API key not configured. Please set ONRAMPER_API_KEY in .env".to_string());
+                self.error = Some(
+                    "Onramper API key not configured. Please set ONRAMPER_API_KEY in .env"
+                        .to_string(),
+                );
                 iced::Task::none()
             }
         }
@@ -1004,10 +1021,12 @@ impl BuySellPanel {
                             "Create Quote",
                             MavapayFlowMode::CreateQuote,
                             Some(state.mavapay_flow_mode),
-                            |mode| ViewMessage::BuySell(BuySellMessage::MavapayFlowModeChanged(mode))
+                            |mode| {
+                                ViewMessage::BuySell(BuySellMessage::MavapayFlowModeChanged(mode))
+                            },
                         )
                         .size(16)
-                        .text_size(14)
+                        .text_size(14),
                     )
                     .push(Space::with_width(Length::Fixed(20.0)))
                     .push(
@@ -1015,12 +1034,14 @@ impl BuySellPanel {
                             "One-time Payment",
                             MavapayFlowMode::OneTimePayment,
                             Some(state.mavapay_flow_mode),
-                            |mode| ViewMessage::BuySell(BuySellMessage::MavapayFlowModeChanged(mode))
+                            |mode| {
+                                ViewMessage::BuySell(BuySellMessage::MavapayFlowModeChanged(mode))
+                            },
                         )
                         .size(16)
-                        .text_size(14)
+                        .text_size(14),
                     )
-                    .align_y(Alignment::Center)
+                    .align_y(Alignment::Center),
             )
             .push(Space::with_height(Length::Fixed(15.0)))
             // Amount field (common to both modes)
@@ -1028,15 +1049,11 @@ impl BuySellPanel {
             .push(Space::with_height(Length::Fixed(5.0)))
             .push(
                 Container::new(
-                    form::Form::new_trimmed(
-                        "100000",
-                        &state.mavapay_amount,
-                        |value| {
-                            ViewMessage::BuySell(BuySellMessage::MavapayAmountChanged(value))
-                        },
-                    )
+                    form::Form::new_trimmed("100000", &state.mavapay_amount, |value| {
+                        ViewMessage::BuySell(BuySellMessage::MavapayAmountChanged(value))
+                    })
                     .size(14)
-                    .padding(10)
+                    .padding(10),
                 )
                 .width(Length::Fixed(200.0)),
             )
@@ -1056,11 +1073,13 @@ impl BuySellPanel {
                                     .push(
                                         pick_list(
                                             Currency::all(),
-                                            Currency::from_str(&state.mavapay_source_currency.value),
+                                            Currency::from_str(
+                                                &state.mavapay_source_currency.value,
+                                            ),
                                             |currency| {
                                                 ViewMessage::BuySell(
                                                     BuySellMessage::MavapaySourceCurrencyChanged(
-                                                        currency.as_str().to_string()
+                                                        currency.as_str().to_string(),
                                                     ),
                                                 )
                                             },
@@ -1078,11 +1097,13 @@ impl BuySellPanel {
                                     .push(
                                         pick_list(
                                             Currency::all(),
-                                            Currency::from_str(&state.mavapay_target_currency.value),
+                                            Currency::from_str(
+                                                &state.mavapay_target_currency.value,
+                                            ),
                                             |currency| {
                                                 ViewMessage::BuySell(
                                                     BuySellMessage::MavapayTargetCurrencyChanged(
-                                                        currency.as_str().to_string()
+                                                        currency.as_str().to_string(),
                                                     ),
                                                 )
                                             },
@@ -1202,7 +1223,9 @@ impl BuySellPanel {
                             Some(state.mavapay_settlement_currency.value.as_str()),
                             |currency| {
                                 ViewMessage::BuySell(
-                                    BuySellMessage::MavapaySettlementCurrencyChanged(currency.to_string())
+                                    BuySellMessage::MavapaySettlementCurrencyChanged(
+                                        currency.to_string(),
+                                    ),
                                 )
                             },
                         )
@@ -1218,9 +1241,9 @@ impl BuySellPanel {
                             MavapayPaymentMethod::all(),
                             Some(state.mavapay_payment_method),
                             |method| {
-                                ViewMessage::BuySell(
-                                    BuySellMessage::MavapayPaymentMethodChanged(method)
-                                )
+                                ViewMessage::BuySell(BuySellMessage::MavapayPaymentMethodChanged(
+                                    method,
+                                ))
                             },
                         )
                         .style(theme::pick_list::primary)
@@ -1298,15 +1321,34 @@ impl BuySellPanel {
             if !quote.bank_name.is_empty() {
                 quote_column = quote_column
                     .push(Space::with_height(Length::Fixed(10.0)))
-                    .push(text("Pay to this bank account:").size(14).color(color::GREY_3))
+                    .push(
+                        text("Pay to this bank account:")
+                            .size(14)
+                            .color(color::GREY_3),
+                    )
                     .push(Space::with_height(Length::Fixed(5.0)))
                     .push(
                         Container::new(
                             Column::new()
-                                .push(text(format!("Bank: {}", quote.bank_name)).size(12).color(color::WHITE))
-                                .push(text(format!("Account Number: {}", quote.ngn_bank_account_number)).size(12).color(color::WHITE))
-                                .push(text(format!("Account Name: {}", quote.ngn_account_name)).size(12).color(color::WHITE))
-                                .spacing(5)
+                                .push(
+                                    text(format!("Bank: {}", quote.bank_name))
+                                        .size(12)
+                                        .color(color::WHITE),
+                                )
+                                .push(
+                                    text(format!(
+                                        "Account Number: {}",
+                                        quote.ngn_bank_account_number
+                                    ))
+                                    .size(12)
+                                    .color(color::WHITE),
+                                )
+                                .push(
+                                    text(format!("Account Name: {}", quote.ngn_account_name))
+                                        .size(12)
+                                        .color(color::WHITE),
+                                )
+                                .spacing(5),
                         )
                         .padding(10)
                         .style(theme::card::simple),

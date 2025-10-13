@@ -67,12 +67,9 @@ impl State for BuySellPanel {
         Task::perform(
             async move { locator.detect_country().await },
             |result| match result {
-                Ok((country_name, iso_code)) => {
-                    Message::View(ViewMessage::BuySell(BuySellMessage::CountryDetected(
-                        country_name,
-                        iso_code,
-                    )))
-                }
+                Ok((country_name, iso_code)) => Message::View(ViewMessage::BuySell(
+                    BuySellMessage::CountryDetected(country_name, iso_code),
+                )),
                 Err(error) => Message::View(ViewMessage::BuySell(
                     BuySellMessage::CountryDetectionError(error),
                 )),
@@ -148,7 +145,8 @@ impl State for BuySellPanel {
             BuySellMessage::CountryDetected(country_name, iso_code) => {
                 // Do not log IP addresses. Country name/ISO are fine.
                 tracing::info!("country = {}, iso_code = {}", country_name, iso_code);
-                return self.handle_country_detected(country_name, iso_code)
+                return self
+                    .handle_country_detected(country_name, iso_code)
                     .map(|msg| Message::View(msg));
             }
             BuySellMessage::CountryDetectionError(_error) => {
@@ -169,7 +167,10 @@ impl State for BuySellPanel {
                 };
                 let wallet = self.wallet_address.value.clone();
 
-                tracing::info!("🌍 [ONRAMPER] Country detection failed, auto-opening with default: {}", iso_code);
+                tracing::info!(
+                    "🌍 [ONRAMPER] Country detection failed, auto-opening with default: {}",
+                    iso_code
+                );
 
                 if let Some(url) = onramper::create_widget_url(&currency, &amount, &wallet) {
                     tracing::info!("🌍 [ONRAMPER] Opening URL: {}", url);
@@ -178,7 +179,10 @@ impl State for BuySellPanel {
                     )));
                 } else {
                     tracing::error!("🌍 [ONRAMPER] API key not configured");
-                    self.set_error("Onramper API key not configured. Please set ONRAMPER_API_KEY in .env".to_string());
+                    self.set_error(
+                        "Onramper API key not configured. Please set ONRAMPER_API_KEY in .env"
+                            .to_string(),
+                    );
                 }
             }
 
@@ -514,7 +518,10 @@ impl State for BuySellPanel {
 
                     // Build Onramper widget URL and open in embedded webview
                     // Use detected country to determine currency
-                    let iso_code = self.detected_country_iso.clone().unwrap_or_else(|| "US".to_string());
+                    let iso_code = self
+                        .detected_country_iso
+                        .clone()
+                        .unwrap_or_else(|| "US".to_string());
                     let currency = currency_for_country(&iso_code).to_string();
 
                     tracing::info!("🌍 [ONRAMPER] ISO: {}, Currency: {}", iso_code, currency);
@@ -535,11 +542,13 @@ impl State for BuySellPanel {
                         )));
                     } else {
                         tracing::error!("🌍 [ONRAMPER] API key not configured");
-                        self.set_error("Onramper API key not configured. Please set ONRAMPER_API_KEY in .env".to_string());
+                        self.set_error(
+                            "Onramper API key not configured. Please set ONRAMPER_API_KEY in .env"
+                                .to_string(),
+                        );
                     }
                 }
             }
-
 
             BuySellMessage::MavapayDashboard => {
                 if let BuySellFlowState::Africa(ref mut state) = self.flow_state {
@@ -694,7 +703,10 @@ impl State for BuySellPanel {
                 // If there's an active page, close it first before creating new one
                 if let Some(old_id) = self.active_page.take() {
                     if cfg!(debug_assertions) {
-                        tracing::info!("🌐 [LIANA] Closing old view {} before creating new one", old_id);
+                        tracing::info!(
+                            "🌐 [LIANA] Closing old view {} before creating new one",
+                            old_id
+                        );
                     }
 
                     if let Some(webview) = self.webview.as_mut() {
@@ -808,7 +820,6 @@ impl BuySellPanel {
             return Task::none();
         };
 
-
         let amount = match state.mavapay_amount.value.parse::<u64>() {
             Ok(amt) => amt,
             Err(_) => {
@@ -847,7 +858,9 @@ impl BuySellPanel {
         if pay_in_btcsat {
             if state.mavapay_bank_account_number.value.is_empty() {
                 return Task::done(Message::View(ViewMessage::BuySell(
-                    BuySellMessage::MavapayQuoteError("Bank account number is required".to_string()),
+                    BuySellMessage::MavapayQuoteError(
+                        "Bank account number is required".to_string(),
+                    ),
                 )));
             }
             if state.mavapay_bank_account_name.value.is_empty() {
@@ -893,7 +906,11 @@ impl BuySellPanel {
             payment_method,
             payment_currency,
             autopayout,
-            customer_internal_fee: if autopayout { Some("0".to_string()) } else { None },
+            customer_internal_fee: if autopayout {
+                Some("0".to_string())
+            } else {
+                None
+            },
             beneficiary,
         };
 
@@ -937,7 +954,11 @@ impl BuySellPanel {
                 // Step 1: Create quote with Mavapay
                 let quote = client.create_quote(request).await?;
 
-                tracing::info!("✅ [MAVAPAY] Quote created: {}, hash: {}", quote.id, quote.hash);
+                tracing::info!(
+                    "✅ [MAVAPAY] Quote created: {}, hash: {}",
+                    quote.id,
+                    quote.hash
+                );
 
                 // Step 2: Save quote to coincube-api
                 let save_request = SaveQuoteRequest {
@@ -955,9 +976,12 @@ impl BuySellPanel {
                     amount_in_source_currency: quote.amount_in_source_currency,
                     amount_in_target_currency: quote.amount_in_target_currency,
                     total_amount_in_source_currency: quote.total_amount_in_source_currency,
-                    total_amount_in_target_currency: quote.total_amount_in_target_currency.or(Some(
-                        quote.amount_in_target_currency + quote.transaction_fees_in_target_currency
-                    )),
+                    total_amount_in_target_currency: quote.total_amount_in_target_currency.or(
+                        Some(
+                            quote.amount_in_target_currency
+                                + quote.transaction_fees_in_target_currency,
+                        ),
+                    ),
                     bank_account_number: Some(bank_account_number),
                     bank_account_name: Some(bank_account_name),
                     bank_code: Some(bank_code),
@@ -966,8 +990,15 @@ impl BuySellPanel {
                     wallet_address: Some(wallet_address),
                 };
 
-                coincube_client.save_quote(save_request).await
-                    .map_err(|e| crate::services::mavapay::MavapayError::Http(None, format!("Failed to save quote: {}", e)))?;
+                coincube_client
+                    .save_quote(save_request)
+                    .await
+                    .map_err(|e| {
+                        crate::services::mavapay::MavapayError::Http(
+                            None,
+                            format!("Failed to save quote: {}", e),
+                        )
+                    })?;
 
                 tracing::info!("✅ [COINCUBE] Quote saved to database");
 
@@ -976,13 +1007,14 @@ impl BuySellPanel {
 
                 Ok((quote, url))
             },
-            |result: Result<(crate::services::mavapay::QuoteResponse, String), crate::services::mavapay::MavapayError>| match result {
+            |result: Result<
+                (crate::services::mavapay::QuoteResponse, String),
+                crate::services::mavapay::MavapayError,
+            >| match result {
                 Ok((_quote, url)) => {
                     tracing::info!("🌍 [MAVAPAY] Opening quote display URL: {}", url);
                     // Open webview directly - no need to store quote since it's in the database
-                    Message::View(ViewMessage::BuySell(
-                        BuySellMessage::WebviewOpenUrl(url)
-                    ))
+                    Message::View(ViewMessage::BuySell(BuySellMessage::WebviewOpenUrl(url)))
                 }
                 Err(error) => Message::View(ViewMessage::BuySell(
                     BuySellMessage::MavapayQuoteError(error.to_string()),
@@ -1013,7 +1045,9 @@ impl BuySellPanel {
         let settlement_currency = &state.mavapay_settlement_currency.value;
         if settlement_currency.is_empty() {
             return Task::done(Message::View(ViewMessage::BuySell(
-                BuySellMessage::MavapayQuoteError("Please select a settlement currency".to_string()),
+                BuySellMessage::MavapayQuoteError(
+                    "Please select a settlement currency".to_string(),
+                ),
             )));
         }
 
@@ -1046,8 +1080,10 @@ impl BuySellPanel {
                     tracing::info!("🌍 [MAVAPAY] Opening Mavapay payment link directly");
 
                     // Open Mavapay's hosted checkout page directly
-                    Message::View(ViewMessage::BuySell(BuySellMessage::WebviewOpenUrl(payment_link)))
-                },
+                    Message::View(ViewMessage::BuySell(BuySellMessage::WebviewOpenUrl(
+                        payment_link,
+                    )))
+                }
                 Err(error) => Message::View(ViewMessage::BuySell(
                     BuySellMessage::MavapayQuoteError(format!("Payment link error: {}", error)),
                 )),
@@ -1134,7 +1170,7 @@ impl BuySellPanel {
             amount_in_target_currency: quote.amount_in_target_currency,
             total_amount_in_source_currency: quote.total_amount_in_source_currency,
             total_amount_in_target_currency: quote.total_amount_in_target_currency.or(Some(
-                quote.amount_in_target_currency + quote.transaction_fees_in_target_currency
+                quote.amount_in_target_currency + quote.transaction_fees_in_target_currency,
             )),
             bank_account_number: Some(state.mavapay_bank_account_number.value.clone()),
             bank_account_name: Some(state.mavapay_bank_account_name.value.clone()),
@@ -1157,7 +1193,8 @@ impl BuySellPanel {
 
                 Ok(url)
             },
-            |result: Result<String, crate::services::coincube::client::CoincubeError>| match result {
+            |result: Result<String, crate::services::coincube::client::CoincubeError>| match result
+            {
                 Ok(url) => {
                     tracing::info!("🌍 [MAVAPAY] Opening quote display URL: {}", url);
                     Message::View(ViewMessage::BuySell(BuySellMessage::WebviewOpenUrl(url)))

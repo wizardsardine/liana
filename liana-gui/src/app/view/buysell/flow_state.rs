@@ -1,9 +1,7 @@
 use liana_ui::component::form;
 
 use crate::app::view::message::AccountType;
-use crate::services::mavapay::{
-    MavapayClient, PriceResponse, QuoteResponse, Transaction,
-};
+use crate::services::mavapay::{MavapayClient, PriceResponse, QuoteResponse, Transaction};
 use crate::services::registration::RegistrationClient;
 
 /// Represents the runtime state of the Buy/Sell panel based on geolocation detection
@@ -75,7 +73,10 @@ pub enum MavapayFlowMode {
 
 impl MavapayFlowMode {
     pub fn all() -> &'static [MavapayFlowMode] {
-        &[MavapayFlowMode::CreateQuote, MavapayFlowMode::OneTimePayment]
+        &[
+            MavapayFlowMode::CreateQuote,
+            MavapayFlowMode::OneTimePayment,
+        ]
     }
 }
 
@@ -97,7 +98,10 @@ pub enum MavapayPaymentMethod {
 
 impl MavapayPaymentMethod {
     pub fn all() -> &'static [MavapayPaymentMethod] {
-        &[MavapayPaymentMethod::BankTransfer, MavapayPaymentMethod::Lightning]
+        &[
+            MavapayPaymentMethod::BankTransfer,
+            MavapayPaymentMethod::Lightning,
+        ]
     }
 
     pub fn as_str(&self) -> &'static str {
