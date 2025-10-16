@@ -158,6 +158,200 @@ pub fn create_spend_tx<'a>(
     is_first_step: bool,
 ) -> Element<'a, Message> {
     let is_self_send = recipients.is_empty();
+
+    // Title
+    let title = h3(if recovery_timelock.is_some() {
+        "Recovery"
+    } else if is_self_send {
+        "Self-transfer"
+    } else {
+        "Send"
+    });
+
+    // Optional batch label
+    let batch_label = (recipients.len() > 1).then_some(
+        form::Form::new("Batch label", batch_label, |s| {
+            Message::CreateSpend(CreateSpendMessage::BatchLabelEdited(s))
+        })
+        .warning("Invalid label length, cannot be superior to 100")
+        .size(30)
+        .padding(10),
+    );
+
+    // Recipients
+    let recipients_cards = Column::new()
+        .push(Column::with_children(recipients).spacing(10))
+        .spacing(20);
+
+    // Add payment row
+    let duplicates_warning = duplicate.then_some(
+        Container::new(text("Two payment addresses are the same").style(theme::text::warning))
+            .padding(10),
+    );
+    let add_payment_btn = (!(is_self_send || recovery_timelock.is_some())).then_some(
+        button::secondary(Some(icon::plus_icon()), "Add payment")
+            .on_press(Message::CreateSpend(CreateSpendMessage::AddRecipient)),
+    );
+    let add_payment_row = Row::new()
+        .push_maybe(duplicates_warning)
+        .push(Space::with_width(Length::Fill))
+        .push_maybe(add_payment_btn);
+
+    // Fee-rate row
+    let fee_input = Container::new(
+        form::Form::new_trimmed("42 (in sats/vbyte)", feerate, move |msg| {
+            Message::CreateSpend(CreateSpendMessage::FeerateEdited(msg))
+        })
+        .warning("Feerate must be an integer less than or equal to 1000 sats/vbyte")
+        .size(P1_SIZE)
+        .padding(10),
+    )
+    .width(150);
+    let fee_amount = fee_amount.map(|fee| {
+        Row::new()
+            .spacing(10)
+            .align_y(Alignment::Center)
+            .push(p1_regular("Fee:").style(theme::text::secondary))
+            .push(amount_with_size(fee, P1_SIZE))
+            .push_maybe(fiat_converter.map(|conv| {
+                Row::new().spacing(10).align_y(Alignment::Center).push(
+                    conv.convert(*fee)
+                        .to_text()
+                        .size(P2_SIZE)
+                        .style(theme::text::secondary),
+                )
+            }))
+    });
+    let fee_rate_row = Row::new()
+        .spacing(10)
+        .align_y(Alignment::Center)
+        .push(Container::new(p1_bold("Feerate:")).padding(10))
+        .push(fee_input)
+        .push_maybe(fee_amount)
+        .wrap();
+
+    // Coin selection
+    let selected_amount = (is_self_send || recovery_timelock.is_some()).then_some(
+        Row::new()
+            .spacing(5)
+            .push(amount_with_size(
+                &Amount::from_sat(
+                    coins
+                        .iter()
+                        .filter_map(|(coin, selected)| {
+                            if *selected {
+                                Some(coin.amount.to_sat())
+                            } else {
+                                None
+                            }
+                        })
+                        .sum(),
+                ),
+                P2_SIZE,
+            ))
+            .push(p2_regular("selected").style(theme::text::secondary)),
+    );
+    let hint = selected_amount
+        .is_none()
+        .then_some(if let Some(amount_left) = amount_left {
+            if amount_left.to_sat() == 0 && !is_valid {
+                // If amount left is set, the current configuration must be redraftable.
+                // If it's not valid, either no coins are selected or there's a recipient
+                // with max selected and invalid amount.
+                if coins.iter().all(|(_, selected)| !selected) {
+                    // This can happen if we have a single recipient
+                    // and it has the max selected.
+                    Row::new().push(text("Select at least one coin.").style(theme::text::secondary))
+                } else {
+                    // There must be a recipient with max selected and value 0.
+                    Row::new()
+                        .push(text("Check max amount for recipient.").style(theme::text::secondary))
+                }
+            } else {
+                Row::new()
+                    .spacing(5)
+                    .push(amount_with_size(amount_left, P2_SIZE))
+                    .push(p2_regular("left to select").style(theme::text::secondary))
+            }
+        } else {
+            Row::new().push(
+                text(if feerate.value.is_empty() || !feerate.valid {
+                    "Feerate needs to be set."
+                } else {
+                    "Add recipient details."
+                })
+                .style(theme::text::secondary),
+            )
+        });
+    let coin_selection_header = Row::new()
+        .align_y(Alignment::Center)
+        .push(p1_bold("Coins selection").width(Length::Fill))
+        .push_maybe(selected_amount)
+        .push_maybe(hint)
+        .width(Length::Fill);
+    let coins = Container::new(scrollable(coins.iter().enumerate().fold(
+        Column::new().spacing(10),
+        |col, (i, (coin, selected))| {
+            col.push(coin_list_view(
+                i,
+                coin,
+                coins_labels,
+                timelock,
+                cache.blockheight() as u32,
+                *selected,
+            ))
+        },
+    )))
+    .max_height(300);
+    let coin_selection = Container::new(
+        Column::new()
+            .push(coin_selection_header)
+            .push(coins)
+            .spacing(10),
+    )
+    .padding(20)
+    .style(theme::card::simple);
+
+    // Bottom row
+    let previous = (!is_first_step).then_some(
+        button::secondary(None, "< Previous")
+            .width(Length::Fixed(150.0))
+            .on_press(Message::Previous),
+    );
+    let clear = button::secondary(None, "Clear")
+        .on_press(Message::CreateSpend(CreateSpendMessage::Clear))
+        .width(Length::Fixed(100.0));
+    let next = if is_valid
+        && !duplicate
+        && error.is_none()
+        && (is_self_send
+            || recovery_timelock.is_some()
+            || Some(&Amount::from_sat(0)) == amount_left)
+    {
+        button::primary(None, "Next")
+            .on_press(Message::CreateSpend(CreateSpendMessage::Generate))
+            .width(Length::Fixed(100.0))
+    } else {
+        button::secondary(None, "Next").width(Length::Fixed(100.0))
+    };
+    let bottom_row = Row::new()
+        .spacing(20)
+        .align_y(Alignment::Center)
+        .push_maybe(previous)
+        .push(Space::with_width(Length::Fill))
+        .push(clear)
+        .push(next);
+    let content = Column::new()
+        .push(title)
+        .push_maybe(batch_label)
+        .push(recipients_cards)
+        .push(add_payment_row)
+        .push(fee_rate_row)
+        .push(coin_selection)
+        .push(bottom_row)
+        .push(Space::with_height(Length::Fixed(20.0)))
+        .spacing(20);
+
     dashboard(
         if recovery_timelock.is_some() {
             &Menu::Recovery
@@ -166,214 +360,7 @@ pub fn create_spend_tx<'a>(
         },
         cache,
         error,
-        Column::new()
-            .push(h3(if recovery_timelock.is_some() {
-                "Recovery"
-            } else if is_self_send {
-                "Self-transfer"
-            } else {
-                "Send"
-            }))
-            .push_maybe(if recipients.len() > 1 {
-                Some(
-                    form::Form::new("Batch label", batch_label, |s| {
-                        Message::CreateSpend(CreateSpendMessage::BatchLabelEdited(s))
-                    })
-                    .warning("Invalid label length, cannot be superior to 100")
-                    .size(30)
-                    .padding(10),
-                )
-            } else {
-                None
-            })
-            .push(
-                Column::new()
-                    .push(Column::with_children(recipients).spacing(10))
-                    .push(
-                        Row::new()
-                            .push_maybe(if duplicate {
-                                Some(
-                                    Container::new(
-                                        text("Two payment addresses are the same")
-                                            .style(theme::text::warning),
-                                    )
-                                    .padding(10),
-                                )
-                            } else {
-                                None
-                            })
-                            .push(Space::with_width(Length::Fill))
-                            .push_maybe(if is_self_send || recovery_timelock.is_some() {
-                                // Recipients cannot be added for self-send (zero recipients) and recovery (exactly one recipient).
-                                None
-                            } else {
-                                Some(
-                                    button::secondary(Some(icon::plus_icon()), "Add payment")
-                                        .on_press(Message::CreateSpend(
-                                            CreateSpendMessage::AddRecipient,
-                                        )),
-                                )
-                            }),
-                    )
-                    .spacing(20),
-            )
-            .push(
-                Row::new()
-                    .spacing(10)
-                    .align_y(Alignment::Center)
-                    .push(Container::new(p1_bold("Feerate:")).padding(10))
-                    .push(
-                        Container::new(
-                            form::Form::new_trimmed("42 (in sats/vbyte)", feerate, move |msg| {
-                                Message::CreateSpend(CreateSpendMessage::FeerateEdited(msg))
-                            })
-                            .warning(
-                                "Feerate must be an integer less than or equal to 1000 sats/vbyte",
-                            )
-                            .size(P1_SIZE)
-                            .padding(10),
-                        )
-                        .width(Length::Fixed(150.0)),
-                    )
-                    .push_maybe(fee_amount.map(|fee| {
-                        Row::new()
-                            .spacing(10)
-                            .align_y(Alignment::Center)
-                            .push(p1_regular("Fee:").style(theme::text::secondary))
-                            .push(amount_with_size(fee, P1_SIZE))
-                            .push_maybe(fiat_converter.map(|conv| {
-                                Row::new().spacing(10).align_y(Alignment::Center).push(
-                                    conv.convert(*fee)
-                                        .to_text()
-                                        .size(P2_SIZE)
-                                        .style(theme::text::secondary),
-                                )
-                            }))
-                    }))
-                    .wrap(),
-            )
-            .push(
-                Container::new(
-                    Column::new()
-                        .spacing(10)
-                        .push(
-                            Row::new()
-                                .align_y(Alignment::Center)
-                                .push(p1_bold("Coins selection").width(Length::Fill))
-                                .push(if is_self_send || recovery_timelock.is_some() {
-                                    Row::new()
-                                        .spacing(5)
-                                        .push(amount_with_size(
-                                            &Amount::from_sat(
-                                                coins
-                                                    .iter()
-                                                    .filter_map(|(coin, selected)| {
-                                                        if *selected {
-                                                            Some(coin.amount.to_sat())
-                                                        } else {
-                                                            None
-                                                        }
-                                                    })
-                                                    .sum(),
-                                            ),
-                                            P2_SIZE,
-                                        ))
-                                        .push(p2_regular("selected").style(theme::text::secondary))
-                                } else if let Some(amount_left) = amount_left {
-                                    if amount_left.to_sat() == 0 && !is_valid {
-                                        // If amount left is set, the current configuration must be redraftable.
-                                        // If it's not valid, either no coins are selected or there's a recipient
-                                        // with max selected and invalid amount.
-                                        if coins.iter().all(|(_, selected)| !selected) {
-                                            // This can happen if we have a single recipient
-                                            // and it has the max selected.
-                                            Row::new().push(
-                                                text("Select at least one coin.")
-                                                    .style(theme::text::secondary),
-                                            )
-                                        } else {
-                                            // There must be a recipient with max selected and value 0.
-                                            Row::new().push(
-                                                text("Check max amount for recipient.")
-                                                    .style(theme::text::secondary),
-                                            )
-                                        }
-                                    } else {
-                                        Row::new()
-                                            .spacing(5)
-                                            .push(amount_with_size(amount_left, P2_SIZE))
-                                            .push(
-                                                p2_regular("left to select")
-                                                    .style(theme::text::secondary),
-                                            )
-                                    }
-                                } else {
-                                    Row::new().push(
-                                        text(if feerate.value.is_empty() || !feerate.valid {
-                                            "Feerate needs to be set."
-                                        } else {
-                                            "Add recipient details."
-                                        })
-                                        .style(theme::text::secondary),
-                                    )
-                                })
-                                .width(Length::Fill),
-                        )
-                        .push(
-                            Container::new(scrollable(coins.iter().enumerate().fold(
-                                Column::new().spacing(10),
-                                |col, (i, (coin, selected))| {
-                                    col.push(coin_list_view(
-                                        i,
-                                        coin,
-                                        coins_labels,
-                                        timelock,
-                                        cache.blockheight() as u32,
-                                        *selected,
-                                    ))
-                                },
-                            )))
-                            .max_height(300),
-                        ),
-                )
-                .padding(20)
-                .style(theme::card::simple),
-            )
-            .push(
-                Row::new()
-                    .spacing(20)
-                    .align_y(Alignment::Center)
-                    .push_maybe(
-                        (!is_first_step).then_some(
-                            button::secondary(None, "< Previous")
-                                .width(Length::Fixed(150.0))
-                                .on_press(Message::Previous),
-                        ),
-                    )
-                    .push(Space::with_width(Length::Fill))
-                    .push(
-                        button::secondary(None, "Clear")
-                            .on_press(Message::CreateSpend(CreateSpendMessage::Clear))
-                            .width(Length::Fixed(100.0)),
-                    )
-                    .push(
-                        if is_valid
-                            && !duplicate
-                            && error.is_none()
-                            && (is_self_send
-                                || recovery_timelock.is_some()
-                                || Some(&Amount::from_sat(0)) == amount_left)
-                        {
-                            button::primary(None, "Next")
-                                .on_press(Message::CreateSpend(CreateSpendMessage::Generate))
-                                .width(Length::Fixed(100.0))
-                        } else {
-                            button::secondary(None, "Next").width(Length::Fixed(100.0))
-                        },
-                    ),
-            )
-            .push(Space::with_height(Length::Fixed(20.0)))
-            .spacing(20),
+        content,
     )
 }
 
