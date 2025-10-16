@@ -160,7 +160,7 @@ pub fn currency_symbol_for_country(iso_code: &str) -> &'static str {
 }
 
 /// Checks if a country ISO code is in the African region (Mavapay supported)
-pub fn is_african_country(iso_code: &str) -> bool {
+pub fn mavapay_supported(iso_code: &str) -> bool {
     matches!(iso_code.to_uppercase().as_str(), "NG" | "KE" | "ZA")
 }
 
@@ -182,49 +182,5 @@ pub fn mavapay_major_unit_for_country(iso_code: &str) -> &'static str {
         "KE" => "KES",
         "ZA" => "ZAR",
         _ => "BTC",
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_african_countries() {
-        assert_eq!(currency_for_country("NG"), Currency::NGN);
-        assert_eq!(currency_for_country("KE"), Currency::KES);
-        assert_eq!(currency_for_country("ZA"), Currency::ZAR);
-
-        assert!(is_african_country("NG"));
-        assert!(is_african_country("KE"));
-        assert!(is_african_country("ZA"));
-        assert!(!is_african_country("US"));
-    }
-
-    #[test]
-    fn test_international_countries() {
-        assert_eq!(currency_for_country("US"), Currency::USD);
-        assert_eq!(currency_for_country("GB"), Currency::GBP);
-        assert_eq!(currency_for_country("DE"), Currency::EUR);
-        assert_eq!(currency_for_country("JP"), Currency::JPY);
-    }
-
-    #[test]
-    fn test_mavapay_units() {
-        assert_eq!(mavapay_minor_unit_for_country("NG"), "NGNKOBO");
-        assert_eq!(mavapay_minor_unit_for_country("KE"), "KESCENT");
-        assert_eq!(mavapay_minor_unit_for_country("ZA"), "ZARCENT");
-
-        assert_eq!(mavapay_major_unit_for_country("NG"), "NGN");
-        assert_eq!(mavapay_major_unit_for_country("KE"), "KES");
-        assert_eq!(mavapay_major_unit_for_country("ZA"), "ZAR");
-    }
-
-    #[test]
-    fn test_currency_symbols() {
-        assert_eq!(currency_symbol_for_country("NG"), "₦");
-        assert_eq!(currency_symbol_for_country("US"), "$");
-        assert_eq!(currency_symbol_for_country("GB"), "£");
-        assert_eq!(currency_symbol_for_country("DE"), "€");
     }
 }

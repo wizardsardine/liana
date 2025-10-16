@@ -29,7 +29,6 @@ pub struct SaveQuoteRequest {
     pub bank_code: Option<String>,
     pub bank_name: Option<String>,
     pub payment_method: String,
-    pub wallet_address: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

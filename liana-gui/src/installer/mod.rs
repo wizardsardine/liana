@@ -82,7 +82,7 @@ impl Installer {
         if self.current > 0 {
             self.current -= 1;
         } else {
-            return Task::perform(async move { network }, Message::BackToLauncher);
+            return Task::done(Message::BackToLauncher(network));
         }
         // skip the previous step according to the current context.
         while self
@@ -94,7 +94,7 @@ impl Installer {
             if self.current > 0 {
                 self.current -= 1;
             } else {
-                return Task::perform(async move { network }, Message::BackToLauncher);
+                return Task::done(Message::BackToLauncher(network));
             }
         }
 

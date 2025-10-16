@@ -1,12 +1,10 @@
-#![allow(unused_imports)]
-
 use iced::{
     widget::{container, pick_list, radio, Space},
     Alignment, Length,
 };
 use iced_webview::{advanced::WebView, Ultralight};
 
-use liana::miniscript::bitcoin::Network;
+use liana::miniscript::bitcoin::{self, Network};
 use liana_ui::{
     color,
     component::{button as ui_button, form, text::text},
@@ -16,55 +14,81 @@ use liana_ui::{
 };
 
 use super::flow_state::{
-    AfricaFlowState, BuySellFlowState, InternationalFlowState, MavapayFlowMode,
-    MavapayPaymentMethod, NativePage,
+    BuySellFlowState, MavapayFlowMode, MavapayFlowState, MavapayPaymentMethod, NativePage,
+    OnramperFlowState,
 };
-use crate::app::view::{BuySellMessage, Message as ViewMessage};
+use crate::app::{
+    self,
+    view::{BuySellMessage, Message as ViewMessage},
+};
 use crate::services::mavapay::api::Currency;
 
+#[derive(Debug, Clone, Copy)]
+pub enum PanelState {
+    Buy,
+    Sell,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct LabelledAddress {
+    pub address: bitcoin::Address,
+    pub index: bitcoin::bip32::ChildNumber,
+    pub label: Option<String>,
+}
+
+impl std::fmt::Display for LabelledAddress {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self.label {
+            Some(l) => write!(f, "{}: {}", l, self.address),
+            None => std::fmt::Display::fmt(&self.address, f),
+        }
+    }
+}
+
 pub struct BuySellPanel {
+    pub state: PanelState,
+
     // Common fields (always present)
-    pub wallet_address: form::Value<String>,
-    pub source_amount: form::Value<String>,
     pub error: Option<String>,
     pub network: Network,
+
+    // for address generation
+    pub wallet: std::sync::Arc<crate::app::wallet::Wallet>,
+    pub data_dir: crate::dir::LianaDirectory,
+    pub modal: app::state::receive::Modal,
+    pub generated_address: Option<LabelledAddress>,
 
     // Geolocation detection state
     pub detected_country_name: Option<String>,
     pub detected_country_iso: Option<String>,
-    pub country_detection_failed: bool,
 
     // Webview (used by international flow)
     pub webview: Option<WebView<Ultralight, crate::app::state::buysell::WebviewMessage>>,
     pub session_url: Option<String>,
     pub active_page: Option<iced_webview::ViewId>,
-    pub pending_close_view: Option<iced_webview::ViewId>,
 
     // Runtime state - determines which flow is active
     pub flow_state: BuySellFlowState,
 }
 
 impl BuySellPanel {
-    pub fn new(network: Network) -> Self {
+    pub fn new(
+        network: bitcoin::Network,
+        wallet: std::sync::Arc<crate::app::wallet::Wallet>,
+        data_dir: crate::dir::LianaDirectory,
+    ) -> Self {
         Self {
-            wallet_address: form::Value {
-                value: "2N3oefVeg6stiTb5Kh3ozCSkaqmx91FDbsm".to_string(),
-                warning: None,
-                valid: true,
-            },
-            source_amount: form::Value {
-                value: "60".to_string(),
-                warning: None,
-                valid: true,
-            },
+            state: PanelState::Buy,
             error: None,
             network,
+            wallet,
+            data_dir,
+            generated_address: None,
+            modal: app::state::receive::Modal::None,
             detected_country_name: None,
             detected_country_iso: None,
-            country_detection_failed: false,
             webview: None,
             session_url: None,
-            pending_close_view: None,
             active_page: None,
             // Start in detecting state
             flow_state: BuySellFlowState::DetectingCountry,
@@ -80,8 +104,8 @@ impl BuySellPanel {
     ) -> iced::Task<ViewMessage> {
         use crate::app::buysell::onramper;
         use crate::services::fiat::{
-            currency_for_country, is_african_country, mavapay_major_unit_for_country,
-            mavapay_minor_unit_for_country,
+            currency_for_country, mavapay_major_unit_for_country, mavapay_minor_unit_for_country,
+            mavapay_supported,
         };
 
         self.detected_country_name = Some(country_name);
@@ -89,32 +113,31 @@ impl BuySellPanel {
         self.error = None;
 
         // Determine flow based on ISO code
-        if is_african_country(&iso_code) {
-            // African flow: Mavapay with auto-populated currency
-            let mut africa_state = AfricaFlowState::new();
+        if mavapay_supported(&iso_code) {
+            let mut state = MavapayFlowState::new();
 
             // Set default currencies based on detected country
-            africa_state.mavapay_source_currency = form::Value {
+            state.mavapay_source_currency = form::Value {
                 value: mavapay_minor_unit_for_country(&iso_code).to_string(),
                 warning: None,
                 valid: true,
             };
-            africa_state.mavapay_target_currency = form::Value {
+            state.mavapay_target_currency = form::Value {
                 value: "BTCSAT".to_string(),
                 warning: None,
                 valid: true,
             };
-            africa_state.mavapay_settlement_currency = form::Value {
+            state.mavapay_settlement_currency = form::Value {
                 value: mavapay_major_unit_for_country(&iso_code).to_string(),
                 warning: None,
                 valid: true,
             };
 
-            self.flow_state = BuySellFlowState::Africa(africa_state);
+            self.flow_state = BuySellFlowState::Mavapay(state);
             iced::Task::none()
         } else {
-            // International flow: Automatically open Onramper
-            self.flow_state = BuySellFlowState::International(InternationalFlowState::new());
+            // International flow: Onramper
+            self.flow_state = BuySellFlowState::Onramper(OnramperFlowState::new());
 
             // Build Onramper URL directly and open it
             let currency = currency_for_country(&iso_code).to_string();
@@ -123,7 +146,7 @@ impl BuySellPanel {
             } else {
                 self.source_amount.value.clone()
             };
-            let wallet = self.wallet_address.value.clone();
+            let address = self.wallet_address.value.clone();
 
             tracing::info!(
                 "🌍 [ONRAMPER] Auto-opening for country: {}, currency: {}",
@@ -131,7 +154,7 @@ impl BuySellPanel {
                 currency
             );
 
-            if let Some(url) = onramper::create_widget_url(&currency, &amount, &wallet) {
+            if let Some(url) = onramper::create_widget_url(&currency, &amount, &address) {
                 tracing::info!("🌍 [ONRAMPER] Opening URL: {}", url);
                 iced::Task::done(ViewMessage::BuySell(BuySellMessage::WebviewOpenUrl(url)))
             } else {
@@ -145,123 +168,30 @@ impl BuySellPanel {
         }
     }
 
-    // Helper methods to access Africa flow state fields (for backward compatibility during migration)
-    pub fn africa_state(&self) -> Option<&AfricaFlowState> {
-        if let BuySellFlowState::Africa(ref state) = self.flow_state {
-            Some(state)
-        } else {
-            None
-        }
-    }
-
-    pub fn africa_state_mut(&mut self) -> Option<&mut AfricaFlowState> {
-        if let BuySellFlowState::Africa(ref mut state) = self.flow_state {
-            Some(state)
-        } else {
-            None
-        }
-    }
-
-    pub fn international_state(&self) -> Option<&InternationalFlowState> {
-        if let BuySellFlowState::International(ref state) = self.flow_state {
-            Some(state)
-        } else {
-            None
-        }
-    }
-
-    pub fn international_state_mut(&mut self) -> Option<&mut InternationalFlowState> {
-        if let BuySellFlowState::International(ref mut state) = self.flow_state {
-            Some(state)
-        } else {
-            None
-        }
-    }
-
     pub fn set_error(&mut self, error: String) {
         self.error = Some(error);
     }
 
-    pub fn set_wallet_address(&mut self, address: String) {
-        self.wallet_address.value = address;
-        self.wallet_address.valid =
-            !self.wallet_address.value.is_empty() && self.validate_wallet_address();
-        self.update_wallet_address_warning();
-    }
-
-    fn validate_wallet_address(&self) -> bool {
-        if self.wallet_address.value.is_empty() {
-            return false;
-        }
-
-        // Network-aware Bitcoin address validation
-        let addr = &self.wallet_address.value;
-        let is_valid_length = addr.len() >= 26 && addr.len() <= 62;
-
-        if !is_valid_length {
-            return false;
-        }
-
-        match self.network {
-            Network::Bitcoin => {
-                // Mainnet addresses: 1, 3, bc1
-                addr.starts_with('1') || addr.starts_with('3') || addr.starts_with("bc1")
-            }
-            Network::Testnet | Network::Signet | Network::Regtest => {
-                // Testnet addresses: 2, tb1, bcrt1
-                addr.starts_with('2') || addr.starts_with("tb1") || addr.starts_with("bcrt1")
-            }
-            _ => false, // Unknown network
-        }
-    }
-
     pub fn set_login_username(&mut self, v: String) {
-        if let BuySellFlowState::Africa(ref mut state) = self.flow_state {
+        if let BuySellFlowState::Mavapay(ref mut state) = self.flow_state {
             state.login_username.value = v;
             state.login_username.valid = !state.login_username.value.is_empty();
         }
     }
 
     pub fn set_login_password(&mut self, v: String) {
-        if let BuySellFlowState::Africa(ref mut state) = self.flow_state {
+        if let BuySellFlowState::Mavapay(ref mut state) = self.flow_state {
             state.login_password.value = v;
             state.login_password.valid = !state.login_password.value.is_empty();
         }
     }
 
     pub fn is_login_form_valid(&self) -> bool {
-        if let BuySellFlowState::Africa(ref state) = self.flow_state {
+        if let BuySellFlowState::Mavapay(ref state) = self.flow_state {
             state.login_username.valid && state.login_password.valid
         } else {
             false
         }
-    }
-
-    fn update_wallet_address_warning(&mut self) {
-        if self.wallet_address.value.is_empty() {
-            self.wallet_address.warning = None;
-            return;
-        }
-
-        // Simplified validation - Onramper handles network-specific requirements
-        self.wallet_address.warning = if self.validate_wallet_address() {
-            None
-        } else {
-            Some("Invalid Bitcoin address format")
-        };
-    }
-
-    pub fn set_source_amount(&mut self, amount: String) {
-        self.source_amount.value = amount;
-        self.source_amount.valid =
-            !self.source_amount.value.is_empty() && self.source_amount.value.parse::<f64>().is_ok();
-    }
-
-    pub fn is_form_valid(&self) -> bool {
-        self.wallet_address.valid
-            && self.source_amount.valid
-            && !self.wallet_address.value.is_empty()
-            && !self.source_amount.value.is_empty()
     }
 
     pub fn view<'a>(&'a self) -> Container<'a, ViewMessage> {
@@ -364,8 +294,8 @@ impl BuySellPanel {
     fn form_view<'a>(&'a self) -> Column<'a, ViewMessage> {
         match &self.flow_state {
             BuySellFlowState::DetectingCountry => self.render_loading(),
-            BuySellFlowState::Africa(state) => self.render_africa_flow(state),
-            BuySellFlowState::International(_state) => self.render_loading_onramper(),
+            BuySellFlowState::Mavapay(state) => self.render_africa_flow(state),
+            BuySellFlowState::Onramper(_state) => self.render_loading_onramper(),
             BuySellFlowState::DetectionFailed => self.render_loading_onramper(),
         }
     }
@@ -383,7 +313,7 @@ impl BuySellPanel {
             .spacing(10)
     }
 
-    fn render_africa_flow<'a>(&'a self, state: &'a AfricaFlowState) -> Column<'a, ViewMessage> {
+    fn render_africa_flow<'a>(&'a self, state: &'a MavapayFlowState) -> Column<'a, ViewMessage> {
         match state.native_page {
             NativePage::AccountSelect => self.native_account_select_form(state),
             NativePage::Login => self.native_login_form(state),
@@ -420,7 +350,7 @@ impl BuySellPanel {
 impl BuySellPanel {
     fn native_account_select_form<'a>(
         &'a self,
-        state: &'a AfricaFlowState,
+        state: &'a MavapayFlowState,
     ) -> Column<'a, ViewMessage> {
         use liana_ui::component::card as ui_card;
         use liana_ui::component::text as ui_text;
@@ -522,7 +452,7 @@ impl BuySellPanel {
             .width(Length::Fill)
     }
 
-    fn native_login_form<'a>(&'a self, state: &'a AfricaFlowState) -> Column<'a, ViewMessage> {
+    fn native_login_form<'a>(&'a self, state: &'a MavapayFlowState) -> Column<'a, ViewMessage> {
         use liana_ui::component::card as ui_card;
         use liana_ui::component::form;
         use liana_ui::component::text as ui_text;
@@ -584,7 +514,7 @@ impl BuySellPanel {
 }
 
 impl BuySellPanel {
-    fn native_register_form<'a>(&'a self, state: &'a AfricaFlowState) -> Column<'a, ViewMessage> {
+    fn native_register_form<'a>(&'a self, state: &'a MavapayFlowState) -> Column<'a, ViewMessage> {
         use iced::widget::checkbox;
         use liana_ui::component::button as ui_button;
         use liana_ui::component::text as ui_text;
@@ -748,7 +678,7 @@ impl BuySellPanel {
     }
 
     #[inline]
-    pub fn is_registration_valid(&self, state: &AfricaFlowState) -> bool {
+    pub fn is_registration_valid(&self, state: &MavapayFlowState) -> bool {
         let email_ok = state.email.value.contains('@') && state.email.value.contains('.');
         let pw_ok = self.is_password_valid(state) && state.password1.value == state.password2.value;
         !state.first_name.value.is_empty()
@@ -759,7 +689,7 @@ impl BuySellPanel {
     }
 
     #[inline]
-    pub fn is_password_valid(&self, state: &AfricaFlowState) -> bool {
+    pub fn is_password_valid(&self, state: &MavapayFlowState) -> bool {
         let password = &state.password1.value;
         if password.len() < 8 {
             return false;
@@ -773,7 +703,7 @@ impl BuySellPanel {
         has_upper && has_lower && has_digit && has_special
     }
 
-    pub fn get_password_validation_message(&self, state: &AfricaFlowState) -> Option<String> {
+    pub fn get_password_validation_message(&self, state: &MavapayFlowState) -> Option<String> {
         let password = &state.password1.value;
         if password.is_empty() {
             return None;
@@ -805,14 +735,14 @@ impl BuySellPanel {
     }
 
     pub fn set_email_verification_status(&mut self, verified: Option<bool>) {
-        if let BuySellFlowState::Africa(ref mut state) = self.flow_state {
+        if let BuySellFlowState::Mavapay(ref mut state) = self.flow_state {
             state.email_verification_status = verified;
         }
     }
 
     fn native_verify_email_form<'a>(
         &'a self,
-        state: &'a AfricaFlowState,
+        state: &'a MavapayFlowState,
     ) -> Column<'a, ViewMessage> {
         use liana_ui::component::button as ui_button;
         use liana_ui::component::text as ui_text;
@@ -963,7 +893,7 @@ impl BuySellPanel {
             .width(Length::Fill)
     }
 
-    fn coincube_pay_form<'a>(&'a self, state: &'a AfricaFlowState) -> Column<'a, ViewMessage> {
+    fn coincube_pay_form<'a>(&'a self, state: &'a MavapayFlowState) -> Column<'a, ViewMessage> {
         use liana_ui::component::{button as ui_button, text as ui_text};
 
         let header = Row::new()

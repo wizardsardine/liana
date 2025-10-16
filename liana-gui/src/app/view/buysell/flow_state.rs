@@ -11,18 +11,18 @@ pub enum BuySellFlowState {
     DetectingCountry,
 
     /// African users: Mavapay native login/registration flow
-    Africa(AfricaFlowState),
+    Mavapay(MavapayFlowState),
 
     /// International users: Onramper embedded webview
-    International(InternationalFlowState),
+    Onramper(OnramperFlowState),
 
     /// Geolocation detection failed - show Onramper as fallback
     DetectionFailed,
 }
 
-/// State specific to African (Mavapay) flow
+/// State specific to Mavapay flow
 #[derive(Debug, Clone)]
-pub struct AfricaFlowState {
+pub struct MavapayFlowState {
     pub native_page: NativePage,
     pub selected_account_type: Option<AccountType>,
 
@@ -123,7 +123,7 @@ impl std::fmt::Display for MavapayPaymentMethod {
 
 /// State specific to International (Onramper) flow
 #[derive(Debug, Clone)]
-pub struct InternationalFlowState {
+pub struct OnramperFlowState {
     // Onramper doesn't need a client - we build the URL directly
 }
 
@@ -137,7 +137,7 @@ pub enum NativePage {
     CoincubePay,
 }
 
-impl AfricaFlowState {
+impl MavapayFlowState {
     pub fn new() -> Self {
         Self {
             native_page: NativePage::AccountSelect,
@@ -201,19 +201,19 @@ impl AfricaFlowState {
     }
 }
 
-impl Default for AfricaFlowState {
+impl Default for MavapayFlowState {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl InternationalFlowState {
+impl OnramperFlowState {
     pub fn new() -> Self {
         Self {}
     }
 }
 
-impl Default for InternationalFlowState {
+impl Default for OnramperFlowState {
     fn default() -> Self {
         Self::new()
     }

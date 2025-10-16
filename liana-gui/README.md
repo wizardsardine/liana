@@ -22,9 +22,6 @@ cargo run --release --features buysell
 For onramper:
 env ONRAMPER_API_KEY="..." ULTRALIGHT_RESOURCES_DIR="path/to/ultralight-free-sdk-1.4.0/resources" cargo run --release --features dev-onramp --bin coincube-vault
 
-For meld:
-env ULTRALIGHT_RESOURCES_DIR="path/to/ultralight-free-sdk-1.4.0/resources" cargo run --release --features dev-meld --bin coincube-vault
-
 ## Usage
 
 _For a quick guide to try out the software see [../doc/TRY.md](../doc/TRY.md)._
