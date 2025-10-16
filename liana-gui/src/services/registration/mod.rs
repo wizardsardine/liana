@@ -10,7 +10,7 @@ pub struct RegistrationState {
     pub login_password: form::Value<String>,
 
     // Default build: account type selection state
-    pub selected_account_type: Option<crate::app::view::message::AccountType>,
+    pub selected_account_type: Option<crate::app::view::AccountType>,
 
     // Native flow current page
     pub native_page: crate::app::view::buysell::NativePage,

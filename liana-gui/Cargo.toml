@@ -9,15 +9,14 @@ authors = ["Edouard Paris <m@edouard.paris>"]
 edition = "2018"
 resolver = "2"
 
+[features]
+default = []
+buysell = ["iced_webview"]
+
 [[bin]]
 name = "coincube-vault"
 path = "src/main.rs"
 
-[features]
-dev-meld = ["webview", "buysell"]
-dev-onramp = ["webview", "buysell"]
-webview = ["iced_webview"]
-buysell = []
 
 [dependencies]
 async-trait = "0.1"
@@ -29,6 +28,7 @@ lianad = { path = "../lianad", default-features = false, features = [
 liana-ui = { path = "../liana-ui" }
 backtrace = "0.3"
 hex = "0.4.3"
+dotenv = "0.15"
 
 iced = { version = "0.13.1", default-features = false, features = [
 	"tokio",
@@ -38,6 +38,7 @@ iced = { version = "0.13.1", default-features = false, features = [
 	"image-without-codecs",
 	"lazy",
 	"advanced",
+	"wgpu",
 	"tiny-skia",
 ] }
 image = { version = "*", default-features = false, features = ["png"] }
@@ -85,9 +86,7 @@ fs4 = { version = "0.13", features = ["sync"] }
 # Used for opening URLs in browser
 open = "5.3"
 
-encrypted_backup = { version = "0.0.1", default-features = false, features = [
-	"miniscript_12_0",
-], package = "bitcoin-encrypted-backup" }
+encrypted_backup = { version = "0.0.1", default-features = false, features = ["miniscript_12_0"], package = "bitcoin-encrypted-backup" }
 
 [target.'cfg(windows)'.dependencies]
 zip = { version = "0.6", default-features = false, features = [
@@ -110,7 +109,6 @@ winresource = "0.1"
 mismatched_lifetime_syntaxes = "allow"
 
 [lints.clippy]
-unknown_lints = "allow"
 uninlined_format_args = "allow"
 large_enum_variant = "allow"
 result_large_err = "allow"

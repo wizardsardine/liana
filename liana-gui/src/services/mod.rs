@@ -1,7 +1,13 @@
+#[cfg(feature = "buysell")]
+pub mod coincube;
 pub mod connect;
 pub mod fiat;
+#[cfg(feature = "buysell")]
+pub mod geolocation;
+
 pub mod http;
 pub mod keys;
-
-#[cfg(all(feature = "buysell", not(feature = "webview")))]
+#[cfg(feature = "buysell")]
+pub mod mavapay;
+#[cfg(feature = "buysell")]
 pub mod registration;

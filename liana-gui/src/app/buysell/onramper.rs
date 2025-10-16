@@ -1,10 +1,11 @@
 const WIDGET_OPTIONS: &str = "{{BASE_URL}}/?apiKey={{API_KEY}}&mode=buy,sell&partnerContext=CoincubeVault&defaultFiat={{DEFAULT_FIAT}}&defaultAmount={{DEFAULT_AMOUNT}}&wallets=btc:{{WALLET_ADDRESS}}&onlyCryptoNetworks=bitcoin&sell_defaultFiat={{DEFAULT_FIAT}}&sell_onlyCryptoNetworks=bitcoin&redirectAtCheckout=true&enableCountrySelector=true&themeName=dark";
 
-const fn api_key() -> Option<&'static str> {
+pub fn api_key() -> Option<String> {
     if cfg!(debug_assertions) {
-        Some("pk_test_01K2HQVXK7F5C8RDZ36WV2W3F5")
+        std::env::var("ONRAMPER_API_KEY").ok()
     } else {
-        option_env!("ONRAMPER_API_KEY")
+        // TODO: Move to .env and use in build.rs for compile-time env
+        option_env!("ONRAMPER_API_KEY").map(|s| s.to_string())
     }
 }
 
@@ -17,10 +18,11 @@ const fn base_url() -> &'static str {
 }
 
 pub fn create_widget_url(currency: &str, amount: &str, wallet: &str) -> Option<String> {
+    let key = api_key()?;
     Some(
         WIDGET_OPTIONS
             .replace("{{BASE_URL}}", base_url())
-            .replace("{{API_KEY}}", api_key()?)
+            .replace("{{API_KEY}}", &key)
             .replace("{{DEFAULT_FIAT}}", currency)
             .replace("{{WALLET_ADDRESS}}", wallet)
             .replace("{{DEFAULT_AMOUNT}}", amount),
