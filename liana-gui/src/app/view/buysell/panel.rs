@@ -1073,9 +1073,7 @@ impl BuySellPanel {
                                     .push(
                                         pick_list(
                                             Currency::all(),
-                                            Currency::from_str(
-                                                &state.mavapay_source_currency.value,
-                                            ),
+                                            Currency::parse(&state.mavapay_source_currency.value),
                                             |currency| {
                                                 ViewMessage::BuySell(
                                                     BuySellMessage::MavapaySourceCurrencyChanged(
@@ -1097,9 +1095,7 @@ impl BuySellPanel {
                                     .push(
                                         pick_list(
                                             Currency::all(),
-                                            Currency::from_str(
-                                                &state.mavapay_target_currency.value,
-                                            ),
+                                            Currency::parse(&state.mavapay_target_currency.value),
                                             |currency| {
                                                 ViewMessage::BuySell(
                                                     BuySellMessage::MavapayTargetCurrencyChanged(

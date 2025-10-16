@@ -147,7 +147,7 @@ impl State for BuySellPanel {
                 tracing::info!("country = {}, iso_code = {}", country_name, iso_code);
                 return self
                     .handle_country_detected(country_name, iso_code)
-                    .map(|msg| Message::View(msg));
+                    .map(Message::View);
             }
             BuySellMessage::CountryDetectionError(_error) => {
                 // Graceful fallback: automatically open Onramper

@@ -6,6 +6,7 @@ use crate::{
     services::fiat::{Currency, PriceSource},
 };
 
+#[cfg(feature = "buysell")]
 use crate::services::mavapay::{PriceResponse, QuoteResponse, Transaction};
 use liana::miniscript::bitcoin::{bip32::Fingerprint, Address, OutPoint};
 
@@ -29,6 +30,7 @@ pub enum Message {
     Settings(SettingsMessage),
     CreateSpend(CreateSpendMessage),
     ImportSpend(ImportSpendMessage),
+    #[cfg(feature = "buysell")]
     BuySell(BuySellMessage),
     Spend(SpendTxMessage),
     Next,
@@ -152,6 +154,7 @@ pub enum CreateRbfMessage {
 // - BuySellMessage::Africa(AfricaMsg)
 // - BuySellMessage::International(InternationalMsg)
 // This would reduce unrelated match arms and better reflect the runtime flow_state boundaries.
+#[cfg(feature = "buysell")]
 #[derive(Debug, Clone)]
 pub enum BuySellMessage {
     // Native login (default build)

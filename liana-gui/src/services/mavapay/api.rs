@@ -107,7 +107,7 @@ impl Currency {
     }
 
     /// Parse currency from string
-    pub fn from_str(s: &str) -> Option<Currency> {
+    pub fn parse(s: &str) -> Option<Currency> {
         match s {
             "BTCSAT" => Some(Currency::BitcoinSatoshi),
             "NGNKOBO" => Some(Currency::NigerianNairaKobo),

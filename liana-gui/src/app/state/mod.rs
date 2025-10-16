@@ -8,6 +8,7 @@ mod settings;
 mod spend;
 mod transactions;
 
+#[cfg(feature = "buysell")]
 pub mod buysell;
 
 use std::convert::TryInto;
