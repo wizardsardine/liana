@@ -94,10 +94,11 @@ pub fn spend_view<'a>(
                     .push(psbt::outputs_view(
                         &tx.psbt.unsigned_tx,
                         network,
-                        Some(tx.change_indexes.clone()),
+                        &tx.change_indexes,
                         &tx.labels,
                         labels_editing,
                         tx.is_single_payment().is_some(),
+                        false,
                     )),
             )
             .push(if saved {

@@ -91,10 +91,11 @@ pub fn psbt_view<'a>(
                     .push(outputs_view(
                         &tx.psbt.unsigned_tx,
                         network,
-                        Some(tx.change_indexes.clone()),
+                        &tx.change_indexes,
                         &tx.labels,
                         labels_editing,
                         tx.is_single_payment().is_some(),
+                        false,
                     )),
             )
             .push(if saved {
@@ -693,12 +694,12 @@ pub fn inputs_view<'a>(
 pub fn outputs_view<'a>(
     tx: &'a Transaction,
     network: Network,
-    change_indexes: Option<Vec<usize>>,
+    change_indexes: &'a [usize],
     labels: &'a HashMap<String, String>,
     labels_editing: &'a HashMap<String, form::Value<String>>,
     is_single_payment: bool,
+    is_external: bool,
 ) -> Element<'a, Message> {
-    let change_indexes_copy = change_indexes.clone();
     Column::new()
         .spacing(20)
         .push({
@@ -707,11 +708,10 @@ pub fn outputs_view<'a>(
                 .iter()
                 .enumerate()
                 .filter(|(i, _)| {
-                    if let Some(indexes) = change_indexes_copy.as_ref() {
-                        !indexes.contains(i)
-                    } else {
-                        true
+                    if is_external {
+                        return true;
                     }
+                    !change_indexes.contains(i)
                 })
                 .count();
             if count > 0 {
@@ -757,15 +757,20 @@ pub fn outputs_view<'a>(
                             .iter()
                             .enumerate()
                             .filter(|(i, _)| {
-                                if let Some(indexes) = change_indexes_copy.as_ref() {
-                                    !indexes.contains(i)
-                                } else {
-                                    true
+                                if is_external {
+                                    return true;
                                 }
+                                !change_indexes.contains(i)
                             })
                             .fold(
                                 Column::new().padding(20),
                                 |col: Column<'a, Message>, (i, output)| {
+                                    let mut is_editable = true;
+
+                                    if is_external && !change_indexes.contains(&i) {
+                                        is_editable = false;
+                                    }
+
                                     col.spacing(10).push(payment_view(
                                         i,
                                         tx.compute_txid(),
@@ -774,6 +779,7 @@ pub fn outputs_view<'a>(
                                         labels,
                                         labels_editing,
                                         is_single_payment,
+                                        is_editable,
                                     ))
                                 },
                             )
@@ -790,56 +796,50 @@ pub fn outputs_view<'a>(
                 .style(theme::card::simple)
             }
         })
-        .push_maybe(
-            if change_indexes
-                .as_ref()
-                .map(|indexes| !indexes.is_empty())
-                .unwrap_or(false)
-            {
-                Some(
-                    Container::new(Collapse::new(
-                        move || {
-                            Button::new(
-                                Row::new()
-                                    .align_y(Alignment::Center)
-                                    .push(h4_bold("Change").width(Length::Fill))
-                                    .push(icon::collapse_icon()),
+        .push_maybe(if !is_external && !change_indexes.is_empty() {
+            Some(
+                Container::new(Collapse::new(
+                    move || {
+                        Button::new(
+                            Row::new()
+                                .align_y(Alignment::Center)
+                                .push(h4_bold("Change").width(Length::Fill))
+                                .push(icon::collapse_icon()),
+                        )
+                        .padding(20)
+                        .width(Length::Fill)
+                        .style(theme::button::transparent_border)
+                    },
+                    move || {
+                        Button::new(
+                            Row::new()
+                                .align_y(Alignment::Center)
+                                .push(h4_bold("Change").width(Length::Fill))
+                                .push(icon::collapsed_icon()),
+                        )
+                        .padding(20)
+                        .width(Length::Fill)
+                        .style(theme::button::transparent_border)
+                    },
+                    move || {
+                        tx.output
+                            .iter()
+                            .enumerate()
+                            .filter(|(i, _)| change_indexes.contains(i))
+                            .fold(
+                                Column::new().padding(20),
+                                |col: Column<'a, Message>, (_, output)| {
+                                    col.spacing(10).push(change_view(output, network))
+                                },
                             )
-                            .padding(20)
-                            .width(Length::Fill)
-                            .style(theme::button::transparent_border)
-                        },
-                        move || {
-                            Button::new(
-                                Row::new()
-                                    .align_y(Alignment::Center)
-                                    .push(h4_bold("Change").width(Length::Fill))
-                                    .push(icon::collapsed_icon()),
-                            )
-                            .padding(20)
-                            .width(Length::Fill)
-                            .style(theme::button::transparent_border)
-                        },
-                        move || {
-                            tx.output
-                                .iter()
-                                .enumerate()
-                                .filter(|(i, _)| change_indexes.as_ref().unwrap().contains(i))
-                                .fold(
-                                    Column::new().padding(20),
-                                    |col: Column<'a, Message>, (_, output)| {
-                                        col.spacing(10).push(change_view(output, network))
-                                    },
-                                )
-                                .into()
-                        },
-                    ))
-                    .style(theme::card::simple),
-                )
-            } else {
-                None
-            },
-        )
+                            .into()
+                    },
+                ))
+                .style(theme::card::simple),
+            )
+        } else {
+            None
+        })
         .into()
 }
 
@@ -925,6 +925,7 @@ fn input_view<'a>(
         .into()
 }
 
+#[allow(clippy::too_many_arguments)]
 fn payment_view<'a>(
     i: usize,
     txid: Txid,
@@ -933,6 +934,7 @@ fn payment_view<'a>(
     labels: &'a HashMap<String, String>,
     labels_editing: &'a HashMap<String, form::Value<String>>,
     is_single: bool,
+    is_editable: bool,
 ) -> Element<'a, Message> {
     let addr = Address::from_script(&output.script_pubkey, network)
         .ok()
@@ -949,6 +951,17 @@ fn payment_view<'a>(
     } else {
         vec![outpoint.clone()]
     };
+
+    let label_widget = if is_editable {
+        if let Some(label) = labels_editing.get(&outpoint) {
+            label::label_editing(change_labels, label, text::P1_SIZE)
+        } else {
+            label::label_editable(change_labels, labels.get(&outpoint), text::P1_SIZE)
+        }
+    } else {
+        label::label_non_editable(change_labels, None, text::P1_SIZE)
+    };
+
     Column::new()
         .width(Length::Fill)
         .spacing(5)
@@ -956,14 +969,7 @@ fn payment_view<'a>(
             Row::new()
                 .spacing(5)
                 .align_y(Alignment::Center)
-                .push(
-                    Container::new(if let Some(label) = labels_editing.get(&outpoint) {
-                        label::label_editing(change_labels, label, text::P1_SIZE)
-                    } else {
-                        label::label_editable(change_labels, labels.get(&outpoint), text::P1_SIZE)
-                    })
-                    .width(Length::Fill),
-                )
+                .push(Container::new(label_widget).width(Length::Fill))
                 .push(amount(&output.value)),
         )
         .push_maybe(addr.map(|addr| {

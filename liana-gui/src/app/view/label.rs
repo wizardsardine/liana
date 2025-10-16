@@ -1,6 +1,7 @@
 use iced::{advanced::text::Shaping, widget::row, Alignment};
 
 use liana_ui::{
+    color,
     component::{button, form},
     icon,
     widget::*,
@@ -64,5 +65,27 @@ pub fn label_editing(
         .align_y(Alignment::Center),
     )
     .into();
+    e.map(move |msg| view::Message::Label(labelled.clone(), msg))
+}
+
+pub fn label_non_editable(
+    labelled: Vec<String>,
+    label: Option<&String>,
+    size: u16,
+) -> Element<view::Message> {
+    let label_text = label.map(|s| s.as_str()).unwrap_or("(External Ouput)");
+
+    let e: Element<view::LabelMessage> = Container::new(
+        row![Container::new(
+            Text::new(label_text)
+                .size(size)
+                .width(iced::Length::Fill)
+                .color(color::GREY_1)
+        ),]
+        .spacing(5)
+        .align_y(Alignment::Center),
+    )
+    .into();
+
     e.map(move |msg| view::Message::Label(labelled.clone(), msg))
 }
