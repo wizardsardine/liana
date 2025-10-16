@@ -23,11 +23,14 @@ use miniscript::bitcoin::{
 use serde::{Deserialize, Serialize};
 
 /// We would never create a transaction with an output worth less than this.
-/// That's 1$ at 20_000$ per BTC.
-pub const DUST_OUTPUT_SATS: u64 = 5_000;
+/// That's 0.5$ at 100_000$ per BTC.
+pub const DUST_OUTPUT_SATS: u64 = 500;
+
+// NOTE: LONG_TERM_FEERATE_VB value is tied to DUST_OUTPUTS_SATS as
+// the coin selection algorithm "decide" if a change output must be included.
 
 /// Long-term feerate (sats/vb) used for coin selection considerations.
-pub const LONG_TERM_FEERATE_VB: f32 = 10.0;
+pub const LONG_TERM_FEERATE_VB: f32 = 5.0;
 
 /// Assume that paying more than 1BTC in fee is a bug.
 pub const MAX_FEE: bitcoin::Amount = bitcoin::Amount::ONE_BTC;

@@ -469,7 +469,7 @@ pub fn recipient_view<'a>(
                                     CreateSpendMessage::RecipientEdited(index, "amount", msg)
                                 })
                                 .warning(
-                                    "Invalid amount. (Note amounts lower than 0.00005 BTC are invalid.)",
+                                    "Invalid amount. (Note amounts lower than 0.000005 BTC are invalid.)",
                                 )
                                 .size(P1_SIZE)
                                 .padding(10)
