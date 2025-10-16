@@ -341,7 +341,7 @@ pub fn tx_view<'a>(
             .push(
                 Column::new().spacing(20).push(
                     Column::new()
-                        .push(if tx.is_send_to_self() {
+                        .push(if tx.is_send_to_self() { 
                             Container::new(h1("Self-transfer"))
                         } else if tx.is_external() {
                             Container::new(amount_with_size(&tx.incoming_amount, H1_SIZE))
@@ -445,6 +445,8 @@ pub fn tx_view<'a>(
                         &tx.labels,
                         labels_editing,
                         tx.is_single_payment().is_some(),
+                        Some(tx.outgoing_amount != Amount::from_sat(0)),
+                        
                     )),
             )
             .spacing(20),

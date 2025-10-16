@@ -95,6 +95,7 @@ pub fn psbt_view<'a>(
                         &tx.labels,
                         labels_editing,
                         tx.is_single_payment().is_some(),
+                        None,
                     )),
             )
             .push(if saved {
@@ -697,6 +698,7 @@ pub fn outputs_view<'a>(
     labels: &'a HashMap<String, String>,
     labels_editing: &'a HashMap<String, form::Value<String>>,
     is_single_payment: bool,
+    has_outgoing: Option<bool>
 ) -> Element<'a, Message> {
     let change_indexes_copy = change_indexes.clone();
     Column::new()
@@ -764,8 +766,9 @@ pub fn outputs_view<'a>(
                                 }
                             })
                             .fold(
-                                Column::new().padding(20),
+                                Column::new().padding(20),                                                                                                                                                                                                                                                   
                                 |col: Column<'a, Message>, (i, output)| {
+                                    let is_editable = !(change_indexes_copy.is_none() && is_single_payment && i == 0 && has_outgoing.unwrap());
                                     col.spacing(10).push(payment_view(
                                         i,
                                         tx.compute_txid(),
@@ -774,6 +777,7 @@ pub fn outputs_view<'a>(
                                         labels,
                                         labels_editing,
                                         is_single_payment,
+                                        is_editable,
                                     ))
                                 },
                             )
@@ -925,6 +929,7 @@ fn input_view<'a>(
         .into()
 }
 
+#[allow(clippy::too_many_arguments)]
 fn payment_view<'a>(
     i: usize,
     txid: Txid,
@@ -933,6 +938,7 @@ fn payment_view<'a>(
     labels: &'a HashMap<String, String>,
     labels_editing: &'a HashMap<String, form::Value<String>>,
     is_single: bool,
+    is_editable: bool,
 ) -> Element<'a, Message> {
     let addr = Address::from_script(&output.script_pubkey, network)
         .ok()
@@ -949,6 +955,19 @@ fn payment_view<'a>(
     } else {
         vec![outpoint.clone()]
     };
+
+
+    let label_widget = if is_editable {
+        if let Some(label) = labels_editing.get(&outpoint) {
+            label::label_editing(change_labels, label, text::P1_SIZE)
+        } else {
+            label::label_editable(change_labels, labels.get(&outpoint), text::P1_SIZE)
+        }
+    } else {
+        label::label_non_editable(change_labels, None, text::P1_SIZE)
+    };
+
+
     Column::new()
         .width(Length::Fill)
         .spacing(5)
@@ -957,12 +976,8 @@ fn payment_view<'a>(
                 .spacing(5)
                 .align_y(Alignment::Center)
                 .push(
-                    Container::new(if let Some(label) = labels_editing.get(&outpoint) {
-                        label::label_editing(change_labels, label, text::P1_SIZE)
-                    } else {
-                        label::label_editable(change_labels, labels.get(&outpoint), text::P1_SIZE)
-                    })
-                    .width(Length::Fill),
+                     Container::new(label_widget)
+                     .width(Length::Fill),
                 )
                 .push(amount(&output.value)),
         )

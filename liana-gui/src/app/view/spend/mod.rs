@@ -98,6 +98,7 @@ pub fn spend_view<'a>(
                         &tx.labels,
                         labels_editing,
                         tx.is_single_payment().is_some(),
+                        None,
                     )),
             )
             .push(if saved {
