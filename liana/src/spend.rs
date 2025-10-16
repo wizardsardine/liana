@@ -23,8 +23,9 @@ use miniscript::bitcoin::{
 use serde::{Deserialize, Serialize};
 
 /// We would never create a transaction with an output worth less than this.
-/// That's 1$ at 20_000$ per BTC.
-pub const DUST_OUTPUT_SATS: u64 = 5_000;
+/// That's 0.5$ at 100_000$ per BTC.
+
+pub const DUST_OUTPUT_SATS: u64 = 500;
 
 /// Long-term feerate (sats/vb) used for coin selection considerations.
 pub const LONG_TERM_FEERATE_VB: f32 = 10.0;

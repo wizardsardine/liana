@@ -15,7 +15,7 @@ use liana::{
         psbt::Psbt,
         secp256k1, Address, Amount, Denomination, Network, OutPoint,
     },
-    spend::{SpendCreationError, MAX_FEERATE},
+    spend::{SpendCreationError, DUST_OUTPUT_SATS, MAX_FEERATE},
 };
 use lianad::commands::ListCoinsEntry;
 
@@ -35,9 +35,6 @@ use crate::{
         Daemon,
     },
 };
-
-/// See: https://github.com/wizardsardine/liana/blob/master/src/commands/mod.rs#L32
-const DUST_OUTPUT_SATS: u64 = 5_000;
 
 #[derive(Clone)]
 pub struct TransactionDraft {
