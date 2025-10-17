@@ -46,6 +46,71 @@ pub fn spend_view<'a>(
         .input
         .iter()
         .any(|txin| txin.sequence.is_relative_lock_time());
+
+    let title =
+        Container::new(h3(if is_recovery { "Recovery" } else { "Send" })).width(Length::Fill);
+
+    let warnings = (!(spend_warnings.is_empty() || saved)).then_some(spend_warnings.iter().fold(
+        Column::new().padding(15).spacing(5),
+        |col, warning| {
+            col.push(
+                Row::new()
+                    .spacing(5)
+                    .push(icon::warning_icon().style(theme::text::warning))
+                    .push(text(warning).style(theme::text::warning)),
+            )
+        },
+    ));
+
+    let spend_overview = psbt::spend_overview_view(tx, desc_info, key_aliases, currently_signing);
+
+    let inputs_outputs = Column::new()
+        .spacing(20)
+        .push(psbt::inputs_view(
+            &tx.coins,
+            &tx.psbt.unsigned_tx,
+            &tx.labels,
+            labels_editing,
+        ))
+        .push(psbt::outputs_view(
+            &tx.psbt.unsigned_tx,
+            network,
+            &tx.change_indexes,
+            &tx.labels,
+            labels_editing,
+            tx.is_single_payment().is_some(),
+            false,
+        ));
+
+    let bottom_row = if saved {
+        Row::new()
+            .push(button::secondary(None, "Delete").width(200).on_press_maybe(
+                (!currently_signing).then_some(Message::Spend(SpendTxMessage::Delete)),
+            ))
+            .width(Length::Fill)
+    } else {
+        Row::new()
+            .push(
+                button::secondary(None, "< Previous")
+                    .width(150)
+                    .on_press_maybe((!currently_signing).then_some(Message::Previous)),
+            )
+            .push(Space::with_width(Length::Fill))
+            .push(button::secondary(None, "Save").width(150).on_press_maybe(
+                (!currently_signing).then_some(Message::Spend(SpendTxMessage::Save)),
+            ))
+            .width(Length::Fill)
+    };
+
+    let content = Column::new()
+        .spacing(20)
+        .push(title)
+        .push(psbt::spend_header(tx, labels_editing))
+        .push_maybe(warnings)
+        .push(spend_overview)
+        .push(inputs_outputs)
+        .push(bottom_row);
+
     dashboard(
         if is_recovery {
             &Menu::Recovery
@@ -54,88 +119,7 @@ pub fn spend_view<'a>(
         },
         cache,
         warning,
-        Column::new()
-            .spacing(20)
-            .push(
-                Container::new(h3(if is_recovery { "Recovery" } else { "Send" }))
-                    .width(Length::Fill),
-            )
-            .push(psbt::spend_header(tx, labels_editing))
-            .push_maybe(if spend_warnings.is_empty() || saved {
-                None
-            } else {
-                Some(spend_warnings.iter().fold(
-                    Column::new().padding(15).spacing(5),
-                    |col, warning| {
-                        col.push(
-                            Row::new()
-                                .spacing(5)
-                                .push(icon::warning_icon().style(theme::text::warning))
-                                .push(text(warning).style(theme::text::warning)),
-                        )
-                    },
-                ))
-            })
-            .push(psbt::spend_overview_view(
-                tx,
-                desc_info,
-                key_aliases,
-                currently_signing,
-            ))
-            .push(
-                Column::new()
-                    .spacing(20)
-                    .push(psbt::inputs_view(
-                        &tx.coins,
-                        &tx.psbt.unsigned_tx,
-                        &tx.labels,
-                        labels_editing,
-                    ))
-                    .push(psbt::outputs_view(
-                        &tx.psbt.unsigned_tx,
-                        network,
-                        &tx.change_indexes,
-                        &tx.labels,
-                        labels_editing,
-                        tx.is_single_payment().is_some(),
-                        false,
-                    )),
-            )
-            .push(if saved {
-                Row::new()
-                    .push(
-                        button::secondary(None, "Delete")
-                            .width(Length::Fixed(200.0))
-                            .on_press_maybe(if currently_signing {
-                                None
-                            } else {
-                                Some(Message::Spend(SpendTxMessage::Delete))
-                            }),
-                    )
-                    .width(Length::Fill)
-            } else {
-                Row::new()
-                    .push(
-                        button::secondary(None, "< Previous")
-                            .width(Length::Fixed(150.0))
-                            .on_press_maybe(if currently_signing {
-                                None
-                            } else {
-                                Some(Message::Previous)
-                            }),
-                    )
-                    .push(Space::with_width(Length::Fill))
-                    .push(
-                        button::secondary(None, "Save")
-                            .width(Length::Fixed(150.0))
-                            .on_press_maybe(if currently_signing {
-                                None
-                            } else {
-                                Some(Message::Spend(SpendTxMessage::Save))
-                            }),
-                    )
-                    .width(Length::Fill)
-            }),
+        content,
     )
 }
 
