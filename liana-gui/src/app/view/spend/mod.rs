@@ -437,18 +437,14 @@ pub fn recipient_view<'a>(
                 (!is_max_selected || btc_amt.is_some())
                     .then_some(p1_bold(format!("~{}", conv.currency()))),
             )
-            .push(Space::with_width(Length::Fixed(5.0)))
-            .push(if is_max_selected {
-                let fiat_from_btc = btc_amt
-                    .map(|a| conv.convert(a))
-                    .map(|fa| fa.to_formatted_string())
-                    .unwrap_or_default();
-                Container::new(
-                    text(fiat_from_btc)
-                        .size(P1_SIZE)
-                        .style(theme::text::secondary),
-                )
-                .width(Length::Fill)
+            .push(Space::with_width(5))
+            .push_maybe(if is_max_selected {
+                // fiat is processed from btc
+                btc_amt.map(|a| {
+                    let a = conv.convert(a).to_formatted_string();
+                    Container::new(text(a).size(P1_SIZE).style(theme::text::secondary))
+                        .width(Length::Fill)
+                })
             } else {
                 let conv = *conv;
                 // The particular form shown depends on whether the user has entered a fiat amount or
@@ -465,21 +461,25 @@ pub fn recipient_view<'a>(
                 } else {
                     &form::Value::default()
                 };
-                form::Form::new_trimmed(
-                    &format!("Enter amount in {}", conv.currency()),
-                    fiat_form,
-                    move |msg| CreateSpendMessage::RecipientFiatAmountEdited(index, msg, conv),
+                (!is_max_selected || btc_amt.is_some()).then_some(
+                    form::Form::new_trimmed(
+                        &format!("Enter amount in {}", conv.currency()),
+                        fiat_form,
+                        move |msg| CreateSpendMessage::RecipientFiatAmountEdited(index, msg, conv),
+                    )
+                    .size(P1_SIZE)
+                    .padding(10)
+                    .into_container(),
                 )
-                .size(P1_SIZE)
-                .padding(10)
-                .into_container()
             })
-            .push(tooltip::Tooltip::new(
-                icon::tooltip_icon(),
-                conv.to_container_summary(),
-                tooltip::Position::Bottom,
-            ))
-            .push(Space::with_width(Length::Fixed(10.0)))
+            .push_maybe(
+                (!is_max_selected || btc_amt.is_some()).then_some(tooltip::Tooltip::new(
+                    icon::tooltip_icon(),
+                    conv.to_container_summary(),
+                    tooltip::Position::Bottom,
+                )),
+            )
+            .push(Space::with_width(10))
     });
 
     // The MAX option cannot be edited for recovery recipients.
