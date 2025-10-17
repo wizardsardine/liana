@@ -361,158 +361,152 @@ pub fn recipient_view<'a>(
 ) -> Element<'a, CreateSpendMessage> {
     let btc_amt = Amount::from_str_in(&amount.value, Denomination::Bitcoin).ok();
 
+    // Recipient for recovery cannot be deleted.
+    let header = (!is_recovery).then_some(
+        Row::new().push(Space::with_width(Length::Fill)).push(
+            Button::new(icon::cross_icon())
+                .style(theme::button::transparent)
+                .on_press(CreateSpendMessage::DeleteRecipient(index))
+                .width(Length::Shrink),
+        ),
+    );
+
+    let address_row = Row::new()
+        .align_y(Alignment::Start)
+        .spacing(10)
+        .push(
+            Container::new(p1_bold("Address"))
+                .align_x(alignment::Horizontal::Right)
+                .padding(10)
+                .width(130),
+        )
+        .push(
+            form::Form::new_trimmed("Address", address, move |msg| {
+                CreateSpendMessage::RecipientEdited(index, "address", msg)
+            })
+            .warning("Invalid address (maybe it is for another network?)")
+            .size(P1_SIZE)
+            .padding(10),
+        );
+
+    let label_row = Row::new()
+        .align_y(Alignment::Start)
+        .spacing(10)
+        .push(
+            Container::new(p1_bold("Description"))
+                .align_x(alignment::Horizontal::Right)
+                .padding(10)
+                .width(130),
+        )
+        .push(
+            form::Form::new("Payment label", label, move |msg| {
+                CreateSpendMessage::RecipientEdited(index, "label", msg)
+            })
+            .warning("Label length is too long (> 100 char)")
+            .size(P1_SIZE)
+            .padding(10),
+        );
+
+    // Amount row
+    let btc_label = Container::new(p1_bold("Amount (BTC)"))
+        .padding(10)
+        .align_x(alignment::Horizontal::Right)
+        .width(130);
+    let btc_input = if is_max_selected {
+        let amount_txt = btc_amt
+            .map(|a| a.to_formatted_string())
+            .unwrap_or(amount.value.clone());
+        Container::new(text(amount_txt).size(P1_SIZE).style(theme::text::secondary))
+            .width(Length::Fill)
+    } else {
+        form::Form::new_amount_btc("0.001 (in BTC)", amount, move |msg| {
+            CreateSpendMessage::RecipientEdited(index, "amount", msg)
+        })
+        .warning("Invalid amount. (Note amounts lower than 0.000005 BTC are invalid.)")
+        .size(P1_SIZE)
+        .padding(10)
+        .into_container()
+    };
+
+    let fiat_price = fiat_converter.map(|conv| {
+        Row::new()
+            .align_y(Alignment::Center)
+            .spacing(5)
+            .push(Space::with_width(20)) // add some space between BTC and fiat amounts
+            .push_maybe(
+                (!is_max_selected || btc_amt.is_some())
+                    .then_some(p1_bold(format!("~{}", conv.currency()))),
+            )
+            .push(Space::with_width(Length::Fixed(5.0)))
+            .push(if is_max_selected {
+                let fiat_from_btc = btc_amt
+                    .map(|a| conv.convert(a))
+                    .map(|fa| fa.to_formatted_string())
+                    .unwrap_or_default();
+                Container::new(
+                    text(fiat_from_btc)
+                        .size(P1_SIZE)
+                        .style(theme::text::secondary),
+                )
+                .width(Length::Fill)
+            } else {
+                let conv = *conv;
+                // The particular form shown depends on whether the user has entered a fiat amount or
+                // if we are instead converting the BTC amount.
+                let fiat_form = if let Some(val) = fiat_form_value {
+                    val
+                } else if let Some(btc_amt) = btc_amt {
+                    let fa = conv.convert(btc_amt);
+                    &form::Value {
+                        value: fa.to_rounded_string(), // required decimal places for currency
+                        warning: None,
+                        valid: true,
+                    }
+                } else {
+                    &form::Value::default()
+                };
+                form::Form::new_trimmed(
+                    &format!("Enter amount in {}", conv.currency()),
+                    fiat_form,
+                    move |msg| CreateSpendMessage::RecipientFiatAmountEdited(index, msg, conv),
+                )
+                .size(P1_SIZE)
+                .padding(10)
+                .into_container()
+            })
+            .push(tooltip::Tooltip::new(
+                icon::tooltip_icon(),
+                conv.to_container_summary(),
+                tooltip::Position::Bottom,
+            ))
+            .push(Space::with_width(Length::Fixed(10.0)))
+    });
+
+    // The MAX option cannot be edited for recovery recipients.
+    let max = (!is_recovery).then_some(tooltip::Tooltip::new(
+        checkbox("MAX", is_max_selected)
+            .on_toggle(move |_| CreateSpendMessage::SendMaxToRecipient(index)),
+        // Add spaces at end so that text is padded at screen edge.
+        "Total amount remaining after paying fee and any other recipients     ",
+        tooltip::Position::Bottom,
+    ));
+
+    let amount_row = Row::new()
+        .align_y(Alignment::Center)
+        .spacing(10)
+        .push(btc_label)
+        .push(btc_input)
+        .push_maybe(fiat_price)
+        .push_maybe(max)
+        .width(Length::Fill);
+
     Container::new(
         Column::new()
-            .spacing(10)
-            .push_maybe(
-                // Recipient for recovery cannot be deleted.
-                (!is_recovery).then_some(
-                    Row::new().push(Space::with_width(Length::Fill)).push(
-                        Button::new(icon::cross_icon())
-                            .style(theme::button::transparent)
-                            .on_press(CreateSpendMessage::DeleteRecipient(index))
-                            .width(Length::Shrink),
-                    ),
-                ),
-            )
-            .push(
-                Row::new()
-                    .align_y(Alignment::Start)
-                    .spacing(10)
-                    .push(
-                        Container::new(p1_bold("Address"))
-                            .align_x(alignment::Horizontal::Right)
-                            .padding(10)
-                            .width(Length::Fixed(130.0)),
-                    )
-                    .push(
-                        form::Form::new_trimmed("Address", address, move |msg| {
-                            CreateSpendMessage::RecipientEdited(index, "address", msg)
-                        })
-                        .warning("Invalid address (maybe it is for another network?)")
-                        .size(P1_SIZE)
-                        .padding(10),
-                    ),
-            )
-            .push(
-                Row::new()
-                    .align_y(Alignment::Start)
-                    .spacing(10)
-                    .push(
-                        Container::new(p1_bold("Description"))
-                            .align_x(alignment::Horizontal::Right)
-                            .padding(10)
-                            .width(Length::Fixed(130.0)),
-                    )
-                    .push(
-                        form::Form::new("Payment label", label, move |msg| {
-                            CreateSpendMessage::RecipientEdited(index, "label", msg)
-                        })
-                        .warning("Label length is too long (> 100 char)")
-                        .size(P1_SIZE)
-                        .padding(10),
-                    ),
-            )
-            .push(
-                Row::new()
-                    .align_y(Alignment::Center)
-                    .spacing(10)
-                    .push(
-                        Container::new(p1_bold("Amount (BTC)"))
-                            .padding(10)
-                            .align_x(alignment::Horizontal::Right)
-                            .width(Length::Fixed(130.0)),
-                    )
-                    .push(
-                        Row::new()
-                            .align_y(Alignment::Center)
-                            .spacing(5)
-                            .push(if is_max_selected {
-                                let amount_txt = btc_amt
-                                    .map(|a| a.to_formatted_string())
-                                    .unwrap_or(amount.value.clone());
-                                Container::new(
-                                    text(amount_txt).size(P1_SIZE).style(theme::text::secondary),
-                                )
-                                .width(Length::Fill)
-                            } else {
-                                form::Form::new_amount_btc("0.001 (in BTC)", amount, move |msg| {
-                                    CreateSpendMessage::RecipientEdited(index, "amount", msg)
-                                })
-                                .warning(
-                                    "Invalid amount. (Note amounts lower than 0.000005 BTC are invalid.)",
-                                )
-                                .size(P1_SIZE)
-                                .padding(10)
-                                .into_container()
-                            })
-                            .push_maybe(fiat_converter.map(|conv| {
-                                Row::new()
-                                    .align_y(Alignment::Center)
-                                    .spacing(5)
-                                    .push(Space::with_width(Length::Fixed(20.0))) // add some space between BTC and fiat amounts
-                                    .push(p1_bold(format!("~{}", conv.currency())))
-                                    .push(Space::with_width(Length::Fixed(5.0)))
-                                    .push(if is_max_selected {
-                                        let fiat_from_btc = btc_amt
-                                            .map(|a| conv.convert(a))
-                                            .map(|fa| fa.to_formatted_string())
-                                            .unwrap_or_default();
-                                        Container::new(
-                                            text(fiat_from_btc)
-                                                .size(P1_SIZE)
-                                                .style(theme::text::secondary),
-                                        )
-                                        .width(Length::Fill)
-                                    } else {
-                                        let conv = *conv;
-                                        // The particular form shown depends on whether the user has entered a fiat amount or
-                                        // if we are instead converting the BTC amount.
-                                        let fiat_form = if let Some(val) = fiat_form_value {
-                                            val
-                                        } else if let Some(btc_amt) = btc_amt {
-                                            let fa = conv.convert(btc_amt);
-                                            &form::Value {
-                                                value: fa.to_rounded_string(), // required decimal places for currency
-                                                warning: None,
-                                                valid: true,
-                                            }
-                                        } else {
-                                            &form::Value::default()
-                                        };
-                                        form::Form::new_trimmed(
-                                            &format!("Enter amount in {}", conv.currency()),
-                                            fiat_form,
-                                            move |msg| {
-                                                CreateSpendMessage::RecipientFiatAmountEdited(
-                                                    index, msg, conv,
-                                                )
-                                            },
-                                        )
-                                        .size(P1_SIZE)
-                                        .padding(10)
-                                        .into_container()
-                                    })
-                                    .push(tooltip::Tooltip::new(
-                                        icon::tooltip_icon(),
-                                        conv.to_container_summary(),
-                                        tooltip::Position::Bottom,
-                                    ))
-                                    .push(Space::with_width(Length::Fixed(10.0)))
-                            })),
-                    )
-                    .push_maybe(
-                        // The MAX option cannot be edited for recovery recipients.
-                        (!is_recovery).then_some(tooltip::Tooltip::new(
-                            checkbox("MAX", is_max_selected)
-                                .on_toggle(move |_| CreateSpendMessage::SendMaxToRecipient(index)),
-                            // Add spaces at end so that text is padded at screen edge.
-                            "Total amount remaining after paying fee and any other recipients     ",
-                            tooltip::Position::Bottom,
-                        )),
-                    )
-                    .width(Length::Fill),
-            ),
+            .push_maybe(header)
+            .push(address_row)
+            .push(label_row)
+            .push(amount_row)
+            .spacing(10),
     )
     .padding(20)
     .style(theme::card::simple)
