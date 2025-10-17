@@ -17,8 +17,8 @@ pub use crate::database::{CoinStatus, LabelItem};
 use liana::{
     descriptors,
     spend::{
-        self, create_spend, AddrInfo, AncestorInfo, CandidateCoin, CreateSpendRes,
-        SpendCreationError, SpendOutputAddress, SpendTxFees, TxGetter,
+        self, create_spend, fetch_funding_transactions, AddrInfo, AncestorInfo, CandidateCoin,
+        CreateSpendRes, SpendCreationError, SpendOutputAddress, SpendTxFees, TxGetter,
     },
 };
 
@@ -28,7 +28,7 @@ use utils::{
 };
 
 use std::{
-    collections::{hash_map, HashMap, HashSet},
+    collections::{hash_map, BTreeMap, HashMap, HashSet},
     convert::TryInto,
     fmt,
     sync::{self, mpsc},
@@ -40,6 +40,7 @@ use miniscript::{
         self, address,
         bip32::{self, ChildNumber},
         psbt::Psbt,
+        Transaction, Txid,
     },
     psbt::PsbtExt,
 };
@@ -636,6 +637,9 @@ impl DaemonControl {
         let mut db_conn = self.db.connection();
         let mut tx_getter = DbTxGetter::new(&self.db);
 
+        let funding_transactions = fetch_funding_transactions(coins_outpoints, &mut tx_getter)
+            .ok_or(CommandError::SpendCreation(SpendCreationError::Transaction))?;
+
         // Prepare the destination addresses.
         let mut destinations_checked = Vec::with_capacity(destinations.len());
         for (address, value_sat) in destinations {
@@ -754,11 +758,12 @@ impl DaemonControl {
         } = match create_spend(
             &self.config.main_descriptor,
             &self.secp,
-            &mut tx_getter,
+            &funding_transactions,
             &destinations_checked,
             &candidate_coins,
             SpendTxFees::Regular(feerate_vb),
-            change_address,
+            Some(change_address),
+            None,
             locktime,
         ) {
             Ok(res) => res,
@@ -1135,16 +1140,26 @@ impl DaemonControl {
         // RBF rule 4.
         let replaced_fee = descendant_fees.to_sat();
         let locktime = self.anti_fee_sniping_locktime();
+
+        let funding_transactions: BTreeMap<Txid, Transaction>;
+        {
+            let coins: Vec<_> = candidate_coins.iter().map(|cc| cc.outpoint).collect();
+
+            funding_transactions = fetch_funding_transactions(&coins, &mut tx_getter)
+                .ok_or(CommandError::SpendCreation(SpendCreationError::Transaction))?;
+        }
+
         // This loop can have up to 2 iterations in the case of cancel and otherwise only 1.
         loop {
             match create_spend(
                 &self.config.main_descriptor,
                 &self.secp,
-                &mut tx_getter,
+                &funding_transactions,
                 &destinations,
                 &candidate_coins,
                 SpendTxFees::Rbf(feerate_vb, replaced_fee),
-                change_address.clone(),
+                Some(change_address.clone()),
+                None,
                 locktime,
             ) {
                 Ok(CreateSpendRes {
@@ -1268,6 +1283,9 @@ impl DaemonControl {
         let mut db_conn = self.db.connection();
         let sweep_addr = self.spend_addr(&mut db_conn, self.validate_address(address)?);
 
+        let funding_transactions = fetch_funding_transactions(coins_outpoints, &mut tx_getter)
+            .ok_or(CommandError::SpendCreation(SpendCreationError::Transaction))?;
+
         // Query the coins that we can spend through the specified recovery path (if no recovery
         // path specified, use the first available one) from the database.
         let current_height = self.bitcoin.chain_tip().height;
@@ -1321,11 +1339,12 @@ impl DaemonControl {
         } = create_spend(
             &self.config.main_descriptor,
             &self.secp,
-            &mut tx_getter,
+            &funding_transactions,
             &[], // No destination, only the change address.
             &sweepable_coins,
             SpendTxFees::Regular(feerate_vb),
-            sweep_addr,
+            Some(sweep_addr),
+            None,
             locktime,
         )?;
         if has_change {
