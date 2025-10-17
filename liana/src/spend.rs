@@ -15,10 +15,10 @@ use bdk_coin_select::{
 use miniscript::bitcoin::{
     self,
     absolute::{Height, LockTime},
-    bip32,
+    bip32::{self, ChildNumber},
     constants::WITNESS_SCALE_FACTOR,
     psbt::{Input as PsbtIn, Output as PsbtOut, Psbt},
-    secp256k1,
+    secp256k1, Network, Transaction, Txid,
 };
 use serde::{Deserialize, Serialize};
 
@@ -56,6 +56,9 @@ pub enum SpendCreationError {
     SanityCheckFailure(Psbt),
     FetchingTransaction(bitcoin::OutPoint),
     CoinSelection(InsufficientFunds),
+    ChangeAndMax,
+    ChangeAddress,
+    Transaction,
 }
 
 impl fmt::Display for SpendCreationError {
@@ -85,6 +88,11 @@ impl fmt::Display for SpendCreationError {
                 "BUG! Please report this. Failed sanity checks for PSBT '{}'.",
                 psbt
             ),
+            SpendCreationError::ChangeAndMax => write!(f, "Both `change` and `max` address are filled, \
+                only one of this arguments must be use."),
+            SpendCreationError::ChangeAddress => write!(f, "Transaction has a change amount but no `change` \
+                or `max` address filled."),
+            SpendCreationError::Transaction => write!(f, "A transaction funding a coin is missing."),
         }
     }
 }
@@ -92,8 +100,8 @@ impl fmt::Display for SpendCreationError {
 impl std::error::Error for SpendCreationError {}
 
 // Sanity check the value of a transaction output.
-fn check_output_value(value: bitcoin::Amount) -> Result<(), SpendCreationError> {
-    if value > bitcoin::Amount::MAX_MONEY || value.to_sat() < DUST_OUTPUT_SATS {
+fn check_output_value(value: bitcoin::Amount, allow_dust: bool) -> Result<(), SpendCreationError> {
+    if value > bitcoin::Amount::MAX_MONEY || (value.to_sat() < DUST_OUTPUT_SATS && !allow_dust) {
         Err(SpendCreationError::InvalidOutputValue(value))
     } else {
         Ok(())
@@ -609,11 +617,12 @@ pub struct CreateSpendRes {
 pub fn create_spend(
     main_descriptor: &descriptors::LianaDescriptor,
     secp: &secp256k1::Secp256k1<secp256k1::VerifyOnly>,
-    tx_getter: &mut impl TxGetter,
+    txs: &BTreeMap<Txid, Transaction>,
     destinations: &[(SpendOutputAddress, bitcoin::Amount)],
     candidate_coins: &[CandidateCoin],
     fees: SpendTxFees,
-    change_addr: SpendOutputAddress,
+    change: Option<SpendOutputAddress>,
+    max: Option<SpendOutputAddress>,
     locktime: LockTime,
 ) -> Result<CreateSpendRes, SpendCreationError> {
     // This method does quite a few things. In addition, we support different modes (coin control
@@ -630,6 +639,9 @@ pub fn create_spend(
     // 3. Add the selected coins as inputs to the transaction.
     // 4. Finalize the PSBT and sanity check it before returning it.
 
+    if change.is_some() && max.is_some() {
+        return Err(SpendCreationError::ChangeAndMax);
+    }
     let mut warnings = Vec::new();
     let (feerate_vb, replaced_fee) = match fees {
         SpendTxFees::Regular(feerate) => (feerate, None),
@@ -651,7 +663,7 @@ pub fn create_spend(
     // sanity check each output's value.
     let mut psbt_outs = Vec::with_capacity(destinations.len());
     for (address, amount) in destinations {
-        check_output_value(*amount)?;
+        check_output_value(*amount, false)?;
 
         tx.output.push(bitcoin::TxOut {
             value: *amount,
@@ -673,13 +685,17 @@ pub fn create_spend(
     }
     assert_eq!(tx.output.is_empty(), is_self_send);
 
-    // Now compute whether we'll need a change output while automatically selecting coins to be
-    // used as input if necessary.
-    // We need to get the size of a potential change output to select coins / determine whether
-    // we should include one, so get the change address and create a dummy txo for this purpose.
-    let mut change_txo = bitcoin::TxOut {
+    // We need a dummy change TxOut for the coin selection algorithm, we use the change
+    // address at index 0 at is it never used and is safer to use than a real dummy
+    // address, as the funds can never be lost.
+    let dummy_script = main_descriptor
+        .change_descriptor()
+        .derive(ChildNumber::from_normal_idx(0).expect("hardcoded"), secp)
+        .address(Network::Bitcoin) // It's fine to use any network as we just need the script
+        .script_pubkey();
+    let dummy_change_txo = bitcoin::TxOut {
         value: bitcoin::Amount::MAX,
-        script_pubkey: change_addr.addr.script_pubkey(),
+        script_pubkey: dummy_script.clone(),
     };
     // If no candidates have relative locktime, then we should use the primary spending path.
     // Note we set this value before actually selecting the coins, but we expect either all
@@ -715,7 +731,7 @@ pub fn create_spend(
         select_coins_for_spend(
             candidate_coins,
             tx.clone(),
-            change_txo.clone(),
+            dummy_change_txo,
             feerate_vb,
             replaced_fee,
             max_sat_wu,
@@ -723,17 +739,34 @@ pub fn create_spend(
         )
         .map_err(SpendCreationError::CoinSelection)?
     };
+    // We allow to create a dust output if MAX is selected
+    let dust_amout = if max.is_some() { 0 } else { DUST_OUTPUT_SATS };
     // If necessary, add a change output.
     // For a self-send, coin selection will only find solutions with change and will otherwise
     // return an error. In any case, the PSBT sanity check will catch a transaction with no outputs.
-    let has_change = change_amount.to_sat() > 0;
-    if has_change {
-        check_output_value(change_amount)?;
+    let has_change = change_amount.to_sat() > dust_amout;
+    let mut max_selected = false;
+    let change_address = if let Some(change) = change {
+        Some(change)
+    } else if let Some(max) = max {
+        max_selected = true;
+        Some(max)
+    } else {
+        None
+    };
+    if has_change && change_address.is_none() {
+        return Err(SpendCreationError::ChangeAddress);
+    }
+    if let Some(change) = change_address {
+        // NOTE: Here we intentionnaly allow creating dust if max selected
+        check_output_value(change_amount, max_selected)?;
 
         // If the change address is ours, tell the signers by setting the BIP32 derivations in the
         // PSBT output.
         let mut psbt_out = PsbtOut::default();
-        if let Some(AddrInfo { index, is_change }) = change_addr.info {
+        if let Some(AddrInfo { index, is_change }) = change.info {
+            // BUG: don't we also fill deriv informations for external if
+            // we get corrupted AddrInfo here?
             let desc = if is_change {
                 main_descriptor.change_descriptor()
             } else {
@@ -744,7 +777,10 @@ pub fn create_spend(
         }
 
         // TODO: shuffle once we have Taproot
-        change_txo.value = change_amount;
+        let change_txo = bitcoin::TxOut {
+            value: change_amount,
+            script_pubkey: change.addr.script_pubkey(),
+        };
         tx.output.push(change_txo);
         psbt_outs.push(psbt_out);
     } else if max_change_amount.to_sat() > 0 {
@@ -781,7 +817,11 @@ pub fn create_spend(
             script_pubkey: coin_desc.script_pubkey(),
         });
         if !main_descriptor.is_taproot() {
-            psbt_in.non_witness_utxo = tx_getter.get_tx(&cand.outpoint.txid);
+            let funding_tx = txs
+                .get(&cand.outpoint.txid)
+                .ok_or(SpendCreationError::Transaction)?
+                .clone();
+            psbt_in.non_witness_utxo = Some(funding_tx);
         }
         psbt_ins.push(psbt_in);
     }
@@ -796,6 +836,10 @@ pub fn create_spend(
         inputs: psbt_ins,
         outputs: psbt_outs,
     };
+    // check the dummy script is not present in an output
+    for txout in &psbt.unsigned_tx.output {
+        assert_ne!(txout.script_pubkey, dummy_script);
+    }
     sanity_check_psbt(main_descriptor, &psbt, use_primary_path)?;
     // TODO: maybe check for common standardness rules (max size, ..)?
 
@@ -804,6 +848,17 @@ pub fn create_spend(
         has_change,
         warnings,
     })
+}
+
+pub fn fetch_funding_transactions(
+    outpoints: &[bitcoin::OutPoint],
+    tx_getter: &mut dyn TxGetter,
+) -> Option<BTreeMap<Txid, Transaction>> {
+    let mut funding_txs = BTreeMap::new();
+    for op in outpoints {
+        funding_txs.insert(op.txid, tx_getter.get_tx(&op.txid)?);
+    }
+    Some(funding_txs)
 }
 
 #[cfg(test)]
