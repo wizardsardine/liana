@@ -9,7 +9,6 @@ use iced_webview::{
 };
 use liana_ui::widget::Element;
 
-use crate::app::buysell::onramper;
 use crate::app::view::buysell::{BuySellFlowState, NativePage};
 
 use crate::{
@@ -48,8 +47,17 @@ fn init_webview() -> WebView<iced_webview::Ultralight, WebviewMessage> {
 
 impl State for BuySellPanel {
     fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, ViewMessage> {
-        // Return the buy/sell view - dashboard wrapper will be applied by app/mod.rs
-        view::dashboard(&app::Menu::BuySell, cache, None, self.view())
+        let inner = view::dashboard(&app::Menu::BuySell, cache, None, self.view());
+
+        let overlay = match &self.modal {
+            super::receive::Modal::VerifyAddress(m) => m.view(),
+            super::receive::Modal::ShowQrCode(m) => m.view(),
+            super::receive::Modal::None => return inner,
+        };
+
+        liana_ui::widget::modal::Modal::new(inner, overlay)
+            .on_blur(Some(ViewMessage::Close))
+            .into()
     }
 
     fn reload(
@@ -74,19 +82,57 @@ impl State for BuySellPanel {
     fn update(
         &mut self,
         daemon: Arc<dyn Daemon + Sync + Send>,
-        _cache: &Cache,
+        cache: &Cache,
         message: Message,
     ) -> Task<Message> {
         // Handle global navigation for native flow (Previous)
-        if let Message::View(ViewMessage::Previous) = &message {
-            if let BuySellFlowState::Mavapay(ref mut state) = self.flow_state {
-                match state.native_page {
-                    NativePage::Register => state.native_page = NativePage::AccountSelect,
-                    NativePage::VerifyEmail => state.native_page = NativePage::Register,
-                    _ => {}
+        match &message {
+            Message::View(ViewMessage::Previous) => {
+                if let BuySellFlowState::Mavapay(ref mut state) = self.flow_state {
+                    match state.native_page {
+                        NativePage::Register => state.native_page = NativePage::AccountSelect,
+                        NativePage::VerifyEmail => state.native_page = NativePage::Register,
+                        _ => {}
+                    }
                 }
+                return Task::none();
             }
-            return Task::none();
+            Message::View(ViewMessage::Select(_)) => {
+                let Some(la) = &self.generated_address else {
+                    return Task::none();
+                };
+
+                self.modal =
+                    super::receive::Modal::VerifyAddress(super::receive::VerifyAddressModal::new(
+                        self.data_dir.clone(),
+                        self.wallet.clone(),
+                        cache.network,
+                        la.address.clone(),
+                        la.index,
+                    ));
+
+                return Task::none();
+            }
+            Message::View(ViewMessage::ShowQrCode(_)) => {
+                let Some(la) = &self.generated_address else {
+                    return Task::none();
+                };
+
+                if let Some(modal) = super::receive::ShowQrCodeModal::new(&la.address, la.index) {
+                    self.modal = super::receive::Modal::ShowQrCode(modal);
+                }
+
+                return Task::none();
+            }
+            Message::View(ViewMessage::Next) => {
+                log::info!("[BUYSELL] Loaded...");
+                return Task::none();
+            }
+            Message::View(ViewMessage::Close) => {
+                self.modal = super::receive::Modal::None;
+                return Task::none();
+            }
+            _ => (),
         }
 
         let Message::View(ViewMessage::BuySell(message)) = message else {
@@ -455,9 +501,23 @@ impl State for BuySellPanel {
                 self.set_error(format!("Login failed: {}", err));
             }
 
+            // session initialization
+            BuySellMessage::CreateSession => {
+                return self
+                    .start_session()
+                    .map(|m| Message::View(ViewMessage::BuySell(m)));
+            }
+            BuySellMessage::SessionError(error) => {
+                self.set_error(error);
+            }
+
             // for creating new addresses for buysell coin reception
+            BuySellMessage::SetBuyOrSell(bs) => self.buy_or_sell = Some(bs),
+            BuySellMessage::SetFlowState(state) => self.flow_state = state,
+
             BuySellMessage::ResetWidget => {
-                self.generated_address = None;
+                self.flow_state = BuySellFlowState::Initialization;
+                self.buy_or_sell = None;
                 self.error = None;
 
                 if let Some(page) = self.active_page.take() {
@@ -471,6 +531,7 @@ impl State for BuySellPanel {
 
                 self.webview = None;
             }
+
             BuySellMessage::CreateNewAddress => {
                 return Task::perform(
                     async move { daemon.get_new_address().await },
@@ -489,52 +550,6 @@ impl State for BuySellPanel {
                 )
             }
             BuySellMessage::AddressCreated(addresses) => self.generated_address = Some(addresses),
-
-            // International provider - Onramper only
-            BuySellMessage::StartOnramperSession => {
-                use crate::services::fiat::currency_for_country;
-
-                // Build Onramper widget URL and open in embedded webview
-                // Use detected country to determine currency
-                let iso_code = self
-                    .detected_country_iso
-                    .clone()
-                    .unwrap_or_else(|| "US".to_string());
-                let currency = currency_for_country(&iso_code).to_string();
-
-                let Some(view::buysell::panel::LabelledAddress { address, .. }) =
-                    &self.generated_address
-                else {
-                    return Task::none();
-                };
-
-                // prepare parameters
-                let address = address.to_string();
-                let mode = match self.state {
-                    view::buysell::panel::PanelState::Buy => "buy",
-                    view::buysell::panel::PanelState::Sell => "sell",
-                };
-
-                if let Some(url) =
-                    onramper::create_widget_url(&currency, Some(address).as_deref(), &mode)
-                {
-                    tracing::info!("🌍 [ONRAMPER] Opening URL: {}", url);
-
-                    return Task::done(Message::View(ViewMessage::BuySell(
-                        BuySellMessage::WebviewOpenUrl(url),
-                    )));
-                } else {
-                    tracing::error!("🌍 [ONRAMPER] API key not configured");
-                    self.set_error(
-                        "Onramper API key not configured. Please set `ONRAMPER_API_KEY` in .env"
-                            .to_string(),
-                    );
-                }
-            }
-
-            BuySellMessage::SessionError(error) => {
-                self.set_error(error);
-            }
 
             BuySellMessage::MavapayDashboard => {
                 if let BuySellFlowState::Mavapay(ref mut state) = self.flow_state {

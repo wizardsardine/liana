@@ -214,9 +214,11 @@ pub enum BuySellMessage {
     MavapayTransactionsError(String),
 
     // creates a webview session on onramper
-    StartOnramperSession,
+    CreateSession,
     SessionError(String),
     ResetWidget,
+    SetBuyOrSell(super::buysell::panel::BuyOrSell),
+    SetFlowState(super::buysell::flow_state::BuySellFlowState),
     CreateNewAddress,
     AddressCreated(super::buysell::panel::LabelledAddress),
 

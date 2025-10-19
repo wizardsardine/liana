@@ -7,17 +7,12 @@ use crate::services::registration::RegistrationClient;
 /// Represents the runtime state of the Buy/Sell panel based on geolocation detection
 #[derive(Debug, Clone)]
 pub enum BuySellFlowState {
-    /// Before country detection completes
-    DetectingCountry,
-
-    /// African users: Mavapay native login/registration flow
+    /// IP geolocation and buy/sell pick
+    Initialization,
+    /// Nigeria, Kenya and South Africa, ie Mavapay supported providers
     Mavapay(MavapayFlowState),
-
-    /// International users: Onramper embedded webview
-    Onramper(OnramperFlowState),
-
-    /// Geolocation detection failed - show Onramper as fallback
-    DetectionFailed,
+    /// For any all countries not supported by Mavapay, but supported by Onramper
+    Onramper,
 }
 
 /// State specific to Mavapay flow
@@ -121,12 +116,6 @@ impl std::fmt::Display for MavapayPaymentMethod {
     }
 }
 
-/// State specific to International (Onramper) flow
-#[derive(Debug, Clone)]
-pub struct OnramperFlowState {
-    // Onramper doesn't need a client - we build the URL directly
-}
-
 /// Pages in the native African flow
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NativePage {
@@ -207,20 +196,8 @@ impl Default for MavapayFlowState {
     }
 }
 
-impl OnramperFlowState {
-    pub fn new() -> Self {
-        Self {}
-    }
-}
-
-impl Default for OnramperFlowState {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl Default for BuySellFlowState {
     fn default() -> Self {
-        Self::DetectingCountry
+        Self::Initialization
     }
 }

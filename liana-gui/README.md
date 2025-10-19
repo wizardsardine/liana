@@ -16,11 +16,11 @@ In addition, if you want to build the project from source, you will need:
 
 ## Development
 
-To run the native with buy/sell feature, simply run:
-cargo run --release --features buysell
+To simply run:
+cargo run --release --bin coincube-vault
 
-For onramper:
-env ONRAMPER_API_KEY="..." ULTRALIGHT_RESOURCES_DIR="path/to/ultralight-free-sdk-1.4.0/resources" cargo run --release --features dev-onramp --bin coincube-vault
+To run the native with buy/sell feature, simply run:
+env ONRAMPER_API_KEY="..." ULTRALIGHT_RESOURCES_DIR="path/to/ultralight-free-sdk-1.4.0/resources" cargo run --release --features buysell --bin coincube-vault
 
 ## Usage
 

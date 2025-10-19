@@ -18,6 +18,13 @@ pub const MEDIUM: Font = Font {
     stretch: Stretch::Normal,
 };
 
+pub const ITALIC: Font = Font {
+    family: Family::Name("IBM Plex Sans"),
+    weight: Weight::Light,
+    style: iced::font::Style::Italic,
+    stretch: Stretch::Normal,
+};
+
 pub const REGULAR: Font = Font::with_name("IBM Plex Sans");
 
 pub const BOLD_BYTES: &[u8] = include_bytes!("../static/fonts/IBMPlexSans-Bold.ttf");

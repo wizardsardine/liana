@@ -59,6 +59,10 @@ pub fn bitcoin_icon() -> Text<'static> {
     bootstrap_icon('\u{F635}')
 }
 
+pub fn dollar_icon() -> Text<'static> {
+    bootstrap_icon('\u{F636}')
+}
+
 pub fn globe_icon<'a>() -> Text<'a> {
     bootstrap_icon('\u{F91B}')
 }
@@ -165,6 +169,10 @@ pub fn hdd_icon() -> Text<'static> {
 
 pub fn enter_box_icon() -> Text<'static> {
     bootstrap_icon('\u{F1BE}')
+}
+
+pub fn qr_code_icon() -> Text<'static> {
+    bootstrap_icon('\u{F6AE}')
 }
 
 const ICONEX_ICONS: Font = Font::with_name("Untitled1");
