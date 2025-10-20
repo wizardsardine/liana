@@ -82,7 +82,7 @@ impl Installer {
         if self.current > 0 {
             self.current -= 1;
         } else {
-            return Task::perform(async move { network }, Message::BackToLauncher);
+            return Task::done(Message::BackToLauncher(network));
         }
         // skip the previous step according to the current context.
         while self
@@ -94,7 +94,7 @@ impl Installer {
             if self.current > 0 {
                 self.current -= 1;
             } else {
-                return Task::perform(async move { network }, Message::BackToLauncher);
+                return Task::done(Message::BackToLauncher(network));
             }
         }
 
@@ -453,7 +453,7 @@ pub async fn install_local_wallet(
     info!("daemon checked");
 
     // Step needed because of ValueAfterTable error in the toml serialize implementation.
-    let daemon_config = toml::Value::try_from(&cfg)
+    let daemon_config_toml = toml::to_string_pretty(&cfg)
         .map_err(|e| Error::Unexpected(format!("Failed to serialize daemon config: {}", e)))?;
 
     // create lianad configuration file
@@ -462,7 +462,7 @@ pub async fn install_local_wallet(
             .lianad_data_directory(&wallet_settings.wallet_id())
             .path()
             .join("daemon.toml"),
-        daemon_config.to_string().as_bytes(),
+        daemon_config_toml.as_bytes(),
     )?;
 
     info!("Daemon configuration file created");

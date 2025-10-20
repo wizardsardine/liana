@@ -105,14 +105,14 @@ impl Panels {
                 cache.network,
             ),
             settings: state::SettingsState::new(
-                data_dir,
+                data_dir.clone(),
                 wallet.clone(),
                 daemon_backend,
                 internal_bitcoind.is_some(),
                 config.clone(),
             ),
             #[cfg(feature = "buysell")]
-            buy_sell: crate::app::view::buysell::BuySellPanel::new(cache.network),
+            buy_sell: crate::app::view::buysell::BuySellPanel::new(cache.network, wallet, data_dir),
         }
     }
 

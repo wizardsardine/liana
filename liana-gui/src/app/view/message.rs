@@ -168,9 +168,7 @@ pub enum BuySellMessage {
     GetStarted,
 
     // Geolocation detection
-    DetectCountry,
     CountryDetected(String, String), // (country_name, iso_code)
-    CountryDetectionError(String),
 
     // Default build: registration form (native flow)
     FirstNameChanged(String),
@@ -215,15 +213,14 @@ pub enum BuySellMessage {
     MavapayTransactionsReceived(Vec<Transaction>),
     MavapayTransactionsError(String),
 
-    // Shared form fields (for provider-integrated builds)
-    WalletAddressChanged(String),
-    SourceAmountChanged(String),
-
+    // creates a webview session on onramper
     CreateSession,
-    // International users - Onramper only
-    OpenOnramper,
-
     SessionError(String),
+    ResetWidget,
+    SetBuyOrSell(super::buysell::panel::BuyOrSell),
+    SetFlowState(super::buysell::flow_state::BuySellFlowState),
+    CreateNewAddress,
+    AddressCreated(super::buysell::panel::LabelledAddress),
 
     // webview messages (gated)
     WebviewCreated(iced_webview::ViewId),
@@ -231,7 +228,6 @@ pub enum BuySellMessage {
     WebviewAction(iced_webview::advanced::Action),
     WebviewOpenUrl(String),
     CloseWebview,
-    DestroyWebview, // Destroy webview instance after closing view
 }
 
 #[derive(Debug, Clone)]

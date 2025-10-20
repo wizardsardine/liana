@@ -3,7 +3,7 @@ pub mod export;
 mod label;
 mod psbt;
 mod psbts;
-mod receive;
+pub mod receive;
 mod settings;
 mod spend;
 mod transactions;

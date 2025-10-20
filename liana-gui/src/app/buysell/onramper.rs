@@ -1,4 +1,4 @@
-const WIDGET_OPTIONS: &str = "{{BASE_URL}}/?apiKey={{API_KEY}}&mode=buy,sell&partnerContext=CoincubeVault&defaultFiat={{DEFAULT_FIAT}}&defaultAmount={{DEFAULT_AMOUNT}}&wallets=btc:{{WALLET_ADDRESS}}&onlyCryptoNetworks=bitcoin&sell_defaultFiat={{DEFAULT_FIAT}}&sell_onlyCryptoNetworks=bitcoin&redirectAtCheckout=true&enableCountrySelector=true&themeName=dark";
+const WIDGET_OPTIONS: &str = "{{BASE_URL}}/?apiKey={{API_KEY}}&mode={{MODE}}&partnerContext=CoincubeVault&defaultFiat={{DEFAULT_FIAT}}&wallets=btc:{{ADDRESS}}&onlyCryptoNetworks=bitcoin&sell_defaultFiat={{DEFAULT_FIAT}}&sell_onlyCryptoNetworks=bitcoin&redirectAtCheckout=true&enableCountrySelector=true&themeName=dark";
 
 pub fn api_key() -> Option<String> {
     if cfg!(debug_assertions) {
@@ -17,14 +17,16 @@ const fn base_url() -> &'static str {
     }
 }
 
-pub fn create_widget_url(currency: &str, amount: &str, wallet: &str) -> Option<String> {
-    let key = api_key()?;
-    Some(
-        WIDGET_OPTIONS
-            .replace("{{BASE_URL}}", base_url())
-            .replace("{{API_KEY}}", &key)
-            .replace("{{DEFAULT_FIAT}}", currency)
-            .replace("{{WALLET_ADDRESS}}", wallet)
-            .replace("{{DEFAULT_AMOUNT}}", amount),
-    )
+pub fn create_widget_url(currency: &str, address: Option<&str>, mode: &str) -> Option<String> {
+    let url = WIDGET_OPTIONS
+        .replace("{{BASE_URL}}", base_url())
+        .replace("{{MODE}}", mode)
+        .replace("{{API_KEY}}", api_key().as_deref()?)
+        .replace("{{DEFAULT_FIAT}}", currency);
+
+    // insert address if any
+    Some(match address {
+        Some(a) => url.replace("{{ADDRESS}}", a),
+        None => url,
+    })
 }

@@ -1,12 +1,10 @@
-#![allow(unused_imports)]
-
 use iced::{
     widget::{container, pick_list, radio, Space},
-    Alignment, Length,
+    Alignment, Length, Task,
 };
 use iced_webview::{advanced::WebView, Ultralight};
 
-use liana::miniscript::bitcoin::Network;
+use liana::miniscript::bitcoin::{self, Network};
 use liana_ui::{
     color,
     component::{button as ui_button, form, text::text},
@@ -16,165 +14,152 @@ use liana_ui::{
 };
 
 use super::flow_state::{
-    AfricaFlowState, BuySellFlowState, InternationalFlowState, MavapayFlowMode,
-    MavapayPaymentMethod, NativePage,
+    BuySellFlowState, MavapayFlowMode, MavapayFlowState, MavapayPaymentMethod, NativePage,
 };
-use crate::app::view::{BuySellMessage, Message as ViewMessage};
+use crate::app::{
+    self,
+    view::{BuySellMessage, Message as ViewMessage},
+};
 use crate::services::mavapay::api::Currency;
 
+#[derive(Debug, Clone, Copy)]
+pub enum BuyOrSell {
+    Buy,
+    Sell,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct LabelledAddress {
+    pub address: bitcoin::Address,
+    pub index: bitcoin::bip32::ChildNumber,
+    pub label: Option<String>,
+}
+
+impl std::fmt::Display for LabelledAddress {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self.label {
+            Some(l) => write!(f, "{}: {}", l, self.address),
+            None => std::fmt::Display::fmt(&self.address, f),
+        }
+    }
+}
+
 pub struct BuySellPanel {
+    // Runtime state - determines which flow is active
+    pub flow_state: BuySellFlowState,
+    pub modal: app::state::receive::Modal,
+    pub buy_or_sell: Option<BuyOrSell>,
+
     // Common fields (always present)
-    pub wallet_address: form::Value<String>,
-    pub source_amount: form::Value<String>,
     pub error: Option<String>,
     pub network: Network,
+
+    // for address generation
+    pub wallet: std::sync::Arc<crate::app::wallet::Wallet>,
+    pub data_dir: crate::dir::LianaDirectory,
+    pub generated_address: Option<LabelledAddress>,
 
     // Geolocation detection state
     pub detected_country_name: Option<String>,
     pub detected_country_iso: Option<String>,
-    pub country_detection_failed: bool,
 
     // Webview (used by international flow)
     pub webview: Option<WebView<Ultralight, crate::app::state::buysell::WebviewMessage>>,
     pub session_url: Option<String>,
     pub active_page: Option<iced_webview::ViewId>,
-    pub pending_close_view: Option<iced_webview::ViewId>,
-
-    // Runtime state - determines which flow is active
-    pub flow_state: BuySellFlowState,
 }
 
 impl BuySellPanel {
-    pub fn new(network: Network) -> Self {
+    pub fn new(
+        network: bitcoin::Network,
+        wallet: std::sync::Arc<crate::app::wallet::Wallet>,
+        data_dir: crate::dir::LianaDirectory,
+    ) -> Self {
         Self {
-            wallet_address: form::Value {
-                value: "2N3oefVeg6stiTb5Kh3ozCSkaqmx91FDbsm".to_string(),
-                warning: None,
-                valid: true,
-            },
-            source_amount: form::Value {
-                value: "60".to_string(),
-                warning: None,
-                valid: true,
-            },
+            buy_or_sell: None,
             error: None,
             network,
+            wallet,
+            data_dir,
+            generated_address: None,
+            modal: app::state::receive::Modal::None,
             detected_country_name: None,
             detected_country_iso: None,
-            country_detection_failed: false,
             webview: None,
             session_url: None,
-            pending_close_view: None,
             active_page: None,
             // Start in detecting state
-            flow_state: BuySellFlowState::DetectingCountry,
+            flow_state: BuySellFlowState::Initialization,
         }
     }
 
-    /// Handle country detection result and transition to appropriate flow state
-    /// Returns a Task that automatically opens Onramper for international users
-    pub fn handle_country_detected(
-        &mut self,
-        country_name: String,
-        iso_code: String,
-    ) -> iced::Task<ViewMessage> {
+    /// transitions to appropriate flow state
+    pub fn start_session(&mut self) -> iced::Task<BuySellMessage> {
         use crate::app::buysell::onramper;
         use crate::services::fiat::{
-            currency_for_country, is_african_country, mavapay_major_unit_for_country,
-            mavapay_minor_unit_for_country,
+            mavapay_major_unit_for_country, mavapay_minor_unit_for_country, mavapay_supported,
         };
 
-        self.detected_country_name = Some(country_name);
-        self.detected_country_iso = Some(iso_code.clone());
-        self.error = None;
+        let Some(iso_code) = self.detected_country_iso.as_ref() else {
+            return Task::none();
+        };
 
         // Determine flow based on ISO code
-        if is_african_country(&iso_code) {
-            // African flow: Mavapay with auto-populated currency
-            let mut africa_state = AfricaFlowState::new();
+        if mavapay_supported(&iso_code) {
+            let mut state = MavapayFlowState::new();
 
             // Set default currencies based on detected country
-            africa_state.mavapay_source_currency = form::Value {
+            state.mavapay_source_currency = form::Value {
                 value: mavapay_minor_unit_for_country(&iso_code).to_string(),
                 warning: None,
                 valid: true,
             };
-            africa_state.mavapay_target_currency = form::Value {
+            state.mavapay_target_currency = form::Value {
                 value: "BTCSAT".to_string(),
                 warning: None,
                 valid: true,
             };
-            africa_state.mavapay_settlement_currency = form::Value {
+            state.mavapay_settlement_currency = form::Value {
                 value: mavapay_major_unit_for_country(&iso_code).to_string(),
                 warning: None,
                 valid: true,
             };
 
-            self.flow_state = BuySellFlowState::Africa(africa_state);
-            iced::Task::none()
+            iced::Task::done(BuySellMessage::SetFlowState(BuySellFlowState::Mavapay(
+                state,
+            )))
         } else {
-            // International flow: Automatically open Onramper
-            self.flow_state = BuySellFlowState::International(InternationalFlowState::new());
+            // Build Onramper widget URL and open in embedded webview
+            let iso_code = self.detected_country_iso.as_deref().unwrap_or("US");
+            let currency = crate::services::fiat::currency_for_country(&iso_code).to_string();
 
-            // Build Onramper URL directly and open it
-            let currency = currency_for_country(&iso_code).to_string();
-            let amount = if self.source_amount.value.is_empty() {
-                "50".to_string()
-            } else {
-                self.source_amount.value.clone()
+            // prepare parameters
+            let address = self
+                .generated_address
+                .as_ref()
+                .map(|a| a.address.to_string());
+
+            let mode = match self.buy_or_sell {
+                None => return Task::none(),
+                Some(app::view::buysell::panel::BuyOrSell::Buy) => "buy",
+                Some(app::view::buysell::panel::BuyOrSell::Sell) => "sell",
             };
-            let wallet = self.wallet_address.value.clone();
 
-            tracing::info!(
-                "🌍 [ONRAMPER] Auto-opening for country: {}, currency: {}",
-                iso_code,
-                currency
-            );
-
-            if let Some(url) = onramper::create_widget_url(&currency, &amount, &wallet) {
+            if let Some(url) = onramper::create_widget_url(&currency, address.as_deref(), &mode) {
                 tracing::info!("🌍 [ONRAMPER] Opening URL: {}", url);
-                iced::Task::done(ViewMessage::BuySell(BuySellMessage::WebviewOpenUrl(url)))
+
+                return Task::batch([
+                    Task::done(BuySellMessage::WebviewOpenUrl(url)),
+                    Task::done(BuySellMessage::SetFlowState(BuySellFlowState::Onramper)),
+                ]);
             } else {
                 tracing::error!("🌍 [ONRAMPER] API key not configured");
-                self.error = Some(
-                    "Onramper API key not configured. Please set ONRAMPER_API_KEY in .env"
+
+                Task::done(BuySellMessage::SessionError(
+                    "Onramper API key not configured. Please set `ONRAMPER_API_KEY` in .env"
                         .to_string(),
-                );
-                iced::Task::none()
+                ))
             }
-        }
-    }
-
-    // Helper methods to access Africa flow state fields (for backward compatibility during migration)
-    pub fn africa_state(&self) -> Option<&AfricaFlowState> {
-        if let BuySellFlowState::Africa(ref state) = self.flow_state {
-            Some(state)
-        } else {
-            None
-        }
-    }
-
-    pub fn africa_state_mut(&mut self) -> Option<&mut AfricaFlowState> {
-        if let BuySellFlowState::Africa(ref mut state) = self.flow_state {
-            Some(state)
-        } else {
-            None
-        }
-    }
-
-    pub fn international_state(&self) -> Option<&InternationalFlowState> {
-        if let BuySellFlowState::International(ref state) = self.flow_state {
-            Some(state)
-        } else {
-            None
-        }
-    }
-
-    pub fn international_state_mut(&mut self) -> Option<&mut InternationalFlowState> {
-        if let BuySellFlowState::International(ref mut state) = self.flow_state {
-            Some(state)
-        } else {
-            None
         }
     }
 
@@ -182,208 +167,258 @@ impl BuySellPanel {
         self.error = Some(error);
     }
 
-    pub fn set_wallet_address(&mut self, address: String) {
-        self.wallet_address.value = address;
-        self.wallet_address.valid =
-            !self.wallet_address.value.is_empty() && self.validate_wallet_address();
-        self.update_wallet_address_warning();
-    }
-
-    fn validate_wallet_address(&self) -> bool {
-        if self.wallet_address.value.is_empty() {
-            return false;
-        }
-
-        // Network-aware Bitcoin address validation
-        let addr = &self.wallet_address.value;
-        let is_valid_length = addr.len() >= 26 && addr.len() <= 62;
-
-        if !is_valid_length {
-            return false;
-        }
-
-        match self.network {
-            Network::Bitcoin => {
-                // Mainnet addresses: 1, 3, bc1
-                addr.starts_with('1') || addr.starts_with('3') || addr.starts_with("bc1")
-            }
-            Network::Testnet | Network::Signet | Network::Regtest => {
-                // Testnet addresses: 2, tb1, bcrt1
-                addr.starts_with('2') || addr.starts_with("tb1") || addr.starts_with("bcrt1")
-            }
-            _ => false, // Unknown network
-        }
-    }
-
     pub fn set_login_username(&mut self, v: String) {
-        if let BuySellFlowState::Africa(ref mut state) = self.flow_state {
+        if let BuySellFlowState::Mavapay(ref mut state) = self.flow_state {
             state.login_username.value = v;
             state.login_username.valid = !state.login_username.value.is_empty();
         }
     }
 
     pub fn set_login_password(&mut self, v: String) {
-        if let BuySellFlowState::Africa(ref mut state) = self.flow_state {
+        if let BuySellFlowState::Mavapay(ref mut state) = self.flow_state {
             state.login_password.value = v;
             state.login_password.valid = !state.login_password.value.is_empty();
         }
     }
 
     pub fn is_login_form_valid(&self) -> bool {
-        if let BuySellFlowState::Africa(ref state) = self.flow_state {
+        if let BuySellFlowState::Mavapay(ref state) = self.flow_state {
             state.login_username.valid && state.login_password.valid
         } else {
             false
         }
     }
 
-    fn update_wallet_address_warning(&mut self) {
-        if self.wallet_address.value.is_empty() {
-            self.wallet_address.warning = None;
-            return;
-        }
+    pub fn view<'a>(&'a self) -> iced::Element<'a, ViewMessage, liana_ui::theme::Theme> {
+        let webview_active = self.active_page.is_some();
 
-        // Simplified validation - Onramper handles network-specific requirements
-        self.wallet_address.warning = if self.validate_wallet_address() {
-            None
-        } else {
-            Some("Invalid Bitcoin address format")
-        };
-    }
+        let column = {
+            let column = Column::new()
+                // COINCUBE branding
+                .push(
+                    Row::new()
+                        .push(
+                            Container::new(liana_ui::icon::bitcoin_icon().size(24))
+                                .style(theme::container::border)
+                                .padding(10),
+                        )
+                        .push(Space::with_width(Length::Fixed(10.0)))
+                        .push(
+                            Column::new()
+                                .push(text("COINCUBE").size(16).color(color::ORANGE))
+                                .push(text("BUY/SELL").size(14).color(color::GREY_3))
+                                .spacing(2),
+                        )
+                        .push_maybe({
+                            webview_active.then(|| Space::with_width(Length::Fixed(25.0)))
+                        })
+                        .push_maybe({
+                            webview_active.then(|| {
+                                ui_button::secondary(Some(reload_icon()), "Reset Widget")
+                                    .on_press(ViewMessage::BuySell(BuySellMessage::ResetWidget))
+                            })
+                        })
+                        .align_y(Alignment::Center),
+                )
+                // error display
+                .push_maybe(self.error.as_ref().map(|err| {
+                    Container::new(text(err).size(14).color(color::RED))
+                        .padding(10)
+                        .style(theme::card::invalid)
+                }))
+                .push_maybe(
+                    self.error
+                        .is_some()
+                        .then(|| Space::with_height(Length::Fixed(20.0))),
+                )
+                .push_maybe((!webview_active).then(|| self.form_view()));
 
-    pub fn set_source_amount(&mut self, amount: String) {
-        self.source_amount.value = amount;
-        self.source_amount.valid =
-            !self.source_amount.value.is_empty() && self.source_amount.value.parse::<f64>().is_ok();
-    }
-
-    pub fn is_form_valid(&self) -> bool {
-        self.wallet_address.valid
-            && self.source_amount.valid
-            && !self.wallet_address.value.is_empty()
-            && !self.source_amount.value.is_empty()
-    }
-
-    pub fn view<'a>(&'a self) -> Container<'a, ViewMessage> {
-        Container::new({
             // attempt to render webview (if available)
-            let webview_widget = self.active_page.as_ref().and_then(|v| {
-                self.webview.as_ref().map(|s| {
-                    s.view(*v)
-                        .map(|a| ViewMessage::BuySell(BuySellMessage::WebviewAction(a)))
+            let view = self
+                .active_page
+                .as_ref()
+                .map(|v| {
+                    let view = self.webview.as_ref().map(|s| {
+                        s.view(*v)
+                            .map(|a| ViewMessage::BuySell(BuySellMessage::WebviewAction(a)))
+                    });
+
+                    view
                 })
+                .flatten();
+
+            let column = column.push({
+                match view {
+                    Some(v) => container(v)
+                        .width(Length::Fixed(600.0))
+                        .height(Length::Fixed(600.0)),
+                    None => container(" ").height(Length::Fixed(150.0)),
+                }
             });
-
-            let column = match webview_widget {
-                Some(w) => Column::new()
-                    .push(
-                        Row::new()
-                            .push(
-                                // Only show Previous button if we have a webview session active
-                                Button::new(
-                                    Row::new()
-                                        .push(previous_icon().color(color::GREY_2))
-                                        .push(Space::with_width(Length::Fixed(5.0)))
-                                        .push(text("Previous").color(color::GREY_2))
-                                        .spacing(5)
-                                        .align_y(Alignment::Center),
-                                )
-                                .style(|_theme, _status| iced::widget::button::Style {
-                                    background: None,
-                                    text_color: color::GREY_2,
-                                    border: iced::Border::default(),
-                                    shadow: iced::Shadow::default(),
-                                })
-                                .on_press(ViewMessage::BuySell(BuySellMessage::CloseWebview)),
-                            )
-                            // Insert webview widget right after the Previous button if provided
-                            .push(Space::with_width(Length::Fill))
-                            .align_y(Alignment::Center),
-                    )
-                    .push(Space::with_height(Length::Fixed(20.0)))
-                    .push(
-                        container(w)
-                            .width(Length::Fixed(600.0))
-                            .height(Length::Fixed(600.0)),
-                    ),
-                // Only show form content if no session has been created (i.e., no webview is active)
-                None => Column::new()
-                    .push(
-                        Column::new()
-                            .push(Space::with_height(Length::Fixed(10.0)))
-                            .push(
-                                Row::new()
-                                    .push(Space::with_width(Length::Fill))
-                                    .push(
-                                        Row::new()
-                                            .push(
-                                                Container::new(
-                                                    liana_ui::icon::bitcoin_icon().size(24),
-                                                )
-                                                .style(theme::container::border)
-                                                .padding(10),
-                                            )
-                                            .push(Space::with_width(Length::Fixed(15.0)))
-                                            .push(
-                                                Column::new()
-                                                    .push(
-                                                        text("COINCUBE")
-                                                            .size(16)
-                                                            .color(color::ORANGE),
-                                                    )
-                                                    .push(
-                                                        text("BUY/SELL")
-                                                            .size(14)
-                                                            .color(color::GREY_3),
-                                                    )
-                                                    .spacing(2),
-                                            )
-                                            .align_y(Alignment::Center),
-                                    )
-                                    .push(Space::with_width(Length::Fill))
-                                    .align_y(Alignment::Center),
-                            ),
-                    )
-                    .push(Space::with_height(Length::Fixed(10.0)))
-                    .push(self.form_view()),
-            };
-
-            // webview always enabled by default
-            // let column = Column::new().push(self.form_view());
 
             column
                 .align_x(Alignment::Center)
-                .spacing(5) // Reduced spacing for more compact layout
-                .max_width(600)
+                .spacing(7) // Reduced spacing for more compact layout
                 .width(Length::Fill)
-        })
-        .padding(iced::Padding::new(2.0).left(40.0).right(40.0).bottom(20.0)) // further reduced padding for compact layout
-        .center_x(Length::Fill)
+        };
+
+        Container::new(column)
+            .width(Length::Fill)
+            .align_y(Alignment::Start)
+            .align_x(Alignment::Center)
+            .into()
     }
 
     fn form_view<'a>(&'a self) -> Column<'a, ViewMessage> {
         match &self.flow_state {
-            BuySellFlowState::DetectingCountry => self.render_loading(),
-            BuySellFlowState::Africa(state) => self.render_africa_flow(state),
-            BuySellFlowState::International(_state) => self.render_loading_onramper(),
-            BuySellFlowState::DetectionFailed => self.render_loading_onramper(),
+            BuySellFlowState::Initialization => self.initialization_flow(),
+            BuySellFlowState::Mavapay(state) => self.render_africa_flow(state),
+            BuySellFlowState::Onramper => self.render_loading_onramper(),
         }
     }
+    fn initialization_flow<'a>(&'a self) -> Column<'a, ViewMessage> {
+        use iced::widget::scrollable;
+        use liana_ui::component::{
+            button, card,
+            text::{p2_regular, Text},
+        };
 
-    fn render_loading<'a>(&'a self) -> Column<'a, ViewMessage> {
-        Column::new()
-            .push(Space::with_height(Length::Fixed(50.0)))
-            .push(
-                text("Detecting your region...")
-                    .size(16)
-                    .color(color::GREY_3),
-            )
-            .push(Space::with_height(Length::Fixed(20.0)))
+        let mut column = Column::new();
+        column = match self.generated_address.as_ref() {
+            Some(addr) => column
+                .push(text("Generated Address").size(14).color(color::GREY_3))
+                .push({
+                    let address_text = addr.to_string();
+
+                    card::simple(
+                        Column::new()
+                            .push(
+                                Container::new(
+                                    scrollable(
+                                        Column::new()
+                                            .push(Space::with_height(Length::Fixed(10.0)))
+                                            .push(
+                                                p2_regular(&address_text)
+                                                    .small()
+                                                    .style(theme::text::secondary),
+                                            )
+                                            // Space between the address and the scrollbar
+                                            .push(Space::with_height(Length::Fixed(10.0))),
+                                    )
+                                    .direction(
+                                        scrollable::Direction::Horizontal(
+                                            scrollable::Scrollbar::new().width(2).scroller_width(2),
+                                        ),
+                                    ),
+                                )
+                                .width(Length::Fill),
+                            )
+                            .push(
+                                Row::new()
+                                    .push(
+                                        button::secondary(None, "Verify on hardware device")
+                                            .on_press(ViewMessage::Select(0)),
+                                    )
+                                    .push(Space::with_width(Length::Fill))
+                                    .push(
+                                        Button::new(qr_code_icon().style(theme::text::secondary))
+                                            .on_press(ViewMessage::ShowQrCode(0))
+                                            .style(theme::button::transparent_border),
+                                    )
+                                    .push(
+                                        Button::new(clipboard_icon().style(theme::text::secondary))
+                                            .on_press(ViewMessage::Clipboard(address_text))
+                                            .style(theme::button::transparent_border),
+                                    )
+                                    .align_y(Alignment::Center),
+                            )
+                            .spacing(10),
+                    )
+                    .width(Length::Fill)
+                })
+                .push(
+                    ui_button::primary(Some(globe_icon()), "Start Widget Session")
+                        .on_press_maybe(
+                            self.detected_country_iso
+                                .is_some()
+                                .then_some(ViewMessage::BuySell(BuySellMessage::CreateSession)),
+                        )
+                        .width(iced::Length::Fill),
+                ),
+            None => column
+                .push({
+                    let buy_or_sell = self.buy_or_sell.clone();
+
+                    Column::new()
+                        .push(
+                            ui_button::secondary(
+                                Some(bitcoin_icon()),
+                                "Buy Bitcoin using Fiat Currencies",
+                            )
+                            .on_press(ViewMessage::BuySell(BuySellMessage::SetBuyOrSell(
+                                BuyOrSell::Buy,
+                            )))
+                            .style(move |th, st| match buy_or_sell {
+                                Some(BuyOrSell::Buy) => liana_ui::theme::button::primary(th, st),
+                                _ => liana_ui::theme::button::secondary(th, st),
+                            })
+                            .padding(30)
+                            .width(iced::Length::Fill),
+                        )
+                        .push(
+                            ui_button::secondary(
+                                Some(dollar_icon()),
+                                "Sell Bitcoin to a Fiat Currency",
+                            )
+                            .on_press(ViewMessage::BuySell(BuySellMessage::SetBuyOrSell(
+                                BuyOrSell::Sell,
+                            )))
+                            .style(move |th, st| match buy_or_sell {
+                                Some(BuyOrSell::Sell) => liana_ui::theme::button::primary(th, st),
+                                _ => liana_ui::theme::button::secondary(th, st),
+                            })
+                            .padding(30)
+                            .width(iced::Length::Fill),
+                        )
+                        .spacing(15)
+                        .padding(5)
+                })
+                .push_maybe(self.buy_or_sell.is_some().then(|| {
+                    container(Space::with_height(1))
+                        .style(|_| {
+                            iced::widget::container::background(iced::Background::Color(
+                                color::GREY_6,
+                            ))
+                        })
+                        .width(Length::Fill)
+                }))
+                .push_maybe(matches!(self.buy_or_sell, Some(BuyOrSell::Buy)).then(|| {
+                    ui_button::secondary(Some(plus_icon()), "Generate New Address")
+                        .on_press_maybe(
+                            matches!(self.buy_or_sell, Some(BuyOrSell::Buy))
+                                .then_some(ViewMessage::BuySell(BuySellMessage::CreateNewAddress)),
+                        )
+                        .width(iced::Length::Fill)
+                }))
+                .push_maybe(matches!(self.buy_or_sell, Some(BuyOrSell::Sell)).then(|| {
+                    ui_button::secondary(Some(globe_icon()), "Start Widget Session")
+                        .on_press_maybe(
+                            self.detected_country_iso
+                                .is_some()
+                                .then_some(ViewMessage::BuySell(BuySellMessage::CreateSession)),
+                        )
+                        .width(iced::Length::Fill)
+                })),
+        };
+
+        column
             .align_x(Alignment::Center)
-            .spacing(10)
+            .spacing(12)
+            .max_width(640)
+            .width(Length::Fill)
     }
 
-    fn render_africa_flow<'a>(&'a self, state: &'a AfricaFlowState) -> Column<'a, ViewMessage> {
+    fn render_africa_flow<'a>(&'a self, state: &'a MavapayFlowState) -> Column<'a, ViewMessage> {
         match state.native_page {
             NativePage::AccountSelect => self.native_account_select_form(state),
             NativePage::Login => self.native_login_form(state),
@@ -420,7 +455,7 @@ impl BuySellPanel {
 impl BuySellPanel {
     fn native_account_select_form<'a>(
         &'a self,
-        state: &'a AfricaFlowState,
+        state: &'a MavapayFlowState,
     ) -> Column<'a, ViewMessage> {
         use liana_ui::component::card as ui_card;
         use liana_ui::component::text as ui_text;
@@ -522,8 +557,7 @@ impl BuySellPanel {
             .width(Length::Fill)
     }
 
-    fn native_login_form<'a>(&'a self, state: &'a AfricaFlowState) -> Column<'a, ViewMessage> {
-        use liana_ui::component::card as ui_card;
+    fn native_login_form<'a>(&'a self, state: &'a MavapayFlowState) -> Column<'a, ViewMessage> {
         use liana_ui::component::form;
         use liana_ui::component::text as ui_text;
 
@@ -584,7 +618,7 @@ impl BuySellPanel {
 }
 
 impl BuySellPanel {
-    fn native_register_form<'a>(&'a self, state: &'a AfricaFlowState) -> Column<'a, ViewMessage> {
+    fn native_register_form<'a>(&'a self, state: &'a MavapayFlowState) -> Column<'a, ViewMessage> {
         use iced::widget::checkbox;
         use liana_ui::component::button as ui_button;
         use liana_ui::component::text as ui_text;
@@ -748,7 +782,7 @@ impl BuySellPanel {
     }
 
     #[inline]
-    pub fn is_registration_valid(&self, state: &AfricaFlowState) -> bool {
+    pub fn is_registration_valid(&self, state: &MavapayFlowState) -> bool {
         let email_ok = state.email.value.contains('@') && state.email.value.contains('.');
         let pw_ok = self.is_password_valid(state) && state.password1.value == state.password2.value;
         !state.first_name.value.is_empty()
@@ -759,7 +793,7 @@ impl BuySellPanel {
     }
 
     #[inline]
-    pub fn is_password_valid(&self, state: &AfricaFlowState) -> bool {
+    pub fn is_password_valid(&self, state: &MavapayFlowState) -> bool {
         let password = &state.password1.value;
         if password.len() < 8 {
             return false;
@@ -773,7 +807,7 @@ impl BuySellPanel {
         has_upper && has_lower && has_digit && has_special
     }
 
-    pub fn get_password_validation_message(&self, state: &AfricaFlowState) -> Option<String> {
+    pub fn get_password_validation_message(&self, state: &MavapayFlowState) -> Option<String> {
         let password = &state.password1.value;
         if password.is_empty() {
             return None;
@@ -805,14 +839,14 @@ impl BuySellPanel {
     }
 
     pub fn set_email_verification_status(&mut self, verified: Option<bool>) {
-        if let BuySellFlowState::Africa(ref mut state) = self.flow_state {
+        if let BuySellFlowState::Mavapay(ref mut state) = self.flow_state {
             state.email_verification_status = verified;
         }
     }
 
     fn native_verify_email_form<'a>(
         &'a self,
-        state: &'a AfricaFlowState,
+        state: &'a MavapayFlowState,
     ) -> Column<'a, ViewMessage> {
         use liana_ui::component::button as ui_button;
         use liana_ui::component::text as ui_text;
@@ -963,7 +997,7 @@ impl BuySellPanel {
             .width(Length::Fill)
     }
 
-    fn coincube_pay_form<'a>(&'a self, state: &'a AfricaFlowState) -> Column<'a, ViewMessage> {
+    fn coincube_pay_form<'a>(&'a self, state: &'a MavapayFlowState) -> Column<'a, ViewMessage> {
         use liana_ui::component::{button as ui_button, text as ui_text};
 
         let header = Row::new()

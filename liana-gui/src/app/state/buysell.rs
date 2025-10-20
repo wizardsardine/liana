@@ -9,7 +9,6 @@ use iced_webview::{
 };
 use liana_ui::widget::Element;
 
-use crate::app::buysell::onramper;
 use crate::app::view::buysell::{BuySellFlowState, NativePage};
 
 use crate::{
@@ -46,16 +45,19 @@ fn init_webview() -> WebView<iced_webview::Ultralight, WebviewMessage> {
     WebView::new().on_create_view(crate::app::state::buysell::WebviewMessage::Created)
 }
 
-impl Default for BuySellPanel {
-    fn default() -> Self {
-        Self::new(liana::miniscript::bitcoin::Network::Bitcoin)
-    }
-}
-
 impl State for BuySellPanel {
     fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, ViewMessage> {
-        // Return the buy/sell view - dashboard wrapper will be applied by app/mod.rs
-        view::dashboard(&app::Menu::BuySell, cache, None, self.view())
+        let inner = view::dashboard(&app::Menu::BuySell, cache, None, self.view());
+
+        let overlay = match &self.modal {
+            super::receive::Modal::VerifyAddress(m) => m.view(),
+            super::receive::Modal::ShowQrCode(m) => m.view(),
+            super::receive::Modal::None => return inner,
+        };
+
+        liana_ui::widget::modal::Modal::new(inner, overlay)
+            .on_blur(Some(ViewMessage::Close))
+            .into()
     }
 
     fn reload(
@@ -70,29 +72,67 @@ impl State for BuySellPanel {
                 Ok((country_name, iso_code)) => Message::View(ViewMessage::BuySell(
                     BuySellMessage::CountryDetected(country_name, iso_code),
                 )),
-                Err(error) => Message::View(ViewMessage::BuySell(
-                    BuySellMessage::CountryDetectionError(error),
-                )),
+                Err(error) => {
+                    Message::View(ViewMessage::BuySell(BuySellMessage::SessionError(error)))
+                }
             },
         )
     }
 
     fn update(
         &mut self,
-        _daemon: Arc<dyn Daemon + Sync + Send>,
-        _cache: &Cache,
+        daemon: Arc<dyn Daemon + Sync + Send>,
+        cache: &Cache,
         message: Message,
     ) -> Task<Message> {
         // Handle global navigation for native flow (Previous)
-        if let Message::View(ViewMessage::Previous) = &message {
-            if let BuySellFlowState::Africa(ref mut state) = self.flow_state {
-                match state.native_page {
-                    NativePage::Register => state.native_page = NativePage::AccountSelect,
-                    NativePage::VerifyEmail => state.native_page = NativePage::Register,
-                    _ => {}
+        match &message {
+            Message::View(ViewMessage::Previous) => {
+                if let BuySellFlowState::Mavapay(ref mut state) = self.flow_state {
+                    match state.native_page {
+                        NativePage::Register => state.native_page = NativePage::AccountSelect,
+                        NativePage::VerifyEmail => state.native_page = NativePage::Register,
+                        _ => {}
+                    }
                 }
+                return Task::none();
             }
-            return Task::none();
+            Message::View(ViewMessage::Select(_)) => {
+                let Some(la) = &self.generated_address else {
+                    return Task::none();
+                };
+
+                self.modal =
+                    super::receive::Modal::VerifyAddress(super::receive::VerifyAddressModal::new(
+                        self.data_dir.clone(),
+                        self.wallet.clone(),
+                        cache.network,
+                        la.address.clone(),
+                        la.index,
+                    ));
+
+                return Task::none();
+            }
+            Message::View(ViewMessage::ShowQrCode(_)) => {
+                let Some(la) = &self.generated_address else {
+                    return Task::none();
+                };
+
+                if let Some(modal) = super::receive::ShowQrCodeModal::new(&la.address, la.index) {
+                    self.modal = super::receive::Modal::ShowQrCode(modal);
+                }
+
+                return Task::none();
+            }
+            Message::View(ViewMessage::Next) => {
+                log::info!("[BUYSELL] Loaded...");
+                return Task::none();
+            }
+            Message::View(ViewMessage::Close) => {
+                self.modal = super::receive::Modal::None;
+                return Task::none();
+            }
+            _ => (),
         }
 
         let Message::View(ViewMessage::BuySell(message)) = message else {
@@ -111,22 +151,19 @@ impl State for BuySellPanel {
             }
             BuySellMessage::CreateAccountPressed => {
                 // Navigate to registration page
-                if let BuySellFlowState::Africa(ref mut state) = self.flow_state {
+                if let BuySellFlowState::Mavapay(ref mut state) = self.flow_state {
                     state.native_page = NativePage::Register;
                 } else {
                     self.set_error("Create Account not implemented yet".to_string());
                 }
             }
-            BuySellMessage::WalletAddressChanged(address) => {
-                self.set_wallet_address(address);
-            }
             BuySellMessage::AccountTypeSelected(t) => {
-                if let BuySellFlowState::Africa(ref mut state) = self.flow_state {
+                if let BuySellFlowState::Mavapay(ref mut state) = self.flow_state {
                     state.selected_account_type = Some(t);
                 }
             }
             BuySellMessage::GetStarted => {
-                if let BuySellFlowState::Africa(ref mut state) = self.flow_state {
+                if let BuySellFlowState::Mavapay(ref mut state) = self.flow_state {
                     if state.selected_account_type.is_some() {
                         // Navigate to login page (native flow)
                         state.native_page = NativePage::Login;
@@ -134,91 +171,52 @@ impl State for BuySellPanel {
                 }
             }
             BuySellMessage::FirstNameChanged(v) => {
-                if let BuySellFlowState::Africa(ref mut state) = self.flow_state {
+                if let BuySellFlowState::Mavapay(ref mut state) = self.flow_state {
                     state.first_name.value = v;
                     state.first_name.valid = !state.first_name.value.is_empty();
                 }
             }
-            BuySellMessage::DetectCountry => {
-                // Detection is automatically triggered by reload(); nothing to do here
-            }
+
             BuySellMessage::CountryDetected(country_name, iso_code) => {
-                // Do not log IP addresses. Country name/ISO are fine.
                 tracing::info!("country = {}, iso_code = {}", country_name, iso_code);
-                return self
-                    .handle_country_detected(country_name, iso_code)
-                    .map(Message::View);
-            }
-            BuySellMessage::CountryDetectionError(_error) => {
-                // Graceful fallback: automatically open Onramper
-                use crate::services::fiat::currency_for_country;
 
-                self.country_detection_failed = true;
-                self.flow_state = BuySellFlowState::DetectionFailed;
-                self.error = None;
-
-                // Build Onramper URL directly and open it (default to US)
-                let iso_code = "US".to_string();
-                let currency = currency_for_country(&iso_code).to_string();
-                let amount = if self.source_amount.value.is_empty() {
-                    "50".to_string()
-                } else {
-                    self.source_amount.value.clone()
-                };
-                let wallet = self.wallet_address.value.clone();
-
-                tracing::info!(
-                    "🌍 [ONRAMPER] Country detection failed, auto-opening with default: {}",
-                    iso_code
-                );
-
-                if let Some(url) = onramper::create_widget_url(&currency, &amount, &wallet) {
-                    tracing::info!("🌍 [ONRAMPER] Opening URL: {}", url);
-                    return Task::done(Message::View(ViewMessage::BuySell(
-                        BuySellMessage::WebviewOpenUrl(url),
-                    )));
-                } else {
-                    tracing::error!("🌍 [ONRAMPER] API key not configured");
-                    self.set_error(
-                        "Onramper API key not configured. Please set ONRAMPER_API_KEY in .env"
-                            .to_string(),
-                    );
-                }
+                self.detected_country_name = Some(country_name);
+                self.detected_country_iso = Some(iso_code);
             }
 
             BuySellMessage::LastNameChanged(v) => {
-                if let BuySellFlowState::Africa(ref mut state) = self.flow_state {
+                if let BuySellFlowState::Mavapay(ref mut state) = self.flow_state {
                     state.last_name.value = v;
                     state.last_name.valid = !state.last_name.value.is_empty();
                 }
             }
             BuySellMessage::EmailChanged(v) => {
-                if let BuySellFlowState::Africa(ref mut state) = self.flow_state {
+                if let BuySellFlowState::Mavapay(ref mut state) = self.flow_state {
                     state.email.value = v;
                     state.email.valid =
                         state.email.value.contains('@') && state.email.value.contains('.')
                 }
             }
             BuySellMessage::Password1Changed(v) => {
-                if let BuySellFlowState::Africa(ref mut state) = self.flow_state {
+                if let BuySellFlowState::Mavapay(ref mut state) = self.flow_state {
                     state.password1.value = v;
                     state.password1.valid = Self::is_password_valid_static(&state.password1.value);
                 }
             }
             BuySellMessage::Password2Changed(v) => {
-                if let BuySellFlowState::Africa(ref mut state) = self.flow_state {
+                if let BuySellFlowState::Mavapay(ref mut state) = self.flow_state {
                     state.password2.value = v;
                     state.password2.valid = state.password2.value == state.password1.value
                         && !state.password2.value.is_empty();
                 }
             }
             BuySellMessage::TermsToggled(b) => {
-                if let BuySellFlowState::Africa(ref mut state) = self.flow_state {
+                if let BuySellFlowState::Mavapay(ref mut state) = self.flow_state {
                     state.terms_accepted = b;
                 }
             }
             BuySellMessage::SubmitRegistration => {
-                if let BuySellFlowState::Africa(ref state) = self.flow_state {
+                if let BuySellFlowState::Mavapay(ref state) = self.flow_state {
                     tracing::info!("🔍 [REGISTRATION] Submit registration button clicked");
 
                     if Self::is_registration_valid_static(state) {
@@ -320,7 +318,7 @@ impl State for BuySellPanel {
                 }
             }
             BuySellMessage::RegistrationSuccess => {
-                if let BuySellFlowState::Africa(ref mut state) = self.flow_state {
+                if let BuySellFlowState::Mavapay(ref mut state) = self.flow_state {
                     // Registration successful, navigate to email verification
                     state.native_page = NativePage::VerifyEmail;
                     state.email_verification_status = Some(false); // pending verification
@@ -331,7 +329,7 @@ impl State for BuySellPanel {
                 self.error = Some(format!("Registration failed: {}", error));
             }
             BuySellMessage::CheckEmailVerificationStatus => {
-                if let BuySellFlowState::Africa(ref mut state) = self.flow_state {
+                if let BuySellFlowState::Mavapay(ref mut state) = self.flow_state {
                     tracing::info!(
                         "🔍 [EMAIL_VERIFICATION] Checking email verification status for: {}",
                         state.email.value
@@ -379,7 +377,7 @@ impl State for BuySellPanel {
                 }
             }
             BuySellMessage::EmailVerificationStatusChecked(verified) => {
-                if let BuySellFlowState::Africa(ref mut state) = self.flow_state {
+                if let BuySellFlowState::Mavapay(ref mut state) = self.flow_state {
                     state.email_verification_status = Some(verified);
                     if verified {
                         tracing::info!(
@@ -397,13 +395,13 @@ impl State for BuySellPanel {
                 }
             }
             BuySellMessage::EmailVerificationStatusError(error) => {
-                if let BuySellFlowState::Africa(ref mut state) = self.flow_state {
+                if let BuySellFlowState::Mavapay(ref mut state) = self.flow_state {
                     state.email_verification_status = Some(false); // fallback to pending
                     self.error = Some(format!("Error checking verification status: {}", error));
                 }
             }
             BuySellMessage::ResendVerificationEmail => {
-                if let BuySellFlowState::Africa(ref state) = self.flow_state {
+                if let BuySellFlowState::Mavapay(ref state) = self.flow_state {
                     tracing::info!(
                         "📧 [RESEND_EMAIL] Resending verification email to: {}",
                         state.email.value
@@ -442,7 +440,7 @@ impl State for BuySellPanel {
                 }
             }
             BuySellMessage::ResendEmailSuccess => {
-                if let BuySellFlowState::Africa(ref mut state) = self.flow_state {
+                if let BuySellFlowState::Mavapay(ref mut state) = self.flow_state {
                     state.email_verification_status = Some(false); // back to pending
                     self.error = Some("Verification email resent successfully!".to_string());
                 }
@@ -451,7 +449,7 @@ impl State for BuySellPanel {
                 self.error = Some(format!("Error resending email: {}", error));
             }
             BuySellMessage::LoginSuccess(response) => {
-                if let BuySellFlowState::Africa(ref mut state) = self.flow_state {
+                if let BuySellFlowState::Mavapay(ref mut state) = self.flow_state {
                     tracing::info!(
                         "✅ [LOGIN] Login successful, checking email verification status"
                     );
@@ -503,118 +501,121 @@ impl State for BuySellPanel {
                 self.set_error(format!("Login failed: {}", err));
             }
 
-            BuySellMessage::SourceAmountChanged(amount) => {
-                self.set_source_amount(amount);
+            // session initialization
+            BuySellMessage::CreateSession => {
+                return self
+                    .start_session()
+                    .map(|m| Message::View(ViewMessage::BuySell(m)));
+            }
+            BuySellMessage::SessionError(error) => {
+                self.set_error(error);
             }
 
-            // International provider - Onramper only
-            BuySellMessage::OpenOnramper => {
-                // Works for both International and DetectionFailed states
-                if matches!(
-                    &self.flow_state,
-                    BuySellFlowState::International(_) | BuySellFlowState::DetectionFailed
-                ) {
-                    use crate::services::fiat::currency_for_country;
+            // for creating new addresses for buysell coin reception
+            BuySellMessage::SetBuyOrSell(bs) => self.buy_or_sell = Some(bs),
+            BuySellMessage::SetFlowState(state) => self.flow_state = state,
 
-                    // Build Onramper widget URL and open in embedded webview
-                    // Use detected country to determine currency
-                    let iso_code = self
-                        .detected_country_iso
-                        .clone()
-                        .unwrap_or_else(|| "US".to_string());
-                    let currency = currency_for_country(&iso_code).to_string();
+            BuySellMessage::ResetWidget => {
+                self.flow_state = BuySellFlowState::Initialization;
+                self.buy_or_sell = None;
+                self.error = None;
 
-                    tracing::info!("🌍 [ONRAMPER] ISO: {}, Currency: {}", iso_code, currency);
+                if let Some(page) = self.active_page.take() {
+                    return self
+                        .webview
+                        .as_mut()
+                        .expect("webview should exist at this point")
+                        .update(WebviewAction::CloseView(page))
+                        .map(map_webview_message_static);
+                };
 
-                    let amount = if self.source_amount.value.is_empty() {
-                        "50".to_string()
-                    } else {
-                        self.source_amount.value.clone()
-                    };
-                    let wallet = self.wallet_address.value.clone();
-
-                    tracing::info!("🌍 [ONRAMPER] Creating widget URL with wallet: {}", wallet);
-
-                    if let Some(url) = onramper::create_widget_url(&currency, &amount, &wallet) {
-                        tracing::info!("🌍 [ONRAMPER] Opening URL: {}", url);
-                        return Task::done(Message::View(ViewMessage::BuySell(
-                            BuySellMessage::WebviewOpenUrl(url),
-                        )));
-                    } else {
-                        tracing::error!("🌍 [ONRAMPER] API key not configured");
-                        self.set_error(
-                            "Onramper API key not configured. Please set ONRAMPER_API_KEY in .env"
-                                .to_string(),
-                        );
-                    }
-                }
+                self.webview = None;
             }
+
+            BuySellMessage::CreateNewAddress => {
+                return Task::perform(
+                    async move { daemon.get_new_address().await },
+                    |res| match res {
+                        Ok(out) => Message::View(ViewMessage::BuySell(
+                            BuySellMessage::AddressCreated(view::buysell::panel::LabelledAddress {
+                                address: out.address,
+                                index: out.derivation_index,
+                                label: Some("new.buysell".to_string()),
+                            }),
+                        )),
+                        Err(err) => Message::View(ViewMessage::BuySell(
+                            BuySellMessage::SessionError(err.to_string()),
+                        )),
+                    },
+                )
+            }
+            BuySellMessage::AddressCreated(addresses) => self.generated_address = Some(addresses),
 
             BuySellMessage::MavapayDashboard => {
-                if let BuySellFlowState::Africa(ref mut state) = self.flow_state {
+                if let BuySellFlowState::Mavapay(ref mut state) = self.flow_state {
                     state.native_page = NativePage::CoincubePay;
                 }
             }
             BuySellMessage::MavapayAmountChanged(amount) => {
-                if let BuySellFlowState::Africa(ref mut state) = self.flow_state {
+                if let BuySellFlowState::Mavapay(ref mut state) = self.flow_state {
                     state.mavapay_amount.value = amount;
                     state.mavapay_amount.valid = !state.mavapay_amount.value.is_empty()
                         && state.mavapay_amount.value.parse::<u64>().is_ok();
                 }
             }
             BuySellMessage::MavapayFlowModeChanged(mode) => {
-                if let BuySellFlowState::Africa(ref mut state) = self.flow_state {
+                if let BuySellFlowState::Mavapay(ref mut state) = self.flow_state {
                     state.mavapay_flow_mode = mode;
                 }
             }
             BuySellMessage::MavapaySourceCurrencyChanged(currency) => {
-                if let BuySellFlowState::Africa(ref mut state) = self.flow_state {
+                if let BuySellFlowState::Mavapay(ref mut state) = self.flow_state {
                     state.mavapay_source_currency.value = currency;
                     state.mavapay_source_currency.valid =
                         !state.mavapay_source_currency.value.is_empty();
                 }
             }
             BuySellMessage::MavapayTargetCurrencyChanged(currency) => {
-                if let BuySellFlowState::Africa(ref mut state) = self.flow_state {
+                if let BuySellFlowState::Mavapay(ref mut state) = self.flow_state {
                     state.mavapay_target_currency.value = currency;
                     state.mavapay_target_currency.valid =
                         !state.mavapay_target_currency.value.is_empty();
                 }
             }
             BuySellMessage::MavapaySettlementCurrencyChanged(currency) => {
-                if let BuySellFlowState::Africa(ref mut state) = self.flow_state {
+                if let BuySellFlowState::Mavapay(ref mut state) = self.flow_state {
                     state.mavapay_settlement_currency.value = currency;
                     state.mavapay_settlement_currency.valid =
                         !state.mavapay_settlement_currency.value.is_empty();
                 }
             }
             BuySellMessage::MavapayPaymentMethodChanged(method) => {
-                if let BuySellFlowState::Africa(ref mut state) = self.flow_state {
+                if let BuySellFlowState::Mavapay(ref mut state) = self.flow_state {
                     state.mavapay_payment_method = method;
                 }
             }
             BuySellMessage::MavapayBankAccountNumberChanged(account) => {
-                if let BuySellFlowState::Africa(ref mut state) = self.flow_state {
+                if let BuySellFlowState::Mavapay(ref mut state) = self.flow_state {
                     state.mavapay_bank_account_number.value = account;
                     state.mavapay_bank_account_number.valid =
                         !state.mavapay_bank_account_number.value.is_empty();
                 }
             }
             BuySellMessage::MavapayBankAccountNameChanged(name) => {
-                if let BuySellFlowState::Africa(ref mut state) = self.flow_state {
+                if let BuySellFlowState::Mavapay(ref mut state) = self.flow_state {
                     state.mavapay_bank_account_name.value = name;
                     state.mavapay_bank_account_name.valid =
                         !state.mavapay_bank_account_name.value.is_empty();
                 }
             }
             BuySellMessage::MavapayBankCodeChanged(code) => {
-                if let BuySellFlowState::Africa(ref mut state) = self.flow_state {
+                if let BuySellFlowState::Mavapay(ref mut state) = self.flow_state {
                     state.mavapay_bank_code.value = code;
                     state.mavapay_bank_code.valid = !state.mavapay_bank_code.value.is_empty();
                 }
             }
             BuySellMessage::MavapayBankNameChanged(name) => {
-                if let BuySellFlowState::Africa(ref mut state) = self.flow_state {
+                if let BuySellFlowState::Mavapay(ref mut state) = self.flow_state {
                     state.mavapay_bank_name.value = name;
                     state.mavapay_bank_name.valid = !state.mavapay_bank_name.value.is_empty();
                 }
@@ -626,7 +627,7 @@ impl State for BuySellPanel {
                 // This handler is kept for backward compatibility but is no longer used
                 // in the simplified flow. The quote is now saved and webview opened
                 // directly in handle_mavapay_create_quote.
-                if let BuySellFlowState::Africa(ref mut state) = self.flow_state {
+                if let BuySellFlowState::Mavapay(ref mut state) = self.flow_state {
                     state.mavapay_current_quote = Some(quote);
                     self.error = None;
                 }
@@ -641,7 +642,7 @@ impl State for BuySellPanel {
                 return self.handle_mavapay_get_price();
             }
             BuySellMessage::MavapayPriceReceived(price) => {
-                if let BuySellFlowState::Africa(ref mut state) = self.flow_state {
+                if let BuySellFlowState::Mavapay(ref mut state) = self.flow_state {
                     state.mavapay_current_price = Some(price);
                     self.error = None;
                 }
@@ -653,7 +654,7 @@ impl State for BuySellPanel {
                 return self.handle_mavapay_get_transactions();
             }
             BuySellMessage::MavapayTransactionsReceived(transactions) => {
-                if let BuySellFlowState::Africa(ref mut state) = self.flow_state {
+                if let BuySellFlowState::Mavapay(ref mut state) = self.flow_state {
                     state.mavapay_transactions = transactions;
                     self.error = None;
                 }
@@ -666,59 +667,45 @@ impl State for BuySellPanel {
                 return self.handle_mavapay_open_payment_link();
             }
 
-            BuySellMessage::CreateSession => {
-                // Legacy handler - now use OpenOnramper instead
-                self.set_error("Please use Onramper to buy Bitcoin".into());
-            }
-            BuySellMessage::SessionError(error) => {
-                self.set_error(error);
-            }
-
             // webview logic
             BuySellMessage::ViewTick(id) => {
-                let action = WebviewAction::Update(id);
                 return self
                     .webview
-                    .get_or_insert_with(init_webview)
-                    .update(action)
+                    .as_mut()
+                    .expect("webview should exist at this point")
+                    .update(WebviewAction::Update(id))
                     .map(map_webview_message_static);
             }
             BuySellMessage::WebviewAction(action) => {
                 return self
                     .webview
-                    .get_or_insert_with(init_webview)
+                    .as_mut()
+                    .expect("webview should exist at this point")
                     .update(action)
                     .map(map_webview_message_static);
             }
             BuySellMessage::WebviewOpenUrl(url) => {
-                // Load URL into Ultralight webview
-                if cfg!(debug_assertions) {
-                    tracing::info!("🌐 [LIANA] Loading Ultralight webview with URL: {}", url);
-                } else {
-                    tracing::info!("🌐 [LIANA] Opening embedded webview");
-                }
+                let webview = self.webview.get_or_insert_with(init_webview);
 
+                // Load URL into Ultralight webview
                 self.session_url = Some(url.clone());
 
                 // If there's an active page, close it first before creating new one
-                if let Some(old_id) = self.active_page.take() {
-                    if cfg!(debug_assertions) {
-                        tracing::info!(
-                            "🌐 [LIANA] Closing old view {} before creating new one",
-                            old_id
-                        );
-                    }
+                if let Some(previous) = self.active_page.take() {
+                    let delete_previous = webview
+                        .update(WebviewAction::CloseView(previous))
+                        .map(map_webview_message_static);
 
-                    if let Some(webview) = self.webview.as_mut() {
-                        // Close old view (don't wait for result)
-                        let _ = webview.update(WebviewAction::CloseView(old_id));
-                    }
+                    return Task::batch([
+                        delete_previous,
+                        webview
+                            .update(WebviewAction::CreateView(PageType::Url(url)))
+                            .map(map_webview_message_static),
+                    ]);
                 }
 
                 // Create new view on the same webview instance
-                return self
-                    .webview
-                    .get_or_insert_with(init_webview)
+                return webview
                     .update(WebviewAction::CreateView(PageType::Url(url)))
                     .map(map_webview_message_static);
             }
@@ -736,12 +723,9 @@ impl State for BuySellPanel {
 
                 // Just clear the state - don't try to close view or destroy webview
                 // The WebviewOpenUrl handler will close the old view when creating a new one
+                self.webview = None;
                 self.session_url = None;
                 self.active_page = None;
-                self.pending_close_view = None;
-            }
-            BuySellMessage::DestroyWebview => {
-                // Not used anymore - kept for compatibility
             }
         };
 
@@ -779,7 +763,7 @@ impl BuySellPanel {
             return Task::none();
         }
 
-        if let BuySellFlowState::Africa(ref state) = self.flow_state {
+        if let BuySellFlowState::Mavapay(ref state) = self.flow_state {
             self.error = None;
             tracing::info!(
                 "🔍 [LOGIN] Attempting login for user: {}",
@@ -816,7 +800,7 @@ impl BuySellPanel {
     fn handle_mavapay_create_quote(&self) -> Task<Message> {
         use crate::services::mavapay::{Currency, PaymentMethod, QuoteRequest};
 
-        let Some(state) = self.africa_state() else {
+        let BuySellFlowState::Mavapay(state) = &self.flow_state else {
             return Task::none();
         };
 
@@ -916,32 +900,31 @@ impl BuySellPanel {
 
         let client = state.mavapay_client.clone();
         let coincube_client = state.coincube_client.clone();
-        let wallet_address = self.wallet_address.value.clone();
 
         // Get user ID from state if available
-        let user_id = if let BuySellFlowState::Africa(ref state) = self.flow_state {
+        let user_id = if let BuySellFlowState::Mavapay(ref state) = self.flow_state {
             state.current_user.as_ref().map(|user| user.id.to_string())
         } else {
             None
         };
 
         // Get bank details from state for the save request
-        let bank_account_number = if let BuySellFlowState::Africa(ref state) = self.flow_state {
+        let bank_account_number = if let BuySellFlowState::Mavapay(ref state) = self.flow_state {
             state.mavapay_bank_account_number.value.clone()
         } else {
             String::new()
         };
-        let bank_account_name = if let BuySellFlowState::Africa(ref state) = self.flow_state {
+        let bank_account_name = if let BuySellFlowState::Mavapay(ref state) = self.flow_state {
             state.mavapay_bank_account_name.value.clone()
         } else {
             String::new()
         };
-        let bank_code = if let BuySellFlowState::Africa(ref state) = self.flow_state {
+        let bank_code = if let BuySellFlowState::Mavapay(ref state) = self.flow_state {
             state.mavapay_bank_code.value.clone()
         } else {
             String::new()
         };
-        let bank_name = if let BuySellFlowState::Africa(ref state) = self.flow_state {
+        let bank_name = if let BuySellFlowState::Mavapay(ref state) = self.flow_state {
             state.mavapay_bank_name.value.clone()
         } else {
             String::new()
@@ -987,7 +970,6 @@ impl BuySellPanel {
                     bank_code: Some(bank_code),
                     bank_name: Some(bank_name),
                     payment_method: "bank_transfer".to_string(),
-                    wallet_address: Some(wallet_address),
                 };
 
                 coincube_client
@@ -1025,7 +1007,7 @@ impl BuySellPanel {
     fn handle_mavapay_open_payment_link(&self) -> Task<Message> {
         use crate::services::mavapay::PaymentLinkRequest;
 
-        let Some(state) = self.africa_state() else {
+        let BuySellFlowState::Mavapay(state) = &self.flow_state else {
             return Task::none();
         };
 
@@ -1092,7 +1074,7 @@ impl BuySellPanel {
     }
 
     fn handle_mavapay_get_price(&self) -> Task<Message> {
-        let Some(state) = self.africa_state() else {
+        let BuySellFlowState::Mavapay(state) = &self.flow_state else {
             return Task::none();
         };
         let client = state.mavapay_client.clone();
@@ -1112,7 +1094,7 @@ impl BuySellPanel {
     }
 
     fn handle_mavapay_get_transactions(&self) -> Task<Message> {
-        let Some(state) = self.africa_state() else {
+        let BuySellFlowState::Mavapay(state) = &self.flow_state else {
             return Task::none();
         };
         let client = state.mavapay_client.clone();
@@ -1136,7 +1118,7 @@ impl BuySellPanel {
         // The quote is now saved and webview opened directly in handle_mavapay_create_quote
         use crate::services::coincube::client::SaveQuoteRequest;
 
-        let Some(state) = self.africa_state() else {
+        let BuySellFlowState::Mavapay(state) = &self.flow_state else {
             return Task::none();
         };
 
@@ -1148,7 +1130,7 @@ impl BuySellPanel {
 
         // Build save quote request
         // Get user ID from state if available
-        let user_id = if let BuySellFlowState::Africa(ref state) = self.flow_state {
+        let user_id = if let BuySellFlowState::Mavapay(ref state) = self.flow_state {
             state.current_user.as_ref().map(|user| user.id.to_string())
         } else {
             None
@@ -1177,7 +1159,6 @@ impl BuySellPanel {
             bank_code: Some(state.mavapay_bank_code.value.clone()),
             bank_name: Some(state.mavapay_bank_name.value.clone()),
             payment_method: "bank_transfer".to_string(),
-            wallet_address: Some(self.wallet_address.value.clone()),
         };
 
         let coincube_client = state.coincube_client.clone();
@@ -1211,7 +1192,7 @@ impl BuySellPanel {
         password.len() >= 8
     }
 
-    fn is_registration_valid_static(state: &crate::app::view::buysell::AfricaFlowState) -> bool {
+    fn is_registration_valid_static(state: &crate::app::view::buysell::MavapayFlowState) -> bool {
         !state.first_name.value.is_empty()
             && !state.last_name.value.is_empty()
             && state.email.value.contains('@')

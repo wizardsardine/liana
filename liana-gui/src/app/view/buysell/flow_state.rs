@@ -7,22 +7,17 @@ use crate::services::registration::RegistrationClient;
 /// Represents the runtime state of the Buy/Sell panel based on geolocation detection
 #[derive(Debug, Clone)]
 pub enum BuySellFlowState {
-    /// Before country detection completes
-    DetectingCountry,
-
-    /// African users: Mavapay native login/registration flow
-    Africa(AfricaFlowState),
-
-    /// International users: Onramper embedded webview
-    International(InternationalFlowState),
-
-    /// Geolocation detection failed - show Onramper as fallback
-    DetectionFailed,
+    /// IP geolocation and buy/sell pick
+    Initialization,
+    /// Nigeria, Kenya and South Africa, ie Mavapay supported providers
+    Mavapay(MavapayFlowState),
+    /// For any all countries not supported by Mavapay, but supported by Onramper
+    Onramper,
 }
 
-/// State specific to African (Mavapay) flow
+/// State specific to Mavapay flow
 #[derive(Debug, Clone)]
-pub struct AfricaFlowState {
+pub struct MavapayFlowState {
     pub native_page: NativePage,
     pub selected_account_type: Option<AccountType>,
 
@@ -121,12 +116,6 @@ impl std::fmt::Display for MavapayPaymentMethod {
     }
 }
 
-/// State specific to International (Onramper) flow
-#[derive(Debug, Clone)]
-pub struct InternationalFlowState {
-    // Onramper doesn't need a client - we build the URL directly
-}
-
 /// Pages in the native African flow
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NativePage {
@@ -137,7 +126,7 @@ pub enum NativePage {
     CoincubePay,
 }
 
-impl AfricaFlowState {
+impl MavapayFlowState {
     pub fn new() -> Self {
         Self {
             native_page: NativePage::AccountSelect,
@@ -201,19 +190,7 @@ impl AfricaFlowState {
     }
 }
 
-impl Default for AfricaFlowState {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl InternationalFlowState {
-    pub fn new() -> Self {
-        Self {}
-    }
-}
-
-impl Default for InternationalFlowState {
+impl Default for MavapayFlowState {
     fn default() -> Self {
         Self::new()
     }
@@ -221,6 +198,6 @@ impl Default for InternationalFlowState {
 
 impl Default for BuySellFlowState {
     fn default() -> Self {
-        Self::DetectingCountry
+        Self::Initialization
     }
 }

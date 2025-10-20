@@ -60,6 +60,13 @@ pub fn h5_regular<'a>(content: impl Display) -> iced::widget::Text<'a, Theme> {
         .size(H5_SIZE)
 }
 
+pub fn p1_italic<'a>(content: impl Display) -> iced::widget::Text<'a, Theme> {
+    iced::widget::text!("{}", content)
+        .shaping(Shaping::Advanced)
+        .font(font::ITALIC)
+        .size(P1_SIZE)
+}
+
 pub fn p1_bold<'a>(content: impl Display) -> iced::widget::Text<'a, Theme> {
     iced::widget::text!("{}", content)
         .shaping(Shaping::Advanced)
@@ -85,6 +92,13 @@ pub fn p2_medium<'a>(content: impl Display) -> iced::widget::Text<'a, Theme> {
     iced::widget::text!("{}", content)
         .shaping(Shaping::Advanced)
         .font(font::MEDIUM)
+        .size(P2_SIZE)
+}
+
+pub fn p2_bold<'a>(content: impl Display) -> iced::widget::Text<'a, Theme> {
+    iced::widget::text!("{}", content)
+        .shaping(Shaping::Advanced)
+        .font(font::BOLD)
         .size(P2_SIZE)
 }
 

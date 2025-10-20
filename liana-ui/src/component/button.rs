@@ -90,7 +90,10 @@ pub fn link<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> Button<'a, T>
 
 fn content<'a, T: 'a>(icon: Option<Text<'a>>, text: Text<'a>) -> Container<'a, T> {
     match icon {
-        None => container(text).align_x(Horizontal::Center).padding(5),
+        None => container(text)
+            .align_y(Vertical::Center)
+            .align_x(Horizontal::Center)
+            .padding(5),
         Some(i) => container(row![i, text].spacing(10).align_y(Vertical::Center))
             .align_x(Horizontal::Center)
             .padding(5),
