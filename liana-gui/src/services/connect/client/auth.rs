@@ -93,7 +93,8 @@ impl AuthClient {
             .http
             .request(method, url)
             .header("apikey", &self.api_public_key)
-            .header("Content-Type", "application/json");
+            .header("Content-Type", "application/json")
+            .header("User-Agent", format!("liana-gui/{}", crate::VERSION));
         tracing::debug!("Sending http request: {:?}", req);
         req
     }
@@ -136,6 +137,7 @@ impl AuthClient {
             .post(format!("{}/auth/v1/verify", self.url))
             .header("apikey", &self.api_public_key)
             .header("Content-Type", "application/json")
+            .header("User-Agent", format!("liana-gui/{}", crate::VERSION))
             .json(&VerifyOtp {
                 email: &self.email,
                 token,
@@ -161,6 +163,7 @@ impl AuthClient {
             ))
             .header("apikey", &self.api_public_key)
             .header("Content-Type", "application/json")
+            .header("User-Agent", format!("liana-gui/{}", crate::VERSION))
             .json(&RefreshToken { refresh_token })
             .send()
             .await?

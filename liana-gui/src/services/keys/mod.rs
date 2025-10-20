@@ -41,7 +41,8 @@ fn request<U: reqwest::IntoUrl>(
     let req = http
         .request(method, url)
         .header("Content-Type", "application/json")
-        .header("API-Version", "0.1");
+        .header("API-Version", "0.1")
+        .header("User-Agent", format!("liana-gui/{}", crate::VERSION));
     tracing::debug!("Sending http request: {:?}", req);
     req
 }
