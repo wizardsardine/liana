@@ -30,7 +30,11 @@ pub async fn get_service_config(
     } else {
         LIANALITE_SIGNET_URL
     };
-    let res: ServiceConfigResource = reqwest::get(format!("{}/v1/desktop", backend_api_url))
+    let client = reqwest::Client::new();
+    let res: ServiceConfigResource = client
+        .get(format!("{}/v1/desktop", backend_api_url))
+        .header("User-Agent", format!("liana-gui/{}", crate::VERSION))
+        .send()
         .await?
         .json()
         .await?;
