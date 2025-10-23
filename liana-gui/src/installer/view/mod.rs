@@ -1798,7 +1798,7 @@ pub fn backup_mnemonic<'a>(
     layout(
         progress,
         email,
-        "Backup your mnemonic",
+        "Back Up your mnemonic",
         Column::new()
             .push(text(prompt::MNEMONIC_HELP))
             .push(
