@@ -519,17 +519,12 @@ impl State for BuySellPanel {
                 self.flow_state = BuySellFlowState::Initialization;
                 self.buy_or_sell = None;
                 self.error = None;
+                self.generated_address = None;
 
-                if let Some(page) = self.active_page.take() {
-                    return self
-                        .webview
-                        .as_mut()
-                        .expect("webview should exist at this point")
-                        .update(WebviewAction::CloseView(page))
-                        .map(map_webview_message_static);
-                };
-
-                self.webview = None;
+                // close webview
+                return Task::done(Message::View(ViewMessage::BuySell(
+                    BuySellMessage::CloseWebview,
+                )));
             }
 
             BuySellMessage::CreateNewAddress => {
@@ -669,12 +664,11 @@ impl State for BuySellPanel {
 
             // webview logic
             BuySellMessage::ViewTick(id) => {
-                return self
-                    .webview
-                    .as_mut()
-                    .expect("webview should exist at this point")
-                    .update(WebviewAction::Update(id))
-                    .map(map_webview_message_static);
+                if let Some(wv) = self.webview.as_mut() {
+                    return wv
+                        .update(WebviewAction::Update(id))
+                        .map(map_webview_message_static);
+                }
             }
             BuySellMessage::WebviewAction(action) => {
                 return self
@@ -696,12 +690,11 @@ impl State for BuySellPanel {
                         .update(WebviewAction::CloseView(previous))
                         .map(map_webview_message_static);
 
-                    return Task::batch([
-                        delete_previous,
+                    return delete_previous.chain(
                         webview
                             .update(WebviewAction::CreateView(PageType::Url(url)))
                             .map(map_webview_message_static),
-                    ]);
+                    );
                 }
 
                 // Create new view on the same webview instance
