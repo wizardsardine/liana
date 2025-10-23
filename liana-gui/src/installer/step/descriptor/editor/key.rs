@@ -1197,7 +1197,7 @@ impl SelectKeySource {
         collapsible_input_button(
             self.focus == Focus::EnterXpub,
             Some(icon::paste_icon()),
-            "Paste extended public key".to_string(),
+            "Paste an extended public key".to_string(),
             example_xpub(self.network),
             &self.form_xpub,
             Some(|xpub| Self::route(SelectKeySourceMessage::Xpub(xpub))),
