@@ -632,7 +632,7 @@ fn optional_content(state: &DecryptModal) -> Container<'static, installer::Messa
 
     let xpub = modal::collapsible_input_button(
         state.focus == Focus::Xpub,
-        Some(icon::round_key_icon()),
+        Some(icon::paste_icon()),
         "Paste an extended public key".to_string(),
         example_xpub(state.network),
         &state.xpub,
