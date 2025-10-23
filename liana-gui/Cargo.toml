@@ -13,6 +13,9 @@ resolver = "2"
 default = []
 buysell = ["iced_webview"]
 
+[package.metadata.winres]
+LegalCopyright = "Copyright © 2025"
+
 [[bin]]
 name = "coincube-vault"
 path = "src/main.rs"

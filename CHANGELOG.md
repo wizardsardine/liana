@@ -21,8 +21,8 @@ And some improvements:
 * UI improvements: Fixed badge tooltips, improved modal layouts, updated paste icon, added toggler widget and
   wrench icon
 * Network validation: Display errors for xpubs from wrong network or invalid xpubs in installer
-* Bug fixes: Fixed widget toast bounds, missing tab closing with wallet loading, loader button wording, and
-  removed forgotten logs
+* Bug fixes: Fixed widget toast bounds, missing tab closing with wallet loading, loader button wording, display
+  amount left to select when drafting spend with Liana Connect as backend, and removed forgotten logs
 * Code refactoring: Added formatting traits, moved utilities, improved cache management, and updated deprecated
   methods
 * Wallet management: Added deletion confirmation message for wallet members

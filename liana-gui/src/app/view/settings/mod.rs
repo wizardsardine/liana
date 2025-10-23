@@ -3,8 +3,8 @@ pub mod general;
 use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
 
-use iced::alignment::Vertical;
-use iced::widget::{Column, Rule};
+use iced::alignment::{Horizontal, Vertical};
+use iced::widget::{container, Column, Rule};
 use iced::{
     alignment,
     widget::{radio, scrollable, tooltip as iced_tooltip, Space},
@@ -216,11 +216,18 @@ pub fn import_export<'a>(cache: &'a Cache, warning: Option<&Error>) -> Element<'
         ))
         .push(Space::with_width(Length::Fill));
 
-    let export_descriptor = export_section(
-        "Descriptor only",
-        "Plain-text descriptor file only, to use with other wallets.",
+    let export_encrypted_descriptor = export_section(
+        "Encrypted descriptor",
+        ".bed file, can be decrypted with one of your signing devices or xpubs.",
         icon::backup_icon(),
         Message::Settings(SettingsMessage::ExportEncryptedDescriptor),
+    );
+
+    let export_descriptor = export_section(
+        "Descriptor only - plain-text",
+        "Plain-text (not encrypted) descriptor file only, to use with other wallets.",
+        icon::backup_icon(),
+        Message::Settings(SettingsMessage::ExportPlaintextDescriptor),
     );
 
     let export_transactions = export_section(
@@ -239,7 +246,7 @@ pub fn import_export<'a>(cache: &'a Cache, warning: Option<&Error>) -> Element<'
 
     let export_wallet = export_section(
         "Export wallet",
-        "File with wallet info useful to sync labels and data on other devices.",
+        "File (not encrypted) with wallet info useful to sync labels and data on other devices.",
         icon::backup_icon(),
         Message::Settings(SettingsMessage::ExportWallet),
     );
@@ -267,6 +274,7 @@ pub fn import_export<'a>(cache: &'a Cache, warning: Option<&Error>) -> Element<'
             .spacing(20)
             .push(header)
             .push(description)
+            .push(export_encrypted_descriptor)
             .push(export_wallet)
             .push(import_wallet)
             .push(separator)
@@ -1009,6 +1017,26 @@ pub fn wallet_settings<'a>(
     updated: bool,
 ) -> Element<'a, Message> {
     let header = header("Wallet", SettingsMessage::EditWalletSettings);
+    let r = Row::new().spacing(10).align_y(Vertical::Center)
+        .push(icon::backup_icon())
+        .push(text("Back up encrypted descriptor"))
+        .push(
+
+    Container::new(
+        iced::widget::tooltip::Tooltip::new(
+            icon::tooltip_icon(),
+            "An encrypted descriptor file (.bed) you can store anywhere. To decrypt it, you need one of your signing devices or xpubs.",
+            iced::widget::tooltip::Position::Bottom,
+        )
+        .style(theme::card::simple),
+    )
+        );
+    let back_up_encrypted_descriptor =
+        Button::new(container(r).align_x(Horizontal::Center).padding(5))
+            .on_press(Message::Settings(
+                SettingsMessage::ExportEncryptedDescriptor,
+            ))
+            .style(theme::button::secondary);
 
     let descr = card::simple(
         Column::new()
@@ -1027,12 +1055,7 @@ pub fn wallet_settings<'a>(
                 Row::new()
                     .spacing(10)
                     .push(Column::new().width(Length::Fill))
-                    .push(
-                        button::secondary(Some(icon::backup_icon()), "Back up Descriptor")
-                            .on_press(Message::Settings(
-                                SettingsMessage::ExportEncryptedDescriptor,
-                            )),
-                    )
+                    .push(back_up_encrypted_descriptor)
                     .push(
                         button::secondary(Some(icon::clipboard_icon()), "Copy")
                             .on_press(Message::Clipboard(descriptor.to_string())),

@@ -39,20 +39,31 @@
           };
           strictDeps = true;
           doCheck = false;
+          cargoLock = ./Cargo.lock;
+          cargoVendorDir = craneLib.vendorCargoDeps {
+            src = ./.;
+          };
         };
 
         x86_64-pc-windows-gnu = craneLib.buildPackage {
           inherit (commonBuildSettings) src strictDeps doCheck;
 
+          SOURCE_DATE_EPOCH = 1;
           CARGO_BUILD_TARGET = "x86_64-pc-windows-gnu";
           CARGO_BUILD_RUSTFLAGS = "-C link-arg=-Wl,--no-insert-timestamp";
           TARGET_CC = "${pkgs.pkgsCross.mingwW64.stdenv.cc}/bin/${pkgs.pkgsCross.mingwW64.stdenv.cc.targetPrefix}cc";
+
+          AR_x86_64_pc_windows_gnu = "${pkgs.pkgsCross.mingwW64.stdenv.cc.targetPrefix}ar";
+          TOOLKIT_x86_64_pc_windows_gnu = "${pkgs.pkgsCross.mingwW64.stdenv.cc.bintools.bintools}/bin";
+          WINDRES_x86_64_pc_windows_gnu = "${pkgs.pkgsCross.mingwW64.stdenv.cc.targetPrefix}windres";
 
           pname = "liana-gui";
           cargoExtraArgs = "-p liana-gui";
           depsBuildBuild = with pkgs; [
             pkgsCross.mingwW64.stdenv.cc
             pkgsCross.mingwW64.windows.pthreads
+            pkgsCross.mingwW64.buildPackages.binutils
+            pkgsCross.mingwW64.buildPackages.binutils-unwrapped
           ];
 
           installPhaseCommand = ''
