@@ -1,6 +1,7 @@
 pub mod editor;
 
 use async_hwi::utils::extract_keys_and_template;
+use iced::widget::column;
 use iced::widget::{
     checkbox, radio, scrollable, scrollable::Scrollbar, tooltip, Button, Space, TextInput,
 };
@@ -616,6 +617,29 @@ pub fn share_xpubs<'a>(
     )
 }
 
+pub fn policy_entry_card(title: String, content: String) -> Container<'static, Message> {
+    let title = text(title).small().bold();
+    let scroll = scrollable(column![text(content).small(), Space::with_height(5)]).direction(
+        scrollable::Direction::Horizontal(scrollable::Scrollbar::new().width(5).scroller_width(5)),
+    );
+    card::simple(column![title, scroll].spacing(10)).width(Length::Fill)
+}
+
+pub fn policy_view(template: String, keys: Vec<String>) -> Element<'static, Message> {
+    let template = policy_entry_card("Descriptor template".into(), template);
+    let mut col = column![template].spacing(5);
+
+    for (index, key) in keys.into_iter().enumerate() {
+        let title = format!("Key @{index}:");
+        col = col.push(policy_entry_card(title, key));
+    }
+    col.into()
+}
+
+pub fn descriptor_view(descriptor_str: String) -> Element<'static, Message> {
+    policy_entry_card("The descriptor".into(), descriptor_str).into()
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn register_descriptor<'a>(
     progress: (usize, usize),
@@ -632,144 +656,76 @@ pub fn register_descriptor<'a>(
     let descriptor_str = descriptor.to_string();
     let displayed_descriptor =
         if let Ok((template, keys)) = extract_keys_and_template::<String>(&descriptor_str) {
-            let mut col = Column::new()
-                .push(
-                    card::simple(
-                        Column::new()
-                            .push(text("Descriptor template:").small().bold())
-                            .push(
-                                scrollable(
-                                    Column::new()
-                                        .push(text(template).small())
-                                        .push(Space::with_height(Length::Fixed(5.0))),
-                                )
-                                .direction(
-                                    scrollable::Direction::Horizontal(
-                                        scrollable::Scrollbar::new().width(5).scroller_width(5),
-                                    ),
-                                ),
-                            )
-                            .spacing(10),
-                    )
-                    .width(Length::Fill),
-                )
-                .push(Space::with_height(5));
-
-            for (index, key) in keys.into_iter().enumerate() {
-                col = col
-                    .push(
-                        card::simple(
-                            Column::new()
-                                .push(text(format!("Key @{}:", index)).small().bold())
-                                .push(
-                                    scrollable(
-                                        Column::new()
-                                            .push(text(key.to_owned()).small())
-                                            .push(Space::with_height(Length::Fixed(5.0))),
-                                    )
-                                    .direction(
-                                        scrollable::Direction::Horizontal(
-                                            scrollable::Scrollbar::new().width(5).scroller_width(5),
-                                        ),
-                                    ),
-                                )
-                                .spacing(10),
-                        )
-                        .width(Length::Fill),
-                    )
-                    .push(Space::with_height(5));
-            }
-
-            col
+            policy_view(template, keys)
         } else {
-            Column::new().push(card::simple(
-                Column::new()
-                    .push(text("The descriptor:").small().bold())
-                    .push(
-                        scrollable(
-                            Column::new()
-                                .push(text(descriptor_str.to_owned()).small())
-                                .push(Space::with_height(Length::Fixed(5.0))),
-                        )
-                        .direction(scrollable::Direction::Horizontal(
-                            scrollable::Scrollbar::new().width(5).scroller_width(5),
-                        )),
-                    )
-                    .push(
-                        Row::new().push(Column::new().width(Length::Fill)).push(
-                            button::secondary(Some(icon::clipboard_icon()), "Copy")
-                                .on_press(Message::Clipboard(descriptor_str)),
-                        ),
-                    )
-                    .spacing(10),
-            ))
+            descriptor_view(descriptor_str)
         };
+
+    let warning = (!created_desc)
+        .then_some(text("This step is only necessary if you are using a signing device.").bold());
+    let error_card = error.map(|e| card::error("Failed to register descriptor", e.to_string()));
+
+    let devices_title = Container::new(if created_desc {
+        text("Select hardware wallet to register descriptor on:").bold()
+    } else {
+        text("If necessary, please select the signing device to register descriptor on:").bold()
+    })
+    .width(Length::Fill);
+    let devices = hws
+        .iter()
+        .enumerate()
+        .fold(Column::new().spacing(10), |col, (i, hw)| {
+            col.push(hw_list_view(
+                i,
+                hw,
+                Some(i) == chosen_hw,
+                processing,
+                hw.fingerprint()
+                    .map(|fg| registered.contains(&fg))
+                    .unwrap_or(false),
+                Some(descriptor),
+                false,
+                None,
+                false,
+            ))
+        });
+    let signing_devices = column![devices_title, devices]
+        .spacing(10)
+        .width(Length::Fill);
+
+    let registered_checkbox = created_desc.then_some(
+        checkbox("I have registered the descriptor on my device(s)", done)
+            .on_toggle(Message::UserActionDone),
+    );
+
+    let next_button = if !created_desc || (done && !processing) {
+        button::secondary(None, "Next")
+            .on_press(Message::Next)
+            .width(200)
+    } else {
+        button::secondary(None, "Next").width(200)
+    };
+
+    let content = Column::new()
+        .push_maybe(warning)
+        .push(displayed_descriptor)
+        .push(text(prompt::REGISTER_DESCRIPTOR_HELP))
+        .push_maybe(error_card)
+        .push(signing_devices)
+        .push_maybe(registered_checkbox)
+        .push(next_button)
+        .push(Space::with_height(5))
+        .spacing(50);
+
+    let previous = (!processing).then_some(Message::Previous);
+
     layout(
         progress,
         email,
         "Register descriptor",
-        Column::new()
-            .push_maybe((!created_desc).then_some(
-                text("This step is only necessary if you are using a signing device.").bold(),
-            ))
-            .push(displayed_descriptor)
-            .push(text(prompt::REGISTER_DESCRIPTOR_HELP))
-            .push_maybe(error.map(|e| card::error("Failed to register descriptor", e.to_string())))
-            .push(
-                Column::new()
-                    .push(
-                        Container::new(
-                            if created_desc {
-                                text("Select hardware wallet to register descriptor on:")
-                                    .bold()
-                            } else {
-                                text("If necessary, please select the signing device to register descriptor on:")
-                                    .bold()
-                            },
-                        )
-                        .width(Length::Fill),
-                    )
-                    .spacing(10)
-                    .push(
-                        hws.iter()
-                            .enumerate()
-                            .fold(Column::new().spacing(10), |col, (i, hw)| {
-                                col.push(hw_list_view(
-                                    i,
-                                    hw,
-                                    Some(i) == chosen_hw,
-                                    processing,
-                                    hw.fingerprint()
-                                        .map(|fg| registered.contains(&fg))
-                                        .unwrap_or(false),
-                                    Some(descriptor),
-                                    false,
-                                    None,
-                                    false,
-                                ))
-                            }),
-                    )
-                    .width(Length::Fill),
-            )
-            .push_maybe(created_desc.then_some(checkbox(
-                "I have registered the descriptor on my device(s)",
-                done,
-            ).on_toggle(Message::UserActionDone)))
-            .push(if !created_desc || (done && !processing) {
-                button::secondary(None, "Next")
-                    .on_press(Message::Next)
-                    .width(Length::Fixed(200.0))
-            } else {
-                button::secondary(None, "Next").width(Length::Fixed(200.0))
-            })
-            .push(Space::with_height(5))
-            .spacing(50),
+        content,
         true,
-        if !processing {
-        Some(Message::Previous)
-        } else {
-            None
-        }
+        previous,
     )
 }
 
