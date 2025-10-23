@@ -145,20 +145,24 @@ impl BuySellPanel {
                 Some(app::view::buysell::panel::BuyOrSell::Sell) => "sell",
             };
 
-            if let Some(url) = onramper::create_widget_url(&currency, address.as_deref(), &mode) {
-                tracing::info!("🌍 [ONRAMPER] Opening URL: {}", url);
+            match onramper::create_widget_url(&currency, address.as_deref(), &mode, self.network) {
+                Ok(url) => {
+                    tracing::info!(
+                        "🌍 [ONRAMPER] Opening URL for {} network: {}",
+                        self.network,
+                        url
+                    );
 
-                return Task::batch([
-                    Task::done(BuySellMessage::WebviewOpenUrl(url)),
-                    Task::done(BuySellMessage::SetFlowState(BuySellFlowState::Onramper)),
-                ]);
-            } else {
-                tracing::error!("🌍 [ONRAMPER] API key not configured");
+                    Task::batch([
+                        Task::done(BuySellMessage::WebviewOpenUrl(url)),
+                        Task::done(BuySellMessage::SetFlowState(BuySellFlowState::Onramper)),
+                    ])
+                }
+                Err(error) => {
+                    tracing::error!("🌍 [ONRAMPER] Error: {}", error);
 
-                Task::done(BuySellMessage::SessionError(
-                    "Onramper API key not configured. Please set `ONRAMPER_API_KEY` in .env"
-                        .to_string(),
-                ))
+                    Task::done(BuySellMessage::SessionError(error))
+                }
             }
         }
     }
@@ -191,6 +195,8 @@ impl BuySellPanel {
 
     pub fn view<'a>(&'a self) -> iced::Element<'a, ViewMessage, liana_ui::theme::Theme> {
         let webview_active = self.active_page.is_some();
+        let is_onramper_active =
+            webview_active && matches!(self.flow_state, BuySellFlowState::Onramper);
 
         let column = {
             let column = Column::new()
@@ -220,6 +226,33 @@ impl BuySellPanel {
                         })
                         .align_y(Alignment::Center),
                 )
+                // Network display banner for Onramper flow
+                .push_maybe(is_onramper_active.then(|| {
+                    let network_name = match self.network {
+                        liana::miniscript::bitcoin::Network::Bitcoin => "Bitcoin Mainnet",
+                        liana::miniscript::bitcoin::Network::Testnet => "Bitcoin Testnet",
+                        liana::miniscript::bitcoin::Network::Testnet4 => "Bitcoin Testnet4",
+                        liana::miniscript::bitcoin::Network::Signet => "Bitcoin Signet",
+                        liana::miniscript::bitcoin::Network::Regtest => "Bitcoin Regtest",
+                    };
+                    let network_color = match self.network {
+                        liana::miniscript::bitcoin::Network::Bitcoin => color::GREEN,
+                        liana::miniscript::bitcoin::Network::Testnet
+                        | liana::miniscript::bitcoin::Network::Testnet4
+                        | liana::miniscript::bitcoin::Network::Signet
+                        | liana::miniscript::bitcoin::Network::Regtest => color::ORANGE,
+                    };
+
+                    Container::new(
+                        Row::new()
+                            .push(text("Network: ").size(12).color(color::GREY_3))
+                            .push(text(network_name).size(12).color(network_color))
+                            .spacing(5)
+                            .align_y(Alignment::Center),
+                    )
+                    .padding(8)
+                    .style(theme::card::simple)
+                }))
                 // error display
                 .push_maybe(self.error.as_ref().map(|err| {
                     Container::new(text(err).size(14).color(color::RED))
