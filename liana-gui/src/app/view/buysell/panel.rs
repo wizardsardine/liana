@@ -145,19 +145,11 @@ impl BuySellPanel {
                 Some(app::view::buysell::panel::BuyOrSell::Sell) => "sell",
             };
 
-            match onramper::create_widget_url(&currency, address.as_deref(), &mode, self.network) {
-                Ok(url) => {
-                    tracing::info!(
-                        "🌍 [ONRAMPER] Opening URL for {} network: {}",
-                        self.network,
-                        url
-                    );
-
-                    Task::batch([
-                        Task::done(BuySellMessage::WebviewOpenUrl(url)),
-                        Task::done(BuySellMessage::SetFlowState(BuySellFlowState::Onramper)),
-                    ])
-                }
+            match onramper::create_widget_url(&currency, address.as_deref(), &mode) {
+                Ok(url) => Task::batch([
+                    Task::done(BuySellMessage::WebviewOpenUrl(url)),
+                    Task::done(BuySellMessage::SetFlowState(BuySellFlowState::Onramper)),
+                ]),
                 Err(error) => {
                     tracing::error!("🌍 [ONRAMPER] Error: {}", error);
 
