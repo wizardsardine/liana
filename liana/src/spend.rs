@@ -725,6 +725,10 @@ pub fn create_spend(
         )
         .map_err(SpendCreationError::CoinSelection)?
     };
+    // selected,
+    // change_amount,
+    // max_change_amount,
+    // fee_for_ancestors,
     // If necessary, add a change output.
     // For a self-send, coin selection will only find solutions with change and will otherwise
     // return an error. In any case, the PSBT sanity check will catch a transaction with no outputs.
