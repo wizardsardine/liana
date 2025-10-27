@@ -739,7 +739,9 @@ pub async fn import_xpub(
     let (descriptor_pubkey, key) =
         if let Some(DescriptorPublicKey::XPub(key)) = parse_raw_xpub(&xpub_str) {
             (DescriptorPublicKey::XPub(key.clone()), key)
-        } else if let Some(DescriptorPublicKey::XPub(key)) = parse_coldcard_xpub(&xpub_str) {
+        } else if let Some(DescriptorPublicKey::XPub(key)) = parse_coldcard_xpub_json(&xpub_str) {
+            (DescriptorPublicKey::XPub(key.clone()), key)
+        } else if let Some(DescriptorPublicKey::XPub(key)) = parse_coldcard_xpub_ccxp(&xpub_str) {
             (DescriptorPublicKey::XPub(key.clone()), key)
         } else {
             return Err(Error::ParseXpub);
@@ -765,7 +767,9 @@ pub fn parse_raw_xpub(raw_xpub: &str) -> Option<DescriptorPublicKey> {
     DescriptorPublicKey::from_str(raw_xpub).ok()
 }
 
-pub fn parse_coldcard_xpub(coldcard_xpub: &str) -> Option<DescriptorPublicKey> {
+// NOTE: this function is intended to import xpub that have been exported from a coldcard device
+// via this menu: Advanced/Tools => Export Wallet => Generic JSON (Any Edge firmware)
+pub fn parse_coldcard_xpub_json(coldcard_xpub: &str) -> Option<DescriptorPublicKey> {
     if let serde_json::Value::Object(map) = serde_json::from_str(coldcard_xpub).ok()? {
         let fg = map.get("xfp")?.to_string().to_lowercase();
         let fg = fg.replace("\"", "");
@@ -778,6 +782,20 @@ pub fn parse_coldcard_xpub(coldcard_xpub: &str) -> Option<DescriptorPublicKey> {
             let raw_xpub = format!("[{fg}{deriv}]{xpub}");
             return parse_raw_xpub(&raw_xpub);
         }
+    }
+    None
+}
+
+// NOTE: this function is intended to import xpub that have been exported from a coldcard device
+// via this menu: Settings => Miniscript => Export XPUB (Edge firmware >= 6.4.0)
+pub fn parse_coldcard_xpub_ccxp(coldcard_xpub: &str) -> Option<DescriptorPublicKey> {
+    if let serde_json::Value::Object(map) = serde_json::from_str(coldcard_xpub).ok()? {
+        let fg_upper = map.get("xfp")?.to_string().to_uppercase().replace("\"", "");
+        let fg_lower = fg_upper.clone().to_lowercase();
+        let xpub = map.get("p2wsh_key_exp")?.to_string();
+        let xpub = xpub.replace("\"", "");
+        let xpub = xpub.replace(&fg_upper, &fg_lower);
+        return parse_raw_xpub(&xpub);
     }
     None
 }
@@ -1427,74 +1445,35 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_coldcard_xpub() {
-        let raw = r#"
-            {
-              "chain": "XTN",
-              "xfp": "C658B283",
-              "account": 3,
-              "xpub": "tpubD6NzVbkrYhZ4XHQ1pLJ7pdpEGWCVbSUEaUakxnrtENzaZaDp4vL6gBgGH7n983ZPgsVe5G2JEAM2oYZkEPCNrfo9XLq8nHFhp9GzFjGc1uQ",
-              "bip44": {
-                "name": "p2pkh",
-                "xfp": "F623F3D0",
-                "deriv": "m/44h/1h/3h",
-                "xpub": "tpubDCrmGPwVjNJsUDsh7pxsWgTZ1sjFZtnPPhpgCxM3yXg6RXjfDQ73g6mX6H2Hn69j5S5MJnhEr7mSvTzaz7qcrYzyZK7Aw836Qwkj1brgDh8",
-                "desc": "pkh([c658b283/44h/1h/3h]tpubDCrmGPwVjNJsUDsh7pxsWgTZ1sjFZtnPPhpgCxM3yXg6RXjfDQ73g6mX6H2Hn69j5S5MJnhEr7mSvTzaz7qcrYzyZK7Aw836Qwkj1brgDh8/<0;1>/*)#2w5s7qf5",
-                "first": "miu3fgGrAZqtPb6iWwUD1pi7MRqWnkVTeG"
-              },
-              "bip49": {
-                "name": "p2sh-p2wpkh",
-                "xfp": "1226F685",
-                "deriv": "m/49h/1h/3h",
-                "xpub": "tpubDDMPh7VRRQ7waHhLDskFU63ZY4Pdue8vPLhim4Nf34nX8KpFZ4yPt5wDtwuQQ79jn7AvpGBCVreVdhPvJCqCSi5zznCwZ61YYnLdGBmn3As",
-                "desc": "sh(wpkh([c658b283/49h/1h/3h]tpubDDMPh7VRRQ7waHhLDskFU63ZY4Pdue8vPLhim4Nf34nX8KpFZ4yPt5wDtwuQQ79jn7AvpGBCVreVdhPvJCqCSi5zznCwZ61YYnLdGBmn3As/<0;1>/*))#3c4vfpj8",
-                "_pub": "upub5EUyFsezG5Y3kbw8GcQHduRgh2re6PfN6NYm4KdrZ8tzDjhrisdcsTHybHwrstEjmHHbxFseamkoHf4ckFjvAZauLANN7ptr9eZHLRHAtJz",
-                "first": "2MueqD2UoZZ566mLqTVCVT5Dm7YMbVBwPeq"
-              },
-              "bip84": {
-                "name": "p2wpkh",
-                "xfp": "B74B1EF5",
-                "deriv": "m/84h/1h/3h",
-                "xpub": "tpubDDKQtgKtTeTVebMfJ6RJ6vL7UMnDjhUfK7scrYiWGMWy8htipN9dCkuHqx9PmJoAUoydwsc9TEoj3A1C1FbPqzxKth8qfn7axA5qHc5YbJz",
-                "desc": "wpkh([c658b283/84h/1h/3h]tpubDDKQtgKtTeTVebMfJ6RJ6vL7UMnDjhUfK7scrYiWGMWy8htipN9dCkuHqx9PmJoAUoydwsc9TEoj3A1C1FbPqzxKth8qfn7axA5qHc5YbJz/<0;1>/*)#0ac7rpv0",
-                "_pub": "vpub5ZHFm7ANT1R5gCnaBBrxUpojoJPfs4zbwGEswCsbAS1KHDbZEpyQpBvBZW9SEzY5sdD7qLu9zpGaaQHTAzv8N68q6QzgpRpNpkN8kStaFVA",
-                "first": "tb1qt8l4mel8c8epzcrqchmrsdsv6e8n0chkynuxzz"
-              },
-              "bip86": {
-                "name": "p2tr",
-                "xfp": "99B6CEE8",
-                "deriv": "m/86h/1h/3h",
-                "xpub": "tpubDDNzAa2tRWaaiDVf6qnzMYjELyz68DrBzGW6PtsZkWz3tU4QZLUhB9TSxxT4KF4sXncg856etJ1rDM2XHibm21uCxQtLjMd4aR9EXydtEpY",
-                "desc": "tr([c658b283/86h/1h/3h]tpubDDNzAa2tRWaaiDVf6qnzMYjELyz68DrBzGW6PtsZkWz3tU4QZLUhB9TSxxT4KF4sXncg856etJ1rDM2XHibm21uCxQtLjMd4aR9EXydtEpY/<0;1>/*)#ggndxtk6",
-                "first": "tb1pcawjnx5krtffagyzvcmqz40z3hds3nycc2vtjj9ngy8hskk5zwzsfh2a3w"
-              },
-              "bip48_1": {
-                "name": "p2sh-p2wsh",
-                "xfp": "141AB091",
-                "deriv": "m/48h/1h/3h/1h",
-                "xpub": "tpubDFmeRMxr4X7dtY9C9H6gAnVBfzBfjrmJ961ST2STHfQQwrHWMtEU1Zgr2PUfQQL4q9uywHxDJcffmRRpL58RJeSuaVs5CYzrcBrMoobyVRH",
-                "desc": "sh(wsh(sortedmulti(M,[c658b283/48h/1h/3h/1h]tpubDFmeRMxr4X7dtY9C9H6gAnVBfzBfjrmJ961ST2STHfQQwrHWMtEU1Zgr2PUfQQL4q9uywHxDJcffmRRpL58RJeSuaVs5CYzrcBrMoobyVRH/0/*,...)))",
-                "_pub": "Upub5ToK7MrrUA67VRYN8gDhAgD7Ykgw8xyLAPW9fYyCBWMHfSk2J6Gy63uXXSUbScdy3o6dwsenGkAUYYiH5MC6Az4UkM8uAhMA6nLtTzhps22"
-              },
-              "bip48_2": {
-                "name": "p2wsh",
-                "xfp": "88AD98C4",
-                "deriv": "m/48h/1h/3h/2h",
-                "xpub": "tpubDFmeRMxr4X7dxNKxxBKWXu1rskHEQYB8vY5PYPmiB74EjyrE814HHpQzh2XEFpm3z5uJpk7Cjt2hmhcMYmBbot6CmRHn3CKK2K6vzLPBMbH",
-                "desc": "wsh(sortedmulti(M,[c658b283/48h/1h/3h/2h]tpubDFmeRMxr4X7dxNKxxBKWXu1rskHEQYB8vY5PYPmiB74EjyrE814HHpQzh2XEFpm3z5uJpk7Cjt2hmhcMYmBbot6CmRHn3CKK2K6vzLPBMbH/0/*,...))",
-                "_pub": "Vpub5ndaR2XmcqdbQYvFmwE9jsqHvUvwkGNfrx6KYKCLSxNzWg7yJsGLzNHpDHUkHwiscNCmaoQLAft4S7WP1jfHUTPNocG2bFV6ndf736mPM9R"
-              },
-              "bip48_3": {
-                "name": "p2tr",
-                "xfp": "C3F84B2C",
-                "deriv": "m/48h/1h/3h/3h",
-                "xpub": "tpubDFmeRMxr4X7e1LErDJWLDRjrHGfirhnFxk3aZoFe8tjMHUyPjh1mATfLfyC6VKUfuS4uBEhMuow7kQWfNqA7U2uHz7fyT9S6V49MLQmyzjm",
-                "desc": "tr(50929b74c1a04954b78b4b6035e97a5e078a5a0f28ec96d547bfee9ace803ac0,sortedmulti_a(M,[c658b283/48h/1h/3h/3h]tpubDFmeRMxr4X7e1LErDJWLDRjrHGfirhnFxk3aZoFe8tjMHUyPjh1mATfLfyC6VKUfuS4uBEhMuow7kQWfNqA7U2uHz7fyT9S6V49MLQmyzjm/0/*,...))"
-              }
-            }
-        "#;
-        let expected = "[c658b283/48'/1'/3'/2']tpubDFmeRMxr4X7dxNKxxBKWXu1rskHEQYB8vY5PYPmiB74EjyrE814HHpQzh2XEFpm3z5uJpk7Cjt2hmhcMYmBbot6CmRHn3CKK2K6vzLPBMbH".to_string();
-        assert_eq!(expected, parse_coldcard_xpub(raw).unwrap().to_string());
+    fn test_parse_coldcard_xpub_json() {
+        let path = env::current_dir()
+            .unwrap()
+            .join("test_assets")
+            .join("coldcard-export.json");
+        let mut file = File::open(path).unwrap();
+        let mut raw = String::new();
+        let _ = file.read_to_string(&mut raw).unwrap();
+        let expected = "[c658b283/48'/1'/0'/2']tpubDFL5wzgPBYK5pZ2Kh1T8qrxnp43kjE5CXfguZHHBrZSWpkfASy5rVfj7prh11XdqkC1P3kRwUPBeX7AHN8XBNx8UwiprnFnEm5jyswiRD4p".to_string();
+        assert_eq!(
+            expected,
+            parse_coldcard_xpub_json(&raw).unwrap().to_string()
+        );
+    }
+
+    #[test]
+    fn test_parse_coldcard_xpub_ccxp() {
+        let path = env::current_dir()
+            .unwrap()
+            .join("test_assets")
+            .join("ccxp-C658B283.json");
+        let mut file = File::open(path).unwrap();
+        let mut raw = String::new();
+        let _ = file.read_to_string(&mut raw).unwrap();
+        let expected = "[c658b283/48'/1'/0'/2']tpubDFL5wzgPBYK5pZ2Kh1T8qrxnp43kjE5CXfguZHHBrZSWpkfASy5rVfj7prh11XdqkC1P3kRwUPBeX7AHN8XBNx8UwiprnFnEm5jyswiRD4p".to_string();
+        assert_eq!(
+            expected,
+            parse_coldcard_xpub_ccxp(&raw).unwrap().to_string()
+        );
     }
 
     #[test]
