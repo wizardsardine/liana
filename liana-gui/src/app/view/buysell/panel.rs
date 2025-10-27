@@ -591,17 +591,7 @@ impl BuySellPanel {
         use liana_ui::component::form;
         use liana_ui::component::text as ui_text;
 
-        let header = Row::new()
-            .push(
-                Row::new()
-                    .push(ui_text::h4_bold("COIN").color(color::ORANGE))
-                    .push(ui_text::h4_bold("CUBE").color(color::WHITE))
-                    .spacing(0),
-            )
-            .push(Space::with_width(Length::Fixed(8.0)))
-            .push(ui_text::h5_regular("BUY/SELL").color(color::GREY_3));
-
-        let subheader = ui_text::p1_regular("Sign in to your account").color(color::WHITE);
+        let header = ui_text::h3("Sign in to your account").color(color::WHITE);
 
         let email_input = form::Form::new_trimmed("Email", &state.login_username, |v| {
             ViewMessage::BuySell(BuySellMessage::LoginUsernameChanged(v))
@@ -630,8 +620,6 @@ impl BuySellPanel {
 
         Column::new()
             .push(header)
-            .push(Space::with_height(Length::Fixed(10.0)))
-            .push(subheader)
             .push(Space::with_height(Length::Fixed(30.0)))
             .push(email_input)
             .push(Space::with_height(Length::Fixed(20.0)))
@@ -1046,7 +1034,8 @@ impl BuySellPanel {
                 .push(
                     Container::new(text(error).size(14).color(color::RED))
                         .padding(10)
-                        .style(theme::card::invalid),
+                        .style(theme::card::invalid)
+                        .width(Length::Fixed(600.0)), // Match form width
                 )
                 .push(Space::with_height(Length::Fixed(10.0)));
         }
@@ -1067,7 +1056,8 @@ impl BuySellPanel {
                             .align_y(Alignment::Center),
                     )
                     .padding(15)
-                    .style(theme::card::simple),
+                    .style(theme::card::simple)
+                    .width(Length::Fixed(600.0)), // Match form width
                 )
                 .push(Space::with_height(Length::Fixed(15.0)));
         }
@@ -1332,7 +1322,8 @@ impl BuySellPanel {
 
         let exchange_form = Container::new(form_column)
             .padding(20)
-            .style(theme::card::simple);
+            .style(theme::card::simple)
+            .width(Length::Fixed(600.0)); // Fixed width for consistent layout
 
         column = column.push(exchange_form);
 
@@ -1420,13 +1411,17 @@ impl BuySellPanel {
 
             let quote_display = Container::new(quote_column.spacing(5))
                 .padding(20)
-                .style(theme::card::simple);
+                .style(theme::card::simple)
+                .width(Length::Fixed(600.0)); // Match form width
 
             column = column
                 .push(Space::with_height(Length::Fixed(15.0)))
                 .push(quote_display);
         }
 
-        column.spacing(10)
+        column
+            .spacing(10)
+            .align_x(Alignment::Center)
+            .width(Length::Fill)
     }
 }
