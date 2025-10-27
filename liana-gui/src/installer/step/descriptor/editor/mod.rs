@@ -279,6 +279,7 @@ impl Step for DefineDescriptor {
                             tracing::error!("Key {} already exists", key.fingerprint);
                         }
                         self.keys.insert(key.fingerprint, *key.clone());
+                        hws.aliases.insert(key.fingerprint, key.name.clone());
                         for coordinate in coordinates {
                             if !self.paths[coordinate.0].keys.contains(&Some(*key.clone())) {
                                 self.paths[coordinate.0].keys[coordinate.1] = Some(*key.clone());
@@ -309,6 +310,7 @@ impl Step for DefineDescriptor {
                 if let Some(key) = self.keys.get_mut(&fg) {
                     key.name = alias.clone();
                 }
+                hws.aliases.insert(fg, alias.clone());
                 // FIXME: this is a bad hack, we should not store duplicates of keys in paths,
                 // source of truth should be self.keys
                 for p in &mut self.paths {
