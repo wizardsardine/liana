@@ -7,7 +7,9 @@ use crate::services::registration::RegistrationClient;
 /// Represents the runtime state of the Buy/Sell panel based on geolocation detection
 #[derive(Debug, Clone)]
 pub enum BuySellFlowState {
-    /// IP geolocation and buy/sell pick
+    /// Detecting user's location via IP geolocation
+    DetectingLocation,
+    /// For Onramper countries: shows Buy/Sell selection
     Initialization,
     /// Nigeria, Kenya and South Africa, ie Mavapay supported providers
     Mavapay(MavapayFlowState),
@@ -198,6 +200,6 @@ impl Default for MavapayFlowState {
 
 impl Default for BuySellFlowState {
     fn default() -> Self {
-        Self::Initialization
+        Self::DetectingLocation
     }
 }

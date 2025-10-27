@@ -88,73 +88,46 @@ impl BuySellPanel {
             webview: None,
             session_url: None,
             active_page: None,
-            // Start in detecting state
-            flow_state: BuySellFlowState::Initialization,
+            // Start in detecting location state
+            flow_state: BuySellFlowState::DetectingLocation,
         }
     }
 
-    /// transitions to appropriate flow state
+    /// Opens Onramper widget session (only called for non-Mavapay countries)
+    /// Mavapay flow is now handled by SetBuyOrSell message handler
     pub fn start_session(&mut self) -> iced::Task<BuySellMessage> {
         use crate::app::buysell::onramper;
-        use crate::services::fiat::{
-            mavapay_major_unit_for_country, mavapay_minor_unit_for_country, mavapay_supported,
-        };
 
         let Some(iso_code) = self.detected_country_iso.as_ref() else {
             return Task::none();
         };
 
-        // Determine flow based on ISO code
-        if mavapay_supported(&iso_code) {
-            let mut state = MavapayFlowState::new();
+        // This method is now only called for Onramper (non-Mavapay) flow
+        let currency = crate::services::fiat::currency_for_country(iso_code).to_string();
 
-            // Set default currencies based on detected country
-            state.mavapay_source_currency = form::Value {
-                value: mavapay_minor_unit_for_country(&iso_code).to_string(),
-                warning: None,
-                valid: true,
-            };
-            state.mavapay_target_currency = form::Value {
-                value: "BTCSAT".to_string(),
-                warning: None,
-                valid: true,
-            };
-            state.mavapay_settlement_currency = form::Value {
-                value: mavapay_major_unit_for_country(&iso_code).to_string(),
-                warning: None,
-                valid: true,
-            };
+        // prepare parameters
+        let address = self
+            .generated_address
+            .as_ref()
+            .map(|a| a.address.to_string());
 
-            iced::Task::done(BuySellMessage::SetFlowState(BuySellFlowState::Mavapay(
-                state,
-            )))
-        } else {
-            // Build Onramper widget URL and open in embedded webview
-            let iso_code = self.detected_country_iso.as_deref().unwrap_or("US");
-            let currency = crate::services::fiat::currency_for_country(&iso_code).to_string();
+        let mode = match self.buy_or_sell {
+            None => return Task::none(),
+            Some(BuyOrSell::Buy) => "buy",
+            Some(BuyOrSell::Sell) => "sell",
+        };
 
-            // prepare parameters
-            let address = self
-                .generated_address
-                .as_ref()
-                .map(|a| a.address.to_string());
-
-            let mode = match self.buy_or_sell {
-                None => return Task::none(),
-                Some(app::view::buysell::panel::BuyOrSell::Buy) => "buy",
-                Some(app::view::buysell::panel::BuyOrSell::Sell) => "sell",
-            };
-
-            match onramper::create_widget_url(&currency, address.as_deref(), &mode) {
-                Ok(url) => Task::batch([
+        match onramper::create_widget_url(&currency, address.as_deref(), &mode) {
+            Ok(url) => {
+                tracing::info!("🌍 [ONRAMPER] Widget URL created successfully: {url}");
+                Task::batch([
                     Task::done(BuySellMessage::WebviewOpenUrl(url)),
                     Task::done(BuySellMessage::SetFlowState(BuySellFlowState::Onramper)),
-                ]),
-                Err(error) => {
-                    tracing::error!("🌍 [ONRAMPER] Error: {}", error);
-
-                    Task::done(BuySellMessage::SessionError(error))
-                }
+                ])
+            }
+            Err(error) => {
+                tracing::error!("🌍 [ONRAMPER] Error: {}", error);
+                Task::done(BuySellMessage::SessionError(error))
             }
         }
     }
@@ -296,6 +269,7 @@ impl BuySellPanel {
 
     fn form_view<'a>(&'a self) -> Column<'a, ViewMessage> {
         match &self.flow_state {
+            BuySellFlowState::DetectingLocation => self.render_detecting_location(),
             BuySellFlowState::Initialization => self.initialization_flow(),
             BuySellFlowState::Mavapay(state) => self.render_africa_flow(state),
             BuySellFlowState::Onramper => self.render_loading_onramper(),
@@ -408,32 +382,61 @@ impl BuySellPanel {
                         .spacing(15)
                         .padding(5)
                 })
-                .push_maybe(self.buy_or_sell.is_some().then(|| {
-                    container(Space::with_height(1))
-                        .style(|_| {
-                            iced::widget::container::background(iced::Background::Color(
-                                color::GREY_6,
-                            ))
-                        })
-                        .width(Length::Fill)
-                }))
-                .push_maybe(matches!(self.buy_or_sell, Some(BuyOrSell::Buy)).then(|| {
-                    ui_button::secondary(Some(plus_icon()), "Generate New Address")
-                        .on_press_maybe(
-                            matches!(self.buy_or_sell, Some(BuyOrSell::Buy))
-                                .then_some(ViewMessage::BuySell(BuySellMessage::CreateNewAddress)),
-                        )
-                        .width(iced::Length::Fill)
-                }))
-                .push_maybe(matches!(self.buy_or_sell, Some(BuyOrSell::Sell)).then(|| {
-                    ui_button::secondary(Some(globe_icon()), "Start Widget Session")
-                        .on_press_maybe(
-                            self.detected_country_iso
-                                .is_some()
-                                .then_some(ViewMessage::BuySell(BuySellMessage::CreateSession)),
-                        )
-                        .width(iced::Length::Fill)
-                })),
+                .push_maybe({
+                    // Only show intermediate buttons for non-Mavapay countries
+                    // For Mavapay countries, the flow immediately transitions to AccountSelect
+                    let is_mavapay = self
+                        .detected_country_iso
+                        .as_ref()
+                        .map(|iso| crate::services::fiat::mavapay_supported(iso))
+                        .unwrap_or(false);
+
+                    (self.buy_or_sell.is_some() && !is_mavapay).then(|| {
+                        container(Space::with_height(1))
+                            .style(|_| {
+                                iced::widget::container::background(iced::Background::Color(
+                                    color::GREY_6,
+                                ))
+                            })
+                            .width(Length::Fill)
+                    })
+                })
+                .push_maybe({
+                    // Only show "Generate New Address" for Buy in non-Mavapay countries
+                    let is_mavapay = self
+                        .detected_country_iso
+                        .as_ref()
+                        .map(|iso| crate::services::fiat::mavapay_supported(iso))
+                        .unwrap_or(false);
+
+                    (matches!(self.buy_or_sell, Some(BuyOrSell::Buy)) && !is_mavapay).then(|| {
+                        ui_button::secondary(Some(plus_icon()), "Generate New Address")
+                            .on_press_maybe(
+                                matches!(self.buy_or_sell, Some(BuyOrSell::Buy)).then_some(
+                                    ViewMessage::BuySell(BuySellMessage::CreateNewAddress),
+                                ),
+                            )
+                            .width(iced::Length::Fill)
+                    })
+                })
+                .push_maybe({
+                    // Only show "Start Widget Session" for Sell in non-Mavapay countries
+                    let is_mavapay = self
+                        .detected_country_iso
+                        .as_ref()
+                        .map(|iso| crate::services::fiat::mavapay_supported(iso))
+                        .unwrap_or(false);
+
+                    (matches!(self.buy_or_sell, Some(BuyOrSell::Sell)) && !is_mavapay).then(|| {
+                        ui_button::secondary(Some(globe_icon()), "Start Widget Session")
+                            .on_press_maybe(
+                                self.detected_country_iso
+                                    .is_some()
+                                    .then_some(ViewMessage::BuySell(BuySellMessage::CreateSession)),
+                            )
+                            .width(iced::Length::Fill)
+                    })
+                }),
         };
 
         column
@@ -451,6 +454,20 @@ impl BuySellPanel {
             NativePage::VerifyEmail => self.native_verify_email_form(state),
             NativePage::CoincubePay => self.coincube_pay_form(state),
         }
+    }
+
+    fn render_detecting_location<'a>(&'a self) -> Column<'a, ViewMessage> {
+        use liana_ui::component::text as ui_text;
+
+        Column::new()
+            .push(Space::with_height(Length::Fixed(30.0)))
+            .push(ui_text::p1_bold("Detecting your location...").color(color::WHITE))
+            .push(Space::with_height(Length::Fixed(20.0)))
+            .push(text("Please wait...").size(14).color(color::GREY_3))
+            .align_x(Alignment::Center)
+            .spacing(10)
+            .max_width(500)
+            .width(Length::Fill)
     }
 
     fn render_loading_onramper<'a>(&'a self) -> Column<'a, ViewMessage> {
@@ -486,17 +503,7 @@ impl BuySellPanel {
         use liana_ui::component::text as ui_text;
         use liana_ui::icon::{building_icon, person_icon};
 
-        let header = Row::new()
-            .push(
-                Row::new()
-                    .push(ui_text::h4_bold("COIN").color(color::ORANGE))
-                    .push(ui_text::h4_bold("CUBE").color(color::WHITE))
-                    .spacing(0),
-            )
-            .push(Space::with_width(Length::Fixed(8.0)))
-            .push(ui_text::h5_regular("BUY/SELL").color(color::GREY_3));
-
-        let subheader = ui_text::p1_regular("Choose your account type").color(color::WHITE);
+        let header = ui_text::h3("Choose your account type").color(color::WHITE);
 
         let is_individual = matches!(
             state.selected_account_type,
@@ -568,9 +575,7 @@ impl BuySellPanel {
 
         Column::new()
             .push(header)
-            .push(Space::with_height(Length::Fixed(10.0)))
-            .push(subheader)
-            .push(Space::with_height(Length::Fixed(20.0)))
+            .push(Space::with_height(Length::Fixed(30.0)))
             .push(individual)
             .push(Space::with_height(Length::Fixed(10.0)))
             .push(business)

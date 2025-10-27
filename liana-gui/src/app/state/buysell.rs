@@ -178,10 +178,48 @@ impl State for BuySellPanel {
             }
 
             BuySellMessage::CountryDetected(country_name, iso_code) => {
+                use crate::app::view::buysell::MavapayFlowState;
+                use crate::services::fiat::{
+                    mavapay_major_unit_for_country, mavapay_minor_unit_for_country,
+                    mavapay_supported,
+                };
+                use liana_ui::component::form;
+
                 tracing::info!("country = {}, iso_code = {}", country_name, iso_code);
 
                 self.detected_country_name = Some(country_name);
-                self.detected_country_iso = Some(iso_code);
+                self.detected_country_iso = Some(iso_code.clone());
+
+                // If Mavapay country, immediately transition to AccountSelect
+                // Skip the Buy/Sell selection screen entirely for Mavapay users
+                if mavapay_supported(&iso_code) {
+                    let mut state = MavapayFlowState::new();
+
+                    // Set default currencies based on detected country
+                    state.mavapay_source_currency = form::Value {
+                        value: mavapay_minor_unit_for_country(&iso_code).to_string(),
+                        warning: None,
+                        valid: true,
+                    };
+                    state.mavapay_target_currency = form::Value {
+                        value: "BTCSAT".to_string(),
+                        warning: None,
+                        valid: true,
+                    };
+                    state.mavapay_settlement_currency = form::Value {
+                        value: mavapay_major_unit_for_country(&iso_code).to_string(),
+                        warning: None,
+                        valid: true,
+                    };
+
+                    return Task::done(Message::View(ViewMessage::BuySell(
+                        BuySellMessage::SetFlowState(BuySellFlowState::Mavapay(state)),
+                    )));
+                }
+                // For non-Mavapay countries, transition to Initialization to show Buy/Sell buttons
+                return Task::done(Message::View(ViewMessage::BuySell(
+                    BuySellMessage::SetFlowState(BuySellFlowState::Initialization),
+                )));
             }
 
             BuySellMessage::LastNameChanged(v) => {
@@ -512,7 +550,11 @@ impl State for BuySellPanel {
             }
 
             // for creating new addresses for buysell coin reception
-            BuySellMessage::SetBuyOrSell(bs) => self.buy_or_sell = Some(bs),
+            // This is now only used by Onramper flow (non-Mavapay countries)
+            // Mavapay users never see the Buy/Sell buttons - they go directly to AccountSelect
+            BuySellMessage::SetBuyOrSell(bs) => {
+                self.buy_or_sell = Some(bs);
+            }
             BuySellMessage::SetFlowState(state) => self.flow_state = state,
 
             BuySellMessage::ResetWidget => {
