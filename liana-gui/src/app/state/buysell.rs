@@ -762,6 +762,9 @@ impl State for BuySellPanel {
                 self.session_url = None;
                 self.active_page = None;
             }
+            BuySellMessage::OpenExternalUrl(url) => {
+                return Task::done(Message::View(ViewMessage::OpenUrl(url)));
+            }
         };
 
         Task::none()

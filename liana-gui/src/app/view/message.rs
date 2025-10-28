@@ -229,6 +229,9 @@ pub enum BuySellMessage {
     WebviewAction(iced_webview::advanced::Action),
     WebviewOpenUrl(String),
     CloseWebview,
+
+    // Open external URL in browser
+    OpenExternalUrl(String),
 }
 
 #[derive(Debug, Clone)]

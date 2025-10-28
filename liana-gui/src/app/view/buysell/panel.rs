@@ -7,7 +7,7 @@ use iced_webview::{advanced::WebView, Ultralight};
 use liana::miniscript::bitcoin::{self, Network};
 use liana_ui::{
     color,
-    component::{button as ui_button, form, text::text},
+    component::{button as ui_button, form, text as ui_text, text::text},
     icon::*,
     theme,
     widget::*,
@@ -169,17 +169,13 @@ impl BuySellPanel {
                 .push(
                     Row::new()
                         .push(
-                            Container::new(liana_ui::icon::bitcoin_icon().size(24))
-                                .style(theme::container::border)
-                                .padding(10),
+                            Row::new()
+                                .push(ui_text::h4_bold("COIN").color(color::ORANGE))
+                                .push(ui_text::h4_bold("CUBE").color(color::WHITE))
+                                .spacing(0),
                         )
-                        .push(Space::with_width(Length::Fixed(10.0)))
-                        .push(
-                            Column::new()
-                                .push(text("COINCUBE").size(16).color(color::ORANGE))
-                                .push(text("BUY/SELL").size(14).color(color::GREY_3))
-                                .spacing(2),
-                        )
+                        .push(Space::with_width(Length::Fixed(8.0)))
+                        .push(ui_text::h5_regular("BUY/SELL").color(color::GREY_3))
                         .push_maybe({
                             webview_active.then(|| Space::with_width(Length::Fixed(25.0)))
                         })
@@ -637,11 +633,10 @@ impl BuySellPanel {
 
 impl BuySellPanel {
     fn native_register_form<'a>(&'a self, state: &'a MavapayFlowState) -> Column<'a, ViewMessage> {
-        use iced::widget::checkbox;
         use liana_ui::component::button as ui_button;
         use liana_ui::component::text as ui_text;
         use liana_ui::component::text::text;
-        use liana_ui::icon::{globe_icon, previous_icon};
+        use liana_ui::icon::previous_icon;
 
         // Top bar with previous
         let top_bar = Row::new()
@@ -664,21 +659,6 @@ impl BuySellPanel {
             )
             .align_y(Alignment::Center);
 
-        // Brand header
-        let brand = Row::new()
-            .push(Space::with_width(Length::Fill))
-            .push(
-                Row::new()
-                    .push(ui_text::h4_bold("COIN").color(color::ORANGE))
-                    .push(ui_text::h4_bold("CUBE").color(color::WHITE))
-                    .push(Space::with_width(Length::Fixed(8.0)))
-                    .push(ui_text::h5_regular("BUY/SELL").color(color::GREY_3))
-                    .spacing(0)
-                    .align_y(Alignment::Center),
-            )
-            .push(Space::with_width(Length::Fill))
-            .align_y(Alignment::Center);
-
         // Title and subtitle
         let title = Column::new()
             .push(ui_text::h3("Create an Account").color(color::WHITE))
@@ -690,16 +670,6 @@ impl BuySellPanel {
             )
             .spacing(10)
             .align_x(Alignment::Center);
-
-        // Continue with Google (placeholder)
-        let google =
-            ui_button::secondary(Some(globe_icon()), "Continue with Google").width(Length::Fill);
-
-        // Divider "Or"
-        let divider = Row::new()
-            .push(Container::new(Space::with_height(Length::Fixed(1.0))).width(Length::Fill))
-            .push(text("  Or  ").color(color::GREY_3))
-            .push(Container::new(Space::with_height(Length::Fixed(1.0))).width(Length::Fill));
 
         let name_row = Row::new()
             .push(
@@ -744,21 +714,6 @@ impl BuySellPanel {
         .padding(15)
         .secure();
 
-        let terms = Row::new()
-            .push(
-                checkbox("", state.terms_accepted)
-                    .on_toggle(|b| ViewMessage::BuySell(BuySellMessage::TermsToggled(b))),
-            )
-            .push(Space::with_width(Length::Fixed(8.0)))
-            .push(
-                Row::new()
-                    .push(ui_text::p2_regular("I agree to COINCUBE's ").color(color::GREY_3))
-                    .push(ui_text::p2_regular("Terms of Service").color(color::ORANGE))
-                    .push(ui_text::p2_regular(" and ").color(color::GREY_3))
-                    .push(ui_text::p2_regular("Privacy Policy").color(color::ORANGE)),
-            )
-            .align_y(Alignment::Center);
-
         let create_btn = if self.is_registration_valid(state) {
             ui_button::primary(None, "Create Account")
                 .on_press(ViewMessage::BuySell(BuySellMessage::SubmitRegistration))
@@ -770,14 +725,9 @@ impl BuySellPanel {
         Column::new()
             .push(top_bar)
             .push(Space::with_height(Length::Fixed(10.0)))
-            .push(brand)
             .push(Space::with_height(Length::Fixed(30.0)))
             .push(title)
             .push(Space::with_height(Length::Fixed(20.0)))
-            .push(google)
-            .push(Space::with_height(Length::Fixed(10.0)))
-            .push(divider)
-            .push(Space::with_height(Length::Fixed(10.0)))
             .push(name_row)
             .push(Space::with_height(Length::Fixed(10.0)))
             .push(email)
@@ -789,8 +739,6 @@ impl BuySellPanel {
             }))
             .push(Space::with_height(Length::Fixed(10.0)))
             .push(confirm)
-            .push(Space::with_height(Length::Fixed(10.0)))
-            .push(terms)
             .push(Space::with_height(Length::Fixed(20.0)))
             .push(create_btn)
             .align_x(Alignment::Center)
@@ -807,7 +755,6 @@ impl BuySellPanel {
             && !state.last_name.value.is_empty()
             && email_ok
             && pw_ok
-            && state.terms_accepted
     }
 
     #[inline]
@@ -890,21 +837,6 @@ impl BuySellPanel {
                 })
                 .on_press(ViewMessage::Previous),
             )
-            .align_y(Alignment::Center);
-
-        // Brand header
-        let brand = Row::new()
-            .push(Space::with_width(Length::Fill))
-            .push(
-                Row::new()
-                    .push(ui_text::h4_bold("COIN").color(color::ORANGE))
-                    .push(ui_text::h4_bold("CUBE").color(color::WHITE))
-                    .push(Space::with_width(Length::Fixed(8.0)))
-                    .push(ui_text::h5_regular("BUY/SELL").color(color::GREY_3))
-                    .spacing(0)
-                    .align_y(Alignment::Center),
-            )
-            .push(Space::with_width(Length::Fill))
             .align_y(Alignment::Center);
 
         // Title and status-dependent subtitle
@@ -1000,7 +932,6 @@ impl BuySellPanel {
         Column::new()
             .push(top_bar)
             .push(Space::with_height(Length::Fixed(10.0)))
-            .push(brand)
             .push(Space::with_height(Length::Fixed(30.0)))
             .push(title)
             .push(Space::with_height(Length::Fixed(30.0)))
