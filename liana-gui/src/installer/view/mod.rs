@@ -486,7 +486,8 @@ pub fn hardware_wallet_xpubs<'a>(
     error: Option<&Error>,
     accounts: &HashMap<Fingerprint, ChildNumber>,
 ) -> Element<'a, Message> {
-    let mut bttn = Button::new(match hw {
+    // Create custom compact button content (bypassing liana-ui button helpers)
+    let button_content = match hw {
         HardwareWallet::Supported {
             kind,
             version,
@@ -531,16 +532,18 @@ pub fn hardware_wallet_xpubs<'a>(
         HardwareWallet::Locked {
             kind, pairing_code, ..
         } => hw::locked_hardware_wallet(kind, pairing_code.as_ref()),
-    })
-    .style(theme::button::secondary)
-    .width(Length::Fill);
+    };
+
+    // Create button with NO width constraints - truly compact
+    let mut bttn = Button::new(button_content).style(theme::button::secondary);
+    // DO NOT add .width() - let button size naturally
     if !processing && hw.is_supported() {
         bttn = bttn.on_press(Message::Select(i));
     }
     Container::new(
         Column::new()
             .push_maybe(error.map(|e| card::warning(e.to_string()).width(Length::Fill)))
-            .push(bttn)
+            .push(Container::new(bttn).width(Length::Shrink)) // Wrap button to force shrink
             .push_maybe(if xpubs.is_none() {
                 None
             } else {

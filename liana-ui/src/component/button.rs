@@ -54,6 +54,15 @@ pub fn primary<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> Button<'a,
     .style(theme::button::primary)
 }
 
+/// Compact primary button - shrinks to content, left-aligned (for action buttons)
+pub fn primary_compact<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> Button<'a, T> {
+    Button::new(content_left_aligned(
+        icon,
+        text(t).font(MEDIUM).align_y(iced::Alignment::Center),
+    ))
+    .style(theme::button::primary)
+}
+
 pub fn transparent<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> Button<'a, T> {
     Button::new(content(
         icon,
@@ -74,28 +83,76 @@ pub fn secondary<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> Button<'
     .style(theme::button::secondary)
 }
 
+/// Compact secondary button - shrinks to content, left-aligned (for action buttons like "share xpubs")
+pub fn secondary_compact<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> Button<'a, T> {
+    Button::new(content_left_aligned(
+        icon,
+        text(t).align_y(iced::Alignment::Center),
+    ))
+    .style(theme::button::secondary)
+}
+
 pub fn border<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> Button<'a, T> {
-    Button::new(content(icon, text(t).align_y(iced::Alignment::Center)))
-        .style(theme::button::secondary)
+    Button::new(content_left_aligned(
+        icon,
+        text(t).align_y(iced::Alignment::Center),
+    ))
+    .style(theme::button::secondary)
 }
 
 pub fn transparent_border<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> Button<'a, T> {
-    button(content(icon, text(t).align_y(iced::Alignment::Center)))
-        .style(theme::button::container_border)
+    button(content_left_aligned(
+        icon,
+        text(t).align_y(iced::Alignment::Center),
+    ))
+    .style(theme::button::container_border)
 }
 
 pub fn link<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> Button<'a, T> {
-    Button::new(content(icon, text(t))).style(theme::button::link)
+    Button::new(content_left_aligned(icon, text(t))).style(theme::button::link)
 }
 
+/// Xpubs button - compact button specifically for hardware wallet xpubs actions
+/// Uses completely minimal layout to ensure it never stretches
+pub fn xpubs_button<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> Button<'a, T> {
+    // Minimal content - no width constraints, just natural padding
+    let content = match icon {
+        None => container(text(t).align_y(iced::Alignment::Center)).padding(5),
+        Some(i) => container(
+            row![i, text(t)]
+                .spacing(10)
+                .align_y(iced::alignment::Vertical::Center),
+        )
+        .padding(5),
+    };
+
+    Button::new(content).style(theme::button::secondary)
+}
+
+// Content function for centered buttons (primary, secondary, transparent)
 fn content<'a, T: 'a>(icon: Option<Text<'a>>, text: Text<'a>) -> Container<'a, T> {
     match icon {
         None => container(text)
             .align_y(Vertical::Center)
             .align_x(Horizontal::Center)
+            .width(iced::Length::Fill)
             .padding(5),
-        Some(i) => container(row![i, text].spacing(10).align_y(Vertical::Center))
-            .align_x(Horizontal::Center)
-            .padding(5),
+        Some(i) => container(
+            row![i, text]
+                .spacing(10)
+                .align_y(Vertical::Center)
+                .width(iced::Length::Shrink),
+        )
+        .align_x(Horizontal::Center)
+        .width(iced::Length::Fill)
+        .padding(5),
+    }
+}
+
+// Content function for left-aligned buttons (border, transparent_border, link)
+fn content_left_aligned<'a, T: 'a>(icon: Option<Text<'a>>, text: Text<'a>) -> Container<'a, T> {
+    match icon {
+        None => container(text).align_y(Vertical::Center).padding(5),
+        Some(i) => container(row![i, text].spacing(10).align_y(Vertical::Center)).padding(5),
     }
 }

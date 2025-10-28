@@ -30,8 +30,8 @@ pub fn locked_hardware_wallet<'a, T: 'a, K: Display>(
                 .spacing(5)
                 .push(text::caption(kind.to_string()))
                 .into(),
-        ])
-        .width(Length::Fill),
+        ]),
+        // No width - let column size naturally to fit button
     )
     .padding(10)
 }
@@ -54,8 +54,8 @@ pub fn supported_hardware_wallet<'a, T: 'a, K: Display, V: Display, F: Display>(
                 .push(text::caption(kind.to_string()))
                 .push_maybe(version.map(|v| text::caption(v.to_string())))
                 .into(),
-        ])
-        .width(Length::Fill),
+        ]),
+        // No width - let column size naturally to fit button
     )
     .padding(10)
 }
@@ -129,12 +129,12 @@ pub fn supported_hardware_wallet_with_account<
             .push(text::caption(kind.to_string()))
             .push_maybe(version.map(|v| text::caption(v.to_string())))
             .into(),
-    ])
-    .width(Length::Fill);
+    ]);
+    // No width set - let column size naturally
     Container::new(
         Row::new()
             .push(key)
-            .push(Space::with_width(Length::Fill))
+            .push(Space::with_width(Length::Fixed(15.0))) // Fixed spacing instead of Fill
             .push_maybe(pick_account)
             .push_maybe(display_account.map(|a| column![Space::with_height(8), a])),
     )
@@ -272,8 +272,7 @@ pub fn processing_hardware_wallet<'a, T: 'a, K: Display, V: Display, F: Display>
                     .push_maybe(version.map(|v| text::caption(v.to_string())))
                     .into(),
             ])
-            .width(Length::Fill)
-            .into(),
+            .into(), // No width - let column size naturally
             column(vec![
                 text::p1_regular("Processing...").into(),
                 text::p1_regular("Please check your device").into(),

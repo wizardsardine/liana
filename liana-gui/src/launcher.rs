@@ -233,7 +233,7 @@ impl Launcher {
                             None
                         })
                         .push(
-                            button::secondary(None, "Share Xpubs")
+                            button::xpubs_button(None, "Share Xpubs")
                                 .on_press(ViewMessage::ShareXpubs),
                         )
                         .push(
