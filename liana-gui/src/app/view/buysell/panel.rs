@@ -751,10 +751,7 @@ impl BuySellPanel {
     pub fn is_registration_valid(&self, state: &MavapayFlowState) -> bool {
         let email_ok = state.email.value.contains('@') && state.email.value.contains('.');
         let pw_ok = self.is_password_valid(state) && state.password1.value == state.password2.value;
-        !state.first_name.value.is_empty()
-            && !state.last_name.value.is_empty()
-            && email_ok
-            && pw_ok
+        !state.first_name.value.is_empty() && !state.last_name.value.is_empty() && email_ok && pw_ok
     }
 
     #[inline]
