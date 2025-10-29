@@ -3124,7 +3124,7 @@ dependencies = [
 [[package]]
 name = "iced_wry"
 version = "0.1.0"
-source = "git+https://github.com/sokorototo/iced_wry#5a75cb6b6e12e368224e5878357ba61456a922e4"
+source = "git+https://github.com/sokorototo/iced_wry#3d1cc7772b9bd26d31c5a95882fbd1d339001316"
 dependencies = [
  "iced",
  "wry",
