@@ -56,8 +56,6 @@
     <?define PlatformProgramFilesFolder = "ProgramFilesFolder"?>
 <?endif?>
 
-<?define UltralightSdkPath="ultralight-sdk"?>
-
 <Wix xmlns='http://schemas.microsoft.com/wix/2006/wi'>
 
   <Product
@@ -111,38 +109,6 @@
                 Advertise="yes"
                 Name="Coincube Vault"
                 WorkingDirectory="APPLICATIONFOLDER" />
-            </Component>
-
-            <Component Id='binary1' Guid='*'>
-              <File
-                Id='dll0'
-                Name='AppCore.dll'
-                Source='$(var.UltralightSdkPath)\bin\AppCore.dll'
-                KeyPath='yes' />
-            </Component>
-
-            <Component Id='binary2' Guid='*'>
-              <File
-                Id='dll1'
-                Name='Ultralight.dll'
-                Source='$(var.UltralightSdkPath)\bin\Ultralight.dll'
-                KeyPath='yes' />
-            </Component>
-
-            <Component Id='binary3' Guid='*'>
-              <File
-                Id='dll2'
-                Name='UltralightCore.dll'
-                Source='$(var.UltralightSdkPath)\bin\UltralightCore.dll'
-                KeyPath='yes' />
-            </Component>
-
-            <Component Id='binary4' Guid='*'>
-              <File
-                Id='dll3'
-                Name='WebCore.dll'
-                Source='$(var.UltralightSdkPath)\bin\WebCore.dll'
-                KeyPath='yes' />
             </Component>
           </Directory>
         </Directory>

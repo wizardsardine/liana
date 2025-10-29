@@ -3,10 +3,6 @@ use std::sync::Arc;
 
 // BankAccount and Beneficiary are used via fully qualified paths below
 
-use iced_webview::{
-    advanced::{Action as WebviewAction, WebView},
-    PageType,
-};
 use liana_ui::widget::Element;
 
 use crate::app::view::buysell::{BuySellFlowState, NativePage};
@@ -21,29 +17,6 @@ use crate::{
     },
     daemon::Daemon,
 };
-
-#[derive(Debug, Clone)]
-pub enum WebviewMessage {
-    Action(iced_webview::advanced::Action),
-    Created(iced_webview::ViewId),
-}
-
-/// Map webview messages to main app messages (static version for Task::map)
-fn map_webview_message_static(webview_msg: WebviewMessage) -> Message {
-    match webview_msg {
-        WebviewMessage::Action(action) => {
-            Message::View(ViewMessage::BuySell(BuySellMessage::WebviewAction(action)))
-        }
-        WebviewMessage::Created(id) => {
-            Message::View(ViewMessage::BuySell(BuySellMessage::WebviewCreated(id)))
-        }
-    }
-}
-
-/// lazily initialize the webview to reduce latent memory usage
-fn init_webview() -> WebView<iced_webview::Ultralight, WebviewMessage> {
-    WebView::new().on_create_view(crate::app::state::buysell::WebviewMessage::Created)
-}
 
 impl State for BuySellPanel {
     fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, ViewMessage> {
@@ -705,62 +678,38 @@ impl State for BuySellPanel {
             }
 
             // webview logic
-            BuySellMessage::ViewTick(id) => {
-                if let Some(wv) = self.webview.as_mut() {
-                    return wv
-                        .update(WebviewAction::Update(id))
-                        .map(map_webview_message_static);
-                }
-            }
-            BuySellMessage::WebviewAction(action) => {
-                return self
-                    .webview
-                    .as_mut()
-                    .expect("webview should exist at this point")
-                    .update(action)
-                    .map(map_webview_message_static);
-            }
+            BuySellMessage::WryMessage(msg) => self.webview_manager.update(msg),
             BuySellMessage::WebviewOpenUrl(url) => {
-                let webview = self.webview.get_or_insert_with(init_webview);
-
-                // Load URL into Ultralight webview
                 self.session_url = Some(url.clone());
 
-                // If there's an active page, close it first before creating new one
-                if let Some(previous) = self.active_page.take() {
-                    let delete_previous = webview
-                        .update(WebviewAction::CloseView(previous))
-                        .map(map_webview_message_static);
+                // extract the main window's raw_window_handle
+                return iced_wry::IcedWebviewManager::extract_window_id(None).map(|w| {
+                    Message::View(ViewMessage::BuySell(BuySellMessage::WryExtractedWindowId(
+                        w,
+                    )))
+                });
+            }
+            BuySellMessage::WryExtractedWindowId(id) => {
+                let mut attributes = iced_wry::wry::WebViewAttributes::default();
+                attributes.url = self.session_url.clone();
 
-                    return delete_previous.chain(
-                        webview
-                            .update(WebviewAction::CreateView(PageType::Url(url)))
-                            .map(map_webview_message_static),
-                    );
+                let webview = self.webview_manager.new_webview(attributes, id);
+
+                if let Some(wv) = webview {
+                    self.active_webview = Some(wv)
+                } else {
+                    tracing::error!("Unable to instantiate wry webview")
                 }
-
-                // Create new view on the same webview instance
-                return webview
-                    .update(WebviewAction::CreateView(PageType::Url(url)))
-                    .map(map_webview_message_static);
             }
 
-            BuySellMessage::WebviewCreated(id) => {
-                tracing::info!("🌐 [LIANA] Activating Webview Page: {}", id);
-
-                // set active page to newly created view id
-                self.active_page = Some(id);
-            }
             BuySellMessage::CloseWebview => {
                 if cfg!(debug_assertions) {
-                    tracing::info!("🌐 [LIANA] Closing webview - clearing state only");
+                    tracing::info!("🌐 [LIANA] Completely resetting webview state");
                 }
 
-                // Just clear the state - don't try to close view or destroy webview
-                // The WebviewOpenUrl handler will close the old view when creating a new one
-                self.webview = None;
+                self.webview_manager = iced_wry::IcedWebviewManager::new();
                 self.session_url = None;
-                self.active_page = None;
+                self.active_webview = None;
             }
             BuySellMessage::OpenExternalUrl(url) => {
                 return Task::done(Message::View(ViewMessage::OpenUrl(url)));
@@ -777,20 +726,9 @@ impl State for BuySellPanel {
     }
 
     fn subscription(&self) -> iced::Subscription<Message> {
-        use std::time::Duration;
-
-        if let Some(id) = self.active_page {
-            let interval = if cfg!(debug_assertions) {
-                Duration::from_millis(250)
-            } else {
-                Duration::from_millis(100)
-            };
-            return iced::time::every(interval)
-                .with(id)
-                .map(|(i, ..)| Message::View(ViewMessage::BuySell(BuySellMessage::ViewTick(i))));
-        }
-
-        iced::Subscription::none()
+        self.webview_manager
+            .subscription(std::time::Duration::from_millis(25))
+            .map(|m| Message::View(ViewMessage::BuySell(BuySellMessage::WryMessage(m))))
     }
 }
 

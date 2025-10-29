@@ -11,7 +11,7 @@ resolver = "2"
 
 [features]
 default = []
-buysell = ["iced_webview"]
+buysell = ["dep:iced_wry"]
 
 [package.metadata.winres]
 LegalCopyright = "Copyright © 2025"
@@ -48,10 +48,8 @@ image = { version = "*", default-features = false, features = ["png"] }
 iced_aw = { version = "0.12.2", features = ["context_menu"] }
 iced_runtime = "0.13.1"
 
-# Webview for embedded browser functionality (Ultralight-based)
-iced_webview = { git = "https://github.com/coincubetech/iced_webview.git", features = [
-	"ultralight",
-], optional = true }
+# Webview for embedded browser functionality (wry-based)
+iced_wry = { git = "https://github.com/sokorototo/iced_wry", optional = true }
 
 # Used to verify RFC-compliance of an email
 email_address = "0.2.7"
@@ -89,7 +87,9 @@ fs4 = { version = "0.13", features = ["sync"] }
 # Used for opening URLs in browser
 open = "5.3"
 
-encrypted_backup = { version = "0.0.1", default-features = false, features = ["miniscript_12_0"], package = "bitcoin-encrypted-backup" }
+encrypted_backup = { version = "0.0.1", default-features = false, features = [
+	"miniscript_12_0",
+], package = "bitcoin-encrypted-backup" }
 
 [target.'cfg(windows)'.dependencies]
 zip = { version = "0.6", default-features = false, features = [

@@ -2,7 +2,6 @@ use iced::{
     widget::{container, pick_list, radio, Space},
     Alignment, Length, Task,
 };
-use iced_webview::{advanced::WebView, Ultralight};
 
 use liana::miniscript::bitcoin::{self, Network};
 use liana_ui::{
@@ -64,9 +63,9 @@ pub struct BuySellPanel {
     pub detected_country_iso: Option<String>,
 
     // Webview (used by international flow)
-    pub webview: Option<WebView<Ultralight, crate::app::state::buysell::WebviewMessage>>,
+    pub webview_manager: iced_wry::IcedWebviewManager,
     pub session_url: Option<String>,
-    pub active_page: Option<iced_webview::ViewId>,
+    pub active_webview: Option<iced_wry::IcedWebview>,
 }
 
 impl BuySellPanel {
@@ -85,9 +84,9 @@ impl BuySellPanel {
             modal: app::state::receive::Modal::None,
             detected_country_name: None,
             detected_country_iso: None,
-            webview: None,
+            webview_manager: iced_wry::IcedWebviewManager::new(),
             session_url: None,
-            active_page: None,
+            active_webview: None,
             // Start in detecting location state
             flow_state: BuySellFlowState::DetectingLocation,
         }
@@ -159,7 +158,7 @@ impl BuySellPanel {
     }
 
     pub fn view<'a>(&'a self) -> iced::Element<'a, ViewMessage, liana_ui::theme::Theme> {
-        let webview_active = self.active_page.is_some();
+        let webview_active = self.active_webview.is_some();
         let is_onramper_active =
             webview_active && matches!(self.flow_state, BuySellFlowState::Onramper);
 
@@ -229,26 +228,14 @@ impl BuySellPanel {
 
             // attempt to render webview (if available)
             let view = self
-                .active_page
+                .active_webview
                 .as_ref()
-                .map(|v| {
-                    let view = self.webview.as_ref().map(|s| {
-                        s.view(*v)
-                            .map(|a| ViewMessage::BuySell(BuySellMessage::WebviewAction(a)))
-                    });
+                .map(|v| v.view(Length::Fixed(600.0), Length::Fixed(600.0)));
 
-                    view
-                })
-                .flatten();
-
-            let column = column.push({
-                match view {
-                    Some(v) => container(v)
-                        .width(Length::Fixed(600.0))
-                        .height(Length::Fixed(600.0)),
-                    None => container(" ").height(Length::Fixed(150.0)),
-                }
-            });
+            let column = match view {
+                Some(v) => column.push(v),
+                None => column.push(container(" ").height(Length::Fixed(150.0))),
+            };
 
             column
                 .align_x(Alignment::Center)
