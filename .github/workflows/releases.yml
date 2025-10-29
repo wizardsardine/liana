@@ -11,7 +11,6 @@ on:
 env:
   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
   ONRAMPER_API_KEY: ${{ secrets.ONRAMPER_API_KEY }}
-  ULTRALIGHT_RESOURCES_DIR: ./ultralight-sdk/resources/
   CARGO_INCREMENTAL: 0
   CARGO_TERM_COLOR: always
   CARGO_PROFILE_RELEASE_LTO: true
@@ -68,13 +67,6 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: sudo apt-get update && sudo apt-get install -y libudev-dev pkg-config
 
-      - name: Download ultralight-sdk
-        if: matrix.os == 'ubuntu-latest'
-        run: |
-          curl -L -O https://github.com/coincubetech/liana/releases/download/ultralight-sdk/ultralight-sdk-latest-linux-x64.7z
-          7z x ultralight-sdk-latest-linux-x64.7z -oultralight-sdk -y
-          mv ultralight-sdk/bin lib
-
       - uses: taiki-e/upload-rust-binary-action@v1
         if: matrix.os == 'ubuntu-latest'
         with:
@@ -92,13 +84,6 @@ jobs:
         run: |
           pip install pillow icnsutil
           python ./contrib/release/macos/icns-creator.py
-
-      # For Windows upload an installer
-      - name: Download ultralight-sdk
-        if: matrix.os == 'windows-latest'
-        run: |
-          curl -L -O https://github.com/coincubetech/liana/releases/download/ultralight-sdk/ultralight-sdk-latest-win-x64.7z
-          7z x ultralight-sdk-latest-win-x64.7z -oultralight-sdk -y
 
       - name: Package and release .msi installer for Windows
         if: matrix.os == 'windows-latest'
@@ -122,19 +107,12 @@ jobs:
         run: |
           cargo build --package liana-gui --profile app-release
 
-      - name: Download ultralight-sdk
-        if: matrix.os == 'macos-latest'
-        run: |
-          curl -L -O https://github.com/coincubetech/liana/releases/download/ultralight-sdk/ultralight-sdk-latest-mac-arm64.7z
-          7z x ultralight-sdk-latest-mac-arm64.7z -oultralight-sdk -y
-
       - name: Copy Executable, Icons and Extra Metadata into .app folder
         if: matrix.os == 'macos-latest'
         run: |
           unzip ./contrib/release/macos/Vault.app.zip
           sed -i '' "s/VERSION_PLACEHOLDER/${{ env.VAULT_VERSION }}/g" ./Vault.app/Contents/Info.plist
           mv target/app-release/coincube-vault ./Vault.app/Contents/MacOS/Vault
-          cp -r ultralight-sdk/bin/*.dylib ./Vault.app/Contents/Frameworks
           mv ./contrib/release/macos/Vault.icns ./Vault.app/Contents/Resources/Vault.icns
 
       - name: CodeSign macOS App Bundle
