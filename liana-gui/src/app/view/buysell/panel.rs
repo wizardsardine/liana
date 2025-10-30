@@ -182,6 +182,7 @@ impl BuySellPanel {
                             webview_active.then(|| {
                                 ui_button::secondary(Some(reload_icon()), "Reset Widget")
                                     .on_press(ViewMessage::BuySell(BuySellMessage::ResetWidget))
+                                    .width(iced::Length::Fixed(300.0))
                             })
                         })
                         .align_y(Alignment::Center),
@@ -195,6 +196,7 @@ impl BuySellPanel {
                         liana::miniscript::bitcoin::Network::Signet => "Bitcoin Signet",
                         liana::miniscript::bitcoin::Network::Regtest => "Bitcoin Regtest",
                     };
+
                     let network_color = match self.network {
                         liana::miniscript::bitcoin::Network::Bitcoin => color::GREEN,
                         liana::miniscript::bitcoin::Network::Testnet

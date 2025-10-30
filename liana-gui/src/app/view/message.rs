@@ -227,7 +227,6 @@ pub enum BuySellMessage {
     WebviewOpenUrl(String),
     WryMessage(iced_wry::IcedWryMessage),
     WryExtractedWindowId(iced_wry::ExtractedWindowId),
-    CloseWebview,
 
     // Open external URL in browser
     OpenExternalUrl(String),

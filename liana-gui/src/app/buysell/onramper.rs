@@ -1,4 +1,4 @@
-const WIDGET_OPTIONS: &str = "{{BASE_URL}}/?apiKey={{API_KEY}}&mode={{MODE}}&partnerContext=CoincubeVault&defaultFiat={{DEFAULT_FIAT}}&wallets=btc:{{ADDRESS}}&onlyCryptoNetworks={{NETWORK}}&sell_defaultFiat={{DEFAULT_FIAT}}&sell_onlyCryptoNetworks={{NETWORK}}&redirectAtCheckout=true&enableCountrySelector=true&themeName=dark";
+const WIDGET_OPTIONS: &str = "{{BASE_URL}}/?apiKey={{API_KEY}}&mode={{MODE}}&partnerContext=CoincubeVault&defaultFiat={{DEFAULT_FIAT}}&onlyCryptoNetworks={{NETWORK}}&sell_defaultFiat={{DEFAULT_FIAT}}&sell_onlyCryptoNetworks={{NETWORK}}&redirectAtCheckout=true&enableCountrySelector=true&themeName=dark";
 
 pub fn api_key() -> Option<String> {
     // Always read from runtime environment (supports .env file loaded via dotenv)
@@ -24,7 +24,7 @@ pub fn create_widget_url(
         "Onramper API key not configured. Please set `ONRAMPER_API_KEY` in .env".to_string()
     })?;
 
-    let url = WIDGET_OPTIONS
+    let mut url = WIDGET_OPTIONS
         .replace("{{BASE_URL}}", base_url())
         .replace("{{MODE}}", mode)
         .replace("{{API_KEY}}", &api_key)
@@ -32,10 +32,12 @@ pub fn create_widget_url(
         .replace("{{NETWORK}}", "bitcoin");
 
     // insert address if any
-    Ok(match address {
-        Some(a) => url.replace("{{ADDRESS}}", a),
-        None => url,
-    })
+    if let Some(a) = address {
+        let opt = format!("&wallets=btc:{}", a);
+        url.push_str(&opt);
+    }
+
+    Ok(url)
 }
 
 #[cfg(test)]

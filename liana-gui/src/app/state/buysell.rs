@@ -33,25 +33,6 @@ impl State for BuySellPanel {
             .into()
     }
 
-    fn reload(
-        &mut self,
-        _daemon: Arc<dyn Daemon + Sync + Send>,
-        _wallet: Arc<crate::app::wallet::Wallet>,
-    ) -> Task<Message> {
-        let locator = crate::services::geolocation::CachedGeoLocator::new_from_env();
-        Task::perform(
-            async move { locator.detect_country().await },
-            |result| match result {
-                Ok((country_name, iso_code)) => Message::View(ViewMessage::BuySell(
-                    BuySellMessage::CountryDetected(country_name, iso_code),
-                )),
-                Err(error) => {
-                    Message::View(ViewMessage::BuySell(BuySellMessage::SessionError(error)))
-                }
-            },
-        )
-    }
-
     fn update(
         &mut self,
         daemon: Arc<dyn Daemon + Sync + Send>,
@@ -536,10 +517,10 @@ impl State for BuySellPanel {
                 self.error = None;
                 self.generated_address = None;
 
-                // close webview
-                return Task::done(Message::View(ViewMessage::BuySell(
-                    BuySellMessage::CloseWebview,
-                )));
+                // clear webview state
+                if let Some(wv) = self.active_webview.take() {
+                    self.webview_manager.clear_view(&wv);
+                }
             }
 
             BuySellMessage::CreateNewAddress => {
@@ -550,7 +531,7 @@ impl State for BuySellPanel {
                             BuySellMessage::AddressCreated(view::buysell::panel::LabelledAddress {
                                 address: out.address,
                                 index: out.derivation_index,
-                                label: Some("new.buysell".to_string()),
+                                label: Some("buysell".to_string()),
                             }),
                         )),
                         Err(err) => Message::View(ViewMessage::BuySell(
@@ -702,15 +683,6 @@ impl State for BuySellPanel {
                 }
             }
 
-            BuySellMessage::CloseWebview => {
-                if cfg!(debug_assertions) {
-                    tracing::info!("🌐 [LIANA] Completely resetting webview state");
-                }
-
-                self.webview_manager = iced_wry::IcedWebviewManager::new();
-                self.session_url = None;
-                self.active_webview = None;
-            }
             BuySellMessage::OpenExternalUrl(url) => {
                 return Task::done(Message::View(ViewMessage::OpenUrl(url)));
             }
@@ -719,10 +691,35 @@ impl State for BuySellPanel {
         Task::none()
     }
 
+    fn reload(
+        &mut self,
+        _daemon: Arc<dyn Daemon + Sync + Send>,
+        _wallet: Arc<crate::app::wallet::Wallet>,
+    ) -> Task<Message> {
+        let locator = crate::services::geolocation::CachedGeoLocator::new_from_env();
+        Task::perform(
+            async move { locator.detect_country().await },
+            |result| match result {
+                Ok((country_name, iso_code)) => Message::View(ViewMessage::BuySell(
+                    BuySellMessage::CountryDetected(country_name, iso_code),
+                )),
+                Err(error) => {
+                    Message::View(ViewMessage::BuySell(BuySellMessage::SessionError(error)))
+                }
+            },
+        )
+    }
+
     fn close(&mut self) -> Task<Message> {
-        Task::done(Message::View(ViewMessage::BuySell(
-            BuySellMessage::CloseWebview,
-        )))
+        if let Some(weak) = self.active_webview.as_ref() {
+            if let Some(strong) = std::sync::Weak::upgrade(&weak.webview) {
+                let _ = strong.set_visible(false);
+                let _ = strong.focus_parent();
+            }
+        }
+
+        // NOTE: messages returned from close are not handled by the current panel, but rather by the state containing the next panel?
+        Task::none()
     }
 
     fn subscription(&self) -> iced::Subscription<Message> {
