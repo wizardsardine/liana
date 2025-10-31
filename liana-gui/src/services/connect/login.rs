@@ -196,12 +196,27 @@ impl LianaLiteLogin {
                             );
                         }
                         Err(e) => {
-                            // Do not display error, if the Liana-Connect cache does not exist,
-                            // simply ask user to do the authentication steps.
-                            if !matches!(e, Error::CredentialsMissing) {
-                                self.connection_error = Some(e);
-                            }
+                            // Whatever the error with current auth,
+                            // user is redirected to do the authentication steps.
                             self.step = ConnectionStep::CheckEmail;
+                            tracing::warn!("Error while checking email: {}", e);
+                            match e {
+                                Error::CredentialsMissing => {
+                                    //  Liana-Connect cache does not exist,
+                                    //  No need to display error
+                                }
+                                Error::Auth(AuthError { http_status, .. }) => {
+                                    if http_status == Some(403) || http_status == Some(401) {
+                                        // Session was certainly deleted
+                                        // No need to display error
+                                    } else {
+                                        self.connection_error = Some(e);
+                                    }
+                                }
+                                _ => {
+                                    self.connection_error = Some(e);
+                                }
+                            }
                         }
                     }
                 }

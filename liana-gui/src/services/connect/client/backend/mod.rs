@@ -25,7 +25,10 @@ use crate::{
     daemon::{model::*, Daemon, DaemonBackend, DaemonError},
     dir::LianaDirectory,
     hw::HardwareWalletConfig,
-    services::http::{NotSuccessResponseInfo, ResponseExt},
+    services::{
+        connect::client::cache::ConnectCacheError,
+        http::{NotSuccessResponseInfo, ResponseExt},
+    },
 };
 
 use self::api::{UTXOKind, DEFAULT_OUTPOINTS_LIMIT};
@@ -556,7 +559,14 @@ impl Daemon for BackendWalletClient {
                     )
                     .await
                     .map_err(|e| {
-                        DaemonError::Unexpected(format!("Cannot update Liana-connect cache: {}", e))
+                        if let ConnectCacheError::Updating(AuthError { http_status, error }) = e {
+                            DaemonError::Http(http_status, error)
+                        } else {
+                            DaemonError::Unexpected(format!(
+                                "Cannot update Liana-connect cache: {}",
+                                e
+                            ))
+                        }
                     })?;
 
                     *old = new;
