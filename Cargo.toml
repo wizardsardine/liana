@@ -71,7 +71,7 @@ rdrand = "0.8"
 fern = "0.6"
 bip329 = { version = "0.3.0", default-features = false }
 async-trait = "0.1"
-async-hwi = "0.0.30"
+async-hwi = "0.0.31"
 hex = "0.4.3"
 email_address = "0.2.7"
 tokio = "1.21.0"
