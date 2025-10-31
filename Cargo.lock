@@ -283,8 +283,7 @@ dependencies = [
 [[package]]
 name = "async-hwi"
 version = "0.0.29"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "724d232316bc0d9ce24eb3b3a6c600f487bd877513bd0e73ec02f8c890af3275"
+source = "git+https://github.com/pythcoiner/async-hwi.git?branch=coldcard_6.4.0#452bae0d94538265f6c5c7ec7999fbfb1ee6513b"
 dependencies = [
  "async-trait",
  "bitbox-api",
@@ -983,8 +982,7 @@ dependencies = [
 [[package]]
 name = "coldcard"
 version = "0.12.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9aaaf3f7409edc40001c30a4c1337f21558a8ceba2a4afe807da841a38ce83d6"
+source = "git+https://github.com/pythcoiner/rust-coldcard.git?branch=cc_6.4.0#c2f83279263b839b01df9f4520ad0e8bd5ebeed7"
 dependencies = [
  "aes",
  "base58",
@@ -3089,6 +3087,7 @@ dependencies = [
  "async-trait",
  "backtrace",
  "base64 0.21.7",
+ "base64ct",
  "bitcoin-encrypted-backup",
  "bitcoin_hashes 0.12.0",
  "chrono",
