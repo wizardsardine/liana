@@ -18,7 +18,9 @@ path = "src/main.rs"
 
 [dependencies]
 async-trait = "0.1"
-async-hwi = "0.0.29"
+# async-hwi = "0.0.29"
+async-hwi = { git = "https://github.com/pythcoiner/async-hwi.git", branch = "coldcard_6.4.0" }
+base64ct = "=1.6.0" # last version that NOT require rust version > 1.80
 liana = { path = "../liana" }
 lianad = { path = "../lianad", default-features = false, features = ["nonblocking_shutdown"] }
 liana-ui = { path = "../liana-ui" }
