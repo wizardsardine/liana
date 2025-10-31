@@ -18,7 +18,8 @@ path = "src/main.rs"
 
 [dependencies]
 async-trait = "0.1"
-async-hwi = "0.0.29"
+# async-hwi = "0.0.29"
+async-hwi = { git = "https://github.com/pythcoiner/async-hwi.git", rev = "486466e" }
 liana = { path = "../liana" }
 lianad = { path = "../lianad", default-features = false, features = ["nonblocking_shutdown"] }
 liana-ui = { path = "../liana-ui" }
