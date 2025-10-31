@@ -176,45 +176,38 @@ impl BuySellPanel {
                         .push(Space::with_width(Length::Fixed(8.0)))
                         .push(ui_text::h5_regular("BUY/SELL").color(color::GREY_3))
                         .push_maybe({
-                            webview_active.then(|| Space::with_width(Length::Fixed(25.0)))
+                            is_onramper_active.then(|| Space::with_width(Length::Fixed(25.0)))
                         })
-                        .push_maybe({
-                            webview_active.then(|| {
-                                ui_button::secondary(Some(reload_icon()), "Reset Widget")
-                                    .on_press(ViewMessage::BuySell(BuySellMessage::ResetWidget))
-                                    .width(iced::Length::Fixed(300.0))
-                            })
-                        })
+                        // Network display banner for Onramper flow
+                        .push_maybe(is_onramper_active.then(|| {
+                            let network_name = match self.network {
+                                liana::miniscript::bitcoin::Network::Bitcoin => "Bitcoin Mainnet",
+                                liana::miniscript::bitcoin::Network::Testnet => "Bitcoin Testnet",
+                                liana::miniscript::bitcoin::Network::Testnet4 => "Bitcoin Testnet4",
+                                liana::miniscript::bitcoin::Network::Signet => "Bitcoin Signet",
+                                liana::miniscript::bitcoin::Network::Regtest => "Bitcoin Regtest",
+                            };
+
+                            let network_color = match self.network {
+                                liana::miniscript::bitcoin::Network::Bitcoin => color::GREEN,
+                                liana::miniscript::bitcoin::Network::Testnet
+                                | liana::miniscript::bitcoin::Network::Testnet4
+                                | liana::miniscript::bitcoin::Network::Signet
+                                | liana::miniscript::bitcoin::Network::Regtest => color::ORANGE,
+                            };
+
+                            Container::new(
+                                Row::new()
+                                    .push(text("Network: ").size(12).color(color::GREY_3))
+                                    .push(text(network_name).size(12).color(network_color))
+                                    .spacing(5)
+                                    .align_y(Alignment::Center),
+                            )
+                            .padding(8)
+                            .style(theme::card::simple)
+                        }))
                         .align_y(Alignment::Center),
                 )
-                // Network display banner for Onramper flow
-                .push_maybe(is_onramper_active.then(|| {
-                    let network_name = match self.network {
-                        liana::miniscript::bitcoin::Network::Bitcoin => "Bitcoin Mainnet",
-                        liana::miniscript::bitcoin::Network::Testnet => "Bitcoin Testnet",
-                        liana::miniscript::bitcoin::Network::Testnet4 => "Bitcoin Testnet4",
-                        liana::miniscript::bitcoin::Network::Signet => "Bitcoin Signet",
-                        liana::miniscript::bitcoin::Network::Regtest => "Bitcoin Regtest",
-                    };
-
-                    let network_color = match self.network {
-                        liana::miniscript::bitcoin::Network::Bitcoin => color::GREEN,
-                        liana::miniscript::bitcoin::Network::Testnet
-                        | liana::miniscript::bitcoin::Network::Testnet4
-                        | liana::miniscript::bitcoin::Network::Signet
-                        | liana::miniscript::bitcoin::Network::Regtest => color::ORANGE,
-                    };
-
-                    Container::new(
-                        Row::new()
-                            .push(text("Network: ").size(12).color(color::GREY_3))
-                            .push(text(network_name).size(12).color(network_color))
-                            .spacing(5)
-                            .align_y(Alignment::Center),
-                    )
-                    .padding(8)
-                    .style(theme::card::simple)
-                }))
                 // error display
                 .push_maybe(self.error.as_ref().map(|err| {
                     Container::new(text(err).size(14).color(color::RED))
@@ -232,7 +225,7 @@ impl BuySellPanel {
             let view = self
                 .active_webview
                 .as_ref()
-                .map(|v| v.view(Length::Fixed(600.0), Length::Fixed(600.0)));
+                .map(|v| v.view(Length::Fixed(600.0), Length::Fixed(800.0)));
 
             let column = match view {
                 Some(v) => column.push(v),
@@ -321,7 +314,7 @@ impl BuySellPanel {
                     .width(Length::Fill)
                 })
                 .push(
-                    ui_button::primary(Some(globe_icon()), "Start Widget Session")
+                    ui_button::primary(Some(globe_icon()), "Continue")
                         .on_press_maybe(
                             self.detected_country_iso
                                 .is_some()
@@ -405,7 +398,7 @@ impl BuySellPanel {
                     })
                 })
                 .push_maybe({
-                    // Only show "Start Widget Session" for Sell in non-Mavapay countries
+                    // Only show "Continue" for Sell in non-Mavapay countries
                     let is_mavapay = self
                         .detected_country_iso
                         .as_ref()
@@ -413,7 +406,7 @@ impl BuySellPanel {
                         .unwrap_or(false);
 
                     (matches!(self.buy_or_sell, Some(BuyOrSell::Sell)) && !is_mavapay).then(|| {
-                        ui_button::secondary(Some(globe_icon()), "Start Widget Session")
+                        ui_button::secondary(Some(globe_icon()), "Continue")
                             .on_press_maybe(
                                 self.detected_country_iso
                                     .is_some()

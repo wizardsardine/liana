@@ -141,8 +141,16 @@ impl State for BuySellPanel {
 
                 tracing::info!("country = {}, iso_code = {}", country_name, iso_code);
 
-                self.detected_country_name = Some(country_name);
-                self.detected_country_iso = Some(iso_code.clone());
+                // Handle empty country detection
+                if country_name.is_empty() || iso_code.is_empty() {
+                    tracing::warn!("🌍 [GEOLOCATION] Empty country detection, defaulting to US");
+
+                    self.detected_country_name = Some("United States".to_string());
+                    self.detected_country_iso = Some("US".to_string());
+                } else {
+                    self.detected_country_name = Some(country_name);
+                    self.detected_country_iso = Some(iso_code.clone());
+                }
 
                 // If Mavapay country, immediately transition to AccountSelect
                 // Skip the Buy/Sell selection screen entirely for Mavapay users
@@ -531,7 +539,7 @@ impl State for BuySellPanel {
                             BuySellMessage::AddressCreated(view::buysell::panel::LabelledAddress {
                                 address: out.address,
                                 index: out.derivation_index,
-                                label: Some("buysell".to_string()),
+                                label: None,
                             }),
                         )),
                         Err(err) => Message::View(ViewMessage::BuySell(
@@ -673,6 +681,8 @@ impl State for BuySellPanel {
             BuySellMessage::WryExtractedWindowId(id) => {
                 let mut attributes = iced_wry::wry::WebViewAttributes::default();
                 attributes.url = self.session_url.clone();
+                attributes.devtools = cfg!(debug_assertions);
+                attributes.incognito = true;
 
                 let webview = self.webview_manager.new_webview(attributes, id);
 
