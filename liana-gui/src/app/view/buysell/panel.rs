@@ -178,36 +178,46 @@ impl BuySellPanel {
                         .push_maybe({
                             is_onramper_active.then(|| Space::with_width(Length::Fixed(25.0)))
                         })
-                        // Network display banner for Onramper flow
-                        .push_maybe(is_onramper_active.then(|| {
-                            let network_name = match self.network {
-                                liana::miniscript::bitcoin::Network::Bitcoin => "Bitcoin Mainnet",
-                                liana::miniscript::bitcoin::Network::Testnet => "Bitcoin Testnet",
-                                liana::miniscript::bitcoin::Network::Testnet4 => "Bitcoin Testnet4",
-                                liana::miniscript::bitcoin::Network::Signet => "Bitcoin Signet",
-                                liana::miniscript::bitcoin::Network::Regtest => "Bitcoin Regtest",
-                            };
-
-                            let network_color = match self.network {
-                                liana::miniscript::bitcoin::Network::Bitcoin => color::GREEN,
-                                liana::miniscript::bitcoin::Network::Testnet
-                                | liana::miniscript::bitcoin::Network::Testnet4
-                                | liana::miniscript::bitcoin::Network::Signet
-                                | liana::miniscript::bitcoin::Network::Regtest => color::ORANGE,
-                            };
-
-                            Container::new(
-                                Row::new()
-                                    .push(text("Network: ").size(12).color(color::GREY_3))
-                                    .push(text(network_name).size(12).color(network_color))
-                                    .spacing(5)
-                                    .align_y(Alignment::Center),
-                            )
-                            .padding(8)
-                            .style(theme::card::simple)
-                        }))
+                        .push_maybe({
+                            webview_active.then(|| Space::with_width(Length::Fixed(25.0)))
+                        })
+                        .push_maybe({
+                            webview_active.then(|| {
+                                ui_button::secondary(Some(cross_icon()), "Exit")
+                                    .on_press(ViewMessage::BuySell(BuySellMessage::ResetWidget))
+                                    .width(iced::Length::Fixed(300.0))
+                            })
+                        })
                         .align_y(Alignment::Center),
                 )
+                // Network display banner for Onramper flow
+                .push_maybe(is_onramper_active.then(|| {
+                    let network_name = match self.network {
+                        liana::miniscript::bitcoin::Network::Bitcoin => "Bitcoin Mainnet",
+                        liana::miniscript::bitcoin::Network::Testnet => "Bitcoin Testnet",
+                        liana::miniscript::bitcoin::Network::Testnet4 => "Bitcoin Testnet4",
+                        liana::miniscript::bitcoin::Network::Signet => "Bitcoin Signet",
+                        liana::miniscript::bitcoin::Network::Regtest => "Bitcoin Regtest",
+                    };
+
+                    let network_color = match self.network {
+                        liana::miniscript::bitcoin::Network::Bitcoin => color::GREEN,
+                        liana::miniscript::bitcoin::Network::Testnet
+                        | liana::miniscript::bitcoin::Network::Testnet4
+                        | liana::miniscript::bitcoin::Network::Signet
+                        | liana::miniscript::bitcoin::Network::Regtest => color::ORANGE,
+                    };
+
+                    Container::new(
+                        Row::new()
+                            .push(text("Network: ").size(12).color(color::GREY_3))
+                            .push(text(network_name).size(12).color(network_color))
+                            .spacing(5)
+                            .align_y(Alignment::Center),
+                    )
+                    .padding(8)
+                    .style(theme::card::simple)
+                }))
                 // error display
                 .push_maybe(self.error.as_ref().map(|err| {
                     Container::new(text(err).size(14).color(color::RED))
