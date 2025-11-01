@@ -437,14 +437,11 @@ pub fn tx_view<'a>(
                     .push(super::psbt::outputs_view(
                         &tx.tx,
                         cache.network,
-                        if tx.is_external() {
-                            None
-                        } else {
-                            Some(tx.change_indexes.clone())
-                        },
+                        &tx.change_indexes,
                         &tx.labels,
                         labels_editing,
                         tx.is_single_payment().is_some(),
+                        tx.is_external(),
                     )),
             )
             .spacing(20),
