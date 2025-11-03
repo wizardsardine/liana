@@ -159,8 +159,6 @@ impl BuySellPanel {
 
     pub fn view<'a>(&'a self) -> iced::Element<'a, ViewMessage, liana_ui::theme::Theme> {
         let webview_active = self.active_webview.is_some();
-        let is_onramper_active =
-            webview_active && matches!(self.flow_state, BuySellFlowState::Onramper);
 
         let column = {
             let column = Column::new()
@@ -176,9 +174,6 @@ impl BuySellPanel {
                         .push(Space::with_width(Length::Fixed(8.0)))
                         .push(ui_text::h5_regular("BUY/SELL").color(color::GREY_3))
                         .push_maybe({
-                            is_onramper_active.then(|| Space::with_width(Length::Fixed(25.0)))
-                        })
-                        .push_maybe({
                             webview_active.then(|| Space::with_width(Length::Fixed(25.0)))
                         })
                         .push_maybe({
@@ -190,34 +185,6 @@ impl BuySellPanel {
                         })
                         .align_y(Alignment::Center),
                 )
-                // Network display banner for Onramper flow
-                .push_maybe(is_onramper_active.then(|| {
-                    let network_name = match self.network {
-                        liana::miniscript::bitcoin::Network::Bitcoin => "Bitcoin Mainnet",
-                        liana::miniscript::bitcoin::Network::Testnet => "Bitcoin Testnet",
-                        liana::miniscript::bitcoin::Network::Testnet4 => "Bitcoin Testnet4",
-                        liana::miniscript::bitcoin::Network::Signet => "Bitcoin Signet",
-                        liana::miniscript::bitcoin::Network::Regtest => "Bitcoin Regtest",
-                    };
-
-                    let network_color = match self.network {
-                        liana::miniscript::bitcoin::Network::Bitcoin => color::GREEN,
-                        liana::miniscript::bitcoin::Network::Testnet
-                        | liana::miniscript::bitcoin::Network::Testnet4
-                        | liana::miniscript::bitcoin::Network::Signet
-                        | liana::miniscript::bitcoin::Network::Regtest => color::ORANGE,
-                    };
-
-                    Container::new(
-                        Row::new()
-                            .push(text("Network: ").size(12).color(color::GREY_3))
-                            .push(text(network_name).size(12).color(network_color))
-                            .spacing(5)
-                            .align_y(Alignment::Center),
-                    )
-                    .padding(8)
-                    .style(theme::card::simple)
-                }))
                 // error display
                 .push_maybe(self.error.as_ref().map(|err| {
                     Container::new(text(err).size(14).color(color::RED))
@@ -235,10 +202,46 @@ impl BuySellPanel {
             let view = self
                 .active_webview
                 .as_ref()
-                .map(|v| v.view(Length::Fixed(600.0), Length::Fixed(800.0)));
+                .map(|v| v.view(Length::Fixed(640.0), Length::Fixed(600.0)));
 
             let column = match view {
-                Some(v) => column.push(v),
+                Some(v) => {
+                    let onramper_active = matches!(self.flow_state, BuySellFlowState::Onramper);
+
+                    column
+                        .push(v)
+                        // Network display banner for Onramper flow
+                        .push_maybe({
+                            onramper_active.then(|| Space::with_height(Length::Fixed(25.0)))
+                        })
+                        .push_maybe(onramper_active.then(|| {
+                            let network_name = match self.network {
+                                liana::miniscript::bitcoin::Network::Bitcoin => "Bitcoin Mainnet",
+                                liana::miniscript::bitcoin::Network::Testnet => "Bitcoin Testnet",
+                                liana::miniscript::bitcoin::Network::Testnet4 => "Bitcoin Testnet4",
+                                liana::miniscript::bitcoin::Network::Signet => "Bitcoin Signet",
+                                liana::miniscript::bitcoin::Network::Regtest => "Bitcoin Regtest",
+                            };
+
+                            let network_color = match self.network {
+                                liana::miniscript::bitcoin::Network::Bitcoin => color::GREEN,
+                                liana::miniscript::bitcoin::Network::Testnet
+                                | liana::miniscript::bitcoin::Network::Testnet4
+                                | liana::miniscript::bitcoin::Network::Signet
+                                | liana::miniscript::bitcoin::Network::Regtest => color::ORANGE,
+                            };
+
+                            Container::new(
+                                Row::new()
+                                    .push(text("Network: ").size(12).color(color::GREY_3))
+                                    .push(text(network_name).size(12).color(network_color))
+                                    .spacing(5)
+                                    .align_y(Alignment::Center),
+                            )
+                            .padding(8)
+                            .style(theme::card::simple)
+                        }))
+                }
                 None => column.push(container(" ").height(Length::Fixed(150.0))),
             };
 
@@ -463,7 +466,7 @@ impl BuySellPanel {
         let info = if let Some(country_name) = &self.detected_country_name {
             format!("Country detected: {}. Opening Onramper...", country_name)
         } else {
-            "Opening Onramper...".to_string()
+            "Unable to determine country. Opening Onramper...".to_string()
         };
         Column::new()
             .push_maybe(self.error.as_ref().map(|err| {

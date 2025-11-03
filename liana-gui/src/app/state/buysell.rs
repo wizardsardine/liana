@@ -143,10 +143,10 @@ impl State for BuySellPanel {
 
                 // Handle empty country detection
                 if country_name.is_empty() || iso_code.is_empty() {
-                    tracing::warn!("🌍 [GEOLOCATION] Empty country detection, defaulting to US");
+                    tracing::warn!("🌍 [GEOLOCATION] Empty country detection");
 
-                    self.detected_country_name = Some("United States".to_string());
-                    self.detected_country_iso = Some("US".to_string());
+                    self.detected_country_name = None;
+                    self.detected_country_iso = None;
                 } else {
                     self.detected_country_name = Some(country_name);
                     self.detected_country_iso = Some(iso_code.clone());
