@@ -224,11 +224,9 @@ pub enum BuySellMessage {
     AddressCreated(super::buysell::panel::LabelledAddress),
 
     // webview messages (gated)
-    WebviewCreated(iced_webview::ViewId),
-    ViewTick(iced_webview::ViewId),
-    WebviewAction(iced_webview::advanced::Action),
     WebviewOpenUrl(String),
-    CloseWebview,
+    WryMessage(iced_wry::IcedWryMessage),
+    WryExtractedWindowId(iced_wry::ExtractedWindowId),
 
     // Open external URL in browser
     OpenExternalUrl(String),

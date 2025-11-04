@@ -440,7 +440,6 @@ impl App {
                 }
                 Task::none()
             }
-            // CheckWebviewTimeout message handler removed - Ultralight handles timeouts internally
             Message::CacheUpdated => {
                 // These are the panels to update with the cache.
                 let mut panels = [

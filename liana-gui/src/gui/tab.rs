@@ -283,13 +283,13 @@ impl Tab {
     }
 
     pub fn subscription(&self) -> Subscription<Message> {
-        Subscription::batch(vec![match &self.state {
+        match &self.state {
             State::Installer(v) => v.subscription().map(|msg| Message::Install(Box::new(msg))),
             State::Loader(v) => v.subscription().map(|msg| Message::Load(Box::new(msg))),
             State::App(v) => v.subscription().map(|msg| Message::Run(Box::new(msg))),
             State::Launcher(v) => v.subscription().map(|msg| Message::Launch(Box::new(msg))),
             State::Login(_) => Subscription::none(),
-        }])
+        }
     }
 
     pub fn view(&self) -> Element<Message> {

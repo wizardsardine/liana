@@ -20,7 +20,7 @@ To simply run:
 cargo run --release --bin coincube-vault
 
 To run the native with buy/sell feature, simply run:
-env ONRAMPER_API_KEY="..." ULTRALIGHT_RESOURCES_DIR="path/to/ultralight-free-sdk-1.4.0/resources" cargo run --release --features buysell --bin coincube-vault
+env ONRAMPER_API_KEY="..." cargo run --release --features buysell --bin coincube-vault
 
 ## Usage
 

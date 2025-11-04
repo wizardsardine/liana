@@ -101,28 +101,16 @@ impl CachedGeoLocator {
 
     /// Detects the user's country and returns (country_name, iso_code)
     pub async fn detect_country(&self) -> Result<(String, String), String> {
-        // Developer override for testing
-        // FORCE_ISOCODE: Set the ISO code (e.g., "NG", "US", "GB")
-        // FORCE_COUNTRY: Set the country name (optional, will derive from ISO if not set)
-        if let Ok(forced_iso) = std::env::var("FORCE_ISOCODE") {
-            let iso = forced_iso.trim().to_uppercase();
-            if !iso.is_empty() && iso.len() == 2 {
+        if cfg!(debug_assertions) {
+            if let Ok(iso) = std::env::var("FORCE_ISOCODE") {
                 // Check if country name is also forced
-                let country_name = if let Ok(forced_name) = std::env::var("FORCE_COUNTRY") {
-                    let name = forced_name.trim();
-                    if !name.is_empty() {
-                        name.to_string()
-                    } else {
-                        // Derive from ISO code
-                        Self::default_country_name(&iso)
-                    }
-                } else {
-                    // Derive from ISO code
-                    Self::default_country_name(&iso)
+                let pair = match std::env::var("FORCE_COUNTRY") {
+                    Ok(forced_name) => (forced_name, iso),
+                    Err(_) => (Self::default_country_name(&iso), iso),
                 };
 
-                tracing::info!("🔧 [DEBUG] Forced country: {} ({})", country_name, iso);
-                return Ok((country_name, iso));
+                tracing::info!("🔧 [DEBUG] Forced country: {} ({})", &pair.0, &pair.1);
+                return Ok(pair);
             }
         }
 
