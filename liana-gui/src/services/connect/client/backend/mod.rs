@@ -2,7 +2,10 @@ pub mod api;
 
 use std::{
     collections::{HashMap, HashSet},
-    sync::Arc,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
 };
 
 use async_trait::async_trait;
@@ -71,6 +74,7 @@ pub struct BackendClient {
     url: String,
     network: Network,
     http: reqwest::Client,
+    unauthenticated: Arc<AtomicBool>,
 
     user_id: String,
 }
@@ -104,6 +108,7 @@ impl BackendClient {
             url,
             user_id,
             http,
+            unauthenticated: Arc::new(AtomicBool::new(false)),
         })
     }
 
@@ -147,7 +152,7 @@ impl BackendClient {
         let res = with_payload(request(
             &self.http,
             method,
-            &format!("{}{}", self.url, uri),
+            format!("{}{}", self.url, uri),
             access_token,
         ))
         .send()
@@ -158,6 +163,9 @@ impl BackendClient {
         if status.is_success() {
             Ok(res.json().await?)
         } else {
+            if status.as_u16() == 401 {
+                self.unauthenticated.store(true, Ordering::Relaxed);
+            }
             Err(DaemonError::Http(
                 Some(status.as_u16()),
                 res.json().await.unwrap_or_else(|_| {
@@ -214,21 +222,22 @@ impl BackendClient {
                     ledger_hmac.fingerprint == cfg.fingerprint && ledger_hmac.hmac == cfg.token
                 })
             {
-                self.request(
-                    Method::PATCH,
-                    &format!("/v1/wallets/{}", wallet_uuid),
-                    |r| {
-                        r.json(&api::payload::UpdateWallet {
-                            alias: None,
-                            ledger_hmac: Some(api::payload::UpdateLedgerHmac {
-                                fingerprint: cfg.fingerprint.to_string(),
-                                hmac: cfg.token.clone(),
-                            }),
-                            fingerprint_aliases: None,
-                        })
-                    },
-                )
-                .await?;
+                let _res: serde_json::Value = self
+                    .request(
+                        Method::PATCH,
+                        &format!("/v1/wallets/{}", wallet_uuid),
+                        |r| {
+                            r.json(&api::payload::UpdateWallet {
+                                alias: None,
+                                ledger_hmac: Some(api::payload::UpdateLedgerHmac {
+                                    fingerprint: cfg.fingerprint.to_string(),
+                                    hmac: cfg.token.clone(),
+                                }),
+                                fingerprint_aliases: None,
+                            })
+                        },
+                    )
+                    .await?;
             }
         }
 
@@ -257,18 +266,19 @@ impl BackendClient {
             };
 
         if fingerprint_aliases.is_some() || wallet_alias.is_some() {
-            self.request(
-                Method::PATCH,
-                &format!("/v1/wallets/{}", wallet_uuid),
-                |r| {
-                    r.json(&api::payload::UpdateWallet {
-                        alias: wallet_alias,
-                        ledger_hmac: None,
-                        fingerprint_aliases,
-                    })
-                },
-            )
-            .await?;
+            let _res: serde_json::Value = self
+                .request(
+                    Method::PATCH,
+                    &format!("/v1/wallets/{}", wallet_uuid),
+                    |r| {
+                        r.json(&api::payload::UpdateWallet {
+                            alias: wallet_alias,
+                            ledger_hmac: None,
+                            fingerprint_aliases,
+                        })
+                    },
+                )
+                .await?;
         }
 
         Ok(())
@@ -287,12 +297,13 @@ impl BackendClient {
     }
 
     pub async fn accept_wallet_invitation(&self, invitation_id: &str) -> Result<(), DaemonError> {
-        self.request(
-            Method::POST,
-            &format!("/v1/invitations/{}/accept", invitation_id),
-            |r| r,
-        )
-        .await?;
+        let _res: serde_json::Value = self
+            .request(
+                Method::POST,
+                &format!("/v1/invitations/{}/accept", invitation_id),
+                |r| r,
+            )
+            .await?;
         Ok(())
     }
 }
@@ -461,7 +472,8 @@ impl BackendWalletClient {
     }
 
     pub async fn delete_wallet(&self) -> Result<(), DaemonError> {
-        self.inner
+        let _resp: serde_json::Value = self
+            .inner
             .request(
                 Method::DELETE,
                 &format!("/v1/wallets/{}", self.wallet_uuid),
@@ -490,6 +502,12 @@ impl Daemon for BackendWalletClient {
         network: Network,
     ) -> Result<(), DaemonError> {
         let auth = self.auth().await;
+        if self.inner.unauthenticated.load(Ordering::Relaxed) {
+            return Err(DaemonError::Http(
+                Some(401),
+                serde_json::Value::String("unauthenticated".to_string()),
+            ));
+        }
         if auth.expires_at < Utc::now().timestamp() + 60 {
             match self.inner.auth.try_write() {
                 Err(_) => {
@@ -805,7 +823,8 @@ impl Daemon for BackendWalletClient {
     }
 
     async fn update_spend_tx(&self, psbt: &Psbt) -> Result<(), DaemonError> {
-        self.inner
+        let _res: serde_json::Value = self
+            .inner
             .request(
                 Method::POST,
                 &format!("/v1/wallets/{}/psbts", self.wallet_uuid),
@@ -832,7 +851,8 @@ impl Daemon for BackendWalletClient {
                 serde_json::Value::String(format!("psbt not found with txid: {}", txid)),
             ))?;
 
-        self.inner
+        let _res: serde_json::Value = self
+            .inner
             .request(Method::DELETE, &format!("/v1/psbts/{}", psbt.uuid), |r| r)
             .await?;
 
@@ -848,7 +868,8 @@ impl Daemon for BackendWalletClient {
             .find(|tx| tx.txid == *txid)
             .ok_or(DaemonError::NoAnswer)?;
 
-        self.inner
+        let _res: serde_json::Value = self
+            .inner
             .request(
                 Method::POST,
                 &format!("/v1/psbts/{}/broadcast", psbt.uuid),
@@ -920,7 +941,8 @@ impl Daemon for BackendWalletClient {
         &self,
         items: &HashMap<LabelItem, Option<String>>,
     ) -> Result<(), DaemonError> {
-        self.inner
+        let _res: serde_json::Value = self
+            .inner
             .request(
                 Method::POST,
                 &format!("/v1/wallets/{}/labels", self.wallet_uuid),
@@ -1039,7 +1061,8 @@ impl Daemon for BackendWalletClient {
     }
 
     async fn send_wallet_invitation(&self, email: &str) -> Result<(), DaemonError> {
-        self.inner
+        let _res: serde_json::Value = self
+            .inner
             .request(
                 Method::POST,
                 &format!("/v1/wallets/{}/invitations", self.wallet_uuid),

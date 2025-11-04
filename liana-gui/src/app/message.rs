@@ -27,6 +27,7 @@ use crate::{
 #[derive(Debug)]
 pub enum Message {
     Tick,
+    RedirectLianaConnectLogin,
     UpdateDaemonCache(Result<DaemonCache, Error>),
     CacheUpdated,
     Fiat(FiatMessage),

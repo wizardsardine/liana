@@ -42,7 +42,7 @@ use crate::{
         settings::WalletId,
         wallet::Wallet,
     },
-    daemon::{embedded::EmbeddedDaemon, Daemon, DaemonBackend},
+    daemon::{embedded::EmbeddedDaemon, Daemon, DaemonBackend, DaemonError},
     dir::LianaDirectory,
     node::{bitcoind::Bitcoind, NodeType},
 };
@@ -396,7 +396,16 @@ impl App {
                         self.cache.daemon_cache = daemon_cache;
                         return Task::perform(async {}, |_| Message::CacheUpdated);
                     }
-                    Err(e) => tracing::error!("Failed to update daemon cache: {}", e),
+                    Err(e) => {
+                        tracing::error!("Failed to update daemon cache: {}", e);
+                        if let Error::Daemon(DaemonError::Http(Some(status), _)) = e {
+                            if status == 401 {
+                                return Task::perform(async {}, |_| {
+                                    Message::RedirectLianaConnectLogin
+                                });
+                            }
+                        }
+                    }
                 }
                 Task::none()
             }
