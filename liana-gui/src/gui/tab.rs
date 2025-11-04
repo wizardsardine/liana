@@ -389,6 +389,7 @@ pub fn create_app_with_remote_backend(
                 last_tick: Instant::now(),
             },
             fiat_price: None,
+            vault_expanded: true,
         },
         Arc::new(
             Wallet::new(wallet.descriptor)

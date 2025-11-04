@@ -25,6 +25,7 @@ use crate::{
     app::{
         cache::Cache,
         error::Error,
+        menu::Menu,
         message::Message,
         state::{fiat_converter_for_wallet, psbt},
         view::{self, fiat::FiatAmount},
@@ -74,7 +75,7 @@ impl TransactionDraft {
 }
 
 pub trait Step {
-    fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, view::Message>;
+    fn view<'a>(&'a self, menu: &'a Menu, cache: &'a Cache) -> Element<'a, view::Message>;
     fn update(
         &mut self,
         daemon: Arc<dyn Daemon + Sync + Send>,
@@ -806,9 +807,10 @@ impl Step for DefineSpend {
         draft.generated.clone_from(&self.generated);
     }
 
-    fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, view::Message> {
+    fn view<'a>(&'a self, menu: &'a Menu, cache: &'a Cache) -> Element<'a, view::Message> {
         let converter = fiat_converter_for_wallet(&self.wallet, cache);
         view::spend::create_spend_tx(
+            menu,
             cache,
             converter.as_ref(),
             self.recipients
@@ -1095,9 +1097,10 @@ impl Step for SaveSpend {
         }
     }
 
-    fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, view::Message> {
+    fn view<'a>(&'a self, menu: &'a Menu, cache: &'a Cache) -> Element<'a, view::Message> {
         let (psbt_state, warnings) = self.spend.as_ref().unwrap();
         let content = view::spend::spend_view(
+            menu,
             cache,
             &psbt_state.tx,
             warnings,
@@ -1165,8 +1168,9 @@ impl Step for SelectRecoveryPath {
         self.wallet = wallet;
     }
 
-    fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, view::Message> {
+    fn view<'a>(&'a self, menu: &'a Menu, cache: &'a Cache) -> Element<'a, view::Message> {
         view::recovery::recovery(
+            menu,
             cache,
             self.recovery_paths
                 .iter()

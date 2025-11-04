@@ -18,6 +18,7 @@ use crate::{
     app::{
         cache::Cache,
         error::Error,
+        menu::Menu,
         message::Message,
         settings::{self, update_settings_file},
         state::{export::ExportModal, State},
@@ -106,8 +107,9 @@ impl WalletSettingsState {
 }
 
 impl State for WalletSettingsState {
-    fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, view::Message> {
+    fn view<'a>(&'a self, menu: &'a Menu, cache: &'a Cache) -> Element<'a, view::Message> {
         let content = view::settings::wallet_settings(
+            menu,
             cache,
             self.warning.as_ref(),
             &self.descriptor,

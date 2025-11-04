@@ -29,6 +29,7 @@ use crate::{
 };
 
 pub fn transactions_view<'a>(
+    menu: &'a Menu,
     cache: &'a Cache,
     txs: &'a [HistoryTransaction],
     warning: Option<&'a Error>,
@@ -36,7 +37,7 @@ pub fn transactions_view<'a>(
     processing: bool,
 ) -> Element<'a, Message> {
     dashboard(
-        &Menu::Transactions,
+        menu,
         cache,
         warning,
         Column::new()
@@ -302,6 +303,7 @@ pub fn create_rbf_modal<'a>(
 }
 
 pub fn tx_view<'a>(
+    menu: &'a Menu,
     cache: &'a Cache,
     tx: &'a HistoryTransaction,
     labels_editing: &'a HashMap<String, form::Value<String>>,
@@ -309,7 +311,7 @@ pub fn tx_view<'a>(
 ) -> Element<'a, Message> {
     let txid = tx.tx.compute_txid().to_string();
     dashboard(
-        &Menu::Transactions,
+        menu,
         cache,
         warning,
         Column::new()

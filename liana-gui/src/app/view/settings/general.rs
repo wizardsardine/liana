@@ -18,6 +18,7 @@ use crate::app::view::settings::SettingsMessage;
 use crate::services::fiat::{Currency, ALL_PRICE_SOURCES};
 
 pub fn general_section<'a>(
+    menu: &'a Menu,
     cache: &'a cache::Cache,
     new_price_setting: &'a PriceSetting,
     currencies_list: &'a [Currency],
@@ -26,7 +27,7 @@ pub fn general_section<'a>(
     let header = header("General", SettingsMessage::GeneralSection);
 
     dashboard(
-        &Menu::Settings,
+        menu,
         cache,
         warning,
         Column::new()

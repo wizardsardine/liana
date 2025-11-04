@@ -20,6 +20,7 @@ pub enum Message {
     Reload,
     Clipboard(String),
     Menu(Menu),
+    ToggleVault,
     Close,
     Select(usize),
     SelectPayment(OutPoint),

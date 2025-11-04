@@ -6,6 +6,7 @@ use liana_ui::widget::Element;
 
 use crate::app::cache::Cache;
 use crate::app::error::Error;
+use crate::app::menu::Menu;
 use crate::app::message::{FiatMessage, Message};
 use crate::app::settings::fiat::PriceSetting;
 use crate::app::settings::update_settings_file;
@@ -75,8 +76,9 @@ impl GeneralSettingsState {
 }
 
 impl State for GeneralSettingsState {
-    fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, view::Message> {
+    fn view<'a>(&'a self, menu: &'a Menu, cache: &'a Cache) -> Element<'a, view::Message> {
         view::settings::general::general_section(
+            menu,
             cache,
             &self.new_price_setting,
             &self.currencies,

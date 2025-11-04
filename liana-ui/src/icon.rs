@@ -240,3 +240,7 @@ pub fn buy_and_sell_icon() -> Text<'static> {
 pub fn building_icon() -> Text<'static> {
     bootstrap_icon('\u{F87D}')
 }
+
+pub fn vault_icon() -> Text<'static> {
+    bootstrap_icon('\u{F65A}') // safe icon
+}

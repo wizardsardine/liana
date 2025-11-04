@@ -16,6 +16,7 @@ use crate::{
     app::{
         cache::Cache,
         error::Error,
+        menu::Menu,
         message::Message,
         state::State,
         view::{self},
@@ -147,11 +148,11 @@ impl State for SettingsState {
         }
     }
 
-    fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, view::Message> {
+    fn view<'a>(&'a self, menu: &'a Menu, cache: &'a Cache) -> Element<'a, view::Message> {
         if let Some(setting) = &self.setting {
-            setting.view(cache)
+            setting.view(menu, cache)
         } else {
-            view::settings::list(cache, self.daemon_backend == DaemonBackend::RemoteBackend)
+            view::settings::list(menu, cache, self.daemon_backend == DaemonBackend::RemoteBackend)
         }
     }
 
@@ -199,8 +200,8 @@ macro_rules! launch {
 }
 
 impl State for ImportExportSettingsState {
-    fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, view::Message> {
-        let content = view::settings::import_export(cache, self.warning.as_ref());
+    fn view<'a>(&'a self, menu: &'a Menu, cache: &'a Cache) -> Element<'a, view::Message> {
+        let content = view::settings::import_export(menu, cache, self.warning.as_ref());
         if let Some(modal) = &self.modal {
             modal.view(content)
         } else {
@@ -337,8 +338,8 @@ pub struct AboutSettingsState {
 }
 
 impl State for AboutSettingsState {
-    fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, view::Message> {
-        view::settings::about_section(cache, self.warning.as_ref(), self.daemon_version.as_ref())
+    fn view<'a>(&'a self, menu: &'a Menu, cache: &'a Cache) -> Element<'a, view::Message> {
+        view::settings::about_section(menu, cache, self.warning.as_ref(), self.daemon_version.as_ref())
     }
 
     fn update(
@@ -401,8 +402,9 @@ impl BackendSettingsState {
 }
 
 impl State for BackendSettingsState {
-    fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, view::Message> {
+    fn view<'a>(&'a self, menu: &'a Menu, cache: &'a Cache) -> Element<'a, view::Message> {
         view::settings::remote_backend_section(
+            menu,
             cache,
             &self.email_form,
             self.processing,

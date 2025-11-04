@@ -48,7 +48,7 @@ pub use spend::CreateSpendPanel;
 pub use transactions::TransactionsPanel;
 
 pub trait State {
-    fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, view::Message>;
+    fn view<'a>(&'a self, menu: &'a Menu, cache: &'a Cache) -> Element<'a, view::Message>;
     fn update(
         &mut self,
         _daemon: Arc<dyn Daemon + Sync + Send>,
@@ -200,7 +200,7 @@ impl Home {
 }
 
 impl State for Home {
-    fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, view::Message> {
+    fn view<'a>(&'a self, menu: &'a Menu, cache: &'a Cache) -> Element<'a, view::Message> {
         let converter = fiat_converter_for_wallet(&self.wallet, cache);
         if let Some((tx, output_index)) = &self.selected_event {
             view::home::payment_view(
@@ -212,7 +212,7 @@ impl State for Home {
             )
         } else {
             view::dashboard(
-                &Menu::Home,
+                menu,
                 cache,
                 None,
                 view::home::home_view(

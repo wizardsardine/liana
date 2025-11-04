@@ -21,6 +21,7 @@ use crate::{
     app::{
         cache::Cache,
         error::Error,
+        menu::Menu,
         message::Message,
         state::{label::LabelsEdited, State},
         view,
@@ -78,9 +79,10 @@ impl TransactionsPanel {
 }
 
 impl State for TransactionsPanel {
-    fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, view::Message> {
+    fn view<'a>(&'a self, menu: &'a Menu, cache: &'a Cache) -> Element<'a, view::Message> {
         if let Some(tx) = self.selected_tx.as_ref() {
             let content = view::transactions::tx_view(
+                menu,
                 cache,
                 tx,
                 self.labels_edited.cache(),
@@ -92,6 +94,7 @@ impl State for TransactionsPanel {
             }
         } else {
             let content = view::transactions::transactions_view(
+                menu,
                 cache,
                 &self.txs,
                 self.warning.as_ref(),

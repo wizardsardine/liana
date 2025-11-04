@@ -49,6 +49,7 @@ use self::state::SettingsState;
 
 struct Panels {
     current: Menu,
+    vault_expanded: bool,
     home: Home,
     coins: CoinsPanel,
     transactions: TransactionsPanel,
@@ -79,7 +80,8 @@ impl Panels {
                 // We don't know the node type for external lianad so assume it's bitcoind.
                 .unwrap_or(true);
         Self {
-            current: Menu::Home,
+            current: Menu::VaultHome,
+            vault_expanded: true,
             home: Home::new(
                 wallet.clone(),
                 cache.coins(),
@@ -119,6 +121,20 @@ impl Panels {
     fn current(&self) -> &dyn State {
         match self.current {
             Menu::Home => &self.home,
+            // Vault submenus - map to same panels as legacy items
+            Menu::Vault => &self.coins,
+            Menu::VaultHome => &self.home,
+            Menu::VaultSend => &self.create_spend,
+            Menu::VaultReceive => &self.receive,
+            Menu::VaultCoins => &self.coins,
+            Menu::VaultTransactions => &self.transactions,
+            Menu::VaultTransactionPreSelected(_) => &self.transactions,
+            Menu::VaultPSBTs => &self.psbts,
+            Menu::VaultPsbtPreSelected(_) => &self.psbts,
+            Menu::VaultRecovery => &self.recovery,
+            Menu::VaultRefreshCoins(_) => &self.create_spend,
+            Menu::VaultSettings | Menu::VaultSettingsPreSelected(_) => &self.settings,
+            // Legacy menu items
             Menu::Receive => &self.receive,
             Menu::PSBTs => &self.psbts,
             Menu::Transactions => &self.transactions,
@@ -137,6 +153,20 @@ impl Panels {
     fn current_mut(&mut self) -> &mut dyn State {
         match self.current {
             Menu::Home => &mut self.home,
+            // Vault submenus - map to same panels as legacy items
+            Menu::VaultHome => &mut self.home,
+            Menu::Vault => &mut self.coins,
+            Menu::VaultSend => &mut self.create_spend,
+            Menu::VaultReceive => &mut self.receive,
+            Menu::VaultCoins => &mut self.coins,
+            Menu::VaultTransactions => &mut self.transactions,
+            Menu::VaultTransactionPreSelected(_) => &mut self.transactions,
+            Menu::VaultPSBTs => &mut self.psbts,
+            Menu::VaultPsbtPreSelected(_) => &mut self.psbts,
+            Menu::VaultRecovery => &mut self.recovery,
+            Menu::VaultRefreshCoins(_) => &mut self.create_spend,
+            Menu::VaultSettings | Menu::VaultSettingsPreSelected(_) => &mut self.settings,
+            // Legacy menu items
             Menu::Receive => &mut self.receive,
             Menu::PSBTs => &mut self.psbts,
             Menu::Transactions => &mut self.transactions,
@@ -221,7 +251,7 @@ impl App {
         self.panels.current_mut().interrupt();
 
         match &menu {
-            menu::Menu::TransactionPreSelected(txid) => {
+            menu::Menu::VaultTransactionPreSelected(txid) => {
                 if let Ok(Some(tx)) = Handle::current().block_on(async {
                     self.daemon
                         .get_history_txs(&[*txid])
@@ -233,7 +263,7 @@ impl App {
                     return Task::none();
                 };
             }
-            menu::Menu::PsbtPreSelected(txid) => {
+            menu::Menu::VaultPsbtPreSelected(txid) => {
                 // Get preselected spend from DB in case it's not yet in the cache.
                 // We only need this single spend as we will go straight to its view and not show the PSBTs list.
                 // In case of any error loading the spend or if it doesn't exist, load PSBTs list in usual way.
@@ -248,7 +278,7 @@ impl App {
                     return Task::none();
                 };
             }
-            menu::Menu::SettingsPreSelected(setting) => {
+            menu::Menu::VaultSettingsPreSelected(setting) => {
                 self.panels.current = menu.clone();
                 return self.panels.current_mut().update(
                     self.daemon.clone(),
@@ -258,7 +288,7 @@ impl App {
                     })),
                 );
             }
-            menu::Menu::RefreshCoins(preselected) => {
+            menu::Menu::VaultRefreshCoins(preselected) => {
                 self.panels.create_spend = CreateSpendPanel::new_self_send(
                     self.wallet.clone(),
                     self.cache.coins(),
@@ -267,7 +297,7 @@ impl App {
                     self.cache.network,
                 );
             }
-            menu::Menu::CreateSpendTx => {
+            menu::Menu::VaultSend => {
                 // redo the process of spending only if user want to start a new one.
                 if !self.panels.create_spend.keep_state() {
                     self.panels.create_spend = CreateSpendPanel::new(
@@ -278,7 +308,7 @@ impl App {
                     );
                 }
             }
-            menu::Menu::Recovery => {
+            menu::Menu::VaultRecovery => {
                 if !self.panels.recovery.keep_state() {
                     self.panels.recovery = new_recovery_panel(self.wallet.clone(), &self.cache);
                 }
@@ -477,6 +507,11 @@ impl App {
                 self.panels.current_mut().close(),
                 self.set_current_panel(menu),
             ]),
+            Message::View(view::Message::ToggleVault) => {
+                self.panels.vault_expanded = !self.panels.vault_expanded;
+                self.cache.vault_expanded = self.panels.vault_expanded;
+                Task::none()
+            }
             Message::View(view::Message::OpenUrl(url)) => {
                 if let Err(e) = open::that_detached(&url) {
                     tracing::error!("Error opening '{}': {}", url, e);
@@ -525,7 +560,7 @@ impl App {
     }
 
     pub fn view(&self) -> Element<'_, Message> {
-        let view = self.panels.current().view(&self.cache);
+        let view = self.panels.current().view(&self.panels.current, &self.cache);
 
         if self.cache.network != bitcoin::Network::Bitcoin {
             Column::with_children([

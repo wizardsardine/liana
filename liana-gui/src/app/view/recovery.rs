@@ -28,6 +28,7 @@ use crate::app::{
 
 #[allow(clippy::too_many_arguments)]
 pub fn recovery<'a>(
+    menu: &'a Menu,
     cache: &'a Cache,
     recovery_paths: Vec<Element<'a, Message>>,
     selected_path: Option<usize>,
@@ -36,7 +37,7 @@ pub fn recovery<'a>(
     let no_recovery_paths = recovery_paths.is_empty();
     const INFO_TEXT: &str = "Recover your funds by sending them to another wallet if you have lost access to your primary spending path.";
     dashboard(
-        &Menu::Recovery,
+        menu,
         cache,
         warning,
         Column::new()

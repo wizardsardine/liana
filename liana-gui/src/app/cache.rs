@@ -23,6 +23,8 @@ pub struct Cache {
     pub last_poll_at_startup: Option<u32>,
     pub daemon_cache: DaemonCache,
     pub fiat_price: Option<FiatPrice>,
+    /// UI state: whether the Vault submenu is expanded
+    pub vault_expanded: bool,
 }
 
 /// only used for tests.
@@ -34,6 +36,7 @@ impl std::default::Default for Cache {
             last_poll_at_startup: None,
             daemon_cache: DaemonCache::default(),
             fiat_price: None,
+            vault_expanded: true,
         }
     }
 }
