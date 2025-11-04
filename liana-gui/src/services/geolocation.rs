@@ -1,6 +1,5 @@
 use serde::Deserialize;
-use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 #[derive(Debug, Clone, Deserialize)]
 struct CountryResponse {
@@ -51,17 +50,8 @@ impl HttpGeoLocator {
     }
 }
 
-#[derive(Debug, Clone)]
-struct CacheEntry {
-    country_name: String,
-    iso_code: String,
-    cached_at: Instant,
-}
-
 pub struct CachedGeoLocator {
     inner: HttpGeoLocator,
-    cache: Arc<Mutex<Option<CacheEntry>>>,
-    ttl: Duration,
 }
 
 impl CachedGeoLocator {
@@ -69,11 +59,7 @@ impl CachedGeoLocator {
         let base = std::env::var("COINCUBE_API_URL")
             .unwrap_or_else(|_| "https://dev-api.coincube.io".to_string());
         let inner = HttpGeoLocator::new(base);
-        Self {
-            inner,
-            cache: Arc::new(Mutex::new(None)),
-            ttl: Duration::from_secs(18_000), // 5 hours
-        }
+        Self { inner }
     }
 
     /// Returns a default country name for common ISO codes (for debugging)
@@ -114,23 +100,7 @@ impl CachedGeoLocator {
             }
         }
 
-        // Check cache
-        if let Some(entry) = self.cache.lock().expect("poisoned").as_ref() {
-            if entry.cached_at.elapsed() < self.ttl {
-                return Ok((entry.country_name.clone(), entry.iso_code.clone()));
-            }
-        }
-
         // Fetch fresh
-        let result = self.inner.detect().await;
-        if let Ok((country_name, iso_code)) = result.clone() {
-            let mut guard = self.cache.lock().expect("poisoned");
-            *guard = Some(CacheEntry {
-                country_name: country_name.clone(),
-                iso_code: iso_code.clone(),
-                cached_at: Instant::now(),
-            });
-        }
-        result
+        self.inner.detect().await
     }
 }

@@ -178,7 +178,7 @@ impl BuySellPanel {
                         })
                         .push_maybe({
                             webview_active.then(|| {
-                                ui_button::secondary(Some(cross_icon()), "Exit")
+                                ui_button::secondary(Some(arrow_back()), "Start Over")
                                     .on_press(ViewMessage::BuySell(BuySellMessage::ResetWidget))
                                     .width(iced::Length::Fixed(300.0))
                             })
@@ -212,7 +212,7 @@ impl BuySellPanel {
                         .push(v)
                         // Network display banner for Onramper flow
                         .push_maybe({
-                            onramper_active.then(|| Space::with_height(Length::Fixed(25.0)))
+                            onramper_active.then(|| Space::with_height(Length::Fixed(15.0)))
                         })
                         .push_maybe(onramper_active.then(|| {
                             let network_name = match self.network {
