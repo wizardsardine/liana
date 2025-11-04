@@ -94,7 +94,7 @@ impl BuySellPanel {
 
     /// Opens Onramper widget session (only called for non-Mavapay countries)
     /// Mavapay flow is now handled by SetBuyOrSell message handler
-    pub fn start_session(&mut self) -> iced::Task<BuySellMessage> {
+    pub fn start_session(&mut self, network: bitcoin::Network) -> iced::Task<BuySellMessage> {
         use crate::app::buysell::onramper;
 
         let Some(iso_code) = self.detected_country_iso.as_ref() else {
@@ -116,7 +116,7 @@ impl BuySellPanel {
             Some(BuyOrSell::Sell) => "sell",
         };
 
-        match onramper::create_widget_url(&currency, address.as_deref(), &mode) {
+        match onramper::create_widget_url(&currency, address.as_deref(), &mode, network) {
             Ok(url) => {
                 tracing::info!("🌍 [ONRAMPER] Widget URL created successfully: {url}");
                 Task::batch([
@@ -126,7 +126,7 @@ impl BuySellPanel {
             }
             Err(error) => {
                 tracing::error!("🌍 [ONRAMPER] Error: {}", error);
-                Task::done(BuySellMessage::SessionError(error))
+                Task::done(BuySellMessage::SessionError(error.to_string()))
             }
         }
     }

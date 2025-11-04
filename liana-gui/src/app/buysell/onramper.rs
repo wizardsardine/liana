@@ -1,33 +1,29 @@
+use liana::miniscript::bitcoin;
+
 const WIDGET_OPTIONS: &str = "{{BASE_URL}}/?apiKey={{API_KEY}}&mode={{MODE}}&partnerContext=CoincubeVault&defaultFiat={{DEFAULT_FIAT}}&onlyCryptoNetworks=bitcoin&sell_defaultFiat={{DEFAULT_FIAT}}&sell_onlyCryptoNetworks=bitcoin&redirectAtCheckout=true&enableCountrySelector=true&themeName=dark";
-
-pub fn api_key() -> Option<String> {
-    // Always read from runtime environment (supports .env file loaded via dotenv)
-    std::env::var("ONRAMPER_API_KEY")
-        .ok()
-        .map(|key| key.trim_matches('"').to_string())
-}
-
-fn base_url() -> &'static str {
-    // Use dev URL for test API keys (pk_test_*), production URL for live keys (pk_prod_*)
-    match api_key() {
-        Some(key) if key.starts_with("pk_test_") => "https://buy.onramper.dev",
-        _ => "https://buy.onramper.com",
-    }
-}
 
 pub fn create_widget_url(
     currency: &str,
     address: Option<&str>,
     mode: &str,
-) -> Result<String, String> {
-    let api_key = api_key().ok_or_else(|| {
-        "Onramper API key not configured. Please set `ONRAMPER_API_KEY` in .env".to_string()
-    })?;
+    network: bitcoin::Network,
+) -> Result<String, &'static str> {
+    let api_key = match network {
+        bitcoin::Network::Bitcoin => {
+            option_env!("ONRAMPER_API_KEY").ok_or("`ONRAMPER_API_KEY` not configured")?
+        }
+        _ => "pk_test_01K2HQVXK7F5C8RDZ36WV2W3F5",
+    };
+
+    let base_url = match network {
+        bitcoin::Network::Bitcoin => "https://buy.onramper.com",
+        _ => "https://buy.onramper.dev",
+    };
 
     let mut url = WIDGET_OPTIONS
-        .replace("{{BASE_URL}}", base_url())
+        .replace("{{BASE_URL}}", base_url)
         .replace("{{MODE}}", mode)
-        .replace("{{API_KEY}}", &api_key)
+        .replace("{{API_KEY}}", api_key)
         .replace("{{DEFAULT_FIAT}}", currency);
 
     // insert address if any
@@ -47,7 +43,7 @@ mod tests {
     fn test_create_widget_url_mainnet() {
         std::env::set_var("ONRAMPER_API_KEY", "test_key");
 
-        let result = create_widget_url("USD", Some("bc1qtest"), "buy");
+        let result = create_widget_url("USD", Some("bc1qtest"), "buy", bitcoin::Network::Testnet);
         assert!(result.is_ok());
 
         let url = result.unwrap();
@@ -62,7 +58,7 @@ mod tests {
     fn test_create_widget_url_with_no_address() {
         std::env::set_var("ONRAMPER_API_KEY", "test_key");
 
-        let result = create_widget_url("EUR", None, "sell");
+        let result = create_widget_url("EUR", None, "sell", bitcoin::Network::Bitcoin);
         assert!(result.is_ok());
 
         let url = result.unwrap();

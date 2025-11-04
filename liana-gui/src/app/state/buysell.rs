@@ -504,7 +504,7 @@ impl State for BuySellPanel {
             // session initialization
             BuySellMessage::CreateSession => {
                 return self
-                    .start_session()
+                    .start_session(cache.network)
                     .map(|m| Message::View(ViewMessage::BuySell(m)));
             }
             BuySellMessage::SessionError(error) => {
