@@ -244,3 +244,7 @@ pub fn building_icon() -> Text<'static> {
 pub fn vault_icon() -> Text<'static> {
     bootstrap_icon('\u{F65A}') // safe icon
 }
+
+pub fn lightning_icon() -> Text<'static> {
+    bootstrap_icon('\u{F46E}') // lightning-fill icon
+}

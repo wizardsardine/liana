@@ -2,6 +2,15 @@ use liana::miniscript::bitcoin::{OutPoint, Txid};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Menu {
     Home,
+
+    // Active menu and submenus
+    Active,
+    ActiveSend,
+    ActiveReceive,
+    ActiveTransactions,
+    ActiveTransactionPreSelected(Txid),
+    ActiveSettings,
+    ActiveSettingsPreSelected(SettingsOption),
     
     // Vault menu and submenus
     Vault,
@@ -18,6 +27,9 @@ pub enum Menu {
     VaultSettings,
     VaultSettingsPreSelected(SettingsOption),
     
+    #[cfg(feature = "buysell")]
+    BuySell, //(Option<AccountInfo>),
+    
     // Legacy menu items (kept for backward compatibility during transition)
     Receive,
     PSBTs,
@@ -30,9 +42,6 @@ pub enum Menu {
     Recovery,
     RefreshCoins(Vec<OutPoint>),
     PsbtPreSelected(Txid),
-    
-    #[cfg(feature = "buysell")]
-    BuySell, //(Option<AccountInfo>),
 }
 
 /// Pre-selectable settings options.

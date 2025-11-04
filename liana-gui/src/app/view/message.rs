@@ -21,6 +21,7 @@ pub enum Message {
     Clipboard(String),
     Menu(Menu),
     ToggleVault,
+    ToggleActive,
     Close,
     Select(usize),
     SelectPayment(OutPoint),

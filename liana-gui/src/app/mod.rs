@@ -27,7 +27,8 @@ pub use config::Config;
 pub use message::Message;
 
 use state::{
-    CoinsPanel, CreateSpendPanel, Home, PsbtsPanel, ReceivePanel, State, TransactionsPanel,
+    ActiveReceive, ActiveSend, ActiveSettings, ActiveTransactions, CoinsPanel, CreateSpendPanel,
+    GlobalHome, Home, PsbtsPanel, ReceivePanel, State, TransactionsPanel,
 };
 use wallet::{sync_status, SyncStatus};
 
@@ -50,7 +51,13 @@ use self::state::SettingsState;
 struct Panels {
     current: Menu,
     vault_expanded: bool,
-    home: Home,
+    active_expanded: bool,
+    global_home: GlobalHome,
+    vault_home: Home,
+    active_send: ActiveSend,
+    active_receive: ActiveReceive,
+    active_transactions: ActiveTransactions,
+    active_settings: ActiveSettings,
     coins: CoinsPanel,
     transactions: TransactionsPanel,
     psbts: PsbtsPanel,
@@ -82,7 +89,9 @@ impl Panels {
         Self {
             current: Menu::VaultHome,
             vault_expanded: true,
-            home: Home::new(
+            active_expanded: false,
+            global_home: GlobalHome::new(wallet.clone()),
+            vault_home: Home::new(
                 wallet.clone(),
                 cache.coins(),
                 sync_status(
@@ -95,6 +104,10 @@ impl Panels {
                 cache.blockheight(),
                 show_rescan_warning,
             ),
+            active_send: ActiveSend::new(wallet.clone()),
+            active_receive: ActiveReceive::new(wallet.clone()),
+            active_transactions: ActiveTransactions::new(wallet.clone()),
+            active_settings: ActiveSettings::new(wallet.clone()),
             coins: CoinsPanel::new(cache.coins(), wallet.main_descriptor.first_timelock_value()),
             transactions: TransactionsPanel::new(wallet.clone()),
             psbts: PsbtsPanel::new(wallet.clone()),
@@ -120,10 +133,17 @@ impl Panels {
 
     fn current(&self) -> &dyn State {
         match self.current {
-            Menu::Home => &self.home,
+            Menu::Home => &self.global_home,
+            // Active submenus
+            Menu::Active => &self.active_send,
+            Menu::ActiveSend => &self.active_send,
+            Menu::ActiveReceive => &self.active_receive,
+            Menu::ActiveTransactions => &self.active_transactions,
+            Menu::ActiveTransactionPreSelected(_) => &self.active_transactions,
+            Menu::ActiveSettings | Menu::ActiveSettingsPreSelected(_) => &self.active_settings,
             // Vault submenus - map to same panels as legacy items
             Menu::Vault => &self.coins,
-            Menu::VaultHome => &self.home,
+            Menu::VaultHome => &self.vault_home,
             Menu::VaultSend => &self.create_spend,
             Menu::VaultReceive => &self.receive,
             Menu::VaultCoins => &self.coins,
@@ -134,6 +154,8 @@ impl Panels {
             Menu::VaultRecovery => &self.recovery,
             Menu::VaultRefreshCoins(_) => &self.create_spend,
             Menu::VaultSettings | Menu::VaultSettingsPreSelected(_) => &self.settings,
+            #[cfg(feature = "buysell")]
+            Menu::BuySell => &self.buy_sell,
             // Legacy menu items
             Menu::Receive => &self.receive,
             Menu::PSBTs => &self.psbts,
@@ -145,16 +167,21 @@ impl Panels {
             Menu::Recovery => &self.recovery,
             Menu::RefreshCoins(_) => &self.create_spend,
             Menu::PsbtPreSelected(_) => &self.psbts,
-            #[cfg(feature = "buysell")]
-            Menu::BuySell => &self.buy_sell,
         }
     }
 
     fn current_mut(&mut self) -> &mut dyn State {
         match self.current {
-            Menu::Home => &mut self.home,
+            Menu::Home => &mut self.global_home,
+            // Active submenus
+            Menu::Active => &mut self.active_send,
+            Menu::ActiveSend => &mut self.active_send,
+            Menu::ActiveReceive => &mut self.active_receive,
+            Menu::ActiveTransactions => &mut self.active_transactions,
+            Menu::ActiveTransactionPreSelected(_) => &mut self.active_transactions,
+            Menu::ActiveSettings | Menu::ActiveSettingsPreSelected(_) => &mut self.active_settings,
             // Vault submenus - map to same panels as legacy items
-            Menu::VaultHome => &mut self.home,
+            Menu::VaultHome => &mut self.vault_home,
             Menu::Vault => &mut self.coins,
             Menu::VaultSend => &mut self.create_spend,
             Menu::VaultReceive => &mut self.receive,
@@ -166,6 +193,8 @@ impl Panels {
             Menu::VaultRecovery => &mut self.recovery,
             Menu::VaultRefreshCoins(_) => &mut self.create_spend,
             Menu::VaultSettings | Menu::VaultSettingsPreSelected(_) => &mut self.settings,
+            #[cfg(feature = "buysell")]
+            Menu::BuySell => &mut self.buy_sell,
             // Legacy menu items
             Menu::Receive => &mut self.receive,
             Menu::PSBTs => &mut self.psbts,
@@ -177,8 +206,6 @@ impl Panels {
             Menu::Recovery => &mut self.recovery,
             Menu::RefreshCoins(_) => &mut self.create_spend,
             Menu::PsbtPreSelected(_) => &mut self.psbts,
-            #[cfg(feature = "buysell")]
-            Menu::BuySell => &mut self.buy_sell,
         }
     }
 }
@@ -212,7 +239,7 @@ impl App {
             config.clone(),
             restored_from_backup,
         );
-        let cmd = panels.home.reload(daemon.clone(), wallet.clone());
+        let cmd = panels.vault_home.reload(daemon.clone(), wallet.clone());
         (
             Self {
                 panels,
@@ -312,6 +339,28 @@ impl App {
                 if !self.panels.recovery.keep_state() {
                     self.panels.recovery = new_recovery_panel(self.wallet.clone(), &self.cache);
                 }
+            }
+            menu::Menu::ActiveTransactionPreSelected(txid) => {
+                if let Ok(Some(tx)) = Handle::current().block_on(async {
+                    self.daemon
+                        .get_history_txs(&[*txid])
+                        .await
+                        .map(|txs| txs.first().cloned())
+                }) {
+                    self.panels.transactions.preselect(tx);
+                    self.panels.current = menu;
+                    return Task::none();
+                };
+            }
+            menu::Menu::ActiveSettingsPreSelected(setting) => {
+                self.panels.current = menu.clone();
+                return self.panels.current_mut().update(
+                    self.daemon.clone(),
+                    &self.cache,
+                    Message::View(view::Message::Settings(match setting {
+                        &menu::SettingsOption::Node => view::SettingsMessage::EditBitcoindSettings,
+                    })),
+                );
             }
             _ => {}
         };
@@ -473,7 +522,7 @@ impl App {
             Message::CacheUpdated => {
                 // These are the panels to update with the cache.
                 let mut panels = [
-                    (&mut self.panels.home as &mut dyn State, Menu::Home),
+                    (&mut self.panels.vault_home as &mut dyn State, Menu::VaultHome),
                     (&mut self.panels.settings as &mut dyn State, Menu::Settings),
                 ];
                 let daemon = self.daemon.clone();
@@ -510,6 +559,21 @@ impl App {
             Message::View(view::Message::ToggleVault) => {
                 self.panels.vault_expanded = !self.panels.vault_expanded;
                 self.cache.vault_expanded = self.panels.vault_expanded;
+                // If we're expanding Vault, collapse Active
+                if self.panels.vault_expanded {
+                    self.panels.active_expanded = false;
+                    self.cache.active_expanded = false;
+                }
+                Task::none()
+            }
+            Message::View(view::Message::ToggleActive) => {
+                self.panels.active_expanded = !self.panels.active_expanded;
+                self.cache.active_expanded = self.panels.active_expanded;
+                // If we're expanding Active, collapse Vault
+                if self.panels.active_expanded {
+                    self.panels.vault_expanded = false;
+                    self.cache.vault_expanded = false;
+                }
                 Task::none()
             }
             Message::View(view::Message::OpenUrl(url)) => {

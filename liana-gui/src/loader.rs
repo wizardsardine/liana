@@ -448,7 +448,8 @@ pub async fn load_application(
             ..Default::default()
         },
         fiat_price: None,
-        vault_expanded: true,
+        vault_expanded: false,
+        active_expanded: false,
     };
 
     Ok((Arc::new(wallet), cache, daemon, internal_bitcoind, backup))

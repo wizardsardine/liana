@@ -1,5 +1,7 @@
+mod active;
 mod coins;
 pub mod export;
+mod global_home;
 mod label;
 mod psbt;
 mod psbts;
@@ -39,7 +41,9 @@ use crate::daemon::{
     Daemon,
 };
 use crate::utils::now;
+pub use active::{ActiveReceive, ActiveSend, ActiveSettings, ActiveTransactions};
 pub use coins::CoinsPanel;
+pub use global_home::GlobalHome;
 use label::LabelsEdited;
 pub use psbts::PsbtsPanel;
 pub use receive::ReceivePanel;
