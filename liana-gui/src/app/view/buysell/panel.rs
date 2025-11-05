@@ -162,6 +162,7 @@ impl BuySellPanel {
 
         let column = {
             let column = Column::new()
+                .push(Space::with_height(150))
                 // COINCUBE branding
                 .push(
                     Row::new()
@@ -266,6 +267,7 @@ impl BuySellPanel {
             BuySellFlowState::Onramper => self.render_loading_onramper(),
         }
     }
+
     fn initialization_flow<'a>(&'a self) -> Column<'a, ViewMessage> {
         use iced::widget::scrollable;
         use liana_ui::component::{
