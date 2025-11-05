@@ -8,12 +8,11 @@ jobs:
   linter:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v1
-      - uses: actions-rs/toolchain@v1
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
         with:
-            toolchain: stable
-            components: rustfmt, clippy
-            override: true
+          components: rustfmt, clippy
       - name: rustfmt
         run: cargo fmt -- --check
       - name: clippy
@@ -36,13 +35,11 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout source code
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
       - name: Install Rust ${{ matrix.toolchain }} toolchain
-        uses: actions-rs/toolchain@v1
+        uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ matrix.toolchain }}
-          override: true
-          profile: minimal
       - name: Test on Rust ${{ matrix.toolchain }} (only Windows)
         if: matrix.os == 'windows-latest'
         run: cargo test --verbose --no-default-features
