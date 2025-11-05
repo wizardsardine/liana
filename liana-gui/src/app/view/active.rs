@@ -1,8 +1,5 @@
 use iced::{widget::Column, widget::Space, Length};
-use liana_ui::{
-    component::text::*,
-    widget::*,
-};
+use liana_ui::{component::text::*, widget::*};
 
 use crate::app::view::message::Message;
 

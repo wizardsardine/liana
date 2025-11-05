@@ -207,7 +207,11 @@ pub fn bitcoind_settings<'a>(
     )
 }
 
-pub fn import_export<'a>(menu: &'a Menu, cache: &'a Cache, warning: Option<&Error>) -> Element<'a, Message> {
+pub fn import_export<'a>(
+    menu: &'a Menu,
+    cache: &'a Cache,
+    warning: Option<&Error>,
+) -> Element<'a, Message> {
     let header = header("Import/Export", SettingsMessage::ImportExportSection);
 
     let description = Row::new()

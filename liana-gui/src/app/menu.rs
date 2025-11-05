@@ -11,7 +11,7 @@ pub enum Menu {
     ActiveTransactionPreSelected(Txid),
     ActiveSettings,
     ActiveSettingsPreSelected(SettingsOption),
-    
+
     // Vault menu and submenus
     Vault,
     VaultHome,
@@ -26,10 +26,10 @@ pub enum Menu {
     VaultRefreshCoins(Vec<OutPoint>),
     VaultSettings,
     VaultSettingsPreSelected(SettingsOption),
-    
+
     #[cfg(feature = "buysell")]
     BuySell, //(Option<AccountInfo>),
-    
+
     // Legacy menu items (kept for backward compatibility during transition)
     Receive,
     PSBTs,

@@ -88,7 +88,7 @@ impl Panels {
                 .unwrap_or(true);
         Self {
             current: Menu::VaultHome,
-            vault_expanded: true,
+            vault_expanded: false,
             active_expanded: false,
             global_home: GlobalHome::new(wallet.clone()),
             vault_home: Home::new(
@@ -522,7 +522,10 @@ impl App {
             Message::CacheUpdated => {
                 // These are the panels to update with the cache.
                 let mut panels = [
-                    (&mut self.panels.vault_home as &mut dyn State, Menu::VaultHome),
+                    (
+                        &mut self.panels.vault_home as &mut dyn State,
+                        Menu::VaultHome,
+                    ),
                     (&mut self.panels.settings as &mut dyn State, Menu::Settings),
                 ];
                 let daemon = self.daemon.clone();
@@ -624,7 +627,10 @@ impl App {
     }
 
     pub fn view(&self) -> Element<'_, Message> {
-        let view = self.panels.current().view(&self.panels.current, &self.cache);
+        let view = self
+            .panels
+            .current()
+            .view(&self.panels.current, &self.cache);
 
         if self.cache.network != bitcoin::Network::Bitcoin {
             Column::with_children([

@@ -152,7 +152,11 @@ impl State for SettingsState {
         if let Some(setting) = &self.setting {
             setting.view(menu, cache)
         } else {
-            view::settings::list(menu, cache, self.daemon_backend == DaemonBackend::RemoteBackend)
+            view::settings::list(
+                menu,
+                cache,
+                self.daemon_backend == DaemonBackend::RemoteBackend,
+            )
         }
     }
 
@@ -339,7 +343,12 @@ pub struct AboutSettingsState {
 
 impl State for AboutSettingsState {
     fn view<'a>(&'a self, menu: &'a Menu, cache: &'a Cache) -> Element<'a, view::Message> {
-        view::settings::about_section(menu, cache, self.warning.as_ref(), self.daemon_version.as_ref())
+        view::settings::about_section(
+            menu,
+            cache,
+            self.warning.as_ref(),
+            self.daemon_version.as_ref(),
+        )
     }
 
     fn update(
