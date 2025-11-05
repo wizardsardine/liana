@@ -10,9 +10,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
+        run: |
+          rustup update stable
+          rustup default stable
+          rustup component add rustfmt clippy
       - name: rustfmt
         run: cargo fmt -- --check
       - name: clippy
@@ -37,9 +38,9 @@ jobs:
       - name: Checkout source code
         uses: actions/checkout@v4
       - name: Install Rust ${{ matrix.toolchain }} toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: ${{ matrix.toolchain }}
+        run: |
+          rustup update ${{ matrix.toolchain }}
+          rustup default ${{ matrix.toolchain }}
       - name: Test on Rust ${{ matrix.toolchain }} (only Windows)
         if: matrix.os == 'windows-latest'
         run: cargo test --verbose --no-default-features
