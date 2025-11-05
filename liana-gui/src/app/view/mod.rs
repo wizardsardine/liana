@@ -339,7 +339,7 @@ pub fn small_sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message
         Column::new()
             .push(
                 Column::new()
-                    .push(liana_logotype().width(Length::Fixed(120.0)))
+                    .push(liana_logotype().width(Length::Fixed(85.0)))
                     .push(home_button)
                     .push(spend_button)
                     .push(receive_button)
