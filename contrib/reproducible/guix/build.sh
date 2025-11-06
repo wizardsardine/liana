@@ -22,11 +22,6 @@ replace-with = "vendored_sources"
 git = "https://github.com/wizardsardine/bdk"
 branch = "release/1.0.0-alpha.13"
 replace-with = "vendored_sources"
-
-[source."https://github.com/edouardparis/winresource"]
-git = "https://github.com/edouardparis/winresource"
-branch = "replace-hashmap-btreemap"
-replace-with = "vendored_sources"
 EOF
 
 ls -la .cargo/config.toml
