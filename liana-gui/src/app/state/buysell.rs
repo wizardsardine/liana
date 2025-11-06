@@ -504,7 +504,7 @@ impl State for BuySellPanel {
             // session initialization
             BuySellMessage::CreateSession => {
                 return self
-                    .start_session()
+                    .start_session(cache.network)
                     .map(|m| Message::View(ViewMessage::BuySell(m)));
             }
             BuySellMessage::SessionError(error) => {
@@ -706,18 +706,24 @@ impl State for BuySellPanel {
         _daemon: Arc<dyn Daemon + Sync + Send>,
         _wallet: Arc<crate::app::wallet::Wallet>,
     ) -> Task<Message> {
-        let locator = crate::services::geolocation::CachedGeoLocator::new_from_env();
-        Task::perform(
-            async move { locator.detect_country().await },
-            |result| match result {
-                Ok((country_name, iso_code)) => Message::View(ViewMessage::BuySell(
-                    BuySellMessage::CountryDetected(country_name, iso_code),
-                )),
-                Err(error) => {
-                    Message::View(ViewMessage::BuySell(BuySellMessage::SessionError(error)))
-                }
-            },
-        )
+        match self.detected_country_iso {
+            Some(_) => Task::none(),
+            None => {
+                let locator = crate::services::geolocation::CachedGeoLocator::new_from_env();
+
+                Task::perform(
+                    async move { locator.detect_country().await },
+                    |result| match result {
+                        Ok((country_name, iso_code)) => Message::View(ViewMessage::BuySell(
+                            BuySellMessage::CountryDetected(country_name, iso_code),
+                        )),
+                        Err(error) => {
+                            Message::View(ViewMessage::BuySell(BuySellMessage::SessionError(error)))
+                        }
+                    },
+                )
+            }
+        }
     }
 
     fn close(&mut self) -> Task<Message> {

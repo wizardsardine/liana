@@ -177,12 +177,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
         Column::new()
             .push(
                 Column::new()
-                    .push(
-                        Container::new(liana_logotype_raster().width(Length::Fixed(120.0)))
-                            .padding(10)
-                            .align_x(iced::Alignment::Center)
-                            .width(Length::Fill),
-                    )
+                    .push(liana_logotype().width(Length::Fill))
                     .push(home_button)
                     .push(spend_button)
                     .push(receive_button)
@@ -344,10 +339,7 @@ pub fn small_sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message
         Column::new()
             .push(
                 Column::new()
-                    .push(
-                        Container::new(liana_logotype_raster().width(Length::Fixed(80.0)))
-                            .padding(10),
-                    )
+                    .push(liana_logotype().width(Length::Fixed(85.0)))
                     .push(home_button)
                     .push(spend_button)
                     .push(receive_button)
@@ -410,7 +402,7 @@ pub fn dashboard<'a, T: Into<Element<'a, Message>>>(
                     Container::new(
                         scrollable(row!(
                             Space::with_width(Length::FillPortion(1)),
-                            column!(Space::with_height(Length::Fixed(150.0)), content.into())
+                            column!(Space::with_height(Length::Fixed(30.0)), content.into())
                                 .width(Length::FillPortion(8))
                                 .max_width(1500),
                             Space::with_width(Length::FillPortion(1)),

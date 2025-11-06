@@ -1,5 +1,5 @@
 use iced::{
-    widget::{image::Image, svg, Svg},
+    widget::{svg, Svg},
     window::icon,
 };
 
@@ -8,7 +8,6 @@ use crate::theme::Theme;
 const LIANA_LOGOTYPE_GREY: &[u8] =
     include_bytes!("../static/logos/LIANA_LOGOTYPE_Gray-coincube.svg");
 const LIANA_LOGOTYPE: &[u8] = include_bytes!("../static/logos/LIANA_LOGOTYPE-coincube.svg");
-const LIANA_LOGOTYPE_PNG: &[u8] = include_bytes!("../static/logos/LIANA_LOGOTYPE-coincube.png");
 
 pub fn liana_window_icon() -> icon::Icon {
     let bytes = include_bytes!("../static/logos/liana-app-icon-coincube.ico");
@@ -19,11 +18,6 @@ pub fn liana_window_icon() -> icon::Icon {
     let buffer = img.into_rgba8().into_vec();
 
     icon::from_rgba(buffer, width, height).unwrap()
-}
-
-pub fn liana_logotype_raster() -> Image {
-    let h = iced::widget::image::Handle::from_bytes(LIANA_LOGOTYPE_PNG);
-    Image::new(h)
 }
 
 pub fn liana_logotype() -> Svg<'static, Theme> {
