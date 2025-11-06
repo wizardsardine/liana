@@ -738,7 +738,7 @@ pub fn dashboard<'a, T: Into<Element<'a, Message>>>(
     Row::new()
         .push(
             Container::new(responsive(move |size| {
-                if size.width > 150.0 {
+                if size.width > 162.0 {
                     sidebar(menu, cache).height(Length::Fill).into()
                 } else {
                     small_sidebar(menu, cache).height(Length::Fill).into()
