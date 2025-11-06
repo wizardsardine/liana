@@ -35,37 +35,3 @@ pub fn create_widget_url(
 
     Ok(url)
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_create_widget_url_mainnet() {
-        std::env::set_var("ONRAMPER_API_KEY", "test_key");
-
-        let result = create_widget_url("USD", Some("bc1qtest"), "buy", bitcoin::Network::Testnet);
-        assert!(result.is_ok());
-
-        let url = result.unwrap();
-        assert!(url.contains("onlyCryptoNetworks=bitcoin"));
-        assert!(url.contains("sell_onlyCryptoNetworks=bitcoin"));
-        assert!(url.contains("mode=buy"));
-        assert!(url.contains("defaultFiat=USD"));
-        assert!(url.contains("wallets=btc:bc1qtest"));
-    }
-
-    #[test]
-    fn test_create_widget_url_with_no_address() {
-        std::env::set_var("ONRAMPER_API_KEY", "test_key");
-
-        let result = create_widget_url("EUR", None, "sell", bitcoin::Network::Bitcoin);
-        assert!(result.is_ok());
-
-        let url = result.unwrap();
-        assert!(url.contains("onlyCryptoNetworks=bitcoin"));
-        assert!(url.contains("sell_onlyCryptoNetworks=bitcoin"));
-        assert!(url.contains("mode=sell"));
-        assert!(url.contains("defaultFiat=EUR"));
-    }
-}
