@@ -89,7 +89,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
         .spacing(0)
         .width(Length::Fill)
         .push(
-            Container::new(liana_logotype_raster().width(Length::Fixed(120.0)))
+            Container::new(liana_logotype().width(Length::Fill))
                 .padding(10)
                 .align_x(iced::Alignment::Center)
                 .width(Length::Fill),
@@ -130,7 +130,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
                 button::menu_active(Some(send_icon()), "Send")
                     .on_press(Message::Reload)
                     .width(iced::Length::Fill),
-                menu_bar_highlight(),
+                menu_bar_highlight()
             )
             .width(Length::Fill)
         } else {
@@ -464,7 +464,10 @@ pub fn small_sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message
 
     // Build menu column starting with logo and home button
     let mut menu_column = Column::new()
-        .push(Container::new(liana_logotype_raster().width(Length::Fixed(80.0))).padding(10))
+        .push(
+            Container::new(liana_logotype().width(Length::Fixed(85.0)))
+                .padding(10)
+        )
         .push(home_button);
 
     // Active button - toggle with ToggleActive message
@@ -755,7 +758,7 @@ pub fn dashboard<'a, T: Into<Element<'a, Message>>>(
                     Container::new(
                         scrollable(row!(
                             Space::with_width(Length::FillPortion(1)),
-                            column!(Space::with_height(Length::Fixed(150.0)), content.into())
+                            column!(Space::with_height(Length::Fixed(30.0)), content.into())
                                 .width(Length::FillPortion(8))
                                 .max_width(1500),
                             Space::with_width(Length::FillPortion(1)),

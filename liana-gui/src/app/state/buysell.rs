@@ -144,10 +144,10 @@ impl State for BuySellPanel {
 
                 // Handle empty country detection
                 if country_name.is_empty() || iso_code.is_empty() {
-                    tracing::warn!("🌍 [GEOLOCATION] Empty country detection, defaulting to US");
+                    tracing::warn!("🌍 [GEOLOCATION] Empty country detection");
 
-                    self.detected_country_name = Some("United States".to_string());
-                    self.detected_country_iso = Some("US".to_string());
+                    self.detected_country_name = None;
+                    self.detected_country_iso = None;
                 } else {
                     self.detected_country_name = Some(country_name);
                     self.detected_country_iso = Some(iso_code.clone());
@@ -505,7 +505,7 @@ impl State for BuySellPanel {
             // session initialization
             BuySellMessage::CreateSession => {
                 return self
-                    .start_session()
+                    .start_session(cache.network)
                     .map(|m| Message::View(ViewMessage::BuySell(m)));
             }
             BuySellMessage::SessionError(error) => {
@@ -707,18 +707,24 @@ impl State for BuySellPanel {
         _daemon: Arc<dyn Daemon + Sync + Send>,
         _wallet: Arc<crate::app::wallet::Wallet>,
     ) -> Task<Message> {
-        let locator = crate::services::geolocation::CachedGeoLocator::new_from_env();
-        Task::perform(
-            async move { locator.detect_country().await },
-            |result| match result {
-                Ok((country_name, iso_code)) => Message::View(ViewMessage::BuySell(
-                    BuySellMessage::CountryDetected(country_name, iso_code),
-                )),
-                Err(error) => {
-                    Message::View(ViewMessage::BuySell(BuySellMessage::SessionError(error)))
-                }
-            },
-        )
+        match self.detected_country_iso {
+            Some(_) => Task::none(),
+            None => {
+                let locator = crate::services::geolocation::CachedGeoLocator::new_from_env();
+
+                Task::perform(
+                    async move { locator.detect_country().await },
+                    |result| match result {
+                        Ok((country_name, iso_code)) => Message::View(ViewMessage::BuySell(
+                            BuySellMessage::CountryDetected(country_name, iso_code),
+                        )),
+                        Err(error) => {
+                            Message::View(ViewMessage::BuySell(BuySellMessage::SessionError(error)))
+                        }
+                    },
+                )
+            }
+        }
     }
 
     fn close(&mut self) -> Task<Message> {
