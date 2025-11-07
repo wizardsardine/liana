@@ -337,34 +337,43 @@ impl App {
                 }
                 _ => {}
             },
-            menu::Menu::Active(submenu) => match submenu {
-                menu::ActiveSubMenu::Transactions(Some(txid)) => {
-                    if let Ok(Some(tx)) = Handle::current().block_on(async {
-                        self.daemon
-                            .get_history_txs(&[*txid])
-                            .await
-                            .map(|txs| txs.first().cloned())
-                    }) {
-                        self.panels.active_transactions.preselect(tx);
-                        self.panels.current = menu;
-                        return Task::none();
-                    };
+            menu::Menu::Active(submenu) => {
+                match submenu {
+                    menu::ActiveSubMenu::Transactions(Some(txid)) => {
+                        if let Ok(Some(tx)) = Handle::current().block_on(async {
+                            self.daemon
+                                .get_history_txs(&[*txid])
+                                .await
+                                .map(|txs| txs.first().cloned())
+                        }) {
+                            self.panels.active_transactions.preselect(tx);
+                            self.panels.current = menu;
+                            return Task::none();
+                        };
+                    }
+                    menu::ActiveSubMenu::Settings(Some(setting)) => {
+                        self.panels.current = menu.clone();
+                        return self.panels.current_mut().update(
+                            self.daemon.clone(),
+                            &self.cache,
+                            Message::View(view::Message::Settings(match setting {
+                                menu::SettingsOption::Node => {
+                                    view::SettingsMessage::EditBitcoindSettings
+                                }
+                            })),
+                        );
+                    }
+                    _ => {
+                        tracing::debug!("Active submenu variant {:?} has no special handling in set_current_panel", submenu);
+                    }
                 }
-                menu::ActiveSubMenu::Settings(Some(setting)) => {
-                    self.panels.current = menu.clone();
-                    return self.panels.current_mut().update(
-                        self.daemon.clone(),
-                        &self.cache,
-                        Message::View(view::Message::Settings(match setting {
-                            menu::SettingsOption::Node => {
-                                view::SettingsMessage::EditBitcoindSettings
-                            }
-                        })),
-                    );
-                }
-                _ => {}
-            },
-            _ => {}
+            }
+            _ => {
+                tracing::debug!(
+                    "Menu variant {:?} has no special handling in set_current_panel",
+                    menu
+                );
+            }
         };
 
         self.panels.current = menu;
