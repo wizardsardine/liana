@@ -123,8 +123,10 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
 
     // Add Active submenu items if expanded
     if is_active_expanded {
+        use crate::app::menu::ActiveSubMenu;
+        
         // Active Send
-        let active_send_button = if *menu == Menu::ActiveSend {
+        let active_send_button = if matches!(menu, Menu::Active(ActiveSubMenu::Send)) {
             row!(
                 Space::with_width(Length::Fixed(20.0)),
                 button::menu_active(Some(send_icon()), "Send")
@@ -137,14 +139,14 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
             row!(
                 Space::with_width(Length::Fixed(20.0)),
                 button::menu(Some(send_icon()), "Send")
-                    .on_press(Message::Menu(Menu::ActiveSend))
+                    .on_press(Message::Menu(Menu::Active(ActiveSubMenu::Send)))
                     .width(iced::Length::Fill),
             )
             .width(Length::Fill)
         };
 
         // Active Receive
-        let active_receive_button = if *menu == Menu::ActiveReceive {
+        let active_receive_button = if matches!(menu, Menu::Active(ActiveSubMenu::Receive)) {
             row!(
                 Space::with_width(Length::Fixed(20.0)),
                 button::menu_active(Some(receive_icon()), "Receive")
@@ -157,16 +159,14 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
             row!(
                 Space::with_width(Length::Fixed(20.0)),
                 button::menu(Some(receive_icon()), "Receive")
-                    .on_press(Message::Menu(Menu::ActiveReceive))
+                    .on_press(Message::Menu(Menu::Active(ActiveSubMenu::Receive)))
                     .width(iced::Length::Fill),
             )
             .width(Length::Fill)
         };
 
         // Active Transactions
-        let active_transactions_button = if *menu == Menu::ActiveTransactions
-            || matches!(menu, Menu::ActiveTransactionPreSelected(_))
-        {
+        let active_transactions_button = if matches!(menu, Menu::Active(ActiveSubMenu::Transactions(_))) {
             row!(
                 Space::with_width(Length::Fixed(20.0)),
                 button::menu_active(Some(history_icon()), "Transactions")
@@ -179,16 +179,14 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
             row!(
                 Space::with_width(Length::Fixed(20.0)),
                 button::menu(Some(history_icon()), "Transactions")
-                    .on_press(Message::Menu(Menu::ActiveTransactions))
+                    .on_press(Message::Menu(Menu::Active(ActiveSubMenu::Transactions(None))))
                     .width(iced::Length::Fill),
             )
             .width(Length::Fill)
         };
 
         // Active Settings
-        let active_settings_button = if *menu == Menu::ActiveSettings
-            || matches!(menu, Menu::ActiveSettingsPreSelected(_))
-        {
+        let active_settings_button = if matches!(menu, Menu::Active(ActiveSubMenu::Settings(_))) {
             row!(
                 Space::with_width(Length::Fixed(20.0)),
                 button::menu_active(Some(settings_icon()), "Settings")
@@ -201,7 +199,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
             row!(
                 Space::with_width(Length::Fixed(20.0)),
                 button::menu(Some(settings_icon()), "Settings")
-                    .on_press(Message::Menu(Menu::ActiveSettings))
+                    .on_press(Message::Menu(Menu::Active(ActiveSubMenu::Settings(None))))
                     .width(iced::Length::Fill),
             )
             .width(Length::Fill)
@@ -241,8 +239,10 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
 
     // Add Vault submenu items if expanded
     if is_vault_expanded {
+        use crate::app::menu::VaultSubMenu;
+        
         // Home
-        let vault_home_button = if *menu == Menu::VaultHome {
+        let vault_home_button = if matches!(menu, Menu::Vault(VaultSubMenu::Home)) {
             row!(
                 Space::with_width(Length::Fixed(20.0)),
                 button::menu_active(Some(home_icon()), "Home")
@@ -255,14 +255,14 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
             row!(
                 Space::with_width(Length::Fixed(20.0)),
                 button::menu(Some(home_icon()), "Home")
-                    .on_press(Message::Menu(Menu::VaultHome))
+                    .on_press(Message::Menu(Menu::Vault(VaultSubMenu::Home)))
                     .width(iced::Length::Fill),
             )
             .width(Length::Fill)
         };
 
         // Send
-        let vault_send_button = if *menu == Menu::VaultSend {
+        let vault_send_button = if matches!(menu, Menu::Vault(VaultSubMenu::Send)) {
             row!(
                 Space::with_width(Length::Fixed(20.0)),
                 button::menu_active(Some(send_icon()), "Send")
@@ -275,14 +275,14 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
             row!(
                 Space::with_width(Length::Fixed(20.0)),
                 button::menu(Some(send_icon()), "Send")
-                    .on_press(Message::Menu(Menu::VaultSend))
+                    .on_press(Message::Menu(Menu::Vault(VaultSubMenu::Send)))
                     .width(iced::Length::Fill),
             )
             .width(Length::Fill)
         };
 
         // Receive
-        let vault_receive_button = if *menu == Menu::VaultReceive {
+        let vault_receive_button = if matches!(menu, Menu::Vault(VaultSubMenu::Receive)) {
             row!(
                 Space::with_width(Length::Fixed(20.0)),
                 button::menu_active(Some(receive_icon()), "Receive")
@@ -295,15 +295,14 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
             row!(
                 Space::with_width(Length::Fixed(20.0)),
                 button::menu(Some(receive_icon()), "Receive")
-                    .on_press(Message::Menu(Menu::VaultReceive))
+                    .on_press(Message::Menu(Menu::Vault(VaultSubMenu::Receive)))
                     .width(iced::Length::Fill),
             )
             .width(Length::Fill)
         };
 
         // Coins
-        let vault_coins_button =
-            if *menu == Menu::VaultCoins || matches!(menu, Menu::VaultRefreshCoins(_)) {
+        let vault_coins_button = if matches!(menu, Menu::Vault(VaultSubMenu::Coins(_))) {
                 row!(
                     Space::with_width(Length::Fixed(20.0)),
                     button::menu_active(Some(coins_icon()), "Coins")
@@ -316,16 +315,14 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
                 row!(
                     Space::with_width(Length::Fixed(20.0)),
                     button::menu(Some(coins_icon()), "Coins")
-                        .on_press(Message::Menu(Menu::VaultCoins))
+                        .on_press(Message::Menu(Menu::Vault(VaultSubMenu::Coins(None))))
                         .width(iced::Length::Fill),
                 )
                 .width(Length::Fill)
             };
 
         // Transactions
-        let vault_transactions_button = if *menu == Menu::VaultTransactions
-            || matches!(menu, Menu::VaultTransactionPreSelected(_))
-        {
+        let vault_transactions_button = if matches!(menu, Menu::Vault(VaultSubMenu::Transactions(_))) {
             row!(
                 Space::with_width(Length::Fixed(20.0)),
                 button::menu_active(Some(history_icon()), "Transactions")
@@ -338,15 +335,14 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
             row!(
                 Space::with_width(Length::Fixed(20.0)),
                 button::menu(Some(history_icon()), "Transactions")
-                    .on_press(Message::Menu(Menu::VaultTransactions))
+                    .on_press(Message::Menu(Menu::Vault(VaultSubMenu::Transactions(None))))
                     .width(iced::Length::Fill),
             )
             .width(Length::Fill)
         };
 
         // PSBTs
-        let vault_psbts_button =
-            if *menu == Menu::VaultPSBTs || matches!(menu, Menu::VaultPsbtPreSelected(_)) {
+        let vault_psbts_button = if matches!(menu, Menu::Vault(VaultSubMenu::PSBTs(_))) {
                 row!(
                     Space::with_width(Length::Fixed(20.0)),
                     button::menu_active(Some(history_icon()), "PSBTs")
@@ -359,14 +355,14 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
                 row!(
                     Space::with_width(Length::Fixed(20.0)),
                     button::menu(Some(history_icon()), "PSBTs")
-                        .on_press(Message::Menu(Menu::VaultPSBTs))
+                        .on_press(Message::Menu(Menu::Vault(VaultSubMenu::PSBTs(None))))
                         .width(iced::Length::Fill),
                 )
                 .width(Length::Fill)
             };
 
         // Recovery
-        let vault_recovery_button = if *menu == Menu::VaultRecovery {
+        let vault_recovery_button = if matches!(menu, Menu::Vault(VaultSubMenu::Recovery)) {
             row!(
                 Space::with_width(Length::Fixed(20.0)),
                 button::menu_active(Some(recovery_icon()), "Recovery")
@@ -379,15 +375,14 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
             row!(
                 Space::with_width(Length::Fixed(20.0)),
                 button::menu(Some(recovery_icon()), "Recovery")
-                    .on_press(Message::Menu(Menu::VaultRecovery))
+                    .on_press(Message::Menu(Menu::Vault(VaultSubMenu::Recovery)))
                     .width(iced::Length::Fill),
             )
             .width(Length::Fill)
         };
 
         // Settings
-        let vault_settings_button =
-            if *menu == Menu::VaultSettings || matches!(menu, Menu::VaultSettingsPreSelected(_)) {
+        let vault_settings_button = if matches!(menu, Menu::Vault(VaultSubMenu::Settings(_))) {
                 row!(
                     Space::with_width(Length::Fixed(20.0)),
                     button::menu_active(Some(settings_icon()), "Settings")
@@ -400,7 +395,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
                 row!(
                     Space::with_width(Length::Fixed(20.0)),
                     button::menu(Some(settings_icon()), "Settings")
-                        .on_press(Message::Menu(Menu::VaultSettings))
+                        .on_press(Message::Menu(Menu::Vault(VaultSubMenu::Settings(None))))
                         .width(iced::Length::Fill),
                 )
                 .width(Length::Fill)
@@ -482,8 +477,10 @@ pub fn small_sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message
 
     // Add Active submenu items if expanded
     if is_active_expanded {
+        use crate::app::menu::ActiveSubMenu;
+        
         // Active Send
-        let active_send_button = if *menu == Menu::ActiveSend {
+        let active_send_button = if matches!(menu, Menu::Active(ActiveSubMenu::Send)) {
             row!(
                 button::menu_active_small(send_icon())
                     .on_press(Message::Reload)
@@ -492,12 +489,12 @@ pub fn small_sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message
             )
         } else {
             row!(button::menu_small(send_icon())
-                .on_press(Message::Menu(Menu::ActiveSend))
+                .on_press(Message::Menu(Menu::Active(ActiveSubMenu::Send)))
                 .width(iced::Length::Fill),)
         };
 
         // Active Receive
-        let active_receive_button = if *menu == Menu::ActiveReceive {
+        let active_receive_button = if matches!(menu, Menu::Active(ActiveSubMenu::Receive)) {
             row!(
                 button::menu_active_small(receive_icon())
                     .on_press(Message::Reload)
@@ -506,14 +503,12 @@ pub fn small_sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message
             )
         } else {
             row!(button::menu_small(receive_icon())
-                .on_press(Message::Menu(Menu::ActiveReceive))
+                .on_press(Message::Menu(Menu::Active(ActiveSubMenu::Receive)))
                 .width(iced::Length::Fill),)
         };
 
         // Active Transactions
-        let active_transactions_button = if *menu == Menu::ActiveTransactions
-            || matches!(menu, Menu::ActiveTransactionPreSelected(_))
-        {
+        let active_transactions_button = if matches!(menu, Menu::Active(ActiveSubMenu::Transactions(_))) {
             row!(
                 button::menu_active_small(history_icon())
                     .on_press(Message::Reload)
@@ -522,14 +517,12 @@ pub fn small_sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message
             )
         } else {
             row!(button::menu_small(history_icon())
-                .on_press(Message::Menu(Menu::ActiveTransactions))
+                .on_press(Message::Menu(Menu::Active(ActiveSubMenu::Transactions(None))))
                 .width(iced::Length::Fill),)
         };
 
         // Active Settings
-        let active_settings_button = if *menu == Menu::ActiveSettings
-            || matches!(menu, Menu::ActiveSettingsPreSelected(_))
-        {
+        let active_settings_button = if matches!(menu, Menu::Active(ActiveSubMenu::Settings(_))) {
             row!(
                 button::menu_active_small(settings_icon())
                     .on_press(Message::Reload)
@@ -538,7 +531,7 @@ pub fn small_sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message
             )
         } else {
             row!(button::menu_small(settings_icon())
-                .on_press(Message::Menu(Menu::ActiveSettings))
+                .on_press(Message::Menu(Menu::Active(ActiveSubMenu::Settings(None))))
                 .width(iced::Length::Fill),)
         };
 
@@ -561,8 +554,10 @@ pub fn small_sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message
 
     // Add Vault submenu items if expanded
     if is_vault_expanded {
+        use crate::app::menu::VaultSubMenu;
+        
         // Vault Home
-        let vault_home_button = if *menu == Menu::VaultHome {
+        let vault_home_button = if matches!(menu, Menu::Vault(VaultSubMenu::Home)) {
             row!(
                 button::menu_active_small(home_icon())
                     .on_press(Message::Reload)
@@ -571,12 +566,12 @@ pub fn small_sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message
             )
         } else {
             row!(button::menu_small(home_icon())
-                .on_press(Message::Menu(Menu::VaultHome))
+                .on_press(Message::Menu(Menu::Vault(VaultSubMenu::Home)))
                 .width(iced::Length::Fill),)
         };
 
         // Vault Send
-        let vault_send_button = if *menu == Menu::VaultSend {
+        let vault_send_button = if matches!(menu, Menu::Vault(VaultSubMenu::Send)) {
             row!(
                 button::menu_active_small(send_icon())
                     .on_press(Message::Reload)
@@ -585,12 +580,12 @@ pub fn small_sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message
             )
         } else {
             row!(button::menu_small(send_icon())
-                .on_press(Message::Menu(Menu::VaultSend))
+                .on_press(Message::Menu(Menu::Vault(VaultSubMenu::Send)))
                 .width(iced::Length::Fill),)
         };
 
         // Vault Receive
-        let vault_receive_button = if *menu == Menu::VaultReceive {
+        let vault_receive_button = if matches!(menu, Menu::Vault(VaultSubMenu::Receive)) {
             row!(
                 button::menu_active_small(receive_icon())
                     .on_press(Message::Reload)
@@ -599,13 +594,12 @@ pub fn small_sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message
             )
         } else {
             row!(button::menu_small(receive_icon())
-                .on_press(Message::Menu(Menu::VaultReceive))
+                .on_press(Message::Menu(Menu::Vault(VaultSubMenu::Receive)))
                 .width(iced::Length::Fill),)
         };
 
         // Vault Coins
-        let vault_coins_button =
-            if *menu == Menu::VaultCoins || matches!(menu, Menu::VaultRefreshCoins(_)) {
+        let vault_coins_button = if matches!(menu, Menu::Vault(VaultSubMenu::Coins(_))) {
                 row!(
                     button::menu_active_small(coins_icon())
                         .on_press(Message::Reload)
@@ -614,14 +608,12 @@ pub fn small_sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message
                 )
             } else {
                 row!(button::menu_small(coins_icon())
-                    .on_press(Message::Menu(Menu::VaultCoins))
+                    .on_press(Message::Menu(Menu::Vault(VaultSubMenu::Coins(None))))
                     .width(iced::Length::Fill),)
             };
 
         // Vault Transactions
-        let vault_transactions_button = if *menu == Menu::VaultTransactions
-            || matches!(menu, Menu::VaultTransactionPreSelected(_))
-        {
+        let vault_transactions_button = if matches!(menu, Menu::Vault(VaultSubMenu::Transactions(_))) {
             row!(
                 button::menu_active_small(history_icon())
                     .on_press(Message::Reload)
@@ -630,13 +622,12 @@ pub fn small_sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message
             )
         } else {
             row!(button::menu_small(history_icon())
-                .on_press(Message::Menu(Menu::VaultTransactions))
+                .on_press(Message::Menu(Menu::Vault(VaultSubMenu::Transactions(None))))
                 .width(iced::Length::Fill),)
         };
 
         // Vault PSBTs
-        let vault_psbts_button =
-            if *menu == Menu::VaultPSBTs || matches!(menu, Menu::VaultPsbtPreSelected(_)) {
+        let vault_psbts_button = if matches!(menu, Menu::Vault(VaultSubMenu::PSBTs(_))) {
                 row!(
                     button::menu_active_small(history_icon())
                         .on_press(Message::Reload)
@@ -645,12 +636,12 @@ pub fn small_sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message
                 )
             } else {
                 row!(button::menu_small(history_icon())
-                    .on_press(Message::Menu(Menu::VaultPSBTs))
+                    .on_press(Message::Menu(Menu::Vault(VaultSubMenu::PSBTs(None))))
                     .width(iced::Length::Fill),)
             };
 
         // Vault Recovery
-        let vault_recovery_button = if *menu == Menu::VaultRecovery {
+        let vault_recovery_button = if matches!(menu, Menu::Vault(VaultSubMenu::Recovery)) {
             row!(
                 button::menu_active_small(recovery_icon())
                     .on_press(Message::Reload)
@@ -659,13 +650,12 @@ pub fn small_sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message
             )
         } else {
             row!(button::menu_small(recovery_icon())
-                .on_press(Message::Menu(Menu::VaultRecovery))
+                .on_press(Message::Menu(Menu::Vault(VaultSubMenu::Recovery)))
                 .width(iced::Length::Fill),)
         };
 
         // Vault Settings
-        let vault_settings_button =
-            if *menu == Menu::VaultSettings || matches!(menu, Menu::VaultSettingsPreSelected(_)) {
+        let vault_settings_button = if matches!(menu, Menu::Vault(VaultSubMenu::Settings(_))) {
                 row!(
                     button::menu_active_small(settings_icon())
                         .on_press(Message::Reload)
@@ -674,7 +664,7 @@ pub fn small_sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message
                 )
             } else {
                 row!(button::menu_small(settings_icon())
-                    .on_press(Message::Menu(Menu::VaultSettings))
+                    .on_press(Message::Menu(Menu::Vault(VaultSubMenu::Settings(None))))
                     .width(iced::Length::Fill),)
             };
 

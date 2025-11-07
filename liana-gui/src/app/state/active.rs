@@ -96,6 +96,10 @@ impl ActiveTransactions {
     pub fn new(wallet: Arc<Wallet>) -> Self {
         Self { wallet }
     }
+
+    pub fn preselect(&mut self, _tx: crate::daemon::model::HistoryTransaction) {
+        // Placeholder: In the future, this will preselect a transaction
+    }
 }
 
 impl State for ActiveTransactions {

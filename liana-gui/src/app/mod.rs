@@ -87,7 +87,7 @@ impl Panels {
                 // We don't know the node type for external lianad so assume it's bitcoind.
                 .unwrap_or(true);
         Self {
-            current: Menu::VaultHome,
+            current: Menu::Vault(crate::app::menu::VaultSubMenu::Home),
             vault_expanded: false,
             active_expanded: false,
             global_home: GlobalHome::new(wallet.clone()),
@@ -132,28 +132,24 @@ impl Panels {
     }
 
     fn current(&self) -> &dyn State {
-        match self.current {
+        match &self.current {
             Menu::Home => &self.global_home,
-            // Active submenus
-            Menu::Active => &self.active_send,
-            Menu::ActiveSend => &self.active_send,
-            Menu::ActiveReceive => &self.active_receive,
-            Menu::ActiveTransactions => &self.active_transactions,
-            Menu::ActiveTransactionPreSelected(_) => &self.active_transactions,
-            Menu::ActiveSettings | Menu::ActiveSettingsPreSelected(_) => &self.active_settings,
-            // Vault submenus - map to same panels as legacy items
-            Menu::Vault => &self.coins,
-            Menu::VaultHome => &self.vault_home,
-            Menu::VaultSend => &self.create_spend,
-            Menu::VaultReceive => &self.receive,
-            Menu::VaultCoins => &self.coins,
-            Menu::VaultTransactions => &self.transactions,
-            Menu::VaultTransactionPreSelected(_) => &self.transactions,
-            Menu::VaultPSBTs => &self.psbts,
-            Menu::VaultPsbtPreSelected(_) => &self.psbts,
-            Menu::VaultRecovery => &self.recovery,
-            Menu::VaultRefreshCoins(_) => &self.create_spend,
-            Menu::VaultSettings | Menu::VaultSettingsPreSelected(_) => &self.settings,
+            Menu::Active(submenu) => match submenu {
+                crate::app::menu::ActiveSubMenu::Send => &self.active_send,
+                crate::app::menu::ActiveSubMenu::Receive => &self.active_receive,
+                crate::app::menu::ActiveSubMenu::Transactions(_) => &self.active_transactions,
+                crate::app::menu::ActiveSubMenu::Settings(_) => &self.active_settings,
+            },
+            Menu::Vault(submenu) => match submenu {
+                crate::app::menu::VaultSubMenu::Home => &self.vault_home,
+                crate::app::menu::VaultSubMenu::Send => &self.create_spend,
+                crate::app::menu::VaultSubMenu::Receive => &self.receive,
+                crate::app::menu::VaultSubMenu::Coins(_) => &self.coins,
+                crate::app::menu::VaultSubMenu::Transactions(_) => &self.transactions,
+                crate::app::menu::VaultSubMenu::PSBTs(_) => &self.psbts,
+                crate::app::menu::VaultSubMenu::Recovery => &self.recovery,
+                crate::app::menu::VaultSubMenu::Settings(_) => &self.settings,
+            },
             #[cfg(feature = "buysell")]
             Menu::BuySell => &self.buy_sell,
             // Legacy menu items
@@ -171,28 +167,24 @@ impl Panels {
     }
 
     fn current_mut(&mut self) -> &mut dyn State {
-        match self.current {
+        match &self.current {
             Menu::Home => &mut self.global_home,
-            // Active submenus
-            Menu::Active => &mut self.active_send,
-            Menu::ActiveSend => &mut self.active_send,
-            Menu::ActiveReceive => &mut self.active_receive,
-            Menu::ActiveTransactions => &mut self.active_transactions,
-            Menu::ActiveTransactionPreSelected(_) => &mut self.active_transactions,
-            Menu::ActiveSettings | Menu::ActiveSettingsPreSelected(_) => &mut self.active_settings,
-            // Vault submenus - map to same panels as legacy items
-            Menu::VaultHome => &mut self.vault_home,
-            Menu::Vault => &mut self.coins,
-            Menu::VaultSend => &mut self.create_spend,
-            Menu::VaultReceive => &mut self.receive,
-            Menu::VaultCoins => &mut self.coins,
-            Menu::VaultTransactions => &mut self.transactions,
-            Menu::VaultTransactionPreSelected(_) => &mut self.transactions,
-            Menu::VaultPSBTs => &mut self.psbts,
-            Menu::VaultPsbtPreSelected(_) => &mut self.psbts,
-            Menu::VaultRecovery => &mut self.recovery,
-            Menu::VaultRefreshCoins(_) => &mut self.create_spend,
-            Menu::VaultSettings | Menu::VaultSettingsPreSelected(_) => &mut self.settings,
+            Menu::Active(submenu) => match submenu {
+                crate::app::menu::ActiveSubMenu::Send => &mut self.active_send,
+                crate::app::menu::ActiveSubMenu::Receive => &mut self.active_receive,
+                crate::app::menu::ActiveSubMenu::Transactions(_) => &mut self.active_transactions,
+                crate::app::menu::ActiveSubMenu::Settings(_) => &mut self.active_settings,
+            },
+            Menu::Vault(submenu) => match submenu {
+                crate::app::menu::VaultSubMenu::Home => &mut self.vault_home,
+                crate::app::menu::VaultSubMenu::Send => &mut self.create_spend,
+                crate::app::menu::VaultSubMenu::Receive => &mut self.receive,
+                crate::app::menu::VaultSubMenu::Coins(_) => &mut self.coins,
+                crate::app::menu::VaultSubMenu::Transactions(_) => &mut self.transactions,
+                crate::app::menu::VaultSubMenu::PSBTs(_) => &mut self.psbts,
+                crate::app::menu::VaultSubMenu::Recovery => &mut self.recovery,
+                crate::app::menu::VaultSubMenu::Settings(_) => &mut self.settings,
+            },
             #[cfg(feature = "buysell")]
             Menu::BuySell => &mut self.buy_sell,
             // Legacy menu items
@@ -278,90 +270,96 @@ impl App {
         self.panels.current_mut().interrupt();
 
         match &menu {
-            menu::Menu::VaultTransactionPreSelected(txid) => {
-                if let Ok(Some(tx)) = Handle::current().block_on(async {
-                    self.daemon
-                        .get_history_txs(&[*txid])
-                        .await
-                        .map(|txs| txs.first().cloned())
-                }) {
-                    self.panels.transactions.preselect(tx);
-                    self.panels.current = menu;
-                    return Task::none();
-                };
-            }
-            menu::Menu::VaultPsbtPreSelected(txid) => {
-                // Get preselected spend from DB in case it's not yet in the cache.
-                // We only need this single spend as we will go straight to its view and not show the PSBTs list.
-                // In case of any error loading the spend or if it doesn't exist, load PSBTs list in usual way.
-                if let Ok(Some(spend_tx)) = Handle::current().block_on(async {
-                    self.daemon
-                        .list_spend_transactions(Some(&[*txid]))
-                        .await
-                        .map(|txs| txs.first().cloned())
-                }) {
-                    self.panels.psbts.preselect(spend_tx);
-                    self.panels.current = menu;
-                    return Task::none();
-                };
-            }
-            menu::Menu::VaultSettingsPreSelected(setting) => {
-                self.panels.current = menu.clone();
-                return self.panels.current_mut().update(
-                    self.daemon.clone(),
-                    &self.cache,
-                    Message::View(view::Message::Settings(match setting {
-                        &menu::SettingsOption::Node => view::SettingsMessage::EditBitcoindSettings,
-                    })),
-                );
-            }
-            menu::Menu::VaultRefreshCoins(preselected) => {
-                self.panels.create_spend = CreateSpendPanel::new_self_send(
-                    self.wallet.clone(),
-                    self.cache.coins(),
-                    self.cache.blockheight() as u32,
-                    preselected,
-                    self.cache.network,
-                );
-            }
-            menu::Menu::VaultSend => {
-                // redo the process of spending only if user want to start a new one.
-                if !self.panels.create_spend.keep_state() {
-                    self.panels.create_spend = CreateSpendPanel::new(
+            menu::Menu::Vault(submenu) => match submenu {
+                menu::VaultSubMenu::Transactions(Some(txid)) => {
+                    if let Ok(Some(tx)) = Handle::current().block_on(async {
+                        self.daemon
+                            .get_history_txs(&[*txid])
+                            .await
+                            .map(|txs| txs.first().cloned())
+                    }) {
+                        self.panels.transactions.preselect(tx);
+                        self.panels.current = menu;
+                        return Task::none();
+                    };
+                }
+                menu::VaultSubMenu::PSBTs(Some(txid)) => {
+                    // Get preselected spend from DB in case it's not yet in the cache.
+                    // We only need this single spend as we will go straight to its view and not show the PSBTs list.
+                    // In case of any error loading the spend or if it doesn't exist, load PSBTs list in usual way.
+                    if let Ok(Some(spend_tx)) = Handle::current().block_on(async {
+                        self.daemon
+                            .list_spend_transactions(Some(&[*txid]))
+                            .await
+                            .map(|txs| txs.first().cloned())
+                    }) {
+                        self.panels.psbts.preselect(spend_tx);
+                        self.panels.current = menu;
+                        return Task::none();
+                    };
+                }
+                menu::VaultSubMenu::Settings(Some(setting)) => {
+                    self.panels.current = menu.clone();
+                    return self.panels.current_mut().update(
+                        self.daemon.clone(),
+                        &self.cache,
+                        Message::View(view::Message::Settings(match setting {
+                            menu::SettingsOption::Node => view::SettingsMessage::EditBitcoindSettings,
+                        })),
+                    );
+                }
+                menu::VaultSubMenu::Coins(Some(preselected)) => {
+                    self.panels.create_spend = CreateSpendPanel::new_self_send(
                         self.wallet.clone(),
                         self.cache.coins(),
                         self.cache.blockheight() as u32,
+                        preselected,
                         self.cache.network,
                     );
                 }
-            }
-            menu::Menu::VaultRecovery => {
-                if !self.panels.recovery.keep_state() {
-                    self.panels.recovery = new_recovery_panel(self.wallet.clone(), &self.cache);
+                menu::VaultSubMenu::Send => {
+                    // redo the process of spending only if user want to start a new one.
+                    if !self.panels.create_spend.keep_state() {
+                        self.panels.create_spend = CreateSpendPanel::new(
+                            self.wallet.clone(),
+                            self.cache.coins(),
+                            self.cache.blockheight() as u32,
+                            self.cache.network,
+                        );
+                    }
                 }
-            }
-            menu::Menu::ActiveTransactionPreSelected(txid) => {
-                if let Ok(Some(tx)) = Handle::current().block_on(async {
-                    self.daemon
-                        .get_history_txs(&[*txid])
-                        .await
-                        .map(|txs| txs.first().cloned())
-                }) {
-                    self.panels.transactions.preselect(tx);
-                    self.panels.current = menu;
-                    return Task::none();
-                };
-            }
-            menu::Menu::ActiveSettingsPreSelected(setting) => {
-                self.panels.current = menu.clone();
-                return self.panels.current_mut().update(
-                    self.daemon.clone(),
-                    &self.cache,
-                    Message::View(view::Message::Settings(match setting {
-                        &menu::SettingsOption::Node => view::SettingsMessage::EditBitcoindSettings,
-                    })),
-                );
-            }
+                menu::VaultSubMenu::Recovery => {
+                    if !self.panels.recovery.keep_state() {
+                        self.panels.recovery = new_recovery_panel(self.wallet.clone(), &self.cache);
+                    }
+                }
+                _ => {}
+            },
+            menu::Menu::Active(submenu) => match submenu {
+                menu::ActiveSubMenu::Transactions(Some(txid)) => {
+                    if let Ok(Some(tx)) = Handle::current().block_on(async {
+                        self.daemon
+                            .get_history_txs(&[*txid])
+                            .await
+                            .map(|txs| txs.first().cloned())
+                    }) {
+                        self.panels.active_transactions.preselect(tx);
+                        self.panels.current = menu;
+                        return Task::none();
+                    };
+                }
+                menu::ActiveSubMenu::Settings(Some(setting)) => {
+                    self.panels.current = menu.clone();
+                    return self.panels.current_mut().update(
+                        self.daemon.clone(),
+                        &self.cache,
+                        Message::View(view::Message::Settings(match setting {
+                            menu::SettingsOption::Node => view::SettingsMessage::EditBitcoindSettings,
+                        })),
+                    );
+                }
+                _ => {}
+            },
             _ => {}
         };
 
@@ -524,7 +522,7 @@ impl App {
                 let mut panels = [
                     (
                         &mut self.panels.vault_home as &mut dyn State,
-                        Menu::VaultHome,
+                        Menu::Vault(crate::app::menu::VaultSubMenu::Home),
                     ),
                     (&mut self.panels.settings as &mut dyn State, Menu::Settings),
                 ];
