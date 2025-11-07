@@ -5,7 +5,7 @@ pub enum Menu {
     Home,
     Active(ActiveSubMenu),
     Vault(VaultSubMenu),
-    
+
     #[cfg(feature = "buysell")]
     BuySell,
 

@@ -304,7 +304,9 @@ impl App {
                         self.daemon.clone(),
                         &self.cache,
                         Message::View(view::Message::Settings(match setting {
-                            menu::SettingsOption::Node => view::SettingsMessage::EditBitcoindSettings,
+                            menu::SettingsOption::Node => {
+                                view::SettingsMessage::EditBitcoindSettings
+                            }
                         })),
                     );
                 }
@@ -354,7 +356,9 @@ impl App {
                         self.daemon.clone(),
                         &self.cache,
                         Message::View(view::Message::Settings(match setting {
-                            menu::SettingsOption::Node => view::SettingsMessage::EditBitcoindSettings,
+                            menu::SettingsOption::Node => {
+                                view::SettingsMessage::EditBitcoindSettings
+                            }
                         })),
                     );
                 }
