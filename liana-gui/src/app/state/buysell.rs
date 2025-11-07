@@ -9,7 +9,6 @@ use crate::app::view::buysell::{BuySellFlowState, NativePage};
 
 use crate::{
     app::{
-        self,
         cache::Cache,
         menu::Menu,
         message::Message,
