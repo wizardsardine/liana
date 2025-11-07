@@ -37,6 +37,7 @@ use super::message::Message;
 fn address_card<'a>(
     row_index: usize,
     address: &'a bitcoin::Address,
+    maybe_bip21: Option<String>,
     labels: &'a HashMap<String, String>,
     labels_editing: &'a HashMap<String, form::Value<String>>,
 ) -> Container<'a, Message> {
@@ -83,7 +84,7 @@ fn address_card<'a>(
                     .push(Space::with_width(Length::Fill))
                     .push(
                         button::secondary(None, "Show QR Code")
-                            .on_press(Message::ShowQrCode(row_index)),
+                            .on_press(Message::ShowQrCode(row_index, maybe_bip21)),
                     ),
             )
             .spacing(10),
@@ -129,7 +130,7 @@ pub fn receive<'a>(
                     Column::new().spacing(10).width(Length::Fill),
                     |col, (i, address)| {
                         addresses_count += 1;
-                        col.push(address_card(i, address, labels, labels_editing))
+                        col.push(address_card(i, address, None, labels, labels_editing))
                     },
                 )),
         )
@@ -229,6 +230,7 @@ pub fn receive<'a>(
                         Button::new(address_card(
                             addresses_count + i,
                             address,
+                            None,
                             prev_labels,
                             labels_editing,
                         ))
