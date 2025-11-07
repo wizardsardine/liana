@@ -306,9 +306,9 @@ fn coin_list_view<'a>(
                                     } else {
                                         button::secondary(icon, label)
                                     };
-                                    refresh_btn.on_press(Message::Menu(Menu::RefreshCoins(vec![
+                                    refresh_btn.on_press(Message::Menu(Menu::Vault(crate::app::menu::VaultSubMenu::Coins(Some(vec![
                                         coin.outpoint,
-                                    ])))
+                                    ])))))
                                 }),
                             )
                         }),

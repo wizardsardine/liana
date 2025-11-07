@@ -197,7 +197,7 @@ pub fn home_view<'a>(
                         )
                         .push(
                             button::primary(Some(icon::arrow_repeat()), "Refresh coins").on_press(
-                                Message::Menu(Menu::RefreshCoins(expiring_coins.to_owned())),
+                                Message::Menu(Menu::Vault(crate::app::menu::VaultSubMenu::Coins(Some(expiring_coins.to_owned())))),
                             ),
                         ),
                 )
