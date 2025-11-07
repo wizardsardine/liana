@@ -120,8 +120,8 @@ impl CreateSpendPanel {
 }
 
 impl State for CreateSpendPanel {
-    fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, view::Message> {
-        self.steps.get(self.current).unwrap().view(cache)
+    fn view<'a>(&'a self, menu: &'a Menu, cache: &'a Cache) -> Element<'a, view::Message> {
+        self.steps.get(self.current).unwrap().view(menu, cache)
     }
 
     fn subscription(&self) -> iced::Subscription<Message> {

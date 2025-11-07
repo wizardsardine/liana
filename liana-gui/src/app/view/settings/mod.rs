@@ -113,7 +113,7 @@ fn export_section(
     .style(theme::card::simple)
 }
 
-pub fn list(cache: &Cache, is_remote_backend: bool) -> Element<Message> {
+pub fn list<'a>(menu: &'a Menu, cache: &'a Cache, is_remote_backend: bool) -> Element<'a, Message> {
     let header = Button::new(text("Settings").size(30).bold())
         .style(theme::button::transparent)
         .on_press(Message::Menu(Menu::Settings));
@@ -161,7 +161,7 @@ pub fn list(cache: &Cache, is_remote_backend: bool) -> Element<Message> {
     );
 
     dashboard(
-        &Menu::Settings,
+        menu,
         cache,
         None,
         Column::new()
@@ -189,6 +189,7 @@ pub fn link<'a>(url: &str, link_text: &'static str) -> Element<'a, Message> {
 }
 
 pub fn bitcoind_settings<'a>(
+    menu: &'a Menu,
     cache: &'a Cache,
     warning: Option<&Error>,
     settings: Vec<Element<'a, Message>>,
@@ -196,7 +197,7 @@ pub fn bitcoind_settings<'a>(
     let header = header("Node", SettingsMessage::EditBitcoindSettings);
 
     dashboard(
-        &Menu::Settings,
+        menu,
         cache,
         warning,
         Column::new()
@@ -206,11 +207,15 @@ pub fn bitcoind_settings<'a>(
     )
 }
 
-pub fn import_export<'a>(cache: &'a Cache, warning: Option<&Error>) -> Element<'a, Message> {
+pub fn import_export<'a>(
+    menu: &'a Menu,
+    cache: &'a Cache,
+    warning: Option<&Error>,
+) -> Element<'a, Message> {
     let header = header("Import/Export", SettingsMessage::ImportExportSection);
 
     let description = Row::new()
-        .push(Space::with_width(15))
+        .push(Space::with_width(30))
         .push(text(
             "A collection of the export and import functions present in Liana.",
         ))
@@ -267,7 +272,7 @@ pub fn import_export<'a>(cache: &'a Cache, warning: Option<&Error>) -> Element<'
         .align_y(Vertical::Center);
 
     dashboard(
-        &Menu::Settings,
+        menu,
         cache,
         warning,
         Column::new()
@@ -286,6 +291,7 @@ pub fn import_export<'a>(cache: &'a Cache, warning: Option<&Error>) -> Element<'
 }
 
 pub fn about_section<'a>(
+    menu: &'a Menu,
     cache: &'a Cache,
     warning: Option<&Error>,
     lianad_version: Option<&String>,
@@ -317,7 +323,7 @@ pub fn about_section<'a>(
     );
 
     dashboard(
-        &Menu::Settings,
+        menu,
         cache,
         warning,
         Column::new()
@@ -329,6 +335,7 @@ pub fn about_section<'a>(
 }
 
 pub fn remote_backend_section<'a>(
+    menu: &'a Menu,
     cache: &'a Cache,
     email_form: &form::Value<String>,
     processing: bool,
@@ -373,7 +380,7 @@ pub fn remote_backend_section<'a>(
     .width(Length::Fill);
 
     dashboard(
-        &Menu::Settings,
+        menu,
         cache,
         warning,
         Column::new()
@@ -1007,6 +1014,7 @@ fn is_ok_and<T, E>(res: &Result<T, E>, f: impl FnOnce(&T) -> bool) -> bool {
 
 #[allow(clippy::too_many_arguments)]
 pub fn wallet_settings<'a>(
+    menu: &'a Menu,
     cache: &'a Cache,
     warning: Option<&Error>,
     descriptor: &'a LianaDescriptor,
@@ -1129,7 +1137,7 @@ pub fn wallet_settings<'a>(
     .width(Length::Fill);
 
     dashboard(
-        &Menu::Settings,
+        menu,
         cache,
         warning,
         Column::new()

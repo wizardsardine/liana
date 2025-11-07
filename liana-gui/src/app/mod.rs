@@ -27,7 +27,8 @@ pub use config::Config;
 pub use message::Message;
 
 use state::{
-    CoinsPanel, CreateSpendPanel, Home, PsbtsPanel, ReceivePanel, State, TransactionsPanel,
+    ActiveReceive, ActiveSend, ActiveSettings, ActiveTransactions, CoinsPanel, CreateSpendPanel,
+    GlobalHome, Home, PsbtsPanel, ReceivePanel, State, TransactionsPanel,
 };
 use wallet::{sync_status, SyncStatus};
 
@@ -49,7 +50,14 @@ use self::state::SettingsState;
 
 struct Panels {
     current: Menu,
-    home: Home,
+    vault_expanded: bool,
+    active_expanded: bool,
+    global_home: GlobalHome,
+    vault_home: Home,
+    active_send: ActiveSend,
+    active_receive: ActiveReceive,
+    active_transactions: ActiveTransactions,
+    active_settings: ActiveSettings,
     coins: CoinsPanel,
     transactions: TransactionsPanel,
     psbts: PsbtsPanel,
@@ -79,8 +87,11 @@ impl Panels {
                 // We don't know the node type for external lianad so assume it's bitcoind.
                 .unwrap_or(true);
         Self {
-            current: Menu::Home,
-            home: Home::new(
+            current: Menu::Vault(crate::app::menu::VaultSubMenu::Home),
+            vault_expanded: false,
+            active_expanded: false,
+            global_home: GlobalHome::new(wallet.clone()),
+            vault_home: Home::new(
                 wallet.clone(),
                 cache.coins(),
                 sync_status(
@@ -93,6 +104,10 @@ impl Panels {
                 cache.blockheight(),
                 show_rescan_warning,
             ),
+            active_send: ActiveSend::new(wallet.clone()),
+            active_receive: ActiveReceive::new(wallet.clone()),
+            active_transactions: ActiveTransactions::new(wallet.clone()),
+            active_settings: ActiveSettings::new(wallet.clone()),
             coins: CoinsPanel::new(cache.coins(), wallet.main_descriptor.first_timelock_value()),
             transactions: TransactionsPanel::new(wallet.clone()),
             psbts: PsbtsPanel::new(wallet.clone()),
@@ -117,8 +132,27 @@ impl Panels {
     }
 
     fn current(&self) -> &dyn State {
-        match self.current {
-            Menu::Home => &self.home,
+        match &self.current {
+            Menu::Home => &self.global_home,
+            Menu::Active(submenu) => match submenu {
+                crate::app::menu::ActiveSubMenu::Send => &self.active_send,
+                crate::app::menu::ActiveSubMenu::Receive => &self.active_receive,
+                crate::app::menu::ActiveSubMenu::Transactions(_) => &self.active_transactions,
+                crate::app::menu::ActiveSubMenu::Settings(_) => &self.active_settings,
+            },
+            Menu::Vault(submenu) => match submenu {
+                crate::app::menu::VaultSubMenu::Home => &self.vault_home,
+                crate::app::menu::VaultSubMenu::Send => &self.create_spend,
+                crate::app::menu::VaultSubMenu::Receive => &self.receive,
+                crate::app::menu::VaultSubMenu::Coins(_) => &self.coins,
+                crate::app::menu::VaultSubMenu::Transactions(_) => &self.transactions,
+                crate::app::menu::VaultSubMenu::PSBTs(_) => &self.psbts,
+                crate::app::menu::VaultSubMenu::Recovery => &self.recovery,
+                crate::app::menu::VaultSubMenu::Settings(_) => &self.settings,
+            },
+            #[cfg(feature = "buysell")]
+            Menu::BuySell => &self.buy_sell,
+            // Legacy menu items
             Menu::Receive => &self.receive,
             Menu::PSBTs => &self.psbts,
             Menu::Transactions => &self.transactions,
@@ -129,14 +163,31 @@ impl Panels {
             Menu::Recovery => &self.recovery,
             Menu::RefreshCoins(_) => &self.create_spend,
             Menu::PsbtPreSelected(_) => &self.psbts,
-            #[cfg(feature = "buysell")]
-            Menu::BuySell => &self.buy_sell,
         }
     }
 
     fn current_mut(&mut self) -> &mut dyn State {
-        match self.current {
-            Menu::Home => &mut self.home,
+        match &self.current {
+            Menu::Home => &mut self.global_home,
+            Menu::Active(submenu) => match submenu {
+                crate::app::menu::ActiveSubMenu::Send => &mut self.active_send,
+                crate::app::menu::ActiveSubMenu::Receive => &mut self.active_receive,
+                crate::app::menu::ActiveSubMenu::Transactions(_) => &mut self.active_transactions,
+                crate::app::menu::ActiveSubMenu::Settings(_) => &mut self.active_settings,
+            },
+            Menu::Vault(submenu) => match submenu {
+                crate::app::menu::VaultSubMenu::Home => &mut self.vault_home,
+                crate::app::menu::VaultSubMenu::Send => &mut self.create_spend,
+                crate::app::menu::VaultSubMenu::Receive => &mut self.receive,
+                crate::app::menu::VaultSubMenu::Coins(_) => &mut self.coins,
+                crate::app::menu::VaultSubMenu::Transactions(_) => &mut self.transactions,
+                crate::app::menu::VaultSubMenu::PSBTs(_) => &mut self.psbts,
+                crate::app::menu::VaultSubMenu::Recovery => &mut self.recovery,
+                crate::app::menu::VaultSubMenu::Settings(_) => &mut self.settings,
+            },
+            #[cfg(feature = "buysell")]
+            Menu::BuySell => &mut self.buy_sell,
+            // Legacy menu items
             Menu::Receive => &mut self.receive,
             Menu::PSBTs => &mut self.psbts,
             Menu::Transactions => &mut self.transactions,
@@ -147,8 +198,6 @@ impl Panels {
             Menu::Recovery => &mut self.recovery,
             Menu::RefreshCoins(_) => &mut self.create_spend,
             Menu::PsbtPreSelected(_) => &mut self.psbts,
-            #[cfg(feature = "buysell")]
-            Menu::BuySell => &mut self.buy_sell,
         }
     }
 }
@@ -182,7 +231,7 @@ impl App {
             config.clone(),
             restored_from_backup,
         );
-        let cmd = panels.home.reload(daemon.clone(), wallet.clone());
+        let cmd = panels.vault_home.reload(daemon.clone(), wallet.clone());
         (
             Self {
                 panels,
@@ -221,69 +270,110 @@ impl App {
         self.panels.current_mut().interrupt();
 
         match &menu {
-            menu::Menu::TransactionPreSelected(txid) => {
-                if let Ok(Some(tx)) = Handle::current().block_on(async {
-                    self.daemon
-                        .get_history_txs(&[*txid])
-                        .await
-                        .map(|txs| txs.first().cloned())
-                }) {
-                    self.panels.transactions.preselect(tx);
-                    self.panels.current = menu;
-                    return Task::none();
-                };
-            }
-            menu::Menu::PsbtPreSelected(txid) => {
-                // Get preselected spend from DB in case it's not yet in the cache.
-                // We only need this single spend as we will go straight to its view and not show the PSBTs list.
-                // In case of any error loading the spend or if it doesn't exist, load PSBTs list in usual way.
-                if let Ok(Some(spend_tx)) = Handle::current().block_on(async {
-                    self.daemon
-                        .list_spend_transactions(Some(&[*txid]))
-                        .await
-                        .map(|txs| txs.first().cloned())
-                }) {
-                    self.panels.psbts.preselect(spend_tx);
-                    self.panels.current = menu;
-                    return Task::none();
-                };
-            }
-            menu::Menu::SettingsPreSelected(setting) => {
-                self.panels.current = menu.clone();
-                return self.panels.current_mut().update(
-                    self.daemon.clone(),
-                    &self.cache,
-                    Message::View(view::Message::Settings(match setting {
-                        &menu::SettingsOption::Node => view::SettingsMessage::EditBitcoindSettings,
-                    })),
-                );
-            }
-            menu::Menu::RefreshCoins(preselected) => {
-                self.panels.create_spend = CreateSpendPanel::new_self_send(
-                    self.wallet.clone(),
-                    self.cache.coins(),
-                    self.cache.blockheight() as u32,
-                    preselected,
-                    self.cache.network,
-                );
-            }
-            menu::Menu::CreateSpendTx => {
-                // redo the process of spending only if user want to start a new one.
-                if !self.panels.create_spend.keep_state() {
-                    self.panels.create_spend = CreateSpendPanel::new(
+            menu::Menu::Vault(submenu) => match submenu {
+                menu::VaultSubMenu::Transactions(Some(txid)) => {
+                    if let Ok(Some(tx)) = Handle::current().block_on(async {
+                        self.daemon
+                            .get_history_txs(&[*txid])
+                            .await
+                            .map(|txs| txs.first().cloned())
+                    }) {
+                        self.panels.transactions.preselect(tx);
+                        self.panels.current = menu;
+                        return Task::none();
+                    };
+                }
+                menu::VaultSubMenu::PSBTs(Some(txid)) => {
+                    // Get preselected spend from DB in case it's not yet in the cache.
+                    // We only need this single spend as we will go straight to its view and not show the PSBTs list.
+                    // In case of any error loading the spend or if it doesn't exist, load PSBTs list in usual way.
+                    if let Ok(Some(spend_tx)) = Handle::current().block_on(async {
+                        self.daemon
+                            .list_spend_transactions(Some(&[*txid]))
+                            .await
+                            .map(|txs| txs.first().cloned())
+                    }) {
+                        self.panels.psbts.preselect(spend_tx);
+                        self.panels.current = menu;
+                        return Task::none();
+                    };
+                }
+                menu::VaultSubMenu::Settings(Some(setting)) => {
+                    self.panels.current = menu.clone();
+                    return self.panels.current_mut().update(
+                        self.daemon.clone(),
+                        &self.cache,
+                        Message::View(view::Message::Settings(match setting {
+                            menu::SettingsOption::Node => {
+                                view::SettingsMessage::EditBitcoindSettings
+                            }
+                        })),
+                    );
+                }
+                menu::VaultSubMenu::Coins(Some(preselected)) => {
+                    self.panels.create_spend = CreateSpendPanel::new_self_send(
                         self.wallet.clone(),
                         self.cache.coins(),
                         self.cache.blockheight() as u32,
+                        preselected,
                         self.cache.network,
                     );
                 }
-            }
-            menu::Menu::Recovery => {
-                if !self.panels.recovery.keep_state() {
-                    self.panels.recovery = new_recovery_panel(self.wallet.clone(), &self.cache);
+                menu::VaultSubMenu::Send => {
+                    // redo the process of spending only if user want to start a new one.
+                    if !self.panels.create_spend.keep_state() {
+                        self.panels.create_spend = CreateSpendPanel::new(
+                            self.wallet.clone(),
+                            self.cache.coins(),
+                            self.cache.blockheight() as u32,
+                            self.cache.network,
+                        );
+                    }
+                }
+                menu::VaultSubMenu::Recovery => {
+                    if !self.panels.recovery.keep_state() {
+                        self.panels.recovery = new_recovery_panel(self.wallet.clone(), &self.cache);
+                    }
+                }
+                _ => {}
+            },
+            menu::Menu::Active(submenu) => {
+                match submenu {
+                    menu::ActiveSubMenu::Transactions(Some(txid)) => {
+                        if let Ok(Some(tx)) = Handle::current().block_on(async {
+                            self.daemon
+                                .get_history_txs(&[*txid])
+                                .await
+                                .map(|txs| txs.first().cloned())
+                        }) {
+                            self.panels.active_transactions.preselect(tx);
+                            self.panels.current = menu;
+                            return Task::none();
+                        };
+                    }
+                    menu::ActiveSubMenu::Settings(Some(setting)) => {
+                        self.panels.current = menu.clone();
+                        return self.panels.current_mut().update(
+                            self.daemon.clone(),
+                            &self.cache,
+                            Message::View(view::Message::Settings(match setting {
+                                menu::SettingsOption::Node => {
+                                    view::SettingsMessage::EditBitcoindSettings
+                                }
+                            })),
+                        );
+                    }
+                    _ => {
+                        tracing::debug!("Active submenu variant {:?} has no special handling in set_current_panel", submenu);
+                    }
                 }
             }
-            _ => {}
+            _ => {
+                tracing::debug!(
+                    "Menu variant {:?} has no special handling in set_current_panel",
+                    menu
+                );
+            }
         };
 
         self.panels.current = menu;
@@ -443,7 +533,10 @@ impl App {
             Message::CacheUpdated => {
                 // These are the panels to update with the cache.
                 let mut panels = [
-                    (&mut self.panels.home as &mut dyn State, Menu::Home),
+                    (
+                        &mut self.panels.vault_home as &mut dyn State,
+                        Menu::Vault(crate::app::menu::VaultSubMenu::Home),
+                    ),
                     (&mut self.panels.settings as &mut dyn State, Menu::Settings),
                 ];
                 let daemon = self.daemon.clone();
@@ -477,6 +570,26 @@ impl App {
                 self.panels.current_mut().close(),
                 self.set_current_panel(menu),
             ]),
+            Message::View(view::Message::ToggleVault) => {
+                self.panels.vault_expanded = !self.panels.vault_expanded;
+                self.cache.vault_expanded = self.panels.vault_expanded;
+                // If we're expanding Vault, collapse Active
+                if self.panels.vault_expanded {
+                    self.panels.active_expanded = false;
+                    self.cache.active_expanded = false;
+                }
+                Task::none()
+            }
+            Message::View(view::Message::ToggleActive) => {
+                self.panels.active_expanded = !self.panels.active_expanded;
+                self.cache.active_expanded = self.panels.active_expanded;
+                // If we're expanding Active, collapse Vault
+                if self.panels.active_expanded {
+                    self.panels.vault_expanded = false;
+                    self.cache.vault_expanded = false;
+                }
+                Task::none()
+            }
             Message::View(view::Message::OpenUrl(url)) => {
                 if let Err(e) = open::that_detached(&url) {
                     tracing::error!("Error opening '{}': {}", url, e);
@@ -525,7 +638,10 @@ impl App {
     }
 
     pub fn view(&self) -> Element<'_, Message> {
-        let view = self.panels.current().view(&self.cache);
+        let view = self
+            .panels
+            .current()
+            .view(&self.panels.current, &self.cache);
 
         if self.cache.network != bitcoin::Network::Bitcoin {
             Column::with_children([

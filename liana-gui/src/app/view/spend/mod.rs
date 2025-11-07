@@ -29,6 +29,7 @@ use crate::{
 
 #[allow(clippy::too_many_arguments)]
 pub fn spend_view<'a>(
+    menu: &'a Menu,
     cache: &'a Cache,
     tx: &'a SpendTx,
     spend_warnings: &'a [String],
@@ -47,11 +48,7 @@ pub fn spend_view<'a>(
         .iter()
         .any(|txin| txin.sequence.is_relative_lock_time());
     dashboard(
-        if is_recovery {
-            &Menu::Recovery
-        } else {
-            &Menu::CreateSpendTx
-        },
+        menu,
         cache,
         warning,
         Column::new()
@@ -140,6 +137,7 @@ pub fn spend_view<'a>(
 
 #[allow(clippy::too_many_arguments)]
 pub fn create_spend_tx<'a>(
+    menu: &'a Menu,
     cache: &'a Cache,
     fiat_converter: Option<&FiatAmountConverter>,
     recipients: Vec<Element<'a, Message>>,
@@ -158,11 +156,7 @@ pub fn create_spend_tx<'a>(
 ) -> Element<'a, Message> {
     let is_self_send = recipients.is_empty();
     dashboard(
-        if recovery_timelock.is_some() {
-            &Menu::Recovery
-        } else {
-            &Menu::CreateSpendTx
-        },
+        menu,
         cache,
         error,
         Column::new()

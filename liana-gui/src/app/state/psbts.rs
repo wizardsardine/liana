@@ -39,12 +39,12 @@ impl PsbtsPanel {
 }
 
 impl State for PsbtsPanel {
-    fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, view::Message> {
+    fn view<'a>(&'a self, menu: &'a Menu, cache: &'a Cache) -> Element<'a, view::Message> {
         if let Some(tx) = &self.selected_tx {
             tx.view(cache)
         } else {
             let list_view = view::dashboard(
-                &Menu::PSBTs,
+                menu,
                 cache,
                 self.warning.as_ref(),
                 view::psbts::psbts_view(&self.spend_txs),

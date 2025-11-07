@@ -114,9 +114,9 @@ impl ReceivePanel {
 }
 
 impl State for ReceivePanel {
-    fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, view::Message> {
+    fn view<'a>(&'a self, menu: &'a Menu, cache: &'a Cache) -> Element<'a, view::Message> {
         let content = view::dashboard(
-            &Menu::Receive,
+            menu,
             cache,
             self.warning.as_ref(),
             view::receive::receive(

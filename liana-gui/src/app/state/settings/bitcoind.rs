@@ -16,7 +16,7 @@ use lianad::config::{
 use liana_ui::{component::form, widget::Element};
 
 use crate::{
-    app::{cache::Cache, error::Error, message::Message, state::settings::State, view},
+    app::{cache::Cache, error::Error, menu::Menu, message::Message, state::settings::State, view},
     daemon::Daemon,
     help,
     node::{
@@ -162,7 +162,7 @@ impl State for BitcoindSettingsState {
         Task::none()
     }
 
-    fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, view::Message> {
+    fn view<'a>(&'a self, menu: &'a Menu, cache: &'a Cache) -> Element<'a, view::Message> {
         let can_edit_bitcoind_settings =
             self.bitcoind_settings.is_some() && !self.rescan_settings.processing;
         let can_edit_electrum_settings =
@@ -179,6 +179,7 @@ impl State for BitcoindSettingsState {
                 == Some(true);
         let can_do_rescan = !self.rescan_settings.processing && !settings_edit;
         view::settings::bitcoind_settings(
+            menu,
             cache,
             self.warning.as_ref(),
             if self.bitcoind_settings.is_some() || self.electrum_settings.is_some() {

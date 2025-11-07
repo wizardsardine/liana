@@ -92,9 +92,9 @@ impl CoinsPanel {
 }
 
 impl State for CoinsPanel {
-    fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, view::Message> {
+    fn view<'a>(&'a self, menu: &'a Menu, cache: &'a Cache) -> Element<'a, view::Message> {
         view::dashboard(
-            &Menu::Coins,
+            menu,
             cache,
             self.warning.as_ref(),
             view::coins::coins_view(

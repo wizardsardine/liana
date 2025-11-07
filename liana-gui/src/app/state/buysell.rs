@@ -11,6 +11,7 @@ use crate::{
     app::{
         self,
         cache::Cache,
+        menu::Menu,
         message::Message,
         state::State,
         view::{self, buysell::BuySellPanel, BuySellMessage, Message as ViewMessage},
@@ -19,8 +20,8 @@ use crate::{
 };
 
 impl State for BuySellPanel {
-    fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, ViewMessage> {
-        let inner = view::dashboard(&app::Menu::BuySell, cache, None, self.view());
+    fn view<'a>(&'a self, menu: &'a Menu, cache: &'a Cache) -> Element<'a, ViewMessage> {
+        let inner = view::dashboard(menu, cache, None, self.view());
 
         let overlay = match &self.modal {
             super::receive::Modal::VerifyAddress(m) => m.view(),
