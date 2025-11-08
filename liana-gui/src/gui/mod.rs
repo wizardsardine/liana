@@ -323,13 +323,14 @@ impl GUI {
                 }
                 Task::none()
             }
-            // In case of wallet deletion, remove any tab where the wallet id is currently running.
+            // In case of cube deletion, remove any tab where the cube/wallet is currently running.
             Message::Pane(p, pane::Message::Tab(t, tab::Message::Launch(msg))) => {
                 let mut tasks = Vec::new();
-                if let launcher::Message::View(launcher::ViewMessage::DeleteWallet(
-                    launcher::DeleteWalletMessage::Confirm(wallet_id),
+                if let launcher::Message::View(launcher::ViewMessage::DeleteCube(
+                    launcher::DeleteCubeMessage::Confirm(_cube_id),
                 )) = msg.as_ref()
                 {
+                    // When a cube is deleted, close all App and Loader tabs since they won't be valid anymore
                     let mut panes_to_close = Vec::<pane_grid::Pane>::new();
                     for (id, pane) in self.panes.iter_mut() {
                         let tabs_to_close: Vec<usize> = pane
@@ -337,13 +338,9 @@ impl GUI {
                             .iter()
                             .enumerate()
                             .filter_map(|(i, tab)| {
-                                if match &tab.state {
-                                    tab::State::App(a) => a.wallet_id() == *wallet_id,
-                                    tab::State::Loader(l) => {
-                                        l.wallet_settings.wallet_id() == *wallet_id
-                                    }
-                                    _ => false,
-                                } {
+                                // Close all app and loader tabs when cube is deleted
+                                // This is safe because user will be in launcher
+                                if matches!(tab.state, tab::State::App(_) | tab::State::Loader(_)) {
                                     Some(i)
                                 } else {
                                     None

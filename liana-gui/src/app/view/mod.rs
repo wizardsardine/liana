@@ -34,8 +34,8 @@ use liana_ui::{
     color,
     component::{button, text::*},
     icon::{
-        coins_icon, cross_icon, down_icon, history_icon, home_icon, lightning_icon, receive_icon,
-        recovery_icon, send_icon, settings_icon, up_icon, vault_icon,
+        coins_icon, cross_icon, down_icon, history_icon, home_icon, lightning_icon, plus_icon,
+        receive_icon, recovery_icon, send_icon, settings_icon, up_icon, vault_icon,
     },
     image::*,
     theme,
@@ -53,7 +53,7 @@ fn menu_bar_highlight<'a, T: 'a>() -> Container<'a, T> {
         .style(theme::container::custom(color::ORANGE))
 }
 
-pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
+pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<'a, Message> {
     // Top-level Home button
     let home_button = if *menu == Menu::Home {
         row!(
@@ -218,30 +218,54 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
     // Check if Vault submenu is expanded from cache
     let is_vault_expanded = cache.vault_expanded;
 
-    // Vault menu button with expand/collapse chevron
-    let vault_chevron = if is_vault_expanded {
-        up_icon()
+    // Vault menu button - show "Vault +" if no vault exists, otherwise show expandable "Vault"
+    if !has_vault {
+        // No vault - show "Vault +" button that launches installer
+        let vault_plus_button = Button::new(
+            Row::new()
+                .spacing(10)
+                .align_y(iced::alignment::Vertical::Center)
+                .push(vault_icon().style(theme::text::secondary))
+                .push(text("Vault").size(15))
+                .push(Space::with_width(Length::Fill))
+                .push(
+                    Container::new(plus_icon().style(theme::text::secondary))
+                        .padding(iced::Padding::from([3.0, 0.0]))  // Add 3px top padding for better centering
+                        .align_y(iced::alignment::Vertical::Top)
+                )
+                .padding(10),
+        )
+        .width(iced::Length::Fill)
+        .style(theme::button::menu)
+        .on_press(Message::SetupVault);
+        
+        menu_column = menu_column.push(vault_plus_button);
     } else {
-        down_icon()
-    };
-    let vault_button = Button::new(
-        Row::new()
-            .spacing(10)
-            .align_y(iced::alignment::Vertical::Center)
-            .push(vault_icon().style(theme::text::secondary))
-            .push(text("Vault").size(15))
-            .push(Space::with_width(Length::Fill))
-            .push(vault_chevron.style(theme::text::secondary))
-            .padding(10),
-    )
-    .width(iced::Length::Fill)
-    .style(theme::button::menu)
-    .on_press(Message::ToggleVault);
+        // Has vault - show expandable Vault menu
+        let vault_chevron = if is_vault_expanded {
+            up_icon()
+        } else {
+            down_icon()
+        };
+        let vault_button = Button::new(
+            Row::new()
+                .spacing(10)
+                .align_y(iced::alignment::Vertical::Center)
+                .push(vault_icon().style(theme::text::secondary))
+                .push(text("Vault").size(15))
+                .push(Space::with_width(Length::Fill))
+                .push(vault_chevron.style(theme::text::secondary))
+                .padding(10),
+        )
+        .width(iced::Length::Fill)
+        .style(theme::button::menu)
+        .on_press(Message::ToggleVault);
 
-    menu_column = menu_column.push(vault_button);
+        menu_column = menu_column.push(vault_button);
+    }
 
-    // Add Vault submenu items if expanded
-    if is_vault_expanded {
+    // Add Vault submenu items if expanded (and vault exists)
+    if has_vault && is_vault_expanded {
         use crate::app::menu::VaultSubMenu;
 
         // Home
@@ -416,11 +440,15 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
             .push(vault_settings_button);
     }
 
-    // Add Buy/Sell button after submenu items
+    // Add Buy/Sell button after submenu items (only if vault exists)
     menu_column = menu_column.push_maybe({
         #[cfg(feature = "buysell")]
         {
-            Some(buy_sell_button)
+            if has_vault {
+                Some(buy_sell_button)
+            } else {
+                None
+            }
         }
         #[cfg(not(feature = "buysell"))]
         {
@@ -452,6 +480,7 @@ pub fn dashboard<'a, T: Into<Element<'a, Message>>>(
     warning: Option<&Error>,
     content: T,
 ) -> Element<'a, Message> {
+    let has_vault = cache.has_vault; // Copy the bool value before moving into closure
     Row::new()
         .push(
             sidebar(menu, cache)

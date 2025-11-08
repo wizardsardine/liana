@@ -23,7 +23,10 @@ use crate::{
     utils::serde::ok_or_none,
 };
 
+use liana::miniscript::bitcoin::Network;
+
 pub const SETTINGS_FILE_NAME: &str = "settings.json";
+pub const CUBES_FILE_NAME: &str = "cubes.json";
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct Settings {
@@ -93,6 +96,120 @@ where
 
     let content = serde_json::to_vec_pretty(&settings)
         .map_err(|e| SettingsError::WritingFile(format!("Failed to serialize settings: {}", e)))?;
+
+    file.seek(SeekFrom::Start(0)).await.map_err(|e| {
+        SettingsError::WritingFile(format!("Failed to seek to start of file: {}", e))
+    })?;
+
+    file.write_all(&content).await.map_err(|e| {
+        tracing::warn!("failed to write to file: {:?}", e);
+        SettingsError::WritingFile(e.to_string())
+    })?;
+
+    file.inner_mut()
+        .set_len(content.len() as u64)
+        .await
+        .map_err(|e| SettingsError::WritingFile(format!("Failed to truncate file: {}", e)))?;
+
+    Ok(())
+}
+
+/// Cubes represent user accounts that can contain multiple features (Vault, Active wallet, etc.)
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct CubeSettings {
+    pub id: String,
+    pub name: String,
+    pub network: Network,
+    pub created_at: i64,
+    /// The Vault wallet for this Cube (optional - may not be set up yet)
+    pub vault_wallet_id: Option<WalletId>,
+}
+
+impl CubeSettings {
+    pub fn new(name: String, network: Network) -> Self {
+        Self {
+            id: uuid::Uuid::new_v4().to_string(),
+            name,
+            network,
+            created_at: chrono::Utc::now().timestamp(),
+            vault_wallet_id: None,
+        }
+    }
+
+    pub fn with_vault(mut self, wallet_id: WalletId) -> Self {
+        self.vault_wallet_id = Some(wallet_id);
+        self
+    }
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct Cubes {
+    pub cubes: Vec<CubeSettings>,
+}
+
+impl Cubes {
+    pub fn from_file(network_dir: &NetworkDirectory) -> Result<Cubes, SettingsError> {
+        let mut path = network_dir.path().to_path_buf();
+        path.push(CUBES_FILE_NAME);
+
+        std::fs::read(path)
+            .map_err(|e| match e.kind() {
+                std::io::ErrorKind::NotFound => SettingsError::NotFound,
+                _ => SettingsError::ReadingFile(format!("Reading cubes file: {}", e)),
+            })
+            .and_then(|file_content| {
+                serde_json::from_slice::<Cubes>(&file_content).map_err(|e| {
+                    SettingsError::ReadingFile(format!("Parsing cubes file: {}", e))
+                })
+            })
+    }
+}
+
+pub async fn update_cubes_file<F>(
+    network_dir: &NetworkDirectory,
+    updater: F,
+) -> Result<(), SettingsError>
+where
+    F: FnOnce(Cubes) -> Cubes,
+{
+    let path = network_dir.path().join(CUBES_FILE_NAME);
+    let file_exists = tokio::fs::try_exists(&path).await.unwrap_or(false);
+
+    let mut file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&path)
+        .await
+        .map_err(|e| SettingsError::ReadingFile(format!("Opening file: {}", e)))?
+        .lock_write()
+        .await
+        .map_err(|e| SettingsError::ReadingFile(format!("Locking file: {:?}", e)))?;
+
+    let cubes = if file_exists {
+        let mut file_content = Vec::new();
+        file.read_to_end(&mut file_content)
+            .await
+            .map_err(|e| SettingsError::ReadingFile(format!("Reading file content: {}", e)))?;
+
+        serde_json::from_slice::<Cubes>(&file_content)
+            .map_err(|e| SettingsError::ReadingFile(e.to_string()))?
+    } else {
+        Cubes::default()
+    };
+
+    let cubes = updater(cubes);
+
+    if cubes.cubes.is_empty() {
+        tokio::fs::remove_file(&path)
+            .await
+            .map_err(|e| SettingsError::ReadingFile(e.to_string()))?;
+        return Ok(());
+    }
+
+    let content = serde_json::to_vec_pretty(&cubes)
+        .map_err(|e| SettingsError::WritingFile(format!("Failed to serialize cubes: {}", e)))?;
 
     file.seek(SeekFrom::Start(0)).await.map_err(|e| {
         SettingsError::WritingFile(format!("Failed to seek to start of file: {}", e))
@@ -214,7 +331,7 @@ impl WalletSettings {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WalletId {
     pub timestamp: Option<i64>,
     pub descriptor_checksum: String,

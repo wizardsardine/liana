@@ -20,7 +20,7 @@ use crate::{
     dir::LianaDirectory,
     export::import_backup_at_launch,
     hw::HardwareWalletConfig,
-    installer::{self, Installer},
+    installer::{self, Installer, UserFlow},
     launcher::{self, Launcher},
     loader::{self, Loader},
     services::connect::{
@@ -79,7 +79,7 @@ impl Tab {
 
     pub fn wallet(&self) -> Option<&Wallet> {
         if let State::App(ref app) = self.state {
-            Some(app.wallet())
+            app.wallet()
         } else {
             None
         }
@@ -120,22 +120,46 @@ impl Tab {
                             );
                         }
                     }
-                    let (install, command) = Installer::new(datadir, network, None, init);
+                    let (install, command) = Installer::new(datadir, network, None, init, false, None);
                     self.state = State::Installer(Box::new(install));
                     command.map(|msg| Message::Install(Box::new(msg)))
                 }
-                launcher::Message::Run(datadir_path, cfg, network, settings) => {
-                    if settings.remote_backend_auth.is_some() {
-                        let (login, command) =
-                            login::LianaLiteLogin::new(datadir_path, network, settings);
-                        self.state = State::Login(Box::new(login));
-                        command.map(|msg| Message::Login(Box::new(msg)))
-                    } else {
-                        let (loader, command) =
-                            Loader::new(datadir_path, cfg, network, None, None, settings);
-                        self.state = State::Loader(Box::new(loader));
-                        command.map(|msg| Message::Load(Box::new(msg)))
+                launcher::Message::Run(datadir_path, cfg, network, cube) => {
+                    // Check if cube has a vault wallet configured
+                    if let Some(vault_id) = &cube.vault_wallet_id {
+                        // Load wallet settings from settings.json
+                        let network_dir = datadir_path.network_directory(network);
+                        match app::settings::Settings::from_file(&network_dir) {
+                            Ok(s) => {
+                                if let Some(wallet_settings) = s.wallets.iter().find(|w| w.wallet_id() == *vault_id) {
+                                    if wallet_settings.remote_backend_auth.is_some() {
+                                        let (login, command) =
+                                            login::LianaLiteLogin::new(datadir_path, network, wallet_settings.clone());
+                                        self.state = State::Login(Box::new(login));
+                                        return command.map(|msg| Message::Login(Box::new(msg)));
+                                    } else {
+                                        let (loader, command) =
+                                            Loader::new(datadir_path, cfg, network, None, None, Some(wallet_settings.clone()), cube);
+                                        self.state = State::Loader(Box::new(loader));
+                                        return command.map(|msg| Message::Load(Box::new(msg)));
+                                    }
+                                }
+                            }
+                            Err(_) => {
+                                // Wallet settings not found, fall through to load without vault
+                            }
+                        }
                     }
+                    
+                    // No vault configured - load app without wallet
+                    let (app, command) = App::new_without_wallet(
+                        cfg,
+                        datadir_path,
+                        network,
+                        cube,
+                    );
+                    self.state = State::App(app);
+                    command.map(|msg| Message::Run(Box::new(msg)))
                 }
                 _ => l.update(*msg).map(|msg| Message::Launch(Box::new(msg))),
             },
@@ -151,6 +175,8 @@ impl Tab {
                         l.network,
                         remote_backend,
                         installer::UserFlow::CreateWallet,
+                        false,
+                        None,
                     );
                     self.state = State::Installer(Box::new(install));
                     command.map(|msg| Message::Install(Box::new(msg)))
@@ -194,13 +220,64 @@ impl Tab {
                         )
                         .expect("A gui configuration file must be present");
 
+                        // Associate wallet with cube
+                        let network_dir = i.datadir.network_directory(i.network);
+                        let cube = match app::settings::Cubes::from_file(&network_dir) {
+                            Ok(mut cubes) => {
+                                // First, check if a cube already has this wallet
+                                if let Some(existing_cube) = cubes.cubes.iter().find(|c| {
+                                    c.vault_wallet_id.as_ref() == Some(&settings.wallet_id())
+                                }) {
+                                    existing_cube.clone()
+                                }
+                                // Second, find a cube without a vault and associate this wallet with it
+                                else if let Some(empty_cube) = cubes.cubes.iter_mut().find(|c| c.vault_wallet_id.is_none()) {
+                                    empty_cube.vault_wallet_id = Some(settings.wallet_id());
+                                    let cube_clone = empty_cube.clone();
+                                    // Save the updated cubes
+                                    tokio::runtime::Handle::current().block_on(async {
+                                        let _ = app::settings::update_cubes_file(&network_dir, |_| cubes.clone()).await;
+                                    });
+                                    cube_clone
+                                }
+                                // Third, create a new cube for this wallet
+                                else {
+                                    let cube = app::settings::CubeSettings::new(
+                                        settings.alias.clone().unwrap_or_else(|| format!("My {} Cube", i.network)),
+                                        i.network
+                                    ).with_vault(settings.wallet_id());
+                                    cubes.cubes.push(cube.clone());
+                                    // Save the cube
+                                    tokio::runtime::Handle::current().block_on(async {
+                                        let _ = app::settings::update_cubes_file(&network_dir, |_| cubes.clone()).await;
+                                    });
+                                    cube
+                                }
+                            }
+                            Err(_) => {
+                                // No cubes file yet, create first cube
+                                let cube = app::settings::CubeSettings::new(
+                                    settings.alias.clone().unwrap_or_else(|| format!("My {} Cube", i.network)),
+                                    i.network
+                                ).with_vault(settings.wallet_id());
+                                tokio::runtime::Handle::current().block_on(async {
+                                    let _ = app::settings::update_cubes_file(&network_dir, |mut c| {
+                                        c.cubes.push(cube.clone());
+                                        c
+                                    }).await;
+                                });
+                                cube
+                            }
+                        };
+
                         let (loader, command) = Loader::new(
                             i.datadir.clone(),
                             cfg,
                             i.network,
                             internal_bitcoind,
                             i.context.backup.take(),
-                            *settings,
+                            Some(*settings),
+                            cube,
                         );
                         self.state = State::Loader(Box::new(loader));
                         command.map(|msg| Message::Load(Box::new(msg)))
@@ -209,6 +286,31 @@ impl Tab {
                     let (launcher, command) = Launcher::new(i.destination_path(), Some(network));
                     self.state = State::Launcher(Box::new(launcher));
                     command.map(|msg| Message::Launch(Box::new(msg)))
+                } else if let installer::Message::BackToApp(network) = *msg {
+                    // Go back to app without vault using stored cube settings
+                    if let Some(cube) = &i.cube_settings {
+                        let cfg = app::Config::from_file(
+                            &i.datadir
+                                .network_directory(network)
+                                .path()
+                                .join(app::config::DEFAULT_FILE_NAME),
+                        )
+                        .expect("A gui configuration file must be present");
+                        
+                        let (app, command) = app::App::new_without_wallet(
+                            cfg,
+                            i.datadir.clone(),
+                            network,
+                            cube.clone(),
+                        );
+                        self.state = State::App(app);
+                        command.map(|msg| Message::Run(Box::new(msg)))
+                    } else {
+                        // No cube settings stored, go to launcher
+                        let (launcher, command) = Launcher::new(i.destination_path(), Some(network));
+                        self.state = State::Launcher(Box::new(launcher));
+                        command.map(|msg| Message::Launch(Box::new(msg)))
+                    }
                 } else {
                     i.update(*msg).map(|msg| Message::Install(Box::new(msg)))
                 }
@@ -219,6 +321,18 @@ impl Tab {
                         Launcher::new(loader.datadir_path.clone(), Some(loader.network));
                     self.state = State::Launcher(Box::new(launcher));
                     command.map(|msg| Message::Launch(Box::new(msg)))
+                }
+                loader::Message::View(loader::ViewMessage::SetupVault) => {
+                    let (install, command) = Installer::new(
+                        loader.datadir_path.clone(),
+                        loader.network,
+                        None,
+                        UserFlow::CreateWallet,
+                        false,
+                        None,
+                    );
+                    self.state = State::Installer(Box::new(install));
+                    command.map(|msg| Message::Install(Box::new(msg)))
                 }
                 loader::Message::Synced(Ok((wallet, cache, daemon, bitcoind, backup))) => {
                     if let Some(backup) = backup {
@@ -275,8 +389,24 @@ impl Tab {
 
                 _ => loader.update(*msg).map(|msg| Message::Load(Box::new(msg))),
             },
-            (State::App(i), Message::Run(msg)) => {
-                i.update(*msg).map(|msg| Message::Run(Box::new(msg)))
+            (State::App(app), Message::Run(msg)) => {
+                let app_msg = *msg;
+                match app_msg {
+                    app::Message::View(app::view::Message::SetupVault) => {
+                        // Launch installer for vault setup from app - should return to app on Previous
+                        let (install, command) = Installer::new(
+                            app.datadir().clone(),
+                            app.cache().network,
+                            None,
+                            UserFlow::CreateWallet,
+                            true,  // launched from app
+                            Some(app.cube_settings().clone()),  // pass cube settings for returning
+                        );
+                        self.state = State::Installer(Box::new(install));
+                        command.map(|msg| Message::Install(Box::new(msg)))
+                    }
+                    _ => app.update(app_msg).map(|msg| Message::Run(Box::new(msg))),
+                }
             }
             _ => Task::none(),
         }
@@ -391,6 +521,7 @@ pub fn create_app_with_remote_backend(
             fiat_price: None,
             vault_expanded: true,
             active_expanded: false,
+            has_vault: true,
         },
         Arc::new(
             Wallet::new(wallet.descriptor)

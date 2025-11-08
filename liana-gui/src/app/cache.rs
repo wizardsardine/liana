@@ -27,6 +27,8 @@ pub struct Cache {
     pub vault_expanded: bool,
     /// UI state: whether the Active submenu is expanded
     pub active_expanded: bool,
+    /// Whether this cube has a vault wallet configured
+    pub has_vault: bool,
 }
 
 /// only used for tests.
@@ -40,6 +42,7 @@ impl std::default::Default for Cache {
             fiat_price: None,
             vault_expanded: true,
             active_expanded: false,
+            has_vault: false,
         }
     }
 }

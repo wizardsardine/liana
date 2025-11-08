@@ -70,6 +70,7 @@ dirs = "6"
 toml = "0.9"
 
 chrono = "0.4.38"
+uuid = { version = "1.10", features = ["v4", "serde"] }
 
 # Used for managing internal bitcoind
 base64 = "0.22"

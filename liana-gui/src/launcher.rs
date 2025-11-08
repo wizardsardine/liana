@@ -16,7 +16,7 @@ use tokio::runtime::Handle;
 use crate::{
     app::{
         self,
-        settings::{self, AuthConfig, WalletId, WalletSettings},
+        settings::{self, AuthConfig, CubeSettings, WalletSettings},
     },
     delete::{delete_wallet, DeleteError},
     dir::{LianaDirectory, NetworkDirectory},
@@ -38,11 +38,11 @@ const NETWORKS: [Network; 5] = [
 #[derive(Debug, Clone)]
 pub enum State {
     Unchecked,
-    Wallets {
-        wallets: Vec<WalletSettings>,
-        add_wallet: bool,
+    Cubes {
+        cubes: Vec<CubeSettings>,
+        create_cube: bool,
     },
-    NoWallet,
+    NoCube,
 }
 
 pub struct Launcher {
@@ -51,7 +51,8 @@ pub struct Launcher {
     network: Network,
     pub datadir_path: LianaDirectory,
     error: Option<String>,
-    delete_wallet_modal: Option<DeleteWalletModal>,
+    delete_cube_modal: Option<DeleteCubeModal>,
+    create_cube_name: liana_ui::component::form::Value<String>,
 }
 
 impl Launcher {
@@ -71,7 +72,8 @@ impl Launcher {
                 network,
                 datadir_path: datadir_path.clone(),
                 error: None,
-                delete_wallet_modal: None,
+                delete_cube_modal: None,
+                create_cube_name: liana_ui::component::form::Value::default(),
             },
             Task::perform(check_network_datadir(network_dir), Message::Checked),
         )
@@ -113,25 +115,88 @@ impl Launcher {
                     Message::Install(d, n, UserFlow::ShareXpubs)
                 })
             }
-            Message::View(ViewMessage::DeleteWallet(DeleteWalletMessage::ShowModal(i))) => {
-                if let State::Wallets { wallets, .. } = &self.state {
-                    let wallet_datadir = self.datadir_path.network_directory(self.network);
-                    let config_path = wallet_datadir.path().join(app::config::DEFAULT_FILE_NAME);
-                    let internal_bitcoind = if wallets[i].remote_backend_auth.is_some() {
-                        Some(false)
-                    } else if wallets[i].start_internal_bitcoind.is_some() {
-                        wallets[i].start_internal_bitcoind
-                    } else if let Ok(cfg) = app::Config::from_file(&config_path) {
-                        Some(cfg.start_internal_bitcoind)
-                    } else {
-                        None
-                    };
-                    self.delete_wallet_modal = Some(DeleteWalletModal::new(
-                        self.network,
-                        wallet_datadir,
-                        wallets[i].clone(),
-                        internal_bitcoind,
-                    ));
+            Message::View(ViewMessage::ShowCreateCube(show)) => {
+                if let State::Cubes { create_cube, .. } = &mut self.state {
+                    *create_cube = show;
+                    if !show {
+                        self.create_cube_name = liana_ui::component::form::Value::default();
+                    }
+                }
+                Task::none()
+            }
+            Message::View(ViewMessage::CubeNameEdited(name)) => {
+                self.create_cube_name.value = name;
+                self.create_cube_name.valid = !self.create_cube_name.value.trim().is_empty();
+                Task::none()
+            }
+            Message::View(ViewMessage::CreateCube) => {
+                if self.create_cube_name.value.trim().is_empty() {
+                    return Task::none();
+                }
+                let network = self.network;
+                let cube = CubeSettings::new(self.create_cube_name.value.trim().to_string(), network);
+                let network_dir = self.datadir_path.network_directory(network);
+                Task::perform(
+                    async move {
+                        settings::update_cubes_file(&network_dir, |mut c| {
+                            c.cubes.push(cube.clone());
+                            c
+                        })
+                        .await
+                        .map(|_| cube)
+                        .map_err(|e| e.to_string())
+                    },
+                    Message::CubeCreated,
+                )
+            }
+            Message::CubeCreated(res) => match res {
+                Ok(_cube) => {
+                    self.create_cube_name = liana_ui::component::form::Value::default();
+                    self.reload()
+                }
+                Err(e) => {
+                    self.error = Some(format!("Failed to create Cube: {}", e));
+                    Task::none()
+                }
+            },
+            Message::View(ViewMessage::DeleteCube(DeleteCubeMessage::ShowModal(i))) => {
+                if let State::Cubes { cubes, .. } = &self.state {
+                    if let Some(cube) = cubes.get(i) {
+                        let wallet_datadir = self.datadir_path.network_directory(cube.network);
+                        let config_path = wallet_datadir.path().join(app::config::DEFAULT_FILE_NAME);
+                        
+                        // Get wallet settings if vault exists
+                        let (wallet_settings, internal_bitcoind) = if let Some(vault_id) = &cube.vault_wallet_id {
+                            match settings::Settings::from_file(&wallet_datadir) {
+                                Ok(s) => {
+                                    if let Some(wallet) = s.wallets.iter().find(|w| w.wallet_id() == *vault_id) {
+                                        let internal_bitcoind = if wallet.remote_backend_auth.is_some() {
+                                            Some(false)
+                                        } else if wallet.start_internal_bitcoind.is_some() {
+                                            wallet.start_internal_bitcoind
+                                        } else if let Ok(cfg) = app::Config::from_file(&config_path) {
+                                            Some(cfg.start_internal_bitcoind)
+                                        } else {
+                                            None
+                                        };
+                                        (Some(wallet.clone()), internal_bitcoind)
+                                    } else {
+                                        (None, None)
+                                    }
+                                }
+                                Err(_) => (None, None),
+                            }
+                        } else {
+                            (None, None)
+                        };
+                        
+                        self.delete_cube_modal = Some(DeleteCubeModal::new(
+                            cube.clone(),
+                            wallet_datadir,
+                            wallet_settings,
+                            internal_bitcoind,
+                        ));
+                    }
                 }
                 Task::none()
             }
@@ -140,14 +205,13 @@ impl Launcher {
                 let network_dir = self.datadir_path.network_directory(self.network);
                 Task::perform(check_network_datadir(network_dir), Message::Checked)
             }
-            Message::View(ViewMessage::DeleteWallet(DeleteWalletMessage::Deleted)) => {
-                self.state = State::NoWallet;
-                let network_dir = self.datadir_path.network_directory(self.network);
-                Task::perform(check_network_datadir(network_dir), Message::Checked)
+            Message::View(ViewMessage::DeleteCube(DeleteCubeMessage::Deleted)) => {
+                // Close modal and reload cubes - Checked will determine the correct state
+                self.delete_cube_modal = None;
+                self.reload()
             }
-
-            Message::View(ViewMessage::DeleteWallet(DeleteWalletMessage::CloseModal)) => {
-                self.delete_wallet_modal = None;
+            Message::View(ViewMessage::DeleteCube(DeleteCubeMessage::CloseModal)) => {
+                self.delete_cube_modal = None;
                 if self.network == Network::Testnet
                     && !has_existing_wallet(&self.datadir_path, Network::Testnet)
                 {
@@ -165,27 +229,21 @@ impl Launcher {
                     Task::none()
                 }
             },
-            Message::View(ViewMessage::AddWalletToList(add)) => {
-                if let State::Wallets { add_wallet, .. } = &mut self.state {
-                    *add_wallet = add;
-                }
-                Task::none()
-            }
             Message::View(ViewMessage::Run(index)) => {
-                if let State::Wallets { wallets, .. } = &self.state {
-                    if let Some(settings) = wallets.get(index) {
+                if let State::Cubes { cubes, .. } = &self.state {
+                    if let Some(cube) = cubes.get(index) {
                         let datadir_path = self.datadir_path.clone();
                         let mut path = self
                             .datadir_path
-                            .network_directory(self.network)
+                            .network_directory(cube.network)
                             .path()
                             .to_path_buf();
                         path.push(app::config::DEFAULT_FILE_NAME);
                         let cfg = app::Config::from_file(&path).expect("Already checked");
-                        let network = self.network;
-                        let settings = settings.clone();
+                        let network = cube.network;
+                        let cube = cube.clone();
                         Task::perform(
-                            async move { (datadir_path.clone(), cfg, network, settings) },
+                            async move { (datadir_path.clone(), cfg, network, cube) },
                             |m| Message::Run(m.0, m.1, m.2, m.3),
                         )
                     } else {
@@ -196,7 +254,7 @@ impl Launcher {
                 }
             }
             _ => {
-                if let Some(modal) = &mut self.delete_wallet_modal {
+                if let Some(modal) = &mut self.delete_cube_modal {
                     return modal.update(message);
                 }
                 Task::none()
@@ -212,14 +270,14 @@ impl Launcher {
                         .spacing(20)
                         .push(image::liana_logotype().width(Length::Fixed(150.0)))
                         .push(Space::with_width(Length::Fill))
-                        .push_maybe(if let State::Wallets { add_wallet, .. } = &self.state {
-                            if *add_wallet {
+                        .push_maybe(if let State::Cubes { create_cube, .. } = &self.state {
+                            if *create_cube {
                                 Some(
                                     button::secondary(
                                         Some(icon::previous_icon()),
-                                        "Back to wallet list",
+                                        "Back to Cube list",
                                     )
-                                    .on_press(ViewMessage::AddWalletToList(false)),
+                                    .on_press(ViewMessage::ShowCreateCube(false)),
                                 )
                             } else {
                                 None
@@ -249,7 +307,7 @@ impl Launcher {
                             .align_x(Alignment::Center)
                             .spacing(30)
                             .push({
-                                let c = if matches!(self.state, State::Wallets { .. }) {
+                                let c = if matches!(self.state, State::Cubes { .. }) {
                                     "Welcome back"
                                 } else {
                                     "Welcome"
@@ -259,19 +317,18 @@ impl Launcher {
                             .push_maybe(self.error.as_ref().map(|e| card::simple(text(e))))
                             .push(match &self.state {
                                 State::Unchecked => Column::new(),
-                                State::Wallets {
-                                    wallets,
-                                    add_wallet,
+                                State::Cubes {
+                                    cubes,
+                                    create_cube,
                                 } => {
-                                    if *add_wallet {
-                                        Column::new().push(add_wallet_menu())
+                                    if *create_cube {
+                                        Column::new().push(create_cube_form(&self.create_cube_name))
                                     } else {
-                                        let col = wallets.iter().enumerate().fold(
+                                        let col = cubes.iter().enumerate().fold(
                                             Column::new().spacing(20),
-                                            |col, (i, settings)| {
-                                                col.push(wallets_list_item(
-                                                    self.network,
-                                                    settings,
+                                            |col, (i, cube)| {
+                                                col.push(cubes_list_item(
+                                                    cube,
                                                     i,
                                                 ))
                                             },
@@ -280,16 +337,16 @@ impl Launcher {
                                             Column::new().push(
                                                 button::secondary(
                                                     Some(icon::plus_icon()),
-                                                    "Add wallet",
+                                                    "Create Cube",
                                                 )
-                                                .on_press(ViewMessage::AddWalletToList(true))
+                                                .on_press(ViewMessage::ShowCreateCube(true))
                                                 .padding(10)
                                                 .width(Length::Fixed(500.0)),
                                             ),
                                         )
                                     }
                                 }
-                                State::NoWallet => Column::new().push(add_wallet_menu()),
+                                State::NoCube => Column::new().push(create_cube_form(&self.create_cube_name)),
                             })
                             .align_x(Alignment::Center),
                     )
@@ -303,10 +360,10 @@ impl Launcher {
         } else {
             content
         };
-        if let Some(modal) = &self.delete_wallet_modal {
+        if let Some(modal) = &self.delete_cube_modal {
             Modal::new(Container::new(content).height(Length::Fill), modal.view())
-                .on_blur(Some(Message::View(ViewMessage::DeleteWallet(
-                    DeleteWalletMessage::CloseModal,
+                .on_blur(Some(Message::View(ViewMessage::DeleteCube(
+                    DeleteCubeMessage::CloseModal,
                 ))))
                 .into()
         } else {
@@ -315,51 +372,44 @@ impl Launcher {
     }
 }
 
-fn add_wallet_menu<'a>() -> Element<'a, ViewMessage> {
-    Row::new()
-        .align_y(Alignment::End)
-        .spacing(20)
-        .push(
-            Container::new(
-                Column::new()
-                    .spacing(20)
-                    .align_x(Alignment::Center)
-                    .push(image::create_new_wallet_icon().width(Length::Fixed(100.0)))
-                    .push(p1_regular("Create a new Vault wallet").style(theme::text::secondary))
-                    .push(
-                        button::secondary(None, "Select")
-                            .width(Length::Fixed(200.0))
-                            .on_press(ViewMessage::CreateWallet),
-                    )
-                    .align_x(Alignment::Center),
+fn create_cube_form<'a>(cube_name: &liana_ui::component::form::Value<String>) -> Element<'a, ViewMessage> {
+    use liana_ui::component::form;
+    
+    Container::new(
+        Column::new()
+            .spacing(20)
+            .align_x(Alignment::Center)
+            .width(Length::Fixed(500.0))
+            .push(h4_bold("Create a new Cube"))
+            .push(p1_regular("A Cube is your account that can contain a Vault wallet and other features.").style(theme::text::secondary))
+            .push(
+                Container::new(
+                    form::Form::new("Cube Name", cube_name, ViewMessage::CubeNameEdited)
+                    .warning("Please enter a name")
+                    .size(20)
+                    .padding(10)
+                )
+                .width(Length::Fill)
             )
-            .padding(20),
-        )
-        .push(
-            Container::new(
-                Column::new()
-                    .spacing(20)
-                    .align_x(Alignment::Center)
-                    .push(image::restore_wallet_icon().width(Length::Fixed(100.0)))
-                    .push(p1_regular("Add an existing Vault wallet").style(theme::text::secondary))
-                    .push(
-                        button::secondary(None, "Select")
-                            .width(Length::Fixed(200.0))
-                            .on_press(ViewMessage::ImportWallet),
-                    )
-                    .align_x(Alignment::Center),
-            )
-            .padding(20),
-        )
-        .into()
+            .push(
+                button::primary(None, "Create Cube")
+                    .width(Length::Fixed(200.0))
+                    .on_press_maybe(if cube_name.valid && !cube_name.value.trim().is_empty() {
+                        Some(ViewMessage::CreateCube)
+                    } else {
+                        None
+                    }),
+            ),
+    )
+    .padding(20)
+    .center_x(Length::Fill)
+    .into()
 }
 
-#[allow(unreachable_patterns)]
-fn wallets_list_item(
-    network: Network,
-    settings: &WalletSettings,
+fn cubes_list_item<'a>(
+    cube: &CubeSettings,
     i: usize,
-) -> Element<ViewMessage> {
+) -> Element<'a, ViewMessage> {
     Container::new(
         Row::new()
             .align_y(Alignment::Center)
@@ -368,29 +418,14 @@ fn wallets_list_item(
                 Container::new(
                     Button::new(
                         Column::new()
-                            .push(if let Some(alias) = &settings.alias {
-                                p1_bold(alias)
+                            .push(p1_bold(&cube.name))
+                            .push_maybe(if let Some(vault_id) = &cube.vault_wallet_id {
+                                Some(p1_regular(format!("Vault: Liana-{}", vault_id.descriptor_checksum))
+                                    .style(theme::text::secondary))
                             } else {
-                                p1_bold(format!(
-                                    "My Vault {} wallet",
-                                    match network {
-                                        Network::Bitcoin => "Bitcoin",
-                                        Network::Signet => "Signet",
-                                        Network::Testnet => "Testnet",
-                                        Network::Testnet4 => "Testnet4",
-                                        Network::Regtest => "Regtest",
-                                    }
-                                ))
-                            })
-                            .push(
-                                p1_regular(format!("Liana-{}", settings.descriptor_checksum))
-                                    .style(theme::text::secondary),
-                            )
-                            .push_maybe(settings.remote_backend_auth.as_ref().map(|auth| {
-                                Row::new()
-                                    .push(Space::with_width(Length::Fill))
-                                    .push(p1_regular(&auth.email).style(theme::text::secondary))
-                            })),
+                                Some(p1_regular("No Vault configured")
+                                    .style(theme::text::secondary))
+                            }),
                     )
                     .on_press(ViewMessage::Run(i))
                     .padding(15)
@@ -403,7 +438,7 @@ fn wallets_list_item(
                 Button::new(icon::trash_icon())
                     .style(theme::button::secondary)
                     .padding(10)
-                    .on_press(ViewMessage::DeleteWallet(DeleteWalletMessage::ShowModal(i))),
+                    .on_press(ViewMessage::DeleteCube(DeleteCubeMessage::ShowModal(i))),
             ),
     )
     .into()
@@ -423,35 +458,38 @@ pub enum Message {
     View(ViewMessage),
     Install(LianaDirectory, Network, UserFlow),
     Checked(Result<State, String>),
-    Run(LianaDirectory, app::config::Config, Network, WalletSettings),
+    Run(LianaDirectory, app::config::Config, Network, CubeSettings),
+    CubeCreated(Result<CubeSettings, String>),
 }
 
 #[derive(Debug, Clone)]
 pub enum ViewMessage {
     ImportWallet,
     CreateWallet,
-    AddWalletToList(bool),
+    ShowCreateCube(bool),
+    CubeNameEdited(String),
+    CreateCube,
     ShareXpubs,
     SelectNetwork(Network),
     StartInstall(Network),
     Check,
     Run(usize),
-    DeleteWallet(DeleteWalletMessage),
+    DeleteCube(DeleteCubeMessage),
 }
 
 #[derive(Debug, Clone)]
-pub enum DeleteWalletMessage {
+pub enum DeleteCubeMessage {
     ShowModal(usize),
     CloseModal,
-    Confirm(WalletId),
+    Confirm(String), // Cube ID
     DeleteLianaConnect(bool),
     Deleted,
 }
 
-struct DeleteWalletModal {
-    network: Network,
+struct DeleteCubeModal {
+    cube: CubeSettings,
     network_directory: NetworkDirectory,
-    wallet_settings: WalletSettings,
+    wallet_settings: Option<WalletSettings>,
     warning: Option<DeleteError>,
     deleted: bool,
     delete_liana_connect: bool,
@@ -460,16 +498,16 @@ struct DeleteWalletModal {
     internal_bitcoind: Option<bool>,
 }
 
-impl DeleteWalletModal {
+impl DeleteCubeModal {
     fn new(
-        network: Network,
+        cube: CubeSettings,
         network_directory: NetworkDirectory,
-        wallet_settings: WalletSettings,
+        wallet_settings: Option<WalletSettings>,
         internal_bitcoind: Option<bool>,
     ) -> Self {
         let mut modal = Self {
-            network,
-            wallet_settings,
+            cube: cube.clone(),
+            wallet_settings: wallet_settings.clone(),
             network_directory,
             warning: None,
             deleted: false,
@@ -477,17 +515,19 @@ impl DeleteWalletModal {
             internal_bitcoind,
             user_role: None,
         };
-        if let Some(auth) = &modal.wallet_settings.remote_backend_auth {
-            match Handle::current().block_on(check_membership(
-                modal.network,
-                &modal.network_directory,
-                auth,
-            )) {
-                Err(e) => {
-                    modal.warning = Some(e);
-                }
-                Ok(user_role) => {
-                    modal.user_role = user_role;
+        if let Some(wallet) = &wallet_settings {
+            if let Some(auth) = &wallet.remote_backend_auth {
+                match Handle::current().block_on(check_membership(
+                    cube.network,
+                    &modal.network_directory,
+                    auth,
+                )) {
+                    Err(e) => {
+                        modal.warning = Some(e);
+                    }
+                    Ok(user_role) => {
+                        modal.user_role = user_role;
+                    }
                 }
             }
         }
@@ -496,26 +536,43 @@ impl DeleteWalletModal {
 
     fn update(&mut self, message: Message) -> Task<Message> {
         match message {
-            Message::View(ViewMessage::DeleteWallet(DeleteWalletMessage::Confirm(wallet_id))) => {
-                if wallet_id != self.wallet_settings.wallet_id() {
+            Message::View(ViewMessage::DeleteCube(DeleteCubeMessage::Confirm(cube_id))) => {
+                if cube_id != self.cube.id {
                     return Task::none();
                 }
                 self.warning = None;
-                if let Err(e) = Handle::current().block_on(delete_wallet(
-                    self.network,
-                    &self.network_directory,
-                    &self.wallet_settings,
-                    self.delete_liana_connect,
-                )) {
-                    self.warning = Some(e);
+                
+                // Delete vault if it exists
+                if let Some(wallet_settings) = &self.wallet_settings {
+                    if let Err(e) = Handle::current().block_on(delete_wallet(
+                        self.cube.network,
+                        &self.network_directory,
+                        wallet_settings,
+                        self.delete_liana_connect,
+                    )) {
+                        self.warning = Some(e);
+                        return Task::none();
+                    }
+                }
+                
+                // Delete the cube from cubes.json
+                let network_dir = self.network_directory.clone();
+                let cube_id = self.cube.id.clone();
+                if let Err(e) = Handle::current().block_on(async {
+                    settings::update_cubes_file(&network_dir, |mut c| {
+                        c.cubes.retain(|cube| cube.id != cube_id);
+                        c
+                    }).await
+                }) {
+                    self.warning = Some(DeleteError::Settings(e));
                 } else {
                     self.deleted = true;
                     return Task::perform(async {}, |_| {
-                        Message::View(ViewMessage::DeleteWallet(DeleteWalletMessage::Deleted))
+                        Message::View(ViewMessage::DeleteCube(DeleteCubeMessage::Deleted))
                     });
-                };
+                }
             }
-            Message::View(ViewMessage::DeleteWallet(DeleteWalletMessage::DeleteLianaConnect(
+            Message::View(ViewMessage::DeleteCube(DeleteCubeMessage::DeleteLianaConnect(
                 delete,
             ))) => {
                 self.delete_liana_connect = delete;
@@ -526,35 +583,43 @@ impl DeleteWalletModal {
     }
 
     fn view(&self) -> Element<Message> {
-        let mut confirm_button = button::secondary(None, "Delete wallet")
+        let mut confirm_button = button::secondary(None, "Delete Cube")
             .width(Length::Fixed(200.0))
             .style(theme::button::destructive);
         if self.warning.is_none() {
-            confirm_button = confirm_button.on_press(ViewMessage::DeleteWallet(
-                DeleteWalletMessage::Confirm(self.wallet_settings.wallet_id()),
+            confirm_button = confirm_button.on_press(ViewMessage::DeleteCube(
+                DeleteCubeMessage::Confirm(self.cube.id.clone()),
             ));
         }
-        // Use separate `Row`s for help text in order to have better spacing.
-        let help_text_1 = format!(
-            "Are you sure you want to {} for the wallet {}",
-            if self.wallet_settings.remote_backend_auth.is_some() {
-                "delete locally the configuration"
-            } else {
-                "delete the configuration and all associated data"
-            },
-            if let Some(alias) = &self.wallet_settings.alias {
-                format!(
-                    "{} (Liana-{})?",
-                    alias, self.wallet_settings.descriptor_checksum
-                )
-            } else {
-                format!("Liana-{}?", &self.wallet_settings.descriptor_checksum)
-            }
-        );
+        
+        // Determine what's being deleted
+        let has_vault = self.wallet_settings.is_some();
+        let has_remote_backend = self.wallet_settings.as_ref()
+            .and_then(|w| w.remote_backend_auth.as_ref())
+            .is_some();
+        
+        let help_text_1 = if has_vault {
+            format!(
+                "Are you sure you want to delete the Cube \"{}\" and {}?",
+                self.cube.name,
+                if has_remote_backend {
+                    "its associated Vault configuration"
+                } else {
+                    "all its associated data (including Vault)"
+                }
+            )
+        } else {
+            format!(
+                "Are you sure you want to delete the Cube \"{}\"?",
+                self.cube.name
+            )
+        };
+        
         let help_text_2 = match self.internal_bitcoind {
             Some(true) => Some("(The Liana-managed Bitcoin node for this network will not be affected by this action.)"),
             Some(false) => None,
-            None => Some("(If you are using a Liana-managed Bitcoin node, it will not be affected by this action.)"),
+            None if has_vault => Some("(If you are using a Liana-managed Bitcoin node, it will not be affected by this action.)"),
+            _ => None,
         };
         let help_text_3 = "WARNING: This cannot be undone.";
 
@@ -563,17 +628,7 @@ impl DeleteWalletModal {
                 Column::new()
                     .spacing(10)
                     .push(Container::new(
-                        h4_bold(if let Some(alias) = &self.wallet_settings.alias {
-                            format!(
-                                "Delete configuration for {} (Liana-{})",
-                                alias, &self.wallet_settings.descriptor_checksum
-                            )
-                        } else {
-                            format!(
-                                "Delete configuration for Liana-{}",
-                                &self.wallet_settings.descriptor_checksum
-                            )
-                        })
+                        h4_bold(format!("Delete Cube \"{}\"", self.cube.name))
                         .style(theme::text::destructive)
                         .width(Length::Fill),
                     ))
@@ -583,17 +638,17 @@ impl DeleteWalletModal {
                             .map(|t| Row::new().push(p1_regular(t).style(theme::text::secondary))),
                     )
                     .push(Row::new())
-                    .push_maybe(self.wallet_settings.remote_backend_auth.as_ref().map(|a| {
+                    .push_maybe(self.wallet_settings.as_ref().and_then(|w| w.remote_backend_auth.as_ref()).map(|a| {
                         checkbox(
                             match self.user_role {
-                                Some(UserRole::Owner) | None => "Also permanently delete this wallet from Liana Connect (for all members).".to_string(),
+                                Some(UserRole::Owner) | None => "Also permanently delete the Vault wallet from Liana Connect (for all members).".to_string(),
                                 Some(UserRole::Member) => format!("Also disassociate {} from this Liana Connect wallet.", a.email),
                             },
                             self.delete_liana_connect,
                         )
                         .on_toggle_maybe(if !self.deleted {
                                 Some(|v| {
-                                    ViewMessage::DeleteWallet(DeleteWalletMessage::DeleteLianaConnect(v))
+                                    ViewMessage::DeleteCube(DeleteCubeMessage::DeleteLianaConnect(v))
                                 })
                             } else {
                                 None
@@ -611,7 +666,7 @@ impl DeleteWalletModal {
                                 .spacing(10)
                                 .push(icon::circle_check_icon().style(theme::text::success))
                                 .push(
-                                    text("Wallet successfully deleted").style(theme::text::success),
+                                    text("Cube successfully deleted").style(theme::text::success),
                                 )
                         })
                         .align_x(Horizontal::Center)
@@ -664,7 +719,7 @@ async fn check_network_datadir(path: NetworkDirectory) -> Result<State, String> 
 
     if let Err(e) = app::Config::from_file(&config_path) {
         if e == app::config::ConfigError::NotFound {
-            return Ok(State::NoWallet);
+            return Ok(State::NoCube);
         } else {
             return Err(format!(
                 "Failed to read GUI configuration file in the directory: {}",
@@ -707,18 +762,66 @@ async fn check_network_datadir(path: NetworkDirectory) -> Result<State, String> 
     })?;
     }
 
-    match settings::Settings::from_file(&path) {
-        Ok(s) => {
-            if s.wallets.is_empty() {
-                Ok(State::NoWallet)
+    // Try to load cubes first
+    match settings::Cubes::from_file(&path) {
+        Ok(c) => {
+            if c.cubes.is_empty() {
+                Ok(State::NoCube)
             } else {
-                Ok(State::Wallets {
-                    wallets: s.wallets,
-                    add_wallet: false,
+                Ok(State::Cubes {
+                    cubes: c.cubes,
+                    create_cube: false,
                 })
             }
         }
-        Err(settings::SettingsError::NotFound) => Ok(State::NoWallet),
+        Err(settings::SettingsError::NotFound) => {
+            // Migration: Check if old settings.json with wallets exists
+            match settings::Settings::from_file(&path) {
+                Ok(s) if !s.wallets.is_empty() => {
+                    // Migrate wallets to cubes
+                    let network = path.path().file_name()
+                        .and_then(|n| n.to_str())
+                        .and_then(|n| n.parse::<liana::miniscript::bitcoin::Network>().ok())
+                        .unwrap_or(liana::miniscript::bitcoin::Network::Bitcoin);
+                    
+                    let mut cubes = Vec::new();
+                    for wallet in &s.wallets {
+                        let cube_name = if let Some(alias) = &wallet.alias {
+                            alias.clone()
+                        } else {
+                            format!("My {} Cube", network_name(network))
+                        };
+                        let cube = CubeSettings::new(cube_name, network)
+                            .with_vault(wallet.wallet_id());
+                        cubes.push(cube);
+                    }
+                    
+                    // Save migrated cubes
+                    if let Err(e) = settings::update_cubes_file(&path, |mut c| {
+                        c.cubes = cubes.clone();
+                        c
+                    }).await {
+                        tracing::warn!("Failed to save migrated cubes: {}", e);
+                    }
+                    
+                    Ok(State::Cubes {
+                        cubes,
+                        create_cube: false,
+                    })
+                }
+                _ => Ok(State::NoCube),
+            }
+        }
         Err(e) => Err(e.to_string()),
+    }
+}
+
+fn network_name(network: liana::miniscript::bitcoin::Network) -> &'static str {
+    match network {
+        liana::miniscript::bitcoin::Network::Bitcoin => "Bitcoin",
+        liana::miniscript::bitcoin::Network::Testnet => "Testnet",
+        liana::miniscript::bitcoin::Network::Testnet4 => "Testnet4",
+        liana::miniscript::bitcoin::Network::Signet => "Signet",
+        liana::miniscript::bitcoin::Network::Regtest => "Regtest",
     }
 }

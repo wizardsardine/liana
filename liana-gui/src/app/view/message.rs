@@ -22,6 +22,7 @@ pub enum Message {
     Menu(Menu),
     ToggleVault,
     ToggleActive,
+    SetupVault,
     Close,
     Select(usize),
     SelectPayment(OutPoint),
