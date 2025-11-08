@@ -248,3 +248,11 @@ pub fn vault_icon() -> Text<'static> {
 pub fn lightning_icon() -> Text<'static> {
     bootstrap_icon('\u{F46E}') // lightning-fill icon
 }
+
+pub fn eye_icon() -> Text<'static> {
+    bootstrap_icon('\u{F33E}')
+}
+
+pub fn eye_slash_icon() -> Text<'static> {
+    bootstrap_icon('\u{F33F}')
+}

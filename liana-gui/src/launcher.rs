@@ -1,6 +1,6 @@
 use iced::{
     alignment::Horizontal,
-    widget::{checkbox, pick_list, scrollable, Button, Space},
+    widget::{checkbox, focus_next, focus_previous, pick_list, scrollable, Button, Space},
     Alignment, Length, Subscription, Task,
 };
 
@@ -53,6 +53,11 @@ pub struct Launcher {
     error: Option<String>,
     delete_cube_modal: Option<DeleteCubeModal>,
     create_cube_name: liana_ui::component::form::Value<String>,
+    create_cube_pin: [String; 4],
+    create_cube_pin_confirm: [String; 4],
+    pin_enabled: bool,
+    show_pin: bool,
+    show_pin_confirm: bool,
 }
 
 impl Launcher {
@@ -74,6 +79,11 @@ impl Launcher {
                 error: None,
                 delete_cube_modal: None,
                 create_cube_name: liana_ui::component::form::Value::default(),
+                create_cube_pin: [String::new(), String::new(), String::new(), String::new()],
+                create_cube_pin_confirm: [String::new(), String::new(), String::new(), String::new()],
+                pin_enabled: false,
+                show_pin: false,
+                show_pin_confirm: false,
             },
             Task::perform(check_network_datadir(network_dir), Message::Checked),
         )
@@ -120,6 +130,11 @@ impl Launcher {
                     *create_cube = show;
                     if !show {
                         self.create_cube_name = liana_ui::component::form::Value::default();
+                        self.create_cube_pin = [String::new(), String::new(), String::new(), String::new()];
+                        self.create_cube_pin_confirm = [String::new(), String::new(), String::new(), String::new()];
+                        self.pin_enabled = false;
+                        self.show_pin = false;
+                        self.show_pin_confirm = false;
                     }
                 }
                 Task::none()
@@ -127,14 +142,100 @@ impl Launcher {
             Message::View(ViewMessage::CubeNameEdited(name)) => {
                 self.create_cube_name.value = name;
                 self.create_cube_name.valid = !self.create_cube_name.value.trim().is_empty();
+                self.error = None;  // Clear error when user makes changes
+                Task::none()
+            }
+            Message::View(ViewMessage::TogglePinEnabled(enabled)) => {
+                self.pin_enabled = enabled;
+                if !enabled {
+                    self.create_cube_pin = [String::new(), String::new(), String::new(), String::new()];
+                    self.create_cube_pin_confirm = [String::new(), String::new(), String::new(), String::new()];
+                    self.show_pin = false;
+                    self.show_pin_confirm = false;
+                    self.error = None;  // Clear error when PIN is disabled
+                }
+                Task::none()
+            }
+            Message::View(ViewMessage::PinDigitChanged(index, value)) => {
+                let old_value = self.create_cube_pin[index].clone();
+                
+                if value.is_empty() {
+                    self.create_cube_pin[index] = value.clone();
+                    self.error = None;  // Clear error when user makes changes
+                    // If we deleted the digit and field is now empty, move to previous input
+                    if !old_value.is_empty() && index > 0 {
+                        return focus_previous();
+                    }
+                } else if value.len() == 1 && value.chars().all(|c| c.is_ascii_digit()) {
+                    self.create_cube_pin[index] = value;
+                    self.error = None;  // Clear error when user makes changes
+                    // Auto-advance to next input when digit is entered
+                    if index < 3 {
+                        return focus_next();
+                    }
+                }
+                
+                Task::none()
+            }
+            Message::View(ViewMessage::PinConfirmDigitChanged(index, value)) => {
+                let old_value = self.create_cube_pin_confirm[index].clone();
+                
+                if value.is_empty() {
+                    self.create_cube_pin_confirm[index] = value.clone();
+                    self.error = None;  // Clear error when user makes changes
+                    // If we deleted the digit and field is now empty, move to previous input
+                    if !old_value.is_empty() && index > 0 {
+                        return focus_previous();
+                    }
+                } else if value.len() == 1 && value.chars().all(|c| c.is_ascii_digit()) {
+                    self.create_cube_pin_confirm[index] = value;
+                    self.error = None;  // Clear error when user makes changes
+                    // Auto-advance to next input when digit is entered
+                    if index < 3 {
+                        return focus_next();
+                    }
+                }
+                
+                Task::none()
+            }
+            Message::View(ViewMessage::ToggleShowPin) => {
+                self.show_pin = !self.show_pin;
+                Task::none()
+            }
+            Message::View(ViewMessage::ToggleShowConfirmPin) => {
+                self.show_pin_confirm = !self.show_pin_confirm;
                 Task::none()
             }
             Message::View(ViewMessage::CreateCube) => {
                 if self.create_cube_name.value.trim().is_empty() {
                     return Task::none();
                 }
+                
+                // Validate PIN if enabled
+                if self.pin_enabled {
+                    if self.create_cube_pin.iter().any(|d| d.is_empty()) {
+                        self.error = Some("Please enter all 4 PIN digits".to_string());
+                        return Task::none();
+                    }
+                    if self.create_cube_pin_confirm.iter().any(|d| d.is_empty()) {
+                        self.error = Some("Please confirm all 4 PIN digits".to_string());
+                        return Task::none();
+                    }
+                    if self.create_cube_pin != self.create_cube_pin_confirm {
+                        self.error = Some("PIN codes do not match".to_string());
+                        return Task::none();
+                    }
+                }
+                
                 let network = self.network;
-                let cube = CubeSettings::new(self.create_cube_name.value.trim().to_string(), network);
+                let mut cube = CubeSettings::new(self.create_cube_name.value.trim().to_string(), network);
+                
+                // Add PIN if enabled
+                if self.pin_enabled {
+                    let pin = self.create_cube_pin.join("");
+                    cube = cube.with_pin(&pin);
+                }
+                
                 let network_dir = self.datadir_path.network_directory(network);
                 Task::perform(
                     async move {
@@ -152,6 +253,9 @@ impl Launcher {
             Message::CubeCreated(res) => match res {
                 Ok(_cube) => {
                     self.create_cube_name = liana_ui::component::form::Value::default();
+                    self.create_cube_pin = [String::new(), String::new(), String::new(), String::new()];
+                    self.create_cube_pin_confirm = [String::new(), String::new(), String::new(), String::new()];
+                    self.pin_enabled = false;
                     self.reload()
                 }
                 Err(e) => {
@@ -314,7 +418,18 @@ impl Launcher {
                                 };
                                 text(c).size(50).bold()
                             })
-                            .push_maybe(self.error.as_ref().map(|e| card::simple(text(e))))
+                            .push_maybe({
+                                // Only show error at top if not in create cube form
+                                let in_create_form = matches!(
+                                    self.state, 
+                                    State::Cubes { create_cube: true, .. } | State::NoCube
+                                );
+                                if !in_create_form {
+                                    self.error.as_ref().map(|e| card::simple(text(e)))
+                                } else {
+                                    None
+                                }
+                            })
                             .push(match &self.state {
                                 State::Unchecked => Column::new(),
                                 State::Cubes {
@@ -322,7 +437,15 @@ impl Launcher {
                                     create_cube,
                                 } => {
                                     if *create_cube {
-                                        Column::new().push(create_cube_form(&self.create_cube_name))
+                                        Column::new().push(create_cube_form(
+                                            &self.create_cube_name,
+                                            &self.create_cube_pin,
+                                            &self.create_cube_pin_confirm,
+                                            self.pin_enabled,
+                                            self.show_pin,
+                                            self.show_pin_confirm,
+                                            &self.error,
+                                        ))
                                     } else {
                                         let col = cubes.iter().enumerate().fold(
                                             Column::new().spacing(20),
@@ -346,7 +469,15 @@ impl Launcher {
                                         )
                                     }
                                 }
-                                State::NoCube => Column::new().push(create_cube_form(&self.create_cube_name)),
+                                State::NoCube => Column::new().push(create_cube_form(
+                                    &self.create_cube_name,
+                                    &self.create_cube_pin,
+                                    &self.create_cube_pin_confirm,
+                                    self.pin_enabled,
+                                    self.show_pin,
+                                    self.show_pin_confirm,
+                                    &self.error,
+                                )),
                             })
                             .align_x(Alignment::Center),
                     )
@@ -372,38 +503,156 @@ impl Launcher {
     }
 }
 
-fn create_cube_form<'a>(cube_name: &liana_ui::component::form::Value<String>) -> Element<'a, ViewMessage> {
+fn create_cube_form<'a>(
+    cube_name: &liana_ui::component::form::Value<String>,
+    pin_digits: &[String; 4],
+    pin_confirm_digits: &[String; 4],
+    pin_enabled: bool,
+    show_pin: bool,
+    show_pin_confirm: bool,
+    error: &Option<String>,
+) -> Element<'a, ViewMessage> {
     use liana_ui::component::form;
     
-    Container::new(
-        Column::new()
-            .spacing(20)
-            .align_x(Alignment::Center)
-            .width(Length::Fixed(500.0))
-            .push(h4_bold("Create a new Cube"))
-            .push(p1_regular("A Cube is your account that can contain a Vault wallet and other features.").style(theme::text::secondary))
-            .push(
-                Container::new(
-                    form::Form::new("Cube Name", cube_name, ViewMessage::CubeNameEdited)
-                    .warning("Please enter a name")
-                    .size(20)
-                    .padding(10)
-                )
-                .width(Length::Fill)
+    let mut column = Column::new()
+        .spacing(20)
+        .align_x(Alignment::Center)
+        .width(Length::Fixed(500.0))
+        .push(h4_bold("Create a new Cube"))
+        .push(p1_regular("A Cube is your account that can contain a Vault wallet and other features.").style(theme::text::secondary))
+        .push(
+            Container::new(
+                form::Form::new("Cube Name", cube_name, ViewMessage::CubeNameEdited)
+                .warning("Please enter a name")
+                .size(20)
+                .padding(10)
             )
-            .push(
-                button::primary(None, "Create Cube")
-                    .width(Length::Fixed(200.0))
-                    .on_press_maybe(if cube_name.valid && !cube_name.value.trim().is_empty() {
-                        Some(ViewMessage::CreateCube)
-                    } else {
-                        None
-                    }),
-            ),
-    )
-    .padding(20)
-    .center_x(Length::Fill)
-    .into()
+            .width(Length::Fill)
+        );
+    
+    // PIN setup section
+    column = column.push(
+        iced::widget::checkbox("Enable 4-digit PIN (optional)", pin_enabled)
+            .on_toggle(ViewMessage::TogglePinEnabled)
+    );
+    
+    if pin_enabled {
+        column = column.push(Space::with_height(Length::Fixed(10.0)));
+        
+        // Enter PIN label with eye button
+        let pin_label = p1_regular("Enter PIN:").style(theme::text::secondary);
+        let pin_eye_button = button::secondary(
+            Some(if show_pin { icon::eye_icon() } else { icon::eye_slash_icon() }),
+            ""
+        )
+        .on_press(ViewMessage::ToggleShowPin)
+        .width(Length::Fixed(50.0))
+        .padding(iced::Padding::new(10.0).left(15.0));
+        
+        let pin_label_row = Row::new()
+            .spacing(10)
+            .align_y(Alignment::Center)
+            .push(pin_label)
+            .push(pin_eye_button);
+        
+        column = column.push(pin_label_row);
+        
+        // PIN inputs with consistent styling
+        let mut pin_inputs_row = Row::new().spacing(15).align_y(Alignment::Center);
+        for i in 0..4 {
+            let mut input = iced::widget::text_input("", &pin_digits[i])
+                .on_input(move |v| ViewMessage::PinDigitChanged(i, v))
+                .size(30)
+                .width(Length::Fixed(60.0));
+            
+            if !show_pin {
+                input = input
+                    .secure(true)
+                    .padding(iced::Padding::new(15.0).left(25.0));
+            } else {
+                input = input.padding(iced::Padding::new(15.0).left(20.0));
+            }
+            
+            pin_inputs_row = pin_inputs_row.push(input);
+        }
+        column = column.push(pin_inputs_row);
+        
+        column = column.push(Space::with_height(Length::Fixed(20.0)));
+        
+        // Confirm PIN label with eye button
+        let pin_confirm_label = p1_regular("Confirm PIN:").style(theme::text::secondary);
+        let pin_confirm_eye_button = button::secondary(
+            Some(if show_pin_confirm { icon::eye_icon() } else { icon::eye_slash_icon() }),
+            ""
+        )
+        .on_press(ViewMessage::ToggleShowConfirmPin)
+        .width(Length::Fixed(50.0))
+        .padding(iced::Padding::new(10.0).left(15.0));
+        
+        let pin_confirm_label_row = Row::new()
+            .spacing(10)
+            .align_y(Alignment::Center)
+            .push(pin_confirm_label)
+            .push(pin_confirm_eye_button);
+        
+        column = column.push(pin_confirm_label_row);
+        
+        // Confirm PIN inputs with consistent styling
+        let mut pin_confirm_inputs_row = Row::new().spacing(15).align_y(Alignment::Center);
+        for i in 0..4 {
+            let mut input = iced::widget::text_input("", &pin_confirm_digits[i])
+                .on_input(move |v| ViewMessage::PinConfirmDigitChanged(i, v))
+                .size(30)
+                .width(Length::Fixed(60.0));
+            
+            if !show_pin_confirm {
+                input = input
+                    .secure(true)
+                    .padding(iced::Padding::new(15.0).left(25.0));
+            } else {
+                input = input.padding(iced::Padding::new(15.0).left(20.0));
+            }
+            
+            pin_confirm_inputs_row = pin_confirm_inputs_row.push(input);
+        }
+        column = column.push(pin_confirm_inputs_row);
+        
+        // Add extra padding before Create Cube button
+        column = column.push(Space::with_height(Length::Fixed(20.0)));
+    }
+    
+    // Show error above the button
+    if let Some(err) = error {
+        column = column.push(
+            p1_regular(err).style(theme::text::error),
+        );
+    }
+    
+    // Determine if button should be enabled
+    let can_create = cube_name.valid && !cube_name.value.trim().is_empty() && {
+        if pin_enabled {
+            // If PIN is enabled, all PIN fields must be filled
+            !pin_digits.iter().any(|d| d.is_empty()) && 
+            !pin_confirm_digits.iter().any(|d| d.is_empty())
+        } else {
+            true
+        }
+    };
+    
+    column = column.push(
+        button::primary(None, "Create Cube")
+            .width(Length::Fixed(200.0))
+            .on_press_maybe(if can_create {
+                Some(ViewMessage::CreateCube)
+            } else {
+                None
+            }),
+    );
+    
+    Container::new(column)
+        .padding(20)
+        .center_x(Length::Fill)
+        .into()
 }
 
 fn cubes_list_item<'a>(
@@ -469,6 +718,11 @@ pub enum ViewMessage {
     ShowCreateCube(bool),
     CubeNameEdited(String),
     CreateCube,
+    TogglePinEnabled(bool),
+    PinDigitChanged(usize, String),
+    PinConfirmDigitChanged(usize, String),
+    ToggleShowPin,
+    ToggleShowConfirmPin,
     ShareXpubs,
     SelectNetwork(Network),
     StartInstall(Network),

@@ -3682,6 +3682,7 @@ dependencies = [
  "rust-ini",
  "serde",
  "serde_json",
+ "sha2",
  "tar",
  "tokio",
  "toml 0.9.8",

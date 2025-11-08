@@ -123,6 +123,9 @@ pub struct CubeSettings {
     pub created_at: i64,
     /// The Vault wallet for this Cube (optional - may not be set up yet)
     pub vault_wallet_id: Option<WalletId>,
+    /// Optional security PIN (stored as SHA256 hash)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub security_pin_hash: Option<String>,
 }
 
 impl CubeSettings {
@@ -133,12 +136,38 @@ impl CubeSettings {
             network,
             created_at: chrono::Utc::now().timestamp(),
             vault_wallet_id: None,
+            security_pin_hash: None,
         }
     }
 
     pub fn with_vault(mut self, wallet_id: WalletId) -> Self {
         self.vault_wallet_id = Some(wallet_id);
         self
+    }
+
+    pub fn with_pin(mut self, pin: &str) -> Self {
+        self.security_pin_hash = Some(Self::hash_pin(pin));
+        self
+    }
+
+    pub fn has_pin(&self) -> bool {
+        self.security_pin_hash.is_some()
+    }
+
+    pub fn verify_pin(&self, pin: &str) -> bool {
+        if let Some(stored_hash) = &self.security_pin_hash {
+            &Self::hash_pin(pin) == stored_hash
+        } else {
+            // No PIN set, allow access
+            true
+        }
+    }
+
+    fn hash_pin(pin: &str) -> String {
+        use sha2::{Digest, Sha256};
+        let mut hasher = Sha256::new();
+        hasher.update(pin.as_bytes());
+        format!("{:x}", hasher.finalize())
     }
 }
 
