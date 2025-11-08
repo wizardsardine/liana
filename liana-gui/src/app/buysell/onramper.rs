@@ -1,6 +1,5 @@
 use liana::miniscript::bitcoin;
 
-// TODO: sign onramper url
 const WIDGET_OPTIONS: &str = "{{BASE_URL}}/?apiKey={{API_KEY}}&mode={{MODE}}&partnerContext=CoincubeVault&defaultFiat={{DEFAULT_FIAT}}&onlyCryptoNetworks=bitcoin&sell_defaultFiat={{DEFAULT_FIAT}}&sell_onlyCryptoNetworks=bitcoin&redirectAtCheckout=true&enableCountrySelector=false&themeName=dark";
 
 pub fn create_widget_url(
