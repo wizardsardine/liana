@@ -410,17 +410,8 @@ fn wallets_list_item(
 }
 
 /// Returns the list of displayed networks.
-///
-/// `Testnet` is not displayed if no wallet already exists as `Testnet4` should be available.
 fn displayed_networks(dir: &LianaDirectory) -> Vec<Network> {
-    let mut networks = NETWORKS.to_vec();
-
-    networks.retain(|&n| match n {
-        Network::Testnet => has_existing_wallet(dir, Network::Testnet),
-        _ => true,
-    });
-
-    networks
+    NETWORKS.to_vec()
 }
 
 fn has_existing_wallet(data_dir: &LianaDirectory, network: Network) -> bool {

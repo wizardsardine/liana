@@ -17,8 +17,8 @@ pub fn create_widget_url(
 
     let base_url = match network {
         bitcoin::Network::Bitcoin => "https://buy.onramper.com",
-        bitcoin::Network::Testnet | bitcoin::Network::Testnet4 => "https://buy.onramper.dev",
-        _ => return Err("Onramper is only supported for mainnet and testnet wallets"),
+        bitcoin::Network::Testnet => "https://buy.onramper.dev",
+        _ => return Err("Onramper is only supported for mainnet and testnet3 wallets"),
     };
 
     let mut url = WIDGET_OPTIONS
@@ -46,6 +46,7 @@ pub fn create_widget_url(
                 let signature = hex::encode(password_hmac.as_ref());
 
                 // assemble signed request
+                // TODO: signature validation might be gated by environment
                 let append = format!("&{}&signature={}", content, signature);
                 url.push_str(&append);
             }
