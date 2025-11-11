@@ -103,7 +103,13 @@ impl BuySellPanel {
         };
 
         // This method is now only called for Onramper (non-Mavapay) flow
-        let Some(currency) = crate::services::fiat::currency_for_country(iso_code) else {
+        let Some(currency) = ({
+            let countries = crate::services::geolocation::get_countries();
+            countries
+                .iter()
+                .find(|c| c.code == iso_code)
+                .map(|c| c.currency.name)
+        }) else {
             tracing::error!("Unknown country iso code: {}", iso_code);
             return Task::none();
         };

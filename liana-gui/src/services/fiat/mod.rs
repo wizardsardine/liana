@@ -5,6 +5,6 @@ pub mod currency;
 pub mod source;
 
 pub use client::PriceClient;
-pub use country_currency::{currency_for_country, mavapay_supported};
+pub use country_currency::mavapay_supported;
 pub use currency::Currency;
 pub use source::{PriceSource, ALL_PRICE_SOURCES};
