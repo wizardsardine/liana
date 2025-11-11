@@ -53,6 +53,12 @@ fn menu_bar_highlight<'a, T: 'a>() -> Container<'a, T> {
         .style(theme::container::custom(color::ORANGE))
 }
 
+fn menu_bottom_highlight<'a, T: 'a>() -> Container<'a, T> {
+    Container::new(Space::with_height(Length::Fixed(3.0)))
+        .width(Length::Fill)
+        .style(theme::container::custom(color::ORANGE))
+}
+
 pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<'a, Message> {
     // Top-level Home button
     let home_button = if *menu == Menu::Home {
