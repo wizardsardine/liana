@@ -483,7 +483,7 @@ pub fn dashboard<'a, T: Into<Element<'a, Message>>>(
     let has_vault = cache.has_vault; // Copy the bool value before moving into closure
     Row::new()
         .push(
-            sidebar(menu, cache)
+            sidebar(menu, cache, has_vault)
                 .height(Length::Fill)
                 .width(Length::Fixed(170.0)),
         )
