@@ -1017,7 +1017,7 @@ def test_start_rescan(lianad, bitcoind):
     # First, get some coins
     for _ in range(10):
         addr = lianad.rpc.getnewaddress()["address"]
-        amount = random.randint(1, COIN * 10) / COIN
+        amount = random.randint(500, COIN * 10) / COIN
         txid = bitcoind.rpc.sendtoaddress(addr, amount)
         bitcoind.generate_block(random.randint(1, 10), wait_for_mempool=txid)
     wait_for(lambda: len(list_coins()) == 10)
@@ -1027,7 +1027,7 @@ def test_start_rescan(lianad, bitcoind):
     # without change, single or multiple inputs, sending externally or to self).
     for _ in range(5):
         addr = lianad.rpc.getnewaddress()["address"]
-        amount = random.randint(1, COIN * 10) / COIN
+        amount = random.randint(500, COIN * 10) / COIN
         txid = bitcoind.rpc.sendtoaddress(addr, amount)
         avail = list(unspent_coins())
         to_spend = random.sample(avail, random.randint(1, len(avail)))
