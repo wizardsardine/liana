@@ -97,6 +97,12 @@ impl BuySellPanel {
     pub fn start_session(&mut self, network: bitcoin::Network) -> iced::Task<BuySellMessage> {
         use crate::app::buysell::onramper;
 
+        let mode = match self.buy_or_sell {
+            None => return Task::none(),
+            Some(BuyOrSell::Buy) => "buy",
+            Some(BuyOrSell::Sell) => "sell",
+        };
+
         let Some(iso_code) = self.detected_country_iso.as_ref() else {
             tracing::warn!("Unable to start session, country selection|detection was unsuccessful");
             return Task::none();
@@ -119,12 +125,6 @@ impl BuySellPanel {
             .generated_address
             .as_ref()
             .map(|a| a.address.to_string());
-
-        let mode = match self.buy_or_sell {
-            None => return Task::none(),
-            Some(BuyOrSell::Buy) => "buy",
-            Some(BuyOrSell::Sell) => "sell",
-        };
 
         match onramper::create_widget_url(&currency, address.as_deref(), &mode, network) {
             Ok(url) => {
@@ -461,13 +461,12 @@ impl BuySellPanel {
 
         match manual_selection {
             true => Column::new()
-                .push(Space::with_height(Length::Fixed(30.0)))
-                .push(ui_text::p1_bold("Select your country below").color(color::WHITE))
-                .push(Space::with_height(Length::Fixed(20.0)))
-                .push(text("Please wait...").size(14).color(color::GREY_3))
+                .push(pick_list(
+                    crate::services::geolocation::get_countries(),
+                    Some(crate::services::geolocation::get_countries()[87].clone()),
+                    |c| ViewMessage::BuySell(BuySellMessage::ManualCountrySelected(c)),
+                ))
                 .align_x(Alignment::Center)
-                .spacing(10)
-                .max_width(500)
                 .width(Length::Fill),
             false => Column::new()
                 .push(Space::with_height(Length::Fixed(30.0)))

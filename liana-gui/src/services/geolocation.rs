@@ -1,7 +1,7 @@
 use serde::Deserialize;
 use std::time::Duration;
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Clone, PartialEq, Eq)]
 pub struct Country {
     pub name: &'static str,
     pub code: &'static str,
@@ -9,7 +9,13 @@ pub struct Country {
     pub currency: Currency,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+impl std::fmt::Display for Country {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} ({})", self.name, self.code)
+    }
+}
+
+#[derive(Debug, Deserialize, Clone, PartialEq, Eq)]
 pub struct Currency {
     pub code: &'static str,
     pub name: &'static str,
