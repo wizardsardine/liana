@@ -501,6 +501,10 @@ impl App {
         &self.cube_settings
     }
 
+    pub fn config(&self) -> &Config {
+        &self.config
+    }
+
     fn daemon_backend(&self) -> DaemonBackend {
         self.daemon
             .as_ref()
