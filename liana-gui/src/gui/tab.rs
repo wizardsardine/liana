@@ -492,13 +492,14 @@ impl Tab {
                     command.map(|msg| Message::Launch(Box::new(msg)))
                 }
                 loader::Message::View(loader::ViewMessage::SetupVault) => {
+                    // Launch installer for vault setup from loader - should return to app on Previous
                     let (install, command) = Installer::new(
                         loader.datadir_path.clone(),
                         loader.network,
                         None,
                         UserFlow::CreateWallet,
-                        false,
-                        None,
+                        true, // launched from app (loader is part of app flow)
+                        Some(loader.cube_settings.clone()), // pass cube settings for returning
                     );
                     self.state = State::Installer(Box::new(install));
                     command.map(|msg| Message::Install(Box::new(msg)))
