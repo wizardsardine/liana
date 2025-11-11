@@ -439,10 +439,12 @@ impl App {
             cube_settings.name
         );
         let config_arc = Arc::new(config);
-        let mut cache = Cache::default();
-        cache.network = network;
-        cache.datadir_path = datadir.clone();
-        cache.has_vault = false;
+        let cache = Cache {
+            network,
+            datadir_path: datadir.clone(),
+            has_vault: false,
+            ..Default::default()
+        };
         tracing::debug!("Cache configured with has_vault=false");
 
         // Create panels without wallet - only Active and other non-Vault features will be available
@@ -581,7 +583,7 @@ impl App {
                                 .panels
                                 .create_spend
                                 .as_ref()
-                                .map_or(true, |p| !p.keep_state())
+                                .is_none_or(|p| !p.keep_state())
                             {
                                 self.panels.create_spend = Some(CreateSpendPanel::new(
                                     wallet.clone(),
@@ -596,7 +598,7 @@ impl App {
                                 .panels
                                 .recovery
                                 .as_ref()
-                                .map_or(true, |p| !p.keep_state())
+                                .is_none_or(|p| !p.keep_state())
                             {
                                 self.panels.recovery =
                                     Some(new_recovery_panel(wallet.clone(), &self.cache));

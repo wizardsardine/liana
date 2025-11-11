@@ -588,8 +588,8 @@ fn create_cube_form<'a>(
 
         // PIN inputs with consistent styling
         let mut pin_inputs_row = Row::new().spacing(15).align_y(Alignment::Center);
-        for i in 0..4 {
-            let mut input = iced::widget::text_input("", &pin_digits[i])
+        for (i, digit) in pin_digits.iter().enumerate().take(4) {
+            let mut input = iced::widget::text_input("", digit)
                 .on_input(move |v| ViewMessage::PinDigitChanged(i, v))
                 .size(30)
                 .width(Length::Fixed(60.0));
@@ -632,8 +632,8 @@ fn create_cube_form<'a>(
 
         // Confirm PIN inputs with consistent styling
         let mut pin_confirm_inputs_row = Row::new().spacing(15).align_y(Alignment::Center);
-        for i in 0..4 {
-            let mut input = iced::widget::text_input("", &pin_confirm_digits[i])
+        for (i, digit) in pin_confirm_digits.iter().enumerate().take(4) {
+            let mut input = iced::widget::text_input("", digit)
                 .on_input(move |v| ViewMessage::PinConfirmDigitChanged(i, v))
                 .size(30)
                 .width(Length::Fixed(60.0));
