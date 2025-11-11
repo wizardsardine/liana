@@ -88,7 +88,7 @@ impl BuySellPanel {
             session_url: None,
             active_webview: None,
             // Start in detecting location state
-            flow_state: BuySellFlowState::DetectingLocation,
+            flow_state: BuySellFlowState::DetectingLocation(false),
         }
     }
 
@@ -98,11 +98,15 @@ impl BuySellPanel {
         use crate::app::buysell::onramper;
 
         let Some(iso_code) = self.detected_country_iso.as_ref() else {
+            tracing::warn!("Unable to start session, country selection|detection was unsuccessful");
             return Task::none();
         };
 
         // This method is now only called for Onramper (non-Mavapay) flow
-        let currency = crate::services::fiat::currency_for_country(iso_code).to_string();
+        let Some(currency) = crate::services::fiat::currency_for_country(iso_code) else {
+            tracing::error!("Unknown country iso code: {}", iso_code);
+            return Task::none();
+        };
 
         // prepare parameters
         let address = self
@@ -197,7 +201,13 @@ impl BuySellPanel {
                         .is_some()
                         .then(|| Space::with_height(Length::Fixed(20.0))),
                 )
-                .push_maybe((!webview_active).then(|| self.form_view()));
+                // render specific form
+                .push_maybe((!webview_active).then(|| match &self.flow_state {
+                    BuySellFlowState::DetectingLocation(m) => self.render_detecting_location(*m),
+                    BuySellFlowState::Initialization => self.initialization_flow(),
+                    BuySellFlowState::Mavapay(state) => self.render_africa_flow(state),
+                    BuySellFlowState::Onramper => self.render_loading_onramper(),
+                }));
 
             // attempt to render webview (if available)
             let view = self
@@ -257,15 +267,6 @@ impl BuySellPanel {
             .align_y(Alignment::Start)
             .align_x(Alignment::Center)
             .into()
-    }
-
-    fn form_view<'a>(&'a self) -> Column<'a, ViewMessage> {
-        match &self.flow_state {
-            BuySellFlowState::DetectingLocation => self.render_detecting_location(),
-            BuySellFlowState::Initialization => self.initialization_flow(),
-            BuySellFlowState::Mavapay(state) => self.render_africa_flow(state),
-            BuySellFlowState::Onramper => self.render_loading_onramper(),
-        }
     }
 
     fn initialization_flow<'a>(&'a self) -> Column<'a, ViewMessage> {
@@ -449,27 +450,40 @@ impl BuySellPanel {
         }
     }
 
-    fn render_detecting_location<'a>(&'a self) -> Column<'a, ViewMessage> {
+    fn render_detecting_location<'a>(&'a self, manual_selection: bool) -> Column<'a, ViewMessage> {
         use liana_ui::component::text as ui_text;
 
-        Column::new()
-            .push(Space::with_height(Length::Fixed(30.0)))
-            .push(ui_text::p1_bold("Detecting your location...").color(color::WHITE))
-            .push(Space::with_height(Length::Fixed(20.0)))
-            .push(text("Please wait...").size(14).color(color::GREY_3))
-            .align_x(Alignment::Center)
-            .spacing(10)
-            .max_width(500)
-            .width(Length::Fill)
+        match manual_selection {
+            true => Column::new()
+                .push(Space::with_height(Length::Fixed(30.0)))
+                .push(ui_text::p1_bold("Select your country below").color(color::WHITE))
+                .push(Space::with_height(Length::Fixed(20.0)))
+                .push(text("Please wait...").size(14).color(color::GREY_3))
+                .align_x(Alignment::Center)
+                .spacing(10)
+                .max_width(500)
+                .width(Length::Fill),
+            false => Column::new()
+                .push(Space::with_height(Length::Fixed(30.0)))
+                .push(ui_text::p1_bold("Detecting your location...").color(color::WHITE))
+                .push(Space::with_height(Length::Fixed(20.0)))
+                .push(text("Please wait...").size(14).color(color::GREY_3))
+                .align_x(Alignment::Center)
+                .spacing(10)
+                .max_width(500)
+                .width(Length::Fill),
+        }
     }
 
     fn render_loading_onramper<'a>(&'a self) -> Column<'a, ViewMessage> {
         use liana_ui::component::text as ui_text;
-        let info = if let Some(country_name) = &self.detected_country_name {
-            format!("Country detected: {}. Opening Onramper...", country_name)
-        } else {
-            "Unable to determine country. Opening Onramper...".to_string()
+        let info = match &self.detected_country_name {
+            Some(country_name) => {
+                format!("Country detected: {}. Opening Onramper...", country_name)
+            }
+            None => "Unable to determine country. Opening Onramper...".to_string(),
         };
+
         Column::new()
             .push_maybe(self.error.as_ref().map(|err| {
                 Container::new(text(err).size(14).color(color::RED))

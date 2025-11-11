@@ -17,6 +17,7 @@ pub fn create_widget_url(
 
     let base_url = match network {
         bitcoin::Network::Bitcoin => "https://buy.onramper.com",
+        // TODO: onramper might support testnet4 addresses
         bitcoin::Network::Testnet => "https://buy.onramper.dev",
         _ => return Err("Onramper is only supported for mainnet and testnet3 wallets"),
     };
@@ -31,8 +32,9 @@ pub fn create_widget_url(
     if let Some(a) = address {
         let content = format!("wallets=btc:{}", a);
 
-        match option_env!("ONRAMPER_SIGNING_SECRET") {
-            Some(secret) => {
+        match (option_env!("ONRAMPER_SIGNING_SECRET"), network) {
+            // only sign requests on bitcoin mainnet if a signing secret is provided
+            (Some(secret), bitcoin::Network::Bitcoin) => {
                 log::warn!("`ONRAMPER_SIGNING_SECRET` was set at compile time. Onramper URL signatures will be generated and included");
 
                 let mut engine = bitcoin_hashes::HmacEngine::<bitcoin_hashes::sha256::Hash>::new(
@@ -50,7 +52,7 @@ pub fn create_widget_url(
                 let append = format!("&{}&signature={}", content, signature);
                 url.push_str(&append);
             }
-            None => {
+            _ => {
                 log::warn!("`ONRAMPER_SIGNING_SECRET` was not set at compile time. Onramper URL signatures will be excluded");
 
                 let append = format!("&{}", content);

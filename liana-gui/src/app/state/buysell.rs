@@ -131,13 +131,22 @@ impl State for BuySellPanel {
                 }
             }
 
-            BuySellMessage::CountryDetected(country_name, iso_code) => {
+            BuySellMessage::CountryDetected(result) => {
                 use crate::app::view::buysell::MavapayFlowState;
-                use crate::services::fiat::{
-                    mavapay_major_unit_for_country, mavapay_minor_unit_for_country,
-                    mavapay_supported,
-                };
+                use crate::services::fiat::mavapay_supported;
                 use liana_ui::component::form;
+
+                let (country_name, iso_code) = match result {
+                    Ok(r) => r,
+                    Err(err) => {
+                        tracing::error!("Unable to detect country via geo-ip: {}", err);
+                        self.flow_state = BuySellFlowState::DetectingLocation(true);
+
+                        return Task::done(Message::View(ViewMessage::BuySell(
+                            BuySellMessage::SessionError("Unable to automatically determine location, please select manually below".to_string()),
+                        )));
+                    }
+                };
 
                 tracing::info!("country = {}, iso_code = {}", country_name, iso_code);
 
@@ -159,7 +168,13 @@ impl State for BuySellPanel {
 
                     // Set default currencies based on detected country
                     state.mavapay_source_currency = form::Value {
-                        value: mavapay_minor_unit_for_country(&iso_code).to_string(),
+                        value: match iso_code.as_str() {
+                            "NG" => "NGNKOBO",
+                            "KE" => "KESCENT",
+                            "ZA" => "ZARCENT",
+                            c => unreachable!("Country: {} is not supported by mavapay", c),
+                        }
+                        .to_string(),
                         warning: None,
                         valid: true,
                     };
@@ -169,7 +184,13 @@ impl State for BuySellPanel {
                         valid: true,
                     };
                     state.mavapay_settlement_currency = form::Value {
-                        value: mavapay_major_unit_for_country(&iso_code).to_string(),
+                        value: match iso_code.as_str() {
+                            "NG" => "NGN",
+                            "KE" => "KES",
+                            "ZA" => "ZAR",
+                            c => unreachable!("Country: {} is not supported by mavapay", c),
+                        }
+                        .to_string(),
                         warning: None,
                         valid: true,
                     };
@@ -711,17 +732,11 @@ impl State for BuySellPanel {
             None => {
                 let locator = crate::services::geolocation::CachedGeoLocator::new_from_env();
 
-                Task::perform(
-                    async move { locator.detect_country().await },
-                    |result| match result {
-                        Ok((country_name, iso_code)) => Message::View(ViewMessage::BuySell(
-                            BuySellMessage::CountryDetected(country_name, iso_code),
-                        )),
-                        Err(error) => {
-                            Message::View(ViewMessage::BuySell(BuySellMessage::SessionError(error)))
-                        }
-                    },
-                )
+                Task::perform(async move { locator.detect_country().await }, |result| {
+                    Message::View(ViewMessage::BuySell(BuySellMessage::CountryDetected(
+                        result,
+                    )))
+                })
             }
         }
     }
