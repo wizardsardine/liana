@@ -1,4 +1,7 @@
-use iced::{widget::{focus_next, focus_previous, Space}, Alignment, Length, Task};
+use iced::{
+    widget::{focus_next, focus_previous, Space},
+    Alignment, Length, Task,
+};
 use liana_ui::{
     component::{button, text::*},
     icon, theme,
@@ -60,12 +63,12 @@ impl PinEntry {
         match message {
             Message::DigitChanged(index, value) => {
                 let old_value = self.pin_digits[index].clone();
-                
+
                 // Only allow single digit (0-9)
                 if value.is_empty() {
                     self.pin_digits[index] = value.clone();
                     self.error = None;
-                    
+
                     // If we deleted the digit and field is now empty, move to previous input
                     if !old_value.is_empty() && index > 0 {
                         return focus_previous();
@@ -73,13 +76,13 @@ impl PinEntry {
                 } else if value.len() == 1 && value.chars().all(|c| c.is_ascii_digit()) {
                     self.pin_digits[index] = value;
                     self.error = None;
-                    
+
                     // Auto-advance to next input when digit is entered
                     if index < 3 {
                         return focus_next();
                     }
                 }
-                
+
                 Task::none()
             }
             Message::Submit => {
@@ -90,7 +93,7 @@ impl PinEntry {
                 }
 
                 let pin = self.pin_digits.join("");
-                
+
                 // Verify PIN
                 if self.cube.verify_pin(&pin) {
                     Task::perform(async {}, |_| Message::PinVerified)
@@ -110,9 +113,9 @@ impl PinEntry {
     }
 
     pub fn view(&self) -> Element<Message> {
-        let back_button = button::transparent(Some(icon::previous_icon()), "Previous")
-            .on_press(Message::Back);
-        
+        let back_button =
+            button::transparent(Some(icon::previous_icon()), "Previous").on_press(Message::Back);
+
         // Header with back button on the left
         let header = Row::new()
             .align_y(Alignment::Center)
@@ -122,7 +125,7 @@ impl PinEntry {
 
         // Title with eye button
         let title = h3(format!("Enter PIN for {}", self.cube.name));
-        
+
         // Small toggle visibility button (icon only) with padding to center icon
         let toggle_icon_button = if self.show_pin {
             button::secondary(Some(icon::eye_icon()), "")
@@ -135,7 +138,7 @@ impl PinEntry {
                 .width(Length::Fixed(50.0))
                 .padding(iced::Padding::new(10.0).left(15.0))
         };
-        
+
         let title_row = Row::new()
             .spacing(10)
             .align_y(Alignment::Center)
@@ -144,23 +147,22 @@ impl PinEntry {
 
         // PIN input fields with masking
         let mut pin_inputs = Row::new().spacing(15).align_y(Alignment::Center);
-        
+
         for i in 0..4 {
             let mut input = iced::widget::text_input("", &self.pin_digits[i])
                 .on_input(move |v| Message::DigitChanged(i, v))
-                .size(30)  // Uniform font size for both modes
+                .size(30) // Uniform font size for both modes
                 .width(Length::Fixed(60.0));
-            
+
             // Use secure mode when not showing PIN
             if !self.show_pin {
                 input = input
                     .secure(true)
-                    .padding(iced::Padding::new(15.0).left(25.0));  // More left padding to center asterisks
+                    .padding(iced::Padding::new(15.0).left(25.0)); // More left padding to center asterisks
             } else {
-                input = input
-                    .padding(iced::Padding::new(15.0).left(20.0));  // Original padding for numbers
+                input = input.padding(iced::Padding::new(15.0).left(20.0)); // Original padding for numbers
             }
-            
+
             pin_inputs = pin_inputs.push(input);
         }
 
@@ -172,9 +174,7 @@ impl PinEntry {
             .push(pin_inputs);
 
         if let Some(error) = &self.error {
-            content = content.push(
-                p1_regular(error).style(theme::text::error),
-            );
+            content = content.push(p1_regular(error).style(theme::text::error));
         }
 
         let submit_button = button::primary(None, "Submit")
@@ -189,10 +189,7 @@ impl PinEntry {
                 .push(Space::with_height(Length::Fixed(100.0)))
                 .push(header)
                 .push(Space::with_height(Length::Fixed(100.0)))
-                .push(
-                    Container::new(content)
-                        .center_x(Length::Fill)
-                )
+                .push(Container::new(content).center_x(Length::Fill)),
         )
         .width(Length::Fill)
         .height(Length::Fill)

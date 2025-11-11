@@ -15,9 +15,11 @@ pub struct GlobalHome {
 
 impl GlobalHome {
     pub fn new(wallet: Arc<Wallet>) -> Self {
-        Self { wallet: Some(wallet) }
+        Self {
+            wallet: Some(wallet),
+        }
     }
-    
+
     pub fn new_without_wallet() -> Self {
         Self { wallet: None }
     }
@@ -25,10 +27,12 @@ impl GlobalHome {
 
 impl State for GlobalHome {
     fn view<'a>(&'a self, menu: &'a Menu, cache: &'a Cache) -> Element<'a, view::Message> {
-        let wallet_name = self.wallet.as_ref()
+        let wallet_name = self
+            .wallet
+            .as_ref()
             .map(|w| w.name.as_str())
             .unwrap_or("No Vault");
-        
+
         view::dashboard(
             menu,
             cache,

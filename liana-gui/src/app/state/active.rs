@@ -14,9 +14,11 @@ pub struct ActiveSend {
 
 impl ActiveSend {
     pub fn new(wallet: Arc<Wallet>) -> Self {
-        Self { wallet: Some(wallet) }
+        Self {
+            wallet: Some(wallet),
+        }
     }
-    
+
     pub fn new_without_wallet() -> Self {
         Self { wallet: None }
     }
@@ -24,10 +26,12 @@ impl ActiveSend {
 
 impl State for ActiveSend {
     fn view<'a>(&'a self, menu: &'a Menu, cache: &'a Cache) -> Element<'a, view::Message> {
-        let wallet_name = self.wallet.as_ref()
+        let wallet_name = self
+            .wallet
+            .as_ref()
             .map(|w| w.name.as_str())
             .unwrap_or("No Wallet");
-        
+
         view::dashboard(
             menu,
             cache,
@@ -62,9 +66,11 @@ pub struct ActiveReceive {
 
 impl ActiveReceive {
     pub fn new(wallet: Arc<Wallet>) -> Self {
-        Self { wallet: Some(wallet) }
+        Self {
+            wallet: Some(wallet),
+        }
     }
-    
+
     pub fn new_without_wallet() -> Self {
         Self { wallet: None }
     }
@@ -72,10 +78,12 @@ impl ActiveReceive {
 
 impl State for ActiveReceive {
     fn view<'a>(&'a self, menu: &'a Menu, cache: &'a Cache) -> Element<'a, view::Message> {
-        let wallet_name = self.wallet.as_ref()
+        let wallet_name = self
+            .wallet
+            .as_ref()
             .map(|w| w.name.as_str())
             .unwrap_or("No Wallet");
-        
+
         view::dashboard(
             menu,
             cache,
@@ -110,9 +118,11 @@ pub struct ActiveTransactions {
 
 impl ActiveTransactions {
     pub fn new(wallet: Arc<Wallet>) -> Self {
-        Self { wallet: Some(wallet) }
+        Self {
+            wallet: Some(wallet),
+        }
     }
-    
+
     pub fn new_without_wallet() -> Self {
         Self { wallet: None }
     }
@@ -124,10 +134,12 @@ impl ActiveTransactions {
 
 impl State for ActiveTransactions {
     fn view<'a>(&'a self, menu: &'a Menu, cache: &'a Cache) -> Element<'a, view::Message> {
-        let wallet_name = self.wallet.as_ref()
+        let wallet_name = self
+            .wallet
+            .as_ref()
             .map(|w| w.name.as_str())
             .unwrap_or("No Wallet");
-        
+
         view::dashboard(
             menu,
             cache,
@@ -162,9 +174,11 @@ pub struct ActiveSettings {
 
 impl ActiveSettings {
     pub fn new(wallet: Arc<Wallet>) -> Self {
-        Self { wallet: Some(wallet) }
+        Self {
+            wallet: Some(wallet),
+        }
     }
-    
+
     pub fn new_without_wallet() -> Self {
         Self { wallet: None }
     }
@@ -172,10 +186,12 @@ impl ActiveSettings {
 
 impl State for ActiveSettings {
     fn view<'a>(&'a self, menu: &'a Menu, cache: &'a Cache) -> Element<'a, view::Message> {
-        let wallet_name = self.wallet.as_ref()
+        let wallet_name = self
+            .wallet
+            .as_ref()
             .map(|w| w.name.as_str())
             .unwrap_or("No Wallet");
-        
+
         view::dashboard(
             menu,
             cache,

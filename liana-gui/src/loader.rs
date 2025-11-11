@@ -137,7 +137,7 @@ impl Loader {
             // No vault configured - loader will show setup screen
             Task::none()
         };
-        
+
         (
             Loader {
                 network,
@@ -175,9 +175,11 @@ impl Loader {
         info: GetInfoResult,
     ) -> Task<Message> {
         // If no wallet is configured, this shouldn't be called
-        let wallet_settings = self.wallet_settings.clone()
+        let wallet_settings = self
+            .wallet_settings
+            .clone()
             .expect("wallet_settings must be Some when loading");
-        
+
         // If the node is not Bitcoin Core or otherwise the wallet was previously synced (blockheight > 0),
         // load the application directly.
         if daemon.backend().node_type() != Some(NodeType::Bitcoind) || info.block_height > 0 {
@@ -221,7 +223,9 @@ impl Loader {
                 Error::Daemon(DaemonError::ClientNotSupported)
                 | Error::Daemon(DaemonError::RpcSocket(Some(ErrorKind::ConnectionRefused), _))
                 | Error::Daemon(DaemonError::RpcSocket(Some(ErrorKind::NotFound), _)) => {
-                    let wallet_settings = self.wallet_settings.clone()
+                    let wallet_settings = self
+                        .wallet_settings
+                        .clone()
                         .expect("wallet_settings must be Some when starting daemon");
                     self.step = Step::StartingDaemon;
                     self.daemon_started = true;
@@ -279,7 +283,9 @@ impl Loader {
                 match res {
                     Ok(info) => {
                         if (info.sync - 1.0_f64).abs() < f64::EPSILON {
-                            let wallet_settings = self.wallet_settings.clone()
+                            let wallet_settings = self
+                                .wallet_settings
+                                .clone()
                                 .expect("wallet_settings must be Some when syncing");
                             return Task::perform(
                                 load_application(
