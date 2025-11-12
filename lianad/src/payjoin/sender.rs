@@ -27,11 +27,11 @@ fn get_proposed_payjoin_psbt(
                 .save(persister);
             match res {
                 Ok(OptionalTransitionOutcome::Progress(psbt)) => {
-                    log::info!("[Payjoin] ProposalReceived!");
+                    log::debug!("[Payjoin] ProposalReceived!");
                     Ok(Some(psbt))
                 }
                 Ok(OptionalTransitionOutcome::Stasis(_current_state)) => {
-                    log::info!("[Payjoin] No response yet.");
+                    log::debug!("[Payjoin] No response yet.");
                     Ok(None)
                 }
                 Err(e) => {
@@ -52,16 +52,16 @@ fn update_db_with_psbt(
 ) {
     let original_txid = session_history.fallback_tx().compute_txid();
 
-    log::info!("[Payjoin] Deleting original Payjoin psbt (txid={original_txid})");
+    log::debug!("[Payjoin] Deleting original Payjoin psbt (txid={original_txid})");
     db_conn.delete_spend(&original_txid);
 
     let new_txid = psbt.unsigned_tx.compute_txid();
     if db_conn.spend_tx(&new_txid).is_some() {
-        log::info!("[Payjoin] Proposal already exists in the db");
+        log::debug!("[Payjoin] Proposal already exists in the db");
         return;
     }
 
-    log::info!(
+    log::debug!(
         "[Payjoin] Updating Payjoin psbt: {} -> {}",
         original_txid,
         new_txid
@@ -77,7 +77,7 @@ fn post_orginal_proposal(
     let (req, ctx) = sender.create_v2_post_request(OHTTP_RELAY)?;
     match post_request(req) {
         Ok(resp) => {
-            log::info!("[Payjoin] Posted original proposal...");
+            log::debug!("[Payjoin] Posted original proposal...");
             sender
                 .process_response(resp.bytes().expect("Failed to read response").as_ref(), ctx)
                 .save(persister)?;
@@ -97,21 +97,21 @@ fn process_sender_session(
 
     match state {
         SendSession::WithReplyKey(sender) => {
-            log::info!("[Payjoin] SenderState::WithReplyKey");
+            log::debug!("[Payjoin] SenderState::WithReplyKey");
             if let Err(err) = post_orginal_proposal(sender, persister) {
-                log::warn!("post_orginal_proposal(): {}", err);
+                log::error!("post_orginal_proposal(): {}", err);
             }
             Ok(())
         }
         SendSession::PollingForProposal(context) => {
-            log::info!("[Payjoin] SenderState::V2GetContext");
+            log::debug!("[Payjoin] SenderState::V2GetContext");
             if let Ok(Some(psbt)) = get_proposed_payjoin_psbt(context, persister) {
                 update_db_with_psbt(db_conn, &session_history, &session_id, psbt);
             }
             Ok(())
         }
         SendSession::ProposalReceived(psbt) => {
-            log::info!(
+            log::debug!(
                 "[Payjoin] SenderState::ProposalReceived: {}",
                 psbt.to_string()
             );
@@ -129,7 +129,7 @@ pub(crate) fn payjoin_sender_check(db: &sync::Arc<sync::Mutex<dyn DatabaseInterf
         match process_sender_session(&mut db_conn, session_id, &persister) {
             Ok(_) => (),
             Err(e) => {
-                log::warn!("payjoin_sender_check(): {}", e);
+                log::error!("payjoin_sender_check(): {}", e);
                 continue;
             }
         }

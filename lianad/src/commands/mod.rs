@@ -27,7 +27,6 @@ use liana::{
     },
 };
 
-use log::info;
 use utils::{
     deser_addr_assume_checked, deser_amount_from_sats, deser_fromstr, deser_hex, ser_amount,
     ser_hex, ser_to_string,
@@ -470,7 +469,7 @@ impl DaemonControl {
     /// Get Payjoin URI (BIP21) and its sender/receiver status by txid
     pub fn get_payjoin_info(&self, txid: &bitcoin::Txid) -> Result<PayjoinStatus, CommandError> {
         let mut db_conn = self.db.connection();
-        info!("Getting payjoin info for txid: {:?}", txid);
+        log::debug!("Getting payjoin info for txid: {:?}", txid);
         if let Some(session_id) = db_conn.get_payjoin_receiver_session_id_from_txid(txid) {
             let persister =
                 ReceiverPersister::from_id(Arc::new(self.db.clone()), session_id.clone());
@@ -480,11 +479,11 @@ impl DaemonControl {
         }
 
         if let Some(session_id) = db_conn.get_payjoin_sender_session_id_from_txid(txid) {
-            log::info!("Checking sender session: {:?}", session_id);
+            log::debug!("Checking sender session: {:?}", session_id);
             let persister = SenderPersister::from_id(Arc::new(self.db.clone()), session_id.clone());
             let (state, _) = replay_sender_event_log(&persister)
                 .map_err(|e| CommandError::ReplayError(format!("Sender replay failed: {e:?}")))?;
-            log::info!("Sender state: {:?}", state);
+            log::debug!("Sender state: {:?}", state);
             return Ok(state.into());
         }
 
@@ -1033,8 +1032,8 @@ impl DaemonControl {
 
         for index in 0..spend_psbt.inputs.len() {
             match spend_psbt.finalize_inp_mut(&self.secp, index) {
-                Ok(_) => log::info!("Finalizing input at: {}", index),
-                Err(e) => log::warn!("Not finalizing input at: {} | {}", index, e),
+                Ok(_) => log::debug!("Finalizing input at: {}", index),
+                Err(e) => log::error!("Not finalizing input at: {} | {}", index, e),
             }
         }
 
