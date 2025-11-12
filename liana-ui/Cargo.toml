@@ -9,7 +9,6 @@ edition = "2021"
 iced = { version = "0.13.1", default-features = false, features = [
 	"svg",
 	"image-without-codecs",
-	"lazy",
 	"qr_code",
 	"advanced",
 ] }

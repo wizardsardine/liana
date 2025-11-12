@@ -50,6 +50,7 @@ impl HttpGeoLocator {
             .timeout(Duration::from_secs(10))
             .build()
             .expect("failed to build reqwest client");
+
         Self { base_url, client }
     }
 
@@ -59,6 +60,7 @@ impl HttpGeoLocator {
             "{}/api/v1/geolocation/country",
             self.base_url.trim_end_matches('/')
         );
+
         let res = self
             .client
             .get(url)

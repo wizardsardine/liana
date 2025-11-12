@@ -17,7 +17,7 @@ pub fn create_widget_url(
 
     let base_url = match network {
         bitcoin::Network::Bitcoin => "https://buy.onramper.com",
-        // TODO: onramper might support testnet4 addresses
+        // TODO: onramper might support testnet4 addresses, further testing is needed for sandbox environments
         bitcoin::Network::Testnet => "https://buy.onramper.dev",
         _ => return Err("Onramper is only supported for mainnet and testnet3 wallets"),
     };

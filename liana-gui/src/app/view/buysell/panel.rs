@@ -461,11 +461,15 @@ impl BuySellPanel {
 
         match manual_selection {
             true => Column::new()
-                .push(pick_list(
-                    crate::services::geolocation::get_countries(),
-                    Some(crate::services::geolocation::get_countries()[87].clone()),
-                    |c| ViewMessage::BuySell(BuySellMessage::ManualCountrySelected(c)),
-                ))
+                .push(
+                    pick_list(
+                        crate::services::geolocation::get_countries(),
+                        None::<crate::services::geolocation::Country>,
+                        |c| ViewMessage::BuySell(BuySellMessage::ManualCountrySelected(c)),
+                    )
+                    .padding(10)
+                    .placeholder("Select Country: "),
+                )
                 .align_x(Alignment::Center)
                 .width(Length::Fill),
             false => Column::new()
