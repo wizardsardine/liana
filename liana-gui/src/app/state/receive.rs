@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::str::FromStr;
 use std::sync::Arc;
 
 use iced::{widget::qr_code, Subscription, Task};
@@ -33,14 +34,12 @@ const PREV_ADDRESSES_PAGE_SIZE: usize = 20;
 pub enum Modal {
     VerifyAddress(VerifyAddressModal),
     ShowQrCode(ShowQrCodeModal),
-    ShowBip21QrCode(ShowBip21QrCodeModal),
     None,
 }
 
 #[derive(Debug, Default)]
 pub struct Addresses {
-    list: Vec<Address>,
-    bip21s: HashMap<Address, String>,
+    list: HashMap<Address, Option<String>>,
     derivation_indexes: Vec<ChildNumber>,
     labels: HashMap<String, String>,
 }
@@ -55,7 +54,7 @@ impl Labelled for Addresses {
     fn labelled(&self) -> Vec<LabelItem> {
         self.list
             .iter()
-            .map(|a| LabelItem::Address(a.clone()))
+            .map(|a| LabelItem::Address(a.0.clone()))
             .collect()
     }
     fn labels(&mut self) -> &mut HashMap<String, String> {
@@ -94,12 +93,16 @@ impl ReceivePanel {
         }
     }
 
-    pub fn address(&self, i: usize) -> Option<&Address> {
-        if i < self.addresses.list.len() {
-            self.addresses.list.get(i)
+    pub fn address(&self, i: usize) -> Option<(&Address, &Option<String>)> {
+        let addresses_vec: Vec<_> = self.addresses.list.iter().collect();
+        if i < addresses_vec.len() {
+            addresses_vec.get(i).map(|(addr, val)| (*addr, *val))
         } else {
             // i >= self.addresses.list.len()
-            self.prev_addresses.list.get(i - self.addresses.list.len())
+            let prev_addresses_vec: Vec<_> = self.prev_addresses.list.iter().collect();
+            prev_addresses_vec
+                .get(i - addresses_vec.len())
+                .map(|(addr, val)| (*addr, *val))
         }
     }
 
@@ -123,7 +126,6 @@ impl State for ReceivePanel {
             self.warning.as_ref(),
             view::receive::receive(
                 &self.addresses.list,
-                &self.addresses.bip21s,
                 &self.addresses.labels,
                 &self.prev_addresses.list,
                 &self.prev_addresses.labels,
@@ -140,9 +142,6 @@ impl State for ReceivePanel {
                 .on_blur(Some(view::Message::Close))
                 .into(),
             Modal::ShowQrCode(m) => modal::Modal::new(content, m.view())
-                .on_blur(Some(view::Message::Close))
-                .into(),
-            Modal::ShowBip21QrCode(m) => modal::Modal::new(content, m.view())
                 .on_blur(Some(view::Message::Close))
                 .into(),
             Modal::None => content,
@@ -183,11 +182,8 @@ impl State for ReceivePanel {
                 match res {
                     Ok((address, derivation_index, bip21)) => {
                         self.warning = None;
-                        self.addresses.list.push(address.clone());
+                        self.addresses.list.insert(address.clone(), bip21);
                         self.addresses.derivation_indexes.push(derivation_index);
-                        if let Some(bip21) = bip21 {
-                            self.addresses.bip21s.insert(address, bip21);
-                        }
                     }
                     Err(e) => self.warning = Some(e),
                 }
@@ -198,7 +194,7 @@ impl State for ReceivePanel {
                 Task::none()
             }
             Message::View(view::Message::Select(i)) => {
-                let (address, index) = (
+                let ((address, _), index) = (
                     self.address(i).expect("Must be present"),
                     self.derivation_index(i).expect("Must be present"),
                 );
@@ -252,7 +248,7 @@ impl State for ReceivePanel {
                                 if entry.index == 0.into() {
                                     continue;
                                 }
-                                self.prev_addresses.list.push(entry.address.clone());
+                                self.prev_addresses.list.insert(entry.address.clone(), None);
                                 self.prev_addresses.derivation_indexes.push(entry.index);
                                 if let Some(label) = &entry.label {
                                     self.prev_addresses.labels.insert(
@@ -296,23 +292,11 @@ impl State for ReceivePanel {
                 }
             }
             Message::View(view::Message::ShowQrCode(i)) => {
-                if let (Some(address), Some(index)) = (self.address(i), self.derivation_index(i)) {
-                    if let Some(modal) = ShowQrCodeModal::new(address, *index) {
+                if let (Some((address, maybe_bip21)), Some(index)) =
+                    (self.address(i), self.derivation_index(i))
+                {
+                    if let Some(modal) = ShowQrCodeModal::new(&address, maybe_bip21) {
                         self.modal = Modal::ShowQrCode(modal);
-                    }
-                }
-                Task::none()
-            }
-            Message::View(view::Message::ShowBip21QrCode(i)) => {
-                if let (Some(bip21), Some(index)) = (
-                    &self
-                        .addresses
-                        .bip21s
-                        .get(self.address(i).expect("Address should be in bip21")),
-                    self.derivation_index(i),
-                ) {
-                    if let Some(modal) = ShowBip21QrCodeModal::new(bip21, *index) {
-                        self.modal = Modal::ShowBip21QrCode(modal);
                     }
                 }
                 Task::none()
@@ -456,37 +440,30 @@ pub struct ShowQrCodeModal {
 }
 
 impl ShowQrCodeModal {
-    pub fn new(address: &Address, index: ChildNumber) -> Option<Self> {
-        qr_code::Data::new(format!("bitcoin:{}?index={}", address, index))
-            .ok()
-            .map(|qr_code| Self {
-                qr_code,
-                address: address.to_string(),
-            })
+    pub fn new(address: &Address, maybe_bip21: &Option<String>) -> Option<Self> {
+        let qr_data = if let Some(bip21) = maybe_bip21.as_deref() {
+            if payjoin::Uri::from_str(bip21).is_ok() {
+                bip21.to_string()
+            } else {
+                log::error!("Invalid BIP21 URI: {}", bip21);
+                format!("bitcoin:{}", address)
+            }
+        } else {
+            format!("bitcoin:{}", address)
+        };
+
+        qr_code::Data::new(&qr_data).ok().map(|qr_code| Self {
+            qr_code,
+            address: if maybe_bip21.is_some() {
+                qr_data
+            } else {
+                address.to_string()
+            },
+        })
     }
 
     fn view(&self) -> Element<view::Message> {
         view::receive::qr_modal(&self.qr_code, &self.address)
-    }
-}
-
-pub struct ShowBip21QrCodeModal {
-    qr_code: qr_code::Data,
-    bip21: String,
-}
-
-impl ShowBip21QrCodeModal {
-    pub fn new(bip21: &String, _index: ChildNumber) -> Option<Self> {
-        qr_code::Data::new(format!("{}", bip21))
-            .ok()
-            .map(|qr_code| Self {
-                qr_code,
-                bip21: bip21.to_string(),
-            })
-    }
-
-    fn view(&self) -> Element<view::Message> {
-        view::receive::qr_modal(&self.qr_code, &self.bip21)
     }
 }
 

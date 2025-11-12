@@ -57,9 +57,13 @@ fn address_card<'a>(
                                 Column::new()
                                     .push(Space::with_height(Length::Fixed(10.0)))
                                     .push(
-                                        p2_regular(addr.clone())
-                                            .small()
-                                            .style(theme::text::secondary),
+                                        p2_regular(
+                                            maybe_bip21
+                                                .map(|bip21| bip21.to_string())
+                                                .unwrap_or(addr.clone()),
+                                        )
+                                        .small()
+                                        .style(theme::text::secondary),
                                     )
                                     // Space between the address and the scrollbar
                                     .push(Space::with_height(Length::Fixed(10.0))),
@@ -79,36 +83,6 @@ fn address_card<'a>(
                     )
                     .align_y(Alignment::Center),
             )
-            .push_maybe(maybe_bip21.map(|bip21| {
-                Row::new()
-                    .push(
-                        Container::new(
-                            scrollable(
-                                Column::new()
-                                    .push(Space::with_height(Length::Fixed(10.0)))
-                                    .push(
-                                        p2_regular(bip21.to_string())
-                                            .small()
-                                            .style(theme::text::secondary),
-                                    )
-                                    // Space between the URI and the scrollbar
-                                    .push(Space::with_height(Length::Fixed(10.0))),
-                            )
-                            .direction(
-                                scrollable::Direction::Horizontal(
-                                    scrollable::Scrollbar::new().width(2).scroller_width(2),
-                                ),
-                            ),
-                        )
-                        .width(Length::Fill),
-                    )
-                    .push(
-                        Button::new(icon::clipboard_icon().style(theme::text::secondary))
-                            .on_press(Message::Clipboard(bip21.to_string()))
-                            .style(theme::button::transparent_border),
-                    )
-                    .align_y(Alignment::Center)
-            }))
             .push(
                 Row::new()
                     .push(
@@ -116,13 +90,10 @@ fn address_card<'a>(
                             .on_press(Message::Select(row_index)),
                     )
                     .push(Space::with_width(Length::Fill))
-                    .push(if maybe_bip21.is_some() {
-                        button::secondary(None, "Show Bip21 QR Code")
-                            .on_press(Message::ShowBip21QrCode(row_index))
-                    } else {
+                    .push(
                         button::secondary(None, "Show QR Code")
-                            .on_press(Message::ShowQrCode(row_index))
-                    }),
+                            .on_press(Message::ShowQrCode(row_index)),
+                    ),
             )
             .spacing(10),
     )
@@ -130,10 +101,9 @@ fn address_card<'a>(
 
 #[allow(clippy::too_many_arguments)]
 pub fn receive<'a>(
-    addresses: &'a [bitcoin::Address],
-    bip21s: &'a HashMap<Address, String>,
+    addresses: &'a HashMap<bitcoin::Address, Option<String>>,
     labels: &'a HashMap<String, String>,
-    prev_addresses: &'a [bitcoin::Address],
+    prev_addresses: &'a HashMap<bitcoin::Address, Option<String>>,
     prev_labels: &'a HashMap<String, String>,
     show_prev_addresses: bool,
     selected: &'a HashSet<bitcoin::Address>,
@@ -168,16 +138,15 @@ pub fn receive<'a>(
         .push(
             Row::new()
                 .spacing(10)
-                .push(addresses.iter().enumerate().rev().fold(
+                .push(addresses.iter().enumerate().fold(
                     // iterate starting from most recently generated
                     Column::new().spacing(10).width(Length::Fill),
-                    |col, (i, address)| {
-                        let maybe_bip21 = bip21s.get(address);
+                    |col, (i, (address, maybe_bip21))| {
                         addresses_count += 1;
                         col.push(address_card(
                             i,
                             address,
-                            maybe_bip21,
+                            maybe_bip21.as_ref(),
                             labels,
                             labels_editing,
                         ))
@@ -212,9 +181,8 @@ pub fn receive<'a>(
             prev_addresses.iter().enumerate().fold(
                 // prev addresses are already ordered in descending order
                 Column::new().spacing(10).width(Length::Fill),
-                |col, (i, address)| {
+                |col, (i, (address, maybe_bip21))| {
                     let addr = address.to_string();
-                    let maybe_bip21 = bip21s.get(address);
                     col.push(if !selected.contains(address) {
                         Button::new(
                             Row::new()
@@ -223,19 +191,24 @@ pub fn receive<'a>(
                                     {
                                         let addr_len = addr.chars().count();
                                         Container::new(
-                                            p2_regular(if addr_len > 2 * NUM_ADDR_CHARS {
-                                                format!(
-                                                    "{}...{}",
-                                                    addr.chars()
-                                                        .take(NUM_ADDR_CHARS)
-                                                        .collect::<String>(),
-                                                    addr.chars()
-                                                        .skip(addr_len - NUM_ADDR_CHARS)
-                                                        .collect::<String>(),
-                                                )
-                                            } else {
-                                                addr
-                                            })
+                                            p2_regular(
+                                                maybe_bip21
+                                                    .clone()
+                                                    .map(|bip21| bip21.to_string())
+                                                    .unwrap_or(if addr_len > 2 * NUM_ADDR_CHARS {
+                                                        format!(
+                                                            "{}...{}",
+                                                            addr.chars()
+                                                                .take(NUM_ADDR_CHARS)
+                                                                .collect::<String>(),
+                                                            addr.chars()
+                                                                .skip(addr_len - NUM_ADDR_CHARS)
+                                                                .collect::<String>(),
+                                                        )
+                                                    } else {
+                                                        addr
+                                                    }),
+                                            )
                                             .small()
                                             .style(theme::text::secondary),
                                         )
@@ -281,7 +254,7 @@ pub fn receive<'a>(
                         Button::new(address_card(
                             addresses_count + i,
                             address,
-                            maybe_bip21,
+                            maybe_bip21.as_ref(),
                             prev_labels,
                             labels_editing,
                         ))
