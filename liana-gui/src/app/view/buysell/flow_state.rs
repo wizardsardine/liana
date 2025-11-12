@@ -8,7 +8,7 @@ use crate::services::registration::RegistrationClient;
 #[derive(Debug, Clone)]
 pub enum BuySellFlowState {
     /// Detecting user's location via IP geolocation
-    DetectingLocation,
+    DetectingLocation(bool),
     /// For Onramper countries: shows Buy/Sell selection
     Initialization,
     /// Nigeria, Kenya and South Africa, ie Mavapay supported providers
@@ -195,11 +195,5 @@ impl MavapayFlowState {
 impl Default for MavapayFlowState {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-impl Default for BuySellFlowState {
-    fn default() -> Self {
-        Self::DetectingLocation
     }
 }

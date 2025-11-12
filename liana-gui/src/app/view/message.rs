@@ -171,7 +171,8 @@ pub enum BuySellMessage {
     GetStarted,
 
     // Geolocation detection
-    CountryDetected(String, String), // (country_name, iso_code)
+    ManualCountrySelected(crate::services::geolocation::Country),
+    CountryDetected(Result<(String, String), String>), // (country_name, iso_code)
 
     // Default build: registration form (native flow)
     FirstNameChanged(String),

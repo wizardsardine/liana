@@ -39,7 +39,6 @@ iced = { version = "0.13.1", default-features = false, features = [
 	"canvas",
 	"qr_code",
 	"image-without-codecs",
-	"lazy",
 	"advanced",
 	"wgpu",
 	"tiny-skia",

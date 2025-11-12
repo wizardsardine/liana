@@ -67,7 +67,7 @@ impl Launcher {
         (
             Self {
                 state: State::Unchecked,
-                displayed_networks: displayed_networks(&datadir_path),
+                displayed_networks: NETWORKS.to_vec(),
                 network,
                 datadir_path: datadir_path.clone(),
                 error: None,
@@ -407,20 +407,6 @@ fn wallets_list_item(
             ),
     )
     .into()
-}
-
-/// Returns the list of displayed networks.
-///
-/// `Testnet` is not displayed if no wallet already exists as `Testnet4` should be available.
-fn displayed_networks(dir: &LianaDirectory) -> Vec<Network> {
-    let mut networks = NETWORKS.to_vec();
-
-    networks.retain(|&n| match n {
-        Network::Testnet => has_existing_wallet(dir, Network::Testnet),
-        _ => true,
-    });
-
-    networks
 }
 
 fn has_existing_wallet(data_dir: &LianaDirectory, network: Network) -> bool {
