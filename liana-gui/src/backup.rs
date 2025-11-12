@@ -434,7 +434,7 @@ pub enum KeyRole {
     Main,
     /// Key that will be used for recover in case loss of main key(s)
     Recovery,
-    /// Key that wil inherit coins if main user disapear
+    /// Key that will inherit coins if main user disappears
     Inheritance,
     /// Key that will cosign a spend in order to enforce some policy
     Cosigning,

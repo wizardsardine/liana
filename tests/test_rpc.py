@@ -1520,7 +1520,7 @@ def test_labels_bip329(lianad, bitcoind):
     for i in range(0, len(txids)):
         assert label_found(f"tx{i}", bip329_labels)
 
-    # All adresses are labelled
+    # All addresses are labelled
     for i in range(0, len(addresses)):
         assert label_found(f"addr{i}", bip329_labels)
 

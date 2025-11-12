@@ -389,7 +389,7 @@ impl From<DbLabel> for Label {
         match value.item_kind {
             DbLabelledKind::Address => Label::Address(bip329::AddressRecord {
                 ref_: Address::<NetworkUnchecked>::from_str(&ref_)
-                    .expect("db contains valid adresses"),
+                    .expect("db contains valid addresses"),
                 label,
             }),
             DbLabelledKind::OutPoint => Label::Output(bip329::OutputRecord {
