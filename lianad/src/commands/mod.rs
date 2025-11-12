@@ -1539,8 +1539,10 @@ mod tests {
         locktime::absolute,
         Amount, OutPoint, ScriptBuf, Sequence, Transaction, Txid, Witness,
     };
-    use spend::InsufficientFunds;
+    use spend::{InsufficientFunds, DUST_OUTPUT_SATS};
     use std::{collections::BTreeMap, str::FromStr};
+
+    const DUST: u64 = DUST_OUTPUT_SATS;
 
     #[test]
     fn getinfo() {
@@ -2002,6 +2004,7 @@ mod tests {
 
     #[test]
     fn create_spend() {
+        const COIN_VALUE: u64 = 100_000;
         let dummy_tx = bitcoin::Transaction {
             version: TxVersion::TWO,
             lock_time: absolute::LockTime::Blocks(absolute::Height::ZERO),
@@ -2047,7 +2050,7 @@ mod tests {
             outpoint: dummy_op,
             is_immature: false,
             block_info: None,
-            amount: bitcoin::Amount::from_sat(100_000),
+            amount: bitcoin::Amount::from_sat(COIN_VALUE),
             derivation_index: bip32::ChildNumber::from(13),
             is_change: false,
             spend_txid: None,
@@ -2117,11 +2120,11 @@ mod tests {
             control.create_spend(&destinations, &[dummy_op], 1, None),
             Ok(CreateSpendResult::InsufficientFunds { .. }),
         ));
-        *destinations.get_mut(&dummy_addr).unwrap() = 4_500;
+        *destinations.get_mut(&dummy_addr).unwrap() = DUST - 1;
         assert_eq!(
             control.create_spend(&destinations, &[dummy_op], 1, None),
             Err(CommandError::SpendCreation(
-                SpendCreationError::InvalidOutputValue(bitcoin::Amount::from_sat(4_500))
+                SpendCreationError::InvalidOutputValue(bitcoin::Amount::from_sat(DUST - 1))
             ))
         );
 
@@ -2137,9 +2140,9 @@ mod tests {
             ))
         ));
 
-        // If we ask for a large, but valid, output we won't get a change output. 95_000 because we
-        // won't create an output lower than 5k sats.
-        *destinations.get_mut(&dummy_addr).unwrap() = 95_000;
+        // If we ask for a large, but valid, output we won't get a change output. 99_500 because we
+        // won't create an output lower than 500 sats.
+        *destinations.get_mut(&dummy_addr).unwrap() = COIN_VALUE - DUST;
         let (psbt, warnings) = if let CreateSpendResult::Success { psbt, warnings } = control
             .create_spend(&destinations, &[dummy_op], 1, None)
             .unwrap()
@@ -2156,19 +2159,19 @@ mod tests {
             tx.output[0].script_pubkey,
             dummy_addr.assume_checked_ref().script_pubkey()
         );
-        assert_eq!(tx.output[0].value.to_sat(), 95_000);
-        // change = 100_000 - 95_000 - /* fee without change */ 127 - /* extra fee for change output */ 43 = 4830
+        assert_eq!(tx.output[0].value.to_sat(), COIN_VALUE - DUST);
+        // change = 100_000 - 99_500 - /* fee without change */ 127 - /* extra fee for change output */ 43 = 330
         assert_eq!(
             warnings,
             vec![
-                "Dust UTXO. The minimal change output allowed by Liana is 5000 sats. \
-                Instead of creating a change of 4839 sats, it was added to the \
+                "Dust UTXO. The minimal change output allowed by Liana is 500 sats. \
+                Instead of creating a change of 339 sats, it was added to the \
                 transaction fee. Select a larger input to avoid this from happening."
             ]
         );
 
         // Increase the target value by the change amount and the warning will disappear.
-        *destinations.get_mut(&dummy_addr).unwrap() = 95_000 + 4_839;
+        *destinations.get_mut(&dummy_addr).unwrap() = (COIN_VALUE - DUST) + 339;
         let (psbt, warnings) = if let CreateSpendResult::Success { psbt, warnings } = control
             .create_spend(&destinations, &[dummy_op], 1, None)
             .unwrap()
@@ -2183,7 +2186,7 @@ mod tests {
 
         // Now increase target also by the extra fee that was paying for change and we can still create the spend.
         *destinations.get_mut(&dummy_addr).unwrap() =
-            95_000 + 4_830 + /* fee for change output */ 43;
+            (COIN_VALUE - DUST) + 330 + /* fee for change output */ 43;
         let (psbt, warnings) = if let CreateSpendResult::Success { psbt, warnings } = control
             .create_spend(&destinations, &[dummy_op], 1, None)
             .unwrap()
@@ -2198,7 +2201,7 @@ mod tests {
 
         // Now increase the target by 1 more sat and we will have insufficient funds.
         *destinations.get_mut(&dummy_addr).unwrap() =
-            95_000 + 4_839 + /* fee for change output */ 43 + 1;
+            (COIN_VALUE - DUST) + 339 + /* fee for change output */ 43 + 1;
         assert_eq!(
             control.create_spend(&destinations, &[dummy_op], 1, None),
             Ok(CreateSpendResult::InsufficientFunds { missing: 1 }),
@@ -2206,7 +2209,7 @@ mod tests {
 
         // Now decrease the target so that the lost change is just 1 sat.
         *destinations.get_mut(&dummy_addr).unwrap() =
-            100_000 - /* fee without change */ 118 - /* extra fee for change output */ 43 - 1;
+            COIN_VALUE - /* fee without change */ 118 - /* extra fee for change output */ 43 - 1;
         let warnings = if let CreateSpendResult::Success { warnings, .. } = control
             .create_spend(&destinations, &[dummy_op], 1, None)
             .unwrap()
@@ -2219,15 +2222,15 @@ mod tests {
         assert_eq!(
             warnings,
             vec![
-                "Dust UTXO. The minimal change output allowed by Liana is 5000 sats. \
+                "Dust UTXO. The minimal change output allowed by Liana is 500 sats. \
                 Instead of creating a change of 1 sat, it was added to the \
                 transaction fee. Select a larger input to avoid this from happening."
             ]
         );
 
         // Now decrease the target value so that we have enough for a change output.
-        *destinations.get_mut(&dummy_addr).unwrap() =
-            95_000 - /* fee without change */ 118 - /* extra fee for change output */ 43;
+        *destinations.get_mut(&dummy_addr).unwrap() = (COIN_VALUE - DUST) - /* fee without change */ 118 - /* extra fee for change output */ 43;
+
         let (psbt, warnings) = if let CreateSpendResult::Success { psbt, warnings } = control
             .create_spend(&destinations, &[dummy_op], 1, None)
             .unwrap()
@@ -2238,12 +2241,12 @@ mod tests {
         };
         let tx = psbt.unsigned_tx;
         assert_eq!(tx.output.len(), 2);
-        assert_eq!(tx.output[1].value.to_sat(), 5_000);
+        assert_eq!(tx.output[1].value.to_sat(), DUST);
         assert!(warnings.is_empty());
 
         // Now increase the target by 1 and we'll get a warning again, this time for 1 less than the dust threshold.
-        *destinations.get_mut(&dummy_addr).unwrap() =
-            95_000 - /* fee without change */ 118 - /* extra fee for change output */ 43 + 1;
+        *destinations.get_mut(&dummy_addr).unwrap() = (COIN_VALUE - DUST) - /* fee without change */ 118 - /* extra fee for change output */ 43
+            + 1;
         let warnings = if let CreateSpendResult::Success { warnings, .. } = control
             .create_spend(&destinations, &[dummy_op], 1, None)
             .unwrap()
@@ -2255,8 +2258,8 @@ mod tests {
         assert_eq!(
             warnings,
             vec![
-                "Dust UTXO. The minimal change output allowed by Liana is 5000 sats. \
-                Instead of creating a change of 4999 sats, it was added to the \
+                "Dust UTXO. The minimal change output allowed by Liana is 500 sats. \
+                Instead of creating a change of 499 sats, it was added to the \
                 transaction fee. Select a larger input to avoid this from happening."
             ]
         );
@@ -2472,7 +2475,7 @@ mod tests {
                 height: 174500,
                 time: 174500,
             }),
-            amount: bitcoin::Amount::from_sat(5_250),
+            amount: bitcoin::Amount::from_sat(DUST + 500),
             derivation_index: bip32::ChildNumber::from(56),
             is_change: false,
             spend_txid: None,
@@ -2480,10 +2483,10 @@ mod tests {
             is_from_self: false,
         }]);
         let empty_dest = &HashMap::<bitcoin::Address<address::NetworkUnchecked>, u64>::new();
-        assert!(matches!(
+        assert_eq!(
             control.create_spend(empty_dest, &[confirmed_op_3], 5, None),
-            Ok(CreateSpendResult::InsufficientFunds { .. }),
-        ));
+            Ok(CreateSpendResult::InsufficientFunds { missing: 150 },)
+        );
         // If we use a lower fee, the self-send will succeed.
         let psbt = if let CreateSpendResult::Success { psbt, .. } = control
             .create_spend(empty_dest, &[confirmed_op_3], 1, None)
@@ -2512,7 +2515,7 @@ mod tests {
             outpoint: imma_op,
             is_immature: true,
             block_info: None,
-            amount: bitcoin::Amount::from_sat(100_000),
+            amount: bitcoin::Amount::from_sat(COIN_VALUE),
             derivation_index: bip32::ChildNumber::from(13),
             is_change: false,
             spend_txid: None,
@@ -3260,7 +3263,7 @@ mod tests {
         // This will give a coin selection error due to insufficient funds.
         db_conn.remove_coins(&[dummy_op]);
         let mut dummy_coin = dummy_coin;
-        dummy_coin.amount = Amount::from_sat(5_000 + 126);
+        dummy_coin.amount = Amount::from_sat(DUST + 126);
         db_conn.new_unspent_coins(&[dummy_coin]);
         db_conn.confirm_coins(&[(dummy_op, 91, 100_000)]);
         assert_eq!(
@@ -3329,7 +3332,7 @@ mod tests {
         // Amount is coin value minus fee.
         assert_eq!(
             psbt.unsigned_tx.output.first().unwrap().value,
-            Amount::from_sat(/* coin 1 */ 5_000 + 126 + /* coin 2 */10_000 - /* fee */ 211)
+            Amount::from_sat(/* coin 1 */ DUST + 126 + /* coin 2 */10_000 - /* fee */ 211)
         );
 
         // Do the same again, now specifying the outpoints explicitly.
@@ -3344,7 +3347,7 @@ mod tests {
         );
         assert_eq!(
             psbt.unsigned_tx.output.first().unwrap().value,
-            Amount::from_sat(/* coin 1 */ 5_000 + 126 + /* coin 2 */10_000 - /* fee */ 211)
+            Amount::from_sat(/* coin 1 */ DUST + 126 + /* coin 2 */10_000 - /* fee */ 211)
         );
 
         // Now check that increasing the feerate increases the fee.
@@ -3353,7 +3356,7 @@ mod tests {
         let psbt = res.unwrap().psbt;
         assert_eq!(
             psbt.unsigned_tx.output.first().unwrap().value,
-            Amount::from_sat(/* coin 1 */ 5_000 + 126 + /* coin 2 */10_000 - /* fee */ 2 * 211)
+            Amount::from_sat(/* coin 1 */ DUST + 126 + /* coin 2 */10_000 - /* fee */ 2 * 211)
         );
 
         ms.shutdown();

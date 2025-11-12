@@ -1017,7 +1017,7 @@ def test_start_rescan(lianad, bitcoind):
     # First, get some coins
     for _ in range(10):
         addr = lianad.rpc.getnewaddress()["address"]
-        amount = random.randint(1, COIN * 10) / COIN
+        amount = random.randint(500, COIN * 10) / COIN
         txid = bitcoind.rpc.sendtoaddress(addr, amount)
         bitcoind.generate_block(random.randint(1, 10), wait_for_mempool=txid)
     wait_for(lambda: len(list_coins()) == 10)
@@ -1027,7 +1027,7 @@ def test_start_rescan(lianad, bitcoind):
     # without change, single or multiple inputs, sending externally or to self).
     for _ in range(5):
         addr = lianad.rpc.getnewaddress()["address"]
-        amount = random.randint(1, COIN * 10) / COIN
+        amount = random.randint(500, COIN * 10) / COIN
         txid = bitcoind.rpc.sendtoaddress(addr, amount)
         avail = list(unspent_coins())
         to_spend = random.sample(avail, random.randint(1, len(avail)))
@@ -1797,14 +1797,14 @@ def test_rbfpsbt_insufficient_funds(lianad, bitcoind):
     wait_for(lambda: len(lianad.rpc.listcoins(["confirmed"])["coins"]) == 0)
     # Get another coin.
     deposit_txid_2 = bitcoind.rpc.sendtoaddress(
-        lianad.rpc.getnewaddress()["address"], 5_200 / COIN
+        lianad.rpc.getnewaddress()["address"], 700 / COIN
     )
     bitcoind.generate_block(1, wait_for_mempool=deposit_txid_2)
     wait_for(lambda: len(lianad.rpc.listcoins(["confirmed"])["coins"]) == 1)
 
     # Create a spend that we will then attempt to cancel.
     destinations_2 = {
-        bitcoind.rpc.getnewaddress(): 5_000,
+        bitcoind.rpc.getnewaddress(): 500,
     }
     spend_res_2 = lianad.rpc.createspend(destinations_2, [], 1)
     spend_psbt_2 = PSBT.from_base64(spend_res_2["psbt"])
