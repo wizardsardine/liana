@@ -707,12 +707,7 @@ pub fn outputs_view<'a>(
                 .output
                 .iter()
                 .enumerate()
-                .filter(|(i, _)| {
-                    if is_external {
-                        return true;
-                    }
-                    !change_indexes.contains(i)
-                })
+                .filter(|(i, _)| is_external || !change_indexes.contains(i))
                 .count();
             if count > 0 {
                 Container::new(Collapse::new(
@@ -756,21 +751,10 @@ pub fn outputs_view<'a>(
                         tx.output
                             .iter()
                             .enumerate()
-                            .filter(|(i, _)| {
-                                if is_external {
-                                    return true;
-                                }
-                                !change_indexes.contains(i)
-                            })
+                            .filter(|(i, _)| is_external || !change_indexes.contains(i))
                             .fold(
                                 Column::new().padding(20),
                                 |col: Column<'a, Message>, (i, output)| {
-                                    let mut is_editable = true;
-
-                                    if is_external && !change_indexes.contains(&i) {
-                                        is_editable = false;
-                                    }
-
                                     col.spacing(10).push(payment_view(
                                         i,
                                         tx.compute_txid(),
@@ -779,7 +763,7 @@ pub fn outputs_view<'a>(
                                         labels,
                                         labels_editing,
                                         is_single_payment,
-                                        is_editable,
+                                        !is_external || change_indexes.contains(&i),
                                     ))
                                 },
                             )
