@@ -485,7 +485,7 @@ pub fn dashboard<'a, T: Into<Element<'a, Message>>>(
         .push(
             sidebar(menu, cache, has_vault)
                 .height(Length::Fill)
-                .width(Length::Fixed(170.0)),
+                .width(Length::Fixed(190.0)),
         )
         .push(
             Column::new()
