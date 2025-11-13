@@ -75,7 +75,7 @@ pub struct Installer {
     pub context: Context,
 
     /// Track if installer was launched from an app without vault (true) or from launcher (false)
-    launched_from_app: bool,
+    pub launched_from_app: bool,
 
     /// Cube settings when launched from app (for returning to the same cube)
     pub cube_settings: Option<crate::app::settings::CubeSettings>,

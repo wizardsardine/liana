@@ -428,13 +428,19 @@ impl Tab {
                         let cube = match cube_result {
                             Ok(c) => c,
                             Err(_error_msg) => {
-                                // On failure, return to launcher
-                                // Error already logged above with full context
-                                error!("Aborting loader transition due to cube save failure - returning to launcher");
-                                let (launcher, command) =
-                                    Launcher::new(i.datadir.clone(), Some(i.network));
-                                self.state = State::Launcher(Box::new(launcher));
-                                return command.map(|msg| Message::Launch(Box::new(msg)));
+                                error!("Aborting loader transition due to cube save failure");
+                                if i.launched_from_app {
+                                    // Return to app state
+                                    return Task::done(Message::Install(Box::new(
+                                        installer::Message::BackToApp(i.network),
+                                    )));
+                                } else {
+                                    // Return to launcher
+                                    let (launcher, command) =
+                                        Launcher::new(i.datadir.clone(), Some(i.network));
+                                    self.state = State::Launcher(Box::new(launcher));
+                                    return command.map(|msg| Message::Launch(Box::new(msg)));
+                                }
                             }
                         };
 
