@@ -121,7 +121,7 @@ impl Panels {
                 // We don't know the node type for external lianad so assume it's bitcoind.
                 .unwrap_or(true);
         Self {
-            current: Menu::Vault(crate::app::menu::VaultSubMenu::Home),
+            current: Menu::Home,
             vault_expanded: false,
             active_expanded: false,
             global_home: GlobalHome::new(wallet.clone()),

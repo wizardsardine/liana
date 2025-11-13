@@ -785,7 +785,7 @@ pub fn create_app_with_remote_backend(
                 last_tick: Instant::now(),
             },
             fiat_price: None,
-            vault_expanded: true,
+            vault_expanded: false,
             active_expanded: false,
             has_vault: true,
         },
