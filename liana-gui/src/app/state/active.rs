@@ -7,6 +7,58 @@ use super::{Cache, Menu, State};
 use crate::app::{message::Message, view, wallet::Wallet};
 use crate::daemon::Daemon;
 
+/// ActiveOverview is a placeholder panel for the Active Overview page
+pub struct ActiveOverview {
+    wallet: Option<Arc<Wallet>>,
+}
+
+impl ActiveOverview {
+    pub fn new(wallet: Arc<Wallet>) -> Self {
+        Self {
+            wallet: Some(wallet),
+        }
+    }
+
+    pub fn new_without_wallet() -> Self {
+        Self { wallet: None }
+    }
+}
+
+impl State for ActiveOverview {
+    fn view<'a>(&'a self, menu: &'a Menu, cache: &'a Cache) -> Element<'a, view::Message> {
+        let wallet_name = self
+            .wallet
+            .as_ref()
+            .map(|w| w.name.as_str())
+            .unwrap_or("No Wallet");
+
+        view::dashboard(
+            menu,
+            cache,
+            None,
+            view::active::active_overview_view(wallet_name),
+        )
+    }
+
+    fn update(
+        &mut self,
+        _daemon: Arc<dyn Daemon + Sync + Send>,
+        _cache: &Cache,
+        _message: Message,
+    ) -> Task<Message> {
+        Task::none()
+    }
+
+    fn reload(
+        &mut self,
+        _daemon: Arc<dyn Daemon + Sync + Send>,
+        wallet: Arc<Wallet>,
+    ) -> Task<Message> {
+        self.wallet = Some(wallet);
+        Task::none()
+    }
+}
+
 /// ActiveSend is a placeholder panel for the Active Send page
 pub struct ActiveSend {
     wallet: Option<Arc<Wallet>>,

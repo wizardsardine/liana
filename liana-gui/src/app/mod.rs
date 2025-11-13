@@ -27,8 +27,8 @@ pub use config::Config;
 pub use message::Message;
 
 use state::{
-    ActiveReceive, ActiveSend, ActiveSettings, ActiveTransactions, CoinsPanel, CreateSpendPanel,
-    GlobalHome, Home, PsbtsPanel, ReceivePanel, State, TransactionsPanel,
+    ActiveOverview, ActiveReceive, ActiveSend, ActiveSettings, ActiveTransactions, CoinsPanel,
+    CreateSpendPanel, GlobalHome, Home, PsbtsPanel, ReceivePanel, State, TransactionsPanel,
 };
 use wallet::{sync_status, SyncStatus};
 
@@ -54,12 +54,13 @@ struct Panels {
     active_expanded: bool,
     // Always available panels
     global_home: GlobalHome,
+    active_overview: ActiveOverview,
     active_send: ActiveSend,
     active_receive: ActiveReceive,
     active_transactions: ActiveTransactions,
     active_settings: ActiveSettings,
     // Vault-only panels - None when no vault exists
-    vault_home: Option<Home>,
+    vault_overview: Option<Home>,
     coins: Option<CoinsPanel>,
     transactions: Option<TransactionsPanel>,
     psbts: Option<PsbtsPanel>,
@@ -86,12 +87,13 @@ impl Panels {
             active_expanded: false,
             // Active panels support operation without a wallet
             global_home: GlobalHome::new_without_wallet(),
+            active_overview: ActiveOverview::new_without_wallet(),
             active_send: ActiveSend::new_without_wallet(),
             active_receive: ActiveReceive::new_without_wallet(),
             active_transactions: ActiveTransactions::new_without_wallet(),
             active_settings: ActiveSettings::new_without_wallet(),
             // All vault panels are None - no vault exists
-            vault_home: None,
+            vault_overview: None,
             coins: None,
             transactions: None,
             psbts: None,
@@ -125,7 +127,7 @@ impl Panels {
             vault_expanded: false,
             active_expanded: false,
             global_home: GlobalHome::new(wallet.clone()),
-            vault_home: Some(Home::new(
+            vault_overview: Some(Home::new(
                 wallet.clone(),
                 cache.coins(),
                 sync_status(
@@ -138,6 +140,7 @@ impl Panels {
                 cache.blockheight(),
                 show_rescan_warning,
             )),
+            active_overview: ActiveOverview::new(wallet.clone()),
             active_send: ActiveSend::new(wallet.clone()),
             active_receive: ActiveReceive::new(wallet.clone()),
             active_transactions: ActiveTransactions::new(wallet.clone()),
@@ -176,14 +179,15 @@ impl Panels {
         match &self.current {
             Menu::Home => &self.global_home,
             Menu::Active(submenu) => match submenu {
+                crate::app::menu::ActiveSubMenu::Overview => &self.active_overview,
                 crate::app::menu::ActiveSubMenu::Send => &self.active_send,
                 crate::app::menu::ActiveSubMenu::Receive => &self.active_receive,
                 crate::app::menu::ActiveSubMenu::Transactions(_) => &self.active_transactions,
                 crate::app::menu::ActiveSubMenu::Settings(_) => &self.active_settings,
             },
             Menu::Vault(submenu) => match submenu {
-                crate::app::menu::VaultSubMenu::Home => self
-                    .vault_home
+                crate::app::menu::VaultSubMenu::Overview => self
+                    .vault_overview
                     .as_ref()
                     .expect("Vault panel accessed without vault"),
                 crate::app::menu::VaultSubMenu::Send => self
@@ -272,14 +276,15 @@ impl Panels {
         match &self.current {
             Menu::Home => &mut self.global_home,
             Menu::Active(submenu) => match submenu {
+                crate::app::menu::ActiveSubMenu::Overview => &mut self.active_overview,
                 crate::app::menu::ActiveSubMenu::Send => &mut self.active_send,
                 crate::app::menu::ActiveSubMenu::Receive => &mut self.active_receive,
                 crate::app::menu::ActiveSubMenu::Transactions(_) => &mut self.active_transactions,
                 crate::app::menu::ActiveSubMenu::Settings(_) => &mut self.active_settings,
             },
             Menu::Vault(submenu) => match submenu {
-                crate::app::menu::VaultSubMenu::Home => self
-                    .vault_home
+                crate::app::menu::VaultSubMenu::Overview => self
+                    .vault_overview
                     .as_mut()
                     .expect("Vault panel accessed without vault"),
                 crate::app::menu::VaultSubMenu::Send => self
@@ -407,9 +412,9 @@ impl App {
             restored_from_backup,
         );
         let cmd = panels
-            .vault_home
+            .vault_overview
             .as_mut()
-            .expect("vault_home must exist when vault present")
+            .expect("vault_overview must exist when vault present")
             .reload(daemon.clone(), wallet.clone());
         let mut cache_with_vault = cache;
         cache_with_vault.has_vault = true;
@@ -834,9 +839,9 @@ impl App {
             }
             Message::CacheUpdated => {
                 // Update vault panels with cache if they exist
-                if let (Some(daemon), Some(vault_home), Some(settings)) = (
+                if let (Some(daemon), Some(vault_overview), Some(settings)) = (
                     &self.daemon,
-                    self.panels.vault_home.as_mut(),
+                    self.panels.vault_overview.as_mut(),
                     self.panels.settings.as_mut(),
                 ) {
                     let daemon = daemon.clone();
@@ -844,11 +849,11 @@ impl App {
                     let cache = self.cache.clone();
 
                     let commands = vec![
-                        vault_home.update(
+                        vault_overview.update(
                             daemon.clone(),
                             &cache,
                             Message::UpdatePanelCache(
-                                current == &Menu::Vault(crate::app::menu::VaultSubMenu::Home),
+                                current == &Menu::Vault(crate::app::menu::VaultSubMenu::Overview),
                             ),
                         ),
                         settings.update(

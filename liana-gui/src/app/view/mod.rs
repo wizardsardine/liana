@@ -34,8 +34,8 @@ use liana_ui::{
     color,
     component::{button, text::*},
     icon::{
-        coins_icon, cross_icon, down_icon, history_icon, home_icon, lightning_icon, plus_icon,
-        receive_icon, recovery_icon, send_icon, settings_icon, up_icon, vault_icon,
+        coins_icon, cross_icon, cube_icon, down_icon, history_icon, home_icon, lightning_icon,
+        plus_icon, receive_icon, recovery_icon, send_icon, settings_icon, up_icon, vault_icon,
     },
     image::*,
     theme,
@@ -57,13 +57,13 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<
     // Top-level Home button
     let home_button = if *menu == Menu::Home {
         row!(
-            button::menu_active(Some(home_icon()), "Home")
+            button::menu_active(Some(cube_icon()), "Home")
                 .on_press(Message::Reload)
                 .width(iced::Length::Fill),
             menu_bar_highlight(),
         )
     } else {
-        row!(button::menu(Some(home_icon()), "Home")
+        row!(button::menu(Some(cube_icon()), "Home")
             .on_press(Message::Menu(Menu::Home))
             .width(iced::Length::Fill),)
     };
@@ -124,6 +124,26 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<
     // Add Active submenu items if expanded
     if is_active_expanded {
         use crate::app::menu::ActiveSubMenu;
+
+        // Active Overview
+        let active_overview_button = if matches!(menu, Menu::Active(ActiveSubMenu::Overview)) {
+            row!(
+                Space::with_width(Length::Fixed(20.0)),
+                button::menu_active(Some(home_icon()), "Overview")
+                    .on_press(Message::Reload)
+                    .width(iced::Length::Fill),
+                menu_bar_highlight()
+            )
+            .width(Length::Fill)
+        } else {
+            row!(
+                Space::with_width(Length::Fixed(20.0)),
+                button::menu(Some(home_icon()), "Overview")
+                    .on_press(Message::Menu(Menu::Active(ActiveSubMenu::Overview)))
+                    .width(iced::Length::Fill),
+            )
+            .width(Length::Fill)
+        };
 
         // Active Send
         let active_send_button = if matches!(menu, Menu::Active(ActiveSubMenu::Send)) {
@@ -209,6 +229,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<
         };
 
         menu_column = menu_column
+            .push(active_overview_button)
             .push(active_send_button)
             .push(active_receive_button)
             .push(active_transactions_button)
@@ -269,10 +290,10 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<
         use crate::app::menu::VaultSubMenu;
 
         // Home
-        let vault_home_button = if matches!(menu, Menu::Vault(VaultSubMenu::Home)) {
+        let vault_overview_button = if matches!(menu, Menu::Vault(VaultSubMenu::Overview)) {
             row!(
                 Space::with_width(Length::Fixed(20.0)),
-                button::menu_active(Some(home_icon()), "Home")
+                button::menu_active(Some(home_icon()), "Overview")
                     .on_press(Message::Reload)
                     .width(iced::Length::Fill),
                 menu_bar_highlight(),
@@ -281,8 +302,8 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<
         } else {
             row!(
                 Space::with_width(Length::Fixed(20.0)),
-                button::menu(Some(home_icon()), "Home")
-                    .on_press(Message::Menu(Menu::Vault(VaultSubMenu::Home)))
+                button::menu(Some(home_icon()), "Overview")
+                    .on_press(Message::Menu(Menu::Vault(VaultSubMenu::Overview)))
                     .width(iced::Length::Fill),
             )
             .width(Length::Fill)
@@ -430,7 +451,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<
         };
 
         menu_column = menu_column
-            .push(vault_home_button)
+            .push(vault_overview_button)
             .push(vault_send_button)
             .push(vault_receive_button)
             .push(vault_coins_button)

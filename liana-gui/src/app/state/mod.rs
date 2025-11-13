@@ -41,7 +41,7 @@ use crate::daemon::{
     Daemon,
 };
 use crate::utils::now;
-pub use active::{ActiveReceive, ActiveSend, ActiveSettings, ActiveTransactions};
+pub use active::{ActiveOverview, ActiveReceive, ActiveSend, ActiveSettings, ActiveTransactions};
 pub use coins::CoinsPanel;
 pub use global_home::GlobalHome;
 use label::LabelsEdited;

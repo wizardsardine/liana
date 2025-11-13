@@ -256,3 +256,7 @@ pub fn eye_icon() -> Text<'static> {
 pub fn eye_slash_icon() -> Text<'static> {
     bootstrap_icon('\u{F33F}')
 }
+
+pub fn cube_icon() -> Text<'static> {
+    bootstrap_icon('\u{F1C8}')
+}
