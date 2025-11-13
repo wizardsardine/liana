@@ -100,7 +100,7 @@ fn format_amount_number_part(s: &str, sep: &str) -> String {
     part.join(sep)
 }
 
-// Helper functions split a string at the first occurence of a non-zero integer (where
+// Helper functions split a string at the first occurrence of a non-zero integer (where
 // the amount starts).
 fn split_at_first_non_zero(s: String) -> Option<(String, String)> {
     for (index, c) in s.char_indices() {
