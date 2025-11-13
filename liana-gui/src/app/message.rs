@@ -36,7 +36,8 @@ pub enum Message {
     DaemonConfigLoaded(Result<(), Error>),
     LoadWallet(Wallet),
     Info(Result<GetInfoResult, Error>),
-    ReceiveAddress(Result<(Address, ChildNumber, Option<String>), Error>),
+    ReceiveAddress(Result<(Address, ChildNumber), Error>),
+    ReceivePayjoin(Result<(Address, ChildNumber, Option<String>), Error>),
     /// Revealed addresses. The second element contains the start index used for the request.
     RevealedAddresses(
         Result<ListRevealedAddressesResult, Error>,

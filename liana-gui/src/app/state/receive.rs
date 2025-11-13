@@ -54,7 +54,7 @@ impl Labelled for Addresses {
     fn labelled(&self) -> Vec<LabelItem> {
         self.list
             .iter()
-            .map(|a| LabelItem::Address(a.0.clone()))
+            .map(|(a, _)| LabelItem::Address(a.clone()))
             .collect()
     }
     fn labels(&mut self) -> &mut HashMap<String, String> {
@@ -180,6 +180,17 @@ impl State for ReceivePanel {
             }
             Message::ReceiveAddress(res) => {
                 match res {
+                    Ok((address, derivation_index)) => {
+                        self.warning = None;
+                        self.addresses.list.insert(address.clone(), None);
+                        self.addresses.derivation_indexes.push(derivation_index);
+                    }
+                    Err(e) => self.warning = Some(e),
+                }
+                Task::none()
+            }
+            Message::ReceivePayjoin(res) => {
+                match res {
                     Ok((address, derivation_index, bip21)) => {
                         self.warning = None;
                         self.addresses.list.insert(address.clone(), bip21);
@@ -214,10 +225,23 @@ impl State for ReceivePanel {
                         daemon
                             .get_new_address()
                             .await
-                            .map(|res| (res.address, res.derivation_index, res.bip21))
+                            .map(|res| (res.address, res.derivation_index))
                             .map_err(|e| e.into())
                     },
                     Message::ReceiveAddress,
+                )
+            }
+            Message::View(view::Message::PayjoinInitiate) => {
+                let daemon = daemon.clone();
+                Task::perform(
+                    async move {
+                        daemon
+                            .receive_payjoin()
+                            .await
+                            .map(|res| (res.address, res.derivation_index, res.bip21))
+                            .map_err(|e| e.into())
+                    },
+                    Message::ReceivePayjoin,
                 )
             }
             Message::View(view::Message::ToggleShowPreviousAddresses) => {
@@ -300,19 +324,6 @@ impl State for ReceivePanel {
                     }
                 }
                 Task::none()
-            }
-            Message::View(view::Message::PayjoinInitiate) => {
-                let daemon = daemon.clone();
-                Task::perform(
-                    async move {
-                        daemon
-                            .receive_payjoin()
-                            .await
-                            .map(|res| (res.address, res.derivation_index, res.bip21))
-                            .map_err(|e| e.into())
-                    },
-                    Message::ReceiveAddress,
-                )
             }
             _ => {
                 if let Modal::VerifyAddress(ref mut m) = self.modal {
