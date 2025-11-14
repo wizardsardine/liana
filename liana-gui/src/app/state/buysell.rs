@@ -56,14 +56,15 @@ impl State for BuySellPanel {
                     return Task::none();
                 };
 
-                self.modal =
-                    super::vault::receive::Modal::VerifyAddress(super::vault::receive::VerifyAddressModal::new(
+                self.modal = super::vault::receive::Modal::VerifyAddress(
+                    super::vault::receive::VerifyAddressModal::new(
                         self.data_dir.clone(),
                         self.wallet.clone(),
                         cache.network,
                         la.address.clone(),
                         la.index,
-                    ));
+                    ),
+                );
 
                 return Task::none();
             }
@@ -72,7 +73,9 @@ impl State for BuySellPanel {
                     return Task::none();
                 };
 
-                if let Some(modal) = super::vault::receive::ShowQrCodeModal::new(&la.address, la.index) {
+                if let Some(modal) =
+                    super::vault::receive::ShowQrCodeModal::new(&la.address, la.index)
+                {
                     self.modal = super::vault::receive::Modal::ShowQrCode(modal);
                 }
 

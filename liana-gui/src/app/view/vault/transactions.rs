@@ -19,8 +19,9 @@ use crate::{
         error::Error,
         menu::Menu,
         view::{
-            dashboard, vault::label,
+            dashboard,
             message::{CreateRbfMessage, Message},
+            vault::label,
             vault::warning::warn,
         },
     },

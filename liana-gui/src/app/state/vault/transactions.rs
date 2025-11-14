@@ -287,7 +287,9 @@ impl State for VaultTransactionsPanel {
             }
             ref msg => {
                 return match &mut self.modal {
-                    VaultTransactionsModal::CreateRbf(modal) => modal.update(daemon, _cache, message),
+                    VaultTransactionsModal::CreateRbf(modal) => {
+                        modal.update(daemon, _cache, message)
+                    }
                     VaultTransactionsModal::Export(modal) => {
                         if let Message::View(view::Message::ImportExport(m)) = msg {
                             modal.update::<Message>(m.clone())

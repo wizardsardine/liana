@@ -589,7 +589,11 @@ impl Modal for SignModal {
     fn view<'a>(&'a self, content: Element<'a, view::Message>) -> Element<'a, view::Message> {
         let content = toast::Manager::new(
             content,
-            view::vault::psbt::sign_action_toasts(self.error.as_ref(), &self.hws.list, &self.signing),
+            view::vault::psbt::sign_action_toasts(
+                self.error.as_ref(),
+                &self.hws.list,
+                &self.signing,
+            ),
         )
         .into();
         if self.display_modal {

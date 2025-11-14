@@ -28,7 +28,8 @@ pub use message::Message;
 
 use state::{
     ActiveOverview, ActiveReceive, ActiveSend, ActiveSettings, ActiveTransactions, CoinsPanel,
-    CreateSpendPanel, GlobalHome, VaultOverview, PsbtsPanel, VaultReceivePanel, State, VaultTransactionsPanel,
+    CreateSpendPanel, GlobalHome, PsbtsPanel, State, VaultOverview, VaultReceivePanel,
+    VaultTransactionsPanel,
 };
 use wallet::{sync_status, SyncStatus};
 

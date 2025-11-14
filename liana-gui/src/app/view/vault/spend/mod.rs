@@ -22,7 +22,7 @@ use crate::{
         cache::Cache,
         error::Error,
         menu::Menu,
-        view::{vault::coins, dashboard, message::*, vault::psbt, FiatAmountConverter},
+        view::{dashboard, message::*, vault::coins, vault::psbt, FiatAmountConverter},
     },
     daemon::model::{remaining_sequence, Coin, SpendTx},
 };

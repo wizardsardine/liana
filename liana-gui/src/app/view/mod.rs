@@ -8,8 +8,8 @@ pub mod buysell;
 
 pub mod vault;
 
-pub use vault::fiat::FiatAmountConverter;
 pub use message::*;
+pub use vault::fiat::FiatAmountConverter;
 pub use vault::warning::warn;
 
 use iced::{

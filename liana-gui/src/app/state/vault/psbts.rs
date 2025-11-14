@@ -93,8 +93,10 @@ impl State for PsbtsPanel {
                 if let Some(tx) = &mut self.selected_tx {
                     return tx.update(daemon, cache, message);
                 } else if self.modal.is_none() {
-                    let modal =
-                        VaultExportModal::new(Some(daemon.clone()), ImportExportType::ImportPsbt(None));
+                    let modal = VaultExportModal::new(
+                        Some(daemon.clone()),
+                        ImportExportType::ImportPsbt(None),
+                    );
                     let launch = modal.launch(false);
                     self.modal = Some(modal);
                     return launch;

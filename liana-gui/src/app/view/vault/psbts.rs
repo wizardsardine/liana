@@ -11,8 +11,8 @@ use crate::{
     daemon::model::{SpendStatus, SpendTx},
 };
 
-use super::warning::warn;
 use super::super::message::*;
+use super::warning::warn;
 
 pub fn import_psbt_view<'a>(
     imported: &form::Value<String>,

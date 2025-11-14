@@ -469,8 +469,10 @@ impl Step for BackupDescriptor {
                             return Task::none();
                         }
                     };
-                    let modal =
-                        VaultExportModal::new(None, ImportExportType::ExportEncryptedDescriptor(bytes));
+                    let modal = VaultExportModal::new(
+                        None,
+                        ImportExportType::ExportEncryptedDescriptor(bytes),
+                    );
                     let launch = modal.launch(true);
                     self.modal = Some(modal);
                     return launch;
