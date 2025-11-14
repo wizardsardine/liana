@@ -1,0 +1,14 @@
+# openssl-pkcs11.cnf
+openssl_conf = openssl_init
+
+[openssl_init]
+engines = engine_section
+
+[engine_section]
+pkcs11 = pkcs11_section
+
+[pkcs11_section]
+engine_id = pkcs11
+dynamic_path = /nix/store/drl8sclg3kyanl2fpya48b0l8kgznr5m-libp11-0.4.12/lib/engines/pkcs11.so
+MODULE_PATH = /nix/store/cr9w0d4gvcqfb3ri4pvm48n5ig8aidiz-opensc-0.26.0/lib/opensc-pkcs11.so
+INIT = 0
