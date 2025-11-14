@@ -71,7 +71,6 @@ toml = "0.9"
 
 chrono = "0.4.38"
 uuid = { version = "1.10", features = ["v4", "serde"] }
-sha2 = "0.10"
 argon2 = { version = "0.5", features = ["std"] }
 
 # Used for managing internal bitcoind
