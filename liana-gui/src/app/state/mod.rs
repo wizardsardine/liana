@@ -16,8 +16,6 @@ use liana_ui::widget::*;
 use super::{cache::Cache, menu::Menu, message::Message, view, wallet::Wallet};
 
 pub const HISTORY_EVENT_PAGE_SIZE: u64 = 20;
-const HOME_RELOAD_MAX_TTL: Duration = Duration::from_secs(10);
-const HOME_RELOAD_MIN_TTL: Duration = Duration::from_secs(3);
 
 use crate::daemon::model::coin_is_owned;
 use crate::daemon::{
