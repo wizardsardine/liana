@@ -21,7 +21,7 @@ use crate::{
         menu::Menu,
         message::Message,
         settings::{self, update_settings_file},
-        state::{export::ExportModal, State},
+        state::{vault::export::VaultExportModal, State},
         view,
         wallet::Wallet,
         Config,
@@ -36,7 +36,7 @@ use crate::{
 enum Modal {
     None,
     RegisterWallet(RegisterWalletModal),
-    ImportExport(ExportModal),
+    ImportExport(VaultExportModal),
 }
 
 impl Modal {
@@ -278,7 +278,7 @@ impl State for WalletSettingsState {
             )) => {
                 if self.modal.is_none() {
                     let descriptor = self.wallet.main_descriptor.clone();
-                    let modal = ExportModal::new(
+                    let modal = VaultExportModal::new(
                         Some(daemon),
                         ImportExportType::ExportEncryptedDescriptor(Box::new(descriptor)),
                     );

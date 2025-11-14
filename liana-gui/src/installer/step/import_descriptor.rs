@@ -2,7 +2,7 @@ use iced::{Subscription, Task};
 use liana_ui::widget::Element;
 
 use crate::{
-    app::state::export::ExportModal,
+    app::state::vault::export::VaultExportModal,
     export::{ImportExportMessage, Progress},
     hw::HardwareWallets,
     installer::{
@@ -16,7 +16,7 @@ pub const BACKUP_NETWORK_NOT_MATCH: &str = "Backup network do not match the sele
 #[derive(Debug)]
 pub enum ImportDescriptorModal {
     None,
-    Export(ExportModal),
+    Export(VaultExportModal),
     Decrypt(DecryptModal),
 }
 

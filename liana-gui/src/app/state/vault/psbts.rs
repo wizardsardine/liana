@@ -4,7 +4,7 @@ use iced::{Subscription, Task};
 
 use liana_ui::widget::Element;
 
-use super::{export::ExportModal, psbt, State};
+use super::{super::State, export::VaultExportModal, psbt};
 use crate::{
     app::{cache::Cache, error::Error, menu::Menu, message::Message, view, wallet::Wallet},
     daemon::{model::SpendTx, Daemon},
@@ -16,7 +16,7 @@ pub struct PsbtsPanel {
     selected_tx: Option<psbt::PsbtState>,
     spend_txs: Vec<SpendTx>,
     warning: Option<Error>,
-    modal: Option<ExportModal>,
+    modal: Option<VaultExportModal>,
 }
 
 impl PsbtsPanel {
@@ -94,7 +94,7 @@ impl State for PsbtsPanel {
                     return tx.update(daemon, cache, message);
                 } else if self.modal.is_none() {
                     let modal =
-                        ExportModal::new(Some(daemon.clone()), ImportExportType::ImportPsbt(None));
+                        VaultExportModal::new(Some(daemon.clone()), ImportExportType::ImportPsbt(None));
                     let launch = modal.launch(false);
                     self.modal = Some(modal);
                     return launch;

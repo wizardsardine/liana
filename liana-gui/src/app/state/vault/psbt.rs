@@ -20,7 +20,7 @@ use crate::{
         cache::Cache,
         error::Error,
         message::Message,
-        state::label::{label_item_from_str, LabelsEdited},
+        state::vault::label::{label_item_from_str, LabelsEdited},
         view,
         wallet::{Wallet, WalletError},
     },
@@ -32,7 +32,7 @@ use crate::{
     hw::{HardwareWallet, HardwareWallets},
 };
 
-use super::export::ExportModal;
+use super::export::VaultExportModal;
 
 pub trait Modal {
     fn load(&self, _daemon: Arc<dyn Daemon + Sync + Send>) -> Task<Message> {
@@ -60,7 +60,7 @@ pub enum PsbtModal {
     Sign(SignModal),
     Broadcast(BroadcastModal),
     Delete(DeleteModal),
-    Export(ExportModal),
+    Export(VaultExportModal),
 }
 
 impl<'a> AsRef<dyn Modal + 'a> for PsbtModal {
@@ -140,7 +140,7 @@ impl PsbtState {
             Message::View(view::Message::ExportPsbt) => {
                 if self.modal.is_none() {
                     let psbt_str = self.tx.psbt.to_string();
-                    let modal = ExportModal::new(None, ImportExportType::ExportPsbt(psbt_str));
+                    let modal = VaultExportModal::new(None, ImportExportType::ExportPsbt(psbt_str));
                     let launch = modal.launch(true);
                     self.modal = Some(PsbtModal::Export(modal));
                     return launch;
@@ -148,7 +148,7 @@ impl PsbtState {
             }
             Message::View(view::Message::ImportPsbt) => {
                 if self.modal.is_none() {
-                    let modal = ExportModal::new(
+                    let modal = VaultExportModal::new(
                         Some(daemon.clone()),
                         ImportExportType::ImportPsbt(Some(self.tx.psbt.unsigned_tx.compute_txid())),
                     );

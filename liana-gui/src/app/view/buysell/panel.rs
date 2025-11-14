@@ -46,7 +46,7 @@ impl std::fmt::Display for LabelledAddress {
 pub struct BuySellPanel {
     // Runtime state - determines which flow is active
     pub flow_state: BuySellFlowState,
-    pub modal: app::state::receive::Modal,
+    pub modal: app::state::vault::receive::Modal,
     pub buy_or_sell: Option<BuyOrSell>,
 
     // Common fields (always present)
@@ -81,7 +81,7 @@ impl BuySellPanel {
             wallet,
             data_dir,
             generated_address: None,
-            modal: app::state::receive::Modal::None,
+            modal: app::state::vault::receive::Modal::None,
             detected_country_name: None,
             detected_country_iso: None,
             webview_manager: iced_wry::IcedWebviewManager::new(),

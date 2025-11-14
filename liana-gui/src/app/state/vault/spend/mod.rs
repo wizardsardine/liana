@@ -10,7 +10,7 @@ use liana::miniscript::bitcoin::{Network, OutPoint};
 use liana_ui::widget::Element;
 use lianad::commands::CoinStatus;
 
-use super::{redirect, State};
+use super::{super::redirect, super::State};
 use crate::{
     app::{cache::Cache, error::Error, menu::Menu, message::Message, view, wallet::Wallet},
     daemon::{

@@ -17,7 +17,7 @@ use crate::{
 };
 
 #[derive(Debug)]
-pub struct ExportModal {
+pub struct VaultExportModal {
     path: Option<PathBuf>,
     handle: Option<Arc<Mutex<JoinHandle<()>>>>,
     state: ImportExportState,
@@ -26,7 +26,7 @@ pub struct ExportModal {
     import_export_type: ImportExportType,
 }
 
-impl app::state::psbt::Modal for ExportModal {
+impl app::state::vault::psbt::Modal for VaultExportModal {
     fn subscription(&self) -> Subscription<app::Message> {
         self.subscription()
             .map(|s| s.map(|m| app::Message::Export(ImportExportMessage::Progress(m))))
@@ -54,7 +54,7 @@ impl app::state::psbt::Modal for ExportModal {
     }
 }
 
-impl ExportModal {
+impl VaultExportModal {
     #[allow(clippy::new_without_default)]
     pub fn new(
         daemon: Option<Arc<dyn Daemon + Sync + Send>>,
@@ -220,7 +220,7 @@ impl ExportModal {
                             async move {
                                 if sender.send(true).await.is_err() {
                                     tracing::error!(
-                                        "ExportModal.update(): fail to send labels NACK"
+                                        "VaultExportModal.update(): fail to send labels NACK"
                                     );
                                 }
                             },
@@ -231,7 +231,7 @@ impl ExportModal {
                             async move {
                                 if sender.send(true).await.is_err() {
                                     tracing::error!(
-                                        "ExportModal.update(): fail to send aliases NACK"
+                                        "VaultExportModal.update(): fail to send aliases NACK"
                                     );
                                 }
                             },
@@ -252,7 +252,7 @@ impl ExportModal {
                             async move {
                                 if sender.send(false).await.is_err() {
                                     tracing::error!(
-                                        "ExportModal.update(): fail to send labels NACK"
+                                        "VaultExportModal.update(): fail to send labels NACK"
                                     );
                                 }
                             },
@@ -263,7 +263,7 @@ impl ExportModal {
                             async move {
                                 if sender.send(false).await.is_err() {
                                     tracing::error!(
-                                        "ExportModal.update(): fail to send aliases NACK"
+                                        "VaultExportModal.update(): fail to send aliases NACK"
                                     );
                                 }
                             },

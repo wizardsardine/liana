@@ -34,7 +34,7 @@ use liana_ui::{
 };
 
 use crate::{
-    app::{settings::ProviderKey, state::export::ExportModal},
+    app::{settings::ProviderKey, state::vault::export::VaultExportModal},
     export::{ImportExportMessage, ImportExportType},
     hw::{is_compatible_with_tapminiscript, HardwareWallet, HardwareWallets, UnsupportedReason},
     installer::{
@@ -185,7 +185,7 @@ pub struct SelectKeySource {
     selected_key: SelectedKey,
     step: Step,
     focus: Focus,
-    modal: Option<ExportModal>,
+    modal: Option<VaultExportModal>,
     processing: bool,
     error: Option<String>,
     details_error: Option<String>,
@@ -474,7 +474,7 @@ impl SelectKeySource {
         self.focus = Focus::LoadXpubFromFile;
         self.import_xpub_error = None;
         if self.modal.is_none() {
-            let modal = ExportModal::new(None, ImportExportType::ImportXpub(self.network));
+            let modal = VaultExportModal::new(None, ImportExportType::ImportXpub(self.network));
             let launch = modal.launch(false);
             self.modal = Some(modal);
             return launch;

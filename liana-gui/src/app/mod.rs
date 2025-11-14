@@ -28,7 +28,7 @@ pub use message::Message;
 
 use state::{
     ActiveOverview, ActiveReceive, ActiveSend, ActiveSettings, ActiveTransactions, CoinsPanel,
-    CreateSpendPanel, GlobalHome, Home, PsbtsPanel, ReceivePanel, State, TransactionsPanel,
+    CreateSpendPanel, GlobalHome, VaultOverview, PsbtsPanel, VaultReceivePanel, State, VaultTransactionsPanel,
 };
 use wallet::{sync_status, SyncStatus};
 
@@ -60,12 +60,12 @@ struct Panels {
     active_transactions: ActiveTransactions,
     active_settings: ActiveSettings,
     // Vault-only panels - None when no vault exists
-    vault_overview: Option<Home>,
+    vault_overview: Option<VaultOverview>,
     coins: Option<CoinsPanel>,
-    transactions: Option<TransactionsPanel>,
+    transactions: Option<VaultTransactionsPanel>,
     psbts: Option<PsbtsPanel>,
     recovery: Option<CreateSpendPanel>,
-    receive: Option<ReceivePanel>,
+    receive: Option<VaultReceivePanel>,
     create_spend: Option<CreateSpendPanel>,
     settings: Option<SettingsState>,
     #[cfg(feature = "buysell")]
@@ -127,7 +127,7 @@ impl Panels {
             vault_expanded: false,
             active_expanded: false,
             global_home: GlobalHome::new(wallet.clone()),
-            vault_overview: Some(Home::new(
+            vault_overview: Some(VaultOverview::new(
                 wallet.clone(),
                 cache.coins(),
                 sync_status(
@@ -149,10 +149,10 @@ impl Panels {
                 cache.coins(),
                 wallet.main_descriptor.first_timelock_value(),
             )),
-            transactions: Some(TransactionsPanel::new(wallet.clone())),
+            transactions: Some(VaultTransactionsPanel::new(wallet.clone())),
             psbts: Some(PsbtsPanel::new(wallet.clone())),
             recovery: Some(new_recovery_panel(wallet.clone(), cache)),
-            receive: Some(ReceivePanel::new(data_dir.clone(), wallet.clone())),
+            receive: Some(VaultReceivePanel::new(data_dir.clone(), wallet.clone())),
             create_spend: Some(CreateSpendPanel::new(
                 wallet.clone(),
                 cache.coins(),

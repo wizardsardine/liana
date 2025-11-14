@@ -289,7 +289,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<
     if has_vault && is_vault_expanded {
         use crate::app::menu::VaultSubMenu;
 
-        // Home
+        // Overview
         let vault_overview_button = if matches!(menu, Menu::Vault(VaultSubMenu::Overview)) {
             row!(
                 Space::with_width(Length::Fixed(20.0)),

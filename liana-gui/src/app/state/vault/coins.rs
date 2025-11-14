@@ -14,7 +14,7 @@ use crate::{
         error::Error,
         menu::Menu,
         message::Message,
-        state::{label::LabelsEdited, State},
+        state::{vault::label::LabelsEdited, State},
         view,
         wallet::Wallet,
     },

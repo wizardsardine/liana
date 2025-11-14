@@ -16,7 +16,10 @@ use lianad::config::{
 use liana_ui::{component::form, widget::Element};
 
 use crate::{
-    app::{cache::Cache, error::Error, menu::Menu, message::Message, state::settings::State, view},
+    app::{
+        cache::Cache, error::Error, menu::Menu, message::Message, state::vault::settings::State,
+        view,
+    },
     daemon::Daemon,
     help,
     node::{

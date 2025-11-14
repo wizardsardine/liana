@@ -27,7 +27,7 @@ use crate::{
         error::Error,
         menu::Menu,
         message::Message,
-        state::{fiat_converter_for_wallet, psbt},
+        state::{fiat_converter_for_wallet, vault::psbt},
         view::{self, fiat::FiatAmount},
         wallet::Wallet,
     },
