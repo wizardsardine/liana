@@ -119,7 +119,7 @@ impl State for VaultReceivePanel {
             menu,
             cache,
             self.warning.as_ref(),
-            view::receive::receive(
+            view::vault::receive::receive(
                 &self.addresses.list,
                 &self.addresses.labels,
                 &self.prev_addresses.list,
@@ -357,7 +357,7 @@ impl VerifyAddressModal {
 
 impl VerifyAddressModal {
     pub fn view(&self) -> Element<'_, view::Message> {
-        view::receive::verify_address_modal(
+        view::vault::receive::verify_address_modal(
             self.warning.as_ref(),
             &self.hws.list,
             &self.chosen_hws,
@@ -430,7 +430,7 @@ impl ShowQrCodeModal {
     }
 
     pub fn view(&self) -> Element<'_, view::Message> {
-        view::receive::qr_modal(&self.qr_code, &self.address)
+        view::vault::receive::qr_modal(&self.qr_code, &self.address)
     }
 }
 

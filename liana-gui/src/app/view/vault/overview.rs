@@ -22,7 +22,7 @@ use crate::{
         cache::Cache,
         error::Error,
         menu::{self, Menu},
-        view::{coins, dashboard, label, message::Message, FiatAmountConverter},
+        view::{dashboard, vault::coins, vault::label, message::Message, FiatAmountConverter},
         wallet::SyncStatus,
     },
     daemon::model::{HistoryTransaction, Payment, PaymentKind, TransactionKind},

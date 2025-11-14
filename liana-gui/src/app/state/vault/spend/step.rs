@@ -28,7 +28,7 @@ use crate::{
         menu::Menu,
         message::Message,
         state::{fiat_converter_for_wallet, vault::psbt},
-        view::{self, fiat::FiatAmount},
+        view::{self, vault::fiat::FiatAmount},
         wallet::Wallet,
     },
     daemon::{
@@ -809,7 +809,7 @@ impl Step for DefineSpend {
 
     fn view<'a>(&'a self, menu: &'a Menu, cache: &'a Cache) -> Element<'a, view::Message> {
         let converter = fiat_converter_for_wallet(&self.wallet, cache);
-        view::spend::create_spend_tx(
+        view::vault::spend::create_spend_tx(
             menu,
             cache,
             converter.as_ref(),
@@ -1003,7 +1003,7 @@ impl Recipient {
                 }
             }
         }
-        view::spend::recipient_view(
+        view::vault::spend::recipient_view(
             i,
             &self.address,
             &self.amount,
@@ -1099,7 +1099,7 @@ impl Step for SaveSpend {
 
     fn view<'a>(&'a self, menu: &'a Menu, cache: &'a Cache) -> Element<'a, view::Message> {
         let (psbt_state, warnings) = self.spend.as_ref().unwrap();
-        let content = view::spend::spend_view(
+        let content = view::vault::spend::spend_view(
             menu,
             cache,
             &psbt_state.tx,
@@ -1169,7 +1169,7 @@ impl Step for SelectRecoveryPath {
     }
 
     fn view<'a>(&'a self, menu: &'a Menu, cache: &'a Cache) -> Element<'a, view::Message> {
-        view::recovery::recovery(
+        view::vault::recovery::recovery(
             menu,
             cache,
             self.recovery_paths
@@ -1177,7 +1177,7 @@ impl Step for SelectRecoveryPath {
                 .enumerate()
                 .filter_map(|(i, path)| {
                     if path.number_of_coins > 0 {
-                        Some(view::recovery::recovery_path_view(
+                        Some(view::vault::recovery::recovery_path_view(
                             i,
                             path.threshold,
                             &path.origins,

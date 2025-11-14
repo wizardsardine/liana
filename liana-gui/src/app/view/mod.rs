@@ -1,29 +1,16 @@
-mod label;
 mod message;
-mod warning;
 
 pub mod active;
-pub mod coins;
-pub mod export;
-pub mod fiat;
 pub mod global_home;
-pub mod home;
-pub mod hw;
 
 #[cfg(feature = "buysell")]
 pub mod buysell;
 
-pub mod psbt;
-pub mod psbts;
-pub mod receive;
-pub mod recovery;
-pub mod settings;
-pub mod spend;
-pub mod transactions;
+pub mod vault;
 
-pub use fiat::FiatAmountConverter;
+pub use vault::fiat::FiatAmountConverter;
 pub use message::*;
-use warning::warn;
+pub use vault::warning::warn;
 
 use iced::{
     widget::{column, row, scrollable, Space},

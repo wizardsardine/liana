@@ -92,7 +92,7 @@ impl State for VaultOverview {
     fn view<'a>(&'a self, menu: &'a Menu, cache: &'a Cache) -> Element<'a, view::Message> {
         let converter = fiat_converter_for_wallet(&self.wallet, cache);
         if let Some((tx, output_index)) = &self.selected_event {
-            view::home::payment_view(
+            view::vault::overview::payment_view(
                 cache,
                 tx,
                 *output_index,
@@ -104,7 +104,7 @@ impl State for VaultOverview {
                 menu,
                 cache,
                 None,
-                view::home::home_view(
+                view::vault::overview::home_view(
                     &self.balance,
                     &self.unconfirmed_balance,
                     &self.remaining_sequence,

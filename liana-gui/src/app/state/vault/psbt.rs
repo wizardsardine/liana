@@ -281,7 +281,7 @@ impl PsbtState {
     }
 
     pub fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, view::Message> {
-        let content = view::psbt::psbt_view(
+        let content = view::vault::psbt::psbt_view(
             cache,
             &self.tx,
             self.saved,
@@ -346,7 +346,7 @@ impl Modal for SaveModal {
     fn view<'a>(&'a self, content: Element<'a, view::Message>) -> Element<'a, view::Message> {
         modal::Modal::new(
             content,
-            view::psbt::save_action(self.error.as_ref(), self.saved),
+            view::vault::psbt::save_action(self.error.as_ref(), self.saved),
         )
         .on_blur(Some(view::Message::Spend(view::SpendTxMessage::Cancel)))
         .into()
@@ -397,7 +397,7 @@ impl Modal for BroadcastModal {
     fn view<'a>(&'a self, content: Element<'a, view::Message>) -> Element<'a, view::Message> {
         modal::Modal::new(
             content,
-            view::psbt::broadcast_action(
+            view::vault::psbt::broadcast_action(
                 &self.conflicting_txids,
                 self.error.as_ref(),
                 self.broadcast,
@@ -447,7 +447,7 @@ impl Modal for DeleteModal {
     fn view<'a>(&'a self, content: Element<'a, view::Message>) -> Element<'a, view::Message> {
         modal::Modal::new(
             content,
-            view::psbt::delete_action(self.error.as_ref(), self.deleted),
+            view::vault::psbt::delete_action(self.error.as_ref(), self.deleted),
         )
         .on_blur(Some(view::Message::Spend(view::SpendTxMessage::Cancel)))
         .into()
@@ -589,13 +589,13 @@ impl Modal for SignModal {
     fn view<'a>(&'a self, content: Element<'a, view::Message>) -> Element<'a, view::Message> {
         let content = toast::Manager::new(
             content,
-            view::psbt::sign_action_toasts(self.error.as_ref(), &self.hws.list, &self.signing),
+            view::vault::psbt::sign_action_toasts(self.error.as_ref(), &self.hws.list, &self.signing),
         )
         .into();
         if self.display_modal {
             modal::Modal::new(
                 content,
-                view::psbt::sign_action(
+                view::vault::psbt::sign_action(
                     self.error.as_ref(),
                     &self.hws.list,
                     &self.wallet.main_descriptor,

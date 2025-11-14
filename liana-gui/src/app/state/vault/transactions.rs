@@ -81,7 +81,7 @@ impl VaultTransactionsPanel {
 impl State for VaultTransactionsPanel {
     fn view<'a>(&'a self, menu: &'a Menu, cache: &'a Cache) -> Element<'a, view::Message> {
         if let Some(tx) = self.selected_tx.as_ref() {
-            let content = view::transactions::tx_view(
+            let content = view::vault::transactions::tx_view(
                 menu,
                 cache,
                 tx,
@@ -93,7 +93,7 @@ impl State for VaultTransactionsPanel {
                 _ => content,
             }
         } else {
-            let content = view::transactions::transactions_view(
+            let content = view::vault::transactions::transactions_view(
                 menu,
                 cache,
                 &self.txs,
@@ -447,7 +447,7 @@ impl CreateRbfModal {
     fn view<'a>(&'a self, content: Element<'a, view::Message>) -> Element<'a, view::Message> {
         let modal = Modal::new(
             content,
-            view::transactions::create_rbf_modal(
+            view::vault::transactions::create_rbf_modal(
                 self.is_cancel,
                 &self.descendant_txids,
                 &self.feerate_val,

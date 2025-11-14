@@ -27,12 +27,12 @@ use liana_ui::{
 use crate::{
     app::{
         error::Error,
-        view::{hw, label, warning::warn},
+        view::{vault::hw, vault::label, vault::warning::warn},
     },
     hw::HardwareWallet,
 };
 
-use super::message::Message;
+use super::super::message::Message;
 
 fn address_card<'a>(
     row_index: usize,

@@ -17,7 +17,7 @@ use liana::{
 };
 use lianad::config::BitcoindRpcAuth;
 
-use super::{dashboard, message::*};
+use super::super::{dashboard, message::*};
 
 use liana_ui::{
     component::{badge, button, card, form, separation, text::*, tooltip::tooltip},
@@ -32,7 +32,7 @@ use crate::{
         error::Error,
         menu::Menu,
         settings::ProviderKey,
-        view::{hw, warning::warn},
+        view::{vault::hw, vault::warning::warn},
     },
     help,
     hw::HardwareWallet,

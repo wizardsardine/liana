@@ -12,7 +12,7 @@ use crate::{
     app::{
         cache::Cache,
         menu::Menu,
-        view::{label, message::Message},
+        view::{vault::label, message::Message},
     },
     daemon::model::{remaining_sequence, Coin},
 };

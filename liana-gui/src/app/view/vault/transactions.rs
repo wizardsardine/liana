@@ -19,9 +19,9 @@ use crate::{
         error::Error,
         menu::Menu,
         view::{
-            dashboard, label,
+            dashboard, vault::label,
             message::{CreateRbfMessage, Message},
-            warning::warn,
+            vault::warning::warn,
         },
     },
     daemon::model::{HistoryTransaction, Txid},
@@ -183,7 +183,7 @@ pub fn create_rbf_modal<'a>(
     let mut confirm_button = button::secondary(None, "Confirm").width(Length::Fixed(200.0));
     if feerate.valid || is_cancel {
         confirm_button =
-            confirm_button.on_press(Message::CreateRbf(super::CreateRbfMessage::Confirm));
+            confirm_button.on_press(Message::CreateRbf(super::super::CreateRbfMessage::Confirm));
     }
     let help_text = if is_cancel {
         "Replace the transaction with one paying a higher feerate \
@@ -375,13 +375,13 @@ pub fn tx_view<'a>(
                         .push(
                             button::secondary(None, "Bump fee")
                                 .width(Length::Fixed(200.0))
-                                .on_press(Message::CreateRbf(super::CreateRbfMessage::New(false))),
+                                .on_press(Message::CreateRbf(super::super::CreateRbfMessage::New(false))),
                         )
                         .push(
                             tooltip::Tooltip::new(
                                 button::secondary(None, "Cancel transaction")
                                 .width(Length::Fixed(200.0))
-                                .on_press(Message::CreateRbf(super::CreateRbfMessage::New(true))),
+                                .on_press(Message::CreateRbf(super::super::CreateRbfMessage::New(true))),
                                 "Best effort attempt at double spending an unconfirmed outgoing transaction",
                                 tooltip::Position::Top,
                             )

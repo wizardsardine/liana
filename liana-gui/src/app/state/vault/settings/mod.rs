@@ -152,7 +152,7 @@ impl State for SettingsState {
         if let Some(setting) = &self.setting {
             setting.view(menu, cache)
         } else {
-            view::settings::list(
+            view::vault::settings::list(
                 menu,
                 cache,
                 self.daemon_backend == DaemonBackend::RemoteBackend,
@@ -205,7 +205,7 @@ macro_rules! launch {
 
 impl State for ImportExportSettingsState {
     fn view<'a>(&'a self, menu: &'a Menu, cache: &'a Cache) -> Element<'a, view::Message> {
-        let content = view::settings::import_export(menu, cache, self.warning.as_ref());
+        let content = view::vault::settings::import_export(menu, cache, self.warning.as_ref());
         if let Some(modal) = &self.modal {
             modal.view(content)
         } else {
@@ -343,7 +343,7 @@ pub struct AboutSettingsState {
 
 impl State for AboutSettingsState {
     fn view<'a>(&'a self, menu: &'a Menu, cache: &'a Cache) -> Element<'a, view::Message> {
-        view::settings::about_section(
+        view::vault::settings::about_section(
             menu,
             cache,
             self.warning.as_ref(),
@@ -412,7 +412,7 @@ impl BackendSettingsState {
 
 impl State for BackendSettingsState {
     fn view<'a>(&'a self, menu: &'a Menu, cache: &'a Cache) -> Element<'a, view::Message> {
-        view::settings::remote_backend_section(
+        view::vault::settings::remote_backend_section(
             menu,
             cache,
             &self.email_form,

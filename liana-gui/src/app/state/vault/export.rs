@@ -10,7 +10,7 @@ use tokio::task::JoinHandle;
 use crate::{
     app::{
         self,
-        view::{export::export_modal, Close},
+        view::{vault::export::export_modal, Close},
     },
     daemon::Daemon,
     export::{self, get_path, ImportExportMessage, ImportExportState, ImportExportType, Progress},
