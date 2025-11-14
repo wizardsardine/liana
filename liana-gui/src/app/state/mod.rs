@@ -7,7 +7,6 @@ pub mod buysell;
 
 use std::convert::TryInto;
 use std::sync::Arc;
-use std::time::Duration;
 
 use iced::{Subscription, Task};
 use liana::miniscript::bitcoin::{Amount, OutPoint};
