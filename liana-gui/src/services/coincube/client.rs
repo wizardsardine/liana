@@ -7,15 +7,14 @@ pub struct CoincubeClient {
     base_url: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct SaveQuoteRequest {
     pub quote_id: String,
     pub hash: String,
     pub user_id: Option<String>,
     pub amount: u64,
-    pub source_currency: String,
-    pub target_currency: String,
-    pub payment_currency: Option<String>,
+    pub source_currency: crate::services::mavapay::MavapayUnitCurrency,
+    pub target_currency: crate::services::mavapay::MavapayUnitCurrency,
     pub exchange_rate: f64,
     pub usd_to_target_currency_rate: f64,
     pub transaction_fees_in_source_currency: u64,

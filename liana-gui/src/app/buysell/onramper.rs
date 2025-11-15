@@ -1,7 +1,5 @@
 use liana::miniscript::bitcoin;
 
-const WIDGET_OPTIONS: &str = "{{BASE_URL}}/?apiKey={{API_KEY}}&mode={{MODE}}&partnerContext=CoincubeVault&defaultFiat={{DEFAULT_FIAT}}&onlyCryptoNetworks=bitcoin&sell_defaultFiat={{DEFAULT_FIAT}}&sell_onlyCryptoNetworks=bitcoin&redirectAtCheckout=true&enableCountrySelector=false&themeName=dark";
-
 pub fn create_widget_url(
     currency: &str,
     address: Option<&str>,
@@ -22,11 +20,7 @@ pub fn create_widget_url(
         _ => return Err("Onramper is only supported for mainnet and testnet3 wallets"),
     };
 
-    let mut url = WIDGET_OPTIONS
-        .replace("{{BASE_URL}}", base_url)
-        .replace("{{MODE}}", mode)
-        .replace("{{API_KEY}}", api_key)
-        .replace("{{DEFAULT_FIAT}}", currency);
+    let mut url = format!("{base_url}/?apiKey={api_key}&mode={mode}&partnerContext=CoincubeVault&defaultFiat={default_fiat}&onlyCryptoNetworks=bitcoin&sell_defaultFiat={default_fiat}&sell_onlyCryptoNetworks=bitcoin&redirectAtCheckout=true&enableCountrySelector=false&themeName=dark", base_url=base_url, api_key=api_key, mode=mode, default_fiat=currency);
 
     // insert address if any
     if let Some(a) = address {

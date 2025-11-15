@@ -3,36 +3,34 @@ use serde::{Deserialize, Serialize};
 
 use crate::services::http::{NotSuccessResponseInfo, ResponseExt};
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Serialize, Deserialize)]
 pub struct AuthDetail {
-    pub provider: u8, // 1 for email provider
+    pub provider: u8,
     pub password: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SignUpRequest {
-    #[serde(rename = "accountType")]
-    pub account_type: String,
+    // TODO: is support for businesses even planned?
+    pub account_type: &'static str,
     pub email: String,
-    #[serde(rename = "firstName")]
     pub first_name: String,
-    #[serde(rename = "lastName")]
     pub last_name: String,
-    #[serde(rename = "authDetails")]
     pub auth_details: Vec<AuthDetail>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Serialize)]
 pub struct EmailVerificationStatusRequest {
     pub email: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Serialize)]
 pub struct ResendVerificationEmailRequest {
     pub email: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Serialize)]
 pub struct LoginRequest {
     pub provider: u8, // 1 for email provider
     pub email: String,
@@ -40,48 +38,45 @@ pub struct LoginRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct User {
     pub id: u32,
     pub email: String,
-    #[serde(rename = "firstName")]
     pub first_name: String,
-    #[serde(rename = "lastName")]
     pub last_name: String,
-    #[serde(rename = "emailVerified")]
     pub email_verified: bool,
-    #[serde(rename = "needs2FASetup")]
     pub needs_2fa_setup: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Deserialize)]
 pub struct SignUpResponse {
     pub status: String,
     pub data: User,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct EmailVerificationStatusResponse {
     pub email: String,
-    #[serde(rename = "emailVerified")]
     pub email_verified: bool,
     pub message: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ResendEmailResponse {
+#[derive(Deserialize)]
+pub struct VerifyEmailResponse {
     pub message: String,
     pub email: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Deserialize, Debug, Clone)]
 pub struct LoginResponse {
-    #[serde(rename = "requires_2fa")]
-    pub requires_two_factor: bool,
-    pub token: Option<String>, // JWT token for authenticated requests
-    pub user: Option<User>,    // User data when login is successful
+    pub requires_2fa: bool,
+    pub token: String, // JWT token for authenticated requests
+    pub user: User,    // User data when login is successful
 }
 
-#[derive(Debug, Clone)]
+// TODO: fold this into `crate::services::coincube::CoincubeClient`
+#[derive(Clone)]
 pub struct RegistrationClient {
     http: reqwest::Client,
     base_url: String,
@@ -177,10 +172,10 @@ impl RegistrationClient {
         Ok(status_response)
     }
 
-    pub async fn resend_verification_email(
+    pub async fn send_verification_email(
         &self,
         email: &str,
-    ) -> Result<ResendEmailResponse, RegistrationError> {
+    ) -> Result<VerifyEmailResponse, RegistrationError> {
         let request = ResendVerificationEmailRequest {
             email: email.to_string(),
         };
@@ -191,7 +186,7 @@ impl RegistrationClient {
             .check_success()
             .await?;
 
-        let resend_response: ResendEmailResponse = response.json().await?;
+        let resend_response: VerifyEmailResponse = response.json().await?;
         Ok(resend_response)
     }
 

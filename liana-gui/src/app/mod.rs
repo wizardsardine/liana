@@ -167,7 +167,6 @@ impl Panels {
             buy_sell: Some(crate::app::view::buysell::BuySellPanel::new(
                 cache.network,
                 wallet,
-                data_dir,
             )),
         }
     }
@@ -222,7 +221,6 @@ impl Panels {
             self.buy_sell = Some(crate::app::view::buysell::BuySellPanel::new(
                 cache.network,
                 wallet,
-                data_dir,
             ));
         }
     }
@@ -788,21 +786,16 @@ impl App {
                     })
                 {
                     self.cache.fiat_price = Some(fiat_price);
-                    Task::perform(async {}, |_| Message::CacheUpdated)
-                } else {
-                    Task::none()
+                    return Task::done(Message::CacheUpdated);
                 }
             }
-            Message::UpdateDaemonCache(res) => {
-                match res {
-                    Ok(daemon_cache) => {
-                        self.cache.daemon_cache = daemon_cache;
-                        return Task::perform(async {}, |_| Message::CacheUpdated);
-                    }
-                    Err(e) => tracing::error!("Failed to update daemon cache: {}", e),
+            Message::UpdateDaemonCache(res) => match res {
+                Ok(daemon_cache) => {
+                    self.cache.daemon_cache = daemon_cache;
+                    return Task::done(Message::CacheUpdated);
                 }
-                Task::none()
-            }
+                Err(e) => tracing::error!("Failed to update daemon cache: {}", e),
+            },
             Message::CacheUpdated => {
                 // Update vault panels with cache if they exist
                 if let (Some(daemon), Some(vault_overview), Some(settings)) = (
@@ -821,7 +814,7 @@ impl App {
                             | Menu::Vault(crate::app::menu::VaultSubMenu::Settings(_))
                     );
 
-                    let commands = vec![
+                    let commands = [
                         vault_overview.update(
                             daemon.clone(),
                             &cache,
@@ -835,19 +828,16 @@ impl App {
                             Message::UpdatePanelCache(is_settings_current),
                         ),
                     ];
-                    Task::batch(commands)
-                } else {
-                    Task::none()
+                    return Task::batch(commands);
                 }
             }
             Message::LoadDaemonConfig(cfg) => {
                 // Only load daemon config if we have a vault (daemon and wallet exist)
                 if self.daemon.is_some() && self.wallet.is_some() {
                     let res = self.load_daemon_config(self.cache.datadir_path.clone(), *cfg);
-                    self.update(Message::DaemonConfigLoaded(res))
+                    return self.update(Message::DaemonConfigLoaded(res));
                 } else {
                     tracing::warn!("Attempted to load daemon config without vault");
-                    Task::none()
                 }
             }
             Message::WalletUpdated(Ok(wallet)) => {
@@ -873,27 +863,16 @@ impl App {
                 }
 
                 // Forward the message to the current panel
-                if let Some(daemon) = &self.daemon {
-                    if let Some(panel) = self.panels.current_mut() {
-                        panel.update(
-                            daemon.clone(),
-                            &self.cache,
-                            Message::WalletUpdated(Ok(wallet)),
-                        )
-                    } else {
-                        Task::none()
-                    }
-                } else {
-                    Task::none()
+                if let (Some(daemon), Some(panel)) =
+                    (self.daemon.clone(), self.panels.current_mut())
+                {
+                    return panel.update(daemon, &self.cache, Message::WalletUpdated(Ok(wallet)));
                 }
             }
             Message::View(view::Message::Menu(menu)) => {
-                let close_task = if let Some(panel) = self.panels.current_mut() {
-                    panel.close()
-                } else {
-                    Task::none()
-                };
-                Task::batch([close_task, self.set_current_panel(menu)])
+                if let Some(panel) = self.panels.current_mut() {
+                    return Task::batch([panel.close(), self.set_current_panel(menu)]);
+                }
             }
             Message::View(view::Message::ToggleVault) => {
                 self.panels.vault_expanded = !self.panels.vault_expanded;
@@ -903,7 +882,6 @@ impl App {
                     self.panels.active_expanded = false;
                     self.cache.active_expanded = false;
                 }
-                Task::none()
             }
             Message::View(view::Message::ToggleActive) => {
                 self.panels.active_expanded = !self.panels.active_expanded;
@@ -913,30 +891,25 @@ impl App {
                     self.panels.vault_expanded = false;
                     self.cache.vault_expanded = false;
                 }
-                Task::none()
             }
             Message::View(view::Message::OpenUrl(url)) => {
                 if let Err(e) = open::that_detached(&url) {
                     tracing::error!("Error opening '{}': {}", url, e);
                 }
-                Task::none()
             }
-            Message::View(view::Message::Clipboard(text)) => clipboard::write(text),
+            Message::View(view::Message::Clipboard(text)) => return clipboard::write(text),
 
-            // TODO: Move to panel.state
-            _ => {
-                if let Some(daemon) = &self.daemon {
-                    if let Some(panel) = self.panels.current_mut() {
-                        panel.update(daemon.clone(), &self.cache, message)
-                    } else {
-                        Task::none()
-                    }
+            msg => {
+                if let (Some(daemon), Some(panel)) =
+                    (self.daemon.clone(), self.panels.current_mut())
+                {
+                    return panel.update(daemon, &self.cache, msg);
                 } else {
-                    // No daemon available (app without vault), skip panel update
-                    Task::none()
                 }
             }
-        }
+        };
+
+        Task::none()
     }
 
     pub fn load_daemon_config(

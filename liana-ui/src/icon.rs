@@ -75,6 +75,10 @@ pub fn dot_icon() -> Text<'static> {
     bootstrap_icon('\u{F287}')
 }
 
+pub fn email_icon() -> Text<'static> {
+    bootstrap_icon('\u{F7BE}')
+}
+
 pub fn person_icon() -> Text<'static> {
     bootstrap_icon('\u{F4DA}')
 }
@@ -242,11 +246,11 @@ pub fn building_icon() -> Text<'static> {
 }
 
 pub fn vault_icon() -> Text<'static> {
-    bootstrap_icon('\u{F65A}') // safe icon
+    bootstrap_icon('\u{F65A}')
 }
 
 pub fn lightning_icon() -> Text<'static> {
-    bootstrap_icon('\u{F46E}') // lightning-fill icon
+    bootstrap_icon('\u{F46E}')
 }
 
 pub fn eye_icon() -> Text<'static> {

@@ -7,37 +7,26 @@ use crate::services::http::ResponseExt;
 #[derive(Debug, Clone)]
 pub struct MavapayClient {
     http: reqwest::Client,
-    base_url: String,
-    api_key: String,
+    base_url: &'static str,
+    api_key: &'static str,
 }
 
 impl MavapayClient {
     /// Create a new Mavapay client
-    pub fn new(api_key: String) -> Self {
-        let base_url = if cfg!(debug_assertions) {
-            "https://staging.api.mavapay.co/api/v1".to_string()
-        } else {
-            "https://api.mavapay.co/api/v1".to_string()
+    pub fn new() -> Self {
+        let api_key = match cfg!(debug_assertions) {
+            // staging api key
+            true => "6361fa8e19e150db46d0dc614b9874fd199c95d80a9",
+            false => option_env!("MAVAPAY_API_KEY")
+                .expect("Unable to initialize Mavapay Client, API key not set at compile time"),
         };
 
-        if api_key.is_empty() {
-            tracing::warn!("Mavapay API key is empty - API calls will fail");
+        let base_url = if cfg!(debug_assertions) {
+            "https://staging.api.mavapay.co/api/v1"
         } else {
-            tracing::info!(
-                "Mavapay client initialized with API key: {}...",
-                &api_key[..api_key.len().min(8)]
-            );
-        }
+            "https://api.mavapay.co/api/v1"
+        };
 
-        Self {
-            http: reqwest::Client::new(),
-            base_url,
-            api_key,
-        }
-    }
-
-    /// Create a new client with custom base URL (for testing)
-    pub fn with_base_url(api_key: String, base_url: String) -> Self {
         Self {
             http: reqwest::Client::new(),
             base_url,
@@ -47,598 +36,154 @@ impl MavapayClient {
 
     /// Create an authenticated request
     fn request(&self, method: Method, endpoint: &str) -> RequestBuilder {
-        let url = format!("{}/{}", self.base_url, endpoint.trim_start_matches('/'));
-
-        #[cfg(debug_assertions)]
-        tracing::info!(
-            "[MAVAPAY] {} {} | API key: {}***",
-            method,
-            url,
-            &self.api_key[..self.api_key.len().min(4)]
-        );
+        let url = format!("{}{}", self.base_url, endpoint);
 
         self.http
             .request(method, &url)
-            .header("x-api-key", &self.api_key)
+            .header("x-api-key", self.api_key)
             .header("Content-Type", "application/json")
     }
 
     /// Get current Bitcoin price in specified currency
-    pub async fn get_price(&self, currency: &str) -> Result<PriceResponse, MavapayError> {
+    pub async fn get_price(
+        &self,
+        currency: MavapayCurrency,
+    ) -> Result<GetPriceResponse, MavapayError> {
         let response = self
-            .request(Method::GET, "price")
+            .request(Method::GET, "/price")
             .query(&[("currency", currency)])
             .send()
             .await?
             .check_success()
             .await?;
 
-        let price_data: serde_json::Value = response.json().await?;
-
-        tracing::debug!(
-            "Price API response: {}",
-            serde_json::to_string_pretty(&price_data).unwrap_or_default()
-        );
-
-        // Parse price from the actual API response structure
-        // Priority order: root level fields first (actual API format), then fallback to nested structures
-        let price = if let Some(btc_price) = price_data
-            .get("btcPriceInUnitCurrency")
-            .and_then(|p| p.as_str())
-        {
-            // Primary: Handle the actual API response format at root level - btcPriceInUnitCurrency as string
-            tracing::debug!(
-                "Found root-level btcPriceInUnitCurrency as string: {}",
-                btc_price
-            );
-            btc_price.parse::<f64>().map_err(|_| {
-                MavapayError::InvalidResponse(format!(
-                    "Cannot parse btcPriceInUnitCurrency '{}' as float",
-                    btc_price
-                ))
-            })?
-        } else if let Some(btc_price) = price_data
-            .get("btcPriceInUnitCurrency")
-            .and_then(|p| p.as_f64())
-        {
-            // Primary: Handle the actual API response format at root level - btcPriceInUnitCurrency as number
-            tracing::debug!(
-                "Found root-level btcPriceInUnitCurrency as number: {}",
-                btc_price
-            );
-            btc_price
-        } else if let Some(unit_price) = price_data
-            .get("unitPricePerSat")
-            .and_then(|p| p.get("amount"))
-            .and_then(|a| a.as_str())
-        {
-            // Alternative: use unit price per sat at root level
-            tracing::debug!(
-                "Found root-level unitPricePerSat amount as string: {}",
-                unit_price
-            );
-            unit_price.parse::<f64>().map_err(|_| {
-                MavapayError::InvalidResponse(format!(
-                    "Cannot parse unitPricePerSat amount '{}' as float",
-                    unit_price
-                ))
-            })?
-        } else if let Some(p) = price_data.get("price").and_then(|p| p.as_f64()) {
-            // Fallback: direct price field as number
-            tracing::debug!("Found root-level price as number: {}", p);
-            p
-        } else if let Some(p) = price_data.get("rate").and_then(|p| p.as_f64()) {
-            // Fallback: rate field as number
-            tracing::debug!("Found root-level rate as number: {}", p);
-            p
-        } else if let Some(data) = price_data.get("data") {
-            // Fallback: Handle nested data structure for other API formats
-            tracing::debug!(
-                "Found nested data structure: {}",
-                serde_json::to_string_pretty(&data).unwrap_or_default()
-            );
-
-            if let Some(btc_price) = data.get("btcPriceInUnitCurrency").and_then(|p| p.as_str()) {
-                tracing::debug!(
-                    "Found nested btcPriceInUnitCurrency as string: {}",
-                    btc_price
-                );
-                btc_price.parse::<f64>().map_err(|_| {
-                    MavapayError::InvalidResponse(format!(
-                        "Cannot parse nested btcPriceInUnitCurrency '{}' as float",
-                        btc_price
-                    ))
-                })?
-            } else if let Some(btc_price) =
-                data.get("btcPriceInUnitCurrency").and_then(|p| p.as_f64())
-            {
-                tracing::debug!(
-                    "Found nested btcPriceInUnitCurrency as number: {}",
-                    btc_price
-                );
-                btc_price
-            } else if let Some(unit_price) = data
-                .get("unitPricePerSat")
-                .and_then(|p| p.get("amount"))
-                .and_then(|a| a.as_str())
-            {
-                tracing::debug!(
-                    "Found nested unitPricePerSat amount as string: {}",
-                    unit_price
-                );
-                unit_price.parse::<f64>().map_err(|_| {
-                    MavapayError::InvalidResponse(format!(
-                        "Cannot parse nested unitPricePerSat amount '{}' as float",
-                        unit_price
-                    ))
-                })?
-            } else if let Some(p) = data.get("price").and_then(|p| p.as_f64()) {
-                tracing::debug!("Found nested price as number: {}", p);
-                p
-            } else if let Some(p) = data.get("rate").and_then(|p| p.as_f64()) {
-                tracing::debug!("Found nested rate as number: {}", p);
-                p
-            } else if let Some(p) = data.as_f64() {
-                tracing::debug!("Found nested data as number: {}", p);
-                p
-            } else {
-                tracing::error!(
-                    "No price found in nested data. Available fields: {:?}",
-                    data.as_object()
-                        .map(|o| o.keys().collect::<Vec<_>>())
-                        .unwrap_or_default()
-                );
-                return Err(MavapayError::InvalidResponse(format!(
-                    "No price found in nested data object: {}",
-                    data
-                )));
-            }
-        } else {
-            return Err(MavapayError::InvalidResponse(format!(
-                "No price found in response. Available fields: {:?}",
-                price_data
-                    .as_object()
-                    .map(|o| o.keys().collect::<Vec<_>>())
-                    .unwrap_or_default()
-            )));
-        };
-
-        Ok(PriceResponse {
-            price,
-            currency: currency.to_string(),
-            timestamp: None,
-        })
-    }
-
-    /// Get exchange rate between two currencies
-    pub async fn get_exchange_rate(&self, pair: &str) -> Result<f64, MavapayError> {
-        let response = self
-            .request(Method::GET, "price/ticker")
-            .query(&[("pair", pair)])
-            .send()
-            .await?
-            .check_success()
-            .await?;
-
-        let rate_data: serde_json::Value = response.json().await?;
-
-        let rate = rate_data
-            .get("rate")
-            .and_then(|r| r.as_f64())
-            .ok_or_else(|| MavapayError::InvalidResponse("Missing rate field".to_string()))?;
-
-        Ok(rate)
+        match response.json::<MavapayResponse<GetPriceResponse>>().await? {
+            MavapayResponse::Error { message } => Err(MavapayError::ApiError(message)),
+            MavapayResponse::Success { data } => Ok(data),
+        }
     }
 
     /// Create a quote for currency conversion
-    pub async fn create_quote(&self, request: QuoteRequest) -> Result<QuoteResponse, MavapayError> {
-        #[cfg(debug_assertions)]
-        {
-            let request_json = serde_json::to_string_pretty(&request).unwrap_or_default();
-            tracing::info!("[MAVAPAY] Creating quote with request:\n{}", request_json);
-        }
-
+    pub async fn create_quote(
+        &self,
+        request: GetQuoteRequest,
+    ) -> Result<GetQuoteResponse, MavapayError> {
         let response = self
-            .request(Method::POST, "quote")
+            .request(Method::POST, "/quote")
             .json(&request)
             .send()
             .await?;
 
-        #[cfg(debug_assertions)]
-        {
-            let status = response.status();
-            tracing::info!("[MAVAPAY] Quote response status: {}", status);
-        }
-
         let response = response.check_success().await?;
+        let response: MavapayResponse<GetQuoteResponse> = response.json().await?;
 
-        // Read raw response body for debugging
-        let response_text = response.text().await?;
+        // check for errors
+        let quote = match response {
+            MavapayResponse::Error { message } => return Err(MavapayError::ApiError(message)),
+            MavapayResponse::Success { data } => data,
+        };
 
-        #[cfg(debug_assertions)]
-        tracing::info!("[MAVAPAY] Raw quote response body:\n{}", response_text);
-
-        // Parse the response
-        let api_response: ApiResponse<QuoteResponse> = serde_json::from_str(&response_text)
-            .map_err(|e| {
-                #[cfg(debug_assertions)]
-                tracing::error!(
-                    "[MAVAPAY] Failed to deserialize quote response: {}\nResponse was: {}",
-                    e,
-                    response_text
-                );
-                MavapayError::InvalidResponse(format!(
-                    "Failed to parse quote response: {} | Response: {}",
-                    e, response_text
-                ))
-            })?;
-
-        if api_response.status != "ok" && api_response.status != "success" {
-            return Err(MavapayError::InvalidResponse(format!(
-                "API returned status: {}",
-                api_response.status
-            )));
-        }
-
-        #[cfg(debug_assertions)]
-        tracing::info!(
-            "[MAVAPAY] Quote created successfully: {} {} -> {} {}",
-            request.amount,
-            request.source_currency.as_str(),
-            api_response.data.amount_in_target_currency,
-            request.target_currency.as_str()
-        );
-
-        Ok(api_response.data)
+        Ok(quote)
     }
 
     /// Create a hosted checkout payment link
     pub async fn create_payment_link(
         &self,
-        request: PaymentLinkRequest,
-    ) -> Result<String, MavapayError> {
-        #[cfg(debug_assertions)]
-        {
-            let request_json = serde_json::to_string_pretty(&request).unwrap_or_default();
-            tracing::info!(
-                "[MAVAPAY] Creating payment link with request:\n{}",
-                request_json
-            );
-        }
-
+        request: CreatePaymentLinkRequest,
+    ) -> Result<CreatePaymentLinkResponse, MavapayError> {
         let response = self
-            .request(Method::POST, "paymentlink")
+            .request(Method::POST, "/paymentlink")
             .json(&request)
             .send()
             .await?;
-
-        #[cfg(debug_assertions)]
-        {
-            let status = response.status();
-            tracing::info!("[MAVAPAY] Payment link response status: {}", status);
-        }
-
         let response = response.check_success().await?;
 
-        // Read raw response body for debugging
-        let response_text = response.text().await?;
-
-        #[cfg(debug_assertions)]
-        tracing::info!(
-            "[MAVAPAY] Raw payment link response body:\n{}",
-            response_text
-        );
-
-        // Try to parse standard { status, data } wrapper
-        let api_response: ApiResponse<PaymentLinkResponse> = serde_json::from_str(&response_text)
-            .map_err(|e| {
-            #[cfg(debug_assertions)]
-            tracing::error!(
-                "[MAVAPAY] Failed to deserialize payment link response: {}\nResponse was: {}",
-                e,
-                response_text
-            );
-            MavapayError::InvalidResponse(format!(
-                "Failed to parse payment link response: {} | Response: {}",
-                e, response_text
-            ))
-        })?;
-
-        if api_response.status != "ok" && api_response.status != "success" {
-            return Err(MavapayError::InvalidResponse(format!(
-                "API returned status: {}",
-                api_response.status
-            )));
+        match response.json().await? {
+            MavapayResponse::Success { data } => Ok(data),
+            MavapayResponse::Error { message } => Err(MavapayError::ApiError(message)),
         }
-
-        #[cfg(debug_assertions)]
-        tracing::info!(
-            "[MAVAPAY] Payment link created successfully: {} (ref: {})",
-            api_response.data.payment_link,
-            api_response.data.payment_ref
-        );
-
-        Ok(api_response.data.payment_link)
     }
 
-    /// Create a hosted checkout payment link and return both URL and reference
-    pub async fn create_payment_link_with_ref(
+    pub async fn get_banks(
         &self,
-        request: PaymentLinkRequest,
-    ) -> Result<(String, String), MavapayError> {
-        #[cfg(debug_assertions)]
-        {
-            let request_json = serde_json::to_string_pretty(&request).unwrap_or_default();
-            tracing::info!(
-                "[MAVAPAY] Creating payment link with request:\n{}",
-                request_json
-            );
-        }
-
+        country_code: &str,
+    ) -> Result<Vec<BankInformation>, MavapayError> {
         let response = self
-            .request(Method::POST, "paymentlink")
-            .json(&request)
-            .send()
-            .await?;
-
-        #[cfg(debug_assertions)]
-        {
-            let status = response.status();
-            tracing::info!("[MAVAPAY] Payment link response status: {}", status);
-        }
-
-        let response = response.check_success().await?;
-
-        // Read raw response body for debugging
-        let response_text = response.text().await?;
-
-        #[cfg(debug_assertions)]
-        tracing::info!(
-            "[MAVAPAY] Raw payment link response body:\n{}",
-            response_text
-        );
-
-        // Try to parse standard { status, data } wrapper
-        let api_response: ApiResponse<PaymentLinkResponse> = serde_json::from_str(&response_text)
-            .map_err(|e| {
-            #[cfg(debug_assertions)]
-            tracing::error!(
-                "[MAVAPAY] Failed to deserialize payment link response: {}\nResponse was: {}",
-                e,
-                response_text
-            );
-            MavapayError::InvalidResponse(format!(
-                "Failed to parse payment link response: {} | Response: {}",
-                e, response_text
-            ))
-        })?;
-
-        if api_response.status != "ok" && api_response.status != "success" {
-            return Err(MavapayError::InvalidResponse(format!(
-                "API returned status: {}",
-                api_response.status
-            )));
-        }
-
-        #[cfg(debug_assertions)]
-        tracing::info!(
-            "[MAVAPAY] Payment link created successfully: {} (ref: {})",
-            api_response.data.payment_link,
-            api_response.data.payment_ref
-        );
-
-        Ok((
-            api_response.data.payment_link,
-            api_response.data.payment_ref,
-        ))
-    }
-
-    /// Get list of supported banks for a country
-    pub async fn get_banks(&self, country_code: &str) -> Result<Vec<BankInfo>, MavapayError> {
-        let response = self
-            .request(Method::GET, "bank/bankcode")
+            .request(Method::GET, "/bank/bankcode")
             .query(&[("country", country_code)])
             .send()
             .await?
             .check_success()
             .await?;
 
-        let banks_data: serde_json::Value = response.json().await?;
-
-        // Parse banks array from response
-        let banks = banks_data
-            .get("data")
-            .and_then(|d| d.as_array())
-            .ok_or_else(|| MavapayError::InvalidResponse("Missing banks data".to_string()))?;
-
-        let mut bank_list = Vec::new();
-        for bank in banks {
-            if let (Some(code), Some(name)) = (
-                bank.get("code").and_then(|c| c.as_str()),
-                bank.get("name").and_then(|n| n.as_str()),
-            ) {
-                bank_list.push(BankInfo {
-                    code: code.to_string(),
-                    name: name.to_string(),
-                    country: country_code.to_string(),
-                });
-            }
+        match response.json().await? {
+            MavapayResponse::Success { data } => Ok(data),
+            MavapayResponse::Error { message } => Err(MavapayError::ApiError(message)),
         }
-
-        Ok(bank_list)
     }
 
-    /// Validate bank account details
-    pub async fn validate_bank_account(
+    pub async fn bank_customer_inquiry(
         &self,
         account_number: &str,
         bank_code: &str,
-    ) -> Result<String, MavapayError> {
+    ) -> Result<BankCustomerInquiry, MavapayError> {
         let response = self
-            .request(Method::GET, "bank/name-enquiry")
+            .request(Method::GET, "/bank/name-enquiry")
             .query(&[("accountNumber", account_number), ("bankCode", bank_code)])
             .send()
             .await?
             .check_success()
             .await?;
 
-        let account_data: serde_json::Value = response.json().await?;
-
-        let account_name = account_data
-            .get("data")
-            .and_then(|d| d.get("accountName"))
-            .and_then(|n| n.as_str())
-            .ok_or(MavapayError::BankAccountValidationFailed)?;
-
-        Ok(account_name.to_string())
+        match response.json().await? {
+            MavapayResponse::Success { data } => Ok(data),
+            MavapayResponse::Error { message } => Err(MavapayError::ApiError(message)),
+        }
     }
 
-    /// Get wallet balance
-    pub async fn get_wallet_balance(
+    pub async fn get_wallet(
         &self,
+        id: &str,
         currency: Option<&str>,
-    ) -> Result<Vec<WalletBalance>, MavapayError> {
-        let mut request = self.request(Method::GET, "wallet");
-
-        if let Some(curr) = currency {
-            request = request.query(&[("currency", curr)]);
-        }
+    ) -> Result<Vec<MavapayWallet>, MavapayError> {
+        let request = self.request(Method::GET, "/wallet");
+        let request = match currency {
+            Some(c) => request.query([("currency", c), ("walletId", id)].as_slice()),
+            None => request.query([("walletId", id)].as_slice()),
+        };
 
         let response = request.send().await?.check_success().await?;
-
-        let wallet_data: serde_json::Value = response.json().await?;
-
-        // Parse wallet balances
-        let balances = wallet_data
-            .get("data")
-            .and_then(|d| d.as_array())
-            .ok_or_else(|| MavapayError::InvalidResponse("Missing wallet data".to_string()))?;
-
-        let mut balance_list = Vec::new();
-        for balance in balances {
-            if let (Some(currency), Some(balance_val), Some(available)) = (
-                balance.get("currency").and_then(|c| c.as_str()),
-                balance.get("balance").and_then(|b| b.as_u64()),
-                balance.get("availableBalance").and_then(|a| a.as_u64()),
-            ) {
-                balance_list.push(WalletBalance {
-                    currency: currency.to_string(),
-                    balance: balance_val,
-                    available_balance: available,
-                });
-            }
+        match response.json().await? {
+            MavapayResponse::Success { data } => Ok(data),
+            MavapayResponse::Error { message } => Err(MavapayError::ApiError(message)),
         }
-
-        Ok(balance_list)
     }
 
     /// Get transaction history
     pub async fn get_transactions(
         &self,
-        page: Option<u32>,
-        limit: Option<u32>,
-        status: Option<TransactionStatus>,
-    ) -> Result<Vec<Transaction>, MavapayError> {
-        let mut request = self.request(Method::GET, "transactions");
-
-        let mut query_params = Vec::new();
-        if let Some(p) = page {
-            query_params.push(("page", p.to_string()));
-        }
-        if let Some(l) = limit {
-            query_params.push(("limit", l.to_string()));
-        }
-        if let Some(s) = status {
-            let status_str = match s {
-                TransactionStatus::Pending => "pending",
-                TransactionStatus::Success => "success",
-                TransactionStatus::Failed => "failed",
-                TransactionStatus::Paid => "paid",
-            };
-            query_params.push(("status", status_str.to_string()));
-        }
-
-        if !query_params.is_empty() {
-            let query_refs: Vec<(&str, &str)> =
-                query_params.iter().map(|(k, v)| (*k, v.as_str())).collect();
-            request = request.query(&query_refs);
-        }
-
+        options: GetTransactions,
+    ) -> Result<(GetTransactionPagination, Vec<Transaction>), MavapayError> {
+        let request = self.request(Method::GET, "/transactions").query(&options);
         let response = request.send().await?.check_success().await?;
 
-        let tx_data: serde_json::Value = response.json().await?;
-
-        // Parse transactions
-        let transactions = tx_data
-            .get("data")
-            .and_then(|d| d.get("transactions"))
-            .and_then(|t| t.as_array())
-            .ok_or_else(|| {
-                MavapayError::InvalidResponse("Missing transactions data".to_string())
-            })?;
-
-        let mut tx_list = Vec::new();
-        for tx in transactions {
-            if let (
-                Some(id),
-                Some(amount),
-                Some(currency),
-                Some(status),
-                Some(created),
-                Some(updated),
-            ) = (
-                tx.get("id").and_then(|i| i.as_str()),
-                tx.get("amount").and_then(|a| a.as_u64()),
-                tx.get("currency").and_then(|c| c.as_str()),
-                tx.get("status").and_then(|s| s.as_str()),
-                tx.get("createdAt").and_then(|c| c.as_str()),
-                tx.get("updatedAt").and_then(|u| u.as_str()),
-            ) {
-                let status_enum = match status {
-                    "PENDING" => TransactionStatus::Pending,
-                    "SUCCESS" => TransactionStatus::Success,
-                    "FAILED" => TransactionStatus::Failed,
-                    "PAID" => TransactionStatus::Paid,
-                    _ => continue, // Skip unknown status
-                };
-
-                tx_list.push(Transaction {
-                    id: id.to_string(),
-                    amount,
-                    currency: currency.to_string(),
-                    status: status_enum,
-                    created_at: created.to_string(),
-                    updated_at: updated.to_string(),
-                    hash: tx
-                        .get("hash")
-                        .and_then(|h| h.as_str())
-                        .map(|s| s.to_string()),
-                });
-            }
+        match response.json().await? {
+            GetTransactionResponse::Error { message } => Err(MavapayError::ApiError(message)),
+            GetTransactionResponse::Success { pagination, data } => Ok((pagination, data)),
         }
-
-        Ok(tx_list)
     }
 
-    /// Get single transaction by ID
     pub async fn get_transaction(&self, transaction_id: &str) -> Result<Transaction, MavapayError> {
         let response = self
-            .request(Method::GET, &format!("transactions/{}", transaction_id))
+            .request(Method::GET, &format!("/transactions/{}", transaction_id))
             .send()
             .await?
             .check_success()
             .await?;
 
-        let api_response: ApiResponse<Transaction> = response.json().await.map_err(|e| {
-            MavapayError::InvalidResponse(format!("Failed to parse transaction response: {}", e))
-        })?;
-
-        if api_response.status != "ok" {
-            return Err(MavapayError::InvalidResponse(
-                "API returned non-ok status".to_string(),
-            ));
+        match response.json().await? {
+            MavapayResponse::Error { message } => Err(MavapayError::ApiError(message)),
+            MavapayResponse::Success { data } => Ok(data),
         }
-
-        Ok(api_response.data)
     }
 }
