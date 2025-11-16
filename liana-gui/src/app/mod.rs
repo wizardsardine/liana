@@ -183,38 +183,30 @@ impl Panels {
                 crate::app::menu::ActiveSubMenu::Settings(_) => Some(&self.active_settings),
             },
             Menu::Vault(submenu) => match submenu {
-                crate::app::menu::VaultSubMenu::Overview => self
-                    .vault_overview
-                    .as_ref()
-                    .map(|v| v as &dyn State),
-                crate::app::menu::VaultSubMenu::Send => self
-                    .create_spend
-                    .as_ref()
-                    .map(|v| v as &dyn State),
-                crate::app::menu::VaultSubMenu::Receive => self
-                    .receive
-                    .as_ref()
-                    .map(|v| v as &dyn State),
-                crate::app::menu::VaultSubMenu::Coins(_) => self
-                    .coins
-                    .as_ref()
-                    .map(|v| v as &dyn State),
-                crate::app::menu::VaultSubMenu::Transactions(_) => self
-                    .transactions
-                    .as_ref()
-                    .map(|v| v as &dyn State),
-                crate::app::menu::VaultSubMenu::PSBTs(_) => self
-                    .psbts
-                    .as_ref()
-                    .map(|v| v as &dyn State),
-                crate::app::menu::VaultSubMenu::Recovery => self
-                    .recovery
-                    .as_ref()
-                    .map(|v| v as &dyn State),
-                crate::app::menu::VaultSubMenu::Settings(_) => self
-                    .settings
-                    .as_ref()
-                    .map(|v| v as &dyn State),
+                crate::app::menu::VaultSubMenu::Overview => {
+                    self.vault_overview.as_ref().map(|v| v as &dyn State)
+                }
+                crate::app::menu::VaultSubMenu::Send => {
+                    self.create_spend.as_ref().map(|v| v as &dyn State)
+                }
+                crate::app::menu::VaultSubMenu::Receive => {
+                    self.receive.as_ref().map(|v| v as &dyn State)
+                }
+                crate::app::menu::VaultSubMenu::Coins(_) => {
+                    self.coins.as_ref().map(|v| v as &dyn State)
+                }
+                crate::app::menu::VaultSubMenu::Transactions(_) => {
+                    self.transactions.as_ref().map(|v| v as &dyn State)
+                }
+                crate::app::menu::VaultSubMenu::PSBTs(_) => {
+                    self.psbts.as_ref().map(|v| v as &dyn State)
+                }
+                crate::app::menu::VaultSubMenu::Recovery => {
+                    self.recovery.as_ref().map(|v| v as &dyn State)
+                }
+                crate::app::menu::VaultSubMenu::Settings(_) => {
+                    self.settings.as_ref().map(|v| v as &dyn State)
+                }
             },
             #[cfg(feature = "buysell")]
             Menu::BuySell => self.buy_sell.as_ref().map(|v| v as &dyn State),
@@ -223,7 +215,9 @@ impl Panels {
             Menu::PSBTs => self.psbts.as_ref().map(|v| v as &dyn State),
             Menu::Transactions => self.transactions.as_ref().map(|v| v as &dyn State),
             Menu::TransactionPreSelected(_) => self.transactions.as_ref().map(|v| v as &dyn State),
-            Menu::Settings | Menu::SettingsPreSelected(_) => self.settings.as_ref().map(|v| v as &dyn State),
+            Menu::Settings | Menu::SettingsPreSelected(_) => {
+                self.settings.as_ref().map(|v| v as &dyn State)
+            }
             Menu::Coins => self.coins.as_ref().map(|v| v as &dyn State),
             Menu::CreateSpendTx => self.create_spend.as_ref().map(|v| v as &dyn State),
             Menu::Recovery => self.recovery.as_ref().map(|v| v as &dyn State),
@@ -239,42 +233,36 @@ impl Panels {
                 crate::app::menu::ActiveSubMenu::Overview => Some(&mut self.active_overview),
                 crate::app::menu::ActiveSubMenu::Send => Some(&mut self.active_send),
                 crate::app::menu::ActiveSubMenu::Receive => Some(&mut self.active_receive),
-                crate::app::menu::ActiveSubMenu::Transactions(_) => Some(&mut self.active_transactions),
+                crate::app::menu::ActiveSubMenu::Transactions(_) => {
+                    Some(&mut self.active_transactions)
+                }
                 crate::app::menu::ActiveSubMenu::Settings(_) => Some(&mut self.active_settings),
             },
             Menu::Vault(submenu) => match submenu {
-                crate::app::menu::VaultSubMenu::Overview => self
-                    .vault_overview
-                    .as_mut()
-                    .map(|v| v as &mut dyn State),
-                crate::app::menu::VaultSubMenu::Send => self
-                    .create_spend
-                    .as_mut()
-                    .map(|v| v as &mut dyn State),
-                crate::app::menu::VaultSubMenu::Receive => self
-                    .receive
-                    .as_mut()
-                    .map(|v| v as &mut dyn State),
-                crate::app::menu::VaultSubMenu::Coins(_) => self
-                    .coins
-                    .as_mut()
-                    .map(|v| v as &mut dyn State),
-                crate::app::menu::VaultSubMenu::Transactions(_) => self
-                    .transactions
-                    .as_mut()
-                    .map(|v| v as &mut dyn State),
-                crate::app::menu::VaultSubMenu::PSBTs(_) => self
-                    .psbts
-                    .as_mut()
-                    .map(|v| v as &mut dyn State),
-                crate::app::menu::VaultSubMenu::Recovery => self
-                    .recovery
-                    .as_mut()
-                    .map(|v| v as &mut dyn State),
-                crate::app::menu::VaultSubMenu::Settings(_) => self
-                    .settings
-                    .as_mut()
-                    .map(|v| v as &mut dyn State),
+                crate::app::menu::VaultSubMenu::Overview => {
+                    self.vault_overview.as_mut().map(|v| v as &mut dyn State)
+                }
+                crate::app::menu::VaultSubMenu::Send => {
+                    self.create_spend.as_mut().map(|v| v as &mut dyn State)
+                }
+                crate::app::menu::VaultSubMenu::Receive => {
+                    self.receive.as_mut().map(|v| v as &mut dyn State)
+                }
+                crate::app::menu::VaultSubMenu::Coins(_) => {
+                    self.coins.as_mut().map(|v| v as &mut dyn State)
+                }
+                crate::app::menu::VaultSubMenu::Transactions(_) => {
+                    self.transactions.as_mut().map(|v| v as &mut dyn State)
+                }
+                crate::app::menu::VaultSubMenu::PSBTs(_) => {
+                    self.psbts.as_mut().map(|v| v as &mut dyn State)
+                }
+                crate::app::menu::VaultSubMenu::Recovery => {
+                    self.recovery.as_mut().map(|v| v as &mut dyn State)
+                }
+                crate::app::menu::VaultSubMenu::Settings(_) => {
+                    self.settings.as_mut().map(|v| v as &mut dyn State)
+                }
             },
             #[cfg(feature = "buysell")]
             Menu::BuySell => self.buy_sell.as_mut().map(|v| v as &mut dyn State),
@@ -282,8 +270,12 @@ impl Panels {
             Menu::Receive => self.receive.as_mut().map(|v| v as &mut dyn State),
             Menu::PSBTs => self.psbts.as_mut().map(|v| v as &mut dyn State),
             Menu::Transactions => self.transactions.as_mut().map(|v| v as &mut dyn State),
-            Menu::TransactionPreSelected(_) => self.transactions.as_mut().map(|v| v as &mut dyn State),
-            Menu::Settings | Menu::SettingsPreSelected(_) => self.settings.as_mut().map(|v| v as &mut dyn State),
+            Menu::TransactionPreSelected(_) => {
+                self.transactions.as_mut().map(|v| v as &mut dyn State)
+            }
+            Menu::Settings | Menu::SettingsPreSelected(_) => {
+                self.settings.as_mut().map(|v| v as &mut dyn State)
+            }
             Menu::Coins => self.coins.as_mut().map(|v| v as &mut dyn State),
             Menu::CreateSpendTx => self.create_spend.as_mut().map(|v| v as &mut dyn State),
             Menu::Recovery => self.recovery.as_mut().map(|v| v as &mut dyn State),
@@ -541,25 +533,23 @@ impl App {
                     }
                 }
             }
-            menu::Menu::Active(submenu) => {
-                match submenu {
-                    menu::ActiveSubMenu::Transactions(Some(txid)) => {
-                        if let Some(daemon) = &self.daemon {
-                            if let Ok(Some(tx)) = Handle::current().block_on(async {
-                                daemon
-                                    .get_history_txs(&[*txid])
-                                    .await
-                                    .map(|txs| txs.first().cloned())
-                            }) {
-                                self.panels.active_transactions.preselect(tx);
-                                self.panels.current = menu;
-                                return Task::none();
-                            }
+            menu::Menu::Active(submenu) => match submenu {
+                menu::ActiveSubMenu::Transactions(Some(txid)) => {
+                    if let Some(daemon) = &self.daemon {
+                        if let Ok(Some(tx)) = Handle::current().block_on(async {
+                            daemon
+                                .get_history_txs(&[*txid])
+                                .await
+                                .map(|txs| txs.first().cloned())
+                        }) {
+                            self.panels.active_transactions.preselect(tx);
+                            self.panels.current = menu;
+                            return Task::none();
                         }
                     }
-                    _ => {}
                 }
-            }
+                _ => {}
+            },
             _ => {
                 tracing::debug!(
                     "Menu variant {:?} has no special handling in set_current_panel",
@@ -617,11 +607,18 @@ impl App {
                     },
                 ))
                 .map(|_| Message::Tick),
-                self.panels.current().unwrap_or(&self.panels.global_home).subscription(),
+                self.panels
+                    .current()
+                    .unwrap_or(&self.panels.global_home)
+                    .subscription(),
             ]
         } else {
             // No vault - only subscribe to panel events, no tick updates
-            vec![self.panels.current().unwrap_or(&self.panels.global_home).subscription()]
+            vec![self
+                .panels
+                .current()
+                .unwrap_or(&self.panels.global_home)
+                .subscription()]
         };
 
         Subscription::batch(subscriptions)

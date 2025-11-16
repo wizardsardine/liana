@@ -337,7 +337,10 @@ impl GUI {
                         let mut i = pane.tabs.len();
                         while i > 0 {
                             i -= 1;
-                            if matches!(pane.tabs[i].state, tab::State::App(_) | tab::State::Loader(_)) {
+                            if matches!(
+                                pane.tabs[i].state,
+                                tab::State::App(_) | tab::State::Loader(_)
+                            ) {
                                 pane.close_tab(i);
                             }
                         }

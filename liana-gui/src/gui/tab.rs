@@ -309,8 +309,10 @@ impl Tab {
                                     Ok(existing_cube.clone())
                                 }
                                 // Second, find a cube without a vault and associate this wallet with it
-                                else if let Some(empty_cube) =
-                                    settings_data.cubes.iter_mut().find(|c| c.vault_wallet_id.is_none())
+                                else if let Some(empty_cube) = settings_data
+                                    .cubes
+                                    .iter_mut()
+                                    .find(|c| c.vault_wallet_id.is_none())
                                 {
                                     empty_cube.vault_wallet_id = Some(settings.wallet_id());
                                     let cube_clone = empty_cube.clone();
@@ -323,9 +325,10 @@ impl Tab {
                                     // Save the updated settings
                                     let save_result =
                                         tokio::runtime::Handle::current().block_on(async {
-                                            app::settings::update_settings_file(&network_dir, |_| {
-                                                settings_to_save
-                                            })
+                                            app::settings::update_settings_file(
+                                                &network_dir,
+                                                |_| settings_to_save,
+                                            )
                                             .await
                                         });
 
@@ -364,9 +367,10 @@ impl Tab {
                                     // Save the settings
                                     let save_result =
                                         tokio::runtime::Handle::current().block_on(async {
-                                            app::settings::update_settings_file(&network_dir, |_| {
-                                                settings_to_save
-                                            })
+                                            app::settings::update_settings_file(
+                                                &network_dir,
+                                                |_| settings_to_save,
+                                            )
                                             .await
                                         });
 
@@ -400,10 +404,13 @@ impl Tab {
 
                                 let save_result =
                                     tokio::runtime::Handle::current().block_on(async {
-                                        app::settings::update_settings_file(&network_dir, |mut s| {
-                                            s.cubes.push(cube.clone());
-                                            s
-                                        })
+                                        app::settings::update_settings_file(
+                                            &network_dir,
+                                            |mut s| {
+                                                s.cubes.push(cube.clone());
+                                                s
+                                            },
+                                        )
                                         .await
                                     });
 
