@@ -249,9 +249,9 @@ impl Launcher {
                 let network_dir = self.datadir_path.network_directory(network);
                 Task::perform(
                     async move {
-                        settings::update_cubes_file(&network_dir, |mut c| {
-                            c.cubes.push(cube.clone());
-                            c
+                        settings::update_settings_file(&network_dir, |mut settings| {
+                            settings.cubes.push(cube.clone());
+                            settings
                         })
                         .await
                         .map(|_| cube)
@@ -839,13 +839,13 @@ impl DeleteCubeModal {
                     }
                 }
 
-                // Delete the cube from cubes.json
+                // Delete the cube from settings
                 let network_dir = self.network_directory.clone();
                 let cube_id = self.cube.id.clone();
                 if let Err(e) = Handle::current().block_on(async {
-                    settings::update_cubes_file(&network_dir, |mut c| {
-                        c.cubes.retain(|cube| cube.id != cube_id);
-                        c
+                    settings::update_settings_file(&network_dir, |mut settings| {
+                        settings.cubes.retain(|cube| cube.id != cube_id);
+                        settings
                     })
                     .await
                 }) {
@@ -1049,60 +1049,19 @@ async fn check_network_datadir(path: NetworkDirectory) -> Result<State, String> 
     })?;
     }
 
-    // Try to load cubes first
-    match settings::Cubes::from_file(&path) {
-        Ok(c) => {
-            if c.cubes.is_empty() {
+    // Try to load cubes from settings
+    match settings::Settings::from_file(&path) {
+        Ok(s) => {
+            if s.cubes.is_empty() {
                 Ok(State::NoCube)
             } else {
                 Ok(State::Cubes {
-                    cubes: c.cubes,
+                    cubes: s.cubes,
                     create_cube: false,
                 })
             }
         }
-        Err(settings::SettingsError::NotFound) => {
-            // Migration: Check if old settings.json with wallets exists
-            match settings::Settings::from_file(&path) {
-                Ok(s) if !s.wallets.is_empty() => {
-                    // Migrate wallets to cubes
-                    let network = path
-                        .path()
-                        .file_name()
-                        .and_then(|n| n.to_str())
-                        .and_then(|n| n.parse::<liana::miniscript::bitcoin::Network>().ok())
-                        .unwrap_or(liana::miniscript::bitcoin::Network::Bitcoin);
-
-                    let mut cubes = Vec::new();
-                    for wallet in &s.wallets {
-                        let cube_name = if let Some(alias) = &wallet.alias {
-                            alias.clone()
-                        } else {
-                            format!("My {} Cube", network_name(network))
-                        };
-                        let cube =
-                            CubeSettings::new(cube_name, network).with_vault(wallet.wallet_id());
-                        cubes.push(cube);
-                    }
-
-                    // Save migrated cubes
-                    if let Err(e) = settings::update_cubes_file(&path, |mut c| {
-                        c.cubes = cubes.clone();
-                        c
-                    })
-                    .await
-                    {
-                        tracing::warn!("Failed to save migrated cubes: {}", e);
-                    }
-
-                    Ok(State::Cubes {
-                        cubes,
-                        create_cube: false,
-                    })
-                }
-                _ => Ok(State::NoCube),
-            }
-        }
+        Err(settings::SettingsError::NotFound) => Ok(State::NoCube),
         Err(e) => Err(e.to_string()),
     }
 }
