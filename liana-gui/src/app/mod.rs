@@ -74,11 +74,7 @@ struct Panels {
 }
 
 impl Panels {
-    fn new_without_wallet(
-        _data_dir: LianaDirectory,
-        _network: liana::miniscript::bitcoin::Network,
-        _config: Arc<Config>,
-    ) -> Panels {
+    fn new_without_wallet() -> Panels {
         // NO PLACEHOLDER WALLET - All vault panels are None
         // The UI layer prevents navigation to vault panels when has_vault=false
 
@@ -176,197 +172,123 @@ impl Panels {
         }
     }
 
-    fn current(&self) -> &dyn State {
+    fn current(&self) -> Option<&dyn State> {
         match &self.current {
-            Menu::Home => &self.global_home,
+            Menu::Home => Some(&self.global_home),
             Menu::Active(submenu) => match submenu {
-                crate::app::menu::ActiveSubMenu::Overview => &self.active_overview,
-                crate::app::menu::ActiveSubMenu::Send => &self.active_send,
-                crate::app::menu::ActiveSubMenu::Receive => &self.active_receive,
-                crate::app::menu::ActiveSubMenu::Transactions(_) => &self.active_transactions,
-                crate::app::menu::ActiveSubMenu::Settings(_) => &self.active_settings,
+                crate::app::menu::ActiveSubMenu::Overview => Some(&self.active_overview),
+                crate::app::menu::ActiveSubMenu::Send => Some(&self.active_send),
+                crate::app::menu::ActiveSubMenu::Receive => Some(&self.active_receive),
+                crate::app::menu::ActiveSubMenu::Transactions(_) => Some(&self.active_transactions),
+                crate::app::menu::ActiveSubMenu::Settings(_) => Some(&self.active_settings),
             },
             Menu::Vault(submenu) => match submenu {
                 crate::app::menu::VaultSubMenu::Overview => self
                     .vault_overview
                     .as_ref()
-                    .expect("Vault panel accessed without vault"),
+                    .map(|v| v as &dyn State),
                 crate::app::menu::VaultSubMenu::Send => self
                     .create_spend
                     .as_ref()
-                    .expect("Vault panel accessed without vault"),
+                    .map(|v| v as &dyn State),
                 crate::app::menu::VaultSubMenu::Receive => self
                     .receive
                     .as_ref()
-                    .expect("Vault panel accessed without vault"),
+                    .map(|v| v as &dyn State),
                 crate::app::menu::VaultSubMenu::Coins(_) => self
                     .coins
                     .as_ref()
-                    .expect("Vault panel accessed without vault"),
+                    .map(|v| v as &dyn State),
                 crate::app::menu::VaultSubMenu::Transactions(_) => self
                     .transactions
                     .as_ref()
-                    .expect("Vault panel accessed without vault"),
+                    .map(|v| v as &dyn State),
                 crate::app::menu::VaultSubMenu::PSBTs(_) => self
                     .psbts
                     .as_ref()
-                    .expect("Vault panel accessed without vault"),
+                    .map(|v| v as &dyn State),
                 crate::app::menu::VaultSubMenu::Recovery => self
                     .recovery
                     .as_ref()
-                    .expect("Vault panel accessed without vault"),
+                    .map(|v| v as &dyn State),
                 crate::app::menu::VaultSubMenu::Settings(_) => self
                     .settings
                     .as_ref()
-                    .expect("Vault panel accessed without vault"),
+                    .map(|v| v as &dyn State),
             },
             #[cfg(feature = "buysell")]
-            Menu::BuySell => {
-                if let Some(ref panel) = self.buy_sell {
-                    panel
-                } else {
-                    // Buy/Sell not available without vault, fallback to home
-                    &self.global_home
-                }
-            }
+            Menu::BuySell => self.buy_sell.as_ref().map(|v| v as &dyn State),
             // Legacy menu items
-            Menu::Receive => self
-                .receive
-                .as_ref()
-                .expect("Vault panel accessed without vault"),
-            Menu::PSBTs => self
-                .psbts
-                .as_ref()
-                .expect("Vault panel accessed without vault"),
-            Menu::Transactions => self
-                .transactions
-                .as_ref()
-                .expect("Vault panel accessed without vault"),
-            Menu::TransactionPreSelected(_) => self
-                .transactions
-                .as_ref()
-                .expect("Vault panel accessed without vault"),
-            Menu::Settings | Menu::SettingsPreSelected(_) => self
-                .settings
-                .as_ref()
-                .expect("Vault panel accessed without vault"),
-            Menu::Coins => self
-                .coins
-                .as_ref()
-                .expect("Vault panel accessed without vault"),
-            Menu::CreateSpendTx => self
-                .create_spend
-                .as_ref()
-                .expect("Vault panel accessed without vault"),
-            Menu::Recovery => self
-                .recovery
-                .as_ref()
-                .expect("Vault panel accessed without vault"),
-            Menu::RefreshCoins(_) => self
-                .create_spend
-                .as_ref()
-                .expect("Vault panel accessed without vault"),
-            Menu::PsbtPreSelected(_) => self
-                .psbts
-                .as_ref()
-                .expect("Vault panel accessed without vault"),
+            Menu::Receive => self.receive.as_ref().map(|v| v as &dyn State),
+            Menu::PSBTs => self.psbts.as_ref().map(|v| v as &dyn State),
+            Menu::Transactions => self.transactions.as_ref().map(|v| v as &dyn State),
+            Menu::TransactionPreSelected(_) => self.transactions.as_ref().map(|v| v as &dyn State),
+            Menu::Settings | Menu::SettingsPreSelected(_) => self.settings.as_ref().map(|v| v as &dyn State),
+            Menu::Coins => self.coins.as_ref().map(|v| v as &dyn State),
+            Menu::CreateSpendTx => self.create_spend.as_ref().map(|v| v as &dyn State),
+            Menu::Recovery => self.recovery.as_ref().map(|v| v as &dyn State),
+            Menu::RefreshCoins(_) => self.create_spend.as_ref().map(|v| v as &dyn State),
+            Menu::PsbtPreSelected(_) => self.psbts.as_ref().map(|v| v as &dyn State),
         }
     }
 
-    fn current_mut(&mut self) -> &mut dyn State {
+    fn current_mut(&mut self) -> Option<&mut dyn State> {
         match &self.current {
-            Menu::Home => &mut self.global_home,
+            Menu::Home => Some(&mut self.global_home),
             Menu::Active(submenu) => match submenu {
-                crate::app::menu::ActiveSubMenu::Overview => &mut self.active_overview,
-                crate::app::menu::ActiveSubMenu::Send => &mut self.active_send,
-                crate::app::menu::ActiveSubMenu::Receive => &mut self.active_receive,
-                crate::app::menu::ActiveSubMenu::Transactions(_) => &mut self.active_transactions,
-                crate::app::menu::ActiveSubMenu::Settings(_) => &mut self.active_settings,
+                crate::app::menu::ActiveSubMenu::Overview => Some(&mut self.active_overview),
+                crate::app::menu::ActiveSubMenu::Send => Some(&mut self.active_send),
+                crate::app::menu::ActiveSubMenu::Receive => Some(&mut self.active_receive),
+                crate::app::menu::ActiveSubMenu::Transactions(_) => Some(&mut self.active_transactions),
+                crate::app::menu::ActiveSubMenu::Settings(_) => Some(&mut self.active_settings),
             },
             Menu::Vault(submenu) => match submenu {
                 crate::app::menu::VaultSubMenu::Overview => self
                     .vault_overview
                     .as_mut()
-                    .expect("Vault panel accessed without vault"),
+                    .map(|v| v as &mut dyn State),
                 crate::app::menu::VaultSubMenu::Send => self
                     .create_spend
                     .as_mut()
-                    .expect("Vault panel accessed without vault"),
+                    .map(|v| v as &mut dyn State),
                 crate::app::menu::VaultSubMenu::Receive => self
                     .receive
                     .as_mut()
-                    .expect("Vault panel accessed without vault"),
+                    .map(|v| v as &mut dyn State),
                 crate::app::menu::VaultSubMenu::Coins(_) => self
                     .coins
                     .as_mut()
-                    .expect("Vault panel accessed without vault"),
+                    .map(|v| v as &mut dyn State),
                 crate::app::menu::VaultSubMenu::Transactions(_) => self
                     .transactions
                     .as_mut()
-                    .expect("Vault panel accessed without vault"),
+                    .map(|v| v as &mut dyn State),
                 crate::app::menu::VaultSubMenu::PSBTs(_) => self
                     .psbts
                     .as_mut()
-                    .expect("Vault panel accessed without vault"),
+                    .map(|v| v as &mut dyn State),
                 crate::app::menu::VaultSubMenu::Recovery => self
                     .recovery
                     .as_mut()
-                    .expect("Vault panel accessed without vault"),
+                    .map(|v| v as &mut dyn State),
                 crate::app::menu::VaultSubMenu::Settings(_) => self
                     .settings
                     .as_mut()
-                    .expect("Vault panel accessed without vault"),
+                    .map(|v| v as &mut dyn State),
             },
             #[cfg(feature = "buysell")]
-            Menu::BuySell => {
-                if let Some(ref mut panel) = self.buy_sell {
-                    panel
-                } else {
-                    // Buy/Sell not available without vault, fallback to home
-                    &mut self.global_home
-                }
-            }
+            Menu::BuySell => self.buy_sell.as_mut().map(|v| v as &mut dyn State),
             // Legacy menu items
-            Menu::Receive => self
-                .receive
-                .as_mut()
-                .expect("Vault panel accessed without vault"),
-            Menu::PSBTs => self
-                .psbts
-                .as_mut()
-                .expect("Vault panel accessed without vault"),
-            Menu::Transactions => self
-                .transactions
-                .as_mut()
-                .expect("Vault panel accessed without vault"),
-            Menu::TransactionPreSelected(_) => self
-                .transactions
-                .as_mut()
-                .expect("Vault panel accessed without vault"),
-            Menu::Settings | Menu::SettingsPreSelected(_) => self
-                .settings
-                .as_mut()
-                .expect("Vault panel accessed without vault"),
-            Menu::Coins => self
-                .coins
-                .as_mut()
-                .expect("Vault panel accessed without vault"),
-            Menu::CreateSpendTx => self
-                .create_spend
-                .as_mut()
-                .expect("Vault panel accessed without vault"),
-            Menu::Recovery => self
-                .recovery
-                .as_mut()
-                .expect("Vault panel accessed without vault"),
-            Menu::RefreshCoins(_) => self
-                .create_spend
-                .as_mut()
-                .expect("Vault panel accessed without vault"),
-            Menu::PsbtPreSelected(_) => self
-                .psbts
-                .as_mut()
-                .expect("Vault panel accessed without vault"),
+            Menu::Receive => self.receive.as_mut().map(|v| v as &mut dyn State),
+            Menu::PSBTs => self.psbts.as_mut().map(|v| v as &mut dyn State),
+            Menu::Transactions => self.transactions.as_mut().map(|v| v as &mut dyn State),
+            Menu::TransactionPreSelected(_) => self.transactions.as_mut().map(|v| v as &mut dyn State),
+            Menu::Settings | Menu::SettingsPreSelected(_) => self.settings.as_mut().map(|v| v as &mut dyn State),
+            Menu::Coins => self.coins.as_mut().map(|v| v as &mut dyn State),
+            Menu::CreateSpendTx => self.create_spend.as_mut().map(|v| v as &mut dyn State),
+            Menu::Recovery => self.recovery.as_mut().map(|v| v as &mut dyn State),
+            Menu::RefreshCoins(_) => self.create_spend.as_mut().map(|v| v as &mut dyn State),
+            Menu::PsbtPreSelected(_) => self.psbts.as_mut().map(|v| v as &mut dyn State),
         }
     }
 }
@@ -412,11 +334,12 @@ impl App {
             config_arc.clone(),
             restored_from_backup,
         );
-        let cmd = panels
-            .vault_overview
-            .as_mut()
-            .expect("vault_overview must exist when vault present")
-            .reload(daemon.clone(), wallet.clone());
+        let cmd = if let Some(vault_overview) = panels.vault_overview.as_mut() {
+            vault_overview.reload(daemon.clone(), wallet.clone())
+        } else {
+            tracing::warn!("vault_overview not present in App::new despite vault being configured");
+            Task::none()
+        };
         let mut cache_with_vault = cache;
         cache_with_vault.has_vault = true;
         (
@@ -454,7 +377,7 @@ impl App {
         tracing::debug!("Cache configured with has_vault=false");
 
         // Create panels without wallet - only Active and other non-Vault features will be available
-        let panels = Panels::new_without_wallet(datadir.clone(), network, config_arc.clone());
+        let panels = Panels::new_without_wallet();
 
         tracing::info!("App created without wallet successfully");
         (
@@ -521,7 +444,9 @@ impl App {
     }
 
     fn set_current_panel(&mut self, menu: Menu) -> Task<Message> {
-        self.panels.current_mut().interrupt();
+        if let Some(panel) = self.panels.current_mut() {
+            panel.interrupt();
+        }
 
         match &menu {
             menu::Menu::Vault(submenu) => {
@@ -563,15 +488,17 @@ impl App {
                         menu::VaultSubMenu::Settings(Some(setting)) => {
                             if let Some(daemon) = &self.daemon {
                                 self.panels.current = menu.clone();
-                                return self.panels.current_mut().update(
-                                    daemon.clone(),
-                                    &self.cache,
-                                    Message::View(view::Message::Settings(match setting {
-                                        menu::SettingsOption::Node => {
-                                            view::SettingsMessage::EditBitcoindSettings
-                                        }
-                                    })),
-                                );
+                                if let Some(panel) = self.panels.current_mut() {
+                                    return panel.update(
+                                        daemon.clone(),
+                                        &self.cache,
+                                        Message::View(view::Message::Settings(match setting {
+                                            menu::SettingsOption::Node => {
+                                                view::SettingsMessage::EditBitcoindSettings
+                                            }
+                                        })),
+                                    );
+                                }
                             }
                         }
                         menu::VaultSubMenu::Coins(Some(preselected)) => {
@@ -630,23 +557,7 @@ impl App {
                             }
                         }
                     }
-                    menu::ActiveSubMenu::Settings(Some(setting)) => {
-                        if let Some(daemon) = &self.daemon {
-                            self.panels.current = menu.clone();
-                            return self.panels.current_mut().update(
-                                daemon.clone(),
-                                &self.cache,
-                                Message::View(view::Message::Settings(match setting {
-                                    menu::SettingsOption::Node => {
-                                        view::SettingsMessage::EditBitcoindSettings
-                                    }
-                                })),
-                            );
-                        }
-                    }
-                    _ => {
-                        tracing::debug!("Active submenu variant {:?} has no special handling in set_current_panel", submenu);
-                    }
+                    _ => {}
                 }
             }
             _ => {
@@ -659,9 +570,11 @@ impl App {
 
         self.panels.current = menu;
         if let (Some(daemon), Some(wallet)) = (&self.daemon, &self.wallet) {
-            self.panels
-                .current_mut()
-                .reload(daemon.clone(), wallet.clone())
+            if let Some(panel) = self.panels.current_mut() {
+                panel.reload(daemon.clone(), wallet.clone())
+            } else {
+                Task::none()
+            }
         } else {
             Task::none()
         }
@@ -704,11 +617,11 @@ impl App {
                     },
                 ))
                 .map(|_| Message::Tick),
-                self.panels.current().subscription(),
+                self.panels.current().unwrap_or(&self.panels.global_home).subscription(),
             ]
         } else {
             // No vault - only subscribe to panel events, no tick updates
-            vec![self.panels.current().subscription()]
+            vec![self.panels.current().unwrap_or(&self.panels.global_home).subscription()]
         };
 
         Subscription::batch(subscriptions)
@@ -739,10 +652,11 @@ impl App {
 
         let tick = std::time::Instant::now();
         let mut tasks = if let Some(daemon) = &self.daemon {
-            vec![self
-                .panels
-                .current_mut()
-                .update(daemon.clone(), &self.cache, Message::Tick)]
+            if let Some(panel) = self.panels.current_mut() {
+                vec![panel.update(daemon.clone(), &self.cache, Message::Tick)]
+            } else {
+                vec![]
+            }
         } else {
             vec![]
         };
@@ -881,19 +795,27 @@ impl App {
             Message::WalletUpdated(Ok(wallet)) => {
                 self.wallet = Some(wallet.clone());
                 if let Some(daemon) = &self.daemon {
-                    self.panels.current_mut().update(
-                        daemon.clone(),
-                        &self.cache,
-                        Message::WalletUpdated(Ok(wallet)),
-                    )
+                    if let Some(panel) = self.panels.current_mut() {
+                        panel.update(
+                            daemon.clone(),
+                            &self.cache,
+                            Message::WalletUpdated(Ok(wallet)),
+                        )
+                    } else {
+                        Task::none()
+                    }
                 } else {
                     Task::none()
                 }
             }
-            Message::View(view::Message::Menu(menu)) => Task::batch([
-                self.panels.current_mut().close(),
-                self.set_current_panel(menu),
-            ]),
+            Message::View(view::Message::Menu(menu)) => {
+                let close_task = if let Some(panel) = self.panels.current_mut() {
+                    panel.close()
+                } else {
+                    Task::none()
+                };
+                Task::batch([close_task, self.set_current_panel(menu)])
+            }
             Message::View(view::Message::ToggleVault) => {
                 self.panels.vault_expanded = !self.panels.vault_expanded;
                 self.cache.vault_expanded = self.panels.vault_expanded;
@@ -925,9 +847,11 @@ impl App {
             // TODO: Move to panel.state
             _ => {
                 if let Some(daemon) = &self.daemon {
-                    self.panels
-                        .current_mut()
-                        .update(daemon.clone(), &self.cache, message)
+                    if let Some(panel) = self.panels.current_mut() {
+                        panel.update(daemon.clone(), &self.cache, message)
+                    } else {
+                        Task::none()
+                    }
                 } else {
                     // No daemon available (app without vault), skip panel update
                     Task::none()
@@ -973,6 +897,7 @@ impl App {
         let view = self
             .panels
             .current()
+            .unwrap_or(&self.panels.global_home)
             .view(&self.panels.current, &self.cache);
 
         if self.cache.network != bitcoin::Network::Bitcoin {
