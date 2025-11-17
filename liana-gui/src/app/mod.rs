@@ -588,8 +588,8 @@ impl App {
                     }
                 }
             }
-            menu::Menu::Active(submenu) => match submenu {
-                menu::ActiveSubMenu::Transactions(Some(txid)) => {
+            menu::Menu::Active(submenu) => {
+                if let menu::ActiveSubMenu::Transactions(Some(txid)) = submenu {
                     if let Some(daemon) = &self.daemon {
                         if let Ok(Some(tx)) = Handle::current().block_on(async {
                             daemon
@@ -603,8 +603,7 @@ impl App {
                         }
                     }
                 }
-                _ => {}
-            },
+            }
             _ => {
                 tracing::debug!(
                     "Menu variant {:?} has no special handling in set_current_panel",
