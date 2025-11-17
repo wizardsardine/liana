@@ -178,14 +178,11 @@ impl CubeSettings {
 
         // Configure Argon2id with reasonable parameters
         // m_cost: 19456 KiB (19 MiB), t_cost: 2 iterations, p_cost: 1 thread
-        let params = Params::new(19456, 2, 1, None)
-            .map_err(|e| format!("Invalid Argon2 parameters: {}", e))?;
+        let params = Params::new(19456, 2, 1, None)?;
         let argon2 = Argon2::new(argon2::Algorithm::Argon2id, argon2::Version::V0x13, params);
 
         // Hash the PIN
-        let password_hash = argon2
-            .hash_password(pin.as_bytes(), &salt)
-            .map_err(|e| format!("Failed to hash PIN: {}", e))?;
+        let password_hash = argon2.hash_password(pin.as_bytes(), &salt)?;
 
         // Return the PHC string format
         Ok(password_hash.to_string())
