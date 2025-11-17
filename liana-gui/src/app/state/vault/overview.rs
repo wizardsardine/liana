@@ -103,8 +103,8 @@ impl State for VaultOverview {
             view::dashboard(
                 menu,
                 cache,
-                None,
-                view::vault::overview::home_view(
+                self.warning.as_ref(),
+                view::vault::overview::vault_overview_view(
                     &self.balance,
                     &self.unconfirmed_balance,
                     &self.remaining_sequence,
@@ -165,12 +165,15 @@ impl State for VaultOverview {
                 }
             },
             Message::PaymentsExtension(res) => match res {
-                Err(e) => self.warning = Some(e),
-                Ok(events) => {
+                Err(e) => {
+                    self.processing = false;
+                    self.warning = Some(e);
+                }
+                Ok((events, actual_limit)) => {
                     self.processing = false;
                     self.warning = None;
                     self.payments.loaded_page_count += 1;
-                    self.payments.is_last_page = (events.len() as u64) < HISTORY_EVENT_PAGE_SIZE;
+                    self.payments.is_last_page = (events.len() as u64) < actual_limit;
                     if let Some(event) = events.first() {
                         if let Some(position) = self
                             .payments
@@ -221,7 +224,13 @@ impl State for VaultOverview {
             Message::View(view::Message::SelectPayment(outpoint)) => {
                 return Task::perform(
                     async move {
-                        let tx = daemon.get_history_txs(&[outpoint.txid]).await?.remove(0);
+                        let txs = daemon.get_history_txs(&[outpoint.txid]).await?;
+                        let tx = txs.into_iter().next().ok_or_else(|| {
+                            Error::Unexpected(format!(
+                                "Transaction {} not found in history",
+                                outpoint.txid
+                            ))
+                        })?;
                         Ok((tx, outpoint.vout as usize))
                     },
                     Message::Payment,
@@ -286,7 +295,7 @@ impl State for VaultOverview {
                             let blocktime = if let Some(event) = events.first() {
                                 event.time
                             } else {
-                                return Ok(events);
+                                return Ok((events, limit));
                             };
 
                             // 2. Retrieve a larger batch of event with the same cursor but
@@ -301,7 +310,7 @@ impl State for VaultOverview {
                                     .await?;
                             }
                             events.sort_by(|a, b| a.compare(b));
-                            Ok(events)
+                            Ok((events, limit))
                         },
                         Message::PaymentsExtension,
                     );

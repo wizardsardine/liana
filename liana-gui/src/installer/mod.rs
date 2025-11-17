@@ -544,7 +544,7 @@ pub async fn install_local_wallet(
     // create liana GUI settings file
     update_settings_file(&network_datadir, |mut settings| {
         settings.wallets.push(wallet_settings.clone());
-        settings
+        Some(settings)
     })
     .await
     .map_err(|e| Error::Unexpected(e.to_string()))?;
@@ -687,7 +687,7 @@ pub async fn create_remote_wallet(
     };
     update_settings_file(&network_datadir, |mut settings| {
         settings.wallets.push(wallet_settings.clone());
-        settings
+        Some(settings)
     })
     .await
     .map_err(|e| Error::Unexpected(e.to_string()))?;
@@ -767,7 +767,7 @@ pub async fn import_remote_wallet(
     };
     update_settings_file(&network_datadir, |mut settings| {
         settings.wallets.push(wallet_settings.clone());
-        settings
+        Some(settings)
     })
     .await
     .map_err(|e| Error::Unexpected(e.to_string()))?;

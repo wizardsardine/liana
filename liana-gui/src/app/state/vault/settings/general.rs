@@ -35,7 +35,7 @@ async fn update_price_setting(
         {
             wallet_setting.fiat_price = Some(new_price_setting);
         }
-        settings
+        Some(settings)
     })
     .await?;
     Ok(Arc::new(wallet))

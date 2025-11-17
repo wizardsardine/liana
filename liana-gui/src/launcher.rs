@@ -243,7 +243,16 @@ impl Launcher {
                 // Add PIN if enabled
                 if self.pin_enabled {
                     let pin = self.create_cube_pin.join("");
-                    cube = cube.with_pin(&pin);
+                    cube = match cube.with_pin(&pin) {
+                        Ok(c) => c,
+                        Err(e) => {
+                            let error_msg = format!("Failed to hash PIN: {}", e);
+                            return Task::perform(
+                                async move { Err(error_msg) },
+                                Message::CubeCreated,
+                            );
+                        }
+                    };
                 }
 
                 let network_dir = self.datadir_path.network_directory(network);
@@ -251,7 +260,7 @@ impl Launcher {
                     async move {
                         settings::update_settings_file(&network_dir, |mut settings| {
                             settings.cubes.push(cube.clone());
-                            settings
+                            Some(settings)
                         })
                         .await
                         .map(|_| cube)
@@ -845,7 +854,12 @@ impl DeleteCubeModal {
                 if let Err(e) = Handle::current().block_on(async {
                     settings::update_settings_file(&network_dir, |mut settings| {
                         settings.cubes.retain(|cube| cube.id != cube_id);
-                        settings
+                        // Delete file if both cubes and wallets are empty
+                        if settings.cubes.is_empty() && settings.wallets.is_empty() {
+                            None
+                        } else {
+                            Some(settings)
+                        }
                     })
                     .await
                 }) {
@@ -1077,7 +1091,7 @@ async fn check_network_datadir(path: NetworkDirectory) -> Result<State, String> 
                     // Save the cubes to settings
                     if let Err(e) = settings::update_settings_file(&path, |mut settings| {
                         settings.cubes = cubes.clone();
-                        settings
+                        Some(settings)
                     })
                     .await
                     {

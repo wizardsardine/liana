@@ -327,7 +327,7 @@ impl Tab {
                                         tokio::runtime::Handle::current().block_on(async {
                                             app::settings::update_settings_file(
                                                 &network_dir,
-                                                |_| settings_to_save,
+                                                |_| Some(settings_to_save),
                                             )
                                             .await
                                         });
@@ -369,7 +369,7 @@ impl Tab {
                                         tokio::runtime::Handle::current().block_on(async {
                                             app::settings::update_settings_file(
                                                 &network_dir,
-                                                |_| settings_to_save,
+                                                |_| Some(settings_to_save),
                                             )
                                             .await
                                         });
@@ -408,7 +408,7 @@ impl Tab {
                                             &network_dir,
                                             |mut s| {
                                                 s.cubes.push(cube.clone());
-                                                s
+                                                Some(s)
                                             },
                                         )
                                         .await
@@ -739,7 +739,7 @@ pub fn create_app_with_remote_backend(
                     w.alias = wallet.metadata.wallet_alias.clone();
                     tracing::info!("Wallet alias was changed. Settings updated.");
                 }
-                settings
+                Some(settings)
             })
             .await
         }) {

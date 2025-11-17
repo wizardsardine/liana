@@ -467,7 +467,7 @@ async fn register_wallet(
                     }
                 }
 
-                settings
+                Some(settings)
             })
             .await?;
         }
@@ -514,7 +514,7 @@ pub async fn update_aliases(
                 wallet_setting.alias = Some(wallet_alias.clone());
             }
 
-            settings
+            Some(settings)
         })
         .await?;
     }
@@ -538,7 +538,7 @@ pub async fn update_aliases(
                     .collect();
             }
 
-            settings
+            Some(settings)
         })
         .await?;
     }

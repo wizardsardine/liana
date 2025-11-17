@@ -1031,7 +1031,7 @@ pub async fn import_backup(
             {
                 wallet.keys = settings_aliases.clone().into_values().collect();
             }
-            settings
+            Some(settings)
         })
         .await
         {

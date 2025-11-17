@@ -81,7 +81,12 @@ pub async fn delete_failed_install(
                     .map(|auth| auth.email.clone())
             })
             .collect();
-        settings
+        // Delete file if both cubes and wallets are empty
+        if settings.cubes.is_empty() && settings.wallets.is_empty() {
+            None
+        } else {
+            Some(settings)
+        }
     })
     .await
     .map_err(DeleteError::Settings)?;
@@ -169,7 +174,12 @@ pub async fn delete_wallet(
                     .map(|auth| auth.email.clone())
             })
             .collect();
-        settings
+        // Delete file if both cubes and wallets are empty
+        if settings.cubes.is_empty() && settings.wallets.is_empty() {
+            None
+        } else {
+            Some(settings)
+        }
     })
     .await
     .map_err(DeleteError::Settings)?;

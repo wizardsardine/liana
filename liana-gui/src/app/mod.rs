@@ -172,6 +172,61 @@ impl Panels {
         }
     }
 
+    /// Rebuilds all vault-specific panels when a vault wallet is added to an app that didn't have one.
+    /// This is called when transitioning from no-vault to has-vault state.
+    fn build_vault_panels(
+        &mut self,
+        wallet: Arc<Wallet>,
+        cache: &Cache,
+        daemon_backend: DaemonBackend,
+        data_dir: LianaDirectory,
+        internal_bitcoind: Option<&Bitcoind>,
+        config: Arc<Config>,
+    ) {
+        self.vault_overview = Some(VaultOverview::new(
+            wallet.clone(),
+            cache.coins(),
+            sync_status(
+                daemon_backend.clone(),
+                cache.blockheight(),
+                cache.sync_progress(),
+                cache.last_poll_timestamp(),
+                cache.last_poll_at_startup,
+            ),
+            cache.blockheight(),
+            false, // show_rescan_warning: false when adding vault dynamically
+        ));
+        self.coins = Some(CoinsPanel::new(
+            cache.coins(),
+            wallet.main_descriptor.first_timelock_value(),
+        ));
+        self.transactions = Some(VaultTransactionsPanel::new(wallet.clone()));
+        self.psbts = Some(PsbtsPanel::new(wallet.clone()));
+        self.recovery = Some(new_recovery_panel(wallet.clone(), cache));
+        self.receive = Some(VaultReceivePanel::new(data_dir.clone(), wallet.clone()));
+        self.create_spend = Some(CreateSpendPanel::new(
+            wallet.clone(),
+            cache.coins(),
+            cache.blockheight() as u32,
+            cache.network,
+        ));
+        self.settings = Some(state::SettingsState::new(
+            data_dir.clone(),
+            wallet.clone(),
+            daemon_backend,
+            internal_bitcoind.is_some(),
+            config.clone(),
+        ));
+        #[cfg(feature = "buysell")]
+        {
+            self.buy_sell = Some(crate::app::view::buysell::BuySellPanel::new(
+                cache.network,
+                wallet,
+                data_dir,
+            ));
+        }
+    }
+
     fn current(&self) -> Option<&dyn State> {
         match &self.current {
             Menu::Home => Some(&self.global_home),
@@ -760,6 +815,13 @@ impl App {
                     let current = &self.panels.current;
                     let cache = self.cache.clone();
 
+                    let is_settings_current = matches!(
+                        current,
+                        Menu::Settings
+                            | Menu::SettingsPreSelected(_)
+                            | Menu::Vault(crate::app::menu::VaultSubMenu::Settings(_))
+                    );
+
                     let commands = vec![
                         vault_overview.update(
                             daemon.clone(),
@@ -771,7 +833,7 @@ impl App {
                         settings.update(
                             daemon.clone(),
                             &cache,
-                            Message::UpdatePanelCache(current == &Menu::Settings),
+                            Message::UpdatePanelCache(is_settings_current),
                         ),
                     ];
                     Task::batch(commands)
@@ -790,7 +852,28 @@ impl App {
                 }
             }
             Message::WalletUpdated(Ok(wallet)) => {
+                // Check if we're transitioning from no-vault to has-vault state
+                let was_vaultless = !self.cache.has_vault;
+
                 self.wallet = Some(wallet.clone());
+                self.cache.has_vault = true;
+
+                // If we didn't have a vault before, rebuild all vault panels
+                if was_vaultless {
+                    if let Some(daemon) = &self.daemon {
+                        tracing::info!("Vault added to app - rebuilding vault panels");
+                        self.panels.build_vault_panels(
+                            wallet.clone(),
+                            &self.cache,
+                            daemon.backend(),
+                            self.datadir.clone(),
+                            self.internal_bitcoind.as_ref(),
+                            self.config.clone(),
+                        );
+                    }
+                }
+
+                // Forward the message to the current panel
                 if let Some(daemon) = &self.daemon {
                     if let Some(panel) = self.panels.current_mut() {
                         panel.update(

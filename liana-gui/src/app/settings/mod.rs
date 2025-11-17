@@ -57,7 +57,7 @@ pub async fn update_settings_file<F>(
     updater: F,
 ) -> Result<(), SettingsError>
 where
-    F: FnOnce(Settings) -> Settings,
+    F: FnOnce(Settings) -> Option<Settings>,
 {
     let path = network_dir.path().join(SETTINGS_FILE_NAME);
     let file_exists = tokio::fs::try_exists(&path).await.unwrap_or(false);
@@ -88,12 +88,13 @@ where
 
     let settings = updater(settings);
 
-    if settings.cubes.is_empty() && settings.wallets.is_empty() {
+    // If updater returns None, delete the file
+    let Some(settings) = settings else {
         tokio::fs::remove_file(&path)
             .await
             .map_err(|e| SettingsError::ReadingFile(e.to_string()))?;
         return Ok(());
-    }
+    };
 
     let content = serde_json::to_vec_pretty(&settings)
         .map_err(|e| SettingsError::WritingFile(format!("Failed to serialize settings: {}", e)))?;
@@ -147,9 +148,9 @@ impl CubeSettings {
         self
     }
 
-    pub fn with_pin(mut self, pin: &str) -> Self {
-        self.security_pin_hash = Some(Self::hash_pin(pin));
-        self
+    pub fn with_pin(mut self, pin: &str) -> Result<Self, Box<dyn std::error::Error>> {
+        self.security_pin_hash = Some(Self::hash_pin(pin)?);
+        Ok(self)
     }
 
     pub fn has_pin(&self) -> bool {
@@ -166,7 +167,7 @@ impl CubeSettings {
     }
 
     /// Hash PIN using Argon2id with a random salt
-    fn hash_pin(pin: &str) -> String {
+    fn hash_pin(pin: &str) -> Result<String, Box<dyn std::error::Error>> {
         use argon2::{
             password_hash::{rand_core::OsRng, PasswordHasher, SaltString},
             Argon2, Params,
@@ -177,16 +178,17 @@ impl CubeSettings {
 
         // Configure Argon2id with reasonable parameters
         // m_cost: 19456 KiB (19 MiB), t_cost: 2 iterations, p_cost: 1 thread
-        let params = Params::new(19456, 2, 1, None).expect("Valid Argon2 params");
+        let params = Params::new(19456, 2, 1, None)
+            .map_err(|e| format!("Invalid Argon2 parameters: {}", e))?;
         let argon2 = Argon2::new(argon2::Algorithm::Argon2id, argon2::Version::V0x13, params);
 
         // Hash the PIN
         let password_hash = argon2
             .hash_password(pin.as_bytes(), &salt)
-            .expect("Failed to hash PIN");
+            .map_err(|e| format!("Failed to hash PIN: {}", e))?;
 
         // Return the PHC string format
-        password_hash.to_string()
+        Ok(password_hash.to_string())
     }
 
     /// Verify PIN against Argon2id hash
@@ -849,7 +851,9 @@ mod test {
         let pin = "1234";
 
         // Create a cube with a PIN
-        let cube = CubeSettings::new("Test Cube".to_string(), Network::Bitcoin).with_pin(pin);
+        let cube = CubeSettings::new("Test Cube".to_string(), Network::Bitcoin)
+            .with_pin(pin)
+            .expect("PIN hashing should succeed in tests");
 
         // Verify the hash is in Argon2id format
         let hash = cube.security_pin_hash.as_ref().unwrap();
@@ -874,8 +878,12 @@ mod test {
         let pin = "1234";
 
         // Create two cubes with the same PIN
-        let cube1 = CubeSettings::new("Cube 1".to_string(), Network::Bitcoin).with_pin(pin);
-        let cube2 = CubeSettings::new("Cube 2".to_string(), Network::Bitcoin).with_pin(pin);
+        let cube1 = CubeSettings::new("Cube 1".to_string(), Network::Bitcoin)
+            .with_pin(pin)
+            .expect("PIN hashing should succeed in tests");
+        let cube2 = CubeSettings::new("Cube 2".to_string(), Network::Bitcoin)
+            .with_pin(pin)
+            .expect("PIN hashing should succeed in tests");
 
         let hash1 = cube1.security_pin_hash.as_ref().unwrap();
         let hash2 = cube2.security_pin_hash.as_ref().unwrap();
