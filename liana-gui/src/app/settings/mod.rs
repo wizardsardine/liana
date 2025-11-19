@@ -92,7 +92,7 @@ where
     let Some(settings) = settings else {
         tokio::fs::remove_file(&path)
             .await
-            .map_err(|e| SettingsError::ReadingFile(e.to_string()))?;
+            .map_err(|e| SettingsError::DeletingFile(e.to_string()))?;
         return Ok(());
     };
 
