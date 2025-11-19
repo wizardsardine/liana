@@ -13,7 +13,7 @@ use crate::{
     app::{
         self,
         cache::{Cache, DaemonCache},
-        settings::{update_settings_file, WalletSettings},
+        settings::{self, update_settings_file, WalletSettings},
         wallet::Wallet,
         App,
     },
@@ -125,9 +125,10 @@ impl Tab {
                     command.map(|msg| Message::Install(Box::new(msg)))
                 }
                 launcher::Message::Run(datadir_path, cfg, network, settings) => {
-                    if settings.remote_backend_auth.is_some() {
+                    let wallet_id = settings.wallet_id();
+                    if let Some(auth_cfg) = settings.remote_backend_auth {
                         let (login, command) =
-                            login::LianaLiteLogin::new(datadir_path, network, settings);
+                            login::LianaLiteLogin::new(datadir_path, network, wallet_id, auth_cfg);
                         self.state = State::Login(Box::new(login));
                         command.map(|msg| Message::Login(Box::new(msg)))
                     } else {
@@ -163,15 +164,21 @@ impl Tab {
                             .join(app::config::DEFAULT_FILE_NAME),
                     )
                     .expect("A gui configuration file must be present");
-                    let (app, command) = create_app_with_remote_backend(
-                        l.settings.clone(),
+                    let (app, command) = match create_app_with_remote_backend(
+                        l.directory_wallet_id.clone(),
                         backend_client,
                         wallet,
                         coins,
                         l.datadir.clone(),
                         l.network,
                         config,
-                    );
+                    ) {
+                        Ok((app, command)) => (app, command),
+                        Err(e) => {
+                            tracing::error!("{}", e);
+                            return Task::none();
+                        }
+                    };
 
                     self.state = State::App(app);
                     command.map(|msg| Message::Run(Box::new(msg)))
@@ -180,9 +187,14 @@ impl Tab {
             },
             (State::Installer(i), Message::Install(msg)) => {
                 if let installer::Message::Exit(settings, internal_bitcoind) = *msg {
-                    if settings.remote_backend_auth.is_some() {
-                        let (login, command) =
-                            login::LianaLiteLogin::new(i.datadir.clone(), i.network, *settings);
+                    let wallet_id = settings.wallet_id();
+                    if let Some(auth_cfg) = settings.remote_backend_auth {
+                        let (login, command) = login::LianaLiteLogin::new(
+                            i.datadir.clone(),
+                            i.network,
+                            wallet_id,
+                            auth_cfg,
+                        );
                         self.state = State::Login(Box::new(login));
                         command.map(|msg| Message::Login(Box::new(msg)))
                     } else {
@@ -276,7 +288,21 @@ impl Tab {
                 _ => loader.update(*msg).map(|msg| Message::Load(Box::new(msg))),
             },
             (State::App(i), Message::Run(msg)) => {
-                i.update(*msg).map(|msg| Message::Run(Box::new(msg)))
+                if matches!(*msg, app::Message::RedirectLianaConnectLogin) {
+                    let (login, command) = login::LianaLiteLogin::new(
+                        i.cache().datadir_path.clone(),
+                        i.cache().network,
+                        i.wallet_id(),
+                        i.wallet()
+                            .remote_backend_auth
+                            .clone()
+                            .expect("Must be a liana-connect wallet"),
+                    );
+                    self.state = State::Login(Box::new(login));
+                    command.map(|msg| Message::Login(Box::new(msg)))
+                } else {
+                    i.update(*msg).map(|msg| Message::Run(Box::new(msg)))
+                }
             }
             _ => Task::none(),
         }
@@ -314,24 +340,27 @@ impl Tab {
 }
 
 pub fn create_app_with_remote_backend(
-    wallet_settings: WalletSettings,
+    wallet_id: settings::WalletId,
     remote_backend: BackendWalletClient,
     wallet: api::Wallet,
     coins: ListCoinsResult,
     liana_dir: LianaDirectory,
     network: bitcoin::Network,
     config: app::Config,
-) -> (app::App, iced::Task<app::Message>) {
+) -> Result<(app::App, iced::Task<app::Message>), settings::SettingsError> {
+    let network_directory = liana_dir.network_directory(network);
+    let wallet_settings =
+        WalletSettings::from_file(&network_directory, |w| w.wallet_id() == wallet_id)?
+            .ok_or_else(|| settings::SettingsError::Unexpected("Wallet not found".to_string()))?;
     // If someone modified the wallet_alias on Liana-Connect,
     // then the new alias is imported and stored in the settings file.
     if wallet.metadata.wallet_alias != wallet_settings.alias {
-        let network_directory = liana_dir.network_directory(network);
         if let Err(e) = tokio::runtime::Handle::current().block_on(async {
             update_settings_file(&network_directory, |mut settings| {
                 if let Some(w) = settings
                     .wallets
                     .iter_mut()
-                    .find(|w| w.wallet_id() == wallet_settings.wallet_id())
+                    .find(|w| w.wallet_id() == wallet_id)
                 {
                     w.alias = wallet.metadata.wallet_alias.clone();
                     tracing::info!("Wallet alias was changed. Settings updated.");
@@ -373,7 +402,7 @@ pub fn create_app_with_remote_backend(
         .map(|pk| (pk.fingerprint, pk.into()))
         .collect();
 
-    App::new(
+    Ok(App::new(
         Cache {
             network,
             datadir_path: liana_dir.clone(),
@@ -398,6 +427,11 @@ pub fn create_app_with_remote_backend(
                 .with_key_aliases(aliases)
                 .with_provider_keys(provider_keys)
                 .with_hardware_wallets(hws)
+                .with_remote_backend_auth(
+                    wallet_settings
+                        .remote_backend_auth
+                        .expect("This is a liana-connect wallet"),
+                )
                 .with_fiat_price_setting(wallet_settings.fiat_price)
                 .load_hotsigners(&liana_dir, network)
                 .expect("Datadir should be conform"),
@@ -407,5 +441,5 @@ pub fn create_app_with_remote_backend(
         liana_dir,
         None,
         false,
-    )
+    ))
 }

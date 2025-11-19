@@ -43,6 +43,7 @@ pub struct Wallet {
     pub hardware_wallets: Vec<HardwareWalletConfig>,
     pub signer: Option<Arc<Signer>>,
     pub fiat_price_setting: Option<fiat::PriceSetting>,
+    pub remote_backend_auth: Option<settings::AuthConfig>,
 }
 
 impl Wallet {
@@ -63,6 +64,7 @@ impl Wallet {
             hardware_wallets: Vec::new(),
             signer: None,
             fiat_price_setting: None,
+            remote_backend_auth: None,
         }
     }
 
@@ -114,6 +116,11 @@ impl Wallet {
         fiat_price_setting: Option<fiat::PriceSetting>,
     ) -> Self {
         self.fiat_price_setting = fiat_price_setting;
+        self
+    }
+
+    pub fn with_remote_backend_auth(mut self, auth_cfg: settings::AuthConfig) -> Self {
+        self.remote_backend_auth = Some(auth_cfg);
         self
     }
 

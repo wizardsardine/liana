@@ -33,7 +33,7 @@ pub enum DaemonError {
     /// Something was wrong with the rpc socket communication.
     RpcSocket(Option<ErrorKind>, String),
     /// Something was wrong with the http communication.
-    Http(Option<u16>, String),
+    Http(Option<u16>, serde_json::Value),
     /// Something unexpected happened.
     Unexpected(String),
     /// No response.

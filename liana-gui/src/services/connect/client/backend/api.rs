@@ -313,8 +313,7 @@ pub struct Psbt {
 
 #[derive(Clone, Deserialize)]
 #[serde(untagged)]
-pub enum DraftPsbtResult {
-    Success(DraftPsbt),
+pub enum DraftPsbtErrors {
     InsufficientFunds(InsufficientFundsInfo),
     Error(DraftPsbtError),
 }

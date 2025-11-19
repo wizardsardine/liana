@@ -13,7 +13,7 @@ use lianad::commands::ListCoinsResult;
 use crate::{
     app::{
         cache::coins_to_cache,
-        settings::{SettingsError, WalletSettings},
+        settings::{self, SettingsError},
     },
     daemon::DaemonError,
     dir::{LianaDirectory, NetworkDirectory},
@@ -112,9 +112,9 @@ pub enum BackendState {
 pub struct LianaLiteLogin {
     pub datadir: LianaDirectory,
     pub network: Network,
-    pub settings: WalletSettings,
+    pub directory_wallet_id: settings::WalletId,
 
-    wallet_id: String,
+    connect_wallet_id: String,
     email: String,
 
     processing: bool,
@@ -141,18 +141,18 @@ impl LianaLiteLogin {
     pub fn new(
         datadir: LianaDirectory,
         network: Network,
-        settings: WalletSettings,
+        directory_wallet_id: settings::WalletId,
+        auth_cfg: settings::AuthConfig,
     ) -> (Self, Task<Message>) {
-        let auth = settings.remote_backend_auth.clone().unwrap();
         (
             Self {
                 network,
                 datadir: datadir.clone(),
                 step: ConnectionStep::CheckingAuthFile,
                 connection_error: None,
-                settings,
-                wallet_id: auth.wallet_id.clone(),
-                email: auth.email.clone(),
+                directory_wallet_id,
+                connect_wallet_id: auth_cfg.wallet_id.clone(),
+                email: auth_cfg.email.clone(),
                 auth_error: None,
                 processing: true,
             },
@@ -164,11 +164,11 @@ impl LianaLiteLogin {
                     let client = AuthClient::new(
                         service_config.auth_api_url,
                         service_config.auth_api_public_key,
-                        auth.email,
+                        auth_cfg.email,
                     );
                     connect_with_credentials(
                         client,
-                        auth.wallet_id,
+                        auth_cfg.wallet_id,
                         service_config.backend_api_url,
                         network,
                         &datadir.network_directory(network),
@@ -196,12 +196,27 @@ impl LianaLiteLogin {
                             );
                         }
                         Err(e) => {
-                            // Do not display error, if the Liana-Connect cache does not exist,
-                            // simply ask user to do the authentication steps.
-                            if !matches!(e, Error::CredentialsMissing) {
-                                self.connection_error = Some(e);
-                            }
+                            // Whatever the error with current auth,
+                            // user is redirected to do the authentication steps.
                             self.step = ConnectionStep::CheckEmail;
+                            tracing::warn!("Error while checking email: {}", e);
+                            match e {
+                                Error::CredentialsMissing => {
+                                    //  Liana-Connect cache does not exist,
+                                    //  No need to display error
+                                }
+                                Error::Auth(AuthError { http_status, .. }) => {
+                                    if http_status == Some(403) || http_status == Some(401) {
+                                        // Session was certainly deleted
+                                        // No need to display error
+                                    } else {
+                                        self.connection_error = Some(e);
+                                    }
+                                }
+                                _ => {
+                                    self.connection_error = Some(e);
+                                }
+                            }
                         }
                     }
                 }
@@ -294,13 +309,20 @@ impl LianaLiteLogin {
                         self.processing = true;
                         self.connection_error = None;
                         self.auth_error = None;
-                        let wallet_id = self.wallet_id.clone();
+                        let connect_wallet_id = self.connect_wallet_id.clone();
                         let network = self.network;
                         let datadir = self.datadir.clone();
                         return Task::perform(
                             async move {
-                                connect(client, otp, wallet_id, backend_api_url, network, datadir)
-                                    .await
+                                connect(
+                                    client,
+                                    otp,
+                                    connect_wallet_id,
+                                    backend_api_url,
+                                    network,
+                                    datadir,
+                                )
+                                .await
                             },
                             Message::Connected,
                         );
@@ -449,7 +471,7 @@ impl LianaLiteLogin {
 pub async fn connect(
     auth: AuthClient,
     token: String,
-    wallet_id: String,
+    connect_wallet_id: String,
     backend_api_url: String,
     network: Network,
     liana_directory: LianaDirectory,
@@ -466,13 +488,13 @@ pub async fn connect(
         return Ok(BackendState::NoWallet(client));
     }
 
-    if wallet_id.is_empty() {
+    if connect_wallet_id.is_empty() {
         let first = wallets.first().cloned().ok_or(DaemonError::NoAnswer)?;
         let (wallet_client, wallet) = client.connect_wallet(first);
         let coins = coins_to_cache(Arc::new(wallet_client.clone())).await?;
 
         Ok(BackendState::WalletExists(wallet_client, wallet, coins))
-    } else if let Some(wallet) = wallets.into_iter().find(|w| w.id == wallet_id) {
+    } else if let Some(wallet) = wallets.into_iter().find(|w| w.id == connect_wallet_id) {
         let (wallet_client, wallet) = client.connect_wallet(wallet);
         let coins = coins_to_cache(Arc::new(wallet_client.clone())).await?;
 

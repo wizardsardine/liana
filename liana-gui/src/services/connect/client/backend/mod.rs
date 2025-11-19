@@ -2,7 +2,10 @@ pub mod api;
 
 use std::{
     collections::{HashMap, HashSet},
-    sync::Arc,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
 };
 
 use async_trait::async_trait;
@@ -18,14 +21,14 @@ use lianad::{
     commands::{CoinStatus, GetInfoDescriptors, LCSpendInfo, LabelItem, UpdateDerivIndexesResult},
     config::Config,
 };
-use reqwest::{Error, IntoUrl, Method, RequestBuilder, Response};
+use reqwest::{Error, IntoUrl, Method, RequestBuilder};
 use tokio::sync::RwLock;
 
 use crate::{
     daemon::{model::*, Daemon, DaemonBackend, DaemonError},
     dir::LianaDirectory,
     hw::HardwareWalletConfig,
-    services::http::{NotSuccessResponseInfo, ResponseExt},
+    services::connect::client::cache::ConnectCacheError,
 };
 
 use self::api::{UTXOKind, DEFAULT_OUTPOINTS_LIMIT};
@@ -37,19 +40,13 @@ use super::{
 
 impl From<Error> for DaemonError {
     fn from(value: Error) -> Self {
-        DaemonError::Http(None, value.to_string())
+        DaemonError::Http(None, serde_json::Value::String(value.to_string()))
     }
 }
 
 impl From<AuthError> for DaemonError {
     fn from(value: AuthError) -> Self {
-        DaemonError::Http(value.http_status, value.error)
-    }
-}
-
-impl From<NotSuccessResponseInfo> for DaemonError {
-    fn from(value: NotSuccessResponseInfo) -> Self {
-        DaemonError::Http(Some(value.status_code), value.text)
+        DaemonError::Http(value.http_status, serde_json::Value::String(value.error))
     }
 }
 
@@ -77,6 +74,7 @@ pub struct BackendClient {
     url: String,
     network: Network,
     http: reqwest::Client,
+    unauthenticated: Arc<AtomicBool>,
 
     user_id: String,
 }
@@ -110,6 +108,7 @@ impl BackendClient {
             url,
             user_id,
             http,
+            unauthenticated: Arc::new(AtomicBool::new(false)),
         })
     }
 
@@ -139,21 +138,81 @@ impl BackendClient {
         )
     }
 
-    async fn request<U: IntoUrl>(&self, method: Method, url: U) -> RequestBuilder {
+    async fn request<F, D>(
+        &self,
+        method: Method,
+        uri: &str,
+        with_payload: F,
+    ) -> Result<D, DaemonError>
+    where
+        F: FnOnce(RequestBuilder) -> RequestBuilder,
+        D: serde::de::DeserializeOwned,
+    {
         let access_token = &self.auth.read().await.access_token;
-        request(&self.http, method, url, access_token)
+        let res = with_payload(request(
+            &self.http,
+            method,
+            format!("{}{}", self.url, uri),
+            access_token,
+        ))
+        .send()
+        .await?;
+
+        let status = res.status();
+
+        if status.is_success() {
+            Ok(res.json().await?)
+        } else {
+            if status.as_u16() == 401 {
+                self.unauthenticated.store(true, Ordering::Relaxed);
+            }
+            Err(DaemonError::Http(
+                Some(status.as_u16()),
+                res.json().await.unwrap_or_else(|_| {
+                    serde_json::Value::String("Failed to read error response".to_string())
+                }),
+            ))
+        }
+    }
+
+    async fn exec_request<F>(
+        &self,
+        method: Method,
+        uri: &str,
+        with_payload: F,
+    ) -> Result<(), DaemonError>
+    where
+        F: FnOnce(RequestBuilder) -> RequestBuilder,
+    {
+        let access_token = &self.auth.read().await.access_token;
+        let res = with_payload(request(
+            &self.http,
+            method,
+            format!("{}{}", self.url, uri),
+            access_token,
+        ))
+        .send()
+        .await?;
+
+        let status = res.status();
+
+        if status.is_success() {
+            Ok(())
+        } else {
+            if status.as_u16() == 401 {
+                self.unauthenticated.store(true, Ordering::Relaxed);
+            }
+            Err(DaemonError::Http(
+                Some(status.as_u16()),
+                res.json().await.unwrap_or_else(|_| {
+                    serde_json::Value::String("Failed to read error response".to_string())
+                }),
+            ))
+        }
     }
 
     pub async fn list_wallets(&self) -> Result<Vec<api::Wallet>, DaemonError> {
-        let list_wallet: api::ListWallets = self
-            .request(Method::GET, &format!("{}/v1/wallets", self.url))
-            .await
-            .send()
-            .await?
-            .check_success()
-            .await?
-            .json()
-            .await?;
+        let list_wallet: api::ListWallets = self.request(Method::GET, "/v1/wallets", |r| r).await?;
 
         Ok(list_wallet.wallets)
     }
@@ -164,20 +223,14 @@ impl BackendClient {
         descriptor: &LianaDescriptor,
         provider_keys: &Vec<api::payload::ProviderKey>,
     ) -> Result<api::Wallet, DaemonError> {
-        Ok(self
-            .request(Method::POST, &format!("{}/v1/wallets", self.url))
-            .await
-            .json(&api::payload::CreateWallet {
+        self.request(Method::POST, "/v1/wallets", |r| {
+            r.json(&api::payload::CreateWallet {
                 name,
                 descriptor,
                 provider_keys,
             })
-            .send()
-            .await?
-            .check_success()
-            .await?
-            .json()
-            .await?)
+        })
+        .await
     }
 
     pub async fn update_wallet_metadata(
@@ -193,7 +246,7 @@ impl BackendClient {
             .find(|w| w.id == wallet_uuid)
             .ok_or(DaemonError::Http(
                 Some(404),
-                "No wallet exists for this uuid".to_string(),
+                serde_json::Value::String("No wallet exists for this uuid".to_string()),
             ))?;
         let ledger_kinds = [
             async_hwi::DeviceKind::Ledger.to_string(),
@@ -205,24 +258,21 @@ impl BackendClient {
                     ledger_hmac.fingerprint == cfg.fingerprint && ledger_hmac.hmac == cfg.token
                 })
             {
-                let response: Response = self
-                    .request(
-                        Method::PATCH,
-                        &format!("{}/v1/wallets/{}", self.url, wallet_uuid),
-                    )
-                    .await
-                    .json(&api::payload::UpdateWallet {
-                        alias: None,
-                        ledger_hmac: Some(api::payload::UpdateLedgerHmac {
-                            fingerprint: cfg.fingerprint.to_string(),
-                            hmac: cfg.token.clone(),
-                        }),
-                        fingerprint_aliases: None,
-                    })
-                    .send()
-                    .await?;
-
-                response.check_success().await?;
+                self.exec_request(
+                    Method::PATCH,
+                    &format!("/v1/wallets/{}", wallet_uuid),
+                    |r| {
+                        r.json(&api::payload::UpdateWallet {
+                            alias: None,
+                            ledger_hmac: Some(api::payload::UpdateLedgerHmac {
+                                fingerprint: cfg.fingerprint.to_string(),
+                                hmac: cfg.token.clone(),
+                            }),
+                            fingerprint_aliases: None,
+                        })
+                    },
+                )
+                .await?;
             }
         }
 
@@ -251,21 +301,18 @@ impl BackendClient {
             };
 
         if fingerprint_aliases.is_some() || wallet_alias.is_some() {
-            let response: Response = self
-                .request(
-                    Method::PATCH,
-                    &format!("{}/v1/wallets/{}", self.url, wallet_uuid),
-                )
-                .await
-                .json(&api::payload::UpdateWallet {
-                    alias: wallet_alias,
-                    ledger_hmac: None,
-                    fingerprint_aliases,
-                })
-                .send()
-                .await?;
-
-            response.check_success().await?;
+            self.exec_request(
+                Method::PATCH,
+                &format!("/v1/wallets/{}", wallet_uuid),
+                |r| {
+                    r.json(&api::payload::UpdateWallet {
+                        alias: wallet_alias,
+                        ledger_hmac: None,
+                        fingerprint_aliases,
+                    })
+                },
+            )
+            .await?;
         }
 
         Ok(())
@@ -275,32 +322,21 @@ impl BackendClient {
         &self,
         invitation_id: &str,
     ) -> Result<api::WalletInvitation, DaemonError> {
-        Ok(self
-            .request(
-                Method::GET,
-                &format!("{}/v1/invitations/{}", self.url, invitation_id),
-            )
-            .await
-            .send()
-            .await?
-            .check_success()
-            .await?
-            .json()
-            .await?)
+        self.request(
+            Method::GET,
+            &format!("/v1/invitations/{}", invitation_id),
+            |r| r,
+        )
+        .await
     }
 
     pub async fn accept_wallet_invitation(&self, invitation_id: &str) -> Result<(), DaemonError> {
-        self.request(
+        self.exec_request(
             Method::POST,
-            &format!("{}/v1/invitations/{}/accept", self.url, invitation_id),
+            &format!("/v1/invitations/{}/accept", invitation_id),
+            |r| r,
         )
         .await
-        .send()
-        .await?
-        .check_success()
-        .await?;
-
-        Ok(())
     }
 }
 
@@ -354,20 +390,13 @@ impl BackendWalletClient {
                     .join(","),
             ))
         }
-        Ok(self
-            .inner
+        self.inner
             .request(
                 Method::GET,
-                &format!("{}/v1/wallets/{}/psbts", self.inner.url, self.wallet_uuid),
+                &format!("/v1/wallets/{}/psbts", self.wallet_uuid),
+                |r| r.query(&query),
             )
             .await
-            .query(&query)
-            .send()
-            .await?
-            .check_success()
-            .await?
-            .json()
-            .await?)
     }
 
     async fn list_txs_by_txids(
@@ -389,23 +418,13 @@ impl BackendWalletClient {
                 transactions: Vec::new(),
             });
         }
-        Ok(self
-            .inner
+        self.inner
             .request(
                 Method::GET,
-                &format!(
-                    "{}/v1/wallets/{}/transactions",
-                    self.inner.url, self.wallet_uuid
-                ),
+                &format!("/v1/wallets/{}/transactions", self.wallet_uuid),
+                |r| r.query(&query),
             )
             .await
-            .query(&query)
-            .send()
-            .await?
-            .check_success()
-            .await?
-            .json()
-            .await?)
     }
 
     async fn list_wallet_txs(
@@ -420,23 +439,13 @@ impl BackendWalletClient {
         if let Some(limit) = limit {
             query.push(("limit", limit.to_string()))
         }
-        Ok(self
-            .inner
+        self.inner
             .request(
                 Method::GET,
-                &format!(
-                    "{}/v1/wallets/{}/transactions",
-                    self.inner.url, self.wallet_uuid
-                ),
+                &format!("/v1/wallets/{}/transactions", self.wallet_uuid),
+                |r| r.query(&query),
             )
             .await
-            .query(&query)
-            .send()
-            .await?
-            .check_success()
-            .await?
-            .json()
-            .await?)
     }
 
     async fn list_wallet_coins(
@@ -465,20 +474,13 @@ impl BackendWalletClient {
                     .join(","),
             ));
         }
-        Ok(self
-            .inner
+        self.inner
             .request(
                 Method::GET,
-                &format!("{}/v1/wallets/{}/coins", self.inner.url, self.wallet_uuid),
+                &format!("/v1/wallets/{}/coins", self.wallet_uuid),
+                |r| r.query(&query),
             )
             .await
-            .query(&query)
-            .send()
-            .await?
-            .check_success()
-            .await?
-            .json()
-            .await?)
     }
 
     pub async fn user_wallet_membership(&self) -> Result<api::UserRole, DaemonError> {
@@ -486,14 +488,9 @@ impl BackendWalletClient {
             .inner
             .request(
                 Method::GET,
-                &format!("{}/v1/wallets/{}/members", self.inner.url, self.wallet_uuid),
+                &format!("/v1/wallets/{}/members", self.wallet_uuid),
+                |r| r,
             )
-            .await
-            .send()
-            .await?
-            .check_success()
-            .await?
-            .json()
             .await?;
         list.members
             .into_iter()
@@ -508,17 +505,12 @@ impl BackendWalletClient {
 
     pub async fn delete_wallet(&self) -> Result<(), DaemonError> {
         self.inner
-            .request(
+            .exec_request(
                 Method::DELETE,
-                &format!("{}/v1/wallets/{}", self.inner.url, self.wallet_uuid),
+                &format!("/v1/wallets/{}", self.wallet_uuid),
+                |r| r,
             )
             .await
-            .send()
-            .await?
-            .check_success()
-            .await?;
-
-        Ok(())
     }
 }
 
@@ -539,6 +531,12 @@ impl Daemon for BackendWalletClient {
         network: Network,
     ) -> Result<(), DaemonError> {
         let auth = self.auth().await;
+        if self.inner.unauthenticated.load(Ordering::Relaxed) {
+            return Err(DaemonError::Http(
+                Some(401),
+                serde_json::Value::String("unauthenticated".to_string()),
+            ));
+        }
         if auth.expires_at < Utc::now().timestamp() + 60 {
             match self.inner.auth.try_write() {
                 Err(_) => {
@@ -556,7 +554,14 @@ impl Daemon for BackendWalletClient {
                     )
                     .await
                     .map_err(|e| {
-                        DaemonError::Unexpected(format!("Cannot update Liana-connect cache: {}", e))
+                        if let ConnectCacheError::Updating(AuthError { http_status, error }) = e {
+                            DaemonError::Http(http_status, serde_json::Value::String(error))
+                        } else {
+                            DaemonError::Unexpected(format!(
+                                "Cannot update Liana-connect cache: {}",
+                                e
+                            ))
+                        }
                     })?;
 
                     *old = new;
@@ -595,17 +600,9 @@ impl Daemon for BackendWalletClient {
             .inner
             .request(
                 Method::POST,
-                &format!(
-                    "{}/v1/wallets/{}/addresses",
-                    self.inner.url, self.wallet_uuid
-                ),
+                &format!("/v1/wallets/{}/addresses", self.wallet_uuid),
+                |r| r,
             )
-            .await
-            .send()
-            .await?
-            .check_success()
-            .await?
-            .json()
             .await?;
 
         Ok(GetAddressResult {
@@ -632,18 +629,9 @@ impl Daemon for BackendWalletClient {
             .inner
             .request(
                 Method::GET,
-                &format!(
-                    "{}/v1/wallets/{}/addresses",
-                    self.inner.url, self.wallet_uuid
-                ),
+                &format!("/v1/wallets/{}/addresses", self.wallet_uuid),
+                |r| r.query(&query),
             )
-            .await
-            .query(&query)
-            .send()
-            .await?
-            .check_success()
-            .await?
-            .json()
             .await?;
 
         Ok(ListRevealedAddressesResult {
@@ -780,38 +768,42 @@ impl Daemon for BackendWalletClient {
                 is_max: true,
             });
         }
-        let res: api::DraftPsbtResult = self
+
+        let res: Result<api::DraftPsbt, DaemonError> = self
             .inner
             .request(
                 Method::POST,
-                &format!(
-                    "{}/v1/wallets/{}/psbts/generate",
-                    self.inner.url, self.wallet_uuid
-                ),
+                &format!("/v1/wallets/{}/psbts/generate", self.wallet_uuid),
+                |r| {
+                    r.json(&api::payload::GeneratePsbt {
+                        save: false,
+                        feerate: feerate_vb,
+                        inputs: coins_outpoints,
+                        recipients,
+                    })
+                },
             )
-            .await
-            .json(&api::payload::GeneratePsbt {
-                save: false,
-                feerate: feerate_vb,
-                inputs: coins_outpoints,
-                recipients,
-            })
-            .send()
-            .await?
-            .json() // no need to check success before parsing the json as it could be an error variant
-            .await?;
+            .await;
 
         match res {
-            api::DraftPsbtResult::Success(draft) => Ok(CreateSpendResult::Success {
+            Ok(draft) => Ok(CreateSpendResult::Success {
                 psbt: draft.raw,
                 warnings: draft.warnings,
             }),
-            api::DraftPsbtResult::InsufficientFunds(api::InsufficientFundsInfo { missing }) => {
-                Ok(CreateSpendResult::InsufficientFunds { missing })
+            Err(DaemonError::Http(status, e)) => {
+                let value: api::DraftPsbtErrors = serde_json::from_value(e).map_err(|e| {
+                    DaemonError::Http(status, serde_json::Value::String(e.to_string()))
+                })?;
+                match value {
+                    api::DraftPsbtErrors::InsufficientFunds(api::InsufficientFundsInfo {
+                        missing,
+                    }) => Ok(CreateSpendResult::InsufficientFunds { missing }),
+                    api::DraftPsbtErrors::Error(api::DraftPsbtError { error }) => {
+                        Err(DaemonError::Unexpected(error))
+                    }
+                }
             }
-            api::DraftPsbtResult::Error(api::DraftPsbtError { error }) => {
-                Err(DaemonError::Unexpected(error))
-            }
+            Err(e) => Err(e),
         }
     }
 
@@ -821,57 +813,56 @@ impl Daemon for BackendWalletClient {
         is_cancel: bool,
         feerate_vb: Option<u64>,
     ) -> Result<CreateSpendResult, DaemonError> {
-        let res: api::DraftPsbtResult = self
+        let res: Result<api::DraftPsbt, DaemonError> = self
             .inner
             .request(
                 Method::POST,
-                &format!(
-                    "{}/v1/wallets/{}/psbts/rbf",
-                    self.inner.url, self.wallet_uuid
-                ),
+                &format!("/v1/wallets/{}/psbts/rbf", self.wallet_uuid),
+                |r| {
+                    r.json(&api::payload::GenerateRbfPsbt {
+                        txid: *txid,
+                        is_cancel,
+                        feerate: feerate_vb,
+                        save: false,
+                    })
+                },
             )
-            .await
-            .json(&api::payload::GenerateRbfPsbt {
-                txid: *txid,
-                is_cancel,
-                feerate: feerate_vb,
-                save: false,
-            })
-            .send()
-            .await?
-            .json() // no need to check success before parsing the json as it could be an error variant
-            .await?;
+            .await;
 
         match res {
-            api::DraftPsbtResult::Success(draft) => Ok(CreateSpendResult::Success {
+            Ok(draft) => Ok(CreateSpendResult::Success {
                 psbt: draft.raw,
                 warnings: draft.warnings,
             }),
-            api::DraftPsbtResult::InsufficientFunds(api::InsufficientFundsInfo { missing }) => {
-                Ok(CreateSpendResult::InsufficientFunds { missing })
+            Err(DaemonError::Http(status, e)) => {
+                let value: api::DraftPsbtErrors = serde_json::from_value(e).map_err(|e| {
+                    DaemonError::Http(status, serde_json::Value::String(e.to_string()))
+                })?;
+                match value {
+                    api::DraftPsbtErrors::InsufficientFunds(api::InsufficientFundsInfo {
+                        missing,
+                    }) => Ok(CreateSpendResult::InsufficientFunds { missing }),
+                    api::DraftPsbtErrors::Error(api::DraftPsbtError { error }) => {
+                        Err(DaemonError::Unexpected(error))
+                    }
+                }
             }
-            api::DraftPsbtResult::Error(api::DraftPsbtError { error }) => {
-                Err(DaemonError::Unexpected(error))
-            }
+            Err(e) => Err(e),
         }
     }
 
     async fn update_spend_tx(&self, psbt: &Psbt) -> Result<(), DaemonError> {
         self.inner
-            .request(
+            .exec_request(
                 Method::POST,
-                &format!("{}/v1/wallets/{}/psbts", self.inner.url, self.wallet_uuid),
+                &format!("/v1/wallets/{}/psbts", self.wallet_uuid),
+                |r| {
+                    r.json(&api::payload::ImportPsbt {
+                        psbt: psbt.to_string(),
+                    })
+                },
             )
             .await
-            .json(&api::payload::ImportPsbt {
-                psbt: psbt.to_string(),
-            })
-            .send()
-            .await?
-            .check_success()
-            .await?;
-
-        Ok(())
     }
 
     async fn delete_spend_tx(&self, txid: &Txid) -> Result<(), DaemonError> {
@@ -883,21 +874,12 @@ impl Daemon for BackendWalletClient {
             .find(|tx| tx.txid == *txid)
             .ok_or(DaemonError::Http(
                 Some(404),
-                format!("psbt not found with txid: {}", txid),
+                serde_json::Value::String(format!("psbt not found with txid: {}", txid)),
             ))?;
 
         self.inner
-            .request(
-                Method::DELETE,
-                &format!("{}/v1/psbts/{}", self.inner.url, psbt.uuid),
-            )
+            .exec_request(Method::DELETE, &format!("/v1/psbts/{}", psbt.uuid), |r| r)
             .await
-            .send()
-            .await?
-            .check_success()
-            .await?;
-
-        Ok(())
     }
 
     async fn broadcast_spend_tx(&self, txid: &Txid) -> Result<(), DaemonError> {
@@ -910,17 +892,12 @@ impl Daemon for BackendWalletClient {
             .ok_or(DaemonError::NoAnswer)?;
 
         self.inner
-            .request(
+            .exec_request(
                 Method::POST,
-                &format!("{}/v1/psbts/{}/broadcast", self.inner.url, psbt.uuid),
+                &format!("/v1/psbts/{}/broadcast", psbt.uuid),
+                |r| r,
             )
             .await
-            .send()
-            .await?
-            .check_success()
-            .await?;
-
-        Ok(())
     }
 
     async fn start_rescan(&self, _t: u32) -> Result<(), DaemonError> {
@@ -934,29 +911,22 @@ impl Daemon for BackendWalletClient {
         feerate_vb: u64,
         sequence: Option<u16>,
     ) -> Result<Psbt, DaemonError> {
+        let timelock = sequence.ok_or(DaemonError::Unexpected("Missing sequence".to_string()))?;
         let res: api::DraftPsbt = self
             .inner
             .request(
                 Method::POST,
-                &format!(
-                    "{}/v1/wallets/{}/psbts/recovery",
-                    self.inner.url, self.wallet_uuid
-                ),
+                &format!("/v1/wallets/{}/psbts/recovery", self.wallet_uuid),
+                |r| {
+                    r.json(&api::payload::GenerateRecoveryPsbt {
+                        save: false,
+                        feerate: feerate_vb,
+                        timelock,
+                        address,
+                        inputs: coins_outpoints,
+                    })
+                },
             )
-            .await
-            .json(&api::payload::GenerateRecoveryPsbt {
-                save: false,
-                feerate: feerate_vb,
-                timelock: sequence
-                    .ok_or(DaemonError::Unexpected("Missing sequence".to_string()))?,
-                address,
-                inputs: coins_outpoints,
-            })
-            .send()
-            .await?
-            .check_success()
-            .await?
-            .json()
             .await?;
 
         Ok(res.raw)
@@ -976,15 +946,9 @@ impl Daemon for BackendWalletClient {
                 .inner
                 .request(
                     Method::GET,
-                    &format!("{}/v1/wallets/{}/labels", self.inner.url, self.wallet_uuid),
+                    &format!("/v1/wallets/{}/labels", self.wallet_uuid),
+                    |r| r.query(&[("items", chunk.join(","))]),
                 )
-                .await
-                .query(&[("items", chunk.join(","))])
-                .send()
-                .await?
-                .check_success()
-                .await?
-                .json()
                 .await?;
 
             res.extend(wallet_labels.labels);
@@ -998,26 +962,22 @@ impl Daemon for BackendWalletClient {
         items: &HashMap<LabelItem, Option<String>>,
     ) -> Result<(), DaemonError> {
         self.inner
-            .request(
+            .exec_request(
                 Method::POST,
-                &format!("{}/v1/wallets/{}/labels", self.inner.url, self.wallet_uuid),
+                &format!("/v1/wallets/{}/labels", self.wallet_uuid),
+                |r| {
+                    r.json(&api::payload::Labels {
+                        labels: items
+                            .iter()
+                            .map(|(item, value)| api::payload::Label {
+                                item: item.to_string(),
+                                value: value.clone(),
+                            })
+                            .collect(),
+                    })
+                },
             )
             .await
-            .json(&api::payload::Labels {
-                labels: items
-                    .iter()
-                    .map(|(item, value)| api::payload::Label {
-                        item: item.to_string(),
-                        value: value.clone(),
-                    })
-                    .collect(),
-            })
-            .send()
-            .await?
-            .check_success()
-            .await?;
-
-        Ok(())
     }
 
     async fn list_history_txs(
@@ -1119,38 +1079,27 @@ impl Daemon for BackendWalletClient {
 
     async fn send_wallet_invitation(&self, email: &str) -> Result<(), DaemonError> {
         self.inner
-            .request(
+            .exec_request(
                 Method::POST,
-                &format!(
-                    "{}/v1/wallets/{}/invitations",
-                    self.inner.url, self.wallet_uuid
-                ),
+                &format!("/v1/wallets/{}/invitations", self.wallet_uuid),
+                |r| r.json(&api::payload::CreateWalletInvitation { email }),
             )
             .await
-            .json(&api::payload::CreateWalletInvitation { email })
-            .send()
-            .await?
-            .check_success()
-            .await?;
-
-        Ok(())
     }
 
     async fn get_labels_bip329(&self, offset: u32, limit: u32) -> Result<Labels, DaemonError> {
-        let response: Response = self
+        let res: api::Labels = self
             .inner
             .request(
                 Method::GET,
                 &format!(
-                    "{}/v1/wallets/{}/labels/bip329?offset={}&limit={}",
-                    self.inner.url, self.wallet_uuid, offset, limit
+                    "/v1/wallets/{}/labels/bip329?offset={}&limit={}",
+                    self.wallet_uuid, offset, limit
                 ),
+                |r| r,
             )
-            .await
-            .send()
             .await?;
 
-        let res: api::Labels = response.json().await?;
         Ok(res.labels)
     }
 }
