@@ -579,9 +579,7 @@ impl SelectKeySource {
                     *valid = warning.is_none();
                     if *valid {
                         self.selected_key = SelectedKey::New(Box::new(k.clone()));
-                        if let Some(kind) = k.source.provider_key_kind() {
-                            self.form_alias.value = format!("{:?}", kind);
-                        }
+                        self.form_alias.value = k.name;
                         let _ = self.on_next();
                     }
                 }
