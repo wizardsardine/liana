@@ -23,9 +23,9 @@ impl State for BuySellPanel {
         let inner = view::dashboard(menu, cache, None, self.view());
 
         let overlay = match &self.modal {
-            super::receive::Modal::VerifyAddress(m) => m.view(),
-            super::receive::Modal::ShowQrCode(m) => m.view(),
-            super::receive::Modal::None => return inner,
+            super::vault::receive::Modal::VerifyAddress(m) => m.view(),
+            super::vault::receive::Modal::ShowQrCode(m) => m.view(),
+            super::vault::receive::Modal::None => return inner,
         };
 
         liana_ui::widget::modal::Modal::new(inner, overlay)
@@ -56,14 +56,15 @@ impl State for BuySellPanel {
                     return Task::none();
                 };
 
-                self.modal =
-                    super::receive::Modal::VerifyAddress(super::receive::VerifyAddressModal::new(
+                self.modal = super::vault::receive::Modal::VerifyAddress(
+                    super::vault::receive::VerifyAddressModal::new(
                         self.data_dir.clone(),
                         self.wallet.clone(),
                         cache.network,
                         la.address.clone(),
                         la.index,
-                    ));
+                    ),
+                );
 
                 return Task::none();
             }
@@ -72,8 +73,10 @@ impl State for BuySellPanel {
                     return Task::none();
                 };
 
-                if let Some(modal) = super::receive::ShowQrCodeModal::new(&la.address, la.index) {
-                    self.modal = super::receive::Modal::ShowQrCode(modal);
+                if let Some(modal) =
+                    super::vault::receive::ShowQrCodeModal::new(&la.address, la.index)
+                {
+                    self.modal = super::vault::receive::Modal::ShowQrCode(modal);
                 }
 
                 return Task::none();
@@ -83,7 +86,7 @@ impl State for BuySellPanel {
                 return Task::none();
             }
             Message::View(ViewMessage::Close) => {
-                self.modal = super::receive::Modal::None;
+                self.modal = super::vault::receive::Modal::None;
                 return Task::none();
             }
             _ => (),

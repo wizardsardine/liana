@@ -27,8 +27,9 @@ pub use config::Config;
 pub use message::Message;
 
 use state::{
-    ActiveReceive, ActiveSend, ActiveSettings, ActiveTransactions, CoinsPanel, CreateSpendPanel,
-    GlobalHome, Home, PsbtsPanel, ReceivePanel, State, TransactionsPanel,
+    ActiveOverview, ActiveReceive, ActiveSend, ActiveSettings, ActiveTransactions, CoinsPanel,
+    CreateSpendPanel, GlobalHome, PsbtsPanel, State, VaultOverview, VaultReceivePanel,
+    VaultTransactionsPanel,
 };
 use wallet::{sync_status, SyncStatus};
 
@@ -52,24 +53,56 @@ struct Panels {
     current: Menu,
     vault_expanded: bool,
     active_expanded: bool,
+    // Always available panels
     global_home: GlobalHome,
-    vault_home: Home,
+    active_overview: ActiveOverview,
     active_send: ActiveSend,
     active_receive: ActiveReceive,
     active_transactions: ActiveTransactions,
     active_settings: ActiveSettings,
-    coins: CoinsPanel,
-    transactions: TransactionsPanel,
-    psbts: PsbtsPanel,
-    recovery: CreateSpendPanel,
-    receive: ReceivePanel,
-    create_spend: CreateSpendPanel,
-    settings: SettingsState,
+    // Vault-only panels - None when no vault exists
+    vault_overview: Option<VaultOverview>,
+    coins: Option<CoinsPanel>,
+    transactions: Option<VaultTransactionsPanel>,
+    psbts: Option<PsbtsPanel>,
+    recovery: Option<CreateSpendPanel>,
+    receive: Option<VaultReceivePanel>,
+    create_spend: Option<CreateSpendPanel>,
+    settings: Option<SettingsState>,
     #[cfg(feature = "buysell")]
-    buy_sell: crate::app::view::buysell::BuySellPanel,
+    buy_sell: Option<crate::app::view::buysell::BuySellPanel>,
 }
 
 impl Panels {
+    fn new_without_wallet() -> Panels {
+        // NO PLACEHOLDER WALLET - All vault panels are None
+        // The UI layer prevents navigation to vault panels when has_vault=false
+
+        Self {
+            current: Menu::Home,
+            vault_expanded: false,
+            active_expanded: false,
+            // Active panels support operation without a wallet
+            global_home: GlobalHome::new_without_wallet(),
+            active_overview: ActiveOverview::new_without_wallet(),
+            active_send: ActiveSend::new_without_wallet(),
+            active_receive: ActiveReceive::new_without_wallet(),
+            active_transactions: ActiveTransactions::new_without_wallet(),
+            active_settings: ActiveSettings::new_without_wallet(),
+            // All vault panels are None - no vault exists
+            vault_overview: None,
+            coins: None,
+            transactions: None,
+            psbts: None,
+            recovery: None,
+            receive: None,
+            create_spend: None,
+            settings: None,
+            #[cfg(feature = "buysell")]
+            buy_sell: None,
+        }
+    }
+
     fn new(
         cache: &Cache,
         wallet: Arc<Wallet>,
@@ -87,11 +120,11 @@ impl Panels {
                 // We don't know the node type for external lianad so assume it's bitcoind.
                 .unwrap_or(true);
         Self {
-            current: Menu::Vault(crate::app::menu::VaultSubMenu::Home),
+            current: Menu::Home,
             vault_expanded: false,
             active_expanded: false,
             global_home: GlobalHome::new(wallet.clone()),
-            vault_home: Home::new(
+            vault_overview: Some(VaultOverview::new(
                 wallet.clone(),
                 cache.coins(),
                 sync_status(
@@ -103,110 +136,218 @@ impl Panels {
                 ),
                 cache.blockheight(),
                 show_rescan_warning,
-            ),
+            )),
+            active_overview: ActiveOverview::new(wallet.clone()),
             active_send: ActiveSend::new(wallet.clone()),
             active_receive: ActiveReceive::new(wallet.clone()),
             active_transactions: ActiveTransactions::new(wallet.clone()),
             active_settings: ActiveSettings::new(wallet.clone()),
-            coins: CoinsPanel::new(cache.coins(), wallet.main_descriptor.first_timelock_value()),
-            transactions: TransactionsPanel::new(wallet.clone()),
-            psbts: PsbtsPanel::new(wallet.clone()),
-            recovery: new_recovery_panel(wallet.clone(), cache),
-            receive: ReceivePanel::new(data_dir.clone(), wallet.clone()),
-            create_spend: CreateSpendPanel::new(
+            coins: Some(CoinsPanel::new(
+                cache.coins(),
+                wallet.main_descriptor.first_timelock_value(),
+            )),
+            transactions: Some(VaultTransactionsPanel::new(wallet.clone())),
+            psbts: Some(PsbtsPanel::new(wallet.clone())),
+            recovery: Some(new_recovery_panel(wallet.clone(), cache)),
+            receive: Some(VaultReceivePanel::new(data_dir.clone(), wallet.clone())),
+            create_spend: Some(CreateSpendPanel::new(
                 wallet.clone(),
                 cache.coins(),
                 cache.blockheight() as u32,
                 cache.network,
-            ),
-            settings: state::SettingsState::new(
+            )),
+            settings: Some(state::SettingsState::new(
                 data_dir.clone(),
                 wallet.clone(),
                 daemon_backend,
                 internal_bitcoind.is_some(),
                 config.clone(),
+            )),
+            #[cfg(feature = "buysell")]
+            buy_sell: Some(crate::app::view::buysell::BuySellPanel::new(
+                cache.network,
+                wallet,
+                data_dir,
+            )),
+        }
+    }
+
+    /// Rebuilds all vault-specific panels when a vault wallet is added to an app that didn't have one.
+    /// This is called when transitioning from no-vault to has-vault state.
+    fn build_vault_panels(
+        &mut self,
+        wallet: Arc<Wallet>,
+        cache: &Cache,
+        daemon_backend: DaemonBackend,
+        data_dir: LianaDirectory,
+        internal_bitcoind: Option<&Bitcoind>,
+        config: Arc<Config>,
+    ) {
+        self.vault_overview = Some(VaultOverview::new(
+            wallet.clone(),
+            cache.coins(),
+            sync_status(
+                daemon_backend.clone(),
+                cache.blockheight(),
+                cache.sync_progress(),
+                cache.last_poll_timestamp(),
+                cache.last_poll_at_startup,
             ),
-            #[cfg(feature = "buysell")]
-            buy_sell: crate::app::view::buysell::BuySellPanel::new(cache.network, wallet, data_dir),
+            cache.blockheight(),
+            false, // show_rescan_warning: false when adding vault dynamically
+        ));
+        self.coins = Some(CoinsPanel::new(
+            cache.coins(),
+            wallet.main_descriptor.first_timelock_value(),
+        ));
+        self.transactions = Some(VaultTransactionsPanel::new(wallet.clone()));
+        self.psbts = Some(PsbtsPanel::new(wallet.clone()));
+        self.recovery = Some(new_recovery_panel(wallet.clone(), cache));
+        self.receive = Some(VaultReceivePanel::new(data_dir.clone(), wallet.clone()));
+        self.create_spend = Some(CreateSpendPanel::new(
+            wallet.clone(),
+            cache.coins(),
+            cache.blockheight() as u32,
+            cache.network,
+        ));
+        self.settings = Some(state::SettingsState::new(
+            data_dir.clone(),
+            wallet.clone(),
+            daemon_backend,
+            internal_bitcoind.is_some(),
+            config.clone(),
+        ));
+        #[cfg(feature = "buysell")]
+        {
+            self.buy_sell = Some(crate::app::view::buysell::BuySellPanel::new(
+                cache.network,
+                wallet,
+                data_dir,
+            ));
         }
     }
 
-    fn current(&self) -> &dyn State {
+    fn current(&self) -> Option<&dyn State> {
         match &self.current {
-            Menu::Home => &self.global_home,
+            Menu::Home => Some(&self.global_home),
             Menu::Active(submenu) => match submenu {
-                crate::app::menu::ActiveSubMenu::Send => &self.active_send,
-                crate::app::menu::ActiveSubMenu::Receive => &self.active_receive,
-                crate::app::menu::ActiveSubMenu::Transactions(_) => &self.active_transactions,
-                crate::app::menu::ActiveSubMenu::Settings(_) => &self.active_settings,
+                crate::app::menu::ActiveSubMenu::Overview => Some(&self.active_overview),
+                crate::app::menu::ActiveSubMenu::Send => Some(&self.active_send),
+                crate::app::menu::ActiveSubMenu::Receive => Some(&self.active_receive),
+                crate::app::menu::ActiveSubMenu::Transactions(_) => Some(&self.active_transactions),
+                crate::app::menu::ActiveSubMenu::Settings(_) => Some(&self.active_settings),
             },
             Menu::Vault(submenu) => match submenu {
-                crate::app::menu::VaultSubMenu::Home => &self.vault_home,
-                crate::app::menu::VaultSubMenu::Send => &self.create_spend,
-                crate::app::menu::VaultSubMenu::Receive => &self.receive,
-                crate::app::menu::VaultSubMenu::Coins(_) => &self.coins,
-                crate::app::menu::VaultSubMenu::Transactions(_) => &self.transactions,
-                crate::app::menu::VaultSubMenu::PSBTs(_) => &self.psbts,
-                crate::app::menu::VaultSubMenu::Recovery => &self.recovery,
-                crate::app::menu::VaultSubMenu::Settings(_) => &self.settings,
+                crate::app::menu::VaultSubMenu::Overview => {
+                    self.vault_overview.as_ref().map(|v| v as &dyn State)
+                }
+                crate::app::menu::VaultSubMenu::Send => {
+                    self.create_spend.as_ref().map(|v| v as &dyn State)
+                }
+                crate::app::menu::VaultSubMenu::Receive => {
+                    self.receive.as_ref().map(|v| v as &dyn State)
+                }
+                crate::app::menu::VaultSubMenu::Coins(_) => {
+                    self.coins.as_ref().map(|v| v as &dyn State)
+                }
+                crate::app::menu::VaultSubMenu::Transactions(_) => {
+                    self.transactions.as_ref().map(|v| v as &dyn State)
+                }
+                crate::app::menu::VaultSubMenu::PSBTs(_) => {
+                    self.psbts.as_ref().map(|v| v as &dyn State)
+                }
+                crate::app::menu::VaultSubMenu::Recovery => {
+                    self.recovery.as_ref().map(|v| v as &dyn State)
+                }
+                crate::app::menu::VaultSubMenu::Settings(_) => {
+                    self.settings.as_ref().map(|v| v as &dyn State)
+                }
             },
             #[cfg(feature = "buysell")]
-            Menu::BuySell => &self.buy_sell,
+            Menu::BuySell => self.buy_sell.as_ref().map(|v| v as &dyn State),
             // Legacy menu items
-            Menu::Receive => &self.receive,
-            Menu::PSBTs => &self.psbts,
-            Menu::Transactions => &self.transactions,
-            Menu::TransactionPreSelected(_) => &self.transactions,
-            Menu::Settings | Menu::SettingsPreSelected(_) => &self.settings,
-            Menu::Coins => &self.coins,
-            Menu::CreateSpendTx => &self.create_spend,
-            Menu::Recovery => &self.recovery,
-            Menu::RefreshCoins(_) => &self.create_spend,
-            Menu::PsbtPreSelected(_) => &self.psbts,
+            Menu::Receive => self.receive.as_ref().map(|v| v as &dyn State),
+            Menu::PSBTs => self.psbts.as_ref().map(|v| v as &dyn State),
+            Menu::Transactions => self.transactions.as_ref().map(|v| v as &dyn State),
+            Menu::TransactionPreSelected(_) => self.transactions.as_ref().map(|v| v as &dyn State),
+            Menu::Settings | Menu::SettingsPreSelected(_) => {
+                self.settings.as_ref().map(|v| v as &dyn State)
+            }
+            Menu::Coins => self.coins.as_ref().map(|v| v as &dyn State),
+            Menu::CreateSpendTx => self.create_spend.as_ref().map(|v| v as &dyn State),
+            Menu::Recovery => self.recovery.as_ref().map(|v| v as &dyn State),
+            Menu::RefreshCoins(_) => self.create_spend.as_ref().map(|v| v as &dyn State),
+            Menu::PsbtPreSelected(_) => self.psbts.as_ref().map(|v| v as &dyn State),
         }
     }
 
-    fn current_mut(&mut self) -> &mut dyn State {
+    fn current_mut(&mut self) -> Option<&mut dyn State> {
         match &self.current {
-            Menu::Home => &mut self.global_home,
+            Menu::Home => Some(&mut self.global_home),
             Menu::Active(submenu) => match submenu {
-                crate::app::menu::ActiveSubMenu::Send => &mut self.active_send,
-                crate::app::menu::ActiveSubMenu::Receive => &mut self.active_receive,
-                crate::app::menu::ActiveSubMenu::Transactions(_) => &mut self.active_transactions,
-                crate::app::menu::ActiveSubMenu::Settings(_) => &mut self.active_settings,
+                crate::app::menu::ActiveSubMenu::Overview => Some(&mut self.active_overview),
+                crate::app::menu::ActiveSubMenu::Send => Some(&mut self.active_send),
+                crate::app::menu::ActiveSubMenu::Receive => Some(&mut self.active_receive),
+                crate::app::menu::ActiveSubMenu::Transactions(_) => {
+                    Some(&mut self.active_transactions)
+                }
+                crate::app::menu::ActiveSubMenu::Settings(_) => Some(&mut self.active_settings),
             },
             Menu::Vault(submenu) => match submenu {
-                crate::app::menu::VaultSubMenu::Home => &mut self.vault_home,
-                crate::app::menu::VaultSubMenu::Send => &mut self.create_spend,
-                crate::app::menu::VaultSubMenu::Receive => &mut self.receive,
-                crate::app::menu::VaultSubMenu::Coins(_) => &mut self.coins,
-                crate::app::menu::VaultSubMenu::Transactions(_) => &mut self.transactions,
-                crate::app::menu::VaultSubMenu::PSBTs(_) => &mut self.psbts,
-                crate::app::menu::VaultSubMenu::Recovery => &mut self.recovery,
-                crate::app::menu::VaultSubMenu::Settings(_) => &mut self.settings,
+                crate::app::menu::VaultSubMenu::Overview => {
+                    self.vault_overview.as_mut().map(|v| v as &mut dyn State)
+                }
+                crate::app::menu::VaultSubMenu::Send => {
+                    self.create_spend.as_mut().map(|v| v as &mut dyn State)
+                }
+                crate::app::menu::VaultSubMenu::Receive => {
+                    self.receive.as_mut().map(|v| v as &mut dyn State)
+                }
+                crate::app::menu::VaultSubMenu::Coins(_) => {
+                    self.coins.as_mut().map(|v| v as &mut dyn State)
+                }
+                crate::app::menu::VaultSubMenu::Transactions(_) => {
+                    self.transactions.as_mut().map(|v| v as &mut dyn State)
+                }
+                crate::app::menu::VaultSubMenu::PSBTs(_) => {
+                    self.psbts.as_mut().map(|v| v as &mut dyn State)
+                }
+                crate::app::menu::VaultSubMenu::Recovery => {
+                    self.recovery.as_mut().map(|v| v as &mut dyn State)
+                }
+                crate::app::menu::VaultSubMenu::Settings(_) => {
+                    self.settings.as_mut().map(|v| v as &mut dyn State)
+                }
             },
             #[cfg(feature = "buysell")]
-            Menu::BuySell => &mut self.buy_sell,
+            Menu::BuySell => self.buy_sell.as_mut().map(|v| v as &mut dyn State),
             // Legacy menu items
-            Menu::Receive => &mut self.receive,
-            Menu::PSBTs => &mut self.psbts,
-            Menu::Transactions => &mut self.transactions,
-            Menu::TransactionPreSelected(_) => &mut self.transactions,
-            Menu::Settings | Menu::SettingsPreSelected(_) => &mut self.settings,
-            Menu::Coins => &mut self.coins,
-            Menu::CreateSpendTx => &mut self.create_spend,
-            Menu::Recovery => &mut self.recovery,
-            Menu::RefreshCoins(_) => &mut self.create_spend,
-            Menu::PsbtPreSelected(_) => &mut self.psbts,
+            Menu::Receive => self.receive.as_mut().map(|v| v as &mut dyn State),
+            Menu::PSBTs => self.psbts.as_mut().map(|v| v as &mut dyn State),
+            Menu::Transactions => self.transactions.as_mut().map(|v| v as &mut dyn State),
+            Menu::TransactionPreSelected(_) => {
+                self.transactions.as_mut().map(|v| v as &mut dyn State)
+            }
+            Menu::Settings | Menu::SettingsPreSelected(_) => {
+                self.settings.as_mut().map(|v| v as &mut dyn State)
+            }
+            Menu::Coins => self.coins.as_mut().map(|v| v as &mut dyn State),
+            Menu::CreateSpendTx => self.create_spend.as_mut().map(|v| v as &mut dyn State),
+            Menu::Recovery => self.recovery.as_mut().map(|v| v as &mut dyn State),
+            Menu::RefreshCoins(_) => self.create_spend.as_mut().map(|v| v as &mut dyn State),
+            Menu::PsbtPreSelected(_) => self.psbts.as_mut().map(|v| v as &mut dyn State),
         }
     }
 }
 
 pub struct App {
     cache: Cache,
-    wallet: Arc<Wallet>,
-    daemon: Arc<dyn Daemon + Sync + Send>,
+    wallet: Option<Arc<Wallet>>,
+    daemon: Option<Arc<dyn Daemon + Sync + Send>>,
     internal_bitcoind: Option<Bitcoind>,
+    cube_settings: settings::CubeSettings,
+    config: Arc<Config>,
+    datadir: LianaDirectory,
 
     panels: Panels,
 }
@@ -221,127 +362,237 @@ impl App {
         internal_bitcoind: Option<Bitcoind>,
         restored_from_backup: bool,
     ) -> (App, Task<Message>) {
-        let config = Arc::new(config);
+        let config_arc = Arc::new(config);
+        let cube_settings = settings::CubeSettings::new(
+            wallet
+                .alias
+                .clone()
+                .unwrap_or_else(|| "My Cube".to_string()),
+            cache.network,
+        )
+        .with_vault(wallet.id());
+
         let mut panels = Panels::new(
             &cache,
             wallet.clone(),
-            data_dir,
+            data_dir.clone(),
             daemon.backend(),
             internal_bitcoind.as_ref(),
-            config.clone(),
+            config_arc.clone(),
             restored_from_backup,
         );
-        let cmd = panels.vault_home.reload(daemon.clone(), wallet.clone());
+        let cmd = if let Some(vault_overview) = panels.vault_overview.as_mut() {
+            vault_overview.reload(daemon.clone(), wallet.clone())
+        } else {
+            tracing::warn!("vault_overview not present in App::new despite vault being configured");
+            Task::none()
+        };
+        let mut cache_with_vault = cache;
+        cache_with_vault.has_vault = true;
         (
             Self {
                 panels,
-                cache,
-                daemon,
-                wallet,
+                cache: cache_with_vault,
+                daemon: Some(daemon),
+                wallet: Some(wallet),
                 internal_bitcoind,
+                cube_settings,
+                config: config_arc,
+                datadir: data_dir,
             },
             cmd,
         )
     }
 
-    pub fn wallet_id(&self) -> WalletId {
-        self.wallet.id()
+    pub fn new_without_wallet(
+        config: Config,
+        datadir: LianaDirectory,
+        network: liana::miniscript::bitcoin::Network,
+        cube_settings: settings::CubeSettings,
+    ) -> (App, Task<Message>) {
+        tracing::info!(
+            "Creating app without wallet for cube: {}",
+            cube_settings.name
+        );
+        let config_arc = Arc::new(config);
+        let cache = Cache {
+            network,
+            datadir_path: datadir.clone(),
+            has_vault: false,
+            ..Default::default()
+        };
+        tracing::debug!("Cache configured with has_vault=false");
+
+        // Create panels without wallet - only Active and other non-Vault features will be available
+        let panels = Panels::new_without_wallet();
+
+        tracing::info!("App created without wallet successfully");
+        (
+            Self {
+                panels,
+                cache,
+                daemon: None,
+                wallet: None,
+                internal_bitcoind: None,
+                cube_settings,
+                config: config_arc,
+                datadir,
+            },
+            Task::none(),
+        )
+    }
+
+    pub fn wallet_id(&self) -> Option<WalletId> {
+        self.wallet.as_ref().map(|w| w.id())
     }
 
     pub fn title(&self) -> &str {
-        if let Some(alias) = &self.wallet.alias {
-            if !alias.is_empty() {
-                return alias;
+        if let Some(wallet) = &self.wallet {
+            if let Some(alias) = &wallet.alias {
+                if !alias.is_empty() {
+                    return alias;
+                }
             }
+            "Coincube Vault Wallet"
+        } else {
+            &self.cube_settings.name
         }
-
-        "Coincube Vault Wallet"
     }
 
     pub fn cache(&self) -> &Cache {
         &self.cache
     }
 
-    pub fn wallet(&self) -> &Wallet {
-        &self.wallet
+    pub fn wallet(&self) -> Option<&Wallet> {
+        self.wallet.as_ref().map(|w| w.as_ref())
+    }
+
+    pub fn has_vault(&self) -> bool {
+        self.wallet.is_some()
+    }
+
+    pub fn datadir(&self) -> &LianaDirectory {
+        &self.datadir
+    }
+
+    pub fn cube_settings(&self) -> &settings::CubeSettings {
+        &self.cube_settings
+    }
+
+    pub fn config(&self) -> &Config {
+        &self.config
+    }
+
+    fn daemon_backend(&self) -> DaemonBackend {
+        self.daemon
+            .as_ref()
+            .map(|d| d.backend())
+            .unwrap_or(DaemonBackend::RemoteBackend)
     }
 
     fn set_current_panel(&mut self, menu: Menu) -> Task<Message> {
-        self.panels.current_mut().interrupt();
+        if let Some(panel) = self.panels.current_mut() {
+            panel.interrupt();
+        }
 
         match &menu {
-            menu::Menu::Vault(submenu) => match submenu {
-                menu::VaultSubMenu::Transactions(Some(txid)) => {
-                    if let Ok(Some(tx)) = Handle::current().block_on(async {
-                        self.daemon
-                            .get_history_txs(&[*txid])
-                            .await
-                            .map(|txs| txs.first().cloned())
-                    }) {
-                        self.panels.transactions.preselect(tx);
-                        self.panels.current = menu;
-                        return Task::none();
-                    };
-                }
-                menu::VaultSubMenu::PSBTs(Some(txid)) => {
-                    // Get preselected spend from DB in case it's not yet in the cache.
-                    // We only need this single spend as we will go straight to its view and not show the PSBTs list.
-                    // In case of any error loading the spend or if it doesn't exist, load PSBTs list in usual way.
-                    if let Ok(Some(spend_tx)) = Handle::current().block_on(async {
-                        self.daemon
-                            .list_spend_transactions(Some(&[*txid]))
-                            .await
-                            .map(|txs| txs.first().cloned())
-                    }) {
-                        self.panels.psbts.preselect(spend_tx);
-                        self.panels.current = menu;
-                        return Task::none();
-                    };
-                }
-                menu::VaultSubMenu::Settings(Some(setting)) => {
-                    self.panels.current = menu.clone();
-                    return self.panels.current_mut().update(
-                        self.daemon.clone(),
-                        &self.cache,
-                        Message::View(view::Message::Settings(match setting {
-                            menu::SettingsOption::Node => {
-                                view::SettingsMessage::EditBitcoindSettings
+            menu::Menu::Vault(submenu) => {
+                // Only process vault menu if we have a wallet
+                if let Some(wallet) = &self.wallet {
+                    match submenu {
+                        menu::VaultSubMenu::Transactions(Some(txid)) => {
+                            if let Some(daemon) = &self.daemon {
+                                if let Ok(Some(tx)) = Handle::current().block_on(async {
+                                    daemon
+                                        .get_history_txs(&[*txid])
+                                        .await
+                                        .map(|txs| txs.first().cloned())
+                                }) {
+                                    if let Some(transactions) = &mut self.panels.transactions {
+                                        transactions.preselect(tx);
+                                    }
+                                    self.panels.current = menu;
+                                    return Task::none();
+                                }
                             }
-                        })),
-                    );
-                }
-                menu::VaultSubMenu::Coins(Some(preselected)) => {
-                    self.panels.create_spend = CreateSpendPanel::new_self_send(
-                        self.wallet.clone(),
-                        self.cache.coins(),
-                        self.cache.blockheight() as u32,
-                        preselected,
-                        self.cache.network,
-                    );
-                }
-                menu::VaultSubMenu::Send => {
-                    // redo the process of spending only if user want to start a new one.
-                    if !self.panels.create_spend.keep_state() {
-                        self.panels.create_spend = CreateSpendPanel::new(
-                            self.wallet.clone(),
-                            self.cache.coins(),
-                            self.cache.blockheight() as u32,
-                            self.cache.network,
-                        );
+                        }
+                        menu::VaultSubMenu::PSBTs(Some(txid)) => {
+                            if let Some(daemon) = &self.daemon {
+                                if let Ok(Some(spend_tx)) = Handle::current().block_on(async {
+                                    daemon
+                                        .list_spend_transactions(Some(&[*txid]))
+                                        .await
+                                        .map(|txs| txs.first().cloned())
+                                }) {
+                                    if let Some(psbts) = &mut self.panels.psbts {
+                                        psbts.preselect(spend_tx);
+                                    }
+                                    self.panels.current = menu;
+                                    return Task::none();
+                                }
+                            }
+                        }
+                        menu::VaultSubMenu::Settings(Some(setting)) => {
+                            if let Some(daemon) = &self.daemon {
+                                self.panels.current = menu.clone();
+                                if let Some(panel) = self.panels.current_mut() {
+                                    return panel.update(
+                                        daemon.clone(),
+                                        &self.cache,
+                                        Message::View(view::Message::Settings(match setting {
+                                            menu::SettingsOption::Node => {
+                                                view::SettingsMessage::EditBitcoindSettings
+                                            }
+                                        })),
+                                    );
+                                }
+                            }
+                        }
+                        menu::VaultSubMenu::Coins(Some(preselected)) => {
+                            self.panels.create_spend = Some(CreateSpendPanel::new_self_send(
+                                wallet.clone(),
+                                self.cache.coins(),
+                                self.cache.blockheight() as u32,
+                                preselected,
+                                self.cache.network,
+                            ));
+                        }
+                        menu::VaultSubMenu::Send => {
+                            // redo the process of spending only if user want to start a new one.
+                            if self
+                                .panels
+                                .create_spend
+                                .as_ref()
+                                .is_none_or(|p| !p.keep_state())
+                            {
+                                self.panels.create_spend = Some(CreateSpendPanel::new(
+                                    wallet.clone(),
+                                    self.cache.coins(),
+                                    self.cache.blockheight() as u32,
+                                    self.cache.network,
+                                ));
+                            }
+                        }
+                        menu::VaultSubMenu::Recovery => {
+                            if self
+                                .panels
+                                .recovery
+                                .as_ref()
+                                .is_none_or(|p| !p.keep_state())
+                            {
+                                self.panels.recovery =
+                                    Some(new_recovery_panel(wallet.clone(), &self.cache));
+                            }
+                        }
+                        _ => {}
                     }
                 }
-                menu::VaultSubMenu::Recovery => {
-                    if !self.panels.recovery.keep_state() {
-                        self.panels.recovery = new_recovery_panel(self.wallet.clone(), &self.cache);
-                    }
-                }
-                _ => {}
-            },
+            }
             menu::Menu::Active(submenu) => {
-                match submenu {
-                    menu::ActiveSubMenu::Transactions(Some(txid)) => {
+                if let menu::ActiveSubMenu::Transactions(Some(txid)) = submenu {
+                    if let Some(daemon) = &self.daemon {
                         if let Ok(Some(tx)) = Handle::current().block_on(async {
-                            self.daemon
+                            daemon
                                 .get_history_txs(&[*txid])
                                 .await
                                 .map(|txs| txs.first().cloned())
@@ -349,22 +600,7 @@ impl App {
                             self.panels.active_transactions.preselect(tx);
                             self.panels.current = menu;
                             return Task::none();
-                        };
-                    }
-                    menu::ActiveSubMenu::Settings(Some(setting)) => {
-                        self.panels.current = menu.clone();
-                        return self.panels.current_mut().update(
-                            self.daemon.clone(),
-                            &self.cache,
-                            Message::View(view::Message::Settings(match setting {
-                                menu::SettingsOption::Node => {
-                                    view::SettingsMessage::EditBitcoindSettings
-                                }
-                            })),
-                        );
-                    }
-                    _ => {
-                        tracing::debug!("Active submenu variant {:?} has no special handling in set_current_panel", submenu);
+                        }
                     }
                 }
             }
@@ -377,55 +613,80 @@ impl App {
         };
 
         self.panels.current = menu;
-        self.panels
-            .current_mut()
-            .reload(self.daemon.clone(), self.wallet.clone())
+        if let (Some(daemon), Some(wallet)) = (&self.daemon, &self.wallet) {
+            if let Some(panel) = self.panels.current_mut() {
+                panel.reload(daemon.clone(), wallet.clone())
+            } else {
+                Task::none()
+            }
+        } else {
+            Task::none()
+        }
     }
 
     pub fn subscription(&self) -> Subscription<Message> {
-        let subscriptions = [
-            time::every(Duration::from_secs(
-                match sync_status(
-                    self.daemon.backend(),
-                    self.cache.blockheight(),
-                    self.cache.sync_progress(),
-                    self.cache.last_poll_timestamp(),
-                    self.cache.last_poll_at_startup,
-                ) {
-                    SyncStatus::BlockchainSync(_) => 5, // Only applies to local backends
-                    SyncStatus::WalletFullScan
-                        if self.daemon.backend() == DaemonBackend::RemoteBackend =>
-                    {
-                        10
-                    } // If remote backend, don't ping too often
-                    SyncStatus::WalletFullScan | SyncStatus::LatestWalletSync => 3,
-                    SyncStatus::Synced => {
-                        if self.daemon.backend() == DaemonBackend::RemoteBackend {
-                            // Remote backend has no rescan feature. For a synced wallet,
-                            // cache refresh is only used to warn user about recovery availability.
-                            120
-                        } else {
-                            // For the rescan feature, we refresh more often in order
-                            // to give user an up-to-date view of the rescan progress.
+        tracing::trace!(
+            "App::subscription() called, has_vault={}",
+            self.cache.has_vault
+        );
+        // Only create tick subscription if we have a vault (daemon exists)
+        let subscriptions = if self.daemon.is_some() {
+            vec![
+                time::every(Duration::from_secs(
+                    match sync_status(
+                        self.daemon_backend(),
+                        self.cache.blockheight(),
+                        self.cache.sync_progress(),
+                        self.cache.last_poll_timestamp(),
+                        self.cache.last_poll_at_startup,
+                    ) {
+                        SyncStatus::BlockchainSync(_) => 5, // Only applies to local backends
+                        SyncStatus::WalletFullScan
+                            if self.daemon_backend() == DaemonBackend::RemoteBackend =>
+                        {
                             10
+                        } // If remote backend, don't ping too often
+                        SyncStatus::WalletFullScan | SyncStatus::LatestWalletSync => 3,
+                        SyncStatus::Synced => {
+                            if self.daemon_backend() == DaemonBackend::RemoteBackend {
+                                // Remote backend has no rescan feature. For a synced wallet,
+                                // cache refresh is only used to warn user about recovery availability.
+                                120
+                            } else {
+                                // For the rescan feature, we refresh more often in order
+                                // to give user an up-to-date view of the rescan progress.
+                                10
+                            }
                         }
-                    }
-                },
-            ))
-            .map(|_| Message::Tick),
-            self.panels.current().subscription(),
-        ];
+                    },
+                ))
+                .map(|_| Message::Tick),
+                self.panels
+                    .current()
+                    .unwrap_or(&self.panels.global_home)
+                    .subscription(),
+            ]
+        } else {
+            // No vault - only subscribe to panel events, no tick updates
+            vec![self
+                .panels
+                .current()
+                .unwrap_or(&self.panels.global_home)
+                .subscription()]
+        };
 
         Subscription::batch(subscriptions)
     }
 
     pub fn stop(&mut self) {
         info!("Close requested");
-        if self.daemon.backend().is_embedded() {
-            if let Err(e) = Handle::current().block_on(async { self.daemon.stop().await }) {
-                error!("{}", e);
-            } else {
-                info!("Internal daemon stopped");
+        if self.daemon_backend().is_embedded() {
+            if let Some(daemon) = &self.daemon {
+                if let Err(e) = Handle::current().block_on(async { daemon.stop().await }) {
+                    error!("{}", e);
+                } else {
+                    info!("Internal daemon stopped");
+                }
             }
             if let Some(bitcoind) = self.internal_bitcoind.take() {
                 bitcoind.stop();
@@ -434,17 +695,27 @@ impl App {
     }
 
     pub fn on_tick(&mut self) -> Task<Message> {
+        // Skip tick processing if no vault is configured
+        if self.daemon.is_none() {
+            tracing::debug!("Skipping tick - no vault configured");
+            return Task::none();
+        }
+
         let tick = std::time::Instant::now();
-        let mut tasks =
-            vec![self
-                .panels
-                .current_mut()
-                .update(self.daemon.clone(), &self.cache, Message::Tick)];
+        let mut tasks = if let Some(daemon) = &self.daemon {
+            if let Some(panel) = self.panels.current_mut() {
+                vec![panel.update(daemon.clone(), &self.cache, Message::Tick)]
+            } else {
+                vec![]
+            }
+        } else {
+            vec![]
+        };
 
         // Check if we need to update the daemon cache.
         let duration = Duration::from_secs(
             match sync_status(
-                self.daemon.backend(),
+                self.daemon_backend(),
                 self.cache.blockheight(),
                 self.cache.sync_progress(),
                 self.cache.last_poll_timestamp(),
@@ -452,13 +723,13 @@ impl App {
             ) {
                 SyncStatus::BlockchainSync(_) => 5, // Only applies to local backends
                 SyncStatus::WalletFullScan
-                    if self.daemon.backend() == DaemonBackend::RemoteBackend =>
+                    if self.daemon_backend() == DaemonBackend::RemoteBackend =>
                 {
                     10
                 } // If remote backend, don't ping too often
                 SyncStatus::WalletFullScan | SyncStatus::LatestWalletSync => 3,
                 SyncStatus::Synced => {
-                    if self.daemon.backend() == DaemonBackend::RemoteBackend {
+                    if self.daemon_backend() == DaemonBackend::RemoteBackend {
                         // Remote backend has no rescan feature. For a synced wallet,
                         // cache refresh is only used to warn user about recovery availability.
                         120
@@ -477,28 +748,30 @@ impl App {
             // there is a race condition with the Task and too much tasks are triggered.
             self.cache.daemon_cache.last_tick = tick;
 
-            let daemon = self.daemon.clone();
-            let datadir_path = self.cache.datadir_path.clone();
-            let network = self.cache.network;
-            tasks.push(Task::perform(
-                async move {
-                    // we check every 10 second if the daemon poller is alive
-                    // or if the access token is not expired.
-                    daemon.is_alive(&datadir_path, network).await?;
+            if let Some(daemon) = &self.daemon {
+                let daemon = daemon.clone();
+                let datadir_path = self.cache.datadir_path.clone();
+                let network = self.cache.network;
+                tasks.push(Task::perform(
+                    async move {
+                        // we check every 10 second if the daemon poller is alive
+                        // or if the access token is not expired.
+                        daemon.is_alive(&datadir_path, network).await?;
 
-                    let info = daemon.get_info().await?;
-                    let coins = cache::coins_to_cache(daemon).await?;
-                    Ok(DaemonCache {
-                        blockheight: info.block_height,
-                        coins: coins.coins,
-                        rescan_progress: info.rescan_progress,
-                        sync_progress: info.sync,
-                        last_poll_timestamp: info.last_poll_timestamp,
-                        last_tick: tick,
-                    })
-                },
-                Message::UpdateDaemonCache,
-            ));
+                        let info = daemon.get_info().await?;
+                        let coins = cache::coins_to_cache(daemon).await?;
+                        Ok(DaemonCache {
+                            blockheight: info.block_height,
+                            coins: coins.coins,
+                            rescan_progress: info.rescan_progress,
+                            sync_progress: info.sync,
+                            last_poll_timestamp: info.last_poll_timestamp,
+                            last_tick: tick,
+                        })
+                    },
+                    Message::UpdateDaemonCache,
+                ));
+            }
         }
         Task::batch(tasks)
     }
@@ -506,7 +779,7 @@ impl App {
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::Fiat(FiatMessage::GetPriceResult(fiat_price)) => {
-                if self.wallet.fiat_price_is_relevant(&fiat_price)
+                if self.wallet.as_ref().map(|w| w.fiat_price_is_relevant(&fiat_price)).unwrap_or(false)
                     // make sure we only update if the price is newer than the cached one
                     && !self.cache.fiat_price.as_ref().is_some_and(|cached| {
                         cached.source() == fiat_price.source()
@@ -531,45 +804,97 @@ impl App {
                 Task::none()
             }
             Message::CacheUpdated => {
-                // These are the panels to update with the cache.
-                let mut panels = [
-                    (
-                        &mut self.panels.vault_home as &mut dyn State,
-                        Menu::Vault(crate::app::menu::VaultSubMenu::Home),
-                    ),
-                    (&mut self.panels.settings as &mut dyn State, Menu::Settings),
-                ];
-                let daemon = self.daemon.clone();
-                let current = &self.panels.current;
-                let cache = self.cache.clone();
-                let commands: Vec<_> = panels
-                    .iter_mut()
-                    .map(|(panel, menu)| {
-                        panel.update(
+                // Update vault panels with cache if they exist
+                if let (Some(daemon), Some(vault_overview), Some(settings)) = (
+                    &self.daemon,
+                    self.panels.vault_overview.as_mut(),
+                    self.panels.settings.as_mut(),
+                ) {
+                    let daemon = daemon.clone();
+                    let current = &self.panels.current;
+                    let cache = self.cache.clone();
+
+                    let is_settings_current = matches!(
+                        current,
+                        Menu::Settings
+                            | Menu::SettingsPreSelected(_)
+                            | Menu::Vault(crate::app::menu::VaultSubMenu::Settings(_))
+                    );
+
+                    let commands = vec![
+                        vault_overview.update(
                             daemon.clone(),
                             &cache,
-                            Message::UpdatePanelCache(current == menu),
-                        )
-                    })
-                    .collect();
-                Task::batch(commands)
+                            Message::UpdatePanelCache(
+                                current == &Menu::Vault(crate::app::menu::VaultSubMenu::Overview),
+                            ),
+                        ),
+                        settings.update(
+                            daemon.clone(),
+                            &cache,
+                            Message::UpdatePanelCache(is_settings_current),
+                        ),
+                    ];
+                    Task::batch(commands)
+                } else {
+                    Task::none()
+                }
             }
             Message::LoadDaemonConfig(cfg) => {
-                let res = self.load_daemon_config(self.cache.datadir_path.clone(), *cfg);
-                self.update(Message::DaemonConfigLoaded(res))
+                // Only load daemon config if we have a vault (daemon and wallet exist)
+                if self.daemon.is_some() && self.wallet.is_some() {
+                    let res = self.load_daemon_config(self.cache.datadir_path.clone(), *cfg);
+                    self.update(Message::DaemonConfigLoaded(res))
+                } else {
+                    tracing::warn!("Attempted to load daemon config without vault");
+                    Task::none()
+                }
             }
             Message::WalletUpdated(Ok(wallet)) => {
-                self.wallet = wallet.clone();
-                self.panels.current_mut().update(
-                    self.daemon.clone(),
-                    &self.cache,
-                    Message::WalletUpdated(Ok(wallet)),
-                )
+                // Check if we're transitioning from no-vault to has-vault state
+                let was_vaultless = !self.cache.has_vault;
+
+                self.wallet = Some(wallet.clone());
+                self.cache.has_vault = true;
+
+                // If we didn't have a vault before, rebuild all vault panels
+                if was_vaultless {
+                    if let Some(daemon) = &self.daemon {
+                        tracing::info!("Vault added to app - rebuilding vault panels");
+                        self.panels.build_vault_panels(
+                            wallet.clone(),
+                            &self.cache,
+                            daemon.backend(),
+                            self.datadir.clone(),
+                            self.internal_bitcoind.as_ref(),
+                            self.config.clone(),
+                        );
+                    }
+                }
+
+                // Forward the message to the current panel
+                if let Some(daemon) = &self.daemon {
+                    if let Some(panel) = self.panels.current_mut() {
+                        panel.update(
+                            daemon.clone(),
+                            &self.cache,
+                            Message::WalletUpdated(Ok(wallet)),
+                        )
+                    } else {
+                        Task::none()
+                    }
+                } else {
+                    Task::none()
+                }
             }
-            Message::View(view::Message::Menu(menu)) => Task::batch([
-                self.panels.current_mut().close(),
-                self.set_current_panel(menu),
-            ]),
+            Message::View(view::Message::Menu(menu)) => {
+                let close_task = if let Some(panel) = self.panels.current_mut() {
+                    panel.close()
+                } else {
+                    Task::none()
+                };
+                Task::batch([close_task, self.set_current_panel(menu)])
+            }
             Message::View(view::Message::ToggleVault) => {
                 self.panels.vault_expanded = !self.panels.vault_expanded;
                 self.cache.vault_expanded = self.panels.vault_expanded;
@@ -599,10 +924,18 @@ impl App {
             Message::View(view::Message::Clipboard(text)) => clipboard::write(text),
 
             // TODO: Move to panel.state
-            _ => self
-                .panels
-                .current_mut()
-                .update(self.daemon.clone(), &self.cache, message),
+            _ => {
+                if let Some(daemon) = &self.daemon {
+                    if let Some(panel) = self.panels.current_mut() {
+                        panel.update(daemon.clone(), &self.cache, message)
+                    } else {
+                        Task::none()
+                    }
+                } else {
+                    // No daemon available (app without vault), skip panel update
+                    Task::none()
+                }
+            }
         }
     }
 
@@ -611,19 +944,21 @@ impl App {
         datadir_path: LianaDirectory,
         cfg: DaemonConfig,
     ) -> Result<(), Error> {
-        Handle::current().block_on(async { self.daemon.stop().await })?;
+        if let Some(daemon) = &self.daemon {
+            Handle::current().block_on(async { daemon.stop().await })?;
+        }
         let network = cfg.bitcoin_config.network;
         let daemon = EmbeddedDaemon::start(cfg)?;
-        self.daemon = Arc::new(daemon);
+        self.daemon = Some(Arc::new(daemon));
         let mut daemon_config_path = datadir_path
             .network_directory(network)
-            .lianad_data_directory(&self.wallet.id())
+            .lianad_data_directory(&self.wallet.as_ref().expect("wallet should exist").id())
             .path()
             .to_path_buf();
         daemon_config_path.push("daemon.toml");
 
-        let content =
-            toml::to_string(&self.daemon.config()).map_err(|e| Error::Config(e.to_string()))?;
+        let content = toml::to_string(&self.daemon.as_ref().expect("daemon should exist").config())
+            .map_err(|e| Error::Config(e.to_string()))?;
 
         OpenOptions::new()
             .write(true)
@@ -641,6 +976,7 @@ impl App {
         let view = self
             .panels
             .current()
+            .unwrap_or(&self.panels.global_home)
             .view(&self.panels.current, &self.cache);
 
         if self.cache.network != bitcoin::Network::Bitcoin {

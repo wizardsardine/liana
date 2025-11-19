@@ -21,7 +21,7 @@ use crate::{
         menu::Menu,
         message::Message,
         settings::{self, update_settings_file},
-        state::{export::ExportModal, State},
+        state::{vault::export::VaultExportModal, State},
         view,
         wallet::Wallet,
         Config,
@@ -36,7 +36,7 @@ use crate::{
 enum Modal {
     None,
     RegisterWallet(RegisterWalletModal),
-    ImportExport(ExportModal),
+    ImportExport(VaultExportModal),
 }
 
 impl Modal {
@@ -108,7 +108,7 @@ impl WalletSettingsState {
 
 impl State for WalletSettingsState {
     fn view<'a>(&'a self, menu: &'a Menu, cache: &'a Cache) -> Element<'a, view::Message> {
-        let content = view::settings::wallet_settings(
+        let content = view::vault::settings::wallet_settings(
             menu,
             cache,
             self.warning.as_ref(),
@@ -278,7 +278,7 @@ impl State for WalletSettingsState {
             )) => {
                 if self.modal.is_none() {
                     let descriptor = self.wallet.main_descriptor.clone();
-                    let modal = ExportModal::new(
+                    let modal = VaultExportModal::new(
                         Some(daemon),
                         ImportExportType::ExportEncryptedDescriptor(Box::new(descriptor)),
                     );
@@ -346,7 +346,7 @@ impl RegisterWalletModal {
 
 impl RegisterWalletModal {
     fn view(&self) -> Element<'_, view::Message> {
-        view::settings::register_wallet_modal(
+        view::vault::settings::register_wallet_modal(
             self.warning.as_ref(),
             &self.hws.list,
             self.processing,
@@ -467,7 +467,7 @@ async fn register_wallet(
                     }
                 }
 
-                settings
+                Some(settings)
             })
             .await?;
         }
@@ -514,7 +514,7 @@ pub async fn update_aliases(
                 wallet_setting.alias = Some(wallet_alias.clone());
             }
 
-            settings
+            Some(settings)
         })
         .await?;
     }
@@ -538,7 +538,7 @@ pub async fn update_aliases(
                     .collect();
             }
 
-            settings
+            Some(settings)
         })
         .await?;
     }

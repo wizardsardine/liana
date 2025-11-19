@@ -14,7 +14,7 @@ use crate::{
         error::Error,
         menu::Menu,
         message::Message,
-        state::{label::LabelsEdited, State},
+        state::{vault::label::LabelsEdited, State},
         view,
         wallet::Wallet,
     },
@@ -97,7 +97,7 @@ impl State for CoinsPanel {
             menu,
             cache,
             self.warning.as_ref(),
-            view::coins::coins_view(
+            view::vault::coins::coins_view(
                 cache,
                 &self.coins.list,
                 self.timelock,

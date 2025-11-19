@@ -16,7 +16,7 @@ use liana_ui::{component::form, widget::Element};
 use async_hwi::DeviceKind;
 
 use crate::{
-    app::{settings::KeySetting, state::export::ExportModal, wallet::wallet_name},
+    app::{settings::KeySetting, state::vault::export::VaultExportModal, wallet::wallet_name},
     backup::Backup,
     export::{ImportExportMessage, ImportExportType, Progress},
     hw::{HardwareWallet, HardwareWallets},
@@ -105,7 +105,7 @@ impl Step for ImportDescriptor {
             }
             Message::ImportBackup => {
                 self.imported_backup = None;
-                let modal = ExportModal::new(None, ImportExportType::FromBackup);
+                let modal = VaultExportModal::new(None, ImportExportType::FromBackup);
                 let launch = modal.launch(false);
                 self.modal = ImportDescriptorModal::Export(modal);
                 Some(launch)
@@ -417,7 +417,7 @@ pub struct BackupDescriptor {
     done: bool,
     descriptor: Option<LianaDescriptor>,
     keys: HashMap<Fingerprint, KeySetting>,
-    modal: Option<ExportModal>,
+    modal: Option<VaultExportModal>,
     error: Option<Error>,
     context: Option<Context>,
 }
@@ -469,8 +469,10 @@ impl Step for BackupDescriptor {
                             return Task::none();
                         }
                     };
-                    let modal =
-                        ExportModal::new(None, ImportExportType::ExportEncryptedDescriptor(bytes));
+                    let modal = VaultExportModal::new(
+                        None,
+                        ImportExportType::ExportEncryptedDescriptor(bytes),
+                    );
                     let launch = modal.launch(true);
                     self.modal = Some(modal);
                     return launch;

@@ -73,6 +73,12 @@ pub struct Installer {
 
     /// Context is data passed through each step.
     pub context: Context,
+
+    /// Track if installer was launched from an app without vault (true) or from launcher (false)
+    pub launched_from_app: bool,
+
+    /// Cube settings when launched from app (for returning to the same cube)
+    pub cube_settings: Option<crate::app::settings::CubeSettings>,
 }
 
 impl Installer {
@@ -82,7 +88,12 @@ impl Installer {
         if self.current > 0 {
             self.current -= 1;
         } else {
-            return Task::done(Message::BackToLauncher(network));
+            // If launched from app, go back to app; otherwise go to launcher
+            return if self.launched_from_app {
+                Task::done(Message::BackToApp(network))
+            } else {
+                Task::done(Message::BackToLauncher(network))
+            };
         }
         // skip the previous step according to the current context.
         while self
@@ -94,7 +105,12 @@ impl Installer {
             if self.current > 0 {
                 self.current -= 1;
             } else {
-                return Task::done(Message::BackToLauncher(network));
+                // If launched from app, go back to app; otherwise go to launcher
+                return if self.launched_from_app {
+                    Task::done(Message::BackToApp(network))
+                } else {
+                    Task::done(Message::BackToLauncher(network))
+                };
             }
         }
 
@@ -109,6 +125,8 @@ impl Installer {
         network: bitcoin::Network,
         remote_backend: Option<BackendClient>,
         user_flow: UserFlow,
+        launched_from_app: bool,
+        cube_settings: Option<crate::app::settings::CubeSettings>,
     ) -> (Installer, Task<Message>) {
         let signer = Arc::new(Mutex::new(Signer::generate(network).unwrap()));
         let context = Context::new(
@@ -128,6 +146,8 @@ impl Installer {
             datadir: destination_path.clone(),
             current: 0,
             hws: HardwareWallets::new(destination_path.clone(), network),
+            launched_from_app,
+            cube_settings,
             steps: match user_flow {
                 UserFlow::CreateWallet => vec![
                     ChooseDescriptorTemplate::default().into(),
@@ -524,7 +544,7 @@ pub async fn install_local_wallet(
     // create liana GUI settings file
     update_settings_file(&network_datadir, |mut settings| {
         settings.wallets.push(wallet_settings.clone());
-        settings
+        Some(settings)
     })
     .await
     .map_err(|e| Error::Unexpected(e.to_string()))?;
@@ -667,7 +687,7 @@ pub async fn create_remote_wallet(
     };
     update_settings_file(&network_datadir, |mut settings| {
         settings.wallets.push(wallet_settings.clone());
-        settings
+        Some(settings)
     })
     .await
     .map_err(|e| Error::Unexpected(e.to_string()))?;
@@ -747,7 +767,7 @@ pub async fn import_remote_wallet(
     };
     update_settings_file(&network_datadir, |mut settings| {
         settings.wallets.push(wallet_settings.clone());
-        settings
+        Some(settings)
     })
     .await
     .map_err(|e| Error::Unexpected(e.to_string()))?;

@@ -16,7 +16,10 @@ use lianad::config::{
 use liana_ui::{component::form, widget::Element};
 
 use crate::{
-    app::{cache::Cache, error::Error, menu::Menu, message::Message, state::settings::State, view},
+    app::{
+        cache::Cache, error::Error, menu::Menu, message::Message, state::vault::settings::State,
+        view,
+    },
     daemon::Daemon,
     help,
     node::{
@@ -178,7 +181,7 @@ impl State for BitcoindSettingsState {
                 .map(|settings| settings.edit)
                 == Some(true);
         let can_do_rescan = !self.rescan_settings.processing && !settings_edit;
-        view::settings::bitcoind_settings(
+        view::vault::settings::bitcoind_settings(
             menu,
             cache,
             self.warning.as_ref(),
@@ -198,7 +201,7 @@ impl State for BitcoindSettingsState {
                         },
                     ))
                 }
-                setting_panels.push(view::settings::link(
+                setting_panels.push(view::vault::settings::link(
                     help::CHANGE_BACKEND_OR_NODE_URL,
                     "I want to change node type or use Liana Connect",
                 ));
@@ -383,7 +386,7 @@ impl BitcoindSettings {
     fn view<'a>(&self, cache: &'a Cache, can_edit: bool) -> Element<'a, view::SettingsEditMessage> {
         let is_configured_node_type = self.configured_node_type == Some(NodeType::Bitcoind);
         if self.edit {
-            view::settings::bitcoind_edit(
+            view::vault::settings::bitcoind_edit(
                 is_configured_node_type,
                 self.bitcoin_config.network,
                 cache.blockheight(),
@@ -393,7 +396,7 @@ impl BitcoindSettings {
                 self.processing,
             )
         } else {
-            view::settings::bitcoind(
+            view::vault::settings::bitcoind(
                 is_configured_node_type,
                 self.bitcoin_config.network,
                 &self.bitcoind_config,
@@ -499,7 +502,7 @@ impl ElectrumSettings {
     fn view<'a>(&self, cache: &'a Cache, can_edit: bool) -> Element<'a, view::SettingsEditMessage> {
         let is_configured_node_type = self.configured_node_type == Some(NodeType::Electrum);
         if self.edit {
-            view::settings::electrum_edit(
+            view::vault::settings::electrum_edit(
                 is_configured_node_type,
                 self.bitcoin_config.network,
                 cache.blockheight(),
@@ -508,7 +511,7 @@ impl ElectrumSettings {
                 self.electrum_config.validate_domain,
             )
         } else {
-            view::settings::electrum(
+            view::vault::settings::electrum(
                 is_configured_node_type,
                 self.bitcoin_config.network,
                 &self.electrum_config,
@@ -651,7 +654,7 @@ impl RescanSetting {
     }
 
     fn view<'a>(&self, cache: &'a Cache, can_edit: bool) -> Element<'a, view::SettingsEditMessage> {
-        view::settings::rescan(
+        view::vault::settings::rescan(
             &self.year,
             &self.month,
             &self.day,

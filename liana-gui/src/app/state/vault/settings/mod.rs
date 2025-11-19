@@ -28,7 +28,7 @@ use crate::{
     export::{ImportExportMessage, ImportExportType},
 };
 
-use super::export::ExportModal;
+use super::export::VaultExportModal;
 
 pub struct SettingsState {
     data_dir: LianaDirectory,
@@ -152,7 +152,7 @@ impl State for SettingsState {
         if let Some(setting) = &self.setting {
             setting.view(menu, cache)
         } else {
-            view::settings::list(
+            view::vault::settings::list(
                 menu,
                 cache,
                 self.daemon_backend == DaemonBackend::RemoteBackend,
@@ -179,7 +179,7 @@ impl From<SettingsState> for Box<dyn State> {
 
 pub struct ImportExportSettingsState {
     warning: Option<Error>,
-    modal: Option<ExportModal>,
+    modal: Option<VaultExportModal>,
     wallet: Arc<Wallet>,
     config: Arc<Config>,
 }
@@ -205,7 +205,7 @@ macro_rules! launch {
 
 impl State for ImportExportSettingsState {
     fn view<'a>(&'a self, menu: &'a Menu, cache: &'a Cache) -> Element<'a, view::Message> {
-        let content = view::settings::import_export(menu, cache, self.warning.as_ref());
+        let content = view::vault::settings::import_export(menu, cache, self.warning.as_ref());
         if let Some(modal) = &self.modal {
             modal.view(content)
         } else {
@@ -262,7 +262,7 @@ impl State for ImportExportSettingsState {
                 view::SettingsMessage::ExportEncryptedDescriptor,
             )) => {
                 if self.modal.is_none() {
-                    let modal = ExportModal::new(
+                    let modal = VaultExportModal::new(
                         Some(daemon),
                         ImportExportType::ExportEncryptedDescriptor(Box::new(
                             self.wallet.main_descriptor.clone(),
@@ -275,7 +275,7 @@ impl State for ImportExportSettingsState {
                 view::SettingsMessage::ExportPlaintextDescriptor,
             )) => {
                 if self.modal.is_none() {
-                    let modal = ExportModal::new(
+                    let modal = VaultExportModal::new(
                         Some(daemon),
                         ImportExportType::Descriptor(self.wallet.main_descriptor.clone()),
                     );
@@ -284,13 +284,13 @@ impl State for ImportExportSettingsState {
             }
             Message::View(view::Message::Settings(view::SettingsMessage::ExportTransactions)) => {
                 if self.modal.is_none() {
-                    let modal = ExportModal::new(Some(daemon), ImportExportType::Transactions);
+                    let modal = VaultExportModal::new(Some(daemon), ImportExportType::Transactions);
                     launch!(self, modal, true);
                 }
             }
             Message::View(view::Message::Settings(view::SettingsMessage::ExportLabels)) => {
                 if self.modal.is_none() {
-                    let modal = ExportModal::new(Some(daemon), ImportExportType::ExportLabels);
+                    let modal = VaultExportModal::new(Some(daemon), ImportExportType::ExportLabels);
                     launch!(self, modal, true);
                 }
             }
@@ -301,7 +301,7 @@ impl State for ImportExportSettingsState {
                     let config = self.config.clone();
                     let wallet = self.wallet.clone();
                     let daemon = daemon.clone();
-                    let modal = ExportModal::new(
+                    let modal = VaultExportModal::new(
                         Some(daemon),
                         ImportExportType::ExportProcessBackup(datadir, network, config, wallet),
                     );
@@ -310,7 +310,7 @@ impl State for ImportExportSettingsState {
             }
             Message::View(view::Message::Settings(view::SettingsMessage::ImportWallet)) => {
                 if self.modal.is_none() {
-                    let modal = ExportModal::new(
+                    let modal = VaultExportModal::new(
                         Some(daemon),
                         ImportExportType::ImportBackup {
                             network_dir: cache.datadir_path.network_directory(cache.network),
@@ -343,7 +343,7 @@ pub struct AboutSettingsState {
 
 impl State for AboutSettingsState {
     fn view<'a>(&'a self, menu: &'a Menu, cache: &'a Cache) -> Element<'a, view::Message> {
-        view::settings::about_section(
+        view::vault::settings::about_section(
             menu,
             cache,
             self.warning.as_ref(),
@@ -412,7 +412,7 @@ impl BackendSettingsState {
 
 impl State for BackendSettingsState {
     fn view<'a>(&'a self, menu: &'a Menu, cache: &'a Cache) -> Element<'a, view::Message> {
-        view::settings::remote_backend_section(
+        view::vault::settings::remote_backend_section(
             menu,
             cache,
             &self.email_form,

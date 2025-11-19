@@ -60,7 +60,11 @@ pub enum Message {
     HistoryTransactionsExtension(Result<Vec<HistoryTransaction>, Error>),
     HistoryTransactions(Result<Vec<HistoryTransaction>, Error>),
     Payments(Result<Vec<Payment>, Error>),
-    PaymentsExtension(Result<Vec<Payment>, Error>),
+    /// Extension of payments for pagination.
+    /// Tuple contains (Vec<Payment>, u64) where the u64 is the actual page limit used
+    /// for fetching payments. This limit may differ from HISTORY_EVENT_PAGE_SIZE when
+    /// multiple events occur in the same block, and is used to accurately detect the last page.
+    PaymentsExtension(Result<(Vec<Payment>, u64), Error>),
     Payment(Result<(HistoryTransaction, usize), Error>),
     LabelsUpdated(Result<HashMap<String, Option<String>>, Error>),
     BroadcastModal(Result<HashSet<Txid>, Error>),

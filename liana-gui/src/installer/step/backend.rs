@@ -10,7 +10,7 @@ use liana::{descriptors::LianaDescriptor, miniscript::bitcoin::Network};
 use liana_ui::{component::form, widget::Element};
 
 use crate::{
-    app::state::export::ExportModal,
+    app::state::vault::export::VaultExportModal,
     daemon::DaemonError,
     dir::NetworkDirectory,
     export::{ImportExportMessage, ImportExportType, Progress},
@@ -514,7 +514,7 @@ impl Step for ImportRemoteWallet {
     fn update(&mut self, hws: &mut HardwareWallets, message: Message) -> Task<Message> {
         match message {
             Message::ImportRemoteWallet(message::ImportRemoteWallet::ImportDescriptorFromFile) => {
-                let modal = ExportModal::new(None, ImportExportType::FromBackup);
+                let modal = VaultExportModal::new(None, ImportExportType::FromBackup);
                 let launch = modal.launch(false);
                 self.modal = ImportDescriptorModal::Export(modal);
                 return launch;

@@ -323,35 +323,26 @@ impl GUI {
                 }
                 Task::none()
             }
-            // In case of wallet deletion, remove any tab where the wallet id is currently running.
+            // In case of cube deletion, remove any tab where the cube/wallet is currently running.
             Message::Pane(p, pane::Message::Tab(t, tab::Message::Launch(msg))) => {
                 let mut tasks = Vec::new();
-                if let launcher::Message::View(launcher::ViewMessage::DeleteWallet(
-                    launcher::DeleteWalletMessage::Confirm(wallet_id),
+                if let launcher::Message::View(launcher::ViewMessage::DeleteCube(
+                    launcher::DeleteCubeMessage::Confirm(_cube_id),
                 )) = msg.as_ref()
                 {
+                    // When a cube is deleted, close all App and Loader tabs since they won't be valid anymore
                     let mut panes_to_close = Vec::<pane_grid::Pane>::new();
                     for (id, pane) in self.panes.iter_mut() {
-                        let tabs_to_close: Vec<usize> = pane
-                            .tabs
-                            .iter()
-                            .enumerate()
-                            .filter_map(|(i, tab)| {
-                                if match &tab.state {
-                                    tab::State::App(a) => a.wallet_id() == *wallet_id,
-                                    tab::State::Loader(l) => {
-                                        l.wallet_settings.wallet_id() == *wallet_id
-                                    }
-                                    _ => false,
-                                } {
-                                    Some(i)
-                                } else {
-                                    None
-                                }
-                            })
-                            .collect();
-                        for i in tabs_to_close {
-                            pane.close_tab(i);
+                        // Stop and remove tabs - iterate in reverse to maintain valid indices
+                        let mut i = pane.tabs.len();
+                        while i > 0 {
+                            i -= 1;
+                            if matches!(
+                                pane.tabs[i].state,
+                                tab::State::App(_) | tab::State::Loader(_)
+                            ) {
+                                pane.close_tab(i);
+                            }
                         }
                         if pane.tabs.is_empty() {
                             panes_to_close.push(*id);

@@ -22,7 +22,7 @@ use crate::{
         cache::Cache,
         error::Error,
         menu::{self, Menu},
-        view::{coins, dashboard, label, message::Message, FiatAmountConverter},
+        view::{dashboard, message::Message, vault::coins, vault::label, FiatAmountConverter},
         wallet::SyncStatus,
     },
     daemon::model::{HistoryTransaction, Payment, PaymentKind, TransactionKind},
@@ -47,7 +47,9 @@ fn rescan_warning<'a>() -> Element<'a, Message> {
                     .push(Space::with_width(Length::Fill))
                     .push(
                         button::secondary(None, "Go to rescan").on_press(Message::Menu(
-                            Menu::SettingsPreSelected(menu::SettingsOption::Node),
+                            Menu::Vault(menu::VaultSubMenu::Settings(Some(
+                                menu::SettingsOption::Node,
+                            ))),
                         )),
                     )
                     .push(
@@ -62,7 +64,7 @@ fn rescan_warning<'a>() -> Element<'a, Message> {
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn home_view<'a>(
+pub fn vault_overview_view<'a>(
     balance: &'a bitcoin::Amount,
     unconfirmed_balance: &'a bitcoin::Amount,
     remaining_sequence: &Option<u32>,

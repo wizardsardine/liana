@@ -12,7 +12,7 @@ use liana::miniscript::bitcoin::{
 use liana_ui::widget::Element;
 
 use crate::{
-    app::state::export::ExportModal,
+    app::state::vault::export::VaultExportModal,
     export::{ImportExportMessage, ImportExportType},
     hw::{HardwareWallet, HardwareWallets},
     installer::{
@@ -73,7 +73,7 @@ pub struct ShareXpubs {
     network: Network,
     hw_xpubs: Vec<HardwareWalletXpubs>,
     xpubs_signer: SignerXpubs,
-    modal: Option<ExportModal>,
+    modal: Option<VaultExportModal>,
     accounts: HashMap<Fingerprint, ChildNumber>,
 }
 
@@ -115,7 +115,7 @@ impl Step for ShareXpubs {
             }
             Message::ExportXpub(xpub_str) => {
                 if self.modal.is_none() {
-                    let modal = ExportModal::new(None, ImportExportType::ExportXpub(xpub_str));
+                    let modal = VaultExportModal::new(None, ImportExportType::ExportXpub(xpub_str));
                     let launch = modal.launch(true);
                     self.modal = Some(modal);
                     return launch;

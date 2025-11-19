@@ -1,29 +1,16 @@
-mod label;
 mod message;
-mod warning;
 
 pub mod active;
-pub mod coins;
-pub mod export;
-pub mod fiat;
 pub mod global_home;
-pub mod home;
-pub mod hw;
 
 #[cfg(feature = "buysell")]
 pub mod buysell;
 
-pub mod psbt;
-pub mod psbts;
-pub mod receive;
-pub mod recovery;
-pub mod settings;
-pub mod spend;
-pub mod transactions;
+pub mod vault;
 
-pub use fiat::FiatAmountConverter;
 pub use message::*;
-use warning::warn;
+pub use vault::fiat::FiatAmountConverter;
+pub use vault::warning::warn;
 
 use iced::{
     widget::{column, row, scrollable, Space},
@@ -34,8 +21,8 @@ use liana_ui::{
     color,
     component::{button, text::*},
     icon::{
-        coins_icon, cross_icon, down_icon, history_icon, home_icon, lightning_icon, receive_icon,
-        recovery_icon, send_icon, settings_icon, up_icon, vault_icon,
+        coins_icon, cross_icon, cube_icon, down_icon, history_icon, home_icon, lightning_icon,
+        plus_icon, receive_icon, recovery_icon, send_icon, settings_icon, up_icon, vault_icon,
     },
     image::*,
     theme,
@@ -53,17 +40,17 @@ fn menu_bar_highlight<'a, T: 'a>() -> Container<'a, T> {
         .style(theme::container::custom(color::ORANGE))
 }
 
-pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
+pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<'a, Message> {
     // Top-level Home button
     let home_button = if *menu == Menu::Home {
         row!(
-            button::menu_active(Some(home_icon()), "Home")
+            button::menu_active(Some(cube_icon()), "Home")
                 .on_press(Message::Reload)
                 .width(iced::Length::Fill),
             menu_bar_highlight(),
         )
     } else {
-        row!(button::menu(Some(home_icon()), "Home")
+        row!(button::menu(Some(cube_icon()), "Home")
             .on_press(Message::Menu(Menu::Home))
             .width(iced::Length::Fill),)
     };
@@ -124,6 +111,26 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
     // Add Active submenu items if expanded
     if is_active_expanded {
         use crate::app::menu::ActiveSubMenu;
+
+        // Active Overview
+        let active_overview_button = if matches!(menu, Menu::Active(ActiveSubMenu::Overview)) {
+            row!(
+                Space::with_width(Length::Fixed(20.0)),
+                button::menu_active(Some(home_icon()), "Overview")
+                    .on_press(Message::Reload)
+                    .width(iced::Length::Fill),
+                menu_bar_highlight()
+            )
+            .width(Length::Fill)
+        } else {
+            row!(
+                Space::with_width(Length::Fixed(20.0)),
+                button::menu(Some(home_icon()), "Overview")
+                    .on_press(Message::Menu(Menu::Active(ActiveSubMenu::Overview)))
+                    .width(iced::Length::Fill),
+            )
+            .width(Length::Fill)
+        };
 
         // Active Send
         let active_send_button = if matches!(menu, Menu::Active(ActiveSubMenu::Send)) {
@@ -209,6 +216,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
         };
 
         menu_column = menu_column
+            .push(active_overview_button)
             .push(active_send_button)
             .push(active_receive_button)
             .push(active_transactions_button)
@@ -218,37 +226,61 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
     // Check if Vault submenu is expanded from cache
     let is_vault_expanded = cache.vault_expanded;
 
-    // Vault menu button with expand/collapse chevron
-    let vault_chevron = if is_vault_expanded {
-        up_icon()
+    // Vault menu button - show "Vault +" if no vault exists, otherwise show expandable "Vault"
+    if !has_vault {
+        // No vault - show "Vault +" button that launches installer
+        let vault_plus_button = Button::new(
+            Row::new()
+                .spacing(10)
+                .align_y(iced::alignment::Vertical::Center)
+                .push(vault_icon().style(theme::text::secondary))
+                .push(text("Vault").size(15))
+                .push(Space::with_width(Length::Fill))
+                .push(
+                    Container::new(plus_icon().style(theme::text::secondary))
+                        .padding(iced::Padding::from([3.0, 0.0])) // Add 3px top and bottom padding for better centering
+                        .align_y(iced::alignment::Vertical::Top),
+                )
+                .padding(10),
+        )
+        .width(iced::Length::Fill)
+        .style(theme::button::menu)
+        .on_press(Message::SetupVault);
+
+        menu_column = menu_column.push(vault_plus_button);
     } else {
-        down_icon()
-    };
-    let vault_button = Button::new(
-        Row::new()
-            .spacing(10)
-            .align_y(iced::alignment::Vertical::Center)
-            .push(vault_icon().style(theme::text::secondary))
-            .push(text("Vault").size(15))
-            .push(Space::with_width(Length::Fill))
-            .push(vault_chevron.style(theme::text::secondary))
-            .padding(10),
-    )
-    .width(iced::Length::Fill)
-    .style(theme::button::menu)
-    .on_press(Message::ToggleVault);
+        // Has vault - show expandable Vault menu
+        let vault_chevron = if is_vault_expanded {
+            up_icon()
+        } else {
+            down_icon()
+        };
+        let vault_button = Button::new(
+            Row::new()
+                .spacing(10)
+                .align_y(iced::alignment::Vertical::Center)
+                .push(vault_icon().style(theme::text::secondary))
+                .push(text("Vault").size(15))
+                .push(Space::with_width(Length::Fill))
+                .push(vault_chevron.style(theme::text::secondary))
+                .padding(10),
+        )
+        .width(iced::Length::Fill)
+        .style(theme::button::menu)
+        .on_press(Message::ToggleVault);
 
-    menu_column = menu_column.push(vault_button);
+        menu_column = menu_column.push(vault_button);
+    }
 
-    // Add Vault submenu items if expanded
-    if is_vault_expanded {
+    // Add Vault submenu items if expanded (and vault exists)
+    if has_vault && is_vault_expanded {
         use crate::app::menu::VaultSubMenu;
 
-        // Home
-        let vault_home_button = if matches!(menu, Menu::Vault(VaultSubMenu::Home)) {
+        // Overview
+        let vault_overview_button = if matches!(menu, Menu::Vault(VaultSubMenu::Overview)) {
             row!(
                 Space::with_width(Length::Fixed(20.0)),
-                button::menu_active(Some(home_icon()), "Home")
+                button::menu_active(Some(home_icon()), "Overview")
                     .on_press(Message::Reload)
                     .width(iced::Length::Fill),
                 menu_bar_highlight(),
@@ -257,8 +289,8 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
         } else {
             row!(
                 Space::with_width(Length::Fixed(20.0)),
-                button::menu(Some(home_icon()), "Home")
-                    .on_press(Message::Menu(Menu::Vault(VaultSubMenu::Home)))
+                button::menu(Some(home_icon()), "Overview")
+                    .on_press(Message::Menu(Menu::Vault(VaultSubMenu::Overview)))
                     .width(iced::Length::Fill),
             )
             .width(Length::Fill)
@@ -406,7 +438,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
         };
 
         menu_column = menu_column
-            .push(vault_home_button)
+            .push(vault_overview_button)
             .push(vault_send_button)
             .push(vault_receive_button)
             .push(vault_coins_button)
@@ -416,11 +448,15 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
             .push(vault_settings_button);
     }
 
-    // Add Buy/Sell button after submenu items
+    // Add Buy/Sell button after submenu items (only if vault exists)
     menu_column = menu_column.push_maybe({
         #[cfg(feature = "buysell")]
         {
-            Some(buy_sell_button)
+            if has_vault {
+                Some(buy_sell_button)
+            } else {
+                None
+            }
         }
         #[cfg(not(feature = "buysell"))]
         {
@@ -452,11 +488,12 @@ pub fn dashboard<'a, T: Into<Element<'a, Message>>>(
     warning: Option<&Error>,
     content: T,
 ) -> Element<'a, Message> {
+    let has_vault = cache.has_vault; // Copy the bool value before moving into closure
     Row::new()
         .push(
-            sidebar(menu, cache)
+            sidebar(menu, cache, has_vault)
                 .height(Length::Fill)
-                .width(Length::Fixed(170.0)),
+                .width(Length::Fixed(190.0)),
         )
         .push(
             Column::new()

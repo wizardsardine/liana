@@ -38,7 +38,7 @@ use liana_ui::{
 };
 
 use crate::{
-    app::state::export::ExportModal,
+    app::state::vault::export::VaultExportModal,
     backup::Backup,
     export::ImportExportType,
     hw::{HardwareWallet, HardwareWallets},
@@ -86,7 +86,7 @@ pub struct DecryptModal {
     mnemonic_ack: bool,
     mnemonic_busy: bool,
     focus: Focus,
-    pub modal: Option<ExportModal>,
+    pub modal: Option<VaultExportModal>,
 }
 impl Debug for DecryptModal {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -282,7 +282,7 @@ impl DecryptModal {
             Decrypt::SelectImportXpub => {
                 self.focus = Focus::ImportXpub;
                 self.import_xpub_error = None;
-                let modal = ExportModal::new(None, ImportExportType::ImportXpub(self.network));
+                let modal = VaultExportModal::new(None, ImportExportType::ImportXpub(self.network));
                 let launch = modal.launch(false);
                 self.modal = Some(modal);
                 launch

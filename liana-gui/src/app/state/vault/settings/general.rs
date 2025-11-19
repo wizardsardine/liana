@@ -35,7 +35,7 @@ async fn update_price_setting(
         {
             wallet_setting.fiat_price = Some(new_price_setting);
         }
-        settings
+        Some(settings)
     })
     .await?;
     Ok(Arc::new(wallet))
@@ -77,7 +77,7 @@ impl GeneralSettingsState {
 
 impl State for GeneralSettingsState {
     fn view<'a>(&'a self, menu: &'a Menu, cache: &'a Cache) -> Element<'a, view::Message> {
-        view::settings::general::general_section(
+        view::vault::settings::general::general_section(
             menu,
             cache,
             &self.new_price_setting,

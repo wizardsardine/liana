@@ -23,10 +23,14 @@ use crate::{
     utils::serde::ok_or_none,
 };
 
+use liana::miniscript::bitcoin::Network;
+
 pub const SETTINGS_FILE_NAME: &str = "settings.json";
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct Settings {
+    #[serde(default)]
+    pub cubes: Vec<CubeSettings>,
     pub wallets: Vec<WalletSettings>,
 }
 
@@ -53,7 +57,7 @@ pub async fn update_settings_file<F>(
     updater: F,
 ) -> Result<(), SettingsError>
 where
-    F: FnOnce(Settings) -> Settings,
+    F: FnOnce(Settings) -> Option<Settings>,
 {
     let path = network_dir.path().join(SETTINGS_FILE_NAME);
     let file_exists = tokio::fs::try_exists(&path).await.unwrap_or(false);
@@ -84,12 +88,13 @@ where
 
     let settings = updater(settings);
 
-    if settings.wallets.is_empty() {
+    // If updater returns None, delete the file
+    let Some(settings) = settings else {
         tokio::fs::remove_file(&path)
             .await
             .map_err(|e| SettingsError::ReadingFile(e.to_string()))?;
         return Ok(());
-    }
+    };
 
     let content = serde_json::to_vec_pretty(&settings)
         .map_err(|e| SettingsError::WritingFile(format!("Failed to serialize settings: {}", e)))?;
@@ -109,6 +114,98 @@ where
         .map_err(|e| SettingsError::WritingFile(format!("Failed to truncate file: {}", e)))?;
 
     Ok(())
+}
+
+/// Cubes represent user accounts that can contain multiple features (Vault, Active wallet, etc.)
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct CubeSettings {
+    pub id: String,
+    pub name: String,
+    pub network: Network,
+    pub created_at: i64,
+    /// The Vault wallet for this Cube (optional - may not be set up yet)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vault_wallet_id: Option<WalletId>,
+    /// Optional security PIN (stored as Argon2id hash with salt in PHC format)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub security_pin_hash: Option<String>,
+}
+
+impl CubeSettings {
+    pub fn new(name: String, network: Network) -> Self {
+        Self {
+            id: uuid::Uuid::new_v4().to_string(),
+            name,
+            network,
+            created_at: chrono::Utc::now().timestamp(),
+            vault_wallet_id: None,
+            security_pin_hash: None,
+        }
+    }
+
+    pub fn with_vault(mut self, wallet_id: WalletId) -> Self {
+        self.vault_wallet_id = Some(wallet_id);
+        self
+    }
+
+    pub fn with_pin(mut self, pin: &str) -> Result<Self, Box<dyn std::error::Error>> {
+        self.security_pin_hash = Some(Self::hash_pin(pin)?);
+        Ok(self)
+    }
+
+    pub fn has_pin(&self) -> bool {
+        self.security_pin_hash.is_some()
+    }
+
+    pub fn verify_pin(&self, pin: &str) -> bool {
+        if let Some(stored_hash) = &self.security_pin_hash {
+            Self::verify_argon2_pin(pin, stored_hash)
+        } else {
+            // No PIN set, allow access
+            true
+        }
+    }
+
+    /// Hash PIN using Argon2id with a random salt
+    fn hash_pin(pin: &str) -> Result<String, Box<dyn std::error::Error>> {
+        use argon2::{
+            password_hash::{rand_core::OsRng, PasswordHasher, SaltString},
+            Argon2, Params,
+        };
+
+        // Generate a random salt
+        let salt = SaltString::generate(&mut OsRng);
+
+        // Configure Argon2id with reasonable parameters
+        // m_cost: 19456 KiB (19 MiB), t_cost: 2 iterations, p_cost: 1 thread
+        let params = Params::new(19456, 2, 1, None)?;
+        let argon2 = Argon2::new(argon2::Algorithm::Argon2id, argon2::Version::V0x13, params);
+
+        // Hash the PIN
+        let password_hash = argon2.hash_password(pin.as_bytes(), &salt)?;
+
+        // Return the PHC string format
+        Ok(password_hash.to_string())
+    }
+
+    /// Verify PIN against Argon2id hash
+    fn verify_argon2_pin(pin: &str, hash: &str) -> bool {
+        use argon2::{
+            password_hash::{PasswordHash, PasswordVerifier},
+            Argon2,
+        };
+
+        // Parse the PHC string
+        let parsed_hash = match PasswordHash::new(hash) {
+            Ok(h) => h,
+            Err(_) => return false,
+        };
+
+        // Verify the PIN
+        Argon2::default()
+            .verify_password(pin.as_bytes(), &parsed_hash)
+            .is_ok()
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -214,7 +311,7 @@ impl WalletSettings {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WalletId {
     pub timestamp: Option<i64>,
     pub descriptor_checksum: String,
@@ -741,5 +838,75 @@ mod test {
             true,
         )
         .unwrap()
+    }
+
+    #[test]
+    fn test_pin_hashing_argon2id() {
+        use super::CubeSettings;
+        use liana::miniscript::bitcoin::Network;
+
+        let pin = "1234";
+
+        // Create a cube with a PIN
+        let cube = CubeSettings::new("Test Cube".to_string(), Network::Bitcoin)
+            .with_pin(pin)
+            .expect("PIN hashing should succeed in tests");
+
+        // Verify the hash is in Argon2id format
+        let hash = cube.security_pin_hash.as_ref().unwrap();
+        assert!(
+            hash.starts_with("$argon2id$"),
+            "Hash should be in Argon2id format"
+        );
+
+        // Verify correct PIN works
+        assert!(cube.verify_pin("1234"), "Correct PIN should verify");
+
+        // Verify incorrect PIN fails
+        assert!(!cube.verify_pin("4321"), "Incorrect PIN should fail");
+        assert!(!cube.verify_pin("0000"), "Incorrect PIN should fail");
+    }
+
+    #[test]
+    fn test_pin_hashing_unique_salts() {
+        use super::CubeSettings;
+        use liana::miniscript::bitcoin::Network;
+
+        let pin = "1234";
+
+        // Create two cubes with the same PIN
+        let cube1 = CubeSettings::new("Cube 1".to_string(), Network::Bitcoin)
+            .with_pin(pin)
+            .expect("PIN hashing should succeed in tests");
+        let cube2 = CubeSettings::new("Cube 2".to_string(), Network::Bitcoin)
+            .with_pin(pin)
+            .expect("PIN hashing should succeed in tests");
+
+        let hash1 = cube1.security_pin_hash.as_ref().unwrap();
+        let hash2 = cube2.security_pin_hash.as_ref().unwrap();
+
+        // Hashes should be different due to unique salts
+        assert_ne!(
+            hash1, hash2,
+            "Same PIN should produce different hashes with unique salts"
+        );
+
+        // Both should verify correctly
+        assert!(cube1.verify_pin(pin));
+        assert!(cube2.verify_pin(pin));
+    }
+
+    #[test]
+    fn test_no_pin_always_allows() {
+        use super::CubeSettings;
+        use liana::miniscript::bitcoin::Network;
+
+        // Create a cube without a PIN
+        let cube = CubeSettings::new("No PIN Cube".to_string(), Network::Bitcoin);
+
+        // Any PIN should "verify" (allow access)
+        assert!(cube.verify_pin("1234"));
+        assert!(cube.verify_pin("0000"));
+        assert!(cube.verify_pin("9999"));
     }
 }

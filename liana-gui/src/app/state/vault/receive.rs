@@ -16,7 +16,7 @@ use crate::{
         error::Error,
         menu::Menu,
         message::Message,
-        state::{label::LabelsEdited, State},
+        state::{vault::label::LabelsEdited, State},
         view,
         wallet::Wallet,
     },
@@ -61,7 +61,7 @@ impl Labelled for Addresses {
     }
 }
 
-pub struct ReceivePanel {
+pub struct VaultReceivePanel {
     data_dir: LianaDirectory,
     wallet: Arc<Wallet>,
     addresses: Addresses,
@@ -75,7 +75,7 @@ pub struct ReceivePanel {
     processing: bool,
 }
 
-impl ReceivePanel {
+impl VaultReceivePanel {
     pub fn new(data_dir: LianaDirectory, wallet: Arc<Wallet>) -> Self {
         Self {
             data_dir,
@@ -113,13 +113,13 @@ impl ReceivePanel {
     }
 }
 
-impl State for ReceivePanel {
+impl State for VaultReceivePanel {
     fn view<'a>(&'a self, menu: &'a Menu, cache: &'a Cache) -> Element<'a, view::Message> {
         let content = view::dashboard(
             menu,
             cache,
             self.warning.as_ref(),
-            view::receive::receive(
+            view::vault::receive::receive(
                 &self.addresses.list,
                 &self.addresses.labels,
                 &self.prev_addresses.list,
@@ -323,8 +323,8 @@ impl State for ReceivePanel {
     }
 }
 
-impl From<ReceivePanel> for Box<dyn State> {
-    fn from(s: ReceivePanel) -> Box<dyn State> {
+impl From<VaultReceivePanel> for Box<dyn State> {
+    fn from(s: VaultReceivePanel) -> Box<dyn State> {
         Box::new(s)
     }
 }
@@ -357,7 +357,7 @@ impl VerifyAddressModal {
 
 impl VerifyAddressModal {
     pub fn view(&self) -> Element<'_, view::Message> {
-        view::receive::verify_address_modal(
+        view::vault::receive::verify_address_modal(
             self.warning.as_ref(),
             &self.hws.list,
             &self.chosen_hws,
@@ -430,7 +430,7 @@ impl ShowQrCodeModal {
     }
 
     pub fn view(&self) -> Element<'_, view::Message> {
-        view::receive::qr_modal(&self.qr_code, &self.address)
+        view::vault::receive::qr_modal(&self.qr_code, &self.address)
     }
 }
 
@@ -489,7 +489,7 @@ mod tests {
             ),
         ]);
         let wallet = Arc::new(Wallet::new(LianaDescriptor::from_str(DESC).unwrap()));
-        let sandbox: Sandbox<ReceivePanel> = Sandbox::new(ReceivePanel::new(
+        let sandbox: Sandbox<VaultReceivePanel> = Sandbox::new(VaultReceivePanel::new(
             LianaDirectory::new(PathBuf::new()),
             wallet.clone(),
         ));

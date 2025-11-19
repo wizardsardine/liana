@@ -25,6 +25,7 @@ pub enum Menu {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ActiveSubMenu {
+    Overview,
     Send,
     Receive,
     Transactions(Option<Txid>),
@@ -33,7 +34,7 @@ pub enum ActiveSubMenu {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum VaultSubMenu {
-    Home,
+    Overview,
     Send,
     Receive,
     Coins(Option<Vec<OutPoint>>),

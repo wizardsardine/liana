@@ -15,21 +15,13 @@ pub fn menu_active<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> Button
 }
 
 pub fn menu_small<'a, T: 'a>(icon: Text<'a>) -> Button<'a, T> {
-    Button::new(
-        container(icon.style(theme::text::secondary))
-            .padding(10)
-            .align_x(Horizontal::Center),
-    )
-    .style(theme::button::menu)
+    Button::new(container(icon.style(theme::text::secondary)).padding(10))
+        .style(theme::button::menu)
 }
 
 pub fn menu_active_small<'a, T: 'a>(icon: Text<'a>) -> Button<'a, T> {
-    Button::new(
-        container(icon.style(theme::text::secondary))
-            .padding(10)
-            .align_x(Horizontal::Center),
-    )
-    .style(theme::button::menu_pressed)
+    Button::new(container(icon.style(theme::text::secondary)).padding(10))
+        .style(theme::button::menu_pressed)
 }
 
 fn content_menu<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> Container<'a, T> {

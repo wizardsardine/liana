@@ -14,7 +14,6 @@ use crate::app::menu::Menu;
 use crate::app::settings::fiat::PriceSetting;
 use crate::app::view::dashboard;
 use crate::app::view::message::*;
-use crate::app::view::settings::SettingsMessage;
 use crate::services::fiat::{Currency, ALL_PRICE_SOURCES};
 
 pub fn general_section<'a>(

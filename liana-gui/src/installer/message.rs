@@ -44,6 +44,7 @@ pub enum Message {
     Skip,
     Previous,
     BackToLauncher(Network),
+    BackToApp(Network),
     Install,
     Close,
     Reload,

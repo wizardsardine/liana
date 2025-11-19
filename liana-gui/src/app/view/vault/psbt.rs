@@ -31,7 +31,9 @@ use crate::{
         cache::Cache,
         error::Error,
         menu::Menu,
-        view::{dashboard, hw::hw_list_view, label, message::*, warning::warn},
+        view::{
+            dashboard, message::*, vault::hw::hw_list_view, vault::label, vault::warning::warn,
+        },
     },
     daemon::model::{Coin, SpendStatus, SpendTx},
     hw::HardwareWallet,
