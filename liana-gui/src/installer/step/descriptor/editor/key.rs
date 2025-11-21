@@ -566,12 +566,8 @@ impl SelectKeySource {
                         };
                         Some(warn)
                     }
-                    // If two keys have the same fingerprint, they must both have the same provider key kind (which could be `None`).
                     // Note that this checks all keys regardless of whether they are currently being used in a path.
-                    else if self.keys.iter().any(|(fg, (_, key))| {
-                        *fg == key.fingerprint
-                            && key.source.provider_key_kind() != key.source.provider_key_kind()
-                    }) {
+                    else if self.keys.contains_key(&k.fingerprint) {
                         Some("Fetched key has already been added to the wallet.")
                     } else {
                         None
@@ -579,9 +575,7 @@ impl SelectKeySource {
                     *valid = warning.is_none();
                     if *valid {
                         self.selected_key = SelectedKey::New(Box::new(k.clone()));
-                        if let Some(kind) = k.source.provider_key_kind() {
-                            self.form_alias.value = format!("{:?}", kind);
-                        }
+                        self.form_alias.value = k.name;
                         let _ = self.on_next();
                     }
                 }
