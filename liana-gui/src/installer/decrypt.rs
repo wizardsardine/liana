@@ -218,7 +218,7 @@ impl DecryptModal {
             }
             Decrypt::Backup(_) => {
                 tracing::error!(
-                    "DecryptModal::update(Backup), this message must have been catched early"
+                    "DecryptModal::update(Backup), this message must have been caught early"
                 );
                 Task::none()
             }

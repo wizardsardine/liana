@@ -393,7 +393,7 @@ impl From<DbLabel> for Label {
                 label,
             }),
             DbLabelledKind::OutPoint => Label::Output(bip329::OutputRecord {
-                ref_: OutPoint::from_str(&ref_).expect(" db contais valid outpoints"),
+                ref_: OutPoint::from_str(&ref_).expect(" db contains valid outpoints"),
                 label,
                 spendable: true,
             }),
