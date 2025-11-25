@@ -2,11 +2,7 @@ use iced::Task;
 use liana_ui::component::form;
 
 use crate::app::view::{BuySellMessage, MavapayMessage};
-use crate::services::{
-    coincube::{client::SaveQuoteRequest, *},
-    mavapay::*,
-    registration::*,
-};
+use crate::services::{coincube::*, mavapay::*};
 
 #[derive(Debug)]
 pub enum MavapayFlowStep {
@@ -50,11 +46,10 @@ pub struct MavapayState {
     pub step: MavapayFlowStep,
 
     // mavapay session information
-    pub current_user: Option<crate::services::registration::User>,
+    pub current_user: Option<User>,
     pub auth_token: Option<String>,
 
     // API clients
-    pub registration_client: RegistrationClient,
     pub mavapay_client: MavapayClient,
     pub coincube_client: CoincubeClient,
 }
@@ -69,16 +64,8 @@ impl MavapayState {
             },
             current_user: None,
             auth_token: None,
-            registration_client: RegistrationClient::new(
-                std::env::var("COINCUBE_API_URL")
-                    .unwrap_or_else(|_| "https://dev-api.coincube.io".to_string())
-                    + "/api/v1",
-            ),
             mavapay_client: MavapayClient::new(),
-            coincube_client: crate::services::coincube::CoincubeClient::new(
-                std::env::var("COINCUBE_API_URL")
-                    .unwrap_or_else(|_| "https://dev-api.coincube.io".to_string()),
-            ),
+            coincube_client: crate::services::coincube::CoincubeClient::new(),
         }
     }
 }

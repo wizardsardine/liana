@@ -268,7 +268,7 @@ impl State for BuySellPanel {
                             MavapayMessage::SubmitLogin,
                         ) => {
                             return {
-                                let client = mavapay.registration_client.clone();
+                                let client = mavapay.coincube_client.clone();
 
                                 let email = email.to_string();
                                 let password = password.to_string();
@@ -372,13 +372,13 @@ impl State for BuySellPanel {
                                 password2.value = name;
                             }
                             MavapayMessage::SubmitRegistration => {
-                                let client = mavapay.registration_client.clone();
-                                let request = crate::services::registration::SignUpRequest {
+                                let client = mavapay.coincube_client.clone();
+                                let request = crate::services::coincube::SignUpRequest {
                                     account_type: "individual",
                                     email: email.value.clone(),
                                     first_name: first_name.value.clone(),
                                     last_name: last_name.value.clone(),
-                                    auth_details: vec![crate::services::registration::AuthDetail {
+                                    auth_details: [crate::services::coincube::AuthDetail {
                                         provider: 1, // EmailProvider = 1
                                         password: password1.value.clone(),
                                     }],
@@ -392,13 +392,9 @@ impl State for BuySellPanel {
                                                 MavapayMessage::RegistrationSuccess,
                                             ),
                                         )),
-                                        Err(error) => {
-                                            tracing::error!("Registration failed: {}", error.error);
-
-                                            Message::View(ViewMessage::BuySell(
-                                                BuySellMessage::SessionError(error.error),
-                                            ))
-                                        }
+                                        Err(error) => Message::View(ViewMessage::BuySell(
+                                            BuySellMessage::SessionError(error.to_string()),
+                                        )),
                                     },
                                 );
                             }
@@ -426,7 +422,7 @@ impl State for BuySellPanel {
                             MavapayMessage::SendVerificationEmail => {
                                 tracing::info!("Sending verification email to: {}", email);
 
-                                let client = mavapay.registration_client.clone();
+                                let client = mavapay.coincube_client.clone();
                                 let email = email.clone();
 
                                 return Task::perform(
@@ -438,7 +434,7 @@ impl State for BuySellPanel {
                                             ),
                                         )),
                                         Err(error) => Message::View(ViewMessage::BuySell(
-                                            BuySellMessage::SessionError(error.error),
+                                            BuySellMessage::SessionError(error.to_string()),
                                         )),
                                     },
                                 );
@@ -453,7 +449,7 @@ impl State for BuySellPanel {
                                 *checking = true;
 
                                 // recheck status every 10 seconds, automatic login if email is verified
-                                let client = mavapay.registration_client.clone();
+                                let client = mavapay.coincube_client.clone();
                                 let email = email.clone();
 
                                 return Task::perform(

@@ -65,18 +65,18 @@ impl HttpGeoLocator {
     pub async fn locate(&self) -> Result<(String, String), String> {
         // allow users (and developers) to override detected ISO_CODE
         if let Ok(forced_iso) = std::env::var("FORCE_ISOCODE") {
-            let (iso, name) = match {
+            match {
                 get_countries()
                     .iter()
                     .find(|c| c.code == forced_iso)
                     .map(|c| c.name)
             } {
-                Some(name) => (name.to_string(), forced_iso),
-                None => panic!("Unknown country iso code: {}", forced_iso),
+                Some(name) => {
+                    tracing::info!("Forced country: {} ({})", &forced_iso, &name);
+                    return Ok((forced_iso, name.to_string()));
+                }
+                None => log::warn!("Unknown country iso code: {}", forced_iso),
             };
-
-            tracing::info!("Forced country: {} ({})", &iso, &name);
-            return Ok((iso, name));
         }
 
         let url = format!("{}/api/v1/geolocation/country", self.base_url);

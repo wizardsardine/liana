@@ -177,7 +177,7 @@ pub enum BuySellMessage {
 #[cfg(feature = "buysell")]
 #[derive(Debug, Clone)]
 pub enum MavapayMessage {
-    LoginSuccess(crate::services::registration::LoginResponse),
+    LoginSuccess(crate::services::coincube::LoginResponse),
     // User Registration
     FirstNameChanged(String),
     LastNameChanged(String),
