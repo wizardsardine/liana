@@ -76,7 +76,8 @@ impl MavapayState {
         let currency = match country_iso {
             Some("KE") => MavapayCurrency::KenyanShilling,
             Some("ZA") => MavapayCurrency::SouthAfricanRand,
-            _ => MavapayCurrency::NigerianNaira,
+            Some("NG") => MavapayCurrency::NigerianNaira,
+            c => unreachable!("Country {:?} is not supported by Mavapay", c),
         };
 
         Task::perform(

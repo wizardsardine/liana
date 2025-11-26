@@ -93,7 +93,7 @@ impl std::fmt::Display for MavapayCurrency {
         match self {
             MavapayCurrency::KenyanShilling => write!(f, "Kenyan Shilling (KES)"),
             MavapayCurrency::SouthAfricanRand => write!(f, "South African Rand (ZAR)"),
-            MavapayCurrency::NigerianNaira => write!(f, "Nigerian Naira (NRN)"),
+            MavapayCurrency::NigerianNaira => write!(f, "Nigerian Naira (NGN)"),
             MavapayCurrency::Bitcoin => write!(f, "Bitcoin (BTC)"),
         }
     }

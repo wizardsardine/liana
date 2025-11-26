@@ -210,56 +210,55 @@ impl State for BuySellPanel {
 
             // session management
             BuySellMessage::StartOnramperSession => {
-                return {
-                    let BuySellFlowState::AddressGeneration {
-                        buy_or_sell,
-                        address: generated_address,
-                        ..
-                    } = &self.flow_state
-                    else {
-                        return Task::none();
-                    };
+                let BuySellFlowState::AddressGeneration {
+                    buy_or_sell,
+                    address: generated_address,
+                    ..
+                } = &self.flow_state
+                else {
+                    return Task::none();
+                };
 
-                    let mode = match buy_or_sell {
-                        Some(view::buysell::panel::BuyOrSell::Buy) => "buy",
-                        Some(view::buysell::panel::BuyOrSell::Sell) => "sell",
-                        None => return Task::none(),
-                    };
+                let mode = match buy_or_sell {
+                    Some(view::buysell::panel::BuyOrSell::Buy) => "buy",
+                    Some(view::buysell::panel::BuyOrSell::Sell) => "sell",
+                    None => return Task::none(),
+                };
 
-                    let Some(iso_code) = self.detected_country.as_ref().map(|c| c.code) else {
-                        tracing::warn!(
-                            "Unable to start session, country selection|detection was unsuccessful"
-                        );
-                        return Task::none();
-                    };
+                let Some(iso_code) = self.detected_country.as_ref().map(|c| c.code) else {
+                    tracing::warn!(
+                        "Unable to start session, country selection|detection was unsuccessful"
+                    );
+                    return Task::none();
+                };
 
-                    // This method is now only called for Onramper (non-Mavapay) flow
-                    let Some(currency) = crate::services::coincube::get_countries()
-                        .iter()
-                        .find(|c| c.code == iso_code)
-                        .map(|c| c.currency.name)
-                    else {
-                        tracing::error!("Unknown country iso code: {}", iso_code);
-                        return Task::none();
-                    };
+                let Some(currency) = crate::services::coincube::get_countries()
+                    .iter()
+                    .find(|c| c.code == iso_code)
+                    .map(|c| c.currency.code)
+                else {
+                    tracing::error!("Unknown country iso code: {}", iso_code);
+                    return Task::none();
+                };
 
-                    // prepare parameters
-                    let address = generated_address.as_ref().map(|a| a.address.to_string());
+                // prepare parameters
+                let address = generated_address.as_ref().map(|a| a.address.to_string());
 
-                    match crate::app::buysell::onramper::create_widget_url(
-                        &currency,
-                        address.as_deref(),
-                        &mode,
-                        self.network,
-                    ) {
-                        Ok(url) => Task::done(BuySellMessage::WebviewOpenUrl(url)),
-                        Err(error) => {
-                            tracing::error!("[ONRAMPER] Error: {}", error);
-                            Task::done(BuySellMessage::SessionError(error.to_string()))
-                        }
+                let start = match crate::app::buysell::onramper::create_widget_url(
+                    &currency,
+                    address.as_deref(),
+                    &mode,
+                    self.network,
+                ) {
+                    Ok(url) => Task::done(BuySellMessage::WebviewOpenUrl(url)),
+                    Err(error) => {
+                        tracing::error!("[ONRAMPER] Error: {}", error);
+                        Task::done(BuySellMessage::SessionError(error.to_string()))
                     }
                 }
                 .map(|m| Message::View(ViewMessage::BuySell(m)));
+
+                return start;
             }
             BuySellMessage::SessionError(error) => {
                 self.error = Some(error);
@@ -352,16 +351,21 @@ impl State for BuySellPanel {
 
                             // store token in OS keyring
                             if let Ok(entry) = keyring::Entry::new("io.coincube.Vault", "vault") {
-                                entry.set_password(&login.token).unwrap();
+                                if let Err(e) = entry.set_password(&login.token) {
+                                    log::error!("Failed to store auth token in keyring: {}", e);
+                                }
 
                                 match serde_json::to_vec(&login.user) {
                                     Ok(bytes) => {
-                                        entry.set_secret(&bytes).unwrap();
+                                        if let Err(e) = entry.set_secret(&bytes) {
+                                            log::error!(
+                                                "Unable to store user data in keyring: {e}"
+                                            );
+                                        }
                                     }
-                                    Err(err) => log::error!(
-                                        "Unable to serialize user data to OS keyring: {}",
-                                        err
-                                    ),
+                                    Err(err) => {
+                                        log::error!("Unable to serialize user data: {}", err)
+                                    }
                                 }
                             };
 
