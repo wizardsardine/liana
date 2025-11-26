@@ -40,7 +40,6 @@ pub enum Modal {
 #[derive(Debug, Default)]
 pub struct Addresses {
     list: Vec<Address>,
-    bip21s: HashMap<Address, String>,
     derivation_indexes: Vec<ChildNumber>,
     labels: HashMap<String, String>,
 }
@@ -288,14 +287,17 @@ impl State for ReceivePanel {
                     Task::none()
                 }
             }
-            Message::View(view::Message::ShowQrCode(i)) => {
+            Message::View(view::Message::ShowQrCode(i, bip21)) => {
                 if let (Some(address), Some(index)) = (self.address(i), self.derivation_index(i)) {
-                    if let Some(bip21) = self.addresses.bip21s.get(address) {
-                        if let Some(modal) = ShowQrCodeModal::new(bip21, *index) {
+                    if bip21.is_some() {
+                        if let Some(modal) = ShowQrCodeModal::new(
+                            &bip21.clone().unwrap_or(address.to_string()),
+                            *index,
+                        ) {
                             self.modal = Modal::ShowQrCode(modal);
                         } else {
                             tracing::error!(
-                                "Failed to create QR modal for BIP21 '{}' (address {}, index {})",
+                                "Failed to create QR modal for BIP21 '{:?}' (address {}, index {})",
                                 bip21,
                                 address,
                                 index
@@ -435,13 +437,14 @@ pub struct ShowQrCodeModal {
 impl ShowQrCodeModal {
     pub fn new(address: &str, index: ChildNumber) -> Option<Self> {
         if Address::from_str(address).is_ok() {
-            qr_code::Data::new(format!("bitcoin:{}?index={}", address, index))
+            qr_code::Data::new(format!("bitcoin:{}", address))
                 .ok()
                 .map(|qr_code| Self {
                     qr_code,
                     address: address.to_string(),
                 })
         } else {
+            // Already in bip21 format
             qr_code::Data::new(address).ok().map(|qr_code| Self {
                 qr_code,
                 address: address.to_string(),
