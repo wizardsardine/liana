@@ -163,14 +163,34 @@ impl State for BuySellPanel {
 
                     // attempt automatic login from os-keyring
                     if let Ok(entry) = keyring::Entry::new("io.coincube.Vault", "vault") {
-                        if let Ok(token) = entry.get_password() {
+                        if let (Ok(token), Ok(user_data)) =
+                            (entry.get_password(), entry.get_secret())
+                        {
                             mavapay.auth_token = Some(token);
-                        }
-
-                        if let Ok(user_data) = entry.get_secret() {
                             if let Ok(user) = serde_json::from_slice(&user_data) {
                                 mavapay.current_user = Some(user);
                             }
+                        };
+
+                        if mavapay.current_user.is_some() && mavapay.auth_token.is_some() {
+                            // TODO: check if auth credentials have expired
+                            log::info!("Coincube session successfully restored from OS keyring");
+
+                            mavapay.step = MavapayFlowStep::ActiveBuysell {
+                                country: country.clone(),
+                                flow_mode: MavapayFlowMode::CreateQuote,
+                                amount: 60,
+                                source_currency: None,
+                                target_currency: None,
+                                settlement_currency: None,
+                                payment_method: MavapayPaymentMethod::Lightning,
+                                bank_account_number: String::new(),
+                                bank_account_name: String::new(),
+                                bank_code: String::new(),
+                                bank_name: String::new(),
+                                current_quote: None,
+                                current_price: None,
+                            };
                         };
                     };
 
@@ -316,6 +336,8 @@ impl State for BuySellPanel {
                                 return Task::none();
                             }
 
+                            log::info!("Successfully logged in user: {}", &login.user.email);
+
                             // initialize location information for user
                             let iso = self.detected_country.as_ref().map(|c| c.code);
                             let source_currency = match iso {
@@ -350,7 +372,7 @@ impl State for BuySellPanel {
                             mavapay.step = MavapayFlowStep::ActiveBuysell {
                                 country: self.detected_country.clone().unwrap(),
                                 flow_mode: MavapayFlowMode::CreateQuote,
-                                amount: 0,
+                                amount: 60,
                                 source_currency,
                                 target_currency: None,
                                 settlement_currency: None,
