@@ -86,9 +86,16 @@ pub struct AuthDetail {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct SignUpRequest {
+pub enum AccountType {
     // TODO: is support for businesses even planned?
-    pub account_type: &'static str,
+    Business,
+    Individual,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SignUpRequest {
+    pub account_type: AccountType,
     pub email: String,
     pub first_name: String,
     pub last_name: String,
@@ -96,8 +103,8 @@ pub struct SignUpRequest {
 }
 
 #[derive(Serialize)]
-pub struct EmailVerificationStatusRequest {
-    pub email: String,
+pub struct EmailVerificationStatusRequest<'a> {
+    pub email: &'a str,
 }
 
 #[derive(Serialize)]
@@ -117,10 +124,8 @@ pub struct LoginRequest {
 pub struct User {
     pub id: u32,
     pub email: String,
-    pub first_name: String,
-    pub last_name: String,
-    pub email_verified: bool,
-    pub needs_2fa_setup: bool,
+    pub legal_name: String,
+    pub email_verified: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -134,7 +139,6 @@ pub struct SignUpResponse {
 pub struct EmailVerificationStatusResponse {
     pub email: String,
     pub email_verified: bool,
-    pub message: String,
 }
 
 #[derive(Deserialize)]
@@ -146,11 +150,12 @@ pub struct VerifyEmailResponse {
 #[derive(Deserialize, Debug, Clone)]
 pub struct LoginResponse {
     pub requires_2fa: bool,
-    pub token: String, // JWT token for authenticated requests
-    pub user: User,    // User data when login is successful
+    pub token: String,
+    pub refresh_token: String,
+    pub user: User,
 }
 
-#[derive(Debug, Deserialize, Clone, PartialEq, Eq)]
+#[derive(Debug, Deserialize, Clone, PartialEq)]
 pub struct Country {
     pub name: &'static str,
     pub code: &'static str,

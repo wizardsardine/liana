@@ -76,7 +76,7 @@ impl CoincubeClient {
 impl CoincubeClient {
     pub async fn sign_up(&self, request: SignUpRequest) -> Result<SignUpResponse, CoincubeError> {
         let response = {
-            let url = format!("{}{}", self.base_url, "/auth/signup");
+            let url = format!("{}{}", self.base_url, "/api/v1/auth/signup");
             self.client
                 .post(&url)
                 .header("Content-Type", "application/json")
@@ -93,12 +93,13 @@ impl CoincubeClient {
         &self,
         email: &str,
     ) -> Result<EmailVerificationStatusResponse, CoincubeError> {
-        let request = EmailVerificationStatusRequest {
-            email: email.to_string(),
-        };
+        let request = EmailVerificationStatusRequest { email };
 
         let response = {
-            let url = format!("{}{}", self.base_url, "/auth/email-verification-status");
+            let url = format!(
+                "{}{}",
+                self.base_url, "/api/v1/auth/email-verification-status"
+            );
             self.client.post(&url).json(&request).send()
         }
         .await?;
@@ -116,7 +117,10 @@ impl CoincubeClient {
         };
 
         let response = {
-            let url = format!("{}{}", self.base_url, "/auth/resend-verification-email");
+            let url = format!(
+                "{}{}",
+                self.base_url, "/api/v1/auth/resend-verification-email"
+            );
             self.client.post(&url).json(&request).send()
         }
         .await?;
@@ -133,7 +137,7 @@ impl CoincubeClient {
         };
 
         let response = {
-            let url = format!("{}{}", self.base_url, "/auth/login");
+            let url = format!("{}{}", self.base_url, "/api/v1/auth/login");
             self.client.post(&url).json(&request).send()
         }
         .await?;
@@ -143,7 +147,7 @@ impl CoincubeClient {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct CountryResponse {
     iso_code: String,

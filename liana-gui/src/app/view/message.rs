@@ -162,9 +162,7 @@ pub enum BuySellMessage {
     AddressCreated(super::buysell::panel::LabelledAddress),
 
     // Geolocation detection
-    CountryDetected(
-        Result<crate::services::coincube::Country, String>,
-    ),
+    CountryDetected(Result<crate::services::coincube::Country, String>),
 
     // webview logic
     WebviewOpenUrl(String),
@@ -178,7 +176,10 @@ pub enum BuySellMessage {
 #[cfg(feature = "buysell")]
 #[derive(Debug, Clone)]
 pub enum MavapayMessage {
-    LoginSuccess(crate::services::coincube::LoginResponse),
+    LoginSuccess {
+        login: crate::services::coincube::LoginResponse,
+        email_verified: bool,
+    },
     // User Registration
     FirstNameChanged(String),
     LastNameChanged(String),
@@ -194,7 +195,9 @@ pub enum MavapayMessage {
     // login to existing mavapay account
     LoginUsernameChanged(String),
     LoginPasswordChanged(String),
-    SubmitLogin,
+    SubmitLogin {
+        skip_email_verification: bool,
+    },
     CreateNewAccount,
     // buysell flow
     FlowModeChanged(crate::app::view::buysell::flow_state::MavapayFlowMode),

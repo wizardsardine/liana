@@ -255,35 +255,64 @@ impl State for BuySellPanel {
                                 email, password, ..
                             }
                             | MavapayFlowStep::Login { email, password },
-                            MavapayMessage::SubmitLogin,
+                            MavapayMessage::SubmitLogin {
+                                skip_email_verification,
+                            },
                         ) => {
-                            return {
-                                let client = mavapay.coincube_client.clone();
+                            let client = mavapay.coincube_client.clone();
 
-                                let email = email.to_string();
-                                let password = password.to_string();
+                            let email = email.to_string();
+                            let password = password.to_string();
 
-                                Task::perform(
-                                    async move { client.login(&email, &password).await },
-                                    |res| match res {
-                                        Ok(response) => BuySellMessage::Mavapay(
-                                            MavapayMessage::LoginSuccess(response),
-                                        ),
-                                        Err(e) => BuySellMessage::SessionError(e.to_string()),
-                                    },
-                                )
-                                .map(|m| Message::View(ViewMessage::BuySell(m)))
-                            };
+                            return Task::perform(
+                                async move {
+                                    let login = client.login(&email, &password).await;
+                                    let verified = match skip_email_verification {
+                                        true => true,
+                                        false => {
+                                            let status = client
+                                                .check_email_verification_status(&email)
+                                                .await?;
+                                            status.email_verified
+                                        }
+                                    };
+
+                                    // TODO: two factor authentication flows will be needed here
+
+                                    login.map(|l| (l, verified))
+                                },
+                                |res| match res {
+                                    Ok((login, email_verified)) => {
+                                        BuySellMessage::Mavapay(MavapayMessage::LoginSuccess {
+                                            email_verified,
+                                            login,
+                                        })
+                                    }
+                                    Err(e) => BuySellMessage::SessionError(e.to_string()),
+                                },
+                            )
+                            .map(|m| Message::View(ViewMessage::BuySell(m)));
                         }
                         (
                             MavapayFlowStep::VerifyEmail {
                                 email, password, ..
                             }
-                            | MavapayFlowStep::Login { email, password },
-                            MavapayMessage::LoginSuccess(login),
+                            | MavapayFlowStep::Login {
+                                email, password, ..
+                            },
+                            MavapayMessage::LoginSuccess {
+                                email_verified,
+                                login,
+                            },
                         ) => {
-                            if login.requires_2fa {
-                                tracing::error!("2FA required but not implemented for {email}");
+                            if !email_verified {
+                                // transition to email verification UI flow
+                                mavapay.step = MavapayFlowStep::VerifyEmail {
+                                    email: email.clone(),
+                                    password: password.clone(),
+                                    checking: false,
+                                };
+
                                 return Task::none();
                             }
 
@@ -299,55 +328,45 @@ impl State for BuySellPanel {
                                 }
                             };
 
-                            // Check if email is verified and route accordingly
-                            if login.user.email_verified {
-                                if let Ok(entry) = keyring::Entry::new("io.coincube.Vault", "vault")
-                                {
-                                    entry.set_password(&login.token).unwrap();
+                            // store token in OS keyring
+                            if let Ok(entry) = keyring::Entry::new("io.coincube.Vault", "vault") {
+                                entry.set_password(&login.token).unwrap();
 
-                                    match serde_json::to_vec(&login.user) {
-                                        Ok(bytes) => {
-                                            entry.set_secret(&bytes).unwrap();
-                                        }
-                                        Err(err) => log::error!(
-                                            "Unable to serialize user data to OS keyring: {}",
-                                            err
-                                        ),
+                                match serde_json::to_vec(&login.user) {
+                                    Ok(bytes) => {
+                                        entry.set_secret(&bytes).unwrap();
                                     }
-                                };
+                                    Err(err) => log::error!(
+                                        "Unable to serialize user data to OS keyring: {}",
+                                        err
+                                    ),
+                                }
+                            };
 
-                                // persist user state
-                                mavapay.current_user = Some(login.user);
-                                mavapay.auth_token = Some(login.token);
+                            // persist user state
+                            mavapay.current_user = Some(login.user);
+                            mavapay.auth_token = Some(login.token);
 
-                                mavapay.step = MavapayFlowStep::ActiveBuysell {
-                                    country: self.detected_country.clone().unwrap(),
-                                    flow_mode: MavapayFlowMode::CreateQuote,
-                                    amount: 0,
-                                    source_currency,
-                                    target_currency: None,
-                                    settlement_currency: None,
-                                    payment_method: MavapayPaymentMethod::Lightning,
-                                    bank_account_number: String::new(),
-                                    bank_account_name: String::new(),
-                                    bank_code: String::new(),
-                                    bank_name: String::new(),
-                                    current_quote: None,
-                                    current_price: None,
-                                };
+                            mavapay.step = MavapayFlowStep::ActiveBuysell {
+                                country: self.detected_country.clone().unwrap(),
+                                flow_mode: MavapayFlowMode::CreateQuote,
+                                amount: 0,
+                                source_currency,
+                                target_currency: None,
+                                settlement_currency: None,
+                                payment_method: MavapayPaymentMethod::Lightning,
+                                bank_account_number: String::new(),
+                                bank_account_name: String::new(),
+                                bank_code: String::new(),
+                                bank_name: String::new(),
+                                current_quote: None,
+                                current_price: None,
+                            };
 
-                                // Automatically get current price when entering dashboard
-                                return Task::done(Message::View(ViewMessage::BuySell(
-                                    BuySellMessage::Mavapay(MavapayMessage::GetPrice),
-                                )));
-                            } else {
-                                // transition to email verification
-                                mavapay.step = MavapayFlowStep::VerifyEmail {
-                                    email: email.clone(),
-                                    password: password.clone(),
-                                    checking: false,
-                                };
-                            }
+                            // Automatically get current price when entering dashboard
+                            return Task::done(Message::View(ViewMessage::BuySell(
+                                BuySellMessage::Mavapay(MavapayMessage::GetPrice),
+                            )));
                         }
                         // user registration form
                         (
@@ -378,7 +397,8 @@ impl State for BuySellPanel {
                             MavapayMessage::SubmitRegistration => {
                                 let client = mavapay.coincube_client.clone();
                                 let request = crate::services::coincube::SignUpRequest {
-                                    account_type: "individual",
+                                    account_type:
+                                        crate::services::coincube::AccountType::Individual,
                                     email: email.value.clone(),
                                     first_name: first_name.value.clone(),
                                     last_name: last_name.value.clone(),
@@ -471,6 +491,10 @@ impl State for BuySellPanel {
                                             {
                                                 Ok(res) => {
                                                     if res.email_verified {
+                                                        log::info!(
+                                                            "Email {} has been verified",
+                                                            email
+                                                        );
                                                         break Ok(());
                                                     }
                                                 }
@@ -480,13 +504,15 @@ impl State for BuySellPanel {
                                             }
 
                                             count = count - 1;
-                                            tokio::time::sleep(std::time::Duration::from_secs(10))
+                                            tokio::time::sleep(std::time::Duration::from_secs(3))
                                                 .await;
                                         }
                                     },
                                     |r| match r {
                                         Ok(_) => Message::View(ViewMessage::BuySell(
-                                            BuySellMessage::Mavapay(MavapayMessage::SubmitLogin),
+                                            BuySellMessage::Mavapay(MavapayMessage::SubmitLogin {
+                                                skip_email_verification: true,
+                                            }),
                                         )),
                                         Err(_) => Message::View(ViewMessage::BuySell(
                                             BuySellMessage::Mavapay(

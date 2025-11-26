@@ -23,19 +23,22 @@ fn login_form<'a>(password: &'a str, email: &'a str) -> Column<'a, BuySellMessag
         text::h3("Sign in to your account").color(color::WHITE),
         Space::with_height(Length::Fixed(30.0)),
         // input fields
-        text_input("Email", password)
-            .on_input(|e| { BuySellMessage::Mavapay(MavapayMessage::LoginUsernameChanged(e)) }),
+        text_input("Email", email)
+            .on_input(|e| BuySellMessage::Mavapay(MavapayMessage::LoginUsernameChanged(e))),
         Space::with_height(Length::Fixed(20.0)),
-        text_input("Password", email)
+        text_input("Password", password)
             .secure(true)
-            .on_input(|p| { BuySellMessage::Mavapay(MavapayMessage::LoginPasswordChanged(p)) }),
+            .on_input(|p| BuySellMessage::Mavapay(MavapayMessage::LoginPasswordChanged(p))),
         Space::with_height(Length::Fixed(30.0)),
         // submit button
-        button::primary(None, "Sign In")
+        button::primary(None, "Log In")
             .on_press_maybe(
                 // TODO: better form validation?
-                (!email.is_empty() && !email.is_empty())
-                    .then_some(BuySellMessage::Mavapay(MavapayMessage::SubmitLogin)),
+                (!email.is_empty() && !password.is_empty()).then_some(BuySellMessage::Mavapay(
+                    MavapayMessage::SubmitLogin {
+                        skip_email_verification: false
+                    }
+                )),
             )
             .width(Length::Fill),
         Space::with_height(Length::Fixed(20.0)),
