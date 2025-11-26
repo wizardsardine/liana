@@ -31,6 +31,7 @@ pub const SETTINGS_FILE_NAME: &str = "settings.json";
 pub struct Settings {
     #[serde(default)]
     pub cubes: Vec<CubeSettings>,
+    #[serde(default)]
     pub wallets: Vec<WalletSettings>,
 }
 
