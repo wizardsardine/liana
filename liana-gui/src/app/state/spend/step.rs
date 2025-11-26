@@ -237,6 +237,7 @@ impl DefineSpend {
 
     pub fn self_send(mut self) -> Self {
         self.recipients = Vec::new();
+        self.is_user_coin_selection = true;
         self
     }
 
@@ -327,6 +328,14 @@ impl DefineSpend {
                 }
             })
             .collect();
+
+        // we drop dust warning
+        self.recipients.iter_mut().for_each(|r| {
+            r.dust_warning = None;
+            r.estimated_max = None;
+        });
+
+        let total_recipients = self.recipients.len();
 
         let recipient_with_max = if let Some(i) = self.send_max_to_recipient {
             Some((
@@ -430,7 +439,6 @@ impl DefineSpend {
             }
         }) {
             Ok(CreateSpendResult::Success { psbt, .. }) => {
-                self.warning = None;
                 self.fee_amount = Some(psbt.fee().expect("Valid fees"));
                 // Update selected coins for auto-selection (non-recovery case).
                 if !self.is_user_coin_selection && self.recovery_timelock.is_none() {
@@ -466,43 +474,84 @@ impl DefineSpend {
                     );
                 }
             }
-            Ok(CreateSpendResult::InsufficientFunds { missing }) => {
-                self.fee_amount = None;
-                self.amount_left_to_select = Some(Amount::from_sat(missing));
-                // To be sure, we exclude recovery transactions here, although they
-                // can't currently reach this part of code.
-                if !self.is_user_coin_selection && self.recovery_timelock.is_none() {
-                    // The missing amount is based on all candidates for coin selection
-                    // being used, which are all owned coins.
-                    for (coin, selected) in &mut self.coins {
-                        *selected = coin_is_owned(coin);
-                    }
-                }
-                if let Some((i, recipient)) = recipient_with_max {
-                    let amount = Amount::from_sat(if destinations.is_empty() {
-                        // If there are no other recipients, then the missing value will
-                        // be the amount left to select in order to create an output at the dust
-                        // threshold. Therefore, set this recipient's amount to this value so
-                        // that the information shown is consistent.
-                        // Otherwise, there are already insufficient funds for the other
-                        // recipients and so the max available for this recipient is 0.
-                        DUST_OUTPUT_SATS
-                    } else {
-                        0
-                    })
-                    .to_btc()
-                    .to_string();
-                    recipient.update(
-                        self.network,
-                        view::CreateSpendMessage::RecipientEdited(i, "amount", amount),
-                    );
-                }
-            }
+            Ok(CreateSpendResult::InsufficientFunds { missing }) => handle_max_under_dust(
+                &mut self.fee_amount,
+                self.is_user_coin_selection,
+                self.recovery_timelock.is_none(),
+                &mut self.coins,
+                recipient_with_max,
+                &mut self.amount_left_to_select,
+                &mut self.warning,
+                Some(missing),
+                total_recipients,
+                self.network,
+            ),
             Err(e) => {
                 self.warning = Some(e.into());
                 self.fee_amount = None;
             }
         }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn handle_max_under_dust(
+    fee_amount: &mut Option<Amount>,
+    is_user_coin_selection: bool,
+    recovery_timelock_none: bool,
+    coins: &mut [(Coin, bool)],
+    recipient_with_max: Option<(usize, &mut Recipient)>,
+    amount_left_to_select: &mut Option<Amount>,
+    warning: &mut Option<Error>,
+    missing: Option<u64>,
+    total_recipients: usize,
+    network: Network,
+) {
+    *fee_amount = None;
+    let missing = missing.unwrap_or(DUST_OUTPUT_SATS);
+    let mut selected_coins = 0;
+    // To be sure, we exclude recovery transactions here, although they
+    // can't currently reach this part of code.
+    if !is_user_coin_selection && recovery_timelock_none {
+        // The missing amount is based on all candidates for coin selection
+        // being used, which are all owned coins.
+        coins.iter_mut().for_each(|(coin, selected)| {
+            *selected = coin_is_owned(coin);
+            if *selected {
+                selected_coins += 1;
+            }
+        })
+    }
+    let all_selected = selected_coins == coins.len();
+    if let Some((i, recipient)) = recipient_with_max {
+        *amount_left_to_select = None;
+        // In this case an output has MAX selected, but the available amount
+        // is lower than the dust limit.
+        if all_selected {
+            recipient.dust_warning = Some(
+                            "Minimum amount is 0.00 000 500 BTC. Add funds to your wallet to spend the coin(s)."
+                                .to_string());
+        } else {
+            recipient.dust_warning = Some(
+                "Minimum amount is 0.00 000 500 BTC. Select more coins to continue.".to_string(),
+            );
+        }
+        let amount = String::new();
+        recipient.update(
+            network,
+            view::CreateSpendMessage::RecipientEdited(i, "amount", amount),
+        );
+        *amount_left_to_select = None;
+        if total_recipients > 1 {
+            recipient.estimated_max = None;
+        } else if missing > DUST_OUTPUT_SATS {
+            // NOTE: Not reachable in theory
+        } else {
+            recipient.estimated_max = Some(Amount::from_sat(DUST_OUTPUT_SATS - missing));
+        }
+    } else {
+        *warning = None;
+        *amount_left_to_select = Some(Amount::from_sat(missing));
     }
 }
 
@@ -698,10 +747,12 @@ impl Step for DefineSpend {
                         }
                     }
                     view::CreateSpendMessage::SendMaxToRecipient(i) => {
-                        if self.recipients.get(i).is_some() {
+                        if let Some(recipient) = self.recipients.get_mut(i) {
                             if self.send_max_to_recipient == Some(i) {
                                 // If already set to this recipient, then unset it.
                                 self.send_max_to_recipient = None;
+                                recipient.dust_warning = None;
+                                recipient.estimated_max = None;
                             } else {
                                 // Either it's set to some other recipient or not at all.
                                 self.send_max_to_recipient = Some(i);
@@ -805,6 +856,10 @@ impl Step for DefineSpend {
 
     fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, view::Message> {
         let converter = fiat_converter_for_wallet(&self.wallet, cache);
+        let max_under_dust = self
+            .recipients
+            .iter()
+            .any(|r| r.estimated_max.is_some() || r.dust_warning.is_some());
         view::spend::create_spend_tx(
             cache,
             converter.as_ref(),
@@ -829,6 +884,7 @@ impl Step for DefineSpend {
             self.fee_amount.as_ref(),
             self.warning.as_ref(),
             self.is_first_step,
+            max_under_dust,
         )
     }
 
@@ -837,15 +893,17 @@ impl Step for DefineSpend {
     }
 }
 
-#[derive(Default, Clone)]
+#[derive(Debug, Default, Clone)]
 struct Recipient {
     label: form::Value<String>,
     address: form::Value<String>,
     amount: form::Value<String>,
+    estimated_max: Option<Amount>,
     // This is only `Some` if the user has entered a fiat amount directly.
     fiat_amount: Option<form::Value<String>>,
     fiat_converter: Option<view::FiatAmountConverter>, // the converter at the time of entering the fiat amount
     is_recovery: bool,
+    dust_warning: Option<String>,
 }
 
 impl Recipient {
@@ -1008,6 +1066,8 @@ impl Recipient {
             &self.label,
             is_max_selected,
             self.is_recovery,
+            &self.dust_warning,
+            self.estimated_max,
         )
     }
 }
