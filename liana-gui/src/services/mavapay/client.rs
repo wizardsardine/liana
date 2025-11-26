@@ -13,11 +13,13 @@ pub struct MavapayClient {
 impl MavapayClient {
     /// Create a new Mavapay client
     pub fn new() -> Self {
-        let api_key = match cfg!(debug_assertions) {
+        let api_key = match (option_env!("MAVAPAY_API_KEY"), cfg!(debug_assertions)) {
             // staging api key
-            true => "6361fa8e19e150db46d0dc614b9874fd199c95d80a9",
-            false => option_env!("MAVAPAY_API_KEY")
-                .expect("Unable to initialize Mavapay Client, API key not set at compile time"),
+            (None, true) => "6361fa8e19e150db46d0dc614b9874fd199c95d80a9",
+            (None, false) => {
+                panic!("Unable to initialize Mavapay Client, API key not set at compile time for release builds")
+            }
+            (Some(k), _) => k,
         };
 
         let mut headers = reqwest::header::HeaderMap::new();
