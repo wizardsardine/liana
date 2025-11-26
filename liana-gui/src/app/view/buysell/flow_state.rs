@@ -24,7 +24,7 @@ pub enum MavapayFlowStep {
         password: String,
     },
     ActiveBuysell {
-        country_iso: String,
+        country: Country,
         flow_mode: MavapayFlowMode,
         amount: u64,
         source_currency: Option<MavapayUnitCurrency>,

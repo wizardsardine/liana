@@ -7,6 +7,4 @@ pub mod keys;
 #[cfg(feature = "buysell")]
 pub mod coincube;
 #[cfg(feature = "buysell")]
-pub mod geolocation;
-#[cfg(feature = "buysell")]
 pub mod mavapay;

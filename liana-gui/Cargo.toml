@@ -88,6 +88,7 @@ fs4 = { version = "0.13", features = ["sync"] }
 # Used for opening URLs in browser
 open = "5.3"
 
+keyring = "3.6.3"
 encrypted_backup = { version = "0.0.1", default-features = false, features = [
 	"miniscript_12_0",
 ], package = "bitcoin-encrypted-backup" }

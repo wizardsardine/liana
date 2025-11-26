@@ -8,7 +8,6 @@ use crate::services::http::ResponseExt;
 pub struct MavapayClient {
     http: reqwest::Client,
     base_url: &'static str,
-    api_key: &'static str,
 }
 
 impl MavapayClient {
@@ -21,27 +20,31 @@ impl MavapayClient {
                 .expect("Unable to initialize Mavapay Client, API key not set at compile time"),
         };
 
+        let mut headers = reqwest::header::HeaderMap::new();
         let base_url = if cfg!(debug_assertions) {
             "https://staging.api.mavapay.co/api/v1"
         } else {
             "https://api.mavapay.co/api/v1"
         };
 
+        headers.append(
+            "key",
+            reqwest::header::HeaderValue::from_str(api_key).unwrap(),
+        );
+
         Self {
-            http: reqwest::Client::new(),
+            http: reqwest::Client::builder()
+                .default_headers(headers)
+                .build()
+                .unwrap(),
             base_url,
-            api_key,
         }
     }
 
     /// Create an authenticated request
     fn request(&self, method: Method, endpoint: &str) -> RequestBuilder {
         let url = format!("{}{}", self.base_url, endpoint);
-
-        self.http
-            .request(method, &url)
-            .header("x-api-key", self.api_key)
-            .header("Content-Type", "application/json")
+        self.http.request(method, &url)
     }
 
     /// Get current Bitcoin price in specified currency

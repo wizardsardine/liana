@@ -87,7 +87,7 @@ impl State for BuySellPanel {
         match message {
             // internal state management
             BuySellMessage::ResetWidget => {
-                let flow_state = match self.detected_country_iso.as_deref() {
+                let flow_state = match self.detected_country.as_ref().map(|c| c.code) {
                     Some(iso) if mavapay_supported(&iso) => {
                         BuySellFlowState::Mavapay(view::buysell::MavapayState::new())
                     }
@@ -141,30 +141,16 @@ impl State for BuySellPanel {
             BuySellMessage::CountryDetected(result) => {
                 use crate::app::view::buysell::MavapayState;
 
-                let (country_name, iso_code) = match result {
-                    Ok((country_name, iso_code)) => {
-                        if country_name.is_empty() || iso_code.is_empty() {
-                            tracing::error!(
-                                "ip-geolocation returned null country information, switching to manual country selector"
-                            );
-
-                            self.flow_state = BuySellFlowState::DetectingLocation(true);
-                            self.detected_country_name = None;
-                            self.detected_country_iso = None;
-
-                            return Task::done(Message::View(ViewMessage::BuySell(
-                                BuySellMessage::SessionError("Unable to automatically determine location, please select manually below".to_string()),
-                            )));
-                        };
-
-                        (country_name, iso_code)
+                let country = match result {
+                    Ok(country) => {
+                        self.error = None;
+                        country
                     }
                     Err(err) => {
-                        tracing::error!("Error detecting country via geo-ip: {}, switching to manual country selector", err);
+                        tracing::error!("Error detecting country via geo-ip, switching to manual country selector.\n    {}", err);
 
                         self.flow_state = BuySellFlowState::DetectingLocation(true);
-                        self.detected_country_name = None;
-                        self.detected_country_iso = None;
+                        self.detected_country = None;
 
                         return Task::done(Message::View(ViewMessage::BuySell(
                             BuySellMessage::SessionError("Unable to automatically determine location, please select manually below".to_string()),
@@ -172,8 +158,23 @@ impl State for BuySellPanel {
                     }
                 };
 
-                if mavapay_supported(&iso_code) {
-                    self.flow_state = BuySellFlowState::Mavapay(MavapayState::new());
+                if mavapay_supported(&country.code) {
+                    let mut mavapay = MavapayState::new();
+
+                    // attempt automatic login from os-keyring
+                    if let Ok(entry) = keyring::Entry::new("io.coincube.Vault", "vault") {
+                        if let Ok(token) = entry.get_password() {
+                            mavapay.auth_token = Some(token);
+                        }
+
+                        if let Ok(user_data) = entry.get_secret() {
+                            if let Ok(user) = serde_json::from_slice(&user_data) {
+                                mavapay.current_user = Some(user);
+                            }
+                        };
+                    };
+
+                    self.flow_state = BuySellFlowState::Mavapay(mavapay);
                 } else {
                     self.flow_state = BuySellFlowState::AddressGeneration {
                         buy_or_sell: None,
@@ -183,19 +184,8 @@ impl State for BuySellPanel {
                 }
 
                 // update location information
-                tracing::info!("Country = {}, ISO = {}", country_name, iso_code);
-                self.detected_country_name = Some(country_name);
-                self.detected_country_iso = Some(iso_code);
-            }
-            BuySellMessage::ManualCountrySelected(country) => {
-                self.error = None;
-
-                return Task::done(Message::View(ViewMessage::BuySell(
-                    BuySellMessage::CountryDetected(Ok((
-                        country.name.to_string(),
-                        country.code.to_string(),
-                    ))),
-                )));
+                tracing::info!("Country = {}, ISO = {}", country.name, country.code);
+                self.detected_country = Some(country);
             }
 
             // session management
@@ -216,7 +206,7 @@ impl State for BuySellPanel {
                         None => return Task::none(),
                     };
 
-                    let Some(iso_code) = self.detected_country_iso.as_ref() else {
+                    let Some(iso_code) = self.detected_country.as_ref().map(|c| c.code) else {
                         tracing::warn!(
                             "Unable to start session, country selection|detection was unsuccessful"
                         );
@@ -224,7 +214,7 @@ impl State for BuySellPanel {
                     };
 
                     // This method is now only called for Onramper (non-Mavapay) flow
-                    let Some(currency) = crate::services::geolocation::get_countries()
+                    let Some(currency) = crate::services::coincube::get_countries()
                         .iter()
                         .find(|c| c.code == iso_code)
                         .map(|c| c.currency.name)
@@ -298,7 +288,7 @@ impl State for BuySellPanel {
                             }
 
                             // initialize location information for user
-                            let iso = self.detected_country_iso.as_deref();
+                            let iso = self.detected_country.as_ref().map(|c| c.code);
                             let source_currency = match iso {
                                 Some("NG") => Some(MavapayUnitCurrency::NigerianNairaKobo),
                                 Some("KE") => Some(MavapayUnitCurrency::KenyanShillingCent),
@@ -311,13 +301,27 @@ impl State for BuySellPanel {
 
                             // Check if email is verified and route accordingly
                             if login.user.email_verified {
+                                if let Ok(entry) = keyring::Entry::new("io.coincube.Vault", "vault")
+                                {
+                                    entry.set_password(&login.token).unwrap();
+
+                                    match serde_json::to_vec(&login.user) {
+                                        Ok(bytes) => {
+                                            entry.set_secret(&bytes).unwrap();
+                                        }
+                                        Err(err) => log::error!(
+                                            "Unable to serialize user data to OS keyring: {}",
+                                            err
+                                        ),
+                                    }
+                                };
+
+                                // persist user state
                                 mavapay.current_user = Some(login.user);
                                 mavapay.auth_token = Some(login.token);
 
-                                // TODO: persist auth_token to os keychain
-
                                 mavapay.step = MavapayFlowStep::ActiveBuysell {
-                                    country_iso: self.detected_country_iso.clone().unwrap(),
+                                    country: self.detected_country.clone().unwrap(),
                                     flow_mode: MavapayFlowMode::CreateQuote,
                                     amount: 0,
                                     source_currency,
@@ -570,7 +574,7 @@ impl State for BuySellPanel {
                             MavapayMessage::BankNameChanged(name) => *bank_name = name,
                             MavapayMessage::CreateQuote => {
                                 return mavapay
-                                    .create_quote(self.detected_country_iso.as_deref())
+                                    .create_quote(self.detected_country.as_ref().map(|c| c.code))
                                     .map(|b| Message::View(ViewMessage::BuySell(b)))
                             }
                             MavapayMessage::OpenPaymentLink => {
@@ -580,7 +584,7 @@ impl State for BuySellPanel {
                             }
                             MavapayMessage::GetPrice => {
                                 return mavapay
-                                    .get_price(self.detected_country_iso.as_deref())
+                                    .get_price(self.detected_country.as_ref().map(|c| c.code))
                                     .map(|b| Message::View(ViewMessage::BuySell(b)))
                             }
                             msg => log::warn!(
@@ -633,19 +637,16 @@ impl State for BuySellPanel {
         _daemon: Arc<dyn Daemon + Sync + Send>,
         _wallet: Arc<crate::app::wallet::Wallet>,
     ) -> Task<Message> {
-        match self.detected_country_iso {
+        match self.detected_country {
             Some(_) => Task::none(),
             None => {
-                let geolocation_service = self.geolocation_service.clone();
+                let client = self.coincube_client.clone();
 
-                Task::perform(
-                    async move { geolocation_service.locate().await },
-                    |result| {
-                        Message::View(ViewMessage::BuySell(BuySellMessage::CountryDetected(
-                            result,
-                        )))
-                    },
-                )
+                Task::perform(async move { client.locate().await }, |result| {
+                    Message::View(ViewMessage::BuySell(BuySellMessage::CountryDetected(
+                        result.map_err(|e| e.to_string()),
+                    )))
+                })
             }
         }
     }

@@ -13,7 +13,10 @@ impl CoincubeClient {
     pub fn new() -> Self {
         Self {
             client: Client::new(),
-            base_url: option_env!("COINCUBE_API_URL").unwrap_or("https://dev-api.coincube.io"),
+            base_url: match cfg!(debug_assertions) {
+                false => "https://api.coincube.io",
+                true => option_env!("COINCUBE_API_URL").unwrap_or("https://dev-api.coincube.io"),
+            },
         }
     }
 
@@ -71,10 +74,7 @@ impl CoincubeClient {
 
 // registration endpoints
 impl CoincubeClient {
-    pub async fn sign_up(
-        &self,
-        request: SignUpRequest,
-    ) -> Result<SignUpResponse, CoincubeError> {
+    pub async fn sign_up(&self, request: SignUpRequest) -> Result<SignUpResponse, CoincubeError> {
         let response = {
             let url = format!("{}{}", self.base_url, "/auth/signup");
             self.client
@@ -83,9 +83,8 @@ impl CoincubeClient {
                 .json(&request)
                 .send()
         }
-        .await?
-        .check_success()
         .await?;
+        let response = response.check_success().await?;
 
         Ok(response.json().await?)
     }
@@ -94,15 +93,16 @@ impl CoincubeClient {
         &self,
         email: &str,
     ) -> Result<EmailVerificationStatusResponse, CoincubeError> {
-        let request = EmailVerificationStatusRequest { email: email.to_string() };
+        let request = EmailVerificationStatusRequest {
+            email: email.to_string(),
+        };
 
         let response = {
             let url = format!("{}{}", self.base_url, "/auth/email-verification-status");
             self.client.post(&url).json(&request).send()
         }
-        .await?
-        .check_success()
         .await?;
+        let response = response.check_success().await?;
 
         Ok(response.json().await?)
     }
@@ -111,15 +111,16 @@ impl CoincubeClient {
         &self,
         email: &str,
     ) -> Result<VerifyEmailResponse, CoincubeError> {
-        let request = ResendVerificationEmailRequest { email: email.to_string() };
+        let request = ResendVerificationEmailRequest {
+            email: email.to_string(),
+        };
 
         let response = {
             let url = format!("{}{}", self.base_url, "/auth/resend-verification-email");
             self.client.post(&url).json(&request).send()
         }
-        .await?
-        .check_success()
         .await?;
+        let response = response.check_success().await?;
 
         Ok(response.json().await?)
     }
@@ -135,10 +136,47 @@ impl CoincubeClient {
             let url = format!("{}{}", self.base_url, "/auth/login");
             self.client.post(&url).json(&request).send()
         }
-        .await?
-        .check_success()
         .await?;
+        let response = response.check_success().await?;
 
         Ok(response.json().await?)
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CountryResponse {
+    iso_code: String,
+}
+
+impl CoincubeClient {
+    /// Detects the user's country and returns (country_name, iso_code)
+    pub async fn locate(&self) -> Result<Country, CoincubeError> {
+        // allow users (and developers) to override detected ISO_CODE
+        let iso_code = match std::env::var("FORCE_ISOCODE") {
+            Ok(iso) => iso,
+            Err(_) => {
+                let url = format!("{}/api/v1/geolocation/country", self.base_url);
+
+                let res = self.client.get(url).send().await?;
+                let res = res.check_success().await?;
+
+                let detected: CountryResponse = res.json().await?;
+                detected.iso_code
+            }
+        };
+
+        match {
+            get_countries()
+                .iter()
+                .find(|c| c.code == &iso_code)
+                .cloned()
+        } {
+            Some(country) => Ok(country),
+            None => Err(CoincubeError::Api(format!(
+                "Unknown country iso code: ({})",
+                iso_code
+            ))),
+        }
     }
 }

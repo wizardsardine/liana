@@ -149,3 +149,33 @@ pub struct LoginResponse {
     pub token: String, // JWT token for authenticated requests
     pub user: User,    // User data when login is successful
 }
+
+#[derive(Debug, Deserialize, Clone, PartialEq, Eq)]
+pub struct Country {
+    pub name: &'static str,
+    pub code: &'static str,
+    pub flag: &'static str,
+    pub currency: Currency,
+}
+
+impl std::fmt::Display for Country {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} ({})", self.name, self.code)
+    }
+}
+
+#[derive(Debug, Deserialize, Clone, PartialEq, Eq)]
+pub struct Currency {
+    pub code: &'static str,
+    pub name: &'static str,
+    pub symbol: &'static str,
+}
+
+pub fn get_countries() -> &'static [Country] {
+    static COUNTRIES_JSON: &'static str = include_str!("../countries.json");
+    static COUNTRIES: std::sync::OnceLock<Vec<Country>> = std::sync::OnceLock::new();
+
+    COUNTRIES
+        .get_or_init(|| serde_json::from_str(COUNTRIES_JSON).unwrap())
+        .as_slice()
+}

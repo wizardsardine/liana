@@ -68,14 +68,13 @@ pub struct BuySellPanel {
     pub network: Network,
 
     // services used by several buysell providers
-    pub geolocation_service: crate::services::geolocation::HttpGeoLocator,
-    pub detected_country_name: Option<String>,
-    pub detected_country_iso: Option<String>,
+    pub coincube_client: crate::services::coincube::CoincubeClient,
+    pub detected_country: Option<crate::services::coincube::Country>,
     pub webview_manager: iced_wry::IcedWebviewManager,
 }
 
 impl BuySellPanel {
-    pub fn new  (
+    pub fn new(
         network: bitcoin::Network,
         wallet: std::sync::Arc<crate::app::wallet::Wallet>,
     ) -> Self {
@@ -85,9 +84,8 @@ impl BuySellPanel {
             network,
             modal: app::state::vault::receive::Modal::None,
             // Geolocation detection state
-            geolocation_service: crate::services::geolocation::HttpGeoLocator::new(),
-            detected_country_name: None,
-            detected_country_iso: None,
+            coincube_client: crate::services::coincube::CoincubeClient::new(),
+            detected_country: None,
             webview_manager: iced_wry::IcedWebviewManager::new(),
             // Start in detecting location state
             flow_state: BuySellFlowState::DetectingLocation(false),
@@ -267,7 +265,7 @@ impl BuySellPanel {
                 .push(
                     button::primary(Some(globe_icon()), "Continue")
                         .on_press_maybe(
-                            self.detected_country_iso
+                            self.detected_country
                                 .is_some()
                                 .then_some(ViewMessage::BuySell(
                                     BuySellMessage::StartOnramperSession,
@@ -330,7 +328,7 @@ impl BuySellPanel {
                 .push_maybe({
                     (matches!(buy_or_sell, Some(BuyOrSell::Sell))).then(|| {
                         button::secondary(Some(globe_icon()), "Continue")
-                            .on_press_maybe(self.detected_country_iso.is_some().then_some(
+                            .on_press_maybe(self.detected_country.is_some().then_some(
                                 ViewMessage::BuySell(BuySellMessage::StartOnramperSession),
                             ))
                             .width(iced::Length::Fill)
@@ -352,9 +350,9 @@ impl BuySellPanel {
             true => Column::new()
                 .push(
                     pick_list(
-                        crate::services::geolocation::get_countries(),
-                        None::<crate::services::geolocation::Country>,
-                        |c| ViewMessage::BuySell(BuySellMessage::ManualCountrySelected(c)),
+                        crate::services::coincube::get_countries(),
+                        self.detected_country.as_ref(),
+                        |c| ViewMessage::BuySell(BuySellMessage::CountryDetected(Ok(c))),
                     )
                     .padding(10)
                     .placeholder("Select Country: "),

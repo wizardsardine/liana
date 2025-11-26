@@ -162,8 +162,9 @@ pub enum BuySellMessage {
     AddressCreated(super::buysell::panel::LabelledAddress),
 
     // Geolocation detection
-    ManualCountrySelected(crate::services::geolocation::Country),
-    CountryDetected(Result<(String, String), String>),
+    CountryDetected(
+        Result<crate::services::coincube::Country, String>,
+    ),
 
     // webview logic
     WebviewOpenUrl(String),
