@@ -108,7 +108,7 @@ async fn ctrl_c() -> Result<(), ()> {
 
 impl GUI {
     pub fn title(&self) -> String {
-        format!("Coincube Vault v{}", VERSION)
+        format!("COINCUBE v{}", VERSION)
     }
 
     pub fn new((config, log_level): (Config, Option<LevelFilter>)) -> (GUI, Task<Message>) {

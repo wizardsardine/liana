@@ -138,6 +138,7 @@ impl MavapayState {
             bank_account_name,
             bank_code,
             bank_name,
+            payment_method,
             ..
         } = &self.step
         else {
@@ -157,7 +158,7 @@ impl MavapayState {
                 amount: amount.clone(),
                 source_currency: source_currency.clone(),
                 target_currency: target_currency.clone(),
-                payment_method: MavapayPaymentMethod::Lightning,
+                payment_method: payment_method.clone(),
                 payment_currency: source_currency.clone(),
                 // automatically deposit fiat funds in beneficiary account
                 autopayout: true,
@@ -166,12 +167,12 @@ impl MavapayState {
                     Some("KE") => {
                         unimplemented!("Support for Kenyan beneficiaries is incomplete")
                     }
-                    Some("ZA") => Some(crate::services::mavapay::Beneficiary::ZAR {
+                    Some("ZA") => Some(Beneficiary::ZAR {
                         name: bank_account_name.clone(),
                         bank_name: bank_name.clone(),
                         bank_account_number: bank_account_number.clone(),
                     }),
-                    Some("NG") => Some(crate::services::mavapay::Beneficiary::NGN {
+                    Some("NG") => Some(Beneficiary::NGN {
                         bank_account_number: bank_account_number.clone(),
                         bank_account_name: bank_account_name.clone(),
                         bank_code: bank_code.clone(),
@@ -197,6 +198,7 @@ impl MavapayState {
         let bank_account_name = bank_account_name.clone();
         let bank_code = bank_code.clone();
         let bank_name = bank_name.clone();
+        let payment_method = payment_method.clone();
 
         Task::perform(
             async move {
@@ -234,30 +236,22 @@ impl MavapayState {
                     bank_account_name: Some(bank_account_name),
                     bank_code: Some(bank_code),
                     bank_name: Some(bank_name),
-                    payment_method: "bank_transfer".to_string(),
+                    payment_method,
                 };
 
                 coincube_client
                     .save_quote(save_request)
                     .await
                     .map_err(|e| {
-                        crate::services::mavapay::MavapayError::Http(
-                            None,
-                            format!("Failed to save quote: {}", e),
-                        )
+                        MavapayError::Http(None, format!("Failed to save quote: {}", e))
                     })?;
-
-                tracing::info!("✅ [COINCUBE] Quote saved to database");
 
                 // Step 3: Build quote display URL using quote_id
                 let url = coincube_client.get_quote_display_url(&quote.id);
 
                 Ok((quote, url))
             },
-            |result: Result<
-                (crate::services::mavapay::GetQuoteResponse, String),
-                crate::services::mavapay::MavapayError,
-            >| match result {
+            |result: Result<(GetQuoteResponse, String), MavapayError>| match result {
                 Ok((_, url)) => BuySellMessage::WebviewOpenUrl(url),
                 Err(e) => BuySellMessage::SessionError(e.to_string()),
             },

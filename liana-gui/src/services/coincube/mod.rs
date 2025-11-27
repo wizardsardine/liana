@@ -62,7 +62,7 @@ pub struct SaveQuoteRequest {
     pub bank_account_name: Option<String>,
     pub bank_code: Option<String>,
     pub bank_name: Option<String>,
-    pub payment_method: String,
+    pub payment_method: crate::services::mavapay::MavapayPaymentMethod,
 }
 
 #[derive(Debug, Clone, Deserialize)]

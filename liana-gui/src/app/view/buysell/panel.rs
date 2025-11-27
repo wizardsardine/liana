@@ -79,16 +79,16 @@ impl BuySellPanel {
         wallet: std::sync::Arc<crate::app::wallet::Wallet>,
     ) -> Self {
         Self {
+            // Start in detecting location state
+            flow_state: BuySellFlowState::DetectingLocation(false),
             error: None,
             wallet,
             network,
             modal: app::state::vault::receive::Modal::None,
-            // Geolocation detection state
+            // API state
             coincube_client: crate::services::coincube::CoincubeClient::new(),
             detected_country: None,
             webview_manager: iced_wry::IcedWebviewManager::new(),
-            // Start in detecting location state
-            flow_state: BuySellFlowState::DetectingLocation(false),
         }
     }
 
