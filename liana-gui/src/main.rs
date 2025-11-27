@@ -99,8 +99,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     setup_panic_hook(&config.liana_directory);
 
     let settings = Settings {
-        id: Some("Liana".to_string()),
-        antialiasing: false,
+        id: Some("Vault".to_string()),
+        antialiasing: true,
 
         default_text_size: text::P1_SIZE.into(),
         default_font: liana_ui::font::REGULAR,
@@ -132,7 +132,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     #[cfg(target_os = "linux")]
     {
         window_settings.platform_specific = iced::window::settings::PlatformSpecific {
-            application_id: "Liana".to_string(),
+            application_id: "CoincubeVault".to_string(),
             ..Default::default()
         };
     }

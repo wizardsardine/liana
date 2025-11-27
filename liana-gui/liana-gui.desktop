@@ -1,4 +1,5 @@
 [Desktop Entry]
-Name=Liana
-Exec=liana-gui
+Name=Coincube Vault
+Exec=coincube-vault
 Type=Application
+StartupWMClass=CoincubeVault

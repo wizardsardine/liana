@@ -35,3 +35,69 @@ impl iced::application::DefaultStyle for Theme {
         }
     }
 }
+
+impl iced_aw::style::number_input::Catalog for Theme {
+    type Class<'a> = ();
+
+    fn default<'a>() -> Self::Class<'a> {
+        ()
+    }
+
+    fn style(
+        &self,
+        _class: &Self::Class<'_>,
+        status: iced_aw::card::Status,
+    ) -> iced_aw::number_input::Style {
+        let (background, icon) = match status {
+            iced_aw::card::Status::Active => (
+                self.colors.text_inputs.primary.active.background,
+                self.colors.text_inputs.primary.active.icon,
+            ),
+            iced_aw::card::Status::Disabled => (
+                self.colors.text_inputs.primary.disabled.background,
+                self.colors.text_inputs.primary.disabled.icon,
+            ),
+            iced_aw::card::Status::Selected => (
+                self.colors.text_inputs.primary.active.selection,
+                self.colors.text_inputs.primary.disabled.icon,
+            ),
+            iced_aw::card::Status::Hovered => (
+                self.colors.buttons.primary.hovered.background,
+                self.colors
+                    .buttons
+                    .primary
+                    .hovered
+                    .border
+                    .unwrap_or(crate::color::ORANGE),
+            ),
+            iced_aw::card::Status::Pressed => (
+                self.colors.buttons.primary.hovered.background,
+                self.colors
+                    .buttons
+                    .primary
+                    .hovered
+                    .border
+                    .unwrap_or(crate::color::ORANGE),
+            ),
+            iced_aw::card::Status::Focused => (
+                self.colors.text_inputs.primary.active.background,
+                self.colors.text_inputs.primary.active.icon,
+            ),
+        };
+
+        iced_aw::number_input::Style {
+            button_background: Some(iced::Background::Color(background)),
+            icon_color: icon,
+        }
+    }
+}
+
+impl iced_aw::style::number_input::ExtendedCatalog for Theme {
+    fn style(
+        &self,
+        class: &<Self as iced_aw::style::number_input::Catalog>::Class<'_>,
+        status: iced_aw::card::Status,
+    ) -> iced_aw::number_input::Style {
+        iced_aw::style::number_input::Catalog::style(self, class, status)
+    }
+}

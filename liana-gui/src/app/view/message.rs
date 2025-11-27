@@ -7,7 +7,7 @@ use crate::{
 };
 
 #[cfg(feature = "buysell")]
-use crate::services::mavapay::{PriceResponse, QuoteResponse, Transaction};
+use crate::services::mavapay::GetPriceResponse;
 use liana::miniscript::bitcoin::{bip32::Fingerprint, Address, OutPoint};
 
 pub trait Close {
@@ -139,11 +139,6 @@ pub enum SettingsEditMessage {
     Confirm,
     Clipboard(String),
 }
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AccountType {
-    Individual,
-    Business,
-}
 
 #[derive(Debug, Clone)]
 pub enum CreateRbfMessage {
@@ -153,87 +148,72 @@ pub enum CreateRbfMessage {
     Confirm,
 }
 
-// TODO(Option B): Consider splitting BuySellMessage into sub-enums for clearer flow separation:
-// - BuySellMessage::Shared(SharedMsg)
-// - BuySellMessage::Africa(AfricaMsg)
-// - BuySellMessage::International(InternationalMsg)
-// This would reduce unrelated match arms and better reflect the runtime flow_state boundaries.
 #[cfg(feature = "buysell")]
 #[derive(Debug, Clone)]
 pub enum BuySellMessage {
-    // Native login (default build)
-    LoginUsernameChanged(String),
-    LoginPasswordChanged(String),
-    SubmitLogin,
-    CreateAccountPressed,
+    // state management
+    SessionError(String),
+    ResetWidget,
+    SetBuyOrSell(super::buysell::panel::BuyOrSell),
+    StartOnramperSession,
 
-    // Default build: account type selection
-    AccountTypeSelected(AccountType),
-    GetStarted,
+    // recipient address generation
+    CreateNewAddress,
+    AddressCreated(super::buysell::panel::LabelledAddress),
 
     // Geolocation detection
-    ManualCountrySelected(crate::services::geolocation::Country),
-    CountryDetected(Result<(String, String), String>), // (country_name, iso_code)
+    CountryDetected(Result<crate::services::coincube::Country, String>),
 
-    // Default build: registration form (native flow)
+    // webview logic
+    WebviewOpenUrl(String),
+    WryMessage(iced_wry::IcedWryMessage),
+    StarWryWebviewWithUrl(iced_wry::ExtractedWindowId, String),
+
+    // Mavapay specific messages
+    Mavapay(MavapayMessage),
+}
+
+#[cfg(feature = "buysell")]
+#[derive(Debug, Clone)]
+pub enum MavapayMessage {
+    LoginSuccess {
+        login: crate::services::coincube::LoginResponse,
+        email_verified: bool,
+    },
+    // User Registration
     FirstNameChanged(String),
     LastNameChanged(String),
     EmailChanged(String),
     Password1Changed(String),
     Password2Changed(String),
-    TermsToggled(bool),
     SubmitRegistration,
-    CheckEmailVerificationStatus,
-    ResendVerificationEmail,
     RegistrationSuccess,
-    RegistrationError(String),
-    EmailVerificationStatusChecked(bool),
-    EmailVerificationStatusError(String),
-    ResendEmailSuccess,
-    ResendEmailError(String),
-    LoginSuccess(crate::services::registration::LoginResponse),
-    LoginError(String),
-
-    // Mavapay-specific messages (native flow)
-    MavapayDashboard,
-    MavapayFlowModeChanged(crate::app::view::buysell::flow_state::MavapayFlowMode),
-    MavapayAmountChanged(String),
-    MavapaySourceCurrencyChanged(String),
-    MavapayTargetCurrencyChanged(String),
-    MavapaySettlementCurrencyChanged(String),
-    MavapayPaymentMethodChanged(crate::app::view::buysell::flow_state::MavapayPaymentMethod),
-    MavapayBankAccountNumberChanged(String),
-    MavapayBankAccountNameChanged(String),
-    MavapayBankCodeChanged(String),
-    MavapayBankNameChanged(String),
-    MavapayCreateQuote,
-    MavapayOpenPaymentLink,
-    MavapayQuoteCreated(QuoteResponse),
-    MavapayQuoteError(String),
-    MavapayConfirmQuote,
-    MavapayGetPrice,
-    MavapayPriceReceived(PriceResponse),
-    MavapayPriceError(String),
-    MavapayGetTransactions,
-    MavapayTransactionsReceived(Vec<Transaction>),
-    MavapayTransactionsError(String),
-
-    // creates a webview session on onramper
-    CreateSession,
-    SessionError(String),
-    ResetWidget,
-    SetBuyOrSell(super::buysell::panel::BuyOrSell),
-    SetFlowState(super::buysell::flow_state::BuySellFlowState),
-    CreateNewAddress,
-    AddressCreated(super::buysell::panel::LabelledAddress),
-
-    // webview messages (gated)
-    WebviewOpenUrl(String),
-    WryMessage(iced_wry::IcedWryMessage),
-    WryExtractedWindowId(iced_wry::ExtractedWindowId),
-
-    // Open external URL in browser
-    OpenExternalUrl(String),
+    // Email Verification
+    SendVerificationEmail,
+    CheckEmailVerificationStatus,
+    EmailVerificationFailed,
+    // login to existing mavapay account
+    LoginUsernameChanged(String),
+    LoginPasswordChanged(String),
+    SubmitLogin {
+        skip_email_verification: bool,
+    },
+    CreateNewAccount,
+    // buysell flow
+    FlowModeChanged(crate::app::view::buysell::flow_state::MavapayFlowMode),
+    AmountChanged(u64),
+    SourceCurrencyChanged(crate::services::mavapay::MavapayUnitCurrency),
+    TargetCurrencyChanged(crate::services::mavapay::MavapayUnitCurrency),
+    SettlementCurrencyChanged(crate::services::mavapay::MavapayCurrency),
+    PaymentMethodChanged(crate::services::mavapay::MavapayPaymentMethod),
+    BankAccountNumberChanged(String),
+    BankAccountNameChanged(String),
+    BankCodeChanged(String),
+    BankNameChanged(String),
+    CreateQuote,
+    OpenPaymentLink,
+    GetPrice,
+    PriceReceived(GetPriceResponse),
 }
 
 #[derive(Debug, Clone)]
