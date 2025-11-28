@@ -97,8 +97,7 @@ pub enum AccountType {
 pub struct SignUpRequest {
     pub account_type: AccountType,
     pub email: String,
-    pub first_name: String,
-    pub last_name: String,
+    pub legal_name: String,
     pub auth_details: [AuthDetail; 1],
 }
 

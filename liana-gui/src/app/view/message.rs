@@ -7,7 +7,7 @@ use crate::{
 };
 
 #[cfg(feature = "buysell")]
-use crate::services::mavapay::GetPriceResponse;
+use crate::services::mavapay::{GetPriceResponse, MavapayBanks};
 use liana::miniscript::bitcoin::{bip32::Fingerprint, Address, OutPoint};
 
 pub trait Close {
@@ -152,10 +152,10 @@ pub enum CreateRbfMessage {
 #[derive(Debug, Clone)]
 pub enum BuySellMessage {
     // state management
-    SessionError(String),
+    SessionError(&'static str, String), // inline description + runtime error
     ResetWidget,
-    SetBuyOrSell(super::buysell::panel::BuyOrSell),
-    StartOnramperSession,
+    SelectBuyOrSell(bool), // true = buy, false = sell
+    StartSession,
 
     // recipient address generation
     CreateNewAddress,
@@ -167,7 +167,7 @@ pub enum BuySellMessage {
     // webview logic
     WebviewOpenUrl(String),
     WryMessage(iced_wry::IcedWryMessage),
-    StarWryWebviewWithUrl(iced_wry::ExtractedWindowId, String),
+    StartWryWebviewWithUrl(iced_wry::ExtractedWindowId, String),
 
     // Mavapay specific messages
     Mavapay(MavapayMessage),
@@ -181,8 +181,7 @@ pub enum MavapayMessage {
         email_verified: bool,
     },
     // User Registration
-    FirstNameChanged(String),
-    LastNameChanged(String),
+    LegalNameChanged(String),
     EmailChanged(String),
     Password1Changed(String),
     Password2Changed(String),
@@ -192,28 +191,24 @@ pub enum MavapayMessage {
     SendVerificationEmail,
     CheckEmailVerificationStatus,
     EmailVerificationFailed,
-    // login to existing mavapay account
+    // Login to coincube account
     LoginUsernameChanged(String),
     LoginPasswordChanged(String),
     SubmitLogin {
         skip_email_verification: bool,
     },
     CreateNewAccount,
-    // buysell flow
-    FlowModeChanged(crate::app::view::buysell::flow_state::MavapayFlowMode),
+    // Active Flow
     AmountChanged(u64),
-    SourceCurrencyChanged(crate::services::mavapay::MavapayUnitCurrency),
-    TargetCurrencyChanged(crate::services::mavapay::MavapayUnitCurrency),
-    SettlementCurrencyChanged(crate::services::mavapay::MavapayCurrency),
     PaymentMethodChanged(crate::services::mavapay::MavapayPaymentMethod),
     BankAccountNumberChanged(String),
     BankAccountNameChanged(String),
-    BankCodeChanged(String),
-    BankNameChanged(String),
+    BankSelected(usize),
     CreateQuote,
-    OpenPaymentLink,
     GetPrice,
     PriceReceived(GetPriceResponse),
+    GetBanks,
+    BanksReceived(MavapayBanks),
 }
 
 #[derive(Debug, Clone)]
