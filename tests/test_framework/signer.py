@@ -102,7 +102,7 @@ def sign_psbt_taproot(psbt, hds):
 
 
 class SingleSigner:
-    """Assumes a simple 1-primary path 1-recovery path Liana descriptor."""
+    """Assumes a simple 1-primary path 1-recovery path Coincube descriptor."""
 
     def __init__(self, is_taproot):
         self.primary_hd = BIP32.from_seed(os.urandom(32), network="test")

@@ -1,6 +1,6 @@
 # (Optional) Path to the folder where we should store the application data.
-# Defaults to `.lianad` in your home folder.
-data_dir = "/home/wizardsardine/.lianad"
+# Defaults to `.coincubed` in your home folder.
+data_dir = "/home/wizardsardine/.coincubed"
 
 # How verbose logging should be (one of "error", "warn", "info", "debug", "trace")
 log_level = "debug"

@@ -133,7 +133,7 @@ class Lianad(TailableProc):
         try:
             self.rpc.stop()
             self.wait_for_log(
-                "Stopping the liana daemon.",
+                "Stopping the coincube daemon.",
             )
             self.proc.wait(timeout)
         except Exception as e:

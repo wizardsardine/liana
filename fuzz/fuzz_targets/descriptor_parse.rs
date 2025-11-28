@@ -2,7 +2,7 @@
 
 use libfuzzer_sys::fuzz_target;
 
-use liana::{descriptors::LianaDescriptor, miniscript::bitcoin::Network};
+use coincube_core::{descriptors::CoincubeDescriptor, miniscript::bitcoin::Network};
 use secp256k1::global::SECP256K1;
 
 use std::str::{self, FromStr};
@@ -41,17 +41,17 @@ fuzz_target!(|data: &[u8]| {
         return;
     }
 
-    let desc = match LianaDescriptor::from_str(desc_str) {
+    let desc = match CoincubeDescriptor::from_str(desc_str) {
         Ok(d) => d,
         Err(_) => return,
     };
 
     // The descriptor must roundtrip.
-    assert_eq!(desc, LianaDescriptor::from_str(&desc.to_string()).unwrap());
+    assert_eq!(desc, CoincubeDescriptor::from_str(&desc.to_string()).unwrap());
 
     // We can get the policy out of this desc and a desc out of this policy, but it's not
     // guaranteed to roundtrip: policy->descriptor involves a compilation.
-    LianaDescriptor::new(desc.policy());
+    CoincubeDescriptor::new(desc.policy());
 
     // Exercise the various methods on the descriptor. None should crash.
     desc.receive_descriptor();

@@ -22,66 +22,66 @@ from test_framework.utils import (
 from threading import Thread
 
 
-def receive_and_send(lianad, bitcoind):
-    n_coins = len(lianad.rpc.listcoins()["coins"])
+def receive_and_send(coincubed, bitcoind):
+    n_coins = len(coincubed.rpc.listcoins()["coins"])
 
     # Receive 3 coins in different blocks on different addresses.
     for _ in range(3):
-        addr = lianad.rpc.getnewaddress()["address"]
+        addr = coincubed.rpc.getnewaddress()["address"]
         txid = bitcoind.rpc.sendtoaddress(addr, 0.01)
         bitcoind.generate_block(1, wait_for_mempool=txid)
-    wait_for(lambda: len(lianad.rpc.listcoins()["coins"]) == n_coins + 3)
+    wait_for(lambda: len(coincubed.rpc.listcoins()["coins"]) == n_coins + 3)
 
     # Create a spend that will create a change output, sign and broadcast it.
     outpoints = [
         next(
             c["outpoint"]
-            for c in lianad.rpc.listcoins()["coins"]
+            for c in coincubed.rpc.listcoins()["coins"]
             if c["spend_info"] is None
         )
     ]
     destinations = {
         bitcoind.rpc.getnewaddress(): 200_000,
     }
-    res = lianad.rpc.createspend(destinations, outpoints, 42)
+    res = coincubed.rpc.createspend(destinations, outpoints, 42)
     psbt = PSBT.from_base64(res["psbt"])
     txid = psbt.tx.txid().hex()
-    signed_psbt = lianad.signer.sign_psbt(psbt, range(3))
-    lianad.rpc.updatespend(signed_psbt.to_base64())
-    lianad.rpc.broadcastspend(txid)
+    signed_psbt = coincubed.signer.sign_psbt(psbt, range(3))
+    coincubed.rpc.updatespend(signed_psbt.to_base64())
+    coincubed.rpc.broadcastspend(txid)
     bitcoind.generate_block(1, wait_for_mempool=txid)
     wait_for(
-        lambda: lianad.rpc.getinfo()["block_height"] == bitcoind.rpc.getblockcount()
+        lambda: coincubed.rpc.getinfo()["block_height"] == bitcoind.rpc.getblockcount()
     )
 
     # Spend all coins to check we can spend from change too. Re-create some deposits.
     outpoints = [
         c["outpoint"]
-        for c in lianad.rpc.listcoins()["coins"]
+        for c in coincubed.rpc.listcoins()["coins"]
         if c["spend_info"] is None
     ]
     destinations = {
         bitcoind.rpc.getnewaddress(): 400_000,
-        lianad.rpc.getnewaddress()["address"]: 300_000,
-        lianad.rpc.getnewaddress()["address"]: 800_000,
+        coincubed.rpc.getnewaddress()["address"]: 300_000,
+        coincubed.rpc.getnewaddress()["address"]: 800_000,
     }
-    res = lianad.rpc.createspend(destinations, outpoints, 42)
+    res = coincubed.rpc.createspend(destinations, outpoints, 42)
     psbt = PSBT.from_base64(res["psbt"])
     txid = psbt.tx.txid().hex()
     # If we sign only with two keys it won't be able to finalize
     with pytest.raises(RpcError, match="ould not satisfy.* at index 0"):
-        signed_psbt = lianad.signer.sign_psbt(psbt, range(2))
-        lianad.rpc.updatespend(signed_psbt.to_base64())
-        lianad.rpc.broadcastspend(txid)
+        signed_psbt = coincubed.signer.sign_psbt(psbt, range(2))
+        coincubed.rpc.updatespend(signed_psbt.to_base64())
+        coincubed.rpc.broadcastspend(txid)
     # We can sign with different keys as long as there are 3 sigs
-    signed_psbt = lianad.signer.sign_psbt(psbt, range(1, 4))
-    lianad.rpc.updatespend(signed_psbt.to_base64())
-    lianad.rpc.broadcastspend(txid)
+    signed_psbt = coincubed.signer.sign_psbt(psbt, range(1, 4))
+    coincubed.rpc.updatespend(signed_psbt.to_base64())
+    coincubed.rpc.broadcastspend(txid)
     bitcoind.generate_block(1, wait_for_mempool=txid)
 
 
 def test_multisig(lianad_multisig, bitcoind):
-    """Test using lianad with a descriptor that contains multiple keys for both
+    """Test using coincubed with a descriptor that contains multiple keys for both
     the primary and recovery paths."""
     receive_and_send(lianad_multisig, bitcoind)
 
@@ -200,18 +200,18 @@ def test_multipath(lianad_multipath, bitcoind):
     # lianad_multipath.rpc.broadcastspend(txid)
 
 
-def test_coinbase_deposit(lianad, bitcoind):
+def test_coinbase_deposit(coincubed, bitcoind):
     """Check we detect deposits from (mature) coinbase transactions."""
     wait_for_sync = lambda: wait_for(
-        lambda: lianad.rpc.getinfo()["block_height"] == bitcoind.rpc.getblockcount()
+        lambda: coincubed.rpc.getinfo()["block_height"] == bitcoind.rpc.getblockcount()
     )
     wait_for_sync()
 
     # Create a new deposit in a coinbase transaction. We must detect it and treat it as immature.
-    addr = lianad.rpc.getnewaddress()["address"]
+    addr = coincubed.rpc.getnewaddress()["address"]
     bitcoind.rpc.generatetoaddress(1, addr)
     wait_for_sync()
-    coins = lianad.rpc.listcoins()["coins"]
+    coins = coincubed.rpc.listcoins()["coins"]
     assert (
         len(coins) == 1
         and coins[0]["is_immature"]
@@ -223,7 +223,7 @@ def test_coinbase_deposit(lianad, bitcoind):
     # It remains as not from self.
     bitcoind.generate_block(100)
     wait_for_sync()
-    coin = lianad.rpc.listcoins()["coins"][0]
+    coin = coincubed.rpc.listcoins()["coins"][0]
     assert (
         not coin["is_immature"]
         and coin["block_height"] is not None
@@ -232,16 +232,16 @@ def test_coinbase_deposit(lianad, bitcoind):
 
     # We must be able to spend the mature coin.
     destinations = {bitcoind.rpc.getnewaddress(): int(0.999999 * COIN)}
-    res = lianad.rpc.createspend(destinations, [coin["outpoint"]], 42)
+    res = coincubed.rpc.createspend(destinations, [coin["outpoint"]], 42)
     psbt = PSBT.from_base64(res["psbt"])
     txid = psbt.tx.txid().hex()
-    signed_psbt = lianad.signer.sign_psbt(psbt)
-    lianad.rpc.updatespend(signed_psbt.to_base64())
-    lianad.rpc.broadcastspend(txid)
+    signed_psbt = coincubed.signer.sign_psbt(psbt)
+    coincubed.rpc.updatespend(signed_psbt.to_base64())
+    coincubed.rpc.broadcastspend(txid)
     bitcoind.generate_block(1, wait_for_mempool=txid)
     wait_for_sync()
     coin = next(
-        c for c in lianad.rpc.listcoins()["coins"] if c["outpoint"] == coin["outpoint"]
+        c for c in coincubed.rpc.listcoins()["coins"] if c["outpoint"] == coin["outpoint"]
     )
     assert (
         not coin["is_immature"]
@@ -252,16 +252,16 @@ def test_coinbase_deposit(lianad, bitcoind):
     # We must also properly detect coinbase deposits to a change address. We used to have
     # an assertion that a coin cannot both be change and a coinbase deposit. Since change
     # is determined by the address... Technically we can.
-    change_desc = lianad.multi_desc.singlepath_descriptors()[1]
+    change_desc = coincubed.multi_desc.singlepath_descriptors()[1]
     change_addr = bitcoind.rpc.deriveaddresses(str(change_desc), [0, 0])[0]
     bitcoind.rpc.generatetoaddress(1, change_addr)
-    wait_for(lambda: any(c["is_immature"] for c in lianad.rpc.listcoins()["coins"]))
-    coin = next(c for c in lianad.rpc.listcoins()["coins"] if c["is_immature"])
+    wait_for(lambda: any(c["is_immature"] for c in coincubed.rpc.listcoins()["coins"]))
+    coin = next(c for c in coincubed.rpc.listcoins()["coins"] if c["is_immature"])
     assert coin["is_change"] and not coin["is_from_self"]
     bitcoind.generate_block(100)
     wait_for_sync()
     coin = next(
-        c for c in lianad.rpc.listcoins()["coins"] if c["outpoint"] == coin["outpoint"]
+        c for c in coincubed.rpc.listcoins()["coins"] if c["outpoint"] == coin["outpoint"]
     )
     assert (
         not coin["is_immature"]
@@ -272,39 +272,39 @@ def test_coinbase_deposit(lianad, bitcoind):
 
 @pytest.mark.skipif(
     OLD_LIANAD_PATH is None or USE_TAPROOT,
-    reason="Need the old lianad binary to create the datadir.",
+    reason="Need the old coincubed binary to create the datadir.",
 )
 @pytest.mark.skipif(
     BITCOIN_BACKEND_TYPE is not BitcoinBackendType.Bitcoind,
-    reason="Only bitcoind backend was available for older lianad versions.",
+    reason="Only bitcoind backend was available for older coincubed versions.",
 )
 def test_migration(lianad_multisig_legacy_datadir, bitcoind):
-    """Test we can start a newer lianad on a datadir created by an older lianad."""
-    lianad = lianad_multisig_legacy_datadir
+    """Test we can start a newer coincubed on a datadir created by an older coincubed."""
+    coincubed = lianad_multisig_legacy_datadir
 
     # Set the old binary and re-create the datadir.
-    lianad.cmd_line[0] = OLD_LIANAD_PATH
-    lianad.restart_fresh(bitcoind)
-    old_lianad_ver = lianad.rpc.getinfo()["version"]
+    coincubed.cmd_line[0] = OLD_LIANAD_PATH
+    coincubed.restart_fresh(bitcoind)
+    old_lianad_ver = coincubed.rpc.getinfo()["version"]
     assert old_lianad_ver in ["0.3.0", "1.0.0"]
 
-    # Perform some transactions. On Liana v0.3 there was no "updated_at" for Spend
+    # Perform some transactions. On Coincube v0.3 there was no "updated_at" for Spend
     # transaction drafts.
-    receive_and_send(lianad, bitcoind)
-    spend_txs = lianad.rpc.listspendtxs()["spend_txs"]
+    receive_and_send(coincubed, bitcoind)
+    spend_txs = coincubed.rpc.listspendtxs()["spend_txs"]
     assert len(spend_txs) == 2
     if old_lianad_ver == "0.3.0":
         assert all("updated_at" not in s for s in spend_txs)
 
     # Set back the new binary. We should be able to read and, if necessary, upgrade
     # the old database and generally all files from the datadir.
-    lianad.cmd_line[0] = LIANAD_PATH
-    lianad.restart_fresh(bitcoind)
+    coincubed.cmd_line[0] = LIANAD_PATH
+    coincubed.restart_fresh(bitcoind)
 
     # And we can go on to create more deposits and transactions. Make sure we now have
     # the "updated_at" field on tx drafts.
-    receive_and_send(lianad, bitcoind)
-    spend_txs = lianad.rpc.listspendtxs()["spend_txs"]
+    receive_and_send(coincubed, bitcoind)
+    spend_txs = coincubed.rpc.listspendtxs()["spend_txs"]
     assert len(spend_txs) == 2 and all(s["updated_at"] is not None for s in spend_txs)
 
 
@@ -337,12 +337,12 @@ def bitcoind_wait_new_block(bitcoind):
     BITCOIN_BACKEND_TYPE is not BitcoinBackendType.Bitcoind,
     reason="Tests the retry logic specific to the bitcoind backend.",
 )
-def test_retry_on_workqueue_exceeded(lianad, bitcoind, executor):
+def test_retry_on_workqueue_exceeded(coincubed, bitcoind, executor):
     """Make sure we retry requests to bitcoind if it is temporarily overloaded."""
-    # Start by reducing the work queue to a single slot. Note we need to stop lianad
+    # Start by reducing the work queue to a single slot. Note we need to stop coincubed
     # as we don't support yet restarting a bitcoind due to the cookie file getting
     # overwritten.
-    lianad.stop()
+    coincubed.stop()
     bitcoind.cmd_line += ["-rpcworkqueue=1", "-rpcthreads=1"]
     bitcoind.stop()
     bitcoind.start()
@@ -351,22 +351,22 @@ def test_retry_on_workqueue_exceeded(lianad, bitcoind, executor):
     block_count = bitcoind.rpc.getblockcount()
     block = bitcoind.rpc.generateblock(bitcoind.rpc.getnewaddress(), [], False)
 
-    # Only restart Liana now to make sure the above bitcoind RPCs don't conflict with the
-    # ones performed by Liana at startup.
-    lianad.start()
+    # Only restart Coincube now to make sure the above bitcoind RPCs don't conflict with the
+    # ones performed by Coincube at startup.
+    coincubed.start()
 
     # Clog the bitcoind RPC server working queue until we get a new block. This is to
-    # make our upcoming call to bitcoind RPC through lianad fail with a 503 error.
+    # make our upcoming call to bitcoind RPC through coincubed fail with a 503 error.
     f_wait = executor.submit(bitcoind_wait_new_block, bitcoind)
 
-    # Now send an RPC command to lianad that will involve it making one to bitcoind. This
+    # Now send an RPC command to coincubed that will involve it making one to bitcoind. This
     # command to bitcoind should fail and we should retry it.
-    # We use a loop to make sure lianad hits a 503 when connecting to bitcoind, and not a
+    # We use a loop to make sure coincubed hits a 503 when connecting to bitcoind, and not a
     # (very long) timeout while awaiting the response.
     while True:
-        f_liana = executor.submit(lianad.rpc.getinfo)
+        f_liana = executor.submit(coincubed.rpc.getinfo)
         try:
-            lianad.wait_for_logs(
+            coincubed.wait_for_logs(
                 [
                     "Transient error when sending request to bitcoind.*(status: 503, body: Work queue depth exceeded)",
                     "Retrying RPC request to bitcoind",
@@ -380,7 +380,7 @@ def test_retry_on_workqueue_exceeded(lianad, bitcoind, executor):
             break
 
     # Submit the mined block to bitcoind through its P2P interface, it would make `waitfornewblock`
-    # return, thereby unclogging the RPC work queue and unstucking the `getinfo` call to Liana.
+    # return, thereby unclogging the RPC work queue and unstucking the `getinfo` call to Coincube.
     bitcoind.submit_block(block_count, block["hex"])
     f_wait.result(TIMEOUT)
 

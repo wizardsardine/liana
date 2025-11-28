@@ -15,81 +15,81 @@ from test_framework.utils import (
 from test_framework.serializations import PSBT
 
 
-def get_coin(lianad, outpoint_or_txid):
+def get_coin(coincubed, outpoint_or_txid):
     return next(
-        c for c in lianad.rpc.listcoins()["coins"] if outpoint_or_txid in c["outpoint"]
+        c for c in coincubed.rpc.listcoins()["coins"] if outpoint_or_txid in c["outpoint"]
     )
 
 
-def test_reorg_detection(lianad, bitcoind):
+def test_reorg_detection(coincubed, bitcoind):
     """Test we detect block chain reorganization under various conditions."""
     initial_height = bitcoind.rpc.getblockcount()
-    wait_for(lambda: lianad.rpc.getinfo()["block_height"] == initial_height)
+    wait_for(lambda: coincubed.rpc.getinfo()["block_height"] == initial_height)
 
     # Re-mine the last block. We should detect it as a reorg.
     bitcoind.invalidate_remine(initial_height)
-    lianad.wait_for_logs(
+    coincubed.wait_for_logs(
         ["Block chain reorganization detected.", "Tip was rolled back."]
     )
-    wait_for(lambda: lianad.rpc.getinfo()["block_height"] == initial_height)
+    wait_for(lambda: coincubed.rpc.getinfo()["block_height"] == initial_height)
 
     # Same if we re-mine the next-to-last block.
     bitcoind.invalidate_remine(initial_height - 1)
-    lianad.wait_for_logs(
+    coincubed.wait_for_logs(
         ["Block chain reorganization detected.", "Tip was rolled back."]
     )
-    wait_for(lambda: lianad.rpc.getinfo()["block_height"] == initial_height)
+    wait_for(lambda: coincubed.rpc.getinfo()["block_height"] == initial_height)
 
     # Same if we re-mine a deep block.
     bitcoind.invalidate_remine(initial_height - 50)
-    lianad.wait_for_logs(
+    coincubed.wait_for_logs(
         ["Block chain reorganization detected.", "Tip was rolled back."]
     )
-    wait_for(lambda: lianad.rpc.getinfo()["block_height"] == initial_height)
+    wait_for(lambda: coincubed.rpc.getinfo()["block_height"] == initial_height)
 
     # Same if the new chain is longer.
     bitcoind.simple_reorg(initial_height - 10, shift=20)
-    lianad.wait_for_logs(
+    coincubed.wait_for_logs(
         ["Block chain reorganization detected.", "Tip was rolled back."]
     )
-    wait_for(lambda: lianad.rpc.getinfo()["block_height"] == initial_height + 10)
+    wait_for(lambda: coincubed.rpc.getinfo()["block_height"] == initial_height + 10)
 
 
-def test_reorg_exclusion(lianad, bitcoind):
+def test_reorg_exclusion(coincubed, bitcoind):
     """Test the unconfirmation by a reorg of a coin in various states."""
     initial_height = bitcoind.rpc.getblockcount()
-    wait_for(lambda: lianad.rpc.getinfo()["block_height"] == initial_height)
+    wait_for(lambda: coincubed.rpc.getinfo()["block_height"] == initial_height)
 
     # A confirmed received coin
-    addr = lianad.rpc.getnewaddress()["address"]
+    addr = coincubed.rpc.getnewaddress()["address"]
     txid = bitcoind.rpc.sendtoaddress(addr, 1)
     bitcoind.generate_block(1, wait_for_mempool=txid)
-    wait_for(lambda: len(lianad.rpc.listcoins()["coins"]) == 1)
-    coin_a = lianad.rpc.listcoins()["coins"][0]
+    wait_for(lambda: len(coincubed.rpc.listcoins()["coins"]) == 1)
+    coin_a = coincubed.rpc.listcoins()["coins"][0]
 
     # A confirmed and 'spending' (unconfirmed spend) coin
-    addr = lianad.rpc.getnewaddress()["address"]
+    addr = coincubed.rpc.getnewaddress()["address"]
     txid = bitcoind.rpc.sendtoaddress(addr, 2)
     bitcoind.generate_block(1, wait_for_mempool=txid)
-    wait_for(lambda: len(lianad.rpc.listcoins()["coins"]) == 2)
-    coin_b = get_coin(lianad, txid)
-    b_spend_tx = spend_coins(lianad, bitcoind, [coin_b])
+    wait_for(lambda: len(coincubed.rpc.listcoins()["coins"]) == 2)
+    coin_b = get_coin(coincubed, txid)
+    b_spend_tx = spend_coins(coincubed, bitcoind, [coin_b])
 
     # These are external deposits so not from self.
     assert coin_a["is_from_self"] is False
     assert coin_b["is_from_self"] is False
 
     # A confirmed and spent coin
-    addr = lianad.rpc.getnewaddress()["address"]
+    addr = coincubed.rpc.getnewaddress()["address"]
     txid_c = bitcoind.rpc.sendtoaddress(addr, 3)
-    wait_for(lambda: len(lianad.rpc.listcoins()["coins"]) == 3)
+    wait_for(lambda: len(coincubed.rpc.listcoins()["coins"]) == 3)
     # Now refresh this coin while it is unconfirmed.
-    res = lianad.rpc.createspend({}, [get_coin(lianad, txid_c)["outpoint"]], 1)
+    res = coincubed.rpc.createspend({}, [get_coin(coincubed, txid_c)["outpoint"]], 1)
     c_spend_psbt = PSBT.from_base64(res["psbt"])
-    txid_d = sign_and_broadcast_psbt(lianad, c_spend_psbt)
-    wait_for(lambda: len(lianad.rpc.listcoins()["coins"]) == 4)
-    coin_c = get_coin(lianad, txid_c)
-    coin_d = get_coin(lianad, txid_d)
+    txid_d = sign_and_broadcast_psbt(coincubed, c_spend_psbt)
+    wait_for(lambda: len(coincubed.rpc.listcoins()["coins"]) == 4)
+    coin_c = get_coin(coincubed, txid_c)
+    coin_d = get_coin(coincubed, txid_d)
     assert coin_c["is_from_self"] is False
     assert coin_c["block_height"] is None
     # Even though coin_d is from a self-send, coin_c is still unconfirmed
@@ -98,9 +98,9 @@ def test_reorg_exclusion(lianad, bitcoind):
 
     bitcoind.generate_block(1)
     # Wait for confirmation to be detected.
-    wait_for(lambda: get_coin(lianad, txid_d)["block_height"] is not None)
-    coin_c = get_coin(lianad, txid_c)
-    coin_d = get_coin(lianad, txid_d)
+    wait_for(lambda: get_coin(coincubed, txid_d)["block_height"] is not None)
+    coin_c = get_coin(coincubed, txid_c)
+    coin_d = get_coin(coincubed, txid_d)
     assert coin_c["is_from_self"] is False
     assert coin_c["block_height"] is not None
     assert coin_d["is_from_self"] is True
@@ -113,14 +113,14 @@ def test_reorg_exclusion(lianad, bitcoind):
     # Reorg the chain down to the initial height, excluding all transactions.
     current_height = bitcoind.rpc.getblockcount()
     bitcoind.simple_reorg(initial_height, shift=-1)
-    wait_for(lambda: lianad.rpc.getinfo()["block_height"] == current_height + 1)
+    wait_for(lambda: coincubed.rpc.getinfo()["block_height"] == current_height + 1)
 
     # During a reorg, bitcoind doesn't update the mempool for blocks too deep (>10 confs).
     # The deposit transactions were dropped. And we discard the unconfirmed coins whose deposit
     # tx isn't part of our mempool anymore: the coins must have been marked as unconfirmed and
     # subsequently discarded.
     wait_for(lambda: len(bitcoind.rpc.getrawmempool()) == 0)
-    wait_for(lambda: len(lianad.rpc.listcoins()["coins"]) == 0)
+    wait_for(lambda: len(coincubed.rpc.listcoins()["coins"]) == 0)
 
     # And if we now confirm everything, they'll be marked as such. The one that was 'spending'
     # will now be spent (its spending transaction will be confirmed) and the one that was spent
@@ -130,16 +130,16 @@ def test_reorg_exclusion(lianad, bitcoind):
         tx = bitcoind.rpc.gettransaction(txid)["hex"]
         bitcoind.rpc.sendrawtransaction(tx)
     bitcoind.rpc.sendrawtransaction(b_spend_tx)
-    sign_and_broadcast_psbt(lianad, c_spend_psbt)
+    sign_and_broadcast_psbt(coincubed, c_spend_psbt)
     bitcoind.generate_block(1, wait_for_mempool=5)
     new_height = bitcoind.rpc.getblockcount()
-    wait_for(lambda: lianad.rpc.getinfo()["block_height"] == new_height)
+    wait_for(lambda: coincubed.rpc.getinfo()["block_height"] == new_height)
     assert all(
-        c["block_height"] == new_height for c in lianad.rpc.listcoins()["coins"]
-    ), (lianad.rpc.listcoins()["coins"], new_height)
+        c["block_height"] == new_height for c in coincubed.rpc.listcoins()["coins"]
+    ), (coincubed.rpc.listcoins()["coins"], new_height)
     new_coin_b = next(
         c
-        for c in lianad.rpc.listcoins()["coins"]
+        for c in coincubed.rpc.listcoins()["coins"]
         if coin_b["outpoint"] == c["outpoint"]
     )
     b_spend_txid = get_txid(b_spend_tx)
@@ -147,20 +147,20 @@ def test_reorg_exclusion(lianad, bitcoind):
     assert new_coin_b["spend_info"]["height"] == new_height
     new_coin_c = next(
         c
-        for c in lianad.rpc.listcoins()["coins"]
+        for c in coincubed.rpc.listcoins()["coins"]
         if coin_c["outpoint"] == c["outpoint"]
     )
     assert new_coin_c["spend_info"]["txid"] == txid_d
     assert new_coin_c["spend_info"]["height"] == new_height
-    new_coin_d = get_coin(lianad, txid_d)
+    new_coin_d = get_coin(coincubed, txid_d)
     assert new_coin_d["is_from_self"] is True
     assert new_coin_d["block_height"] == new_height
 
     # TODO: maybe test with some malleation for the deposit and spending txs?
 
 
-def spend_confirmed_noticed(lianad, outpoint):
-    c = get_coin(lianad, outpoint)
+def spend_confirmed_noticed(coincubed, outpoint):
+    c = get_coin(coincubed, outpoint)
     if c["spend_info"] is None:
         return False
     if c["spend_info"]["height"] is None:
@@ -168,33 +168,33 @@ def spend_confirmed_noticed(lianad, outpoint):
     return True
 
 
-def test_reorg_status_recovery(lianad, bitcoind):
+def test_reorg_status_recovery(coincubed, bitcoind):
     """
     Test the coins that were not unconfirmed recover their initial state after a reorg.
     """
-    list_coins = lambda: lianad.rpc.listcoins()["coins"]
+    list_coins = lambda: coincubed.rpc.listcoins()["coins"]
 
     # Generate blocks in order to test locktime set correctly.
     bitcoind.generate_block(200)
     # Create two confirmed coins. Note how we take the initial_height after having
     # mined them, as we'll reorg back to this height and due to anti fee-sniping
     # these deposit transactions might not be valid anymore!
-    addresses = (lianad.rpc.getnewaddress()["address"] for _ in range(2))
+    addresses = (coincubed.rpc.getnewaddress()["address"] for _ in range(2))
     txids = [bitcoind.rpc.sendtoaddress(addr, 0.5670) for addr in addresses]
     bitcoind.generate_block(1, wait_for_mempool=txids)
     initial_height = bitcoind.rpc.getblockcount()
     assert initial_height > 100
-    wait_for(lambda: lianad.rpc.getinfo()["block_height"] == initial_height)
+    wait_for(lambda: coincubed.rpc.getinfo()["block_height"] == initial_height)
 
     # Both coins are confirmed. Refresh the second one then get their infos.
     wait_for(lambda: len(list_coins()) == 2)
     wait_for(lambda: all(c["block_height"] is not None for c in list_coins()))
-    coin_b = get_coin(lianad, txids[1])
+    coin_b = get_coin(coincubed, txids[1])
     # Refresh coin_b.
-    res = lianad.rpc.createspend({}, [coin_b["outpoint"]], 1)
+    res = coincubed.rpc.createspend({}, [coin_b["outpoint"]], 1)
     b_spend_psbt = PSBT.from_base64(res["psbt"])
-    txid = sign_and_broadcast_psbt(lianad, b_spend_psbt)
-    coin_c = get_coin(lianad, txid)
+    txid = sign_and_broadcast_psbt(coincubed, b_spend_psbt)
+    coin_c = get_coin(coincubed, txid)
     # coin_c is unconfirmed and marked as from self as its parent is confirmed.
     assert coin_c["block_height"] is None
     assert coin_c["is_from_self"] is True
@@ -202,44 +202,44 @@ def test_reorg_status_recovery(lianad, bitcoind):
     locktime = b_spend_psbt.tx.nLockTime
     assert initial_height - 100 <= locktime <= initial_height
     bitcoind.generate_block(1, wait_for_mempool=1)
-    wait_for(lambda: spend_confirmed_noticed(lianad, coin_b["outpoint"]))
-    coin_a = get_coin(lianad, txids[0])
-    coin_b = get_coin(lianad, txids[1])
-    coin_c = get_coin(lianad, txid)
+    wait_for(lambda: spend_confirmed_noticed(coincubed, coin_b["outpoint"]))
+    coin_a = get_coin(coincubed, txids[0])
+    coin_b = get_coin(coincubed, txids[1])
+    coin_c = get_coin(coincubed, txid)
 
     # Reorg the chain down to the initial height without shifting nor malleating
     # any transaction. The coin info should be identical (except the spend info
     # of the transaction spending the second coin).
     bitcoind.simple_reorg(initial_height, shift=0)
     new_height = bitcoind.rpc.getblockcount()
-    wait_for(lambda: lianad.rpc.getinfo()["block_height"] == new_height)
-    new_coin_a = get_coin(lianad, coin_a["outpoint"])
+    wait_for(lambda: coincubed.rpc.getinfo()["block_height"] == new_height)
+    new_coin_a = get_coin(coincubed, coin_a["outpoint"])
     assert coin_a == new_coin_a
-    new_coin_b = get_coin(lianad, coin_b["outpoint"])
+    new_coin_b = get_coin(coincubed, coin_b["outpoint"])
 
     if locktime == initial_height:
         # Cannot be mined until next block (initial_height + 1).
         coin_b["spend_info"] = None
         # coin_c no longer exists.
         with pytest.raises(StopIteration):
-            get_coin(lianad, coin_c["outpoint"])
+            get_coin(coincubed, coin_c["outpoint"])
     else:
         # Otherwise, the tx will be mined at the height the reorg happened.
         coin_b["spend_info"]["height"] = initial_height
-        new_coin_c = get_coin(lianad, coin_c["outpoint"])
+        new_coin_c = get_coin(coincubed, coin_c["outpoint"])
         assert new_coin_c["is_from_self"] is True
     assert new_coin_b == coin_b
 
 
-def test_rescan_edge_cases(lianad, bitcoind):
+def test_rescan_edge_cases(coincubed, bitcoind):
     """Test some specific cases that could arise when rescanning the chain."""
     initial_tip = bitcoind.rpc.getblockheader(bitcoind.rpc.getbestblockhash())
 
     # Some helpers
-    list_coins = lambda: lianad.rpc.listcoins()["coins"]
+    list_coins = lambda: coincubed.rpc.listcoins()["coins"]
     sorted_coins = lambda: sorted(list_coins(), key=lambda c: c["outpoint"])
     wait_synced = lambda: wait_for(
-        lambda: lianad.rpc.getinfo()["block_height"] == bitcoind.rpc.getblockcount()
+        lambda: coincubed.rpc.getinfo()["block_height"] == bitcoind.rpc.getblockcount()
     )
 
     def reorg_shift(height, txs):
@@ -257,12 +257,12 @@ def test_rescan_edge_cases(lianad, bitcoind):
     # rebroadcast them on reorgs.
     txs = []
     for _ in range(3):
-        addr = lianad.rpc.getnewaddress()["address"]
+        addr = coincubed.rpc.getnewaddress()["address"]
         amount = 0.356
         txid = bitcoind.rpc.sendtoaddress(addr, amount)
         txs.append(bitcoind.rpc.gettransaction(txid)["hex"])
     wait_for(lambda: len(list_coins()) == 3)
-    txs.append(spend_coins(lianad, bitcoind, list_coins()[:2]))
+    txs.append(spend_coins(coincubed, bitcoind, list_coins()[:2]))
     bitcoind.generate_block(1, wait_for_mempool=4)
     wait_synced()
 
@@ -275,30 +275,30 @@ def test_rescan_edge_cases(lianad, bitcoind):
     coins_before = sorted_coins()
     outpoints_before = set(c["outpoint"] for c in coins_before)
     bitcoind.generate_block(1)
-    lianad.restart_fresh(bitcoind)
+    coincubed.restart_fresh(bitcoind)
     if BITCOIN_BACKEND_TYPE is BitcoinBackendType.Bitcoind:
         assert len(list_coins()) == 0
 
     # We can be stopped while we are rescanning
-    lianad.rpc.startrescan(initial_tip["time"])
-    lianad.stop()
-    lianad.start()
-    wait_for(lambda: lianad.rpc.getinfo()["rescan_progress"] is None)
+    coincubed.rpc.startrescan(initial_tip["time"])
+    coincubed.stop()
+    coincubed.start()
+    wait_for(lambda: coincubed.rpc.getinfo()["rescan_progress"] is None)
     wait_synced()
     assert coins_before == sorted_coins()
 
     # Lose our state again
     bitcoind.generate_block(1)
-    lianad.restart_fresh(bitcoind)
-    wait_for(lambda: lianad.rpc.getinfo()["rescan_progress"] is None)
+    coincubed.restart_fresh(bitcoind)
+    wait_for(lambda: coincubed.rpc.getinfo()["rescan_progress"] is None)
     if BITCOIN_BACKEND_TYPE is BitcoinBackendType.Bitcoind:
         assert len(list_coins()) == 0
 
     # There can be a reorg when we start rescanning
     reorg_shift(initial_tip["height"], txs)
-    lianad.rpc.startrescan(initial_tip["time"])
+    coincubed.rpc.startrescan(initial_tip["time"])
     wait_synced()
-    wait_for(lambda: lianad.rpc.getinfo()["rescan_progress"] is None)
+    wait_for(lambda: coincubed.rpc.getinfo()["rescan_progress"] is None)
     assert len(sorted_coins()) == len(coins_before)
     assert all(c["outpoint"] in outpoints_before for c in list_coins())
 
@@ -308,28 +308,28 @@ def test_rescan_edge_cases(lianad, bitcoind):
 
     # Lose our state again
     bitcoind.generate_block(1)
-    lianad.restart_fresh(bitcoind)
+    coincubed.restart_fresh(bitcoind)
     wait_synced()
-    wait_for(lambda: lianad.rpc.getinfo()["rescan_progress"] is None)
+    wait_for(lambda: coincubed.rpc.getinfo()["rescan_progress"] is None)
     if BITCOIN_BACKEND_TYPE is BitcoinBackendType.Bitcoind:
         assert len(list_coins()) == 0
 
     # We can be rescanning when a reorg happens
-    lianad.rpc.startrescan(initial_tip["time"])
+    coincubed.rpc.startrescan(initial_tip["time"])
     reorg_shift(initial_tip["height"] + 1, txs)
     wait_synced()
-    wait_for(lambda: lianad.rpc.getinfo()["rescan_progress"] is None)
+    wait_for(lambda: coincubed.rpc.getinfo()["rescan_progress"] is None)
     assert len(sorted_coins()) == len(coins_before)
     assert all(c["outpoint"] in outpoints_before for c in list_coins())
 
 
-def test_deposit_replacement(lianad, bitcoind):
+def test_deposit_replacement(coincubed, bitcoind):
     """Test we discard an unconfirmed deposit that was replaced."""
     # Get some more coins.
     bitcoind.generate_block(1)
 
     # Create a new unconfirmed deposit.
-    addr = lianad.rpc.getnewaddress()["address"]
+    addr = coincubed.rpc.getnewaddress()["address"]
     txid = bitcoind.rpc.sendtoaddress(addr, 1)
 
     # Create a transaction conflicting with the deposit that pays more fee.
@@ -358,73 +358,73 @@ def test_deposit_replacement(lianad, bitcoind):
     conflicting_tx = bitcoind.rpc.finalizepsbt(res["psbt"])["hex"]
 
     # Make sure we registered the unconfirmed coin. Then RBF the deposit tx.
-    wait_for(lambda: len(lianad.rpc.listcoins()["coins"]) == 1)
+    wait_for(lambda: len(coincubed.rpc.listcoins()["coins"]) == 1)
     txid = bitcoind.rpc.sendrawtransaction(conflicting_tx)
 
     # We must forget about the deposit.
-    wait_for(lambda: len(lianad.rpc.listcoins()["coins"]) == 0)
+    wait_for(lambda: len(coincubed.rpc.listcoins()["coins"]) == 0)
 
     # Send a new one, it'll be detected.
-    addr = lianad.rpc.getnewaddress()["address"]
+    addr = coincubed.rpc.getnewaddress()["address"]
     bitcoind.rpc.sendtoaddress(addr, 2)
-    wait_for(lambda: len(lianad.rpc.listcoins()["coins"]) == 1)
+    wait_for(lambda: len(coincubed.rpc.listcoins()["coins"]) == 1)
 
 
-def test_rescan_and_recovery(lianad, bitcoind):
+def test_rescan_and_recovery(coincubed, bitcoind):
     """Test user recovery flow"""
     # Get initial_tip to use for rescan later
     initial_tip = bitcoind.rpc.getblockheader(bitcoind.rpc.getbestblockhash())
 
     # Start by getting a few coins
-    destination = lianad.rpc.getnewaddress()["address"]
+    destination = coincubed.rpc.getnewaddress()["address"]
     txid = bitcoind.rpc.sendtoaddress(destination, 0.5)
     bitcoind.generate_block(1, wait_for_mempool=txid)
     wait_for(
-        lambda: lianad.rpc.getinfo()["block_height"] == bitcoind.rpc.getblockcount()
+        lambda: coincubed.rpc.getinfo()["block_height"] == bitcoind.rpc.getblockcount()
     )
-    assert len(lianad.rpc.listcoins()["coins"]) == 1
+    assert len(coincubed.rpc.listcoins()["coins"]) == 1
 
     # Advance the blocktime by >2h in median-time past for rescan
     added_time = 60 * 60 * 3
     bitcoind.rpc.setmocktime(initial_tip["time"] + added_time)
     bitcoind.generate_block(12)
 
-    # Clear lianad state
-    lianad.restart_fresh(bitcoind)
+    # Clear coincubed state
+    coincubed.restart_fresh(bitcoind)
     if BITCOIN_BACKEND_TYPE is BitcoinBackendType.Bitcoind:
-        assert len(lianad.rpc.listcoins()["coins"]) == 0
+        assert len(coincubed.rpc.listcoins()["coins"]) == 0
 
     # Start rescan
-    lianad.rpc.startrescan(initial_tip["time"])
-    wait_for(lambda: len(lianad.rpc.listcoins()["coins"]) == 1)
-    wait_for(lambda: lianad.rpc.getinfo()["rescan_progress"] is None)
+    coincubed.rpc.startrescan(initial_tip["time"])
+    wait_for(lambda: len(coincubed.rpc.listcoins()["coins"]) == 1)
+    wait_for(lambda: coincubed.rpc.getinfo()["rescan_progress"] is None)
 
     # Create a recovery tx that sweeps the first coin.
-    res = lianad.rpc.createrecovery(bitcoind.rpc.getnewaddress(), 2)
+    res = coincubed.rpc.createrecovery(bitcoind.rpc.getnewaddress(), 2)
     reco_psbt = PSBT.from_base64(res["psbt"])
     assert len(reco_psbt.tx.vin) == 1
     assert len(reco_psbt.tx.vout) == 1
     assert int(0.4999 * COIN) < int(reco_psbt.tx.vout[0].nValue) < int(0.5 * COIN)
-    sign_and_broadcast(lianad, bitcoind, reco_psbt, recovery=True)
+    sign_and_broadcast(coincubed, bitcoind, reco_psbt, recovery=True)
 
 
 @pytest.mark.skipif(
     USE_TAPROOT, reason="Needs a finalizer implemented in the Python test framework."
 )
-def test_conflicting_unconfirmed_spend_txs(lianad, bitcoind):
+def test_conflicting_unconfirmed_spend_txs(coincubed, bitcoind):
     """Test we'll update the spending txid of a coin if a conflicting spend enters our mempool."""
     # Get an (unconfirmed, on purpose) coin to be spent by 2 different txs.
-    addr = lianad.rpc.getnewaddress()["address"]
+    addr = coincubed.rpc.getnewaddress()["address"]
     txid = bitcoind.rpc.sendtoaddress(addr, 0.01)
-    wait_for(lambda: len(lianad.rpc.listcoins()["coins"]) == 1)
-    spent_coin = lianad.rpc.listcoins()["coins"][0]
+    wait_for(lambda: len(coincubed.rpc.listcoins()["coins"]) == 1)
+    spent_coin = coincubed.rpc.listcoins()["coins"][0]
 
     # Create a first transaction, register it in our wallet.
-    outpoints = [c["outpoint"] for c in lianad.rpc.listcoins()["coins"]]
+    outpoints = [c["outpoint"] for c in coincubed.rpc.listcoins()["coins"]]
     destinations = {
         bitcoind.rpc.getnewaddress(): 100_000,
     }
-    res = lianad.rpc.createspend(destinations, outpoints, 2)
+    res = coincubed.rpc.createspend(destinations, outpoints, 2)
     psbt_a = PSBT.from_base64(res["psbt"])
     txid_a = psbt_a.tx.txid()
 
@@ -438,26 +438,26 @@ def test_conflicting_unconfirmed_spend_txs(lianad, bitcoind):
     txid_b = psbt_b.tx.txid()
 
     # Sign and broadcast the first Spend transaction.
-    signed_psbt = lianad.signer.sign_psbt(psbt_a)
-    lianad.rpc.updatespend(signed_psbt.to_base64())
-    lianad.rpc.broadcastspend(txid_a.hex())
+    signed_psbt = coincubed.signer.sign_psbt(psbt_a)
+    coincubed.rpc.updatespend(signed_psbt.to_base64())
+    coincubed.rpc.broadcastspend(txid_a.hex())
 
     # We detect the coin as being spent by the first transaction.
-    wait_for(lambda: get_coin(lianad, spent_coin["outpoint"])["spend_info"] is not None)
+    wait_for(lambda: get_coin(coincubed, spent_coin["outpoint"])["spend_info"] is not None)
     assert (
-        get_coin(lianad, spent_coin["outpoint"])["spend_info"]["txid"] == txid_a.hex()
+        get_coin(coincubed, spent_coin["outpoint"])["spend_info"]["txid"] == txid_a.hex()
     )
 
     # Now sign and broadcast the conflicting transaction, as if coming from an external
     # wallet.
-    signed_psbt = lianad.signer.sign_psbt(psbt_b)
-    finalized_psbt = lianad.finalize_psbt(signed_psbt)
+    signed_psbt = coincubed.signer.sign_psbt(psbt_b)
+    finalized_psbt = coincubed.finalize_psbt(signed_psbt)
     tx_hex = finalized_psbt.tx.serialize_with_witness().hex()
     bitcoind.rpc.sendrawtransaction(tx_hex)
 
     # We must now detect the coin as being spent by the second transaction.
-    def is_spent_by(lianad, outpoint, txid):
-        coins = lianad.rpc.listcoins([], [outpoint])["coins"]
+    def is_spent_by(coincubed, outpoint, txid):
+        coins = coincubed.rpc.listcoins([], [outpoint])["coins"]
         if len(coins) == 0:
             return False
         coin = coins[0]
@@ -466,26 +466,26 @@ def test_conflicting_unconfirmed_spend_txs(lianad, bitcoind):
         return coin["spend_info"]["txid"] == txid.hex()
 
     wait_for_while_condition_holds(
-        lambda: is_spent_by(lianad, spent_coin["outpoint"], txid_b),
-        lambda: lianad.rpc.listcoins([], [spent_coin["outpoint"]])["coins"][0][
+        lambda: is_spent_by(coincubed, spent_coin["outpoint"], txid_b),
+        lambda: coincubed.rpc.listcoins([], [spent_coin["outpoint"]])["coins"][0][
             "spend_info"
         ]
         is not None,  # The spend txid changes directly from txid_a to txid_b
     )
 
 
-def test_spend_replacement(lianad, bitcoind):
+def test_spend_replacement(coincubed, bitcoind):
     """Test we detect the new version of the unconfirmed spending transaction."""
     # Get three coins.
     destinations = {
-        lianad.rpc.getnewaddress()["address"]: 0.03,
-        lianad.rpc.getnewaddress()["address"]: 0.04,
-        lianad.rpc.getnewaddress()["address"]: 0.05,
+        coincubed.rpc.getnewaddress()["address"]: 0.03,
+        coincubed.rpc.getnewaddress()["address"]: 0.04,
+        coincubed.rpc.getnewaddress()["address"]: 0.05,
     }
     txid = bitcoind.rpc.sendmany("", destinations)
     bitcoind.generate_block(1, wait_for_mempool=txid)
-    wait_for(lambda: len(lianad.rpc.listcoins(["confirmed"])["coins"]) == 3)
-    coins = lianad.rpc.listcoins(["confirmed"])["coins"]
+    wait_for(lambda: len(coincubed.rpc.listcoins(["confirmed"])["coins"]) == 3)
+    coins = coincubed.rpc.listcoins(["confirmed"])["coins"]
 
     # Create three conflicting spends, the two first spend two different set of coins
     # and the third one is just an RBF of the second one but as a send-to-self.
@@ -493,60 +493,60 @@ def test_spend_replacement(lianad, bitcoind):
     destinations = {
         bitcoind.rpc.getnewaddress(): 650_000,
     }
-    first_res = lianad.rpc.createspend(destinations, first_outpoints, 1)
+    first_res = coincubed.rpc.createspend(destinations, first_outpoints, 1)
     first_psbt = PSBT.from_base64(first_res["psbt"])
     second_outpoints = [c["outpoint"] for c in coins[1:]]
     destinations = {
         bitcoind.rpc.getnewaddress(): 650_000,
     }
-    second_res = lianad.rpc.createspend(destinations, second_outpoints, 3)
+    second_res = coincubed.rpc.createspend(destinations, second_outpoints, 3)
     second_psbt = PSBT.from_base64(second_res["psbt"])
     destinations = {}
-    third_res = lianad.rpc.createspend(destinations, second_outpoints, 5)
+    third_res = coincubed.rpc.createspend(destinations, second_outpoints, 5)
     third_psbt = PSBT.from_base64(third_res["psbt"])
 
     # Broadcast the first transaction. Make sure it's detected.
-    first_txid = sign_and_broadcast_psbt(lianad, first_psbt)
+    first_txid = sign_and_broadcast_psbt(coincubed, first_psbt)
     wait_for(
         lambda: all(
             c["spend_info"] is not None and c["spend_info"]["txid"] == first_txid
-            for c in lianad.rpc.listcoins([], first_outpoints)["coins"]
+            for c in coincubed.rpc.listcoins([], first_outpoints)["coins"]
         )
     )
 
     # Now RBF the first transaction by the second one. The third coin should be
     # newly marked as spending, the second one's spend_txid should be updated and
     # the first one's spend txid should be dropped.
-    second_txid = sign_and_broadcast_psbt(lianad, second_psbt)
+    second_txid = sign_and_broadcast_psbt(coincubed, second_psbt)
     wait_for_while_condition_holds(
         lambda: all(
             c["spend_info"] is not None and c["spend_info"]["txid"] == second_txid
-            for c in lianad.rpc.listcoins([], second_outpoints)["coins"]
+            for c in coincubed.rpc.listcoins([], second_outpoints)["coins"]
         ),
-        lambda: lianad.rpc.listcoins([], [coins[1]["outpoint"]])["coins"][0][
+        lambda: coincubed.rpc.listcoins([], [coins[1]["outpoint"]])["coins"][0][
             "spend_info"
         ]
         is not None,  # The spend txid of coin from first spend is updated directly
     )
     wait_for(
-        lambda: lianad.rpc.listcoins([], [first_outpoints[0]])["coins"][0]["spend_info"]
+        lambda: coincubed.rpc.listcoins([], [first_outpoints[0]])["coins"][0]["spend_info"]
         is None
     )
 
     # Now RBF the second transaction with a send-to-self, just because.
-    third_txid = sign_and_broadcast_psbt(lianad, third_psbt)
+    third_txid = sign_and_broadcast_psbt(coincubed, third_psbt)
     wait_for_while_condition_holds(
         lambda: all(
             c["spend_info"] is not None and c["spend_info"]["txid"] == third_txid
-            for c in lianad.rpc.listcoins([], second_outpoints)["coins"]
+            for c in coincubed.rpc.listcoins([], second_outpoints)["coins"]
         ),
         lambda: all(
             c["spend_info"] is not None
-            for c in lianad.rpc.listcoins([], second_outpoints)["coins"]
+            for c in coincubed.rpc.listcoins([], second_outpoints)["coins"]
         ),  # The spend txid of all coins are updated directly
     )
     assert (
-        lianad.rpc.listcoins([], [first_outpoints[0]])["coins"][0]["spend_info"] is None
+        coincubed.rpc.listcoins([], [first_outpoints[0]])["coins"][0]["spend_info"] is None
     )
 
     # Once the RBF is mined, we detect it as confirmed and the first coin is still unspent.
@@ -554,9 +554,9 @@ def test_spend_replacement(lianad, bitcoind):
     wait_for(
         lambda: all(
             c["spend_info"] is not None and c["spend_info"]["height"] is not None
-            for c in lianad.rpc.listcoins([], second_outpoints)["coins"]
+            for c in coincubed.rpc.listcoins([], second_outpoints)["coins"]
         )
     )
     assert (
-        lianad.rpc.listcoins([], [first_outpoints[0]])["coins"][0]["spend_info"] is None
+        coincubed.rpc.listcoins([], [first_outpoints[0]])["coins"][0]["spend_info"] is None
     )

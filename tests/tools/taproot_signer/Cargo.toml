@@ -6,5 +6,5 @@ edition = "2021"
 [dependencies]
 bitcoin = { version = "0.31", features = ["base64"] }
 
-# Avoid it being built under Liana's target dir.
+# Avoid it being built under Coincube's target dir.
 [workspace]

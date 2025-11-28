@@ -89,7 +89,7 @@ class Bitcoind(BitcoinBackend):
         # An RPC interface with our internal wallet, and an RPC interface with no
         # wallet to be able to call 'unloadwallet' on any wallet.
         self.rpc = BitcoindRpcInterface(
-            bitcoin_dir, "regtest", rpcport, wallet="lianad-tests"
+            bitcoin_dir, "regtest", rpcport, wallet="coincubed-tests"
         )
         self.node_rpc = BitcoindRpcInterface(bitcoin_dir, "regtest", rpcport)
 

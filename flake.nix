@@ -1,5 +1,5 @@
 {
-  description = "Dev shell to help contributing to liana";
+  description = "Dev shell to help contributing to coincube";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -34,7 +34,7 @@
             root = ./.;
             fileset = lib.fileset.unions [
               (craneLib.fileset.commonCargoSources ./.)
-              (lib.fileset.maybeMissing ./liana-ui/static)
+              (lib.fileset.maybeMissing ./coincube-ui/static)
             ];
           };
           strictDeps = true;
@@ -57,8 +57,8 @@
           TOOLKIT_x86_64_pc_windows_gnu = "${pkgs.pkgsCross.mingwW64.stdenv.cc.bintools.bintools}/bin";
           WINDRES_x86_64_pc_windows_gnu = "${pkgs.pkgsCross.mingwW64.stdenv.cc.targetPrefix}windres";
 
-          pname = "liana-gui";
-          cargoExtraArgs = "-p liana-gui";
+          pname = "coincube-gui";
+          cargoExtraArgs = "-p coincube-gui";
           depsBuildBuild = with pkgs; [
             pkgsCross.mingwW64.stdenv.cc
             pkgsCross.mingwW64.windows.pthreads
@@ -68,7 +68,7 @@
 
           installPhaseCommand = ''
             mkdir -p $out/x86_64-pc-windows-gnu
-            cp target/x86_64-pc-windows-gnu/release/liana-gui.exe $out/x86_64-pc-windows-gnu
+            cp target/x86_64-pc-windows-gnu/release/coincube-gui.exe $out/x86_64-pc-windows-gnu
           '';
         };
 
@@ -100,9 +100,9 @@
 
           installPhaseCommand = ''
             mkdir -p $out/x86_64-apple-darwin
-            cp target/x86_64-apple-darwin/release/liana-gui $out/x86_64-apple-darwin
-            cp target/x86_64-apple-darwin/release/lianad $out/x86_64-apple-darwin
-            cp target/x86_64-apple-darwin/release/liana-cli $out/x86_64-apple-darwin
+            cp target/x86_64-apple-darwin/release/coincube-gui $out/x86_64-apple-darwin
+            cp target/x86_64-apple-darwin/release/coincubed $out/x86_64-apple-darwin
+            cp target/x86_64-apple-darwin/release/coincube-cli $out/x86_64-apple-darwin
           '';
         };
 
@@ -131,9 +131,9 @@
 
           installPhaseCommand = ''
             mkdir -p $out/aarch64-apple-darwin
-            cp target/aarch64-apple-darwin/release/liana-gui $out/aarch64-apple-darwin
-            cp target/aarch64-apple-darwin/release/lianad $out/aarch64-apple-darwin
-            cp target/aarch64-apple-darwin/release/liana-cli $out/aarch64-apple-darwin
+            cp target/aarch64-apple-darwin/release/coincube-gui $out/aarch64-apple-darwin
+            cp target/aarch64-apple-darwin/release/coincubed $out/aarch64-apple-darwin
+            cp target/aarch64-apple-darwin/release/coincube-cli $out/aarch64-apple-darwin
           '';
         };
 
@@ -145,10 +145,10 @@
         } ''
           mkdir -p $out/universal2-apple-darwin
 
-          # Combine liana-gui binaries
-          lipo -output $out/universal2-apple-darwin/liana-gui -create \
-            ${x86_64-apple-darwin}/x86_64-apple-darwin/liana-gui \
-            ${aarch64-apple-darwin}/aarch64-apple-darwin/liana-gui
+          # Combine coincube-gui binaries
+          lipo -output $out/universal2-apple-darwin/coincube-gui -create \
+            ${x86_64-apple-darwin}/x86_64-apple-darwin/coincube-gui \
+            ${aarch64-apple-darwin}/aarch64-apple-darwin/coincube-gui
         '';
 
         # Common build inputs for all shells

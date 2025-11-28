@@ -330,7 +330,7 @@ This means you won't be able to open with Liana v6 (or below) any wallet opened 
 
 #### Liana daemon / library
 
-- We now check the change multipath is not hardened when importing a descriptor (or creating a `LianaDescriptor` struct).
+- We now check the change multipath is not hardened when importing a descriptor (or creating a `CoincubeDescriptor` struct).
 - We add the minimum feerate requested in the error message of the create spend command.
 
 #### Liana GUI

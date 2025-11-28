@@ -3,8 +3,8 @@
 use arbitrary::{Arbitrary, Unstructured};
 use libfuzzer_sys::fuzz_target;
 
-use liana::{
-    descriptors::{LianaDescriptor, LianaPolicy, PathInfo},
+use coincube_core::{
+    descriptors::{CoincubeDescriptor, CoincubePolicy, PathInfo},
     miniscript::{
         bitcoin::{bip32, Network, Psbt},
         descriptor,
@@ -128,23 +128,23 @@ fuzz_target!(|config: Config| {
         return;
     };
     let policy = if config.use_taproot {
-        LianaPolicy::new(prim_path_info, rec_paths_info)
+        CoincubePolicy::new(prim_path_info, rec_paths_info)
     } else {
-        LianaPolicy::new_legacy(prim_path_info, rec_paths_info)
+        CoincubePolicy::new_legacy(prim_path_info, rec_paths_info)
     };
     let policy = if let Ok(policy) = policy {
         policy
     } else {
         return;
     };
-    let desc = LianaDescriptor::new(policy);
+    let desc = CoincubeDescriptor::new(policy);
 
     // The descriptor must roundtrip.
-    assert_eq!(desc, LianaDescriptor::from_str(&desc.to_string()).unwrap());
+    assert_eq!(desc, CoincubeDescriptor::from_str(&desc.to_string()).unwrap());
 
     // We can get the policy out of this desc and a desc out of this policy, but it's not
     // guaranteed to roundtrip: policy->descriptor involves a compilation.
-    LianaDescriptor::new(desc.policy());
+    CoincubeDescriptor::new(desc.policy());
 
     // Exercise the various methods on the descriptor. None should crash.
     desc.receive_descriptor();

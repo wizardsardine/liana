@@ -1,0 +1,28 @@
+[package]
+name = "coincube-ui"
+version = "0.3.0"
+edition = "2021"
+description = "COINCUBE UI components - Reusable Iced widgets for COINCUBE wallet"
+repository = "https://github.com/coincubetech/coincube"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+iced = { version = "0.13.1", default-features = false, features = [
+	"svg",
+	"image-without-codecs",
+	"lazy",
+	"qr_code",
+	"advanced",
+] }
+image = { version = "*", default-features = false, features = ["png", "ico"] }
+
+iced_aw = { version = "0.12.2", features = ["context_menu"] }
+iced_core = { version = "0.13.2" }
+iced_runtime = { version = "0.13.2" }
+unicode-segmentation = "1.0"
+bitcoin = "0.32"
+chrono = "0.4"
+
+[lints.clippy]
+uninlined_format_args = "allow"

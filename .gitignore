@@ -17,7 +17,7 @@ release_assets
 .env
 
 .vscode
-liana-gui/default
+coincube-gui/default
 contrib/release/macos/certificates.p12
 contrib/release/macos/Vault.icns
 contrib/release/wix/Vault.ico

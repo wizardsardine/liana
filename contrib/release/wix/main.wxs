@@ -60,17 +60,17 @@
 
   <Product
     Id='*'
-    Name='Coincube Vault'
+    Name='COINCUBE'
     UpgradeCode='046BC7BE-9EFD-46F0-95C4-93E4B7EBBED1'
-    Manufacturer='Eduardo Paris'
+    Manufacturer='COINCUBE TECHNOLOGY LLC'
     Language='1033'
     Codepage='1252'
     Version='$(var.Version)'>
 
     <Package Id='*'
       Keywords='Installer'
-      Description='The missing safety net for your coins'
-      Manufacturer='Edouard Paris'
+      Description='The wallet that makes it easy to bank on Bitcoin'
+      Manufacturer='COINCUBE TECHNOLOGY LLC'
       InstallerVersion='450'
       Languages='1033'
       Compressed='yes'
@@ -83,12 +83,12 @@
       DowngradeErrorMessage='A newer version of [ProductName] is already installed. Setup will now exit.' />
 
     <Media Id='1' Cabinet='media1.cab' EmbedCab='yes' DiskPrompt='CD-ROM #1' />
-    <Property Id='DiskPrompt' Value='Coincube Vault Installation' />
+    <Property Id='DiskPrompt' Value='COINCUBE Installation' />
 
     <Directory Id='TARGETDIR' Name='SourceDir'>
       <Directory Id="ProgramMenuFolder" />
       <Directory Id='$(var.PlatformProgramFilesFolder)' Name='PFiles'>
-        <Directory Id='APPLICATIONFOLDER' Name='Coincube Vault'>
+        <Directory Id='APPLICATIONFOLDER' Name='COINCUBE'>
           <Component Id='License' Guid='*'>
             <File Id='LicenseFile'
               Source='LICENCE'
@@ -99,15 +99,15 @@
             <Component Id='binary0' Guid='*'>
               <File
                 Id='exe0'
-                Name='coincube-vault.exe'
-                Source='$(var.CargoTargetBinDir)\coincube-vault.exe'
+                Name='coincube.exe'
+                Source='$(var.CargoTargetBinDir)\coincube.exe'
                 KeyPath='yes' />
 
               <Shortcut
                 Id="StartMenuShortcut"
                 Directory="ProgramMenuFolder"
                 Advertise="yes"
-                Name="Coincube Vault"
+                Name="COINCUBE"
                 WorkingDirectory="APPLICATIONFOLDER" />
             </Component>
           </Directory>
@@ -137,7 +137,7 @@
     <Icon Id="AppIcon" SourceFile="contrib\release\wix\Vault.ico" />
     <SetProperty Id='ARPINSTALLLOCATION' Value='[APPLICATIONFOLDER]' After='CostFinalize' />
 
-    <Property Id='ARPHELPLINK' Value='https://github.com/coincubetech/liana' />
+    <Property Id='ARPHELPLINK' Value='https://github.com/coincubetech/coincube' />
     <Property Id="ARPPRODUCTICON" Value="AppIcon" />
 
     <UI>

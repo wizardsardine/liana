@@ -1,14 +1,13 @@
-# Quickly try out Liana in a test environment
+# Quickly try out Coincube in a test environment
 
+_(Updated on of 2023)_
 
-*(Updated on  of 2023)*
-
-This document is a short set of instructions for trying out Liana on Bitcoin signet, a test network using value-less bitcoins. It does not attempt to
+This document is a short set of instructions for trying out Coincube on Bitcoin signet, a test network using value-less bitcoins. It does not attempt to
 give any nuance, details or describe alternative configurations.
 
-This guide will make use Liana as a "hot wallet", and use the "Liana managed" `bitcoind` option.
+This guide will make use Coincube as a "hot wallet", and use the "Coincube managed" `bitcoind` option.
 You can find [here](./SIGNING_DEVICES.md) the list of supported signing devices.
-If you'd like to try out Liana using emulators of
+If you'd like to try out Coincube using emulators of
 hardware signing device you can use the [Specter
 simulator](https://github.com/cryptoadvance/specter-diy/blob/master/docs/simulator.md) or the
 [Ledger "Speculos" emulator](https://github.com/LedgerHQ/speculos).
@@ -18,22 +17,24 @@ simulator](https://github.com/cryptoadvance/specter-diy/blob/master/docs/simulat
 
 ### System dependencies
 
-*If you are using Windows or MacOS, you can skip this step.*
-*If you are using a somewhat recent Debian/Ubuntu, Arch/Manjaro/Endeavor, NixOS distribution or similar, you can skip this step.*
+_If you are using Windows or MacOS, you can skip this step._
+_If you are using a somewhat recent Debian/Ubuntu, Arch/Manjaro/Endeavor, NixOS distribution or similar, you can skip this step._
 
 Here is a list of the system dependencies: the tools and libraries you need to have installed on
 your system to follow the guide if you are running a Linux that isn't Debian- or Arch- based.
 
 - GUI requirements, see the link to projects below to search for the name of your distribution's packages.
-    - [`fontconfig`](https://www.freedesktop.org/wiki/Software/fontconfig/)
-    - [Libudev](https://www.freedesktop.org/software/systemd/man/libudev.html)
+  - [`fontconfig`](https://www.freedesktop.org/wiki/Software/fontconfig/)
+  - [Libudev](https://www.freedesktop.org/software/systemd/man/libudev.html)
 - Running binaries requires GLIBC >= 2.33 (Ubuntu >= 22.04 or Debian >= 12)
 
 We'll use basic tools which should already be present on your system, such as:
+
 - `shasum`
 - `tar`
 
 To verify binaries you will also need:
+
 - `gpg` (On Debian/Ubuntu `apt install gpg`)
 
 ### Throwaway folder
@@ -42,24 +43,24 @@ You can follow the guide from any folder of your choice. We recommend creating a
 can wipe easily after testing.
 
 If you are using a Linux terminal:
+
 ```
-mkdir liana_quicktry
-cd liana_quicktry
+mkdir coincube_quicktry
+cd coincube_quicktry
 ```
 
+## Step 1: Coincube installer
 
-## Step 1: Liana installer
-
-Get the Liana software for your system on the [Wizardsardine website](https://wizardsardine.com/liana).
+Get the COINCUBE software for your system on the [COINCUBE website](https://coincube.io).
 
 A note for **Linux users only**: released binaries may not be working on your system if it is
 running a too old glibc. In this case you may have to build from source. See the [short section
 about this in the README](../README.md#a-note-on-linux-binaries-and-glibc-version).
 
 For every file available on the website, there is an accompanying `.asc` file with the same
-name on our [Github release page](https://github.com/wizardsardine/liana/releases).
+name on our [Github release page](https://github.com/coincubetech/coincube/releases).
 
-if Liana version is inferior to v7:
+if Coincube version is inferior to v7:
 
 This is a GPG signature made with Antoine Poinsot's key:
 `590B7292695AFFA5B672CBB2E13FC145CD3F4304`. This key is available elsewhere for cross-checking, such
@@ -67,50 +68,55 @@ as on [his Twitter profile](https://twitter.com/darosior) or his [personal
 website](http://download.darosior.ninja/antoine_poinsot_0xE13FC145CD3F4304.txt). It is recommended
 you verify your download against this key.
 Example for Linux (replace the signature name with the one corresponding to your download):
+
 ```
 gpg --keyserver hkps://keys.openpgp.org --receive 590B7292695AFFA5B672CBB2E13FC145CD3F4304
-gpg --verify liana_2.0-1_amd64.deb.asc
+gpg --verify coincube_2.0-1_amd64.deb.asc
 ```
+
 GPG should tell you the signature is valid for Antoine's key.
 
 If GPG told you that Antoine key has expired, you should refresh it.
 Example for Linux (replace the signature name with the one corresponding to your download):
+
 ```
 gpg --keyserver hkps://keys.openpgp.org --refresh-keys E13FC145CD3F4304
 ```
 
-if Liana version is superior or equal to v7:
+if Coincube version is superior or equal to v7:
 
 This is a GPG signature made with Edouard Paris key:
 `5B63F3B97699C7EEF3B040B19B7F629A53E77B83`. This key is available elsewhere for cross-checking, such
-as on  his [personal website](https://edouard.paris/keys/5B63F3B97699C7EEF3B040B19B7F629A53E77B83.asc).
+as on his [personal website](https://edouard.paris/keys/5B63F3B97699C7EEF3B040B19B7F629A53E77B83.asc).
 It is recommended you verify your download against this key.
 Example for Linux (replace the signature name with the one corresponding to your download):
+
 ```
 gpg --keyserver hkps://keys.openpgp.org --receive 5B63F3B97699C7EEF3B040B19B7F629A53E77B83
-gpg --verify liana_7.0-1_amd64.deb.asc
+gpg --verify coincube_7.0-1_amd64.deb.asc
 ```
+
 GPG should tell you the signature is valid for Edouard's key.
 
 If GPG told you that Edouard key has expired, you should refresh it.
 Example for Linux (replace the signature name with the one corresponding to your download):
+
 ```
 gpg --keyserver hkps://keys.openpgp.org --refresh-keys 5B63F3B97699C7EEF3B040B19B7F629A53E77B83
 ```
 
-if Liana version is superior or equal to v9:
+if Coincube version is superior or equal to v9:
 
 ```
 gpg --keyserver hkps://keys.openpgp.org --receive 5B63F3B97699C7EEF3B040B19B7F629A53E77B83
-sha256sum --check liana-9.0-shasums.txt
-gpg --verify liana-9.0-shasums.txt.asc
+sha256sum --check coincube-9.0-shasums.txt
+gpg --verify coincube-9.0-shasums.txt.asc
 ```
 
+If all is good, you can run Coincube!
 
-If all is good, you can run Liana!
-
-At startup, you will have the choice between starting Liana using an existing configuration or to
-set up a new one. Choose to install Liana on a new Bitcoin network.
+At startup, you will have the choice between starting Coincube using an existing configuration or to
+set up a new one. Choose to install Coincube on a new Bitcoin network.
 
 The next screen allows you to either configure a new wallet, participate in the configuration of a
 new wallet (if you are taking part in a multisig for instance), or to recover a wallet from backup.
@@ -128,7 +134,7 @@ the recovery key, and choose "This computer" again.
 
 Of course, it wouldn't make sense for a real wallet to use the same signing device to derive both
 the primary and recovery keys. Or even to use hot keys at all with a non-trivial amount of coins. We
-only do this for convenience in testing Liana on Signet. If you'd like to try out signing with a
+only do this for convenience in testing Coincube on Signet. If you'd like to try out signing with a
 hardware wallet you can use the "testnet" mode of a Specter, the "Bitcoin testnet" app of a Ledger,
 or the simulator of any of them (see the links at the top of this document).
 
@@ -137,17 +143,16 @@ mnemonic as well as the descriptor in the next two screens. Otherwise just make 
 ticking the boxes. If you are using a signing device or its simulator you'll have a step for registering
 the descriptor on it.
 
-You can then decide whether you would like to manage `bitcoind` yourself or let Liana configure
+You can then decide whether you would like to manage `bitcoind` yourself or let Coincube configure
 and start/stop it while the GUI is being used:
-For the purpose of this guide, we will use the simpler option: to let Liana download and manage Bitcoin Core for us. It will get the software on [bitcoincore.org](https://bitcoincore.org/) and configure it in pruned mode with about 20GB of disk usage.
+For the purpose of this guide, we will use the simpler option: to let Coincube download and manage Bitcoin Core for us. It will get the software on [bitcoincore.org](https://bitcoincore.org/) and configure it in pruned mode with about 20GB of disk usage.
 A full Initial Blocks Download (Bitcoin network synchronization, from the beginning of the chain) will take place, as we are using Signet it will be pretty quick.
 
 Click on continue until we finalize the installation.
 
-
 ## Step 2: have fun
 
-Once synchronized, Liana will open the wallet.
+Once synchronized, Coincube will open the wallet.
 You can generate a receive address in the "Receive" menu. You can get signet coins from the signet
 faucet at https://signet.bc-2.jp/.
 
@@ -157,29 +162,29 @@ my own configuration, but it depends on what you configured previously). Then yo
 
 Keep in mind that signet coins have no value!
 
-Signet is a network, so you can send coins to other people on signet, receive from them, etc. Feel free to explore Liana!
-
+Signet is a network, so you can send coins to other people on signet, receive from them, etc. Feel free to explore Coincube!
 
 ## Cleanup
 
 You need to remove:
-- The Liana binary
+
+- The Coincube binary
 - its data directory
 
-For a user Alice the default Liana data directory is:
+For a user Alice the default Coincube data directory is:
 
-- /Users/Alice/Library/Application Support/Liana on MacOS
-- C:\Users\Alice\AppData\Roaming\Liana on Windows
-- /home/Alice/.liana on Linux
+- /Users/Alice/Library/Application Support/Coincube on MacOS
+- C:\Users\Alice\AppData\Roaming\Coincube on Windows
+- /home/Alice/.coincube on Linux
 
 Assuming you used the throwaway folder as advised in step 0 and did not use custom `bitcoind` or
-Liana data directories you can wipe everything using these commands on Linux:
+Coincube data directories you can wipe everything using these commands on Linux:
+
 ```
 cd ..
-rm -rf liana_quicktry
-rm -rf ~/.liana/signet
+rm -rf coincube_quicktry
+rm -rf ~/.coincube/signet
 ```
-
 
 ## Tips & Tricks
 
@@ -188,17 +193,19 @@ rm -rf ~/.liana/signet
 You can simulate multiple wallets by using different data directories. For instance:
 
 ```
-./liana-gui --datadir test_alice
-./liana-gui --datadir test_bob
-./liana-gui --datadir test_charlie
- ```
+./coincube-gui --datadir test_alice
+./coincube-gui --datadir test_bob
+./coincube-gui --datadir test_charlie
+```
+
 The directory will be created if it doesn't exist.
 
 ### Building from source with `nix develop`
 
 If you have [nix](https://nixos.org) (the package manager) installed, you can easily
 build from source as follows:
-1. `git clone https://github.com/wizardsardine/liana.git && cd liana`
+
+1. `git clone https://github.com/coincubetech/coincube.git && cd coincube`
 2. `nix develop` which will put you into a development shell with all dependencies available
-3. `cargo build --release` which will build `lianad`, `liana-cli`, and `liana-gui`.
-4. `target/release/liana-gui --datadir test_alice` will load up the gui and create/use `./test_alice` as the data directory for liana.
+3. `cargo build --release` which will build `coincubed`, `coincube-cli`, and `coincube-gui`.
+4. `target/release/coincube-gui --datadir test_alice` will load up the gui and create/use `./test_alice` as the data directory for coincube.

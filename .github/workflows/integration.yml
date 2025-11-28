@@ -12,19 +12,19 @@ jobs:
       matrix:
         include:
           - USE_TAPROOT: 0
-            BITCOIN_BACKEND_TYPE: 'bitcoind'
-            USE_MIN_BITCOIN_VERSION: 'TRUE'
+            BITCOIN_BACKEND_TYPE: "bitcoind"
+            USE_MIN_BITCOIN_VERSION: "TRUE"
           - USE_TAPROOT: 0
-            BITCOIN_BACKEND_TYPE: 'bitcoind'
+            BITCOIN_BACKEND_TYPE: "bitcoind"
           - USE_TAPROOT: 1
-            BITCOIN_BACKEND_TYPE: 'bitcoind'
+            BITCOIN_BACKEND_TYPE: "bitcoind"
           - USE_TAPROOT: 0
-            BITCOIN_BACKEND_TYPE: 'electrs'
-            USE_MIN_BITCOIN_VERSION: 'TRUE'
+            BITCOIN_BACKEND_TYPE: "electrs"
+            USE_MIN_BITCOIN_VERSION: "TRUE"
           - USE_TAPROOT: 0
-            BITCOIN_BACKEND_TYPE: 'electrs'
+            BITCOIN_BACKEND_TYPE: "electrs"
           - USE_TAPROOT: 1
-            BITCOIN_BACKEND_TYPE: 'electrs'
+            BITCOIN_BACKEND_TYPE: "electrs"
 
     env:
       EXECUTOR_WORKERS: 3
@@ -63,9 +63,9 @@ jobs:
           key: ${{ runner.os }}-pip-${{ hashFiles('tests/requirements.txt') }}
           restore-keys: ${{ runner.os }}-pip-
 
-      - name: Build lianad and taproot_signer
+      - name: Build coincubed and taproot_signer
         run: |
-          cargo build --release --package lianad
+          cargo build --release --package coincubed
           cd ./tests/tools/taproot_signer
           cargo build --release
 
@@ -96,10 +96,10 @@ jobs:
             export ELECTRS_PATH=$PWD/electrs
           fi
 
-          curl -LO https://github.com/wizardsardine/liana/releases/download/0.3.1/liana-0.3.1-x86_64-linux-gnu.tar.gz
-          echo "70c8595554b6f78ccc7b66ef5f5ebc5bac03a7b1ce28afe8a076f69adf59c583 liana-0.3.1-x86_64-linux-gnu.tar.gz" | sha256sum -c
-          tar -xzf liana-0.3.1-x86_64-linux-gnu.tar.gz
-          export OLD_LIANAD_PATH="$PWD/liana-0.3.1-x86_64-linux-gnu/lianad"
+          curl -LO https://github.com/coincubetech/coincube/releases/download/0.3.1/coincube-0.3.1-x86_64-linux-gnu.tar.gz
+          echo "70c8595554b6f78ccc7b66ef5f5ebc5bac03a7b1ce28afe8a076f69adf59c583 coincube-0.3.1-x86_64-linux-gnu.tar.gz" | sha256sum -c
+          tar -xzf coincube-0.3.1-x86_64-linux-gnu.tar.gz
+          export OLD_LIANAD_PATH="$PWD/coincube-0.3.1-x86_64-linux-gnu/coincubed"
 
           # Run the functional tests
           pytest tests/ -vvv -n 8
