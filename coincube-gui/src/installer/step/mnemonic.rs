@@ -1,8 +1,8 @@
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 
-use iced::Task;
 use coincube_core::{bip39, signer::HotSigner};
+use iced::Task;
 
 use coincube_ui::widget::Element;
 

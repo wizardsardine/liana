@@ -9,8 +9,8 @@ use crate::{
         Daemon,
     },
 };
-use iced::Task;
 use coincube_ui::component::form;
+use iced::Task;
 
 #[derive(Default)]
 pub struct LabelsEdited(HashMap<String, form::Value<String>>);

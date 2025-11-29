@@ -1,12 +1,12 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use iced::{widget::qr_code, Subscription, Task};
 use coincube_core::miniscript::bitcoin::{
     bip32::{ChildNumber, Fingerprint},
     Address, Network,
 };
 use coincube_ui::{widget::modal, widget::*};
+use iced::{widget::qr_code, Subscription, Task};
 
 use crate::daemon::model::LabelsLoader;
 use crate::dir::CoincubeDirectory;

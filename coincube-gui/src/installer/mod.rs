@@ -6,14 +6,14 @@ mod prompt;
 mod step;
 mod view;
 
-pub use context::{Context, RemoteBackend};
-use iced::{clipboard, Subscription, Task};
 use coincube_core::miniscript::bitcoin::{self, Network};
 use coincube_ui::{
     component::network_banner,
     widget::{Column, Element},
 };
 use coincubed::config::{BitcoinBackend, BitcoindConfig, BitcoindRpcAuth, Config};
+pub use context::{Context, RemoteBackend};
+use iced::{clipboard, Subscription, Task};
 use std::{collections::HashMap, ops::Deref};
 use tokio::runtime::Handle;
 use tracing::{error, info, warn};
@@ -703,11 +703,11 @@ pub async fn create_remote_wallet(
     )
     .await
     {
-        // this error is not critical, the coincube-connect backend stored the wallet
+        // this error is not critical, the liana-connect backend stored the wallet
         // and user can reauthenticate.
-        tracing::error!("Failed to update Coincube-Connect cache: {}", e);
+        tracing::error!("Failed to update Liana-Connect cache: {}", e);
     } else {
-        info!("Coincube-Connect cache updated");
+        info!("Liana-Connect cache updated");
     };
 
     Ok(wallet_settings)
@@ -798,11 +798,11 @@ pub async fn import_remote_wallet(
     )
     .await
     {
-        // this error is not critical, the coincube-connect backend stored the wallet
+        // this error is not critical, the liana-connect backend stored the wallet
         // and user can reauthenticate.
-        tracing::error!("Failed to update Coincube-Connect cache: {}", e);
+        tracing::error!("Failed to update Liana-Connect cache: {}", e);
     } else {
-        info!("Coincube-Connect cache updated");
+        info!("Liana-Connect cache updated");
     };
 
     Ok(wallet_settings)

@@ -1,11 +1,11 @@
-use iced::{
-    widget::{focus_next, focus_previous, Space},
-    Alignment, Length, Task,
-};
 use coincube_ui::{
     component::{button, text::*},
     icon, theme,
     widget::*,
+};
+use iced::{
+    widget::{focus_next, focus_previous, Space},
+    Alignment, Length, Task,
 };
 
 use crate::app::settings::CubeSettings;

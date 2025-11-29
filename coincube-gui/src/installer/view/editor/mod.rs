@@ -414,10 +414,10 @@ pub fn edit_threshold_modal<'a>(threshold: (usize, usize)) -> Element<'a, Messag
 }
 
 mod threshsold_input {
+    use coincube_ui::{component::text::*, icon, theme, widget::*};
     use iced::alignment::{self, Alignment};
     use iced::widget::{component, Component};
     use iced::Length;
-    use coincube_ui::{component::text::*, icon, theme, widget::*};
 
     pub struct ThresholdInput<Message> {
         value: usize,

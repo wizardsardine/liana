@@ -802,10 +802,10 @@ pub async fn import_backup(
 ) -> Result<(), Error> {
     let daemon = daemon.ok_or(Error::DaemonMissing)?;
 
-    // TODO: drop after support for restore to coincube-connect
+    // TODO: drop after support for restore to liana-connect
     if matches!(daemon.backend(), DaemonBackend::RemoteBackend) {
         return Err(Error::BackupImport(
-            "Restore to a Coincube-connect backend is not yet supported!".into(),
+            "Restore to a Liana-connect backend is not yet supported!".into(),
         ));
     }
 
@@ -851,7 +851,8 @@ pub async fn import_backup(
         1 => backup.accounts.first().expect("already checked"),
         _ => {
             return Err(Error::BackupImport(
-                "Coincube is actually not supporting import of backup with several accounts!".into(),
+                "Coincube is actually not supporting import of backup with several accounts!"
+                    .into(),
             ));
         }
     };
@@ -1078,7 +1079,7 @@ impl Display for RestoreBackupError {
                 write!(f, "There is several accounts in the backup")
             }
             RestoreBackupError::LianaConnectNotSupported => {
-                write!(f, "Restore a backup to Coincube-connect is not yet supported")
+                write!(f, "Restore a backup to Liana-connect is not yet supported")
             }
             RestoreBackupError::GetLabels => write!(f, "Fails to get labels during backup restore"),
             RestoreBackupError::LabelsNotEmpty => write!(
@@ -1162,7 +1163,8 @@ pub async fn from_backup(sender: &UnboundedSender<Progress>, path: PathBuf) -> R
         1 => backup.accounts.first().expect("already checked"),
         _ => {
             return Err(Error::BackupImport(
-                "Coincube is actually not supporting import of backup with several accounts!".into(),
+                "Coincube is actually not supporting import of backup with several accounts!"
+                    .into(),
             ));
         }
     };
@@ -1226,7 +1228,7 @@ pub async fn import_backup_at_launch(
     ),
     RestoreBackupError,
 > {
-    // TODO: drop after support for restore to coincube-connect
+    // TODO: drop after support for restore to liana-connect
     if matches!(daemon.backend(), DaemonBackend::RemoteBackend) {
         return Err(RestoreBackupError::LianaConnectNotSupported);
     }

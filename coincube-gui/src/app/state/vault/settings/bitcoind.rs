@@ -203,7 +203,7 @@ impl State for BitcoindSettingsState {
                 }
                 setting_panels.push(view::vault::settings::link(
                     help::CHANGE_BACKEND_OR_NODE_URL,
-                    "I want to change node type or use Coincube Connect",
+                    "I want to change node type or use Liana Connect",
                 ));
                 setting_panels.push(self.rescan_settings.view(cache, can_do_rescan).map(
                     move |msg| view::Message::Settings(view::SettingsMessage::RescanSettings(msg)),
@@ -367,11 +367,12 @@ impl BitcoindSettings {
 
                 if let (true, Some(rpc_auth)) = (self.addr.valid, rpc_auth) {
                     let mut daemon_config = daemon.config().cloned().unwrap();
-                    daemon_config.bitcoin_backend =
-                        Some(coincubed::config::BitcoinBackend::Bitcoind(BitcoindConfig {
+                    daemon_config.bitcoin_backend = Some(
+                        coincubed::config::BitcoinBackend::Bitcoind(BitcoindConfig {
                             rpc_auth,
                             addr: new_addr.unwrap(),
-                        }));
+                        }),
+                    );
                     self.processing = true;
                     return Task::perform(async move { daemon_config }, |cfg| {
                         Message::LoadDaemonConfig(Box::new(cfg))
@@ -477,11 +478,12 @@ impl ElectrumSettings {
             view::SettingsEditMessage::Confirm => {
                 if self.addr.valid {
                     let mut daemon_config = daemon.config().cloned().unwrap();
-                    daemon_config.bitcoin_backend =
-                        Some(coincubed::config::BitcoinBackend::Electrum(ElectrumConfig {
+                    daemon_config.bitcoin_backend = Some(
+                        coincubed::config::BitcoinBackend::Electrum(ElectrumConfig {
                             addr: self.addr.value.clone(),
                             validate_domain: self.electrum_config.validate_domain,
-                        }));
+                        }),
+                    );
                     self.processing = true;
                     return Task::perform(async move { daemon_config }, |cfg| {
                         Message::LoadDaemonConfig(Box::new(cfg))

@@ -14,8 +14,8 @@ use async_hwi::{
     jade::{self, Jade},
     ledger, specter, DeviceKind, Error as HWIError, Version, HWI,
 };
-use iced::futures::{SinkExt, Stream};
 use coincube_core::miniscript::bitcoin::{bip32::Fingerprint, hashes::hex::FromHex, Network};
+use iced::futures::{SinkExt, Stream};
 use serde::{Deserialize, Serialize};
 use tracing::{debug, warn};
 

@@ -6,13 +6,6 @@ use std::{
 };
 
 use async_hwi::{bitbox::api::btc::Fingerprint, DeviceKind, Version, HWI};
-use encrypted_backup::{Decrypted, EncryptedBackup};
-use iced::{
-    alignment::{self, Horizontal, Vertical},
-    clipboard,
-    widget::{column, row, scrollable, tooltip, Column, Space},
-    Length, Task,
-};
 use coincube_core::{
     bip39::Mnemonic,
     descriptors::CoincubeDescriptor,
@@ -35,6 +28,13 @@ use coincube_ui::{
     },
     icon, theme,
     widget::{modal::Modal, Button, CheckBox, Container, Element, Row},
+};
+use encrypted_backup::{Decrypted, EncryptedBackup};
+use iced::{
+    alignment::{self, Horizontal, Vertical},
+    clipboard,
+    widget::{column, row, scrollable, tooltip, Column, Space},
+    Length, Task,
 };
 
 use crate::{

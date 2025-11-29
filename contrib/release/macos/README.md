@@ -24,12 +24,11 @@ certificate to distribute apps outside of the store.
 
 (We should look into the installer feature later on. Maybe we could bundle a bitcoind there.)
 
-They ask for a "Certificate Signing Request (CSR)" that you need to generate on your Mac. I don't
-have a Mac. Generate it using OpenSSL:
+They ask for a "Certificate Signing Request (CSR)" that you need to generate on your Mac. Generate it using OpenSSL:
 
 ```
-openssl genrsa -out wizardsardine_liana.key 2048
-openssl req -new -sha256 -key wizardsardine_liana.key -out wizardsardine_coincube_codesigning.csr -subj "/emailAddress=antoine@wizardsardine.com, CN=Antoine Poinsot, C=FR"
+openssl genrsa -out coincubetech_coincube.key 2048
+openssl req -new -sha256 -key coincubetech_coincube.key -out coincubetech_coincube_codesigning.csr -subj "/emailAddress=robert@coincube.io, CN=COINCUBE TECHNOLOGY LLC, C=US"
 ```
 
 (Note you have no choice in the size or type of the key here, they expect a RSA(2048) key.)
@@ -38,7 +37,7 @@ For the profile type select "G2 Sub-CA". We are using an Xcode newer than 11.4.1
 tool we use supports the new CA.
 
 Now you get to be able to download your certificate (I've stored it as
-"antoine_devid_coincube_codesigning.cer"). Thankfully `rcodesign` supports various certificate format,
+"allen_robert_coincube_codesigning.cer"). Thankfully `rcodesign` supports various certificate format,
 so we don't even have to convert it to PEM.
 
 Download `rcodesign`:
@@ -52,7 +51,7 @@ tar -xzf apple-codesign-0.22.0-x86_64-unknown-linux-musl.tar.gz
 Sign the packaged application using the `sign` command (mind `--code-signature-flags for the necessary hardened runtime):
 
 ```
-./apple-codesign-0.22.0-x86_64-unknown-linux-musl/rcodesign sign --code-signature-flags runtime --pem-source wizardsardine_liana.key --der-source antoine_devid_coincube_codesigning.cer Coincube.app
+./apple-codesign-0.22.0-x86_64-unknown-linux-musl/rcodesign sign --code-signature-flags runtime --pem-source coincubetech_coincube.key --der-source allen_robert_coincube_codesigning.cer Coincube.app
 ```
 
 You can see the chain of certificates was applied using the `diff-signatures` command against

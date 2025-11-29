@@ -109,7 +109,7 @@ pub async fn delete_wallet(
     network: Network,
     network_dir: &NetworkDirectory,
     wallet: &WalletSettings,
-    delete_coincube_connect: bool,
+    delete_liana_connect: bool,
 ) -> Result<(), DeleteError> {
     let wallet_id = wallet.wallet_id();
     let coincubed_directory = network_dir.coincubed_data_directory(&wallet_id);
@@ -127,7 +127,7 @@ pub async fn delete_wallet(
         )?;
     }
 
-    if delete_coincube_connect {
+    if delete_liana_connect {
         if let Some(auth) = &wallet.remote_backend_auth {
             let service_config = get_service_config(network)
                 .await
@@ -148,7 +148,7 @@ pub async fn delete_wallet(
             .await
             .map_err(|e| DeleteError::Connect(e.to_string()))?
             {
-                tracing::info!("Deleting wallet on Coincube-Connect {} backend", network);
+                tracing::info!("Deleting wallet on Liana-Connect {} backend", network);
                 client
                     .delete_wallet()
                     .await

@@ -6,18 +6,18 @@ use std::{
 };
 
 use async_hwi::{DeviceKind, Version};
-use iced::{
-    alignment::{Horizontal, Vertical},
-    clipboard,
-    widget::{column, container, pick_list, row, Column, Row, Space},
-    Length, Subscription, Task,
-};
 use coincube_core::miniscript::{
     bitcoin::{
         bip32::{ChildNumber, DerivationPath, Fingerprint, Xpub},
         Network,
     },
     descriptor::{DerivPaths, DescriptorMultiXKey, DescriptorPublicKey, DescriptorXKey, Wildcard},
+};
+use iced::{
+    alignment::{Horizontal, Vertical},
+    clipboard,
+    widget::{column, container, pick_list, row, Column, Row, Space},
+    Length, Subscription, Task,
 };
 
 use coincube_ui::{

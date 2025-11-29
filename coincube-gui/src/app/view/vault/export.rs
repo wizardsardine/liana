@@ -1,8 +1,3 @@
-use iced::{
-    alignment::{self, Horizontal},
-    widget::{progress_bar, Column, Container, Row, Space},
-    Length,
-};
 use coincube_ui::{
     component::{
         button, card,
@@ -10,6 +5,11 @@ use coincube_ui::{
     },
     icon,
     widget::Element,
+};
+use iced::{
+    alignment::{self, Horizontal},
+    widget::{progress_bar, Column, Container, Row, Space},
+    Length,
 };
 
 use crate::export::ImportExportState;

@@ -479,7 +479,8 @@ mod test {
         backup.name = Some("Coincube".into());
 
         let serialized = serde_json::to_string(&backup).unwrap();
-        let expected = r#"{"name":"Coincube","accounts":[],"network":"signet","date":0,"version":0}"#;
+        let expected =
+            r#"{"name":"Coincube","accounts":[],"network":"signet","date":0,"version":0}"#;
         assert_eq!(expected, serialized);
         assert!(round_trip(&backup));
 

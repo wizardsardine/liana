@@ -15,8 +15,8 @@ use crate::{
     node::NodeType,
 };
 
-use iced::Task;
 use coincube_ui::widget::Element;
+use iced::Task;
 
 #[derive(Clone)]
 pub enum NodeDefinition {

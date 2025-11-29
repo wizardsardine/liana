@@ -1,5 +1,5 @@
-use iced::{Subscription, Task};
 use coincube_ui::widget::Element;
+use iced::{Subscription, Task};
 
 use crate::{
     app::state::vault::export::VaultExportModal,

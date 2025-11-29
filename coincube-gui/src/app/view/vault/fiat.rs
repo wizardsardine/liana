@@ -1,12 +1,12 @@
 use std::convert::TryFrom;
 use std::num::ParseFloatError;
 
-use iced::widget::Column;
 use coincube_core::miniscript::bitcoin::Amount;
 use coincube_ui::component::amount::{format_f64_as_string, DisplayAmount};
 use coincube_ui::component::text::text;
 use coincube_ui::theme;
 use coincube_ui::widget::{Container, Text};
+use iced::widget::Column;
 
 use crate::app::cache;
 use crate::services::fiat::{Currency, PriceSource};

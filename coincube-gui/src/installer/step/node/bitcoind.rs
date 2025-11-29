@@ -5,11 +5,11 @@ use std::path::PathBuf;
 use std::str::FromStr;
 
 use bitcoin_hashes::sha256;
+use coincube_core::miniscript::bitcoin::Network;
+use coincubed::config::{BitcoinBackend, BitcoindConfig, BitcoindRpcAuth};
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 use flate2::read::GzDecoder;
 use iced::{Subscription, Task};
-use coincube_core::miniscript::bitcoin::Network;
-use coincubed::config::{BitcoinBackend, BitcoindConfig, BitcoindRpcAuth};
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 use tar::Archive;
 use tracing::info;
@@ -471,11 +471,9 @@ impl DefineBitcoind {
                 false
             }
             (Some(rpc_auth), Ok(addr)) => {
-                ctx.bitcoin_backend =
-                    Some(coincubed::config::BitcoinBackend::Bitcoind(BitcoindConfig {
-                        rpc_auth,
-                        addr,
-                    }));
+                ctx.bitcoin_backend = Some(coincubed::config::BitcoinBackend::Bitcoind(
+                    BitcoindConfig { rpc_auth, addr },
+                ));
                 true
             }
         }
@@ -713,8 +711,11 @@ impl Step for InternalBitcoindStep {
                         .as_ref()
                         .expect("already added")
                         .clone();
-                    match Bitcoind::maybe_start(self.network, bitcoind_config, &self.coincube_datadir)
-                    {
+                    match Bitcoind::maybe_start(
+                        self.network,
+                        bitcoind_config,
+                        &self.coincube_datadir,
+                    ) {
                         Err(e) => {
                             self.started =
                                 Some(Err(StartInternalBitcoindError::CommandError(e.to_string())));

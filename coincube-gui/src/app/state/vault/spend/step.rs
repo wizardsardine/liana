@@ -7,7 +7,6 @@ use std::{
     sync::Arc,
 };
 
-use iced::{Subscription, Task};
 use coincube_core::{
     miniscript::bitcoin::{
         address,
@@ -18,6 +17,7 @@ use coincube_core::{
     spend::{SpendCreationError, MAX_FEERATE},
 };
 use coincubed::commands::ListCoinsEntry;
+use iced::{Subscription, Task};
 
 use coincube_ui::{component::form, widget::Element};
 
@@ -715,7 +715,9 @@ impl Step for DefineSpend {
                                             }
                                             CreateSpendResult::InsufficientFunds { missing } => {
                                                 Err(SpendCreationError::CoinSelection(
-                                                    coincube_core::spend::InsufficientFunds { missing },
+                                                    coincube_core::spend::InsufficientFunds {
+                                                        missing,
+                                                    },
                                                 )
                                                 .into())
                                             }

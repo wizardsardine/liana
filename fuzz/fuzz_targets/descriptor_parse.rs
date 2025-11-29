@@ -47,7 +47,10 @@ fuzz_target!(|data: &[u8]| {
     };
 
     // The descriptor must roundtrip.
-    assert_eq!(desc, CoincubeDescriptor::from_str(&desc.to_string()).unwrap());
+    assert_eq!(
+        desc,
+        CoincubeDescriptor::from_str(&desc.to_string()).unwrap()
+    );
 
     // We can get the policy out of this desc and a desc out of this policy, but it's not
     // guaranteed to roundtrip: policy->descriptor involves a compilation.

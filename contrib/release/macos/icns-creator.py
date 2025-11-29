@@ -4,9 +4,9 @@ from PIL import Image
 from icnsutil import IcnsFile
 
 # Input PNG (should be at least 1024x1024)
-input_file = "coincube-ui/static/logos/coincube-app-icon-coincube.png"
-output_file = "contrib/release/macos/Vault.icns"
-output_ico = "contrib/release/wix/Vault.ico"
+input_file = "coincube-ui/static/logos/coincube-vault-icon.png"
+output_file = "contrib/release/macos/Coincube.icns"
+output_ico = "contrib/release/wix/Coincube.ico"
 
 print(f"Processing {input_file}")
 

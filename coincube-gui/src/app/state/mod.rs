@@ -8,9 +8,9 @@ pub mod buysell;
 use std::convert::TryInto;
 use std::sync::Arc;
 
-use iced::{Subscription, Task};
 use coincube_core::miniscript::bitcoin::{Amount, OutPoint};
 use coincube_ui::widget::*;
+use iced::{Subscription, Task};
 
 use super::{cache::Cache, menu::Menu, message::Message, view, wallet::Wallet};
 

@@ -5,8 +5,7 @@ use iced::{
 
 use crate::theme::Theme;
 
-const COINCUBE_LOGOTYPE_GREY: &[u8] =
-    include_bytes!("../static/logos/coincube-logo-gray.svg");
+const COINCUBE_LOGOTYPE_GREY: &[u8] = include_bytes!("../static/logos/coincube-logo-gray.svg");
 const COINCUBE_LOGOTYPE: &[u8] = include_bytes!("../static/logos/coincube-logo.svg");
 
 pub fn coincube_window_icon() -> icon::Icon {

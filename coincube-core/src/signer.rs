@@ -902,9 +902,11 @@ mod tests {
             wildcard: Wildcard::Unhardened,
         });
         let recov_keys = descriptors::PathInfo::Single(recov_key.clone());
-        let policy =
-            descriptors::CoincubePolicy::new(prim_keys, [(46, recov_keys)].iter().cloned().collect())
-                .unwrap();
+        let policy = descriptors::CoincubePolicy::new(
+            prim_keys,
+            [(46, recov_keys)].iter().cloned().collect(),
+        )
+        .unwrap();
         let desc = descriptors::CoincubeDescriptor::new(policy);
 
         // Create a dummy PSBT spending a coin from this descriptor with a single input and single
@@ -1099,9 +1101,11 @@ mod tests {
         // Now use a Taproot descriptor such as there is a single primary key as the internal key.
         let prim_keys = descriptors::PathInfo::Single(prim_key_a);
         let recov_keys = descriptors::PathInfo::Single(recov_key);
-        let policy =
-            descriptors::CoincubePolicy::new(prim_keys, [(42, recov_keys)].iter().cloned().collect())
-                .unwrap();
+        let policy = descriptors::CoincubePolicy::new(
+            prim_keys,
+            [(42, recov_keys)].iter().cloned().collect(),
+        )
+        .unwrap();
         let desc = descriptors::CoincubeDescriptor::new(policy);
         let spent_coin_desc = desc.receive_descriptor().derive(412.into(), &secp);
 

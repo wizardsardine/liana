@@ -16,8 +16,8 @@ pub use crate::database::{CoinStatus, LabelItem};
 
 use coincube_core::descriptors;
 use coincube_core::spend::{
-    self, create_spend, AddrInfo, AncestorInfo, CandidateCoin, CreateSpendRes,
-    SpendCreationError, SpendOutputAddress, SpendTxFees, TxGetter,
+    self, create_spend, AddrInfo, AncestorInfo, CandidateCoin, CreateSpendRes, SpendCreationError,
+    SpendOutputAddress, SpendTxFees, TxGetter,
 };
 
 use utils::{

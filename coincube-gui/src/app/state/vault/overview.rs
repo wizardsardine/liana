@@ -2,10 +2,10 @@ use std::convert::TryInto;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use iced::Task;
 use coincube_core::miniscript::bitcoin::{Amount, OutPoint};
 use coincube_ui::widget::*;
 use coincubed::commands::CoinStatus;
+use iced::Task;
 
 use crate::{
     app::cache::Cache,

@@ -26,7 +26,7 @@ env ONRAMPER_API_KEY="..." cargo run --release --features buysell --bin coincube
 
 _For a quick guide to try out the software see [../doc/TRY.md](../doc/TRY.md)._
 
-```
+```bash
 coincube-gui --datadir <datadir> --<network>
 ```
 

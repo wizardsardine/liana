@@ -7,8 +7,8 @@ pub mod electrum;
 pub mod poller;
 
 use crate::bitcoin::d::{BitcoindError, CachedTxGetter, LSBlockEntry};
-pub use d::{MempoolEntry, MempoolEntryFees, SyncProgress};
 use coincube_core::descriptors;
+pub use d::{MempoolEntry, MempoolEntryFees, SyncProgress};
 
 use std::{fmt, sync};
 

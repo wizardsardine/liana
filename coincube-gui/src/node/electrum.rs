@@ -1,7 +1,7 @@
 use std::fmt;
 
-use iced::{widget::checkbox, Element, Renderer};
 use coincube_ui::{component::form, theme::Theme};
+use iced::{widget::checkbox, Element, Renderer};
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum ConfigField {

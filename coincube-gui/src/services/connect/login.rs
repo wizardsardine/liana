@@ -196,7 +196,7 @@ impl CoincubeLiteLogin {
                             );
                         }
                         Err(e) => {
-                            // Do not display error, if the Coincube-Connect cache does not exist,
+                            // Do not display error, if the Liana-Connect cache does not exist,
                             // simply ask user to do the authentication steps.
                             if !matches!(e, Error::CredentialsMissing) {
                                 self.connection_error = Some(e);
@@ -354,7 +354,7 @@ impl CoincubeLiteLogin {
                         .align_x(Alignment::Center)
                         .spacing(20)
                         .width(Length::Fill)
-                        .push(h2("Coincube Connect"))
+                        .push(h2("Liana Connect"))
                         .push(
                             Column::new()
                                 .max_width(500)

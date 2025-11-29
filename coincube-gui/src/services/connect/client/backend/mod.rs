@@ -555,7 +555,7 @@ impl Daemon for BackendWalletClient {
                     )
                     .await
                     .map_err(|e| {
-                        DaemonError::Unexpected(format!("Cannot update Coincube-connect cache: {}", e))
+                        DaemonError::Unexpected(format!("Cannot update Liana-connect cache: {}", e))
                     })?;
 
                     *old = new;

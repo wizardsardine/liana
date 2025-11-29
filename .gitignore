@@ -1,25 +1,2 @@
-tags
-target/
-__pycache__
-dummy_config.toml
-regtest/
-venv/
-pytest.log
-TODO
-**/target
-**/dist
-Xcode_12.2.xip
-.idea/
-fuzz/corpus
-result
-release_build
-release_assets
-.env
-
-.vscode
-coincube-gui/default
-contrib/release/macos/certificates.p12
-contrib/release/macos/Vault.icns
-contrib/release/wix/Vault.ico
-contrib/icons
-default
+# Created by venv; see https://docs.python.org/3/library/venv.html
+*

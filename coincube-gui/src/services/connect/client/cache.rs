@@ -94,8 +94,8 @@ pub async fn update_connect_cache(
         match serde_json::from_slice::<ConnectCache>(&file_content) {
             Ok(cache) => cache,
             Err(e) => {
-                tracing::warn!("Something wrong with Coincube-Connect cache file: {:?}", e);
-                tracing::warn!("Coincube-Connect cache file is reset");
+                tracing::warn!("Something wrong with Liana-Connect cache file: {:?}", e);
+                tracing::warn!("Liana-Connect cache file is reset");
                 ConnectCache::default()
             }
         }
@@ -106,7 +106,7 @@ pub async fn update_connect_cache(
     if let Some(c) = cache.accounts.iter().find(|cred| cred.email == *email) {
         // An other process updated the tokens
         if current_tokens.expires_at < c.tokens.expires_at {
-            tracing::debug!("Coincube-Connect authentication tokens are up to date, nothing to do");
+            tracing::debug!("Liana-Connect authentication tokens are up to date, nothing to do");
             return Ok(c.tokens.clone());
         }
     }
@@ -173,8 +173,8 @@ pub async fn filter_connect_cache(
         match serde_json::from_slice::<ConnectCache>(&file_content) {
             Ok(cache) => cache,
             Err(e) => {
-                tracing::warn!("Something wrong with Coincube-Connect cache file: {:?}", e);
-                tracing::warn!("Coincube-Connect cache file is reset");
+                tracing::warn!("Something wrong with Liana-Connect cache file: {:?}", e);
+                tracing::warn!("Liana-Connect cache file is reset");
                 ConnectCache::default()
             }
         }

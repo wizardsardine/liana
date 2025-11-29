@@ -96,10 +96,10 @@ jobs:
             export ELECTRS_PATH=$PWD/electrs
           fi
 
-          curl -LO https://github.com/coincubetech/coincube/releases/download/0.3.1/coincube-0.3.1-x86_64-linux-gnu.tar.gz
-          echo "70c8595554b6f78ccc7b66ef5f5ebc5bac03a7b1ce28afe8a076f69adf59c583 coincube-0.3.1-x86_64-linux-gnu.tar.gz" | sha256sum -c
-          tar -xzf coincube-0.3.1-x86_64-linux-gnu.tar.gz
-          export OLD_LIANAD_PATH="$PWD/coincube-0.3.1-x86_64-linux-gnu/coincubed"
+          curl -LO https://github.com/coincubetech/coincube/releases/download/v13.0.0/Coincube-Vault-x86_64-unknown-linux-gnu.tar.gz
+          echo "f4472364ef457e78ca684115d695fac7b51746607f546c5de9b56f3ce4722472 Coincube-Vault-x86_64-unknown-linux-gnu.tar.gz" | sha256sum -c
+          tar -xzf Coincube-Vault-x86_64-unknown-linux-gnu.tar.gz
+          export OLD_LIANAD_PATH="$PWD/Coincube-Vault-x86_64-unknown-linux-gnu/lianad"
 
           # Run the functional tests
           pytest tests/ -vvv -n 8

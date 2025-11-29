@@ -746,7 +746,12 @@ pub enum Message {
     View(ViewMessage),
     Install(CoincubeDirectory, Network, UserFlow),
     Checked(Result<State, String>),
-    Run(CoincubeDirectory, app::config::Config, Network, CubeSettings),
+    Run(
+        CoincubeDirectory,
+        app::config::Config,
+        Network,
+        CubeSettings,
+    ),
     CubeCreated(Result<CubeSettings, String>),
 }
 
@@ -785,7 +790,7 @@ struct DeleteCubeModal {
     wallet_settings: Option<WalletSettings>,
     warning: Option<DeleteError>,
     deleted: bool,
-    delete_coincube_connect: bool,
+    delete_liana_connect: bool,
     user_role: Option<UserRole>,
     // `None` means we were not able to determine whether wallet uses internal bitcoind.
     internal_bitcoind: Option<bool>,
@@ -804,7 +809,7 @@ impl DeleteCubeModal {
             network_directory,
             warning: None,
             deleted: false,
-            delete_coincube_connect: false,
+            delete_liana_connect: false,
             internal_bitcoind,
             user_role: None,
         };
@@ -841,7 +846,7 @@ impl DeleteCubeModal {
                         self.cube.network,
                         &self.network_directory,
                         wallet_settings,
-                        self.delete_coincube_connect,
+                        self.delete_liana_connect,
                     )) {
                         self.warning = Some(e);
                         return Task::none();
@@ -874,7 +879,7 @@ impl DeleteCubeModal {
             Message::View(ViewMessage::DeleteCube(DeleteCubeMessage::DeleteLianaConnect(
                 delete,
             ))) => {
-                self.delete_coincube_connect = delete;
+                self.delete_liana_connect = delete;
             }
             _ => {}
         }
@@ -917,9 +922,9 @@ impl DeleteCubeModal {
         };
 
         let help_text_2 = match self.internal_bitcoind {
-            Some(true) => Some("(The Coincube-managed Bitcoin node for this network will not be affected by this action.)"),
+            Some(true) => Some("(The Liana-managed Bitcoin node for this network will not be affected by this action.)"),
             Some(false) => None,
-            None if has_vault => Some("(If you are using a Coincube-managed Bitcoin node, it will not be affected by this action.)"),
+            None if has_vault => Some("(If you are using a Liana-managed Bitcoin node, it will not be affected by this action.)"),
             _ => None,
         };
         let help_text_3 = "WARNING: This cannot be undone.";
@@ -942,10 +947,10 @@ impl DeleteCubeModal {
                     .push_maybe(self.wallet_settings.as_ref().and_then(|w| w.remote_backend_auth.as_ref()).map(|a| {
                         checkbox(
                             match self.user_role {
-                                Some(UserRole::Owner) | None => "Also permanently delete the Vault wallet from Coincube Connect (for all members).".to_string(),
-                                Some(UserRole::Member) => format!("Also disassociate {} from this Coincube Connect wallet.", a.email),
+                                Some(UserRole::Owner) | None => "Also permanently delete the Vault wallet from Liana Connect (for all members).".to_string(),
+                                Some(UserRole::Member) => format!("Also disassociate {} from this Liana Connect wallet.", a.email),
                             },
-                            self.delete_coincube_connect,
+                            self.delete_liana_connect,
                         )
                         .on_toggle_maybe(if !self.deleted {
                                 Some(|v| {
@@ -1087,7 +1092,10 @@ async fn check_network_datadir(path: NetworkDirectory) -> Result<State, String> 
                         .path()
                         .file_name()
                         .and_then(|n| n.to_str())
-                        .and_then(|n| n.parse::<coincube_core::miniscript::bitcoin::Network>().ok())
+                        .and_then(|n| {
+                            n.parse::<coincube_core::miniscript::bitcoin::Network>()
+                                .ok()
+                        })
                         .unwrap_or(coincube_core::miniscript::bitcoin::Network::Bitcoin);
 
                     let mut cubes = Vec::new();

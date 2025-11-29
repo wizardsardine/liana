@@ -3,8 +3,8 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use iced::{Subscription, Task};
 use coincube_ui::{widget::modal::Modal, widget::Element};
+use iced::{Subscription, Task};
 use tokio::task::JoinHandle;
 
 use crate::{
@@ -94,7 +94,9 @@ impl VaultExportModal {
                 format!("coincube-txs-{date}.csv")
             }
             ImportExportType::ExportPsbt(_) => "psbt.psbt".into(),
-            ImportExportType::ExportXpub(_) | ImportExportType::ImportXpub(_) => "coincube.pub".into(),
+            ImportExportType::ExportXpub(_) | ImportExportType::ImportXpub(_) => {
+                "coincube.pub".into()
+            }
             ImportExportType::Descriptor(descriptor) => {
                 let checksum = descriptor
                     .to_string()

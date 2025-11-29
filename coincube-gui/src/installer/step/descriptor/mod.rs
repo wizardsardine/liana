@@ -5,11 +5,11 @@ use std::{
     str::FromStr,
 };
 
-use iced::{Subscription, Task};
 use coincube_core::{
     descriptors::CoincubeDescriptor,
     miniscript::bitcoin::{bip32::Fingerprint, Network},
 };
+use iced::{Subscription, Task};
 
 use coincube_ui::{component::form, widget::Element};
 

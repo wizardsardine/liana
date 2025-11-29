@@ -3,11 +3,11 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use iced::{Subscription, Task};
 use coincube_core::miniscript::bitcoin::{
     bip32::{ChildNumber, Fingerprint},
     Network,
 };
+use iced::{Subscription, Task};
 
 use coincube_ui::widget::Element;
 

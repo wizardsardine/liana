@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
-use iced::Task;
 use coincube_ui::widget::*;
+use iced::Task;
 
 use super::{Cache, Menu, State};
 use crate::app::{message::Message, view, wallet::Wallet};

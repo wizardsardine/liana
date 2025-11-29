@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
-use iced::Task;
 use coincube_core::miniscript::bitcoin::Network;
 use coincube_ui::widget::Element;
+use iced::Task;
 
 use crate::app::cache::Cache;
 use crate::app::error::Error;

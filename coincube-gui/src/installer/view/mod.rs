@@ -1965,7 +1965,7 @@ pub fn choose_backend(progress: (usize, usize)) -> Element<'static, Message> {
                         Column::new()
                             .spacing(20)
                             .width(Length::FillPortion(1))
-                            .push(h3("Use Coincube Connect"))
+                            .push(h3("Use Liana Connect"))
                             .push(
                                 text::p2_medium(REMOTE_BACKEND_DESC).style(theme::text::secondary),
                             ),
@@ -2026,7 +2026,7 @@ pub fn login(progress: (usize, usize), connection_step: Element<Message>) -> Ele
                 .max_width(700)
                 .align_x(Alignment::Center)
                 .width(Length::FillPortion(1))
-                .push(h2("Coincube Connect"))
+                .push(h2("Liana Connect"))
                 .push(connection_step),
         )
         .center_x(Length::Fill),
@@ -2160,7 +2160,7 @@ pub fn connection_step_connected<'a>(
         .into()
 }
 
-pub const REMOTE_BACKEND_DESC: &str = "Use our service to instantly be ready to transact. Wizardsardine runs the infrastructure, allowing multiple computers or participants to connect and synchronize.\n\nThis is a simpler and safer option for people who want Wizardsardine to keep a backup of their descriptor. You are still in control of your keys, and Wizardsardine does not have any control over your funds, but it will be able to see your wallet's information, associated to an email address. Privacy focused users should run their own infrastructure instead.";
+pub const REMOTE_BACKEND_DESC: &str = "Use Wizardsardine service to instantly be ready to transact. Wizardsardine runs the infrastructure, allowing multiple computers or participants to connect and synchronize.\n\nThis is a simpler and safer option for people who want Wizardsardine to keep a backup of their descriptor. You are still in control of your keys, and Wizardsardine does not have any control over your funds, but it will be able to see your wallet's information, associated to an email address. Privacy focused users should run their own infrastructure instead.";
 
 pub const LOCAL_WALLET_DESC: &str = "Use your already existing Bitcoin node or automatically install one. The Vault wallet will not connect to any external server.\n\nThis is the most private option, but the data is locally stored on this computer, only. You must perform your own backups, and share the descriptor with other people you want to be able to access the wallet.";
 

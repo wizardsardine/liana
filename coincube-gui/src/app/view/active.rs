@@ -1,5 +1,5 @@
-use iced::{widget::Column, widget::Space, Length};
 use coincube_ui::{component::text::*, widget::*};
+use iced::{widget::Column, widget::Space, Length};
 
 use crate::app::view::message::Message;
 

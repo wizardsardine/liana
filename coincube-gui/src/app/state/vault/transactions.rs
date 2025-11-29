@@ -4,7 +4,6 @@ use std::{
     sync::Arc,
 };
 
-use iced::Task;
 use coincube_core::{
     miniscript::bitcoin::{OutPoint, Txid},
     spend::{SpendCreationError, MAX_FEERATE},
@@ -14,6 +13,7 @@ use coincube_ui::{
     widget::{modal::Modal, Element},
 };
 use coincubed::commands::CoinStatus;
+use iced::Task;
 
 pub const HISTORY_EVENT_PAGE_SIZE: u64 = 20;
 
@@ -481,10 +481,10 @@ async fn rbf(
     {
         CreateSpendResult::Success { psbt, .. } => psbt,
         CreateSpendResult::InsufficientFunds { missing } => {
-            return Err(
-                SpendCreationError::CoinSelection(coincube_core::spend::InsufficientFunds { missing })
-                    .into(),
-            );
+            return Err(SpendCreationError::CoinSelection(
+                coincube_core::spend::InsufficientFunds { missing },
+            )
+            .into());
         }
     };
 

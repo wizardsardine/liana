@@ -1,9 +1,9 @@
-use iced::Task;
 use coincube_ui::{component::form, widget::*};
 use coincubed::{
     config::ElectrumConfig,
     electrum_client::{self, ElectrumApi},
 };
+use iced::Task;
 
 use crate::{
     installer::{
@@ -56,10 +56,12 @@ impl DefineElectrum {
 
     pub fn apply(&mut self, ctx: &mut Context) -> bool {
         if self.can_try_ping() {
-            ctx.bitcoin_backend = Some(coincubed::config::BitcoinBackend::Electrum(ElectrumConfig {
-                addr: self.address.value.clone(),
-                validate_domain: self.validate_domain,
-            }));
+            ctx.bitcoin_backend = Some(coincubed::config::BitcoinBackend::Electrum(
+                ElectrumConfig {
+                    addr: self.address.value.clone(),
+                    validate_domain: self.validate_domain,
+                },
+            ));
             return true;
         }
         false

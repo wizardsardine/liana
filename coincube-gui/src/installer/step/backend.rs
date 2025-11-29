@@ -581,7 +581,8 @@ impl Step for ImportRemoteWallet {
             Message::ImportRemoteWallet(message::ImportRemoteWallet::ImportDescriptor(desc)) => {
                 self.imported_descriptor.value = desc;
                 if !self.imported_descriptor.value.is_empty() {
-                    if let Ok(desc) = CoincubeDescriptor::from_str(&self.imported_descriptor.value) {
+                    if let Ok(desc) = CoincubeDescriptor::from_str(&self.imported_descriptor.value)
+                    {
                         if self.network == Network::Bitcoin {
                             self.imported_descriptor.valid = desc.all_xpubs_net_is(self.network);
                         } else {

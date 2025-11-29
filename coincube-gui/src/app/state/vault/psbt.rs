@@ -3,12 +3,12 @@ use std::sync::Arc;
 
 use iced::Subscription;
 
-use iced::Task;
 use coincube_core::{
     descriptors::CoincubePolicy,
     miniscript::bitcoin::{bip32::Fingerprint, psbt::Psbt, Network, Txid},
 };
 use coincubed::commands::CoinStatus;
+use iced::Task;
 
 use coincube_ui::component::toast;
 use coincube_ui::{widget::modal, widget::Element};

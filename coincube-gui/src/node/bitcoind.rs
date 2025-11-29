@@ -697,8 +697,8 @@ impl fmt::Display for ConfigField {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ini::Ini;
     use coincube_core::miniscript::bitcoin::Network;
+    use ini::Ini;
 
     // Test the format of the internal bitcoind configuration file.
     #[test]

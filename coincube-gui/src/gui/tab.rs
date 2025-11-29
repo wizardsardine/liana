@@ -725,7 +725,7 @@ pub fn create_app_with_remote_backend(
     network: bitcoin::Network,
     config: app::Config,
 ) -> (app::App, iced::Task<app::Message>) {
-    // If someone modified the wallet_alias on Coincube-Connect,
+    // If someone modified the wallet_alias on Liana-Connect,
     // then the new alias is imported and stored in the settings file.
     if wallet.metadata.wallet_alias != wallet_settings.alias {
         let network_directory = coincube_dir.network_directory(network);

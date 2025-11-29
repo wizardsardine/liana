@@ -5,7 +5,6 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 
-use iced::{Subscription, Task};
 use coincube_core::miniscript::bitcoin::bip32::ChildNumber;
 use coincube_core::{
     descriptors::{CoincubeDescriptor, CoincubePolicy, PathInfo},
@@ -14,6 +13,7 @@ use coincube_core::{
         descriptor::DescriptorPublicKey,
     },
 };
+use iced::{Subscription, Task};
 
 use coincube_ui::{
     component::form,

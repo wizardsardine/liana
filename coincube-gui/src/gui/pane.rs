@@ -1,6 +1,6 @@
+use coincube_ui::{component::text::*, icon::plus_icon, theme, widget::*};
 use iced::{Length, Subscription, Task};
 use iced_aw::ContextMenu;
-use coincube_ui::{component::text::*, icon::plus_icon, theme, widget::*};
 
 use crate::{app, gui::Config};
 

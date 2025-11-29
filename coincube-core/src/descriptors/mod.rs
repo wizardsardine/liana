@@ -958,7 +958,8 @@ mod tests {
         //CoincubePolicy::new_legacy(owner_key, heir_key, (1 << 22) + 1).unwrap_err();
 
         // You can't use a null timelock in Miniscript.
-        CoincubePolicy::new_legacy(owner_key, [(0, heir_key)].iter().cloned().collect()).unwrap_err();
+        CoincubePolicy::new_legacy(owner_key, [(0, heir_key)].iter().cloned().collect())
+            .unwrap_err();
 
         let owner_key = PathInfo::Single(descriptor::DescriptorPublicKey::from_str("[aabb0011/10/4893]xpub661MyMwAqRbcFG59fiikD8UV762quhruT8K8bdjqy6N2o3LG7yohoCdLg1m2HAY1W6rfBrtauHkBhbfA4AQ3iazaJj5wVPhwgaRCHBW2DBg/<0;1>/*").unwrap());
         let heir_key = PathInfo::Single(descriptor::DescriptorPublicKey::from_str("[abcdef01]xpub661MyMwAqRbcFfxf71L4Dx4w5TmyNXrBicTEAM7vLzumxangwATWWgdJPb6xH1JHcJH9S3jNZx3fCnkkB1WyqrqGgavj1rehHcbythmruvZ/24/32/<0;1>/*").unwrap());
@@ -1159,7 +1160,8 @@ mod tests {
             [(timelock, heir_key.clone())].iter().cloned().collect(),
         )
         .unwrap_err();
-        CoincubePolicy::new(owner_key, [(timelock, heir_key)].iter().cloned().collect()).unwrap_err();
+        CoincubePolicy::new(owner_key, [(timelock, heir_key)].iter().cloned().collect())
+            .unwrap_err();
 
         // One of the xpub isn't normalized.
         let owner_key = PathInfo::Single(descriptor::DescriptorPublicKey::from_str("[abcdef01]xpub6Eze7yAT3Y1wGrnzedCNVYDXUqa9NmHVWck5emBaTbXtURbe1NWZbK9bsz1TiVE7Cz341PMTfYgFw1KdLWdzcM1UMFTcdQfCYhhXZ2HJvTW/<0;1>/*").unwrap());
@@ -1170,7 +1172,8 @@ mod tests {
             [(timelock, heir_key.clone())].iter().cloned().collect(),
         )
         .unwrap_err();
-        CoincubePolicy::new(owner_key, [(timelock, heir_key)].iter().cloned().collect()).unwrap_err();
+        CoincubePolicy::new(owner_key, [(timelock, heir_key)].iter().cloned().collect())
+            .unwrap_err();
 
         // A 1-of-N multisig as primary path.
         CoincubeDescriptor::from_str("wsh(or_d(multi(1,[573fb35b/48'/1'/0'/2']tpubDFKp9T7WAYDcENSjoifkrpq1gMDF47KGJcJrpxzX23Qor8wuGbrEVs9utNq1MDS8E2WXJSBk1qoPQLpwyokW7DiUNPwFuxQkL7owNkLAb9W/<0;1>/*,[573fb35c/48'/1'/1'/2']tpubDFGezyzuHJPhdP3jHGW7v7Hwes4Hihqv5W2yyCmRY9VZJCRchETvxrMC8uECeJZdxQ14V4iD4DecoArkUSDwj8ogYE9WEv4MNZr12thNHCs/<0;1>/*),and_v(v:multi(2,[573fb35b/48'/1'/2'/2']tpubDDwxQauiaU964vPzt5Vd7jnDHEUtp2Vc34PaWpEXg5TQ3bRccxnc1MKKh88Hi7xiMeZo9Tm6fBcq4UGXqnDtGUniJLjqAD8SjQ8Eci3aSR7/<0;1>/*,[573fb35c/48'/1'/3'/2']tpubDE37XAVB5CQ1x85md3BQ5uHCoMwT5fgT8X13zzCUQ3x5o2jskYxKjj7Qcxt1Jpj4QB8tqspn2dooPCekRuQDYrDHov7J1ueUNu2wcvgRDxr/<0;1>/*),older(1000))))#fccaqlhh").unwrap();
