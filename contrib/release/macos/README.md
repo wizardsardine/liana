@@ -28,7 +28,7 @@ They ask for a "Certificate Signing Request (CSR)" that you need to generate on 
 
 ```
 openssl genrsa -out coincubetech_coincube.key 2048
-openssl req -new -sha256 -key coincubetech_coincube.key -out coincubetech_coincube_codesigning.csr -subj "/emailAddress=robert@coincube.io, CN=COINCUBE TECHNOLOGY LLC, C=US"
+openssl req -new -sha256 -key coincubetech_coincube.key -out coincubetech_coincube_codesigning.csr -subj "/C=US/CN=COINCUBE TECHNOLOGY LLC/emailAddress=robert@coincube.io"
 ```
 
 (Note you have no choice in the size or type of the key here, they expect a RSA(2048) key.)
@@ -43,15 +43,19 @@ so we don't even have to convert it to PEM.
 Download `rcodesign`:
 
 ```
+
 curl -OL https://github.com/indygreg/apple-platform-rs/releases/download/apple-codesign%2F0.22.0/apple-codesign-0.22.0-x86_64-unknown-linux-musl.tar.gz
 tar -xzf apple-codesign-0.22.0-x86_64-unknown-linux-musl.tar.gz
 ./apple-codesign-0.22.0-x86_64-unknown-linux-musl/rcodesign --help
+
 ```
 
 Sign the packaged application using the `sign` command (mind `--code-signature-flags for the necessary hardened runtime):
 
 ```
+
 ./apple-codesign-0.22.0-x86_64-unknown-linux-musl/rcodesign sign --code-signature-flags runtime --pem-source coincubetech_coincube.key --der-source allen_robert_coincube_codesigning.cer Coincube.app
+
 ```
 
 You can see the chain of certificates was applied using the `diff-signatures` command against
@@ -66,7 +70,9 @@ https://gregoryszorc.com/docs/apple-codesign/main/apple_codesign_rcodesign.html#
 - Use the `notary-submit` command to request notarization
 
 ```
+
 ./apple-codesign-0.22.0-x86_64-unknown-linux-musl/rcodesign notary-submit --max-wait-seconds 600 --api-key-path ./encoded_appstore_api_key.json --staple Coincube.app
+
 ```
 
 According to
@@ -88,3 +94,7 @@ Resources:
 Resources on packaging an application for MacOS:
 
 - https://developer.apple.com/library/archive/documentation/CoreFoundation/Conceptual/CFBundles/BundleTypes/BundleTypes.html#//apple_ref/doc/uid/10000123i-CH101-SW5
+
+```
+
+```
