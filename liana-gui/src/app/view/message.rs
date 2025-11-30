@@ -73,6 +73,7 @@ pub enum CreateSpendMessage {
     SelectPath(usize),
     Generate,
     SendMaxToRecipient(usize),
+    FetchFeeEstimate(usize),
     Clear,
 }
 

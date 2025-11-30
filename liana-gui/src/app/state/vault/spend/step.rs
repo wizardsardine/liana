@@ -28,13 +28,14 @@ use crate::{
         menu::Menu,
         message::Message,
         state::{fiat_converter_for_wallet, vault::psbt},
-        view::{self, vault::fiat::FiatAmount},
+        view::{self, vault::fiat::FiatAmount, CreateSpendMessage},
         wallet::Wallet,
     },
     daemon::{
         model::{coin_is_owned, remaining_sequence, Coin, CreateSpendResult, SpendTx},
         Daemon,
     },
+    services::feeestimation::fee_estimation::FeeEstimator,
 };
 
 /// See: https://github.com/wizardsardine/liana/blob/master/src/commands/mod.rs#L32
@@ -162,6 +163,7 @@ pub struct DefineSpend {
     batch_label: form::Value<String>,
     amount_left_to_select: Option<Amount>,
     feerate: form::Value<String>,
+    loading_fee_estimate: Option<usize>,
     fee_amount: Option<Amount>,
     generated: Option<(Psbt, Vec<String>)>,
     warning: Option<Error>,
@@ -207,6 +209,7 @@ impl DefineSpend {
             amount_left_to_select: None,
             warning: None,
             is_first_step,
+            loading_fee_estimate: None,
         }
     }
 
@@ -621,6 +624,29 @@ impl Step for DefineSpend {
                             self.feerate.valid = false;
                         }
                         self.warning = None;
+                        self.loading_fee_estimate = None;
+                    }
+                    view::CreateSpendMessage::FetchFeeEstimate(block_target) => {
+                        self.loading_fee_estimate = Some(block_target);
+                        return Task::perform(
+                            async move {
+                                let fee_estimator = FeeEstimator::new();
+                                let feerate = match block_target {
+                                    1 => fee_estimator.get_high_priority_rate().await,
+                                    6 => fee_estimator.get_mid_priority_rate().await,
+                                    _ => fee_estimator.get_low_priority_rate().await,
+                                };
+                                match feerate {
+                                    Ok(feerate) => feerate.to_string(),
+                                    Err(err) => format!("error:{}", err),
+                                }
+                            },
+                            |fee| {
+                                Message::View(view::Message::CreateSpend(
+                                    CreateSpendMessage::FeerateEdited(fee),
+                                ))
+                            },
+                        );
                     }
                     view::CreateSpendMessage::Generate => {
                         let inputs: Vec<OutPoint> = self
@@ -834,6 +860,7 @@ impl Step for DefineSpend {
             self.fee_amount.as_ref(),
             self.warning.as_ref(),
             self.is_first_step,
+            self.loading_fee_estimate,
         )
     }
 
