@@ -13,8 +13,8 @@ pub use vault::fiat::FiatAmountConverter;
 pub use vault::warning::warn;
 
 use iced::{
-    widget::{column, row, scrollable, Space},
-    Length,
+    widget::{column, container, row, scrollable, Space},
+    Alignment, Length,
 };
 
 use liana_ui::{
@@ -559,4 +559,36 @@ fn modal_section<'a, T: 'a>(menu: Container<'a, T>) -> Container<'a, T> {
         .center_x(Length::Fill)
         .width(Length::Fill)
         .height(Length::Fill)
+}
+
+pub fn placeholder<'a, T: Into<Element<'a, Message>>>(
+    icon: T,
+    title: &'a str,
+    subtitle: &'a str,
+) -> Element<'a, Message> {
+    let content = Column::new()
+        .push(icon)
+        .push(text(title).style(theme::text::secondary).bold())
+        .push(
+            text(subtitle)
+                .size(P2_SIZE)
+                .style(theme::text::secondary)
+                .align_x(Alignment::Center),
+        )
+        .spacing(16)
+        .align_x(Alignment::Center);
+
+    Container::new(content)
+        .width(Length::Fill)
+        .padding(60)
+        .center_x(Length::Fill)
+        .style(|_| container::Style {
+            background: Some(iced::Background::Color(color::GREY_6)),
+            border: iced::Border {
+                radius: 20.0.into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        })
+        .into()
 }

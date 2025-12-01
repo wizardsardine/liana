@@ -264,3 +264,7 @@ pub fn eye_slash_icon() -> Text<'static> {
 pub fn cube_icon() -> Text<'static> {
     bootstrap_icon('\u{F1C8}')
 }
+
+pub fn receipt_icon() -> Text<'static> {
+    bootstrap_icon('\u{F50F}')
+}
