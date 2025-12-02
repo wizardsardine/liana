@@ -39,9 +39,9 @@ impl DataDirectory {
         dir.push("coincubed_watchonly_wallet");
         dir
     }
-    pub fn lianad_rpc_socket_path(&self) -> PathBuf {
+    pub fn coincubed_rpc_socket_path(&self) -> PathBuf {
         let mut dir = self.0.clone();
-        dir.push("lianad_rpc");
+        dir.push("coincubed_rpc");
         dir
     }
 }

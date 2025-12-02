@@ -294,7 +294,7 @@ pub fn about_section<'a>(
     menu: &'a Menu,
     cache: &'a Cache,
     warning: Option<&Error>,
-    lianad_version: Option<&String>,
+    coincubed_version: Option<&String>,
 ) -> Element<'a, Message> {
     let header = header("About", SettingsMessage::AboutSection);
 
@@ -316,7 +316,8 @@ pub fn about_section<'a>(
                     Column::new()
                         .push(text(format!("coincube-gui v{}", crate::VERSION)))
                         .push_maybe(
-                            lianad_version.map(|version| text(format!("coincubed v{}", version))),
+                            coincubed_version
+                                .map(|version| text(format!("coincubed v{}", version))),
                         ),
                 ),
             ),

@@ -218,7 +218,7 @@ fn coin_to_candidate(
 
 impl DaemonControl {
     // Get the derived descriptor for this coin
-    fn derived_desc(&self, coin: &Coin) -> descriptors::DerivedSinglePathLianaDesc {
+    fn derived_desc(&self, coin: &Coin) -> descriptors::DerivedSinglePathCoincubeDesc {
         let desc = if coin.is_change {
             self.config.main_descriptor.change_descriptor()
         } else {
@@ -1543,7 +1543,7 @@ mod tests {
 
     #[test]
     fn getinfo() {
-        let ms = DummyLiana::new(DummyBitcoind::new(), DummyDatabase::new());
+        let ms = DummyCoincube::new(DummyBitcoind::new(), DummyDatabase::new());
         // We can query getinfo
         ms.control().get_info();
         ms.shutdown();
@@ -1551,7 +1551,7 @@ mod tests {
 
     #[test]
     fn getnewaddress() {
-        let ms = DummyLiana::new(DummyBitcoind::new(), DummyDatabase::new());
+        let ms = DummyCoincube::new(DummyBitcoind::new(), DummyDatabase::new());
 
         let control = &ms.control();
         // We can get an address (it will have index 1)
@@ -1578,7 +1578,7 @@ mod tests {
 
     #[test]
     fn listaddresses() {
-        let ms = DummyLiana::new(DummyBitcoind::new(), DummyDatabase::new());
+        let ms = DummyCoincube::new(DummyBitcoind::new(), DummyDatabase::new());
 
         let control = &ms.control();
 
@@ -1692,7 +1692,7 @@ mod tests {
 
     #[test]
     fn list_revealed_addresses() {
-        let ms = DummyLiana::new(DummyBitcoind::new(), DummyDatabase::new());
+        let ms = DummyCoincube::new(DummyBitcoind::new(), DummyDatabase::new());
 
         let control = &ms.control();
         let mut db_conn = control.db().lock().unwrap().connection();
@@ -2008,7 +2008,7 @@ mod tests {
             output: vec![],
         };
         let dummy_op = bitcoin::OutPoint::new(dummy_tx.compute_txid(), 0);
-        let ms = DummyLiana::new(DummyBitcoind::new(), DummyDatabase::new());
+        let ms = DummyCoincube::new(DummyBitcoind::new(), DummyDatabase::new());
         let control = &ms.control();
         let mut db_conn = control.db().lock().unwrap().connection();
         db_conn.new_txs(&[dummy_tx]);
@@ -2547,7 +2547,7 @@ mod tests {
             .txs
             .insert(dummy_op_a.txid, (dummy_tx.clone(), None));
         dummy_bitcoind.txs.insert(dummy_op_b.txid, (dummy_tx, None));
-        let ms = DummyLiana::new(dummy_bitcoind, DummyDatabase::new());
+        let ms = DummyCoincube::new(dummy_bitcoind, DummyDatabase::new());
         let control = &ms.control();
         let mut db_conn = control.db().lock().unwrap().connection();
 
@@ -2695,7 +2695,7 @@ mod tests {
         };
         let dummy_txid_a = dummy_psbt_a.unsigned_tx.compute_txid();
         dummy_bitcoind.txs.insert(dummy_txid_a, (dummy_tx_a, None));
-        let ms = DummyLiana::new(dummy_bitcoind, DummyDatabase::new());
+        let ms = DummyCoincube::new(dummy_bitcoind, DummyDatabase::new());
         let control = &ms.control();
         let mut db_conn = control.db().lock().unwrap().connection();
         // The spend needs to be in DB before using RBF.
@@ -2937,7 +2937,7 @@ mod tests {
             ),
         );
 
-        let ms = DummyLiana::new(DummyBitcoind::new(), db);
+        let ms = DummyCoincube::new(DummyBitcoind::new(), db);
 
         let control = &ms.control();
         let mut db_conn = control.db.connection();
@@ -3074,7 +3074,7 @@ mod tests {
             ),
         );
 
-        let ms = DummyLiana::new(DummyBitcoind::new(), DummyDatabase::new());
+        let ms = DummyCoincube::new(DummyBitcoind::new(), DummyDatabase::new());
         let control = &ms.control();
         let mut db_conn = control.db.connection();
         let txs: Vec<_> = txs_map.values().map(|(tx, _)| tx.clone()).collect();
@@ -3134,7 +3134,7 @@ mod tests {
         };
         let dummy_txid = dummy_tx.compute_txid();
         let dummy_op = bitcoin::OutPoint::new(dummy_txid, 0);
-        let ms = DummyLiana::new_timelock(DummyBitcoind::new(), DummyDatabase::new(), 10);
+        let ms = DummyCoincube::new_timelock(DummyBitcoind::new(), DummyDatabase::new(), 10);
         let control = &ms.control();
         let mut db_conn = control.db().lock().unwrap().connection();
         db_conn.new_txs(&[dummy_tx]);

@@ -284,7 +284,7 @@ pub fn sync_status(
         // For external daemon or if we otherwise don't know the node type,
         // treat it the same as bitcoind to be sure we don't mislead the user.
         if daemon_backend == DaemonBackend::RemoteBackend
-            || daemon_backend == DaemonBackend::EmbeddedLianad(Some(NodeType::Electrum))
+            || daemon_backend == DaemonBackend::EmbeddedCoincubed(Some(NodeType::Electrum))
         {
             return SyncStatus::WalletFullScan;
         }
@@ -298,7 +298,8 @@ pub fn sync_status(
     // TODO: should we check the daemon version at GUI startup?
     else if last_poll <= last_poll_at_startup
         && (daemon_backend.is_embedded()
-            || (daemon_backend == DaemonBackend::ExternalLianad && last_poll_at_startup.is_some()))
+            || (daemon_backend == DaemonBackend::ExternalCoincubed
+                && last_poll_at_startup.is_some()))
     {
         return SyncStatus::LatestWalletSync;
     }

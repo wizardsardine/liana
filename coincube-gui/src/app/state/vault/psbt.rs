@@ -708,7 +708,7 @@ mod tests {
     use super::*;
     use crate::{
         app::{cache::Cache, state::PsbtsPanel},
-        daemon::client::{Lianad, Request},
+        daemon::client::{Coincubed, Request},
         utils::{mock::Daemon, sandbox::Sandbox},
     };
 
@@ -775,7 +775,7 @@ mod tests {
         ]);
         let wallet = Arc::new(Wallet::new(CoincubeDescriptor::from_str(DESC).unwrap()));
         let sandbox: Sandbox<PsbtsPanel> = Sandbox::new(PsbtsPanel::new(wallet.clone()));
-        let client = Arc::new(Lianad::new(daemon.run()));
+        let client = Arc::new(Coincubed::new(daemon.run()));
         let cache = Cache::default();
         let sandbox = sandbox
             .load(client.clone(), &Cache::default(), wallet)

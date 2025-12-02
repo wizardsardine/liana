@@ -4,7 +4,7 @@ from bip380.descriptors import Descriptor
 from concurrent import futures
 from test_framework.bitcoind import Bitcoind
 from test_framework.electrs import Electrs
-from test_framework.coincubed import Lianad
+from test_framework.coincubed import Coincubed
 from test_framework.signer import SingleSigner, MultiSigner
 from test_framework.utils import (
     BITCOIN_BACKEND_TYPE,
@@ -185,7 +185,7 @@ def coincubed(bitcoin_backend, directory):
         )
     )
 
-    coincubed = Lianad(
+    coincubed = Coincubed(
         datadir,
         signer,
         main_desc,
@@ -204,7 +204,7 @@ def coincubed(bitcoin_backend, directory):
 
 # This can currently only be used with Taproot if no signing is required.
 @pytest.fixture
-def lianad_with_deriv_paths(bitcoin_backend, directory):
+def coincubed_with_deriv_paths(bitcoin_backend, directory):
     datadir = os.path.join(directory, "coincubed")
     os.makedirs(datadir, exist_ok=True)
 
@@ -227,7 +227,7 @@ def lianad_with_deriv_paths(bitcoin_backend, directory):
         )
     )
 
-    coincubed = Lianad(
+    coincubed = Coincubed(
         datadir,
         signer,
         main_desc,
@@ -283,7 +283,7 @@ def multisig_desc(multi_signer, csv_value, is_taproot, prim_thresh, recov_thresh
 
 
 @pytest.fixture
-def lianad_multisig(bitcoin_backend, directory):
+def coincubed_multisig(bitcoin_backend, directory):
     datadir = os.path.join(directory, "coincubed")
     os.makedirs(datadir, exist_ok=True)
 
@@ -292,7 +292,7 @@ def lianad_multisig(bitcoin_backend, directory):
     signer = MultiSigner(4, {csv_value: 5}, is_taproot=USE_TAPROOT)
     main_desc = Descriptor.from_str(multisig_desc(signer, csv_value, USE_TAPROOT, 3, 2))
 
-    coincubed = Lianad(
+    coincubed = Coincubed(
         datadir,
         signer,
         main_desc,
@@ -310,7 +310,7 @@ def lianad_multisig(bitcoin_backend, directory):
 
 
 @pytest.fixture
-def lianad_multisig_legacy_datadir(bitcoin_backend, directory):
+def coincubed_multisig_legacy_datadir(bitcoin_backend, directory):
     datadir = os.path.join(directory, "coincubed")
     os.makedirs(datadir, exist_ok=True)
 
@@ -319,7 +319,7 @@ def lianad_multisig_legacy_datadir(bitcoin_backend, directory):
     signer = MultiSigner(4, {csv_value: 5}, is_taproot=USE_TAPROOT)
     main_desc = Descriptor.from_str(multisig_desc(signer, csv_value, USE_TAPROOT, 3, 2))
 
-    coincubed = Lianad(datadir, signer, main_desc, bitcoin_backend, legacy_datadir=True)
+    coincubed = Coincubed(datadir, signer, main_desc, bitcoin_backend, legacy_datadir=True)
 
     try:
         coincubed.start()
@@ -332,7 +332,7 @@ def lianad_multisig_legacy_datadir(bitcoin_backend, directory):
 
 
 @pytest.fixture
-def lianad_multisig_2_of_2(bitcoin_backend, directory):
+def coincubed_multisig_2_of_2(bitcoin_backend, directory):
     datadir = os.path.join(directory, "coincubed")
     os.makedirs(datadir, exist_ok=True)
 
@@ -341,7 +341,7 @@ def lianad_multisig_2_of_2(bitcoin_backend, directory):
     signer = MultiSigner(2, {csv_value: 1}, is_taproot=USE_TAPROOT)
     main_desc = Descriptor.from_str(multisig_desc(signer, csv_value, USE_TAPROOT, 2, 1))
 
-    coincubed = Lianad(
+    coincubed = Coincubed(
         datadir,
         signer,
         main_desc,
@@ -381,7 +381,7 @@ def multipath_desc(multi_signer, csv_values, is_taproot):
 
 
 @pytest.fixture
-def lianad_multipath(bitcoin_backend, directory):
+def coincubed_multipath(bitcoin_backend, directory):
     datadir = os.path.join(directory, "coincubed")
     os.makedirs(datadir, exist_ok=True)
 
@@ -394,7 +394,7 @@ def lianad_multipath(bitcoin_backend, directory):
         multipath_desc(signer, csv_values, is_taproot=USE_TAPROOT)
     )
 
-    coincubed = Lianad(
+    coincubed = Coincubed(
         datadir,
         signer,
         main_desc,

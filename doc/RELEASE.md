@@ -14,7 +14,7 @@ This document details the release process.
   v5](https://github.com/wizardsardine/liana/pull/1037).)
 - Update the GUI to use the latest version of this branch. Don't forget to update both the
   Cargo.toml and the reproducible build. Don't forget to `cargo build` after `cargo update -p
-liana`. (Example: [the PR for v5](https://github.com/wizardsardine/liana/pull/1038).)
+coincube-core`. (Example: [the PR for v5](https://github.com/wizardsardine/liana/pull/1038).)
 - Make sure the documentation is up to date (build doc, usage doc, `TRY.md`, etc..)
 - Create a `vA.Brc1` tag on this branch and push it to the Github repo.
 - Make a reproducible release build on this tag using the
@@ -31,18 +31,13 @@ liana`. (Example: [the PR for v5](https://github.com/wizardsardine/liana/pull/10
 - Remove the "rc" suffix in the version string on the release branch. Don't forget the release
   script. (Example: [this PR for v5](https://github.com/wizardsardine/liana/pull/1067).)
 - Update the Coincube version in the GUI to the latest of the release branch. (Don't forget to `cargo
-build` after having `cargo update -p liana`.)
+build` after having `cargo update -p coincube-core`.)
 - Create a new `vA.B` tag on the tip of the release branch. Don't forget to sign the tag and include
   the release notes.
 - Make a reproducible release build for this tag.
 - Create a Github release for this tag. Don't forget to include the release notes as well as
   instructions on what binaries a user should pick.
-- If necessary, write a companion blog post on [the blog](https://wizardsardine.com/blog/), update
-  the link to the binaries on [the website](https://wizardsardine.com/liana/), brag on social
-  medias.
 - If possible push the Coincube library to [crates.io](https://crates.io).
-- Update the package managers with the new version. As of this writing we only update the [AUR
-  package](https://aur.archlinux.org/packages/liana-bin) ourselves.
 - Celebrate.
 
 In order to build the release assets:

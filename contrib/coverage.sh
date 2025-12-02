@@ -10,9 +10,9 @@ fi
 
 cargo clean
 
-rm -f "lianad_coverage_*.profraw"
-LLVM_PROFILE_FILE="lianad_coverage_%m.profraw" RUSTFLAGS="-Zinstrument-coverage" RUSTDOCFLAGS="$RUSTFLAGS -Z unstable-options --persist-doctests target/debug/doctestbins" cargo +nightly build --all-features
-LLVM_PROFILE_FILE="lianad_coverage_%m.profraw" RUSTFLAGS="-Zinstrument-coverage" RUSTDOCFLAGS="$RUSTFLAGS -Z unstable-options --persist-doctests target/debug/doctestbins" cargo +nightly test --all-features
+rm -f "coincubed_coverage_*.profraw"
+LLVM_PROFILE_FILE="coincubed_coverage_%m.profraw" RUSTFLAGS="-Zinstrument-coverage" RUSTDOCFLAGS="$RUSTFLAGS -Z unstable-options --persist-doctests target/debug/doctestbins" cargo +nightly build --all-features
+LLVM_PROFILE_FILE="coincubed_coverage_%m.profraw" RUSTFLAGS="-Zinstrument-coverage" RUSTDOCFLAGS="$RUSTFLAGS -Z unstable-options --persist-doctests target/debug/doctestbins" cargo +nightly test --all-features
 pytest -n $JOBS
 
 grcov . --source-dir ./src/ --binary-path ./target/debug/ -t html --branch --ignore-not-existing --llvm -o ./target/grcov/

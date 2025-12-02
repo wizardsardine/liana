@@ -113,7 +113,7 @@ $ coincube-cli --conf ./signet_config.toml getinfo
 }
 ```
 
-A sample configuration file is available [here](../contrib/lianad_config_example.toml). Notably you
+A sample configuration file is available [here](../contrib/coincubed_config_example.toml). Notably you
 will need to generate an output descriptor. The easiest way to achieve it is to use the Coincube GUI's
 installer (see above).
 

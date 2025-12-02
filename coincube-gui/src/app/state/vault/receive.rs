@@ -452,7 +452,7 @@ mod tests {
     use crate::{
         app::{cache::Cache, view::Message as viewMessage, Message},
         daemon::{
-            client::{Lianad, Request},
+            client::{Coincubed, Request},
             model::*,
         },
         utils::{mock::Daemon, sandbox::Sandbox},
@@ -493,7 +493,7 @@ mod tests {
             CoincubeDirectory::new(PathBuf::new()),
             wallet.clone(),
         ));
-        let client = Arc::new(Lianad::new(daemon.run()));
+        let client = Arc::new(Coincubed::new(daemon.run()));
         let cache = Cache::default();
         let sandbox = sandbox.load(client.clone(), &cache, wallet).await;
         let sandbox = sandbox

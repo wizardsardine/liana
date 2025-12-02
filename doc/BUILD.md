@@ -92,7 +92,7 @@ repository, except if using Windows in which case only `coincube-gui` will be bu
 
 ```
 $ ls target/release/
-build  deps  examples  incremental  coincube-cli  coincube-cli.d  coincubed  coincubed.d  coincube-gui  coincube-gui.d  libliana.d  libcoincube_gui.d  libcoincube_gui.rlib  libliana.rlib  libcoincube_ui.d  libcoincube_ui.rlib
+build  deps  examples  incremental  coincube  coincube-cli  coincube-cli.d  coincubed  coincubed.d libcoincube_core.d libcoincube_core.rlib libcoincube_gui.d libcoincube_gui.rlib  libcoincube_ui.d  libcoincube_ui.rlib libcoincubed.d libcoincubed.rlib
 ```
 
 Whether your are building the whole wallet or only the daemon, make sure not to forget the

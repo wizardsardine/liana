@@ -62,7 +62,7 @@ impl Daemon for EmbeddedDaemon {
             .bitcoin_backend
             .as_ref()
             .map(node::NodeType::from);
-        DaemonBackend::EmbeddedLianad(node_type)
+        DaemonBackend::EmbeddedCoincubed(node_type)
     }
 
     fn config(&self) -> Option<&Config> {

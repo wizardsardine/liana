@@ -477,7 +477,7 @@ fn derived_desc(
     secp: &secp256k1::Secp256k1<secp256k1::VerifyOnly>,
     desc: &descriptors::CoincubeDescriptor,
     coin: &CandidateCoin,
-) -> descriptors::DerivedSinglePathLianaDesc {
+) -> descriptors::DerivedSinglePathCoincubeDesc {
     let desc = if coin.is_change {
         desc.change_descriptor()
     } else {

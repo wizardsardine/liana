@@ -402,12 +402,12 @@ mod tests {
     #[cfg(not(target_os = "macos"))]
     #[test]
     fn server_sanity_check() {
-        let ms = DummyLiana::new_server(DummyBitcoind::new(), DummyDatabase::new());
+        let ms = DummyCoincube::new_server(DummyBitcoind::new(), DummyDatabase::new());
         let socket_path: path::PathBuf = [
             ms.tmp_dir.as_path(),
             path::Path::new("d"),
             path::Path::new("bitcoin"),
-            path::Path::new("lianad_rpc"),
+            path::Path::new("coincubed_rpc"),
         ]
         .iter()
         .collect();

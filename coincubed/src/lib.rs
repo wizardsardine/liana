@@ -481,7 +481,7 @@ impl DaemonHandle {
                 .spawn({
                     let shutdown = rpcserver_shutdown.clone();
                     move || {
-                        server::run(&data_dir.lianad_rpc_socket_path(), control, shutdown)?;
+                        server::run(&data_dir.coincubed_rpc_socket_path(), control, shutdown)?;
                         Ok(())
                     }
                 })
@@ -744,7 +744,7 @@ mod tests {
     }
 
     // TODO: we could move the dummy bitcoind thread stuff to the bitcoind module to test the
-    // bitcoind interface, and use the DummyLiana from testutils to sanity check the startup.
+    // bitcoind interface, and use the DummyCoincube from testutils to sanity check the startup.
     // Note that startup as checked by this unit test is also tested in the functional test
     // framework.
     #[test]
@@ -758,7 +758,7 @@ mod tests {
         let wo_path: path::PathBuf = [
             data_dir.as_path(),
             path::Path::new("bitcoin"),
-            path::Path::new("lianad_watchonly_wallet"),
+            path::Path::new("coincubed_watchonly_wallet"),
         ]
         .iter()
         .collect();

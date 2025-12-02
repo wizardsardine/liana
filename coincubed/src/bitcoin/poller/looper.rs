@@ -28,7 +28,7 @@ fn update_coins(
     bit: &impl BitcoinInterface,
     db_conn: &mut Box<dyn DatabaseConnection>,
     previous_tip: &BlockChainTip,
-    descs: &[descriptors::SinglePathLianaDesc],
+    descs: &[descriptors::SinglePathCoincubeDesc],
     secp: &secp256k1::Secp256k1<secp256k1::VerifyOnly>,
 ) -> UpdatedCoins {
     let network = db_conn.network();
@@ -241,7 +241,7 @@ fn new_tip(bit: &impl BitcoinInterface, current_tip: &BlockChainTip) -> TipUpdat
 fn updates(
     db_conn: &mut Box<dyn DatabaseConnection>,
     bit: &mut impl BitcoinInterface,
-    descs: &[descriptors::SinglePathLianaDesc],
+    descs: &[descriptors::SinglePathCoincubeDesc],
     secp: &secp256k1::Secp256k1<secp256k1::VerifyOnly>,
 ) {
     // Check if there was a new block before we update our state.
@@ -330,7 +330,7 @@ fn updates(
 fn rescan_check(
     db_conn: &mut Box<dyn DatabaseConnection>,
     bit: &mut impl BitcoinInterface,
-    descs: &[descriptors::SinglePathLianaDesc],
+    descs: &[descriptors::SinglePathCoincubeDesc],
     secp: &secp256k1::Secp256k1<secp256k1::VerifyOnly>,
 ) {
     log::debug!("Checking the state of an ongoing rescan if there is any");
@@ -399,7 +399,7 @@ pub fn poll(
     bit: &mut sync::Arc<sync::Mutex<dyn BitcoinInterface>>,
     db: &sync::Arc<sync::Mutex<dyn DatabaseInterface>>,
     secp: &secp256k1::Secp256k1<secp256k1::VerifyOnly>,
-    descs: &[descriptors::SinglePathLianaDesc],
+    descs: &[descriptors::SinglePathCoincubeDesc],
 ) {
     let mut db_conn = db.connection();
     updates(&mut db_conn, bit, descs, secp);

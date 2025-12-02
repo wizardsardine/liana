@@ -608,7 +608,7 @@ def test_sweep(coincubed, bitcoind):
 
 @pytest.mark.parametrize("feerate", [1, 2])
 @pytest.mark.skipif(not USE_TAPROOT, reason="This tests a Taproot-specific bug.")
-def test_tr_multisig_2_of_2_feerate_is_met(feerate, lianad_multisig_2_of_2, bitcoind):
+def test_tr_multisig_2_of_2_feerate_is_met(feerate, coincubed_multisig_2_of_2, bitcoind):
     """
     A regression test for https://github.com/wizardsardine/liana/issues/1371.
 
@@ -620,21 +620,21 @@ def test_tr_multisig_2_of_2_feerate_is_met(feerate, lianad_multisig_2_of_2, bitc
     """
     # Get a coin.
     deposit_txid = bitcoind.rpc.sendtoaddress(
-        lianad_multisig_2_of_2.rpc.getnewaddress()["address"], 0.001
+        coincubed_multisig_2_of_2.rpc.getnewaddress()["address"], 0.001
     )
     bitcoind.generate_block(1, wait_for_mempool=deposit_txid)
     wait_for(
-        lambda: len(lianad_multisig_2_of_2.rpc.listcoins(["confirmed"])["coins"]) == 1
+        lambda: len(coincubed_multisig_2_of_2.rpc.listcoins(["confirmed"])["coins"]) == 1
     )
-    coin = lianad_multisig_2_of_2.rpc.listcoins(["confirmed"])["coins"][0]
+    coin = coincubed_multisig_2_of_2.rpc.listcoins(["confirmed"])["coins"][0]
 
     # Refresh the coin at the given feerate.
-    res = lianad_multisig_2_of_2.rpc.createspend({}, [coin["outpoint"]], feerate)
+    res = coincubed_multisig_2_of_2.rpc.createspend({}, [coin["outpoint"]], feerate)
     spend_psbt = PSBT.from_base64(res["psbt"])
-    signed_psbt = lianad_multisig_2_of_2.signer.sign_psbt(spend_psbt, [0, 1])
-    lianad_multisig_2_of_2.rpc.updatespend(signed_psbt.to_base64())
+    signed_psbt = coincubed_multisig_2_of_2.signer.sign_psbt(spend_psbt, [0, 1])
+    coincubed_multisig_2_of_2.rpc.updatespend(signed_psbt.to_base64())
     spend_txid = signed_psbt.tx.txid().hex()
-    lianad_multisig_2_of_2.rpc.broadcastspend(spend_txid)
+    coincubed_multisig_2_of_2.rpc.broadcastspend(spend_txid)
 
     # Check the tx fee and weight in mempool are as expected.
     res = bitcoind.rpc.getmempoolentry(spend_txid)

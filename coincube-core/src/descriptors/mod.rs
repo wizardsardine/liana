@@ -29,17 +29,17 @@ pub mod analysis;
 pub use analysis::*;
 
 #[derive(Debug)]
-pub enum LianaDescError {
+pub enum CoincubeDescError {
     Miniscript(miniscript::Error),
     DescKey(DescKeyError),
-    Policy(LianaPolicyError),
+    Policy(CoincubePolicyError),
     /// Different number of PSBT vs tx inputs, etc..
     InsanePsbt,
     /// Not all inputs' sequence the same, not all inputs signed with the same key, ..
     InconsistentPsbt,
 }
 
-impl std::fmt::Display for LianaDescError {
+impl std::fmt::Display for CoincubeDescError {
     fn fmt(&self, f: &mut fmt::Formatter) -> std::fmt::Result {
         match self {
             Self::Miniscript(e) => write!(f, "Miniscript error: '{}'.", e),
@@ -51,11 +51,11 @@ impl std::fmt::Display for LianaDescError {
     }
 }
 
-impl error::Error for LianaDescError {}
+impl error::Error for CoincubeDescError {}
 
-impl From<LianaPolicyError> for LianaDescError {
-    fn from(e: LianaPolicyError) -> LianaDescError {
-        LianaDescError::Policy(e)
+impl From<CoincubePolicyError> for CoincubeDescError {
+    fn from(e: CoincubePolicyError) -> CoincubeDescError {
+        CoincubeDescError::Policy(e)
     }
 }
 
@@ -87,23 +87,23 @@ fn key_is_for_path(
     false
 }
 
-/// An [SinglePathLianaDesc] that contains multipath keys for (and only for) the receive keychain
+/// An [SinglePathCoincubeDesc] that contains multipath keys for (and only for) the receive keychain
 /// and the change keychain.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CoincubeDescriptor {
     multi_desc: descriptor::Descriptor<descriptor::DescriptorPublicKey>,
-    receive_desc: SinglePathLianaDesc,
-    change_desc: SinglePathLianaDesc,
+    receive_desc: SinglePathCoincubeDesc,
+    change_desc: SinglePathCoincubeDesc,
 }
 
 /// A Miniscript descriptor with a main, unencombered, branch (the main owner of the coins)
 /// and a timelocked branch (the heir). All keys in this descriptor are singlepath.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SinglePathLianaDesc(descriptor::Descriptor<descriptor::DescriptorPublicKey>);
+pub struct SinglePathCoincubeDesc(descriptor::Descriptor<descriptor::DescriptorPublicKey>);
 
 /// Derived (containing only raw Bitcoin public keys) version of the inheritance descriptor.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct DerivedSinglePathLianaDesc(descriptor::Descriptor<DerivedPublicKey>);
+pub struct DerivedSinglePathCoincubeDesc(descriptor::Descriptor<DerivedPublicKey>);
 
 impl fmt::Display for CoincubeDescriptor {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -112,7 +112,7 @@ impl fmt::Display for CoincubeDescriptor {
 }
 
 impl str::FromStr for CoincubeDescriptor {
-    type Err = LianaDescError;
+    type Err = CoincubeDescError;
 
     fn from_str(s: &str) -> Result<CoincubeDescriptor, Self::Err> {
         // Parse a descriptor and check it is a multipath descriptor corresponding to a valid Coincube
@@ -121,7 +121,7 @@ impl str::FromStr for CoincubeDescriptor {
         // them explicitly. See https://github.com/rust-bitcoin/rust-miniscript/issues/734.
         let desc = descriptor::Descriptor::<descriptor::DescriptorPublicKey>::from_str(s)
             .and_then(|desc| desc.sanity_check().map(|_| desc))
-            .map_err(LianaDescError::Miniscript)?;
+            .map_err(CoincubeDescError::Miniscript)?;
         CoincubePolicy::from_multipath_descriptor(&desc)?;
 
         // Compute the receive and change "sub" descriptors right away. According to our pubkey
@@ -134,8 +134,8 @@ impl str::FromStr for CoincubeDescriptor {
             .expect("Can't error, all paths have the same length")
             .into_iter();
         assert_eq!(singlepath_descs.len(), 2);
-        let receive_desc = SinglePathLianaDesc(singlepath_descs.next().expect("First of 2"));
-        let change_desc = SinglePathLianaDesc(singlepath_descs.next().expect("Second of 2"));
+        let receive_desc = SinglePathCoincubeDesc(singlepath_descs.next().expect("First of 2"));
+        let change_desc = SinglePathCoincubeDesc(singlepath_descs.next().expect("Second of 2"));
 
         Ok(CoincubeDescriptor {
             multi_desc: desc,
@@ -145,13 +145,13 @@ impl str::FromStr for CoincubeDescriptor {
     }
 }
 
-impl fmt::Display for SinglePathLianaDesc {
+impl fmt::Display for SinglePathCoincubeDesc {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{}", self.0)
     }
 }
 
-impl PartialEq<descriptor::Descriptor<descriptor::DescriptorPublicKey>> for SinglePathLianaDesc {
+impl PartialEq<descriptor::Descriptor<descriptor::DescriptorPublicKey>> for SinglePathCoincubeDesc {
     fn eq(&self, other: &descriptor::Descriptor<descriptor::DescriptorPublicKey>) -> bool {
         self.0.eq(other)
     }
@@ -191,8 +191,8 @@ impl CoincubeDescriptor {
             .expect("Can't error, all paths have the same length")
             .into_iter();
         assert_eq!(singlepath_descs.len(), 2);
-        let receive_desc = SinglePathLianaDesc(singlepath_descs.next().expect("First of 2"));
-        let change_desc = SinglePathLianaDesc(singlepath_descs.next().expect("Second of 2"));
+        let receive_desc = SinglePathCoincubeDesc(singlepath_descs.next().expect("First of 2"));
+        let change_desc = SinglePathCoincubeDesc(singlepath_descs.next().expect("Second of 2"));
 
         CoincubeDescriptor {
             multi_desc,
@@ -257,12 +257,12 @@ impl CoincubeDescriptor {
     }
 
     /// Get the descriptor for receiving addresses.
-    pub fn receive_descriptor(&self) -> &SinglePathLianaDesc {
+    pub fn receive_descriptor(&self) -> &SinglePathCoincubeDesc {
         &self.receive_desc
     }
 
     /// Get the descriptor for change addresses.
-    pub fn change_descriptor(&self) -> &SinglePathLianaDesc {
+    pub fn change_descriptor(&self) -> &SinglePathCoincubeDesc {
         &self.change_desc
     }
 
@@ -491,14 +491,14 @@ impl CoincubeDescriptor {
     /// - The PSBT is consistent across inputs (the sequence is the same across inputs, the
     ///   signatures are either absent or present for all inputs, ..)
     /// - The provided signatures are valid for this script.
-    pub fn partial_spend_info(&self, psbt: &Psbt) -> Result<PartialSpendInfo, LianaDescError> {
+    pub fn partial_spend_info(&self, psbt: &Psbt) -> Result<PartialSpendInfo, CoincubeDescError> {
         // Check the PSBT isn't empty or malformed.
         if psbt.inputs.len() != psbt.unsigned_tx.input.len()
             || psbt.outputs.len() != psbt.unsigned_tx.output.len()
             || psbt.inputs.is_empty()
             || psbt.outputs.is_empty()
         {
-            return Err(LianaDescError::InsanePsbt);
+            return Err(CoincubeDescError::InsanePsbt);
         }
 
         // We are doing this analysis at a transaction level. We assume that if an input
@@ -520,7 +520,7 @@ impl CoincubeDescriptor {
             if txin.sequence != first_txin.sequence
                 || spend_info != self.partial_spend_info_txin(psbt_in, txin)
             {
-                return Err(LianaDescError::InconsistentPsbt);
+                return Err(CoincubeDescError::InconsistentPsbt);
             }
         }
 
@@ -616,7 +616,7 @@ impl CoincubeDescriptor {
     ///   any of them, prune all but the primary path's bip32 derivations.
     /// - If there is two recovery paths, and the PSBT's first input nSequence is set to unlock the first one, prune all but the first recovery path's bip32 derivations.
     /// - Etc..
-    pub fn prune_bip32_derivs_last_avail(&self, psbt: Psbt) -> Result<Psbt, LianaDescError> {
+    pub fn prune_bip32_derivs_last_avail(&self, psbt: Psbt) -> Result<Psbt, CoincubeDescError> {
         let spend_info = self.partial_spend_info(&psbt)?;
         let policy = self.policy();
         let path_info = spend_info
@@ -671,7 +671,7 @@ impl CoincubeDescriptor {
     }
 }
 
-impl SinglePathLianaDesc {
+impl SinglePathCoincubeDesc {
     /// Derive this descriptor at a given index for a receiving address.
     ///
     /// # Panics
@@ -680,7 +680,7 @@ impl SinglePathLianaDesc {
         &self,
         index: bip32::ChildNumber,
         secp: &secp256k1::Secp256k1<impl secp256k1::Verification>,
-    ) -> DerivedSinglePathLianaDesc {
+    ) -> DerivedSinglePathCoincubeDesc {
         assert!(index.is_normal());
 
         // Unfortunately we can't just use `self.0.at_derivation_index().derived_descriptor()`
@@ -720,7 +720,7 @@ impl SinglePathLianaDesc {
             );
         }
 
-        DerivedSinglePathLianaDesc(
+        DerivedSinglePathCoincubeDesc(
             self.0
                 .translate_pk(&mut Derivator(index.into(), secp))
                 .expect(
@@ -745,7 +745,7 @@ pub enum DescKeysOrigins {
 /// Map of a raw public key to the xpub used to derive it and its derivation path
 pub type Bip32Deriv = BTreeMap<secp256k1::PublicKey, (bip32::Fingerprint, bip32::DerivationPath)>;
 
-impl DerivedSinglePathLianaDesc {
+impl DerivedSinglePathCoincubeDesc {
     pub fn address(&self, network: bitcoin::Network) -> bitcoin::Address {
         self.0
             .address(network)
@@ -1071,7 +1071,7 @@ mod tests {
             [(26352, recovery_keys.clone())].iter().cloned().collect(),
         )
         .unwrap_err();
-        assert!(matches!(err, LianaPolicyError::DuplicateKey(_)));
+        assert!(matches!(err, CoincubePolicyError::DuplicateKey(_)));
 
         // It's also checked under Taproot.
         let err = CoincubePolicy::new(
@@ -1079,7 +1079,7 @@ mod tests {
             [(26352, recovery_keys)].iter().cloned().collect(),
         )
         .unwrap_err();
-        assert!(matches!(err, LianaPolicyError::DuplicateKey(_)));
+        assert!(matches!(err, CoincubePolicyError::DuplicateKey(_)));
 
         // You can't pass duplicate signers in the primary path.
         let primary_keys = PathInfo::Multi(
@@ -1095,7 +1095,10 @@ mod tests {
             [(26352, recovery_keys.clone())].iter().cloned().collect(),
         )
         .unwrap_err();
-        assert!(matches!(err, LianaPolicyError::DuplicateOriginSamePath(_)));
+        assert!(matches!(
+            err,
+            CoincubePolicyError::DuplicateOriginSamePath(_)
+        ));
 
         // It's also checked under Taproot.
         let err = CoincubePolicy::new(
@@ -1103,7 +1106,10 @@ mod tests {
             [(26352, recovery_keys)].iter().cloned().collect(),
         )
         .unwrap_err();
-        assert!(matches!(err, LianaPolicyError::DuplicateOriginSamePath(_)));
+        assert!(matches!(
+            err,
+            CoincubePolicyError::DuplicateOriginSamePath(_)
+        ));
 
         // You can't pass duplicate signers in the recovery path.
         let recovery_keys = PathInfo::Multi(
@@ -1119,7 +1125,10 @@ mod tests {
             [(26352, recovery_keys.clone())].iter().cloned().collect(),
         )
         .unwrap_err();
-        assert!(matches!(err, LianaPolicyError::DuplicateOriginSamePath(_)));
+        assert!(matches!(
+            err,
+            CoincubePolicyError::DuplicateOriginSamePath(_)
+        ));
 
         // It's also checked under Taproot.
         let err = CoincubePolicy::new(
@@ -1127,7 +1136,10 @@ mod tests {
             [(26352, recovery_keys)].iter().cloned().collect(),
         )
         .unwrap_err();
-        assert!(matches!(err, LianaPolicyError::DuplicateOriginSamePath(_)));
+        assert!(matches!(
+            err,
+            CoincubePolicyError::DuplicateOriginSamePath(_)
+        ));
 
         // But the same signer can absolutely be used across spending paths.
         let primary_keys = PathInfo::Multi(

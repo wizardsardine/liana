@@ -67,20 +67,20 @@ impl std::fmt::Display for DaemonError {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DaemonBackend {
-    EmbeddedLianad(Option<node::NodeType>),
-    ExternalLianad,
+    EmbeddedCoincubed(Option<node::NodeType>),
+    ExternalCoincubed,
     RemoteBackend,
 }
 
 impl DaemonBackend {
     pub fn is_embedded(&self) -> bool {
-        matches!(self, DaemonBackend::EmbeddedLianad(_))
+        matches!(self, DaemonBackend::EmbeddedCoincubed(_))
     }
 
-    pub fn is_lianad(&self) -> bool {
+    pub fn is_coincubed(&self) -> bool {
         matches!(
             self,
-            DaemonBackend::EmbeddedLianad(_) | DaemonBackend::ExternalLianad
+            DaemonBackend::EmbeddedCoincubed(_) | DaemonBackend::ExternalCoincubed
         )
     }
 
@@ -89,7 +89,7 @@ impl DaemonBackend {
     }
 
     pub fn node_type(&self) -> Option<node::NodeType> {
-        if let DaemonBackend::EmbeddedLianad(node_type) = self {
+        if let DaemonBackend::EmbeddedCoincubed(node_type) = self {
             *node_type
         } else {
             None

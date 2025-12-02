@@ -19,7 +19,7 @@ use std::{
 };
 
 #[derive(Debug)]
-pub enum LianaPolicyError {
+pub enum CoincubePolicyError {
     MissingRecoveryPath,
     InsaneTimelock(u32),
     InvalidKey(Box<descriptor::DescriptorPublicKey>),
@@ -35,7 +35,7 @@ pub enum LianaPolicyError {
     InvalidPolicy(miniscript::Error),
 }
 
-impl std::fmt::Display for LianaPolicyError {
+impl std::fmt::Display for CoincubePolicyError {
     fn fmt(&self, f: &mut fmt::Formatter) -> std::fmt::Result {
         match self {
             Self::MissingRecoveryPath => write!(f, "A Coincube policy requires at least one recovery path."),
@@ -67,7 +67,7 @@ impl std::fmt::Display for LianaPolicyError {
     }
 }
 
-impl error::Error for LianaPolicyError {}
+impl error::Error for CoincubePolicyError {}
 
 // Whether a Miniscript policy node represents a key check (or several of them).
 fn is_single_key_or_multisig(policy: &SemanticPolicy<descriptor::DescriptorPublicKey>) -> bool {
@@ -102,12 +102,12 @@ impl DescKeyChecker {
     pub fn check(
         &mut self,
         key: &descriptor::DescriptorPublicKey,
-    ) -> Result<bip32::Fingerprint, LianaPolicyError> {
+    ) -> Result<bip32::Fingerprint, CoincubePolicyError> {
         if let descriptor::DescriptorPublicKey::MultiXPub(ref xpub) = *key {
             let key_identifier = (xpub.xkey, xpub.derivation_paths.clone());
             // First make sure it's not a duplicate and record seeing it.
             if self.keys_set.contains(&key_identifier) {
-                return Err(LianaPolicyError::DuplicateKey(key.clone().into()));
+                return Err(CoincubePolicyError::DuplicateKey(key.clone().into()));
             }
             self.keys_set.insert(key_identifier);
             // Then perform the contextless checks (origin, deriv paths, ..).
@@ -126,7 +126,7 @@ impl DescKeyChecker {
                 }
             }
         }
-        Err(LianaPolicyError::InvalidKey(key.clone().into()))
+        Err(CoincubePolicyError::InvalidKey(key.clone().into()))
     }
 }
 
@@ -137,11 +137,11 @@ impl DescKeyChecker {
 //
 // All this is achieved simply through asking for a 16-bit integer, since all the
 // above are signaled in leftmost bits.
-fn csv_check(csv_value: u32) -> Result<u16, LianaPolicyError> {
+fn csv_check(csv_value: u32) -> Result<u16, CoincubePolicyError> {
     if csv_value > 0 {
-        u16::try_from(csv_value).map_err(|_| LianaPolicyError::InsaneTimelock(csv_value))
+        u16::try_from(csv_value).map_err(|_| CoincubePolicyError::InsaneTimelock(csv_value))
     } else {
-        Err(LianaPolicyError::InsaneTimelock(csv_value))
+        Err(CoincubePolicyError::InsaneTimelock(csv_value))
     }
 }
 
@@ -183,22 +183,22 @@ impl PathInfo {
     /// descriptor (that is, a set of keys).
     pub fn from_primary_path(
         policy: SemanticPolicy<descriptor::DescriptorPublicKey>,
-    ) -> Result<PathInfo, LianaPolicyError> {
+    ) -> Result<PathInfo, CoincubePolicyError> {
         match policy {
             SemanticPolicy::Key(key) => Ok(PathInfo::Single(key)),
             SemanticPolicy::Thresh(thresh) if thresh.k() > 0 && thresh.n() >= thresh.k() => {
                 let k = thresh.k();
-                let keys: Result<_, LianaPolicyError> = thresh
+                let keys: Result<_, CoincubePolicyError> = thresh
                     .into_data()
                     .into_iter()
                     .map(|sub| match sub.as_ref() {
                         SemanticPolicy::Key(key) => Ok(key.clone()),
-                        _ => Err(LianaPolicyError::IncompatibleDesc),
+                        _ => Err(CoincubePolicyError::IncompatibleDesc),
                     })
                     .collect();
                 Ok(PathInfo::Multi(k, keys?))
             }
-            _ => Err(LianaPolicyError::IncompatibleDesc),
+            _ => Err(CoincubePolicyError::IncompatibleDesc),
         }
     }
 
@@ -207,14 +207,14 @@ impl PathInfo {
     /// descriptor (that is, a set of keys after a timelock).
     pub fn from_recovery_path(
         policy: SemanticPolicy<descriptor::DescriptorPublicKey>,
-    ) -> Result<(u16, PathInfo), LianaPolicyError> {
+    ) -> Result<(u16, PathInfo), CoincubePolicyError> {
         // The recovery spending path must always be a policy of type `thresh(2, older(x), thresh(n, key1,
         // key2, ..))`. In the special case n == 1, it is only `thresh(2, older(x), key)`. In the
         // special case n == len(keys) (i.e. it's an N-of-N multisig), it is normalized as
         // `thresh(n+1, older(x), key1, key2, ...)`.
         let (k, subs) = match policy {
             SemanticPolicy::Thresh(thresh) => (thresh.k(), thresh.into_data()),
-            _ => return Err(LianaPolicyError::IncompatibleDesc),
+            _ => return Err(CoincubePolicyError::IncompatibleDesc),
         };
         if k == 2 && subs.len() == 2 {
             // The general case (as well as the n == 1 case). The sub that is not the timelock is
@@ -225,11 +225,11 @@ impl PathInfo {
                     SemanticPolicy::Older(val) => Some(csv_check(val.to_consensus_u32())),
                     _ => None,
                 })
-                .ok_or(LianaPolicyError::IncompatibleDesc)??;
+                .ok_or(CoincubePolicyError::IncompatibleDesc)??;
             let keys_sub = subs
                 .into_iter()
                 .find(|sub| is_single_key_or_multisig(sub.as_ref()))
-                .ok_or(LianaPolicyError::IncompatibleDesc)?;
+                .ok_or(CoincubePolicyError::IncompatibleDesc)?;
             PathInfo::from_primary_path(keys_sub.as_ref().clone()).map(|info| (tl_value, info))
         } else if k == subs.len() && subs.len() > 2 {
             // The N-of-N case. All subs but the threshold must be keys (if one had been thresh()
@@ -241,22 +241,22 @@ impl PathInfo {
                     SemanticPolicy::Key(key) => keys.push(key.clone()),
                     SemanticPolicy::Older(val) => {
                         if tl_value.is_some() {
-                            return Err(LianaPolicyError::IncompatibleDesc);
+                            return Err(CoincubePolicyError::IncompatibleDesc);
                         }
                         tl_value = Some(csv_check(val.to_consensus_u32())?);
                     }
-                    _ => return Err(LianaPolicyError::IncompatibleDesc),
+                    _ => return Err(CoincubePolicyError::IncompatibleDesc),
                 }
             }
             assert!(keys.len() > 1); // At least 3 subs, only one of which may be older().
             Ok((
-                tl_value.ok_or(LianaPolicyError::IncompatibleDesc)?,
+                tl_value.ok_or(CoincubePolicyError::IncompatibleDesc)?,
                 PathInfo::Multi(k - 1, keys),
             ))
         } else {
             // If there is less than 2 subs, there can't be both a timelock and keys. If the
             // threshold is not equal to the number of subs, the timelock can't be mandatory.
-            Err(LianaPolicyError::IncompatibleDesc)
+            Err(CoincubePolicyError::IncompatibleDesc)
         }
     }
 
@@ -353,7 +353,7 @@ impl PathInfo {
     /// Get a Miniscript Policy for this path.
     pub fn into_ms_policy(
         self,
-    ) -> Result<ConcretePolicy<descriptor::DescriptorPublicKey>, LianaPolicyError> {
+    ) -> Result<ConcretePolicy<descriptor::DescriptorPublicKey>, CoincubePolicyError> {
         Ok(match self {
             PathInfo::Single(key) => ConcretePolicy::Key(key),
             PathInfo::Multi(thresh, keys) => ConcretePolicy::Thresh(
@@ -363,7 +363,7 @@ impl PathInfo {
                         .map(|key| sync::Arc::new(ConcretePolicy::Key(key)))
                         .collect(),
                 )
-                .map_err(|e| LianaPolicyError::InvalidPolicy(miniscript::Error::Threshold(e)))?,
+                .map_err(|e| CoincubePolicyError::InvalidPolicy(miniscript::Error::Threshold(e)))?,
             ),
         })
     }
@@ -485,9 +485,9 @@ impl CoincubePolicy {
         recovery_paths: BTreeMap<u16, PathInfo>,
         is_taproot: bool,
         compile: bool,
-    ) -> Result<CoincubePolicy, LianaPolicyError> {
+    ) -> Result<CoincubePolicy, CoincubePolicyError> {
         if recovery_paths.is_empty() {
-            return Err(LianaPolicyError::MissingRecoveryPath);
+            return Err(CoincubePolicyError::MissingRecoveryPath);
         }
 
         // We require the locktime to:
@@ -498,7 +498,7 @@ impl CoincubePolicy {
         //
         // All this is achieved through asking for a 16-bit integer.
         if recovery_paths.contains_key(&0) {
-            return Err(LianaPolicyError::InsaneTimelock(0));
+            return Err(CoincubePolicyError::InsaneTimelock(0));
         }
 
         // Check all keys are valid according to our standard (this checks all are multipath keys).
@@ -524,7 +524,7 @@ impl CoincubePolicy {
                     for key in keys {
                         let fg = key_checker.check(key)?;
                         if origin_fingerprints.contains(&fg) {
-                            return Err(LianaPolicyError::DuplicateOriginSamePath(
+                            return Err(CoincubePolicyError::DuplicateOriginSamePath(
                                 key.clone().into(),
                             ));
                         }
@@ -550,7 +550,7 @@ impl CoincubePolicy {
     pub fn new(
         primary_path: PathInfo,
         recovery_paths: BTreeMap<u16, PathInfo>,
-    ) -> Result<CoincubePolicy, LianaPolicyError> {
+    ) -> Result<CoincubePolicy, CoincubePolicyError> {
         Self::_new(
             primary_path,
             recovery_paths,
@@ -563,7 +563,7 @@ impl CoincubePolicy {
     pub fn new_legacy(
         primary_path: PathInfo,
         recovery_paths: BTreeMap<u16, PathInfo>,
-    ) -> Result<CoincubePolicy, LianaPolicyError> {
+    ) -> Result<CoincubePolicy, CoincubePolicyError> {
         Self::_new(
             primary_path,
             recovery_paths,
@@ -576,26 +576,26 @@ impl CoincubePolicy {
     /// (P2WSH, multipath, ..) and has a valid Coincube semantic.
     pub fn from_multipath_descriptor(
         desc: &descriptor::Descriptor<descriptor::DescriptorPublicKey>,
-    ) -> Result<CoincubePolicy, LianaPolicyError> {
+    ) -> Result<CoincubePolicy, CoincubePolicyError> {
         // Lift a semantic policy out of this Miniscript and normalize it to make sure we compare
         // apples to apples below.
         let policy = match desc {
             descriptor::Descriptor::Wsh(wsh_desc) => {
                 let ms = match wsh_desc.as_inner() {
                     descriptor::WshInner::Ms(ms) => ms,
-                    _ => return Err(LianaPolicyError::IncompatibleDesc),
+                    _ => return Err(CoincubePolicyError::IncompatibleDesc),
                 };
-                ms.lift().map_err(LianaPolicyError::PolicyAnalysis)?
+                ms.lift().map_err(CoincubePolicyError::PolicyAnalysis)?
             }
             descriptor::Descriptor::Tr(desc) => {
                 // For Taproot, make sure to not take the internal key into account in the semantic
                 // policy if it's unspendable.
                 if let Some(tree) = desc.tap_tree() {
-                    let tree_policy = tree.lift().map_err(LianaPolicyError::PolicyAnalysis)?;
+                    let tree_policy = tree.lift().map_err(CoincubePolicyError::PolicyAnalysis)?;
                     let unspend_int_xpub = unspendable_internal_xpub(desc)
-                        .ok_or(LianaPolicyError::IncompatibleDesc)?;
+                        .ok_or(CoincubePolicyError::IncompatibleDesc)?;
                     let desc_int_xpub = get_multi_xkey(desc.internal_key())
-                        .ok_or(LianaPolicyError::IncompatibleDesc)?;
+                        .ok_or(CoincubePolicyError::IncompatibleDesc)?;
                     if *desc_int_xpub == unspend_int_xpub {
                         tree_policy
                     } else {
@@ -606,11 +606,11 @@ impl CoincubePolicy {
                     }
                 } else {
                     // A Coincube descriptor must contain a timelocked path.
-                    return Err(LianaPolicyError::IncompatibleDesc);
+                    return Err(CoincubePolicyError::IncompatibleDesc);
                 }
             }
             // We only allow P2WSH and Taproot descriptors.
-            _ => return Err(LianaPolicyError::IncompatibleDesc),
+            _ => return Err(CoincubePolicyError::IncompatibleDesc),
         }
         .normalized();
         let is_taproot = matches!(desc, descriptor::Descriptor::Tr(..));
@@ -622,7 +622,7 @@ impl CoincubePolicy {
             SemanticPolicy::Thresh(thresh) if thresh.is_or() && thresh.n() > 1 => {
                 thresh.into_data()
             }
-            _ => return Err(LianaPolicyError::IncompatibleDesc),
+            _ => return Err(CoincubePolicyError::IncompatibleDesc),
         };
 
         // Fetch all spending paths' semantic policies. The primary path is identified as the only
@@ -646,7 +646,7 @@ impl CoincubePolicy {
                     if let SemanticPolicy::Key(key) = sub {
                         primary_path = Some(prim_path.with_added_key(key.clone()));
                     } else {
-                        return Err(LianaPolicyError::IncompatibleDesc);
+                        return Err(CoincubePolicyError::IncompatibleDesc);
                     }
                 } else {
                     primary_path = Some(PathInfo::from_primary_path(sub)?);
@@ -656,7 +656,7 @@ impl CoincubePolicy {
                 // recovery path(s).
                 let (timelock, path_info) = PathInfo::from_recovery_path(sub)?;
                 if recovery_paths.contains_key(&timelock) {
-                    return Err(LianaPolicyError::IncompatibleDesc);
+                    return Err(CoincubePolicyError::IncompatibleDesc);
                 }
                 recovery_paths.insert(timelock, path_info);
             }
@@ -664,7 +664,7 @@ impl CoincubePolicy {
 
         // Use the constructor for sanity checking the keys and the Miniscript policy. Note this
         // makes sure the recovery paths mapping isn't empty, too.
-        let prim_path = primary_path.ok_or(LianaPolicyError::IncompatibleDesc)?;
+        let prim_path = primary_path.ok_or(CoincubePolicyError::IncompatibleDesc)?;
         // We don't compile the policy as we assume it compiles given we started with a descriptor.
         // This will still perform all other checks to make sure the descriptor conforms to
         // a Coincube policy.
@@ -689,7 +689,7 @@ impl CoincubePolicy {
 
     fn into_policy(
         self,
-    ) -> Result<miniscript::policy::Concrete<descriptor::DescriptorPublicKey>, LianaPolicyError>
+    ) -> Result<miniscript::policy::Concrete<descriptor::DescriptorPublicKey>, CoincubePolicyError>
     {
         let CoincubePolicy {
             primary_path,
@@ -718,7 +718,7 @@ impl CoincubePolicy {
 
     fn compile_multipath_descriptor_fallible(
         self,
-    ) -> Result<descriptor::Descriptor<descriptor::DescriptorPublicKey>, LianaPolicyError> {
+    ) -> Result<descriptor::Descriptor<descriptor::DescriptorPublicKey>, CoincubePolicyError> {
         if self.is_taproot {
             // If compiling to a Taproot descriptor and we can't have an internal key, we want to
             // compute a deterministic unspendable key to use as internal key. We compute it from
@@ -746,7 +746,7 @@ impl CoincubePolicy {
             let desc = policy
                 .clone()
                 .compile_tr(Some(dummy_internal_key.clone()))
-                .map_err(LianaPolicyError::InvalidPolicy)?;
+                .map_err(CoincubePolicyError::InvalidPolicy)?;
             let inner_desc = if let descriptor::Descriptor::Tr(ref d) = desc {
                 d
             } else {
@@ -759,7 +759,7 @@ impl CoincubePolicy {
                     .expect("Desc has a Taptree and only multixpubs.");
                 policy
                     .compile_tr(Some(actual_internal_key))
-                    .map_err(LianaPolicyError::InvalidPolicy)
+                    .map_err(CoincubePolicyError::InvalidPolicy)
             } else {
                 // A key from the policy could be used as internal key. No need for a deterministic
                 // internal key.
@@ -769,7 +769,7 @@ impl CoincubePolicy {
             let ms = self
                 .into_policy()?
                 .compile::<miniscript::Segwitv0>()
-                .map_err(|e| LianaPolicyError::InvalidPolicy(e.into()))?;
+                .map_err(|e| CoincubePolicyError::InvalidPolicy(e.into()))?;
             miniscript::Segwitv0::check_local_validity(&ms).expect("Miniscript must be sane");
             Ok(descriptor::Descriptor::Wsh(
                 descriptor::Wsh::new(ms).expect("Must pass sanity checks"),
@@ -854,7 +854,7 @@ mod tests {
         let mut checker = DescKeyChecker::new();
         assert!(matches!(
             checker.check(&key),
-            Err(LianaPolicyError::InvalidKey(k)) if k == key.into()
+            Err(CoincubePolicyError::InvalidKey(k)) if k == key.into()
         ));
 
         // No multipath
@@ -864,7 +864,7 @@ mod tests {
         let mut checker = DescKeyChecker::new();
         assert!(matches!(
             checker.check(&key),
-            Err(LianaPolicyError::InvalidKey(k)) if k == key.into()
+            Err(CoincubePolicyError::InvalidKey(k)) if k == key.into()
         ));
 
         // Hardened receive path
@@ -874,7 +874,7 @@ mod tests {
         let mut checker = DescKeyChecker::new();
         assert!(matches!(
             checker.check(&key),
-            Err(LianaPolicyError::InvalidKey(k)) if k == key.into()
+            Err(CoincubePolicyError::InvalidKey(k)) if k == key.into()
         ));
 
         // Hardened change path
@@ -884,7 +884,7 @@ mod tests {
         let mut checker = DescKeyChecker::new();
         assert!(matches!(
             checker.check(&key),
-            Err(LianaPolicyError::InvalidKey(k)) if k == key.into()
+            Err(CoincubePolicyError::InvalidKey(k)) if k == key.into()
         ));
 
         // Hardened wildcard
@@ -894,7 +894,7 @@ mod tests {
         let mut checker = DescKeyChecker::new();
         assert!(matches!(
             checker.check(&key),
-            Err(LianaPolicyError::InvalidKey(k)) if k == key.into()
+            Err(CoincubePolicyError::InvalidKey(k)) if k == key.into()
         ));
     }
 }

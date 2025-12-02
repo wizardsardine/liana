@@ -966,10 +966,10 @@ def test_broadcast_spend(coincubed, bitcoind):
 
 # Use a descriptor that includes hardened derivation paths so that we can check
 # there is no problem regarding the use of `h` and `'`.
-def test_start_rescan_does_not_error(lianad_with_deriv_paths, bitcoind):
+def test_start_rescan_does_not_error(coincubed_with_deriv_paths, bitcoind):
     """Test we can successfully start a rescan."""
     tip_timestamp = bitcoind.rpc.getblockheader(bitcoind.rpc.getbestblockhash())["time"]
-    lianad_with_deriv_paths.rpc.startrescan(tip_timestamp - 1)
+    coincubed_with_deriv_paths.rpc.startrescan(tip_timestamp - 1)
 
 
 def test_start_rescan(coincubed, bitcoind):

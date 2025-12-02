@@ -3085,7 +3085,7 @@ CREATE TABLE labels (
         // Create a database with version 0, using the old schema.
         let tmp_dir = tmp_dir();
         fs::create_dir_all(&tmp_dir).unwrap();
-        let db_path: path::PathBuf = [tmp_dir.as_path(), path::Path::new("lianad_v0.sqlite3")]
+        let db_path: path::PathBuf = [tmp_dir.as_path(), path::Path::new("coincube_v0.sqlite3")]
             .iter()
             .collect();
         let mut options = dummy_options();
@@ -3266,7 +3266,7 @@ CREATE TABLE labels (
         // Create a database with version 3, using the old schema.
         let tmp_dir = tmp_dir();
         fs::create_dir_all(&tmp_dir).unwrap();
-        let db_path: path::PathBuf = [tmp_dir.as_path(), path::Path::new("lianad_v3.sqlite3")]
+        let db_path: path::PathBuf = [tmp_dir.as_path(), path::Path::new("coincube_v3.sqlite3")]
             .iter()
             .collect();
         let mut options = dummy_options();
@@ -3452,7 +3452,7 @@ CREATE TABLE labels (
         // Create a database with version 3, using the old schema.
         let tmp_dir = tmp_dir();
         fs::create_dir_all(&tmp_dir).unwrap();
-        let db_path: path::PathBuf = [tmp_dir.as_path(), path::Path::new("lianad_v4.sqlite3")]
+        let db_path: path::PathBuf = [tmp_dir.as_path(), path::Path::new("coincube_v4.sqlite3")]
             .iter()
             .collect();
         let mut options = dummy_options();

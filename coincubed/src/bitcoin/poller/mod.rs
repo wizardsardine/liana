@@ -24,7 +24,7 @@ pub struct Poller {
     db: sync::Arc<sync::Mutex<dyn DatabaseInterface>>,
     secp: secp256k1::Secp256k1<secp256k1::VerifyOnly>,
     // The receive and change descriptors (in this order).
-    descs: [descriptors::SinglePathLianaDesc; 2],
+    descs: [descriptors::SinglePathCoincubeDesc; 2],
 }
 
 impl Poller {

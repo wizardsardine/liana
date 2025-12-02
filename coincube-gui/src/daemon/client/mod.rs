@@ -34,13 +34,13 @@ pub trait Client {
 }
 
 #[derive(Debug, Clone)]
-pub struct Lianad<C: Client> {
+pub struct Coincubed<C: Client> {
     client: C,
 }
 
-impl<C: Client> Lianad<C> {
-    pub fn new(client: C) -> Lianad<C> {
-        Lianad { client }
+impl<C: Client> Coincubed<C> {
+    pub fn new(client: C) -> Coincubed<C> {
+        Coincubed { client }
     }
 
     /// Generic call function for RPC calls.
@@ -58,9 +58,9 @@ impl<C: Client> Lianad<C> {
 }
 
 #[async_trait]
-impl<C: Client + Send + Sync + Debug> Daemon for Lianad<C> {
+impl<C: Client + Send + Sync + Debug> Daemon for Coincubed<C> {
     fn backend(&self) -> DaemonBackend {
-        DaemonBackend::ExternalLianad
+        DaemonBackend::ExternalCoincubed
     }
 
     fn config(&self) -> Option<&Config> {

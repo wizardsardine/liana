@@ -45,7 +45,7 @@ const SYNCING_PROGRESS_1: &str = "Bitcoin Core is synchronising the blockchain. 
 const SYNCING_PROGRESS_2: &str = "Bitcoin Core is synchronising the blockchain. This will take a while, depending on the last time it was done, your internet connection, and your computer performance.";
 const SYNCING_PROGRESS_3: &str = "Bitcoin Core is synchronising the blockchain. This may take a few minutes, depending on the last time it was done, your internet connection, and your computer performance.";
 
-type Lianad = client::Lianad<client::jsonrpc::JsonRPCClient>;
+type Coincubed = client::Coincubed<client::jsonrpc::JsonRPCClient>;
 type StartedResult = Result<
     (
         Arc<dyn Daemon + Sync + Send>,
@@ -131,7 +131,7 @@ impl Loader {
             let socket_path = datadir_path
                 .network_directory(network)
                 .coincubed_data_directory(&wallet.wallet_id())
-                .lianad_rpc_socket_path();
+                .coincubed_rpc_socket_path();
             Task::perform(connect(socket_path), Message::Loaded)
         } else {
             // No vault configured - loader will show setup screen
@@ -212,7 +212,7 @@ impl Loader {
         match res {
             Ok((daemon, info)) => {
                 if self.start_bitcoind() {
-                    warn!("Lianad is external, gui will not start internal bitcoind");
+                    warn!("Coincubed is external, gui will not start internal bitcoind");
                 }
                 return self.maybe_skip_syncing(daemon, info);
             }
@@ -582,7 +582,7 @@ async fn connect(
     socket_path: PathBuf,
 ) -> Result<(Arc<dyn Daemon + Sync + Send>, GetInfoResult), Error> {
     let client = client::jsonrpc::JsonRPCClient::new(socket_path);
-    let daemon = Lianad::new(client);
+    let daemon = Coincubed::new(client);
 
     debug!("Searching for external daemon");
     let info = daemon.get_info().await?;

@@ -1,4 +1,4 @@
-## Lianad blackbox tests
+## Coincubed blackbox tests
 
 Here we test `coincubed` by starting it on a regression testing Bitcoin network,
 and by then talking to it as an user would, from the outside.

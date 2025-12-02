@@ -1,7 +1,7 @@
 use std::convert::From;
 use std::io::ErrorKind;
 
-use coincube_core::{descriptors::LianaDescError, spend::SpendCreationError};
+use coincube_core::{descriptors::CoincubeDescError, spend::SpendCreationError};
 use coincubed::config::ConfigError;
 
 use crate::{
@@ -18,7 +18,7 @@ pub enum Error {
     Daemon(DaemonError),
     Unexpected(String),
     HardwareWallet(async_hwi::Error),
-    Desc(LianaDescError),
+    Desc(CoincubeDescError),
     Spend(SpendCreationError),
     ImportExport(export::Error),
     RestoreBackup(RestoreBackupError),

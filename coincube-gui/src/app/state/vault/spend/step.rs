@@ -38,7 +38,6 @@ use crate::{
     services::feeestimation::fee_estimation::FeeEstimator,
 };
 
-/// See: https://github.com/wizardsardine/liana/blob/master/src/commands/mod.rs#L32
 const DUST_OUTPUT_SATS: u64 = 5_000;
 
 #[derive(Clone)]

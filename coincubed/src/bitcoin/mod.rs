@@ -75,7 +75,7 @@ pub trait BitcoinInterface: Send {
     fn received_coins(
         &self,
         tip: &BlockChainTip,
-        descs: &[descriptors::SinglePathLianaDesc],
+        descs: &[descriptors::SinglePathCoincubeDesc],
     ) -> Vec<UTxO>;
 
     /// Get all coins that were confirmed, and at what height and time. Along with "expired"
@@ -179,7 +179,7 @@ impl BitcoinInterface for d::BitcoinD {
     fn received_coins(
         &self,
         tip: &BlockChainTip,
-        descs: &[descriptors::SinglePathLianaDesc],
+        descs: &[descriptors::SinglePathCoincubeDesc],
     ) -> Vec<UTxO> {
         let lsb_res = self.list_since_block(&tip.hash);
 
@@ -417,7 +417,7 @@ impl BitcoinInterface for electrum::Electrum {
     fn received_coins(
         &self,
         tip: &BlockChainTip,
-        _descs: &[descriptors::SinglePathLianaDesc],
+        _descs: &[descriptors::SinglePathCoincubeDesc],
     ) -> Vec<UTxO> {
         // Get those wallet coins that are either unconfirmed or have a confirmation height
         // after tip. The poller will then discard any that had already been received.
@@ -626,7 +626,7 @@ impl BitcoinInterface for sync::Arc<sync::Mutex<dyn BitcoinInterface + 'static>>
     fn received_coins(
         &self,
         tip: &BlockChainTip,
-        descs: &[descriptors::SinglePathLianaDesc],
+        descs: &[descriptors::SinglePathCoincubeDesc],
     ) -> Vec<UTxO> {
         self.lock().unwrap().received_coins(tip, descs)
     }

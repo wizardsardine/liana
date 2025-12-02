@@ -1,6 +1,6 @@
-# Contributing to Liana
+# Contributing to Coincube
 
-Anyone is welcome to contribute to Liana regardless of any arbitrary criterion. Contribution are
+Anyone is welcome to contribute to Coincube regardless of any arbitrary criterion. Contribution are
 only judged based on their technical relevance and quality.
 
 Note that the development of Bitcoin software requires a high level of rigor, so it could take some
@@ -66,7 +66,7 @@ query).
 
 ## Minimum Supported Rust Version
 
-`lianad` should always compile and pass tests using **Rust 1.63**. The rationale behind this is
+`coincubed` should always compile and pass tests using **Rust 1.63**. The rationale behind this is
 support something reasonable, and preferably supported by all of:
 - [Guix](https://guix.gnu.org/)
 - Popular distributions' packages (especially Debian which is the most conservative)

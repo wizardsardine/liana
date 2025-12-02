@@ -113,7 +113,7 @@ impl Panels {
         restored_from_backup: bool,
     ) -> Panels {
         let show_rescan_warning = restored_from_backup
-            && daemon_backend.is_lianad()
+            && daemon_backend.is_coincubed()
             && daemon_backend
                 .node_type()
                 .map(|nt| nt == NodeType::Bitcoind)

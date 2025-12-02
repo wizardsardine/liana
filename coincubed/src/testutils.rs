@@ -79,7 +79,7 @@ impl BitcoinInterface for DummyBitcoind {
     fn received_coins(
         &self,
         _: &BlockChainTip,
-        _: &[descriptors::SinglePathLianaDesc],
+        _: &[descriptors::SinglePathCoincubeDesc],
     ) -> Vec<UTxO> {
         Vec::new()
     }
@@ -552,7 +552,7 @@ impl DatabaseConnection for DummyDatabase {
     }
 }
 
-pub struct DummyLiana {
+pub struct DummyCoincube {
     pub tmp_dir: path::PathBuf,
     pub handle: DaemonHandle,
 }
@@ -571,14 +571,14 @@ pub fn tmp_dir() -> path::PathBuf {
     ))
 }
 
-impl DummyLiana {
-    /// Creates a new DummyLiana interface
+impl DummyCoincube {
+    /// Creates a new DummyCoincube interface
     pub fn _new(
         bitcoin_interface: impl BitcoinInterface + 'static,
         database: impl DatabaseInterface + 'static,
         rpc_server: bool,
         timelock: u16,
-    ) -> DummyLiana {
+    ) -> DummyCoincube {
         let tmp_dir = tmp_dir();
         fs::create_dir_all(&tmp_dir).unwrap();
         // Use a shorthand for 'datadir', to avoid overflowing SUN_LEN on MacOS.
@@ -613,32 +613,32 @@ impl DummyLiana {
         let handle =
             DaemonHandle::start(config, Some(bitcoin_interface), Some(database), rpc_server)
                 .unwrap();
-        DummyLiana { tmp_dir, handle }
+        DummyCoincube { tmp_dir, handle }
     }
 
-    /// Creates a new DummyLiana interface
+    /// Creates a new DummyCoincube interface
     pub fn new(
         bitcoin_interface: impl BitcoinInterface + 'static,
         database: impl DatabaseInterface + 'static,
-    ) -> DummyLiana {
+    ) -> DummyCoincube {
         Self::_new(bitcoin_interface, database, false, 10_000)
     }
 
-    /// Creates a new DummyLiana interface with the specified recovery path timelock.
+    /// Creates a new DummyCoincube interface with the specified recovery path timelock.
     pub fn new_timelock(
         bitcoin_interface: impl BitcoinInterface + 'static,
         database: impl DatabaseInterface + 'static,
         timelock: u16,
-    ) -> DummyLiana {
+    ) -> DummyCoincube {
         Self::_new(bitcoin_interface, database, false, timelock)
     }
 
-    /// Creates a new DummyLiana interface which also spins up an RPC server.
+    /// Creates a new DummyCoincube interface which also spins up an RPC server.
     #[allow(dead_code)]
     pub fn new_server(
         bitcoin_interface: impl BitcoinInterface + 'static,
         database: impl DatabaseInterface + 'static,
-    ) -> DummyLiana {
+    ) -> DummyCoincube {
         Self::_new(bitcoin_interface, database, true, 10_000)
     }
 

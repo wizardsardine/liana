@@ -11,8 +11,8 @@ from test_framework.utils import (
     BITCOIN_BACKEND_TYPE,
     wait_for,
     RpcError,
-    OLD_LIANAD_PATH,
-    LIANAD_PATH,
+    OLD_COINCUBED_PATH,
+    COINCUBED_PATH,
     COIN,
     TIMEOUT,
     IS_NOT_BITCOIND_24,
@@ -80,37 +80,37 @@ def receive_and_send(coincubed, bitcoind):
     bitcoind.generate_block(1, wait_for_mempool=txid)
 
 
-def test_multisig(lianad_multisig, bitcoind):
+def test_multisig(coincubed_multisig, bitcoind):
     """Test using coincubed with a descriptor that contains multiple keys for both
     the primary and recovery paths."""
-    receive_and_send(lianad_multisig, bitcoind)
+    receive_and_send(coincubed_multisig, bitcoind)
 
     # Generate 10 blocks to test the recovery path
     bitcoind.generate_block(10)
     wait_for(
-        lambda: lianad_multisig.rpc.getinfo()["block_height"]
+        lambda: coincubed_multisig.rpc.getinfo()["block_height"]
         == bitcoind.rpc.getblockcount()
     )
 
     # Sweep all coins through the recovery path. It needs 2 signatures out of
     # 5 keys. Sign with the second and the fifth ones.
-    res = lianad_multisig.rpc.createrecovery(bitcoind.rpc.getnewaddress(), 2)
+    res = coincubed_multisig.rpc.createrecovery(bitcoind.rpc.getnewaddress(), 2)
     reco_psbt = PSBT.from_base64(res["psbt"])
     txid = reco_psbt.tx.txid().hex()
-    signed_psbt = lianad_multisig.signer.sign_psbt(reco_psbt, {10: [1, 4]})
-    lianad_multisig.rpc.updatespend(signed_psbt.to_base64())
-    lianad_multisig.rpc.broadcastspend(txid)
+    signed_psbt = coincubed_multisig.signer.sign_psbt(reco_psbt, {10: [1, 4]})
+    coincubed_multisig.rpc.updatespend(signed_psbt.to_base64())
+    coincubed_multisig.rpc.broadcastspend(txid)
 
 
-def test_multipath(lianad_multipath, bitcoind):
+def test_multipath(coincubed_multipath, bitcoind):
     """Exercise various commands as well as recovery with a descriptor with multiple
     recovery paths."""
-    receive_and_send(lianad_multipath, bitcoind)
+    receive_and_send(coincubed_multipath, bitcoind)
 
     # Generate 10 blocks to test the recovery path
     bitcoind.generate_block(10)
     wait_for(
-        lambda: lianad_multipath.rpc.getinfo()["block_height"]
+        lambda: coincubed_multipath.rpc.getinfo()["block_height"]
         == bitcoind.rpc.getblockcount()
     )
 
@@ -120,11 +120,11 @@ def test_multipath(lianad_multipath, bitcoind):
         RpcError,
         match="No coin currently spendable through this timelocked recovery path",
     ):
-        lianad_multipath.rpc.createrecovery(bitcoind.rpc.getnewaddress(), 2, 20)
+        coincubed_multipath.rpc.createrecovery(bitcoind.rpc.getnewaddress(), 2, 20)
 
     # Sweep all coins through the first recovery path (that is available after 10 blocks).
     # It needs 3 signatures out of 5 keys.
-    res = lianad_multipath.rpc.createrecovery(bitcoind.rpc.getnewaddress(), 2)
+    res = coincubed_multipath.rpc.createrecovery(bitcoind.rpc.getnewaddress(), 2)
     reco_psbt = PSBT.from_base64(res["psbt"])
     txid = reco_psbt.tx.txid().hex()
 
@@ -134,70 +134,70 @@ def test_multipath(lianad_multipath, bitcoind):
     # TODO: reintroduce these tests once we get rid of this restriction.
 
     # Try to sign with the keys for the next recovery spending path, it'll fail.
-    # signed_psbt = lianad_multipath.signer.sign_psbt(reco_psbt, {20: range(3)})
-    # lianad_multipath.rpc.updatespend(signed_psbt.to_base64())
+    # signed_psbt = coincubed_multipath.signer.sign_psbt(reco_psbt, {20: range(3)})
+    # coincubed_multipath.rpc.updatespend(signed_psbt.to_base64())
     # with pytest.raises(RpcError, match="Failed to finalize"):
-    # lianad_multipath.rpc.broadcastspend(txid)
+    # coincubed_multipath.rpc.broadcastspend(txid)
 
     # Try to sign with the right keys but only two of them, it'll fail.
-    signed_psbt = lianad_multipath.signer.sign_psbt(reco_psbt, {10: range(2)})
-    lianad_multipath.rpc.updatespend(signed_psbt.to_base64())
+    signed_psbt = coincubed_multipath.signer.sign_psbt(reco_psbt, {10: range(2)})
+    coincubed_multipath.rpc.updatespend(signed_psbt.to_base64())
     with pytest.raises(RpcError, match="Failed to finalize"):
-        lianad_multipath.rpc.broadcastspend(txid)
+        coincubed_multipath.rpc.broadcastspend(txid)
 
     # Finally add one more signature with an unused key from the right keyset.
-    signed_psbt = lianad_multipath.signer.sign_psbt(reco_psbt, {10: [2]})
-    lianad_multipath.rpc.updatespend(signed_psbt.to_base64())
-    lianad_multipath.rpc.broadcastspend(txid)
+    signed_psbt = coincubed_multipath.signer.sign_psbt(reco_psbt, {10: [2]})
+    coincubed_multipath.rpc.updatespend(signed_psbt.to_base64())
+    coincubed_multipath.rpc.broadcastspend(txid)
 
     # NOTE: commented out for the same reason as above.
 
     # Receive 3 more coins and make the second recovery path (20 blocks) available.
     # txids = []
     # for _ in range(3):
-    # addr = lianad_multipath.rpc.getnewaddress()["address"]
+    # addr = coincubed_multipath.rpc.getnewaddress()["address"]
     # txids.append(bitcoind.rpc.sendtoaddress(addr, 0.42))
     # bitcoind.generate_block(20, wait_for_mempool=txids)
     # wait_for(
-    # lambda: lianad_multipath.rpc.getinfo()["block_height"]
+    # lambda: coincubed_multipath.rpc.getinfo()["block_height"]
     # == bitcoind.rpc.getblockcount()
     # )
 
     # We can create a recovery transaction for an earlier timelock.
-    # lianad_multipath.rpc.createrecovery(bitcoind.rpc.getnewaddress(), 2)
+    # coincubed_multipath.rpc.createrecovery(bitcoind.rpc.getnewaddress(), 2)
 
     # Sweep all coins through the second recovery path (that is available after 20 blocks).
     # It needs 3 signatures out of 5 keys.
-    # res = lianad_multipath.rpc.createrecovery(bitcoind.rpc.getnewaddress(), 2, 20)
+    # res = coincubed_multipath.rpc.createrecovery(bitcoind.rpc.getnewaddress(), 2, 20)
     # reco_psbt = PSBT.from_base64(res["psbt"])
     # txid = reco_psbt.tx.txid().hex()
 
     # We can sign with any keys for the second recovery path (we need only 1 out of 10)
-    # signed_psbt = lianad_multipath.signer.sign_psbt(reco_psbt, {20: [8]})
-    # lianad_multipath.rpc.updatespend(signed_psbt.to_base64())
-    # lianad_multipath.rpc.broadcastspend(txid)
+    # signed_psbt = coincubed_multipath.signer.sign_psbt(reco_psbt, {20: [8]})
+    # coincubed_multipath.rpc.updatespend(signed_psbt.to_base64())
+    # coincubed_multipath.rpc.broadcastspend(txid)
 
     # Now do this again but with signing using keys for the first recovery path.
     # Receive 3 more coins and make the second recovery path (20 blocks) available. Note this
     # is possible since the CSV checks the nSequence is >= to the value, not ==.
     # txids = []
     # for _ in range(3):
-    # addr = lianad_multipath.rpc.getnewaddress()["address"]
+    # addr = coincubed_multipath.rpc.getnewaddress()["address"]
     # txids.append(bitcoind.rpc.sendtoaddress(addr, 0.398))
     # bitcoind.generate_block(20, wait_for_mempool=txids)
     # wait_for(
-    # lambda: lianad_multipath.rpc.getinfo()["block_height"]
+    # lambda: coincubed_multipath.rpc.getinfo()["block_height"]
     # == bitcoind.rpc.getblockcount()
     # )
     # Sweep all coins through the second recovery path (that is available after 20 blocks).
     # It needs 3 signatures out of 5 keys.
-    # res = lianad_multipath.rpc.createrecovery(bitcoind.rpc.getnewaddress(), 2, 20)
+    # res = coincubed_multipath.rpc.createrecovery(bitcoind.rpc.getnewaddress(), 2, 20)
     # reco_psbt = PSBT.from_base64(res["psbt"])
     # txid = reco_psbt.tx.txid().hex()
     # We can sign with keys for the first recovery path (we need 3 out of 5)
-    # signed_psbt = lianad_multipath.signer.sign_psbt(reco_psbt, {10: range(2, 5)})
-    # lianad_multipath.rpc.updatespend(signed_psbt.to_base64())
-    # lianad_multipath.rpc.broadcastspend(txid)
+    # signed_psbt = coincubed_multipath.signer.sign_psbt(reco_psbt, {10: range(2, 5)})
+    # coincubed_multipath.rpc.updatespend(signed_psbt.to_base64())
+    # coincubed_multipath.rpc.broadcastspend(txid)
 
 
 def test_coinbase_deposit(coincubed, bitcoind):
@@ -271,34 +271,34 @@ def test_coinbase_deposit(coincubed, bitcoind):
 
 
 @pytest.mark.skipif(
-    OLD_LIANAD_PATH is None or USE_TAPROOT,
+    OLD_COINCUBED_PATH is None or USE_TAPROOT,
     reason="Need the old coincubed binary to create the datadir.",
 )
 @pytest.mark.skipif(
     BITCOIN_BACKEND_TYPE is not BitcoinBackendType.Bitcoind,
     reason="Only bitcoind backend was available for older coincubed versions.",
 )
-def test_migration(lianad_multisig_legacy_datadir, bitcoind):
+def test_migration(coincubed_multisig_legacy_datadir, bitcoind):
     """Test we can start a newer coincubed on a datadir created by an older coincubed."""
-    coincubed = lianad_multisig_legacy_datadir
+    coincubed = coincubed_multisig_legacy_datadir
 
     # Set the old binary and re-create the datadir.
-    coincubed.cmd_line[0] = OLD_LIANAD_PATH
+    coincubed.cmd_line[0] = OLD_COINCUBED_PATH
     coincubed.restart_fresh(bitcoind)
-    old_lianad_ver = coincubed.rpc.getinfo()["version"]
-    assert old_lianad_ver in ["0.3.0", "1.0.0"]
+    old_coincubed_ver = coincubed.rpc.getinfo()["version"]
+    assert old_coincubed_ver in ["0.3.0", "1.0.0"]
 
     # Perform some transactions. On Coincube v0.3 there was no "updated_at" for Spend
     # transaction drafts.
     receive_and_send(coincubed, bitcoind)
     spend_txs = coincubed.rpc.listspendtxs()["spend_txs"]
     assert len(spend_txs) == 2
-    if old_lianad_ver == "0.3.0":
+    if old_coincubed_ver == "0.3.0":
         assert all("updated_at" not in s for s in spend_txs)
 
     # Set back the new binary. We should be able to read and, if necessary, upgrade
     # the old database and generally all files from the datadir.
-    coincubed.cmd_line[0] = LIANAD_PATH
+    coincubed.cmd_line[0] = COINCUBED_PATH
     coincubed.restart_fresh(bitcoind)
 
     # And we can go on to create more deposits and transactions. Make sure we now have
@@ -364,7 +364,7 @@ def test_retry_on_workqueue_exceeded(coincubed, bitcoind, executor):
     # We use a loop to make sure coincubed hits a 503 when connecting to bitcoind, and not a
     # (very long) timeout while awaiting the response.
     while True:
-        f_liana = executor.submit(coincubed.rpc.getinfo)
+        f_coincube = executor.submit(coincubed.rpc.getinfo)
         try:
             coincubed.wait_for_logs(
                 [
@@ -386,4 +386,4 @@ def test_retry_on_workqueue_exceeded(coincubed, bitcoind, executor):
 
     # We should have retried the request to bitcoind, which should now succeed along with the call.
     # This just checks the response we get is sane, nothing particular with this field.
-    assert "block_height" in f_liana.result(TIMEOUT)
+    assert "block_height" in f_coincube.result(TIMEOUT)

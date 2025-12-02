@@ -89,7 +89,7 @@ fn socket_file(conf_file: Option<PathBuf>) -> PathBuf {
     let data_dir = config
         .data_directory()
         .expect("Wallet datadir is not properly defined");
-    data_dir.lianad_rpc_socket_path()
+    data_dir.coincubed_rpc_socket_path()
 }
 
 fn trimmed(mut vec: Vec<u8>, bytes_read: usize) -> Vec<u8> {

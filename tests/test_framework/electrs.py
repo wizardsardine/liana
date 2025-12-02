@@ -74,7 +74,7 @@ class Electrs(BitcoinBackend):
             self.proc.kill()
         self.proc.wait()
 
-    def append_to_lianad_conf(self, conf_file):
+    def append_to_coincubed_conf(self, conf_file):
         with open(conf_file, "a") as f:
             f.write("[electrum_config]\n")
             f.write(f"addr = '127.0.0.1:{self.rpcport}'\n")

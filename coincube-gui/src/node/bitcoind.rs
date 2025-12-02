@@ -118,10 +118,10 @@ pub fn internal_bitcoind_cookie_path(bitcoind_datadir: &Path, network: &Network)
 
 /// Path of the cookie file used by internal bitcoind on a given network.
 pub fn internal_bitcoind_debug_log_path(
-    lianad_datadir: &CoincubeDirectory,
+    coincubed_datadir: &CoincubeDirectory,
     network: Network,
 ) -> PathBuf {
-    let mut debug_log_path = internal_bitcoind_datadir(lianad_datadir);
+    let mut debug_log_path = internal_bitcoind_datadir(coincubed_datadir);
     if let Some(dir) = bitcoind_network_dir(&network) {
         debug_log_path.push(dir);
     }

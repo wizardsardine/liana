@@ -21,7 +21,7 @@ assert LOG_LEVEL in ["trace", "debug", "info", "warn", "error"]
 DEFAULT_MS_PATH = os.path.join(
     os.path.dirname(__file__), "..", "..", "target/release/coincubed"
 )
-LIANAD_PATH = os.getenv("LIANAD_PATH", DEFAULT_MS_PATH)
+COINCUBED_PATH = os.getenv("COINCUBED_PATH", DEFAULT_MS_PATH)
 
 
 class BitcoinBackendType(str, enum.Enum):
@@ -37,7 +37,7 @@ DEFAULT_BITCOIND_PATH = "bitcoind"
 BITCOIND_PATH = os.getenv("BITCOIND_PATH", DEFAULT_BITCOIND_PATH)
 DEFAULT_ELECTRS_PATH = "electrs"
 ELECTRS_PATH = os.getenv("ELECTRS_PATH", DEFAULT_ELECTRS_PATH)
-OLD_LIANAD_PATH = os.getenv("OLD_LIANAD_PATH", None)
+OLD_COINCUBED_PATH = os.getenv("OLD_COINCUBED_PATH", None)
 IS_NOT_BITCOIND_24 = bool(int(os.getenv("IS_NOT_BITCOIND_24", True)))
 USE_TAPROOT = bool(
     int(os.getenv("USE_TAPROOT", False))
@@ -443,6 +443,6 @@ class BitcoinBackend(abc.ABC, TailableProc):
     """All Bitcoin backends should derive from this class."""
 
     @abc.abstractmethod
-    def append_to_lianad_conf(self, conf_file):
+    def append_to_coincubed_conf(self, conf_file):
         """Append backend config values to coincubed config file."""
         ...

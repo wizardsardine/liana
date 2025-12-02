@@ -11,7 +11,7 @@ from test_framework.utils import (
     TailableProc,
     VERBOSE,
     LOG_LEVEL,
-    LIANAD_PATH,
+    COINCUBED_PATH,
     wait_for,
 )
 from test_framework.serializations import (
@@ -24,7 +24,7 @@ from test_framework.serializations import (
 )
 
 
-class Lianad(TailableProc):
+class Coincubed(TailableProc):
     def __init__(
         self, datadir, signer, multi_desc, bitcoin_backend, legacy_datadir=False
     ):
@@ -39,9 +39,9 @@ class Lianad(TailableProc):
         self.receive_desc, self.change_desc = multi_desc.singlepath_descriptors()
 
         self.conf_file = os.path.join(datadir, "config.toml")
-        self.cmd_line = [LIANAD_PATH, "--conf", f"{self.conf_file}"]
+        self.cmd_line = [COINCUBED_PATH, "--conf", f"{self.conf_file}"]
         data_directory = os.path.join(datadir, "regtest")
-        socket_path = os.path.join(data_directory, "lianad_rpc")
+        socket_path = os.path.join(data_directory, "coincubed_rpc")
         self.rpc = UnixDomainSocketRpc(socket_path)
         self.bitcoin_backend = bitcoin_backend
 
@@ -58,7 +58,7 @@ class Lianad(TailableProc):
             f.write("[bitcoin_config]\n")
             f.write('network = "regtest"\n')
             f.write(f"poll_interval_secs = {self._poll_interval_secs}\n")
-        bitcoin_backend.append_to_lianad_conf(self.conf_file)
+        bitcoin_backend.append_to_coincubed_conf(self.conf_file)
 
     @property
     def poll_interval_secs(self):
@@ -113,7 +113,7 @@ class Lianad(TailableProc):
         dir_path = os.path.join(self.datadir, "regtest")
         shutil.rmtree(dir_path)
         if BITCOIN_BACKEND_TYPE is BitcoinBackendType.Bitcoind:
-            wallet_path = os.path.join(dir_path, "lianad_watchonly_wallet")
+            wallet_path = os.path.join(dir_path, "coincubed_watchonly_wallet")
             bitcoind.node_rpc.unloadwallet(wallet_path)
         self.start()
         wait_for(

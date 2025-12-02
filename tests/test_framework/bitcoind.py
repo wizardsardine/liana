@@ -289,7 +289,7 @@ class Bitcoind(BitcoinBackend):
             self.proc.kill()
         self.proc.wait()
 
-    def append_to_lianad_conf(self, conf_file):
+    def append_to_coincubed_conf(self, conf_file):
         cookie_path = os.path.join(self.bitcoin_dir, "regtest", ".cookie")
         with open(conf_file, "a") as f:
             f.write("[bitcoind_config]\n")
