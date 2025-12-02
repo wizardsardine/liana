@@ -965,7 +965,7 @@ impl DeleteCubeModal {
                         } else {
                             Row::new()
                                 .spacing(10)
-                                .push(icon::circle_check_icon().style(theme::text::success))
+                                .push(icon::square_check_icon().style(theme::text::success))
                                 .push(
                                     text("Cube successfully deleted").style(theme::text::success),
                                 )

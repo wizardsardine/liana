@@ -1099,7 +1099,7 @@ pub fn define_bitcoin_node<'a>(
                         Row::new()
                             .spacing(10)
                             .align_y(Alignment::Center)
-                            .push(icon::circle_check_icon().style(theme::text::success))
+                            .push(icon::square_check_icon().style(theme::text::success))
                             .push(text("Connection checked").style(theme::text::success)),
                     )
                 } else {
@@ -1107,7 +1107,7 @@ pub fn define_bitcoin_node<'a>(
                         Row::new()
                             .spacing(10)
                             .align_y(Alignment::Center)
-                            .push(icon::circle_cross_icon().style(theme::text::error))
+                            .push(icon::square_cross_icon().style(theme::text::error))
                             .push(text("Connection failed").style(theme::text::error)),
                     )
                 }
@@ -1418,7 +1418,7 @@ pub fn start_internal_bitcoind<'a>(
                     DownloadState::Finished(_) => Row::new()
                         .spacing(10)
                         .align_y(Alignment::Center)
-                        .push(icon::circle_check_icon().style(theme::text::success))
+                        .push(icon::square_check_icon().style(theme::text::success))
                         .push(text("Download complete").style(theme::text::success)),
                     DownloadState::Downloading { progress } => Row::new()
                         .spacing(10)
@@ -1429,7 +1429,7 @@ pub fn start_internal_bitcoind<'a>(
                     DownloadState::Errored(e) => Row::new()
                         .spacing(10)
                         .align_y(Alignment::Center)
-                        .push(icon::circle_cross_icon().style(theme::text::error))
+                        .push(icon::square_cross_icon().style(theme::text::error))
                         .push(text(format!("Download failed: '{}'.", e)).style(theme::text::error)),
                     _ => Row::new().spacing(10).align_y(Alignment::Center),
                 }
@@ -1443,12 +1443,12 @@ pub fn start_internal_bitcoind<'a>(
                     InstallState::Finished => Row::new()
                         .spacing(10)
                         .align_y(Alignment::Center)
-                        .push(icon::circle_check_icon().style(theme::text::success))
+                        .push(icon::square_check_icon().style(theme::text::success))
                         .push(text("Installation complete").style(theme::text::success)),
                     InstallState::Errored(e) => Row::new()
                         .spacing(10)
                         .align_y(Alignment::Center)
-                        .push(icon::circle_cross_icon().style(theme::text::error))
+                        .push(icon::square_cross_icon().style(theme::text::error))
                         .push(
                             text(format!("Installation failed: '{}'.", e))
                                 .style(theme::text::error),
@@ -1458,7 +1458,7 @@ pub fn start_internal_bitcoind<'a>(
                 Row::new()
                     .spacing(10)
                     .align_y(Alignment::Center)
-                    .push(icon::circle_check_icon().style(theme::text::success))
+                    .push(icon::square_check_icon().style(theme::text::success))
                     .push(
                         text("Liana-managed bitcoind already installed")
                             .style(theme::text::success),
@@ -1478,7 +1478,7 @@ pub fn start_internal_bitcoind<'a>(
                             Row::new()
                                 .spacing(10)
                                 .align_y(Alignment::Center)
-                                .push(icon::circle_check_icon().style(theme::text::success))
+                                .push(icon::square_check_icon().style(theme::text::success))
                                 .push(text("Started").style(theme::text::success)),
                         )
                     } else {
@@ -1486,7 +1486,7 @@ pub fn start_internal_bitcoind<'a>(
                             Row::new()
                                 .spacing(10)
                                 .align_y(Alignment::Center)
-                                .push(icon::circle_cross_icon().style(theme::text::error))
+                                .push(icon::square_cross_icon().style(theme::text::error))
                                 .push(
                                     text(res.as_ref().err().unwrap().to_string())
                                         .style(theme::text::error),
@@ -1551,7 +1551,7 @@ pub fn install<'a>(
                     Row::new()
                         .spacing(10)
                         .align_y(Alignment::Center)
-                        .push(icon::circle_check_icon().style(theme::text::success))
+                        .push(icon::square_check_icon().style(theme::text::success))
                         .push(text("Installed").style(theme::text::success)),
                 )
             } else {
@@ -1891,7 +1891,7 @@ pub fn recover_mnemonic<'a>(
                                         )
                                         .push_maybe(if *valid {
                                             Some(
-                                                icon::circle_check_icon()
+                                                icon::square_check_icon()
                                                     .style(theme::text::success),
                                             )
                                         } else {
