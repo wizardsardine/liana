@@ -219,35 +219,23 @@ pub fn create_spend_tx<'a>(
                     .push(
                         button::secondary(None, "Fast (~10m)")
                             .width(Length::Fixed(130.0))
-                            .on_press_maybe(if let Some(1) = loading_fee_estimate {
-                                None
-                            } else {
-                                Some(Message::CreateSpend(CreateSpendMessage::FetchFeeEstimate(
-                                    1,
-                                )))
-                            }),
+                            .on_press_maybe((!matches!(loading_fee_estimate, Some(1))).then(
+                                || Message::CreateSpend(CreateSpendMessage::FetchFeeEstimate(1)),
+                            )),
                     )
                     .push(
                         button::secondary(None, "Normal (~1h)")
                             .width(Length::Fixed(130.0))
-                            .on_press_maybe(if let Some(6) = loading_fee_estimate {
-                                None
-                            } else {
-                                Some(Message::CreateSpend(CreateSpendMessage::FetchFeeEstimate(
-                                    6,
-                                )))
-                            }),
+                            .on_press_maybe((!matches!(loading_fee_estimate, Some(6))).then(
+                                || Message::CreateSpend(CreateSpendMessage::FetchFeeEstimate(6)),
+                            )),
                     )
                     .push(
                         button::secondary(None, "Slow (~4h)")
                             .width(Length::Fixed(130.0))
-                            .on_press_maybe(if let Some(24) = loading_fee_estimate {
-                                None
-                            } else {
-                                Some(Message::CreateSpend(CreateSpendMessage::FetchFeeEstimate(
-                                    24,
-                                )))
-                            }),
+                            .on_press_maybe((!matches!(loading_fee_estimate, Some(24))).then(
+                                || Message::CreateSpend(CreateSpendMessage::FetchFeeEstimate(24)),
+                            )),
                     )
                     .push(
                         Container::new(

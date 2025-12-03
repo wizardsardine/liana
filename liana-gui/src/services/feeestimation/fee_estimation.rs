@@ -1,7 +1,9 @@
+use reqwest::Client;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::error::Error;
 use std::fmt;
+use std::time::Duration;
 
 const MEMPOOL_FEES_API_URL: &str = "https://mempool.space/api/v1/fees/recommended";
 const ESPLORA_FEES_API_URL: &str = "https://blockstream.info/api/fee-estimates";
@@ -15,17 +17,17 @@ impl FeeEstimator {
 
     pub async fn get_high_priority_rate(&self) -> Result<usize, FeeEstimatorError> {
         let fee = self.get_fee_rate(BlockTarget::Fastest).await?;
-        Ok(fee.round() as usize)
+        Ok(fee.round().max(1.0) as usize)
     }
 
     pub async fn get_mid_priority_rate(&self) -> Result<usize, FeeEstimatorError> {
         let fee = self.get_fee_rate(BlockTarget::Standard).await?;
-        Ok(fee.round() as usize)
+        Ok(fee.round().max(1.0) as usize)
     }
 
     pub async fn get_low_priority_rate(&self) -> Result<usize, FeeEstimatorError> {
         let fee = self.get_fee_rate(BlockTarget::Economy).await?;
-        Ok(fee.round() as usize)
+        Ok(fee.round().max(1.0) as usize)
     }
 
     async fn get_fee_rate(&self, target: BlockTarget) -> Result<f64, FeeEstimatorError> {
@@ -36,8 +38,13 @@ impl FeeEstimator {
     }
 
     async fn estimate_fees(&self) -> Result<HashMap<BlockTarget, f64>, FeeEstimatorError> {
-        let (mempool_res, esplora_res) =
-            tokio::join!(Self::fetch_mempool_fees(), Self::fetch_esplora_fees(),);
+        let client = reqwest::ClientBuilder::new()
+            .timeout(Duration::from_secs(10))
+            .build()?;
+        let (mempool_res, esplora_res) = tokio::join!(
+            Self::fetch_mempool_fees(&client),
+            Self::fetch_esplora_fees(&client),
+        );
 
         let mut combined: HashMap<BlockTarget, Vec<f64>> = HashMap::new();
         combined.insert(BlockTarget::Fastest, vec![]);
@@ -71,8 +78,12 @@ impl FeeEstimator {
         Ok(final_fees)
     }
 
-    async fn fetch_mempool_fees() -> Result<HashMap<BlockTarget, f64>, FeeEstimatorError> {
-        let response = reqwest::get(MEMPOOL_FEES_API_URL)
+    async fn fetch_mempool_fees(
+        client: &Client,
+    ) -> Result<HashMap<BlockTarget, f64>, FeeEstimatorError> {
+        let response = client
+            .get(MEMPOOL_FEES_API_URL)
+            .send()
             .await?
             .json::<MempoolFeeResponse>()
             .await?;
@@ -85,30 +96,21 @@ impl FeeEstimator {
         Ok(map)
     }
 
-    async fn fetch_esplora_fees() -> Result<HashMap<BlockTarget, f64>, FeeEstimatorError> {
-        let response = reqwest::get(ESPLORA_FEES_API_URL)
+    async fn fetch_esplora_fees(
+        client: &Client,
+    ) -> Result<HashMap<BlockTarget, f64>, FeeEstimatorError> {
+        let response = client
+            .get(ESPLORA_FEES_API_URL)
+            .send()
             .await?
             .json::<EsploraFeeResponse>()
-            .await?
-            .fees;
+            .await?;
 
         let mut map = HashMap::new();
 
-        let fee_1 = *response.get("1").ok_or_else(|| {
-            FeeEstimatorError::MissingData("Esplora missing 1-block estimate".into())
-        })?;
-
-        let fee_6 = *response.get("6").ok_or_else(|| {
-            FeeEstimatorError::MissingData("Esplora missing 6-block estimate".into())
-        })?;
-
-        let fee_24 = *response.get("24").ok_or_else(|| {
-            FeeEstimatorError::MissingData("Esplora missing 24-block estimate".into())
-        })?;
-
-        map.insert(BlockTarget::Fastest, fee_1);
-        map.insert(BlockTarget::Standard, fee_6);
-        map.insert(BlockTarget::Economy, fee_24);
+        map.insert(BlockTarget::Fastest, response.one);
+        map.insert(BlockTarget::Standard, response.six);
+        map.insert(BlockTarget::Economy, response.twenty_four);
 
         Ok(map)
     }
@@ -126,8 +128,12 @@ struct MempoolFeeResponse {
 
 #[derive(Debug, Deserialize)]
 struct EsploraFeeResponse {
-    #[serde(flatten)]
-    fees: HashMap<String, f64>,
+    #[serde(rename = "1")]
+    one: f64,
+    #[serde(rename = "6")]
+    six: f64,
+    #[serde(rename = "24")]
+    twenty_four: f64,
 }
 
 #[derive(Debug)]

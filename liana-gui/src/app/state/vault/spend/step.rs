@@ -626,6 +626,9 @@ impl Step for DefineSpend {
                         self.warning = None;
                         self.loading_fee_estimate = None;
                     }
+                    view::CreateSpendMessage::SessionError(error) => {
+                        self.warning = Some(error.into());
+                    }
                     view::CreateSpendMessage::FetchFeeEstimate(block_target) => {
                         self.loading_fee_estimate = Some(block_target);
                         return Task::perform(
@@ -636,15 +639,17 @@ impl Step for DefineSpend {
                                     6 => fee_estimator.get_mid_priority_rate().await,
                                     _ => fee_estimator.get_low_priority_rate().await,
                                 };
-                                match feerate {
-                                    Ok(feerate) => feerate.to_string(),
-                                    Err(err) => format!("error:{}", err),
-                                }
+                                return feerate;
                             },
-                            |fee| {
-                                Message::View(view::Message::CreateSpend(
-                                    CreateSpendMessage::FeerateEdited(fee),
-                                ))
+                            |feerate| match feerate {
+                                Ok(fee) => Message::View(view::Message::CreateSpend(
+                                    CreateSpendMessage::FeerateEdited(fee.to_string()),
+                                )),
+                                Err(_) => Message::View(view::Message::CreateSpend(
+                                    CreateSpendMessage::SessionError(
+                                        SpendCreationError::FeeEstimationFailed,
+                                    ),
+                                )),
                             },
                         );
                     }
