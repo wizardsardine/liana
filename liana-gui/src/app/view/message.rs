@@ -9,6 +9,7 @@ use crate::{
 #[cfg(feature = "buysell")]
 use crate::services::mavapay::*;
 use liana::miniscript::bitcoin::{bip32::Fingerprint, Address, OutPoint};
+use liana::spend::SpendCreationError;
 
 pub trait Close {
     fn close() -> Self;
