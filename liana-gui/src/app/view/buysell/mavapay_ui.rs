@@ -359,6 +359,8 @@ fn transactions_form<'a>(state: &'a MavapayState) -> Column<'a, BuySellMessage> 
 
     // Current price display
     let mut price_display = iced::widget::column![header, Space::with_height(Length::Fixed(20.0))];
+
+    // TODO: Replace with realtime BTC-fiat conversion display
     if let Some(price) = current_price {
         price_display = price_display
             .push(

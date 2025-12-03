@@ -37,17 +37,6 @@ impl CoincubeClient {
             .await?;
 
         let response = response.check_success().await?;
-
-        if !response.status().is_success() {
-            let status = response.status();
-            let error_text = response.text().await;
-
-            return Err(CoincubeError::Api(format!(
-                "HTTP {}: {:?}",
-                status, error_text
-            )));
-        }
-
         Ok(response.json().await?)
     }
 
