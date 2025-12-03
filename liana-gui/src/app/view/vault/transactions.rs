@@ -293,7 +293,7 @@ pub fn create_rbf_modal<'a>(
                 Row::new()
                     .spacing(10)
                     .align_y(Alignment::Center)
-                    .push(icon::circle_check_icon().style(theme::text::secondary))
+                    .push(icon::square_check_icon().style(theme::text::secondary))
                     .push(
                         text("Replacement PSBT created successfully and ready to be signed")
                             .style(theme::text::success),

@@ -1119,7 +1119,7 @@ pub fn wallet_settings<'a>(
                         Some(
                             Row::new()
                                 .align_y(Alignment::Center)
-                                .push(icon::circle_check_icon().style(theme::text::success))
+                                .push(icon::square_check_icon().style(theme::text::success))
                                 .push(text("Updated").style(theme::text::success)),
                         )
                     } else {

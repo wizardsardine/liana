@@ -21,8 +21,8 @@ use liana_ui::{
     color,
     component::{button, text::*},
     icon::{
-        coins_icon, cross_icon, cube_icon, down_icon, history_icon, home_icon, lightning_icon,
-        plus_icon, receive_icon, recovery_icon, send_icon, settings_icon, up_icon, vault_icon,
+        coins_icon, cross_icon, cube_icon, down_icon, home_icon, lightning_icon, plus_icon,
+        receipt_icon, receive_icon, recovery_icon, send_icon, settings_icon, up_icon, vault_icon,
     },
     image::*,
     theme,
@@ -177,7 +177,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<
             if matches!(menu, Menu::Active(ActiveSubMenu::Transactions(_))) {
                 row!(
                     Space::with_width(Length::Fixed(20.0)),
-                    button::menu_active(Some(history_icon()), "Transactions")
+                    button::menu_active(Some(receipt_icon()), "Transactions")
                         .on_press(Message::Reload)
                         .width(iced::Length::Fill),
                     menu_bar_highlight()
@@ -186,7 +186,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<
             } else {
                 row!(
                     Space::with_width(Length::Fixed(20.0)),
-                    button::menu(Some(history_icon()), "Transactions")
+                    button::menu(Some(receipt_icon()), "Transactions")
                         .on_press(Message::Menu(Menu::Active(ActiveSubMenu::Transactions(
                             None
                         ))))
@@ -361,7 +361,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<
             if matches!(menu, Menu::Vault(VaultSubMenu::Transactions(_))) {
                 row!(
                     Space::with_width(Length::Fixed(20.0)),
-                    button::menu_active(Some(history_icon()), "Transactions")
+                    button::menu_active(Some(receipt_icon()), "Transactions")
                         .on_press(Message::Reload)
                         .width(iced::Length::Fill),
                     menu_bar_highlight()
@@ -370,7 +370,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<
             } else {
                 row!(
                     Space::with_width(Length::Fixed(20.0)),
-                    button::menu(Some(history_icon()), "Transactions")
+                    button::menu(Some(receipt_icon()), "Transactions")
                         .on_press(Message::Menu(Menu::Vault(VaultSubMenu::Transactions(None))))
                         .width(iced::Length::Fill),
                 )
@@ -381,7 +381,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<
         let vault_psbts_button = if matches!(menu, Menu::Vault(VaultSubMenu::PSBTs(_))) {
             row!(
                 Space::with_width(Length::Fixed(20.0)),
-                button::menu_active(Some(history_icon()), "PSBTs")
+                button::menu_active(Some(receipt_icon()), "PSBTs")
                     .on_press(Message::Reload)
                     .width(iced::Length::Fill),
                 menu_bar_highlight()
@@ -390,7 +390,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<
         } else {
             row!(
                 Space::with_width(Length::Fixed(20.0)),
-                button::menu(Some(history_icon()), "PSBTs")
+                button::menu(Some(receipt_icon()), "PSBTs")
                     .on_press(Message::Menu(Menu::Vault(VaultSubMenu::PSBTs(None))))
                     .width(iced::Length::Fill),
             )
