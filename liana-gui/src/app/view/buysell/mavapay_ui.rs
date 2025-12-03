@@ -1,57 +1,173 @@
 use crate::app::view::{
-    buysell::{flow_state::MavapayFlowMode, MavapayFlowStep, MavapayState},
+    buysell::{panel::BuyOrSell, MavapayFlowStep, MavapayState},
     BuySellMessage, MavapayMessage,
 };
 
 use iced::{widget::*, Alignment, Length};
 
-use liana_ui::component::{button, form, text};
 use liana_ui::{color, theme, widget::Column};
+use liana_ui::{
+    component::{button, text},
+    icon::*,
+};
 
+// TODO: Use labels instead of placeholders for all input forms
 pub fn form<'a>(state: &'a MavapayState) -> Column<'a, BuySellMessage> {
-    match &state.step {
-        MavapayFlowStep::Login { password, email } => login_form(password, email),
-        MavapayFlowStep::Register { .. } => registration_form(state),
-        MavapayFlowStep::VerifyEmail { .. } => email_verification_form(state),
-        MavapayFlowStep::ActiveBuysell { .. } => active_form(state),
-    }
+    let form = match &state.step {
+        MavapayFlowStep::Register { .. } => registration_form,
+        MavapayFlowStep::VerifyEmail { .. } => email_verification_form,
+        MavapayFlowStep::Login { .. } => login_form,
+        MavapayFlowStep::PasswordReset { .. } => password_reset_form,
+        MavapayFlowStep::Transaction { .. } => transactions_form,
+    };
+
+    form(state)
 }
 
-fn login_form<'a>(password: &'a str, email: &'a str) -> Column<'a, BuySellMessage> {
+fn login_form<'a>(state: &'a MavapayState) -> Column<'a, BuySellMessage> {
+    let MavapayFlowStep::Login { email, password } = &state.step else {
+        unreachable!();
+    };
+
     iced::widget::column![
         // header
         text::h3("Sign in to your account").color(color::WHITE),
-        Space::with_height(Length::Fixed(30.0)),
+        Space::with_height(Length::Fixed(35.0)),
         // input fields
         text_input("Email", email)
-            .on_input(|e| BuySellMessage::Mavapay(MavapayMessage::LoginUsernameChanged(e))),
-        Space::with_height(Length::Fixed(20.0)),
+            .on_input(|e| BuySellMessage::Mavapay(MavapayMessage::LoginUsernameChanged(e)))
+            .size(16)
+            .padding(15),
+        Space::with_height(Length::Fixed(5.0)),
         text_input("Password", password)
             .secure(true)
-            .on_input(|p| BuySellMessage::Mavapay(MavapayMessage::LoginPasswordChanged(p))),
-        Space::with_height(Length::Fixed(30.0)),
+            .on_input(|p| BuySellMessage::Mavapay(MavapayMessage::LoginPasswordChanged(p)))
+            .size(16)
+            .padding(15),
+        Space::with_height(Length::Fixed(15.0)),
         // submit button
         button::primary(None, "Log In")
             .on_press_maybe(
-                // TODO: better form validation?
-                (!email.is_empty() && !password.is_empty()).then_some(BuySellMessage::Mavapay(
-                    MavapayMessage::SubmitLogin {
+                (email.contains('.') && email.contains('@') && !password.is_empty()).then_some(
+                    BuySellMessage::Mavapay(MavapayMessage::SubmitLogin {
                         skip_email_verification: false
-                    }
-                )),
+                    })
+                ),
             )
             .width(Length::Fill),
-        Space::with_height(Length::Fixed(20.0)),
+        Space::with_height(Length::Fixed(10.0)),
+        // separator
+        container(Space::new(iced::Length::Fill, iced::Length::Fixed(3.0)))
+            .style(|_| { color::GREY_6.into() }),
+        Space::with_height(Length::Fixed(5.0)),
         // sign-up redirect
         iced::widget::button(
-            text::p2_regular("Don't have an account? Sign up").color(color::ORANGE),
+            text::p2_regular("Don't have an account? Sign up").color(color::BLUE),
         )
-        .style(theme::button::transparent)
-        .on_press(BuySellMessage::Mavapay(MavapayMessage::CreateNewAccount))
+        .style(theme::button::link)
+        .on_press(BuySellMessage::Mavapay(MavapayMessage::CreateNewAccount)),
+        // password reset button
+        iced::widget::button(
+            text::p2_regular("Forgot your Password? Reset it here...").color(color::ORANGE),
+        )
+        .style(theme::button::link)
+        .on_press(BuySellMessage::Mavapay(MavapayMessage::ResetPassword))
     ]
     .align_x(Alignment::Center)
-    .spacing(5)
+    .spacing(2)
     .max_width(500)
+    .width(Length::Fill)
+}
+
+fn password_reset_form<'a>(state: &'a MavapayState) -> Column<'a, BuySellMessage> {
+    let MavapayFlowStep::PasswordReset { email, sent } = &state.step else {
+        unreachable!()
+    };
+
+    iced::widget::column![
+        Space::with_height(Length::Fixed(15.0)),
+        text::p1_bold("Password Reset Form"),
+        Space::with_height(Length::Fixed(10.0)),
+        iced::widget::row![
+            container(email_icon().color(color::BLACK).size(20))
+                .style(|_| {
+                    iced::widget::container::Style::default()
+                        .border(iced::Border {
+                            color: color::GREY_1,
+                            width: 0.5,
+                            radius: 1.0.into(),
+                        })
+                        .background(color::GREY_1)
+                })
+                .padding(8.0),
+            container({
+                let el: iced::Element<BuySellMessage, theme::Theme> = match sent {
+                    true => container(
+                        text(email)
+                            .style(theme::text::success)
+                            .size(20)
+                            .center()
+                            .width(Length::Fill),
+                    )
+                    .padding(8)
+                    .into(),
+                    false => text_input("Your e-mail here: ", email)
+                        .width(Length::Fill)
+                        .size(20)
+                        .padding(8)
+                        .style(|th, st| {
+                            let mut style = theme::text_input::primary(th, st);
+                            style.border.radius = 0.into();
+                            style.border.width = 0.0;
+                            style
+                        })
+                        .on_input(|s| BuySellMessage::Mavapay(MavapayMessage::EmailChanged(s)))
+                        .on_submit(BuySellMessage::Mavapay(
+                            MavapayMessage::SendPasswordResetEmail,
+                        ))
+                        .into(),
+                };
+
+                el
+            })
+            .style(|_| iced::widget::container::Style::default().border(
+                iced::Border {
+                    color: color::GREY_1,
+                    width: 0.5,
+                    radius: 1.0.into()
+                }
+            ))
+        ]
+        .height(40.0)
+    ]
+    .push(
+        iced::widget::column![
+            Space::with_height(Length::Fixed(10.0)),
+            // separator
+            container(Space::new(iced::Length::Fill, iced::Length::Fixed(2.0)))
+                .style(|_| { color::GREY_7.into() }),
+            Space::with_height(Length::Fixed(10.0)),
+            match sent {
+                // log-in redirect
+                true => iced::widget::button(
+                    text::p2_regular("Recovery Email Sent! Return to Log-In").color(color::BLUE),
+                )
+                .style(theme::button::link)
+                .on_press(BuySellMessage::Mavapay(MavapayMessage::ReturnToLogin)),
+                // sends the password reset email
+                false => button(text::p2_medium("Proceed").size(16).width(80).center())
+                    .on_press_maybe(
+                        (!*sent && email.contains('.') && email.contains('@')).then_some(
+                            BuySellMessage::Mavapay(MavapayMessage::SendPasswordResetEmail)
+                        )
+                    ),
+            },
+        ]
+        .align_x(iced::Alignment::Center),
+    )
+    .align_x(iced::Alignment::Center)
+    .spacing(2)
+    .max_width(400)
     .width(Length::Fill)
 }
 
@@ -59,8 +175,7 @@ fn registration_form<'a>(state: &'a MavapayState) -> Column<'a, BuySellMessage> 
     use liana_ui::icon::previous_icon;
 
     let MavapayFlowStep::Register {
-        first_name,
-        last_name,
+        legal_name,
         password1,
         password2,
         email,
@@ -75,7 +190,7 @@ fn registration_form<'a>(state: &'a MavapayState) -> Column<'a, BuySellMessage> 
             Row::new()
                 .push(previous_icon().color(color::GREY_2))
                 .push(Space::with_width(Length::Fixed(5.0)))
-                .push(text("Previous").color(color::GREY_2))
+                .push(text::p1_medium("Previous").color(color::GREY_2))
                 .spacing(5)
                 .align_y(Alignment::Center),
         )
@@ -95,57 +210,37 @@ fn registration_form<'a>(state: &'a MavapayState) -> Column<'a, BuySellMessage> 
         .spacing(10)
         .align_x(Alignment::Center),
         Space::with_height(Length::Fixed(20.0)),
-        // Name Inputs
-        iced::widget::row![
-            Container::new(
-                form::Form::new("First Name", first_name, |v| {
-                    BuySellMessage::Mavapay(MavapayMessage::FirstNameChanged(v))
-                })
-                .size(16)
-                .padding(15),
-            )
-            .width(Length::FillPortion(1)),
-            Space::with_width(Length::Fixed(12.0)),
-            Container::new(
-                form::Form::new("Last Name", last_name, |v| {
-                    BuySellMessage::Mavapay(MavapayMessage::LastNameChanged(v))
-                })
-                .size(16)
-                .padding(15),
-            )
-            .width(Length::FillPortion(1))
-        ],
-        Space::with_height(Length::Fixed(10.0)),
+        // Name Input
+        text_input("Full Legal Name: ", legal_name).on_input(|v| BuySellMessage::Mavapay(MavapayMessage::LegalNameChanged(v)))
+            .width(Length::Fill)
+            .size(16)
+            .padding(15),
         // Email Input
-        form::Form::new("Email Address", email, |v| {
+        text_input("Email Address", email).on_input(|v| {
             BuySellMessage::Mavapay(MavapayMessage::EmailChanged(v))
         })
         .size(16)
         .padding(15),
         Space::with_height(Length::Fixed(10.0)),
         // Password Inputs
-        form::Form::new("Password", password1, |v| {
+        text_input("Password", password1).on_input(|v| {
             BuySellMessage::Mavapay(MavapayMessage::Password1Changed(v))
         })
         .size(16)
         .padding(15)
-        .secure(),
+        .secure(true),
         // TODO: include password check messages
-        form::Form::new("Confirm Password", password2, |v| {
+        text_input("Confirm Password", password2).on_input(|v| {
             BuySellMessage::Mavapay(MavapayMessage::Password2Changed(v))
         })
         .size(16)
         .padding(15)
-        .secure(),
+        .secure(true),
         Space::with_height(Length::Fixed(20.0)),
         button::primary(None, "Create Account")
             .on_press_maybe(
-                {
-                    // TODO: implement form validation here
-                    // use https://github.com/shssoichiro/zxcvbn-rs for password strength validation
-                    false
-                }
-                .then_some(BuySellMessage::Mavapay(MavapayMessage::SubmitRegistration)),
+                (!legal_name.is_empty() && email.contains('.') &&  email.contains('@')  && !password1.is_empty() && (password1 == password2))
+                    .then_some(BuySellMessage::Mavapay(MavapayMessage::SubmitRegistration)),
             )
             .width(Length::Fill),
     ]
@@ -242,54 +337,46 @@ fn email_verification_form<'a>(state: &'a MavapayState) -> Column<'a, BuySellMes
     .width(Length::Fill)
 }
 
-fn active_form<'a>(state: &'a MavapayState) -> Column<'a, BuySellMessage> {
+fn transactions_form<'a>(state: &'a MavapayState) -> Column<'a, BuySellMessage> {
     use liana_ui::icon::bitcoin_icon;
 
-    let MavapayFlowStep::ActiveBuysell {
-        flow_mode,
+    let MavapayFlowStep::Transaction {
         amount,
-        source_currency,
-        target_currency,
-        payment_method,
-        bank_account_number,
-        bank_account_name,
-        bank_code,
-        bank_name,
-        current_quote,
         current_price,
-        settlement_currency,
+        buy_or_sell,
         ..
     } = &state.step
     else {
         unreachable!()
     };
 
-    let header = Row::new()
-        .push(Space::with_width(Length::Fill))
-        .push(text::h4_bold("Bitcoin ↔ Fiat Exchange").color(color::WHITE))
-        .push(Space::with_width(Length::Fill))
-        .align_y(Alignment::Center);
-
-    let mut column = Column::new()
-        .push(header)
-        .push(Space::with_height(Length::Fixed(20.0)));
+    let header = iced::widget::row![
+        Space::with_width(Length::Fill),
+        text::h4_bold("Bitcoin ↔ Fiat Exchange").color(color::WHITE),
+        Space::with_width(Length::Fill),
+    ]
+    .align_y(Alignment::Center);
 
     // Current price display
+    let mut price_display = iced::widget::column![header, Space::with_height(Length::Fixed(20.0))];
+
+    // TODO: Replace with realtime BTC-fiat conversion display
     if let Some(price) = current_price {
-        column = column
+        price_display = price_display
             .push(
                 Container::new(
                     Row::new()
-                        .push(bitcoin_icon().size(20).color(color::ORANGE))
-                        .push(Space::with_width(Length::Fixed(10.0)))
                         .push(
                             text(format!(
-                                "1 BTC = {:.4} {}",
-                                price.btc_price_in_unit_currency, price.currency
+                                "1 SAT = {:.4} {}",
+                                price.btc_price_in_unit_currency / 100_000_000.0,
+                                price.currency
                             ))
                             .size(16)
                             .color(color::WHITE),
                         )
+                        .push(Space::with_width(Length::Fill))
+                        .push(bitcoin_icon().size(20).color(color::ORANGE))
                         .align_y(Alignment::Center),
                 )
                 .padding(15)
@@ -300,338 +387,44 @@ fn active_form<'a>(state: &'a MavapayState) -> Column<'a, BuySellMessage> {
     }
 
     // Exchange form with payment mode radio buttons
-    let mut form_column = Column::new()
-        .push(Space::with_height(Length::Fixed(15.0)))
-        // Payment mode selection with radio buttons
-        .push(text("Payment Mode").size(14).color(color::GREY_3))
-        .push(Space::with_height(Length::Fixed(8.0)))
-        .push(
-            Row::new()
-                .push(
-                    radio(
-                        "Create Quote",
-                        MavapayFlowMode::CreateQuote,
-                        Some(*flow_mode),
-                        |mode| BuySellMessage::Mavapay(MavapayMessage::FlowModeChanged(mode)),
-                    )
-                    .size(16)
-                    .text_size(14),
-                )
-                .push(Space::with_width(Length::Fixed(20.0)))
-                .push(
-                    radio(
-                        "One-time Payment",
-                        MavapayFlowMode::OneTimePayment,
-                        Some(*flow_mode),
-                        |mode| BuySellMessage::Mavapay(MavapayMessage::FlowModeChanged(mode)),
-                    )
-                    .size(16)
-                    .text_size(14),
-                )
-                .align_y(Alignment::Center),
-        )
-        .push(Space::with_height(Length::Fixed(15.0)))
+    let beneficiary_input_form = iced::widget::column![
+        Space::with_height(Length::Fixed(15.0)),
         // Amount field (common to both modes)
-        .push(text("Amount").size(14).color(color::GREY_3))
-        .push(Space::with_height(Length::Fixed(5.0)))
-        .push(
-            Container::new(
-                iced_aw::number_input(amount, .., |a| {
-                    BuySellMessage::Mavapay(MavapayMessage::AmountChanged(a))
-                })
-                .size(14)
-                .padding(10),
-            )
-            .width(Length::Fixed(200.0)),
+        text("Amount in BTCSAT").size(14).color(color::GREY_3),
+        Space::with_height(Length::Fixed(5.0)),
+        Container::new(
+            iced_aw::number_input(amount, .., |a| {
+                BuySellMessage::Mavapay(MavapayMessage::AmountChanged(a))
+            })
+            .size(14)
+            .padding(10),
         )
-        .push(Space::with_height(Length::Fixed(15.0)));
-
-    // Conditional fields based on mode
-    match flow_mode {
-        MavapayFlowMode::CreateQuote => {
-            // Show From/To currency dropdowns for quote mode
-            form_column = form_column
-                .push(
-                    Row::new()
-                        .push(
-                            Column::new()
-                                .push(text("From").size(14).color(color::GREY_3))
-                                .push(Space::with_height(Length::Fixed(5.0)))
-                                .push(
-                                    pick_list(
-                                        crate::services::mavapay::MavapayUnitCurrency::all(),
-                                        source_currency.as_ref(),
-                                        |currency| {
-                                            BuySellMessage::Mavapay(
-                                                MavapayMessage::SourceCurrencyChanged(currency),
-                                            )
-                                        },
-                                    )
-                                    .placeholder("Select Source Currency")
-                                    .style(theme::pick_list::primary)
-                                    .padding(10),
-                                )
-                                .width(Length::Fixed(250.0)),
-                        )
-                        .push(Space::with_width(Length::Fixed(15.0)))
-                        .push(
-                            Column::new()
-                                .push(text("To").size(14).color(color::GREY_3))
-                                .push(Space::with_height(Length::Fixed(5.0)))
-                                .push(
-                                    pick_list(
-                                        crate::services::mavapay::MavapayUnitCurrency::all(),
-                                        target_currency.as_ref(),
-                                        |currency| {
-                                            BuySellMessage::Mavapay(
-                                                MavapayMessage::TargetCurrencyChanged(currency),
-                                            )
-                                        },
-                                    )
-                                    .placeholder("Select Target Currency")
-                                    .style(theme::pick_list::primary)
-                                    .padding(10),
-                                )
-                                .width(Length::Fixed(250.0)),
-                        )
-                        .spacing(10),
-                )
-                .push(Space::with_height(Length::Fixed(15.0)));
-
-            // Bank Account Details (only when selling BTC in Create Quote mode)
-            if matches!(
-                source_currency,
-                Some(crate::services::mavapay::MavapayUnitCurrency::BitcoinSatoshi)
-            ) {
-                form_column = form_column
-                    .push(text("Bank Account Details").size(16).color(color::WHITE))
-                    .push(Space::with_height(Length::Fixed(10.0)))
-                    .push(
-                        Row::new()
-                            .push(
-                                Column::new()
-                                    .push(text("Account Number").size(14).color(color::GREY_3))
-                                    .push(Space::with_height(Length::Fixed(5.0)))
-                                    .push(
-                                        text_input("...1234567890", &bank_account_number)
-                                            .on_input(|ban| {
-                                                BuySellMessage::Mavapay(
-                                                    MavapayMessage::BankAccountNumberChanged(ban),
-                                                )
-                                            })
-                                            .size(14)
-                                            .padding(10),
-                                    )
-                                    .width(Length::Fixed(250.0)),
-                            )
-                            .push(Space::with_width(Length::Fixed(15.0)))
-                            .push(
-                                Column::new()
-                                    .push(text("Account Name").size(14).color(color::GREY_3))
-                                    .push(Space::with_height(Length::Fixed(5.0)))
-                                    .push(
-                                        text_input("John/Jane Doe", &bank_account_name)
-                                            .on_input(|ban| {
-                                                BuySellMessage::Mavapay(
-                                                    MavapayMessage::BankAccountNameChanged(ban),
-                                                )
-                                            })
-                                            .size(14)
-                                            .padding(10),
-                                    )
-                                    .width(Length::Fixed(250.0)),
-                            )
-                            .spacing(10),
-                    )
-                    .push(Space::with_height(Length::Fixed(10.0)))
-                    .push(
-                        Row::new()
-                            .push(
-                                Column::new()
-                                    .push(text("Bank Code").size(14).color(color::GREY_3))
-                                    .push(Space::with_height(Length::Fixed(5.0)))
-                                    .push(
-                                        text_input("...", &bank_code)
-                                            .on_input(|ban| {
-                                                BuySellMessage::Mavapay(
-                                                    MavapayMessage::BankCodeChanged(ban),
-                                                )
-                                            })
-                                            .size(14)
-                                            .padding(10),
-                                    )
-                                    .width(Length::Fixed(120.0)),
-                            )
-                            .push(Space::with_width(Length::Fixed(15.0)))
-                            .push(
-                                Column::new()
-                                    .push(text("Bank Name").size(14).color(color::GREY_3))
-                                    .push(Space::with_height(Length::Fixed(5.0)))
-                                    .push(
-                                        text_input("...", &bank_name)
-                                            .on_input(|ban| {
-                                                BuySellMessage::Mavapay(
-                                                    MavapayMessage::BankNameChanged(ban),
-                                                )
-                                            })
-                                            .size(14)
-                                            .padding(10),
-                                    )
-                                    .width(Length::Fixed(385.0)),
-                            )
-                            .spacing(10),
-                    )
-                    .push(Space::with_height(Length::Fixed(15.0)));
+        .width(Length::Fixed(200.0)),
+        // TODO: Display source/target currencies, with realtime conversion rate
+        match buy_or_sell {
+            BuyOrSell::Buy { address: _ } => {
+                // TODO: display input amount, generated address and bank deposit details.
+                Space::with_height(0)
             }
-        }
-        MavapayFlowMode::OneTimePayment => {
-            // Show Settlement Currency and Payment Method for one-time payment
-            form_column = form_column
-                .push(text("Settlement Currency").size(14).color(color::GREY_3))
-                .push(Space::with_height(Length::Fixed(5.0)))
-                .push(
-                    pick_list(
-                        crate::services::mavapay::MavapayCurrency::all(),
-                        settlement_currency.as_ref(),
-                        |currency| {
-                            BuySellMessage::Mavapay(MavapayMessage::SettlementCurrencyChanged(
-                                currency,
-                            ))
-                        },
-                    )
-                    .placeholder("Select Settlement Currency")
-                    .style(theme::pick_list::primary)
-                    .padding(10)
-                    .width(Length::Fixed(250.0)),
-                )
-                .push(Space::with_height(Length::Fixed(15.0)))
-                .push(text("Payment Method").size(14).color(color::GREY_3))
-                .push(Space::with_height(Length::Fixed(5.0)))
-                .push(
-                    pick_list(
-                        crate::services::mavapay::MavapayPaymentMethod::all(),
-                        Some(payment_method),
-                        |method| {
-                            BuySellMessage::Mavapay(MavapayMessage::PaymentMethodChanged(method))
-                        },
-                    )
-                    .style(theme::pick_list::primary)
-                    .padding(10)
-                    .width(Length::Fixed(250.0)),
-                )
-                .push(Space::with_height(Length::Fixed(15.0)));
-        }
-    }
+            BuyOrSell::Sell => {
+                // TODO: display onchain bitcoin address for deposit, and beneficiary input forms
+                // TODO: If country uses BankTransfer, render banks selector dropdown
+                Space::with_height(0)
+            }
+        },
+        button::primary(None, "Process Payment")
+            .on_press(BuySellMessage::Mavapay(MavapayMessage::CreateQuote))
+            .width(Length::Fill)
+    ]
+    .spacing(10)
+    .align_x(Alignment::Center)
+    .width(Length::Fill);
 
-    // TODO: disable button if form is not valid
-    form_column = form_column
-        .push(
-            button::primary(None, "Process Payment")
-                .on_press(match flow_mode {
-                    MavapayFlowMode::CreateQuote => {
-                        BuySellMessage::Mavapay(MavapayMessage::CreateQuote)
-                    }
-                    MavapayFlowMode::OneTimePayment => {
-                        BuySellMessage::Mavapay(MavapayMessage::OpenPaymentLink)
-                    }
-                })
-                .width(Length::Fill),
-        )
-        .spacing(5);
-
-    let exchange_form = Container::new(form_column)
-        .padding(20)
-        .style(theme::card::simple)
-        .width(Length::Fixed(600.0)); // Fixed width for consistent layout
-
-    column = column.push(exchange_form);
-
-    // Quote display with payment confirmation
-    if let Some(quote) = current_quote {
-        let mut quote_column = Column::new()
-            .push(text::h5_medium("Quote Created Successfully").color(color::GREEN))
-            .push(Space::with_height(Length::Fixed(10.0)))
-            .push(
-                Row::new()
-                    .push(text("Amount: ").size(14).color(color::GREY_3))
-                    .push(
-                        text(format!("{} sats", quote.total_amount_in_source_currency))
-                            .size(14)
-                            .color(color::WHITE),
-                    ),
-            )
-            .push(
-                Row::new()
-                    .push(text("Rate: ").size(14).color(color::GREY_3))
-                    .push(
-                        text(format!("{:.2}", quote.exchange_rate))
-                            .size(14)
-                            .color(color::WHITE),
-                    ),
-            )
-            .push(
-                Row::new()
-                    .push(text("Expires: ").size(14).color(color::GREY_3))
-                    .push(text(&quote.expiry).size(14).color(color::ORANGE)),
-            )
-            .push(Space::with_height(Length::Fixed(10.0)))
-            .push(text("Lightning Invoice: ").size(14).color(color::GREY_3))
-            .push(
-                Container::new(text(&quote.invoice).size(12).color(color::WHITE))
-                    .padding(10)
-                    .style(theme::card::simple),
-            );
-
-        // Show NGN bank details if available (for buy-BTC flow)
-        if let Some(bank_name) = quote.bank_name.as_deref() {
-            quote_column = quote_column
-                .push(Space::with_height(Length::Fixed(10.0)))
-                .push(
-                    text("Pay to this bank account:")
-                        .size(14)
-                        .color(color::GREY_3),
-                )
-                .push(Space::with_height(Length::Fixed(5.0)))
-                .push(
-                    Container::new(
-                        Column::new()
-                            .push(
-                                text(format!("Bank: {}", bank_name))
-                                    .size(12)
-                                    .color(color::WHITE),
-                            )
-                            .push_maybe(quote.ngn_bank_account_number.as_deref().map(|ban| {
-                                text(format!("Account Number: {}", ban))
-                                    .size(12)
-                                    .color(color::WHITE)
-                            }))
-                            .push_maybe(quote.ngn_account_name.as_deref().map(|an| {
-                                text(format!("Account Name: {}", an))
-                                    .size(12)
-                                    .color(color::WHITE)
-                            }))
-                            .spacing(5),
-                    )
-                    .padding(10)
-                    .style(theme::card::simple),
-                );
-        }
-
-        // Note: "Confirm Payment" button removed - payment page opens automatically
-        // after quote creation in the simplified flow
-
-        let quote_display = Container::new(quote_column.spacing(5))
+    // combine UI, render beneficiary input form using card styling
+    price_display.push(
+        Container::new(beneficiary_input_form)
             .padding(20)
             .style(theme::card::simple)
-            .width(Length::Fixed(600.0)); // Match form width
-
-        column = column
-            .push(Space::with_height(Length::Fixed(15.0)))
-            .push(quote_display);
-    }
-
-    column
-        .spacing(10)
-        .align_x(Alignment::Center)
-        .width(Length::Fill)
+            .width(Length::Fixed(600.0)),
+    )
 }

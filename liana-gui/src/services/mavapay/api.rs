@@ -49,8 +49,13 @@ impl From<NotSuccessResponseInfo> for MavapayError {
 #[serde(rename_all = "camelCase")]
 #[serde(tag = "status")]
 pub enum MavapayResponse<T> {
-    Error { message: String },
-    Success { data: T },
+    Error {
+        message: String,
+    },
+    #[serde(alias = "ok")]
+    Success {
+        data: T,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -126,15 +131,6 @@ impl MavapayUnitCurrency {
             MavapayUnitCurrency::BitcoinSatoshi => "Satoshi",
         }
     }
-
-    pub(crate) fn all() -> &'static [MavapayUnitCurrency] {
-        &[
-            MavapayUnitCurrency::KenyanShillingCent,
-            MavapayUnitCurrency::SouthAfricanRandCent,
-            MavapayUnitCurrency::NigerianNairaKobo,
-            MavapayUnitCurrency::BitcoinSatoshi,
-        ]
-    }
 }
 
 impl std::fmt::Display for MavapayUnitCurrency {
@@ -153,15 +149,15 @@ impl std::fmt::Display for MavapayUnitCurrency {
 pub enum MavapayPaymentMethod {
     Lightning,
     BankTransfer,
-    NgnBankTransfer,
+    Onchain,
 }
 
 impl std::fmt::Display for MavapayPaymentMethod {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             MavapayPaymentMethod::Lightning => write!(f, "Bitcoin Lightning"),
+            MavapayPaymentMethod::Onchain => write!(f, "Bitcoin Mainnet Transaction"),
             MavapayPaymentMethod::BankTransfer => write!(f, "Bank Transfer"),
-            MavapayPaymentMethod::NgnBankTransfer => write!(f, "Nigerian Bank Transfer"),
         }
     }
 }
@@ -171,12 +167,12 @@ impl MavapayPaymentMethod {
         &[
             MavapayPaymentMethod::Lightning,
             MavapayPaymentMethod::BankTransfer,
-            MavapayPaymentMethod::NgnBankTransfer,
+            MavapayPaymentMethod::Onchain,
         ]
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 #[serde(rename_all_fields = "camelCase")]
 #[serde(untagged)]
 pub enum Beneficiary {
@@ -200,18 +196,35 @@ pub enum Beneficiary {
     KES(KenyanBeneficiary),
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 #[serde(rename_all = "lowercase")]
 #[serde(rename_all_fields = "camelCase")]
 #[serde(tag = "identifierType", content = "identifiers")]
 pub enum KenyanBeneficiary {
     PayToPhone {
+        account_name: String,
         phone_number: String,
     },
     PayToBill {
-        paybill_number: String,
+        account_name: String,
         account_number: String,
+        paybill_number: String,
     },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all_fields = "camelCase")]
+#[serde(untagged)]
+pub enum MavapayBanks {
+    Nigerian(Vec<NigerianBank>),
+    SouthAfrican(Vec<String>),
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct NigerianBank {
+    pub bank_name: String,
+    pub nip_bank_code: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -236,7 +249,8 @@ pub struct GetQuoteRequest {
     pub beneficiary: Option<Beneficiary>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+// TODO: This structure is always changing, with some members being deprecated or undocumented
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GetQuoteResponse {
     pub id: String,
@@ -259,7 +273,6 @@ pub struct GetQuoteResponse {
     pub created_at: String,
     pub updated_at: String,
 
-    // TODO: undocumented members
     pub estimated_routing_fee: Option<u64>,
     pub order_id: Option<String>,
     pub bank_name: Option<String>,
@@ -275,44 +288,6 @@ pub struct MavapayWallet {
     pub account_id: String,
     pub currency: MavapayCurrency,
     pub balance: u64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum PaymentLinkType {
-    #[serde(rename = "One_Time")]
-    OneTime,
-    #[serde(rename = "Recurring")]
-    Recurring,
-}
-
-/// Based on actual API spec from Postman collection
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CreatePaymentLinkRequest {
-    #[serde(rename = "type")]
-    pub _type: PaymentLinkType,
-    pub name: String,
-    pub description: String,
-    pub add_fee_to_total_cost: bool,
-    pub settlement_currency: MavapayCurrency,
-    pub payment_methods: [MavapayPaymentMethod; 1],
-    pub amount: u64,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub callback_url: Option<String>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CreatePaymentLinkResponse {
-    pub payment_link: String,
-    pub payment_ref: String,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct BankInformation {
-    pub bank_name: String,
-    pub nip_bank_code: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]

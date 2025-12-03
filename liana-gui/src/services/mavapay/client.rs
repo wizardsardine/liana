@@ -91,35 +91,13 @@ impl MavapayClient {
         Ok(quote)
     }
 
-    /// Create a hosted checkout payment link
-    pub async fn create_payment_link(
-        &self,
-        request: CreatePaymentLinkRequest,
-    ) -> Result<CreatePaymentLinkResponse, MavapayError> {
-        let response = self
-            .request(Method::POST, "/paymentlink")
-            .json(&request)
-            .send()
-            .await?;
-        let response = response.check_success().await?;
-
-        match response.json().await? {
-            MavapayResponse::Success { data } => Ok(data),
-            MavapayResponse::Error { message } => Err(MavapayError::ApiError(message)),
-        }
-    }
-
-    pub async fn get_banks(
-        &self,
-        country_code: &str,
-    ) -> Result<Vec<BankInformation>, MavapayError> {
+    pub async fn get_banks(&self, country_code: &str) -> Result<MavapayBanks, MavapayError> {
         let response = self
             .request(Method::GET, "/bank/bankcode")
             .query(&[("country", country_code)])
             .send()
-            .await?
-            .check_success()
             .await?;
+        let response = response.check_success().await?;
 
         match response.json().await? {
             MavapayResponse::Success { data } => Ok(data),
@@ -172,6 +150,7 @@ impl MavapayClient {
         let request = self.request(Method::GET, "/transactions").query(&options);
         let response = request.send().await?.check_success().await?;
 
+        // `GET /transactions` has a custom response structure
         match response.json().await? {
             GetTransactionResponse::Error { message } => Err(MavapayError::ApiError(message)),
             GetTransactionResponse::Success { pagination, data } => Ok((pagination, data)),

@@ -21,12 +21,13 @@ impl CoincubeClient {
     }
 
     /// Save a Mavapay quote to coincube-api
-    pub async fn save_quote(
+    pub async fn save_quote<T: serde::Serialize>(
         &self,
-        request: SaveQuoteRequest,
+        quote_id: &str,
+        quote: T,
     ) -> Result<SaveQuoteResponse, CoincubeError> {
-        tracing::info!("[COINCUBE] Saving quote with request:\n{:?}", &request);
         let url = format!("{}/api/v1/mavapay/quotes", self.base_url);
+        let request = SaveQuoteRequest { quote_id, quote };
 
         let response = self
             .client
@@ -36,17 +37,6 @@ impl CoincubeClient {
             .await?;
 
         let response = response.check_success().await?;
-
-        if !response.status().is_success() {
-            let status = response.status();
-            let error_text = response.text().await;
-
-            return Err(CoincubeError::Api(format!(
-                "HTTP {}: {:?}",
-                status, error_text
-            )));
-        }
-
         Ok(response.json().await?)
     }
 
@@ -138,6 +128,22 @@ impl CoincubeClient {
 
         let response = {
             let url = format!("{}{}", self.base_url, "/api/v1/auth/login");
+            self.client.post(&url).json(&request).send()
+        }
+        .await?;
+        let response = response.check_success().await?;
+
+        Ok(response.json().await?)
+    }
+
+    pub async fn send_password_reset_email(
+        &self,
+        email: &str,
+    ) -> Result<PasswordResetEmailResponse, CoincubeError> {
+        let request = PasswordResetEmailRequest { email };
+
+        let response = {
+            let url = format!("{}{}", self.base_url, "/api/v1/auth/forgot-password");
             self.client.post(&url).json(&request).send()
         }
         .await?;

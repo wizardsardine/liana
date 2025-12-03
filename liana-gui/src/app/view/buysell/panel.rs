@@ -20,10 +20,10 @@ use crate::app::{
     view::{BuySellMessage, Message as ViewMessage},
 };
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub enum BuyOrSell {
-    Buy,
     Sell,
+    Buy { address: LabelledAddress },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -47,11 +47,12 @@ pub enum BuySellFlowState {
     DetectingLocation(bool),
     /// Nigeria, Kenya and South Africa, ie Mavapay supported countries
     Mavapay(super::flow_state::MavapayState),
-    /// Renders an interface to generate a new address for bitcoin deposit
-    AddressGeneration {
-        buy_or_sell: Option<BuyOrSell>,
-        data_dir: crate::dir::LianaDirectory,
-        address: Option<LabelledAddress>,
+    /// Renders an interface to either generate a new address for bitcoin deposit, or skip to selling BTC
+    Initialization {
+        buy_or_sell_selected: Option<bool>,
+        buy_or_sell: Option<BuyOrSell>, // `buy` mode always has an address included for deposit
+        // mavapay credentials restored from the OS keyring
+        mavapay_credentials: Option<(String, Vec<u8>)>,
     },
     /// A webview is currently active, and is rendered instead of a buysell UI
     WebviewRenderer { active: iced_wry::IcedWebview },
@@ -111,7 +112,7 @@ impl BuySellPanel {
                 )
                 // error display
                 .push_maybe(self.error.as_ref().map(|err| {
-                    Container::new(text(err).size(14).color(color::RED))
+                    Container::new(text(err).size(12).style(theme::text::error).center())
                         .padding(10)
                         .style(theme::card::invalid)
                 }))
@@ -124,13 +125,17 @@ impl BuySellPanel {
                 .push({
                     let element: iced::Element<ViewMessage, theme::Theme> = match &self.flow_state {
                         BuySellFlowState::DetectingLocation(m) => self.geolocation_ux(*m).into(),
-                        BuySellFlowState::AddressGeneration {
+                        BuySellFlowState::Initialization {
+                            buy_or_sell_selected,
                             buy_or_sell,
-                            address: generated_address,
                             ..
-                        } => self
-                            .address_generation_ux(buy_or_sell.clone(), generated_address.clone())
-                            .into(),
+                        } => match buy_or_sell.as_ref() {
+                            Some(BuyOrSell::Buy { address }) => {
+                                self.initialization_ux(*buy_or_sell_selected, Some(address))
+                            }
+                            _ => self.initialization_ux(*buy_or_sell_selected, None),
+                        }
+                        .into(),
                         BuySellFlowState::Mavapay(state) => {
                             let element: iced::Element<BuySellMessage, theme::Theme> =
                                 super::mavapay_ui::form(state).into();
@@ -198,10 +203,10 @@ impl BuySellPanel {
         ]
     }
 
-    fn address_generation_ux<'a>(
+    fn initialization_ux<'a>(
         &'a self,
-        buy_or_sell: Option<BuyOrSell>,
-        generated: Option<LabelledAddress>,
+        buy_or_sell: Option<bool>,
+        generated: Option<&'a LabelledAddress>,
     ) -> Column<'a, ViewMessage> {
         use iced::widget::scrollable;
         use liana_ui::component::{
@@ -267,9 +272,7 @@ impl BuySellPanel {
                         .on_press_maybe(
                             self.detected_country
                                 .is_some()
-                                .then_some(ViewMessage::BuySell(
-                                    BuySellMessage::StartOnramperSession,
-                                )),
+                                .then_some(ViewMessage::BuySell(BuySellMessage::StartSession)),
                         )
                         .width(iced::Length::Fill),
                 ),
@@ -281,12 +284,12 @@ impl BuySellPanel {
                                 Some(bitcoin_icon()),
                                 "Buy Bitcoin using Fiat Currencies",
                             )
-                            .on_press(ViewMessage::BuySell(BuySellMessage::SetBuyOrSell(
-                                BuyOrSell::Buy,
-                            )))
-                            .style(move |th, st| match buy_or_sell {
-                                Some(BuyOrSell::Buy) => liana_ui::theme::button::primary(th, st),
-                                _ => liana_ui::theme::button::secondary(th, st),
+                            .on_press(ViewMessage::BuySell(BuySellMessage::SelectBuyOrSell(true)))
+                            .style({
+                                move |th, st| match buy_or_sell {
+                                    Some(true) => liana_ui::theme::button::primary(th, st),
+                                    _ => liana_ui::theme::button::secondary(th, st),
+                                }
                             })
                             .padding(30)
                             .width(iced::Length::Fill),
@@ -296,12 +299,12 @@ impl BuySellPanel {
                                 Some(dollar_icon()),
                                 "Sell Bitcoin to a Fiat Currency",
                             )
-                            .on_press(ViewMessage::BuySell(BuySellMessage::SetBuyOrSell(
-                                BuyOrSell::Sell,
-                            )))
-                            .style(move |th, st| match buy_or_sell {
-                                Some(BuyOrSell::Sell) => liana_ui::theme::button::primary(th, st),
-                                _ => liana_ui::theme::button::secondary(th, st),
+                            .on_press(ViewMessage::BuySell(BuySellMessage::SelectBuyOrSell(false)))
+                            .style({
+                                move |th, st| match buy_or_sell {
+                                    Some(false) => liana_ui::theme::button::primary(th, st),
+                                    _ => liana_ui::theme::button::secondary(th, st),
+                                }
                             })
                             .padding(30)
                             .width(iced::Length::Fill),
@@ -319,18 +322,20 @@ impl BuySellPanel {
                         .width(Length::Fill),
                 )
                 .push_maybe({
-                    (matches!(buy_or_sell, Some(BuyOrSell::Buy))).then(|| {
+                    (matches!(buy_or_sell, Some(true))).then(|| {
                         button::secondary(Some(plus_icon()), "Generate New Address")
                             .on_press(ViewMessage::BuySell(BuySellMessage::CreateNewAddress))
                             .width(iced::Length::Fill)
                     })
                 })
                 .push_maybe({
-                    (matches!(buy_or_sell, Some(BuyOrSell::Sell))).then(|| {
+                    (matches!(buy_or_sell, Some(false))).then(|| {
                         button::secondary(Some(globe_icon()), "Continue")
-                            .on_press_maybe(self.detected_country.is_some().then_some(
-                                ViewMessage::BuySell(BuySellMessage::StartOnramperSession),
-                            ))
+                            .on_press_maybe(
+                                self.detected_country
+                                    .is_some()
+                                    .then_some(ViewMessage::BuySell(BuySellMessage::StartSession)),
+                            )
                             .width(iced::Length::Fill)
                     })
                 }),

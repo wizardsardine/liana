@@ -9,13 +9,7 @@ use crate::{
         menu::Menu,
         message::Message,
         state::State,
-        view::{
-            self,
-            buysell::{
-                flow_state::MavapayFlowMode, BuySellFlowState, BuySellPanel, MavapayFlowStep,
-            },
-            BuySellMessage, MavapayMessage, Message as ViewMessage,
-        },
+        view::{self, buysell::*, BuySellMessage, MavapayMessage, Message as ViewMessage},
     },
     daemon::Daemon,
     services::mavapay::*,
@@ -43,36 +37,36 @@ impl State for BuySellPanel {
         message: Message,
     ) -> Task<Message> {
         let message = match message {
+            Message::View(ViewMessage::BuySell(message)) => message,
             // modal for any generated address
             Message::View(ViewMessage::Select(_)) => {
-                if let BuySellFlowState::AddressGeneration {
-                    address: Some(la), ..
-                } = &self.flow_state
-                {
-                    self.modal = super::vault::receive::Modal::VerifyAddress(
-                        super::vault::receive::VerifyAddressModal::new(
-                            cache.datadir_path.clone(),
-                            self.wallet.clone(),
-                            cache.network,
-                            la.address.clone(),
-                            la.index,
-                        ),
-                    );
-                };
+                if let BuySellFlowState::Initialization { buy_or_sell, .. } = &self.flow_state {
+                    if let Some(panel::BuyOrSell::Buy { address }) = buy_or_sell {
+                        self.modal = super::vault::receive::Modal::VerifyAddress(
+                            super::vault::receive::VerifyAddressModal::new(
+                                cache.datadir_path.clone(),
+                                self.wallet.clone(),
+                                cache.network,
+                                address.address.clone(),
+                                address.index,
+                            ),
+                        );
+                    };
+                }
 
                 return Task::none();
             }
             Message::View(ViewMessage::ShowQrCode(_)) => {
-                if let BuySellFlowState::AddressGeneration {
-                    address: Some(la), ..
-                } = &self.flow_state
-                {
-                    if let Some(modal) =
-                        super::vault::receive::ShowQrCodeModal::new(&la.address, la.index)
-                    {
-                        self.modal = super::vault::receive::Modal::ShowQrCode(modal);
-                    }
-                };
+                if let BuySellFlowState::Initialization { buy_or_sell, .. } = &self.flow_state {
+                    if let Some(panel::BuyOrSell::Buy { address }) = buy_or_sell {
+                        if let Some(modal) = super::vault::receive::ShowQrCodeModal::new(
+                            &address.address,
+                            address.index,
+                        ) {
+                            self.modal = super::vault::receive::Modal::ShowQrCode(modal);
+                        }
+                    };
+                }
 
                 return Task::none();
             }
@@ -80,36 +74,63 @@ impl State for BuySellPanel {
                 self.modal = super::vault::receive::Modal::None;
                 return Task::none();
             }
-            Message::View(ViewMessage::BuySell(message)) => message,
             _ => return Task::none(),
         };
 
         match message {
             // internal state management
             BuySellMessage::ResetWidget => {
-                let flow_state = match self.detected_country.as_ref().map(|c| c.code) {
-                    Some(iso) if mavapay_supported(&iso) => {
-                        BuySellFlowState::Mavapay(view::buysell::MavapayState::new())
-                    }
-                    _ => BuySellFlowState::AddressGeneration {
-                        buy_or_sell: None,
-                        data_dir: cache.datadir_path.clone(),
-                        address: None,
-                    },
-                };
+                if let Some(country) = &self.detected_country {
+                    if mavapay_supported(&country.code) {
+                        // attempt automatic login from os-keyring
+                        match keyring::Entry::new("io.coincube.Vault", "mavapay") {
+                            Ok(entry) => {
+                                if let (Ok(token), Ok(user_data)) =
+                                    (entry.get_password(), entry.get_secret())
+                                {
+                                    self.error = None;
 
-                self.flow_state = flow_state;
-                self.error = None;
-            }
-            BuySellMessage::SetBuyOrSell(bs) => {
-                if let BuySellFlowState::AddressGeneration { buy_or_sell, .. } =
-                    &mut self.flow_state
-                {
-                    *buy_or_sell = Some(bs);
+                                    // start initialization step with mavapay credentials embedded
+                                    self.flow_state = BuySellFlowState::Initialization {
+                                        buy_or_sell_selected: None,
+                                        buy_or_sell: None,
+                                        mavapay_credentials: Some((token, user_data)),
+                                    };
+
+                                    return Task::none();
+                                };
+                            }
+                            Err(e) => {
+                                log::error!("Unable to acquire OS keyring for Mavapay state: {e}");
+                            }
+                        };
+
+                        // send user back to mavapay login screen, to initialize login credentials
+                        self.flow_state = BuySellFlowState::Mavapay(MavapayState::new())
+                    } else {
+                        // onramper skips to automatic initialization
+                        self.flow_state = BuySellFlowState::Initialization {
+                            buy_or_sell_selected: None,
+                            buy_or_sell: None,
+                            mavapay_credentials: None,
+                        };
+                    }
+                } else {
+                    log::warn!("Unable to reset widget, country is unknown");
+                    self.flow_state = BuySellFlowState::DetectingLocation(true);
                 }
             }
 
-            // creates a new address for bitcoin deposit
+            // initialization flow: for creating a new address and setting panel mode (buy or sell)
+            BuySellMessage::SelectBuyOrSell(bs) => {
+                if let BuySellFlowState::Initialization {
+                    buy_or_sell_selected,
+                    ..
+                } = &mut self.flow_state
+                {
+                    *buy_or_sell_selected = Some(bs)
+                }
+            }
             BuySellMessage::CreateNewAddress => {
                 return Task::perform(
                     async move { daemon.get_new_address().await },
@@ -121,147 +142,169 @@ impl State for BuySellPanel {
                                 label: None,
                             }),
                         )),
-                        Err(err) => Message::View(ViewMessage::BuySell(
-                            BuySellMessage::SessionError(err.to_string()),
-                        )),
+                        Err(e) => {
+                            Message::View(ViewMessage::BuySell(BuySellMessage::SessionError(
+                                "Unable to create a new address",
+                                e.to_string(),
+                            )))
+                        }
                     },
                 )
             }
-            BuySellMessage::AddressCreated(addresses) => {
-                if let BuySellFlowState::AddressGeneration {
-                    address: generated_address,
-                    ..
-                } = &mut self.flow_state
-                {
-                    *generated_address = Some(addresses);
+            BuySellMessage::AddressCreated(address) => {
+                if let BuySellFlowState::Initialization { buy_or_sell, .. } = &mut self.flow_state {
+                    *buy_or_sell = Some(panel::BuyOrSell::Buy { address })
                 }
             }
 
             // ip-geolocation logic
             BuySellMessage::CountryDetected(result) => {
-                use crate::app::view::buysell::MavapayState;
-
                 let country = match result {
                     Ok(country) => {
                         self.error = None;
                         country
                     }
                     Err(err) => {
-                        tracing::error!("Error detecting country via geo-ip, switching to manual country selector.\n    {}", err);
+                        log::error!("Error detecting country via geo-ip, switching to manual country selector.\n    {}", err);
 
                         self.flow_state = BuySellFlowState::DetectingLocation(true);
                         self.detected_country = None;
 
                         return Task::done(Message::View(ViewMessage::BuySell(
-                            BuySellMessage::SessionError("Unable to automatically determine location, please select manually below".to_string()),
+                            BuySellMessage::SessionError(
+                                "Unable to automatically determine location",
+                                "please select manually below".to_string(),
+                            ),
                         )));
                     }
                 };
 
-                if mavapay_supported(&country.code) {
-                    let mut mavapay = MavapayState::new();
-
-                    // attempt automatic login from os-keyring
-                    if let Ok(entry) = keyring::Entry::new("io.coincube.Vault", "vault") {
-                        if let (Ok(token), Ok(user_data)) =
-                            (entry.get_password(), entry.get_secret())
-                        {
-                            mavapay.auth_token = Some(token);
-                            if let Ok(user) = serde_json::from_slice(&user_data) {
-                                mavapay.current_user = Some(user);
-                            }
-                        };
-
-                        if mavapay.current_user.is_some() && mavapay.auth_token.is_some() {
-                            // TODO: check if auth credentials have expired
-                            log::info!("Coincube session successfully restored from OS keyring");
-
-                            mavapay.step = MavapayFlowStep::ActiveBuysell {
-                                country: country.clone(),
-                                flow_mode: MavapayFlowMode::CreateQuote,
-                                amount: 60,
-                                source_currency: None,
-                                target_currency: None,
-                                settlement_currency: None,
-                                payment_method: MavapayPaymentMethod::Lightning,
-                                bank_account_number: String::new(),
-                                bank_account_name: String::new(),
-                                bank_code: String::new(),
-                                bank_name: String::new(),
-                                current_quote: None,
-                                current_price: None,
-                            };
-                        };
-                    };
-
-                    self.flow_state = BuySellFlowState::Mavapay(mavapay);
-                } else {
-                    self.flow_state = BuySellFlowState::AddressGeneration {
-                        buy_or_sell: None,
-                        data_dir: cache.datadir_path.clone(),
-                        address: None,
-                    };
-                }
-
                 // update location information
-                tracing::info!("Country = {}, ISO = {}", country.name, country.code);
-                self.detected_country = Some(country);
+                log::info!("Country = {}, ISO = {}", country.name, country.code);
+                self.detected_country = Some(country.clone());
+
+                return Task::done(Message::View(ViewMessage::BuySell(
+                    BuySellMessage::ResetWidget,
+                )));
             }
 
             // session management
-            BuySellMessage::StartOnramperSession => {
-                let BuySellFlowState::AddressGeneration {
+            BuySellMessage::StartSession => {
+                let BuySellFlowState::Initialization {
                     buy_or_sell,
-                    address: generated_address,
+                    mavapay_credentials,
                     ..
-                } = &self.flow_state
+                } = &mut self.flow_state
                 else {
-                    return Task::none();
+                    unreachable!(
+                        "`StartSession` is always called after the Initialization Flow Stage"
+                    )
                 };
 
-                let mode = match buy_or_sell {
-                    Some(view::buysell::panel::BuyOrSell::Buy) => "buy",
-                    Some(view::buysell::panel::BuyOrSell::Sell) => "sell",
-                    None => return Task::none(),
-                };
-
-                let Some(iso_code) = self.detected_country.as_ref().map(|c| c.code) else {
-                    tracing::warn!(
-                        "Unable to start session, country selection|detection was unsuccessful"
+                let buy_or_sell = buy_or_sell.as_ref().unwrap_or(&panel::BuyOrSell::Sell);
+                let Some(country) = self.detected_country.as_ref() else {
+                    unreachable!(
+                        "Unable to start session, country detection|selection was unsuccessful"
                     );
-                    return Task::none();
                 };
 
-                let Some(currency) = crate::services::coincube::get_countries()
-                    .iter()
-                    .find(|c| c.code == iso_code)
-                    .map(|c| c.currency.code)
-                else {
-                    tracing::error!("Unknown country iso code: {}", iso_code);
-                    return Task::none();
-                };
+                match mavapay_credentials.take() {
+                    // if present, login to mavapay state
+                    Some((token, user_data)) => {
+                        // start buysell under Mavapay
+                        let mut mavapay = MavapayState::new();
 
-                // prepare parameters
-                let address = generated_address.as_ref().map(|a| a.address.to_string());
+                        match serde_json::from_slice(&user_data) {
+                            Ok(user) => {
+                                mavapay.auth_token = Some(token);
+                                mavapay.current_user = Some(user);
+                                log::info!("Mavapay session successfully restored from OS keyring");
+                                mavapay.step = MavapayFlowStep::Transaction {
+                                    buy_or_sell: buy_or_sell.clone(),
+                                    country: country.clone(),
+                                    banks: None,
+                                    amount: 60,
+                                    beneficiary: None,
+                                    selected_bank: None,
+                                    current_quote: None,
+                                    current_price: None,
+                                };
+                                self.flow_state = BuySellFlowState::Mavapay(mavapay);
+                                return if country.code != "KE" {
+                                    Task::batch([
+                                        Task::done(Message::View(view::Message::BuySell(
+                                            BuySellMessage::Mavapay(MavapayMessage::GetBanks),
+                                        ))),
+                                        Task::done(Message::View(view::Message::BuySell(
+                                            BuySellMessage::Mavapay(MavapayMessage::GetPrice),
+                                        ))),
+                                    ])
+                                } else {
+                                    Task::done(Message::View(view::Message::BuySell(
+                                        BuySellMessage::Mavapay(MavapayMessage::GetPrice),
+                                    )))
+                                };
+                            }
+                            Err(e) => {
+                                log::error!("Unable to parse user data from OS keyring, possibly malformed or outdated data: {e}");
+                                self.error = Some(
+                                    "Unable to restore Mavapay session, data is malformed or outdated"
+                                        .to_string(),
+                                );
 
-                let start = match crate::app::buysell::onramper::create_widget_url(
-                    &currency,
-                    address.as_deref(),
-                    &mode,
-                    self.network,
-                ) {
-                    Ok(url) => Task::done(BuySellMessage::WebviewOpenUrl(url)),
-                    Err(error) => {
-                        tracing::error!("[ONRAMPER] Error: {}", error);
-                        Task::done(BuySellMessage::SessionError(error.to_string()))
+                                // send user back to mavapay login screen
+                                self.flow_state = BuySellFlowState::Mavapay(MavapayState::new())
+                            }
+                        }
+                    }
+                    // start buysell under Onramper
+                    None => {
+                        let Some(currency) = crate::services::coincube::get_countries()
+                            .iter()
+                            .find(|c| c.code == country.code)
+                            .map(|c| c.currency.code)
+                        else {
+                            self.error = Some(format!(
+                                "[FATAL] The country iso code ({}) is invalid",
+                                country.code
+                            ));
+                            return Task::none();
+                        };
+
+                        // create onramper widget url and start session
+                        let url = match buy_or_sell {
+                            view::buysell::panel::BuyOrSell::Buy { address } => {
+                                let address = address.address.to_string();
+                                crate::app::buysell::onramper::create_widget_url(
+                                    &currency,
+                                    Some(&address),
+                                    "buy",
+                                    self.network,
+                                )
+                            }
+                            view::buysell::panel::BuyOrSell::Sell => {
+                                crate::app::buysell::onramper::create_widget_url(
+                                    &currency,
+                                    None,
+                                    "sell",
+                                    self.network,
+                                )
+                            }
+                        };
+
+                        return match url {
+                            Ok(url) => Task::done(BuySellMessage::WebviewOpenUrl(url)),
+                            Err(e) => Task::done(BuySellMessage::SessionError(
+                                "Couldn't create Onramper URL",
+                                e.to_string(),
+                            )),
+                        }
+                        .map(|m| Message::View(ViewMessage::BuySell(m)));
                     }
                 }
-                .map(|m| Message::View(ViewMessage::BuySell(m)));
-
-                return start;
             }
-            BuySellMessage::SessionError(error) => {
-                self.error = Some(error);
+            BuySellMessage::SessionError(description, error) => {
+                self.error = Some(format!("{} ({})", description, error));
             }
 
             // mavapay session logic
@@ -278,7 +321,7 @@ impl State for BuySellPanel {
                                 skip_email_verification,
                             },
                         ) => {
-                            let client = mavapay.coincube_client.clone();
+                            let client = self.coincube_client.clone();
 
                             let email = email.to_string();
                             let password = password.to_string();
@@ -307,7 +350,10 @@ impl State for BuySellPanel {
                                             login,
                                         })
                                     }
-                                    Err(e) => BuySellMessage::SessionError(e.to_string()),
+                                    Err(e) => BuySellMessage::SessionError(
+                                        "Failed to submit login",
+                                        e.to_string(),
+                                    ),
                                 },
                             )
                             .map(|m| Message::View(ViewMessage::BuySell(m)));
@@ -336,101 +382,53 @@ impl State for BuySellPanel {
                             }
 
                             log::info!("Successfully logged in user: {}", &login.user.email);
-
-                            // initialize location information for user
-                            let iso = self.detected_country.as_ref().map(|c| c.code);
-                            let source_currency = match iso {
-                                Some("NG") => Some(MavapayUnitCurrency::NigerianNairaKobo),
-                                Some("KE") => Some(MavapayUnitCurrency::KenyanShillingCent),
-                                Some("ZA") => Some(MavapayUnitCurrency::SouthAfricanRandCent),
-                                c => {
-                                    log::error!("Country: {:?} is not supported by mavapay", c);
-                                    None
-                                }
-                            };
+                            let bytes = serde_json::to_vec(&login.user).unwrap();
 
                             // store token in OS keyring
-                            if let Ok(entry) = keyring::Entry::new("io.coincube.Vault", "vault") {
+                            if let Ok(entry) = keyring::Entry::new("io.coincube.Vault", "mavapay") {
                                 if let Err(e) = entry.set_password(&login.token) {
                                     log::error!("Failed to store auth token in keyring: {}", e);
                                 }
 
-                                match serde_json::to_vec(&login.user) {
-                                    Ok(bytes) => {
-                                        if let Err(e) = entry.set_secret(&bytes) {
-                                            log::error!(
-                                                "Unable to store user data in keyring: {e}"
-                                            );
-                                        }
-                                    }
-                                    Err(err) => {
-                                        log::error!("Unable to serialize user data: {}", err)
-                                    }
-                                }
+                                if let Err(e) = entry.set_secret(&bytes) {
+                                    log::error!("Unable to store user data in keyring: {e}");
+                                };
+                            } else {
+                                self.error = Some("Unable to initialize OS keyring".to_string());
                             };
 
-                            // persist user state
-                            mavapay.current_user = Some(login.user);
-                            mavapay.auth_token = Some(login.token);
-
-                            mavapay.step = MavapayFlowStep::ActiveBuysell {
-                                country: self.detected_country.clone().unwrap(),
-                                flow_mode: MavapayFlowMode::CreateQuote,
-                                amount: 60,
-                                source_currency,
-                                target_currency: None,
-                                settlement_currency: None,
-                                payment_method: MavapayPaymentMethod::Lightning,
-                                bank_account_number: String::new(),
-                                bank_account_name: String::new(),
-                                bank_code: String::new(),
-                                bank_name: String::new(),
-                                current_quote: None,
-                                current_price: None,
+                            // go straight to initialization
+                            self.flow_state = BuySellFlowState::Initialization {
+                                buy_or_sell_selected: None,
+                                buy_or_sell: None,
+                                mavapay_credentials: Some((login.token, bytes)),
                             };
-
-                            // Automatically get current price when entering dashboard
-                            return Task::done(Message::View(ViewMessage::BuySell(
-                                BuySellMessage::Mavapay(MavapayMessage::GetPrice),
-                            )));
                         }
                         // user registration form
                         (
                             MavapayFlowStep::Register {
-                                first_name,
-                                last_name,
+                                legal_name,
                                 password1,
                                 password2,
                                 email,
                             },
                             msg,
                         ) => match msg {
-                            MavapayMessage::FirstNameChanged(name) => {
-                                first_name.value = name;
-                            }
-                            MavapayMessage::LastNameChanged(name) => {
-                                last_name.value = name;
-                            }
-                            MavapayMessage::EmailChanged(name) => {
-                                email.value = name;
-                            }
-                            MavapayMessage::Password1Changed(name) => {
-                                password1.value = name;
-                            }
-                            MavapayMessage::Password2Changed(name) => {
-                                password2.value = name;
-                            }
+                            MavapayMessage::LegalNameChanged(n) => *legal_name = n,
+                            MavapayMessage::EmailChanged(e) => *email = e,
+                            MavapayMessage::Password1Changed(p) => *password1 = p,
+                            MavapayMessage::Password2Changed(p) => *password2 = p,
+
                             MavapayMessage::SubmitRegistration => {
-                                let client = mavapay.coincube_client.clone();
+                                let client = self.coincube_client.clone();
                                 let request = crate::services::coincube::SignUpRequest {
                                     account_type:
                                         crate::services::coincube::AccountType::Individual,
-                                    email: email.value.clone(),
-                                    first_name: first_name.value.clone(),
-                                    last_name: last_name.value.clone(),
+                                    email: email.clone(),
+                                    legal_name: legal_name.clone(),
                                     auth_details: [crate::services::coincube::AuthDetail {
                                         provider: 1, // EmailProvider = 1
-                                        password: password1.value.clone(),
+                                        password: password1.clone(),
                                     }],
                                 };
 
@@ -442,8 +440,11 @@ impl State for BuySellPanel {
                                                 MavapayMessage::RegistrationSuccess,
                                             ),
                                         )),
-                                        Err(error) => Message::View(ViewMessage::BuySell(
-                                            BuySellMessage::SessionError(error.to_string()),
+                                        Err(e) => Message::View(ViewMessage::BuySell(
+                                            BuySellMessage::SessionError(
+                                                "Couldn't process signup request",
+                                                e.to_string(),
+                                            ),
                                         )),
                                     },
                                 );
@@ -451,8 +452,8 @@ impl State for BuySellPanel {
                             MavapayMessage::RegistrationSuccess => {
                                 self.error = None;
                                 mavapay.step = MavapayFlowStep::VerifyEmail {
-                                    email: email.value.clone(),
-                                    password: password1.value.clone(),
+                                    email: email.clone(),
+                                    password: password1.clone(),
                                     checking: false,
                                 };
                             }
@@ -472,7 +473,7 @@ impl State for BuySellPanel {
                             MavapayMessage::SendVerificationEmail => {
                                 tracing::info!("Sending verification email to: {}", email);
 
-                                let client = mavapay.coincube_client.clone();
+                                let client = self.coincube_client.clone();
                                 let email = email.clone();
 
                                 return Task::perform(
@@ -483,8 +484,11 @@ impl State for BuySellPanel {
                                                 MavapayMessage::CheckEmailVerificationStatus,
                                             ),
                                         )),
-                                        Err(error) => Message::View(ViewMessage::BuySell(
-                                            BuySellMessage::SessionError(error.to_string()),
+                                        Err(e) => Message::View(ViewMessage::BuySell(
+                                            BuySellMessage::SessionError(
+                                                "Unable to send verification email",
+                                                e.to_string(),
+                                            ),
                                         )),
                                     },
                                 );
@@ -499,7 +503,7 @@ impl State for BuySellPanel {
                                 *checking = true;
 
                                 // recheck status every 10 seconds, automatic login if email is verified
-                                let client = mavapay.coincube_client.clone();
+                                let client = self.coincube_client.clone();
                                 let email = email.clone();
 
                                 return Task::perform(
@@ -530,7 +534,7 @@ impl State for BuySellPanel {
                                             }
 
                                             count = count - 1;
-                                            tokio::time::sleep(std::time::Duration::from_secs(3))
+                                            tokio::time::sleep(std::time::Duration::from_secs(10))
                                                 .await;
                                         }
                                     },
@@ -567,12 +571,17 @@ impl State for BuySellPanel {
                             MavapayMessage::LoginPasswordChanged(pswd) => *password = pswd,
                             MavapayMessage::CreateNewAccount => {
                                 mavapay.step = MavapayFlowStep::Register {
-                                    first_name: Default::default(),
-                                    last_name: Default::default(),
+                                    legal_name: Default::default(),
                                     password1: Default::default(),
                                     password2: Default::default(),
                                     email: Default::default(),
                                 };
+                            }
+                            MavapayMessage::ResetPassword => {
+                                mavapay.step = MavapayFlowStep::PasswordReset {
+                                    email: email.clone(),
+                                    sent: false,
+                                }
                             }
 
                             msg => log::warn!(
@@ -581,63 +590,44 @@ impl State for BuySellPanel {
                                 msg
                             ),
                         },
-                        // active buysell form
-                        (
-                            MavapayFlowStep::ActiveBuysell {
-                                flow_mode,
-                                amount,
-                                source_currency,
-                                target_currency,
-                                settlement_currency,
-                                payment_method,
-                                bank_account_number,
-                                bank_account_name,
-                                bank_code,
-                                bank_name,
-                                current_price,
-                                ..
-                            },
-                            msg,
-                        ) => match msg {
-                            MavapayMessage::FlowModeChanged(mode) => *flow_mode = mode,
-                            MavapayMessage::AmountChanged(a) => *amount = a,
-                            MavapayMessage::SourceCurrencyChanged(currency) => {
-                                *source_currency = Some(currency)
+                        // password reset form
+                        (MavapayFlowStep::PasswordReset { email, sent }, msg) => match msg {
+                            MavapayMessage::EmailChanged(e) => {
+                                *sent = false;
+                                *email = e;
                             }
-                            MavapayMessage::TargetCurrencyChanged(currency) => {
-                                *target_currency = Some(currency)
+                            MavapayMessage::SendPasswordResetEmail => {
+                                let email = email.clone();
+                                let client = self.coincube_client.clone();
+
+                                return Task::perform(
+                                    async move { client.send_password_reset_email(&email).await },
+                                    |res| match res {
+                                        Ok(sent) => Message::View(view::Message::BuySell(
+                                            BuySellMessage::Mavapay(
+                                                MavapayMessage::PasswordResetEmailSent(
+                                                    sent.message,
+                                                ),
+                                            ),
+                                        )),
+                                        Err(e) => Message::View(view::Message::BuySell(
+                                            BuySellMessage::SessionError(
+                                                "Unable to send password reset email",
+                                                e.to_string(),
+                                            ),
+                                        )),
+                                    },
+                                );
                             }
-                            MavapayMessage::SettlementCurrencyChanged(currency) => {
-                                *settlement_currency = Some(currency)
+                            MavapayMessage::PasswordResetEmailSent(msg) => {
+                                log::info!("[PASSWORD RESET] {}", msg);
+                                *sent = true;
                             }
-                            MavapayMessage::PaymentMethodChanged(method) => {
-                                *payment_method = method
-                            }
-                            MavapayMessage::BankAccountNumberChanged(number) => {
-                                *bank_account_number = number
-                            }
-                            MavapayMessage::BankAccountNameChanged(name) => {
-                                *bank_account_name = name
-                            }
-                            MavapayMessage::PriceReceived(price) => {
-                                *current_price = Some(price);
-                            }
-                            MavapayMessage::BankCodeChanged(code) => *bank_code = code,
-                            MavapayMessage::BankNameChanged(name) => *bank_name = name,
-                            MavapayMessage::CreateQuote => {
-                                return mavapay
-                                    .create_quote(self.detected_country.as_ref().map(|c| c.code))
-                                    .map(|b| Message::View(ViewMessage::BuySell(b)))
-                            }
-                            MavapayMessage::OpenPaymentLink => {
-                                return mavapay
-                                    .open_payment_link()
-                                    .map(|b| Message::View(ViewMessage::BuySell(b)))
-                            }
-                            MavapayMessage::GetPrice => {
-                                return mavapay
-                                    .get_price(self.detected_country.as_ref().map(|c| c.code))
-                                    .map(|b| Message::View(ViewMessage::BuySell(b)))
+                            MavapayMessage::ReturnToLogin => {
+                                mavapay.step = MavapayFlowStep::Login {
+                                    email: email.clone(),
+                                    password: "".to_string(),
+                                }
                             }
                             msg => log::warn!(
                                 "Current {:?} has ignored message: {:?}",
@@ -645,6 +635,55 @@ impl State for BuySellPanel {
                                 msg
                             ),
                         },
+                        // transaction form
+                        (
+                            MavapayFlowStep::Transaction {
+                                amount,
+                                current_price,
+                                country,
+                                banks,
+                                ..
+                            },
+                            msg,
+                        ) => {
+                            match msg {
+                                MavapayMessage::AmountChanged(a) => *amount = a,
+
+                                // TODO: Beneficiary specific form inputs
+                                MavapayMessage::CreateQuote => {
+                                    return mavapay
+                                        .create_quote(self.coincube_client.clone())
+                                        .map(|b| Message::View(ViewMessage::BuySell(b)));
+                                }
+                                MavapayMessage::QuoteCreated(quote) => {
+                                    log::info!("[MAVAPAY] Quote created: {}", quote.id);
+
+                                    // TODO: Implement checkout UI, with checkout events propagated via SSE and adapted into the iced runtime as an `iced::Subscription`
+                                }
+
+                                MavapayMessage::PriceReceived(price) => {
+                                    *current_price = Some(price);
+                                }
+                                MavapayMessage::BanksReceived(b) => *banks = Some(b),
+                                MavapayMessage::GetPrice => {
+                                    let code = country.code;
+                                    return mavapay
+                                        .get_price(code)
+                                        .map(|b| Message::View(ViewMessage::BuySell(b)));
+                                }
+                                MavapayMessage::GetBanks => {
+                                    let code = country.code;
+                                    return mavapay
+                                        .get_banks(code)
+                                        .map(|b| Message::View(ViewMessage::BuySell(b)));
+                                }
+                                msg => log::warn!(
+                                    "Current {:?} has ignored message: {:?}",
+                                    &mavapay.step,
+                                    msg
+                                ),
+                            }
+                        }
                     }
                 } else {
                     log::warn!("Ignoring MavapayMessage: {:?}, BuySell Panel is currently not in Mavapay state", msg);
@@ -656,13 +695,12 @@ impl State for BuySellPanel {
             BuySellMessage::WebviewOpenUrl(url) => {
                 // extract the main window's raw_window_handle
                 return iced_wry::IcedWebviewManager::extract_window_id(None).map(move |w| {
-                    Message::View(ViewMessage::BuySell(BuySellMessage::StarWryWebviewWithUrl(
-                        w,
-                        url.clone(),
-                    )))
+                    Message::View(ViewMessage::BuySell(
+                        BuySellMessage::StartWryWebviewWithUrl(w, url.clone()),
+                    ))
                 });
             }
-            BuySellMessage::StarWryWebviewWithUrl(id, url) => {
+            BuySellMessage::StartWryWebviewWithUrl(id, url) => {
                 let webview = self.webview_manager.new_webview(
                     iced_wry::wry::WebViewAttributes {
                         url: Some(url),
