@@ -100,7 +100,7 @@
 
           installPhaseCommand = ''
             mkdir -p $out/x86_64-apple-darwin
-            cp target/x86_64-apple-darwin/release/coincube-gui $out/x86_64-apple-darwin
+            cp target/x86_64-apple-darwin/release/coincube $out/x86_64-apple-darwin
             cp target/x86_64-apple-darwin/release/coincubed $out/x86_64-apple-darwin
             cp target/x86_64-apple-darwin/release/coincube-cli $out/x86_64-apple-darwin
           '';
@@ -153,15 +153,24 @@
 
         # Common build inputs for all shells
         commonBuildInputs = with pkgs; [
+          atk
+          cairo
+          dbus
           expat
           fontconfig
           freetype
           freetype.dev
+          gdk-pixbuf
+          glib
+          gtk3
           libGL
+          libsoup_3
+          pango
           pkg-config
           udev
           wayland
           libxkbcommon
+          webkitgtk_4_1
           xorg.libX11
           xorg.libXcursor
           xorg.libXi
@@ -180,8 +189,9 @@
         devShell = pkgs.mkShell rec {
           buildInputs = commonBuildInputs ++ [ toolchain ];
 
-          LD_LIBRARY_PATH =
-            builtins.foldl' (a: b: "${a}:${b}/lib") "${pkgs.vulkan-loader}/lib" buildInputs;
+          shellHook = ''
+            export LD_LIBRARY_PATH="${lib.makeLibraryPath buildInputs}:${pkgs.vulkan-loader}/lib:$LD_LIBRARY_PATH"
+          '';
         };
 
         releaseShell = pkgs.mkShell {
