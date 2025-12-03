@@ -145,6 +145,22 @@ impl CoincubeClient {
 
         Ok(response.json().await?)
     }
+
+    pub async fn send_password_reset_email(
+        &self,
+        email: &str,
+    ) -> Result<PasswordResetEmailResponse, CoincubeError> {
+        let request = PasswordResetEmailRequest { email };
+
+        let response = {
+            let url = format!("{}{}", self.base_url, "/api/v1/auth/forgot-password");
+            self.client.post(&url).json(&request).send()
+        }
+        .await?;
+        let response = response.check_success().await?;
+
+        Ok(response.json().await?)
+    }
 }
 
 #[derive(Deserialize)]

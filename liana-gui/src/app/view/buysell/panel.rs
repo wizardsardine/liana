@@ -112,7 +112,7 @@ impl BuySellPanel {
                 )
                 // error display
                 .push_maybe(self.error.as_ref().map(|err| {
-                    Container::new(text(err).size(14).color(color::RED))
+                    Container::new(text(err).size(12).style(theme::text::error).center())
                         .padding(10)
                         .style(theme::card::invalid)
                 }))

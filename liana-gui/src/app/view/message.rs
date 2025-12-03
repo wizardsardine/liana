@@ -198,6 +198,11 @@ pub enum MavapayMessage {
         skip_email_verification: bool,
     },
     CreateNewAccount,
+    ResetPassword,
+    // Password Reset
+    SendPasswordResetEmail,
+    PasswordResetEmailSent(String),
+    ReturnToLogin,
     // Active Flow
     AmountChanged(u64),
     PaymentMethodChanged(crate::services::mavapay::MavapayPaymentMethod),

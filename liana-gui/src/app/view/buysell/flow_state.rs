@@ -21,6 +21,10 @@ pub enum MavapayFlowStep {
         email: String,
         password: String,
     },
+    PasswordReset {
+        email: String,
+        sent: bool,
+    },
     ActiveBuysell {
         buy_or_sell: BuyOrSell,
         country: Country,
@@ -120,6 +124,7 @@ impl MavapayState {
                 payment_currency: MavapayUnitCurrency::BitcoinSatoshi,
                 autopayout: true,
                 customer_internal_fee: None,
+                // TODO: Currently, Kenyan beneficiaries are not supported by Mavapay, as only BankTransfer is currently supported by `onchain` buy
                 beneficiary: Some(Beneficiary::Onchain {
                     on_chain_address: address.address.to_string(),
                 }),

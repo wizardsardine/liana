@@ -33,7 +33,7 @@ impl std::fmt::Display for CoincubeError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             CoincubeError::Network(msg) => write!(f, "Network error: {}", msg),
-            CoincubeError::Unsuccessful(e) => write!(f, "Unsuccessful HTTP response: {:?}", e),
+            CoincubeError::Unsuccessful(e) => write!(f, "HTTP [{}] {}", e.status_code, e.text),
             CoincubeError::Api(msg) => write!(f, "API error: {}", msg),
             CoincubeError::Parse(msg) => write!(f, "Parse error: {}", msg),
         }
@@ -118,6 +118,11 @@ pub struct LoginRequest {
     pub password: String,
 }
 
+#[derive(Serialize)]
+pub struct PasswordResetEmailRequest<'a> {
+    pub email: &'a str,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct User {
@@ -152,6 +157,11 @@ pub struct LoginResponse {
     pub token: String,
     pub refresh_token: String,
     pub user: User,
+}
+
+#[derive(Deserialize, Debug, Clone)]
+pub struct PasswordResetEmailResponse {
+    pub message: String,
 }
 
 #[derive(Debug, Deserialize, Clone, PartialEq)]

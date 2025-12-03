@@ -574,7 +574,58 @@ impl State for BuySellPanel {
                                     email: Default::default(),
                                 };
                             }
+                            MavapayMessage::ResetPassword => {
+                                mavapay.step = MavapayFlowStep::PasswordReset {
+                                    email: email.clone(),
+                                    sent: false,
+                                }
+                            }
 
+                            msg => log::warn!(
+                                "Current {:?} has ignored message: {:?}",
+                                &mavapay.step,
+                                msg
+                            ),
+                        },
+                        // password reset form
+                        (MavapayFlowStep::PasswordReset { email, sent }, msg) => match msg {
+                            MavapayMessage::EmailChanged(e) => {
+                                *sent = false;
+                                *email = e;
+                            }
+                            MavapayMessage::SendPasswordResetEmail => {
+                                let email = email.clone();
+                                let client = self.coincube_client.clone();
+
+                                return Task::perform(
+                                    async move { client.send_password_reset_email(&email).await },
+                                    |res| match res {
+                                        Ok(sent) => Message::View(view::Message::BuySell(
+                                            BuySellMessage::Mavapay(
+                                                MavapayMessage::PasswordResetEmailSent(
+                                                    sent.message,
+                                                ),
+                                            ),
+                                        )),
+                                        Err(e) => Message::View(view::Message::BuySell(
+                                            BuySellMessage::SessionError(
+                                                "Unable to send password reset email",
+                                                e.to_string(),
+                                            ),
+                                        )),
+                                    },
+                                );
+                            }
+                            MavapayMessage::PasswordResetEmailSent(msg) => {
+                                log::info!("[PASSWORD RESET] {}", msg);
+                                *sent = true;
+                            }
+                            MavapayMessage::ReturnToLogin => {
+                                mavapay.step = MavapayFlowStep::Login {
+                                    email: email.clone(),
+                                    password: "".to_string(),
+                                }
+                            }
                             msg => log::warn!(
                                 "Current {:?} has ignored message: {:?}",
                                 &mavapay.step,
