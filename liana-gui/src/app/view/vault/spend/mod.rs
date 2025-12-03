@@ -153,6 +153,7 @@ pub fn create_spend_tx<'a>(
     fee_amount: Option<&Amount>,
     error: Option<&Error>,
     is_first_step: bool,
+    loading_fee_estimate: Option<usize>,
 ) -> Element<'a, Message> {
     let is_self_send = recipients.is_empty();
     dashboard(
@@ -215,6 +216,27 @@ pub fn create_spend_tx<'a>(
                     .spacing(10)
                     .align_y(Alignment::Center)
                     .push(Container::new(p1_bold("Feerate:")).padding(10))
+                    .push(
+                        button::secondary(None, "Fast (~10m)")
+                            .width(Length::Fixed(130.0))
+                            .on_press_maybe((!matches!(loading_fee_estimate, Some(1))).then(
+                                || Message::CreateSpend(CreateSpendMessage::FetchFeeEstimate(1)),
+                            )),
+                    )
+                    .push(
+                        button::secondary(None, "Normal (~1h)")
+                            .width(Length::Fixed(130.0))
+                            .on_press_maybe((!matches!(loading_fee_estimate, Some(6))).then(
+                                || Message::CreateSpend(CreateSpendMessage::FetchFeeEstimate(6)),
+                            )),
+                    )
+                    .push(
+                        button::secondary(None, "Slow (~4h)")
+                            .width(Length::Fixed(130.0))
+                            .on_press_maybe((!matches!(loading_fee_estimate, Some(24))).then(
+                                || Message::CreateSpend(CreateSpendMessage::FetchFeeEstimate(24)),
+                            )),
+                    )
                     .push(
                         Container::new(
                             form::Form::new_trimmed("42 (in sats/vbyte)", feerate, move |msg| {

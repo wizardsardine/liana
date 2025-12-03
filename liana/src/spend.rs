@@ -50,6 +50,7 @@ pub enum InsaneFeeInfo {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SpendCreationError {
     InvalidFeerate(/* sats/vb */ u64),
+    FeeEstimationFailed,
     InvalidOutputValue(bitcoin::Amount),
     InsaneFees(InsaneFeeInfo),
     SanityCheckFailure(Psbt),
@@ -84,6 +85,7 @@ impl fmt::Display for SpendCreationError {
                 "BUG! Please report this. Failed sanity checks for PSBT '{}'.",
                 psbt
             ),
+            Self::FeeEstimationFailed => write!(f, "Fee Estimation Failed"),
         }
     }
 }

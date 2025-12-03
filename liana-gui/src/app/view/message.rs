@@ -8,7 +8,10 @@ use crate::{
 
 #[cfg(feature = "buysell")]
 use crate::services::mavapay::GetPriceResponse;
-use liana::miniscript::bitcoin::{bip32::Fingerprint, Address, OutPoint};
+use liana::{
+    miniscript::bitcoin::{bip32::Fingerprint, Address, OutPoint},
+    spend::SpendCreationError,
+};
 
 pub trait Close {
     fn close() -> Self;
@@ -73,6 +76,8 @@ pub enum CreateSpendMessage {
     SelectPath(usize),
     Generate,
     SendMaxToRecipient(usize),
+    FetchFeeEstimate(usize),
+    SessionError(SpendCreationError),
     Clear,
 }
 
