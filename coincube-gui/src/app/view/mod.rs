@@ -449,20 +449,10 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<
     }
 
     // Add Buy/Sell button after submenu items (only if vault exists)
-    menu_column = menu_column.push_maybe({
-        #[cfg(feature = "buysell")]
-        {
-            if has_vault {
-                Some(buy_sell_button)
-            } else {
-                None
-            }
-        }
-        #[cfg(not(feature = "buysell"))]
-        {
-            None::<Row<'_, Message>>
-        }
-    });
+    #[cfg(feature = "buysell")]
+    {
+        menu_column = menu_column.push_maybe(has_vault.then_some(buy_sell_button));
+    }
 
     Container::new(
         Column::new().push(menu_column.height(Length::Fill)).push(

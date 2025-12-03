@@ -55,6 +55,10 @@ pub fn wallet_icon() -> Text<'static> {
     bootstrap_icon('\u{F615}')
 }
 
+pub fn card_icon() -> Text<'static> {
+    bootstrap_icon('\u{F2D9}')
+}
+
 pub fn bitcoin_icon() -> Text<'static> {
     bootstrap_icon('\u{F635}')
 }
@@ -121,6 +125,14 @@ pub fn down_icon() -> Text<'static> {
 
 pub fn up_icon() -> Text<'static> {
     bootstrap_icon('\u{F27C}')
+}
+
+pub fn left_right_icon() -> Text<'static> {
+    bootstrap_icon('\u{F12B}')
+}
+
+pub fn up_down_icon() -> Text<'static> {
+    bootstrap_icon('\u{F12B}')
 }
 
 pub fn network_icon() -> Text<'static> {

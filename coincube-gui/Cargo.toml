@@ -20,7 +20,6 @@ LegalCopyright = "Copyright © 2025"
 name = "coincube"
 path = "src/main.rs"
 
-
 [dependencies]
 async-trait = "0.1"
 async-hwi = "0.0.29"
