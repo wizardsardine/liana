@@ -1,4 +1,5 @@
 pub mod connect;
+pub mod feeestimation;
 pub mod fiat;
 
 pub mod http;

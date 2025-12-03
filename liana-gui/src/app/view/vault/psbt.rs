@@ -443,7 +443,7 @@ pub fn signatures<'a>(
                         .align_y(Alignment::Center)
                         .spacing(10)
                         .push(p1_bold("Status"))
-                        .push(icon::circle_check_icon().style(theme::text::success))
+                        .push(icon::square_check_icon().style(theme::text::success))
                         .push(text("Ready").bold().style(theme::text::success))
                         .push(text("  signed by"))
                         .push(sigs.signed_pubkeys.keys().fold(
@@ -482,7 +482,7 @@ pub fn signatures<'a>(
                                 Row::new()
                                     .spacing(5)
                                     .align_y(Alignment::Center)
-                                    .push(icon::circle_cross_icon().style(theme::text::error))
+                                    .push(icon::square_cross_icon().style(theme::text::error))
                                     .push(text("Not ready").style(theme::text::error))
                                     .width(Length::Fill),
                             )
@@ -502,7 +502,7 @@ pub fn signatures<'a>(
                                 Row::new()
                                     .spacing(5)
                                     .align_y(Alignment::Center)
-                                    .push(icon::circle_cross_icon().style(theme::text::error))
+                                    .push(icon::square_cross_icon().style(theme::text::error))
                                     .push(text("Not ready").style(theme::text::error))
                                     .width(Length::Fill),
                             )
@@ -595,9 +595,9 @@ pub fn path_view<'a>(
             .push(
                 Row::new()
                     .push(if missing_signatures == 0 {
-                        icon::circle_check_icon().style(theme::text::success)
+                        icon::square_check_icon().style(theme::text::success)
                     } else {
-                        icon::circle_cross_icon().style(theme::text::secondary)
+                        icon::square_cross_icon().style(theme::text::secondary)
                     })
                     .push(Space::with_width(Length::Fixed(20.0))),
             )

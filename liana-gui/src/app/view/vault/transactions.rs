@@ -9,7 +9,8 @@ use iced::{
 
 use liana_ui::{
     component::{amount::*, badge, button, card, form, text::*},
-    icon, theme,
+    icon::{self, receipt_icon},
+    theme,
     widget::*,
 };
 
@@ -21,8 +22,8 @@ use crate::{
         view::{
             dashboard,
             message::{CreateRbfMessage, Message},
-            vault::label,
-            vault::warning::warn,
+            placeholder,
+            vault::{label, warning::warn},
         },
     },
     daemon::model::{HistoryTransaction, Txid},
@@ -51,6 +52,13 @@ pub fn transactions_view<'a>(
                             .on_press(ImportExportMessage::Open.into()),
                     ),
             )
+            .push_maybe(txs.is_empty().then(|| {
+                placeholder(
+                    receipt_icon().size(80),
+                    "No transactions yet",
+                    "Your transaction history will appear here once you send or receive coins.",
+                )
+            }))
             .push(
                 Column::new()
                     .spacing(10)
@@ -90,7 +98,7 @@ pub fn transactions_view<'a>(
                     }),
             )
             .align_x(Alignment::Center)
-            .spacing(30),
+            .spacing(25),
     )
 }
 
@@ -285,7 +293,7 @@ pub fn create_rbf_modal<'a>(
                 Row::new()
                     .spacing(10)
                     .align_y(Alignment::Center)
-                    .push(icon::circle_check_icon().style(theme::text::secondary))
+                    .push(icon::square_check_icon().style(theme::text::secondary))
                     .push(
                         text("Replacement PSBT created successfully and ready to be signed")
                             .style(theme::text::success),

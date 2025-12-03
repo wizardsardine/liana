@@ -4,7 +4,8 @@ use iced::{widget::Space, Alignment, Length};
 
 use liana_ui::{
     component::{amount::*, badge, button, form, text::*},
-    icon, theme,
+    icon::{self, coins_icon},
+    theme,
     widget::*,
 };
 
@@ -12,7 +13,7 @@ use crate::{
     app::{
         cache::Cache,
         menu::Menu,
-        view::{message::Message, vault::label},
+        view::{message::Message, placeholder, vault::label},
     },
     daemon::model::{remaining_sequence, Coin},
 };
@@ -27,6 +28,13 @@ pub fn coins_view<'a>(
 ) -> Element<'a, Message> {
     Column::new()
         .push(Container::new(h3("Coins")).width(Length::Fill))
+        .push_maybe(coins.is_empty().then(|| {
+            placeholder(
+                coins_icon().size(80),
+                "No coins yet",
+                "Your coins will appear here once you receive bitcoin.",
+            )
+        }))
         .push(
             Column::new()
                 .spacing(10)
@@ -46,7 +54,7 @@ pub fn coins_view<'a>(
                 )),
         )
         .align_x(Alignment::Center)
-        .spacing(30)
+        .spacing(35)
         .into()
 }
 

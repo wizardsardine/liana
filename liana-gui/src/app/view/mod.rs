@@ -13,16 +13,16 @@ pub use vault::fiat::FiatAmountConverter;
 pub use vault::warning::warn;
 
 use iced::{
-    widget::{column, row, scrollable, Space},
-    Length,
+    widget::{column, container, row, scrollable, Space},
+    Alignment, Length,
 };
 
 use liana_ui::{
     color,
     component::{button, text::*},
     icon::{
-        coins_icon, cross_icon, cube_icon, down_icon, history_icon, home_icon, lightning_icon,
-        plus_icon, receive_icon, recovery_icon, send_icon, settings_icon, up_icon, vault_icon,
+        coins_icon, cross_icon, cube_icon, down_icon, home_icon, lightning_icon, plus_icon,
+        receipt_icon, receive_icon, recovery_icon, send_icon, settings_icon, up_icon, vault_icon,
     },
     image::*,
     theme,
@@ -177,7 +177,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<
             if matches!(menu, Menu::Active(ActiveSubMenu::Transactions(_))) {
                 row!(
                     Space::with_width(Length::Fixed(20.0)),
-                    button::menu_active(Some(history_icon()), "Transactions")
+                    button::menu_active(Some(receipt_icon()), "Transactions")
                         .on_press(Message::Reload)
                         .width(iced::Length::Fill),
                     menu_bar_highlight()
@@ -186,7 +186,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<
             } else {
                 row!(
                     Space::with_width(Length::Fixed(20.0)),
-                    button::menu(Some(history_icon()), "Transactions")
+                    button::menu(Some(receipt_icon()), "Transactions")
                         .on_press(Message::Menu(Menu::Active(ActiveSubMenu::Transactions(
                             None
                         ))))
@@ -361,7 +361,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<
             if matches!(menu, Menu::Vault(VaultSubMenu::Transactions(_))) {
                 row!(
                     Space::with_width(Length::Fixed(20.0)),
-                    button::menu_active(Some(history_icon()), "Transactions")
+                    button::menu_active(Some(receipt_icon()), "Transactions")
                         .on_press(Message::Reload)
                         .width(iced::Length::Fill),
                     menu_bar_highlight()
@@ -370,7 +370,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<
             } else {
                 row!(
                     Space::with_width(Length::Fixed(20.0)),
-                    button::menu(Some(history_icon()), "Transactions")
+                    button::menu(Some(receipt_icon()), "Transactions")
                         .on_press(Message::Menu(Menu::Vault(VaultSubMenu::Transactions(None))))
                         .width(iced::Length::Fill),
                 )
@@ -381,7 +381,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<
         let vault_psbts_button = if matches!(menu, Menu::Vault(VaultSubMenu::PSBTs(_))) {
             row!(
                 Space::with_width(Length::Fixed(20.0)),
-                button::menu_active(Some(history_icon()), "PSBTs")
+                button::menu_active(Some(receipt_icon()), "PSBTs")
                     .on_press(Message::Reload)
                     .width(iced::Length::Fill),
                 menu_bar_highlight()
@@ -390,7 +390,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<
         } else {
             row!(
                 Space::with_width(Length::Fixed(20.0)),
-                button::menu(Some(history_icon()), "PSBTs")
+                button::menu(Some(receipt_icon()), "PSBTs")
                     .on_press(Message::Menu(Menu::Vault(VaultSubMenu::PSBTs(None))))
                     .width(iced::Length::Fill),
             )
@@ -559,4 +559,36 @@ fn modal_section<'a, T: 'a>(menu: Container<'a, T>) -> Container<'a, T> {
         .center_x(Length::Fill)
         .width(Length::Fill)
         .height(Length::Fill)
+}
+
+pub fn placeholder<'a, T: Into<Element<'a, Message>>>(
+    icon: T,
+    title: &'a str,
+    subtitle: &'a str,
+) -> Element<'a, Message> {
+    let content = Column::new()
+        .push(icon)
+        .push(text(title).style(theme::text::secondary).bold())
+        .push(
+            text(subtitle)
+                .size(P2_SIZE)
+                .style(theme::text::secondary)
+                .align_x(Alignment::Center),
+        )
+        .spacing(16)
+        .align_x(Alignment::Center);
+
+    Container::new(content)
+        .width(Length::Fill)
+        .padding(60)
+        .center_x(Length::Fill)
+        .style(|_| container::Style {
+            background: Some(iced::Background::Color(color::GREY_6)),
+            border: iced::Border {
+                radius: 20.0.into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        })
+        .into()
 }

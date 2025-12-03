@@ -179,66 +179,52 @@ pub fn qr_code_icon() -> Text<'static> {
     bootstrap_icon('\u{F6AE}')
 }
 
-const ICONEX_ICONS: Font = Font::with_name("Untitled1");
-
-fn iconex_icon(unicode: char) -> Text<'static> {
-    Text::new(unicode)
-        .font(ICONEX_ICONS)
-        .width(Length::Fixed(20.0))
-        .align_x(alignment::Horizontal::Center)
-        .size(P1_SIZE)
-}
-
 pub fn arrow_repeat() -> Text<'static> {
-    iconex_icon('\u{46BB}')
+    bootstrap_icon('\u{F130}')
 }
 
 pub fn send_icon() -> Text<'static> {
-    iconex_icon('\u{2CEE}')
+    bootstrap_icon('\u{F603}')
 }
 
 pub fn receive_icon() -> Text<'static> {
-    iconex_icon('\u{605B}')
+    bootstrap_icon('\u{F30A}')
 }
 
 pub fn home_icon() -> Text<'static> {
-    iconex_icon('\u{C722}')
+    bootstrap_icon('\u{F3FC}')
 }
 
 pub fn settings_icon() -> Text<'static> {
-    iconex_icon('\u{3038}')
+    bootstrap_icon('\u{F3E5}')
 }
 
 pub fn key_icon() -> Text<'static> {
-    iconex_icon('\u{FFEC}')
+    bootstrap_icon('\u{F44F}')
 }
 
 pub fn history_icon() -> Text<'static> {
-    iconex_icon('\u{BEBA}')
+    bootstrap_icon('\u{F479}')
 }
 
 pub fn coins_icon() -> Text<'static> {
-    iconex_icon('\u{9F25}')
+    bootstrap_icon('\u{F585}')
 }
 
 pub fn clock_icon() -> Text<'static> {
-    iconex_icon('\u{B0CA}')
+    bootstrap_icon('\u{F293}')
 }
 
 pub fn clipboard_icon() -> Text<'static> {
-    iconex_icon('\u{F8D3}')
+    bootstrap_icon('\u{F290}')
 }
 
-pub fn circle_check_icon() -> Text<'static> {
-    iconex_icon('\u{E2F9}')
+pub fn square_check_icon() -> Text<'static> {
+    bootstrap_icon('\u{F26D}')
 }
 
-pub fn circle_cross_icon() -> Text<'static> {
-    iconex_icon('\u{19DA}')
-}
-
-pub fn buy_and_sell_icon() -> Text<'static> {
-    iconex_icon('\u{F635}')
+pub fn square_cross_icon() -> Text<'static> {
+    bootstrap_icon('\u{F629}')
 }
 
 pub fn building_icon() -> Text<'static> {
@@ -263,4 +249,8 @@ pub fn eye_slash_icon() -> Text<'static> {
 
 pub fn cube_icon() -> Text<'static> {
     bootstrap_icon('\u{F1C8}')
+}
+
+pub fn receipt_icon() -> Text<'static> {
+    bootstrap_icon('\u{F50F}')
 }

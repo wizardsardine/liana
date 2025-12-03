@@ -73,6 +73,8 @@ pub enum CreateSpendMessage {
     SelectPath(usize),
     Generate,
     SendMaxToRecipient(usize),
+    FetchFeeEstimate(usize),
+    SessionError(SpendCreationError),
     Clear,
 }
 

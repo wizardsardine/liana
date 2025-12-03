@@ -2,12 +2,13 @@ use iced::{widget::Space, Alignment, Length};
 
 use liana_ui::{
     component::{amount::*, badge, button, card, form, text::*},
-    icon, theme,
+    icon::{self, receipt_icon},
+    theme,
     widget::*,
 };
 
 use crate::{
-    app::{error::Error, menu::Menu},
+    app::{error::Error, menu::Menu, view::placeholder},
     daemon::model::{SpendStatus, SpendTx},
 };
 
@@ -77,6 +78,13 @@ pub fn psbts_view(spend_txs: &[SpendTx]) -> Element<'_, Message> {
                         .on_press(Message::Menu(Menu::CreateSpendTx)),
                 ),
         )
+        .push_maybe(spend_txs.is_empty().then(|| {
+            placeholder(
+                receipt_icon().size(80),
+                "No PSBTs yet",
+                "Your pending spend transactions will appear here once you create or import PSBTs.",
+            )
+        }))
         .push(
             Column::new().spacing(10).push(
                 spend_txs
