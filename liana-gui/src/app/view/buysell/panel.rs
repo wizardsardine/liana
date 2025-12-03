@@ -131,7 +131,7 @@ impl BuySellPanel {
                             ..
                         } => match buy_or_sell.as_ref() {
                             Some(BuyOrSell::Buy { address }) => {
-                                self.initialization_ux(*buy_or_sell_selected, Some(&address))
+                                self.initialization_ux(*buy_or_sell_selected, Some(address))
                             }
                             _ => self.initialization_ux(*buy_or_sell_selected, None),
                         }
