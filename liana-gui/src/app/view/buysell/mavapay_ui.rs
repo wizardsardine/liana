@@ -18,7 +18,7 @@ pub fn form<'a>(state: &'a MavapayState) -> Column<'a, BuySellMessage> {
         MavapayFlowStep::VerifyEmail { .. } => email_verification_form,
         MavapayFlowStep::Login { .. } => login_form,
         MavapayFlowStep::PasswordReset { .. } => password_reset_form,
-        MavapayFlowStep::ActiveBuysell { .. } => active_form,
+        MavapayFlowStep::Transaction { .. } => active_form,
     };
 
     form(state)
@@ -215,7 +215,6 @@ fn registration_form<'a>(state: &'a MavapayState) -> Column<'a, BuySellMessage> 
             .width(Length::Fill)
             .size(16)
             .padding(15),
-        Space::with_height(Length::Fixed(10.0)),
         // Email Input
         text_input("Email Address", email).on_input(|v| {
             BuySellMessage::Mavapay(MavapayMessage::EmailChanged(v))
@@ -240,12 +239,8 @@ fn registration_form<'a>(state: &'a MavapayState) -> Column<'a, BuySellMessage> 
         Space::with_height(Length::Fixed(20.0)),
         button::primary(None, "Create Account")
             .on_press_maybe(
-                {
-                    // TODO: implement form validation here
-                    // use https://github.com/shssoichiro/zxcvbn-rs for password strength validation
-                    true
-                }
-                .then_some(BuySellMessage::Mavapay(MavapayMessage::SubmitRegistration)),
+                (!legal_name.is_empty() && email.contains('.') &&  email.contains('@')  && !password1.is_empty() && (password1 == password2))
+                    .then_some(BuySellMessage::Mavapay(MavapayMessage::SubmitRegistration)),
             )
             .width(Length::Fill),
     ]
@@ -345,7 +340,7 @@ fn email_verification_form<'a>(state: &'a MavapayState) -> Column<'a, BuySellMes
 fn active_form<'a>(state: &'a MavapayState) -> Column<'a, BuySellMessage> {
     use liana_ui::icon::bitcoin_icon;
 
-    let MavapayFlowStep::ActiveBuysell {
+    let MavapayFlowStep::Transaction {
         amount,
         current_quote,
         current_price,

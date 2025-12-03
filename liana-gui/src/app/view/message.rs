@@ -7,7 +7,7 @@ use crate::{
 };
 
 #[cfg(feature = "buysell")]
-use crate::services::mavapay::{GetPriceResponse, MavapayBanks};
+use crate::services::mavapay::*;
 use liana::miniscript::bitcoin::{bip32::Fingerprint, Address, OutPoint};
 
 pub trait Close {
@@ -210,6 +210,7 @@ pub enum MavapayMessage {
     BankAccountNameChanged(String),
     BankSelected(usize),
     CreateQuote,
+    QuoteCreated(GetQuoteResponse),
     GetPrice,
     PriceReceived(GetPriceResponse),
     GetBanks,

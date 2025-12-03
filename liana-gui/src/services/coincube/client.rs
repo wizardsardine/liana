@@ -21,12 +21,13 @@ impl CoincubeClient {
     }
 
     /// Save a Mavapay quote to coincube-api
-    pub async fn save_quote(
+    pub async fn save_quote<T: serde::Serialize>(
         &self,
-        request: SaveQuoteRequest,
+        quote_id: &str,
+        quote: T,
     ) -> Result<SaveQuoteResponse, CoincubeError> {
-        tracing::info!("[COINCUBE] Saving quote with request:\n{:?}", &request);
         let url = format!("{}/api/v1/mavapay/quotes", self.base_url);
+        let request = SaveQuoteRequest { quote_id, quote };
 
         let response = self
             .client

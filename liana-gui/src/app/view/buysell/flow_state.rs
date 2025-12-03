@@ -25,16 +25,17 @@ pub enum MavapayFlowStep {
         email: String,
         sent: bool,
     },
-    ActiveBuysell {
+    Transaction {
         buy_or_sell: BuyOrSell,
         country: Country,
-        banks: Option<MavapayBanks>,
-        amount: u64, // Amount in BTCSAT
         beneficiary: Option<Beneficiary>,
+        amount: u64, // Amount in BTCSAT
+        banks: Option<MavapayBanks>,
         selected_bank: Option<usize>,
-        current_quote: Option<GetQuoteResponse>,
-        // TODO: Display BTC price on buysell UI
         current_price: Option<GetPriceResponse>,
+
+        // TODO: Should be displayed on a custom `Checkout` UI
+        current_quote: Option<GetQuoteResponse>,
     },
 }
 
@@ -85,7 +86,7 @@ impl MavapayState {
     }
 
     pub fn create_quote(&self, coincube_client: CoincubeClient) -> Task<BuySellMessage> {
-        let MavapayFlowStep::ActiveBuysell {
+        let MavapayFlowStep::Transaction {
             country,
             amount,
             beneficiary,
@@ -135,17 +136,20 @@ impl MavapayState {
         let client = self.mavapay_client.clone();
 
         Task::perform(
-            // Step 1: Create quote with Mavapay
-            async move { client.create_quote(request).await },
+            async move {
+                // Step 1: Create quote with Mavapay
+                let quote = client.create_quote(request).await?;
+
+                // Step 2: Save quote to coincube-api
+                match coincube_client.save_quote(&quote.id, &quote).await {
+                    Ok(save) => log::info!("[COINCUBE] Successfully saved quote: {:?}", save),
+                    Err(err) => log::error!("[COINCUBE] Unable to saved quote: {:?}", err),
+                };
+
+                Ok(quote)
+            },
             move |result: Result<GetQuoteResponse, MavapayError>| match result {
-                Ok(quote) => {
-                    // TODO: Save quote to coincube-api, requires rework to the coincube API (Step 2)
-
-                    tracing::info!("[MAVAPAY] Quote created: {}", quote.id);
-
-                    // Step 3: Build quote display URL using quote_id
-                    BuySellMessage::WebviewOpenUrl(coincube_client.get_quote_display_url(&quote.id))
-                }
+                Ok(quote) => BuySellMessage::Mavapay(MavapayMessage::QuoteCreated(quote)),
                 Err(e) => BuySellMessage::SessionError("Unable to create quote", e.to_string()),
             },
         )

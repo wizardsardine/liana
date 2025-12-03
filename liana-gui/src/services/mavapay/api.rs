@@ -249,7 +249,8 @@ pub struct GetQuoteRequest {
     pub beneficiary: Option<Beneficiary>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+// TODO: This structure is always changing, with some members being deprecated or undocumented
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GetQuoteResponse {
     pub id: String,
@@ -272,7 +273,6 @@ pub struct GetQuoteResponse {
     pub created_at: String,
     pub updated_at: String,
 
-    // TODO: undocumented members
     pub estimated_routing_fee: Option<u64>,
     pub order_id: Option<String>,
     pub bank_name: Option<String>,

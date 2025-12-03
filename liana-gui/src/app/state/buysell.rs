@@ -219,7 +219,7 @@ impl State for BuySellPanel {
                                 mavapay.auth_token = Some(token);
                                 mavapay.current_user = Some(user);
                                 log::info!("Mavapay session successfully restored from OS keyring");
-                                mavapay.step = MavapayFlowStep::ActiveBuysell {
+                                mavapay.step = MavapayFlowStep::Transaction {
                                     buy_or_sell: buy_or_sell.clone(),
                                     country: country.clone(),
                                     banks: None,
@@ -634,7 +634,7 @@ impl State for BuySellPanel {
                         },
                         // active buysell form
                         (
-                            MavapayFlowStep::ActiveBuysell {
+                            MavapayFlowStep::Transaction {
                                 amount,
                                 current_price,
                                 ..
@@ -649,6 +649,11 @@ impl State for BuySellPanel {
                                     return mavapay
                                         .create_quote(self.coincube_client.clone())
                                         .map(|b| Message::View(ViewMessage::BuySell(b)));
+                                }
+                                MavapayMessage::QuoteCreated(quote) => {
+                                    log::info!("[MAVAPAY] Quote created: {}", quote.id);
+
+                                    // TODO: Implement checkout UI, with checkout events propagated via SSE and adapted into the iced runtime as an `iced::Subscription`
                                 }
 
                                 MavapayMessage::PriceReceived(price) => {
