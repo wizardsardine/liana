@@ -64,12 +64,12 @@ impl MavapayState {
 }
 
 impl MavapayState {
-    pub fn get_price(&self, country_iso: Option<&str>) -> Task<BuySellMessage> {
+    pub fn get_price(&self, country_code: &str) -> Task<BuySellMessage> {
         let client = self.mavapay_client.clone();
-        let currency = match country_iso {
-            Some("KE") => MavapayCurrency::KenyanShilling,
-            Some("ZA") => MavapayCurrency::SouthAfricanRand,
-            Some("NG") => MavapayCurrency::NigerianNaira,
+        let currency = match country_code {
+            "KE" => MavapayCurrency::KenyanShilling,
+            "ZA" => MavapayCurrency::SouthAfricanRand,
+            "NG" => MavapayCurrency::NigerianNaira,
             c => unreachable!("Country {:?} is not supported by Mavapay", c),
         };
 
@@ -79,6 +79,22 @@ impl MavapayState {
                 Ok(price) => BuySellMessage::Mavapay(MavapayMessage::PriceReceived(price)),
                 Err(e) => BuySellMessage::SessionError(
                     "Unable to get latest Bitcoin price",
+                    e.to_string(),
+                ),
+            },
+        )
+    }
+
+    pub fn get_banks(&self, country_code: &str) -> Task<BuySellMessage> {
+        let client = self.mavapay_client.clone();
+        let country_code = country_code.to_string();
+
+        Task::perform(
+            async move { client.get_banks(&country_code).await },
+            |result| match result {
+                Ok(banks) => BuySellMessage::Mavapay(MavapayMessage::BanksReceived(banks)),
+                Err(e) => BuySellMessage::SessionError(
+                    "Unable to fetch supported banks for your country",
                     e.to_string(),
                 ),
             },

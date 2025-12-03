@@ -264,7 +264,10 @@ impl State for BuySellPanel {
                             .find(|c| c.code == country.code)
                             .map(|c| c.currency.code)
                         else {
-                            tracing::error!("Unknown country iso code: {}", country.code);
+                            self.error = Some(format!(
+                                "[FATAL] The country iso code ({}) is invalid",
+                                country.code
+                            ));
                             return Task::none();
                         };
 
@@ -632,11 +635,13 @@ impl State for BuySellPanel {
                                 msg
                             ),
                         },
-                        // active buysell form
+                        // transaction form
                         (
                             MavapayFlowStep::Transaction {
                                 amount,
                                 current_price,
+                                country,
+                                banks,
                                 ..
                             },
                             msg,
@@ -659,10 +664,18 @@ impl State for BuySellPanel {
                                 MavapayMessage::PriceReceived(price) => {
                                     *current_price = Some(price);
                                 }
+                                MavapayMessage::BanksReceived(b) => *banks = Some(b),
                                 MavapayMessage::GetPrice => {
+                                    let code = country.code;
                                     return mavapay
-                                        .get_price(self.detected_country.as_ref().map(|c| c.code))
-                                        .map(|b| Message::View(ViewMessage::BuySell(b)))
+                                        .get_price(code)
+                                        .map(|b| Message::View(ViewMessage::BuySell(b)));
+                                }
+                                MavapayMessage::GetBanks => {
+                                    let code = country.code;
+                                    return mavapay
+                                        .get_banks(code)
+                                        .map(|b| Message::View(ViewMessage::BuySell(b)));
                                 }
                                 msg => log::warn!(
                                     "Current {:?} has ignored message: {:?}",

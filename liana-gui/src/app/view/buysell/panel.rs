@@ -50,7 +50,7 @@ pub enum BuySellFlowState {
     /// Renders an interface to either generate a new address for bitcoin deposit, or skip to selling BTC
     Initialization {
         buy_or_sell_selected: Option<bool>,
-        buy_or_sell: Option<BuyOrSell>, // `sell` mode always has an address generated included
+        buy_or_sell: Option<BuyOrSell>, // `buy` mode always has an address included for deposit
         // mavapay credentials restored from the OS keyring
         mavapay_credentials: Option<(String, Vec<u8>)>,
     },

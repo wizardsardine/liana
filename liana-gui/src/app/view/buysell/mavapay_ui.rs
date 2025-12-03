@@ -18,7 +18,7 @@ pub fn form<'a>(state: &'a MavapayState) -> Column<'a, BuySellMessage> {
         MavapayFlowStep::VerifyEmail { .. } => email_verification_form,
         MavapayFlowStep::Login { .. } => login_form,
         MavapayFlowStep::PasswordReset { .. } => password_reset_form,
-        MavapayFlowStep::Transaction { .. } => active_form,
+        MavapayFlowStep::Transaction { .. } => transactions_form,
     };
 
     form(state)
@@ -48,7 +48,7 @@ fn login_form<'a>(state: &'a MavapayState) -> Column<'a, BuySellMessage> {
         // submit button
         button::primary(None, "Log In")
             .on_press_maybe(
-                (email.contains('.') & email.contains('@') && !password.is_empty()).then_some(
+                (email.contains('.') && email.contains('@') && !password.is_empty()).then_some(
                     BuySellMessage::Mavapay(MavapayMessage::SubmitLogin {
                         skip_email_verification: false
                     })
@@ -337,12 +337,11 @@ fn email_verification_form<'a>(state: &'a MavapayState) -> Column<'a, BuySellMes
     .width(Length::Fill)
 }
 
-fn active_form<'a>(state: &'a MavapayState) -> Column<'a, BuySellMessage> {
+fn transactions_form<'a>(state: &'a MavapayState) -> Column<'a, BuySellMessage> {
     use liana_ui::icon::bitcoin_icon;
 
     let MavapayFlowStep::Transaction {
         amount,
-        current_quote,
         current_price,
         buy_or_sell,
         ..
@@ -351,19 +350,17 @@ fn active_form<'a>(state: &'a MavapayState) -> Column<'a, BuySellMessage> {
         unreachable!()
     };
 
-    let header = Row::new()
-        .push(Space::with_width(Length::Fill))
-        .push(text::h4_bold("Bitcoin ↔ Fiat Exchange").color(color::WHITE))
-        .push(Space::with_width(Length::Fill))
-        .align_y(Alignment::Center);
-
-    let mut column = Column::new()
-        .push(header)
-        .push(Space::with_height(Length::Fixed(20.0)));
+    let header = iced::widget::row![
+        Space::with_width(Length::Fill),
+        text::h4_bold("Bitcoin ↔ Fiat Exchange").color(color::WHITE),
+        Space::with_width(Length::Fill),
+    ]
+    .align_y(Alignment::Center);
 
     // Current price display
+    let mut price_display = iced::widget::column![header, Space::with_height(Length::Fixed(20.0))];
     if let Some(price) = current_price {
-        column = column
+        price_display = price_display
             .push(
                 Container::new(
                     Row::new()
@@ -388,137 +385,44 @@ fn active_form<'a>(state: &'a MavapayState) -> Column<'a, BuySellMessage> {
     }
 
     // Exchange form with payment mode radio buttons
-    let mut form_column = Column::new()
-        .push(Space::with_height(Length::Fixed(15.0)))
+    let beneficiary_input_form = iced::widget::column![
+        Space::with_height(Length::Fixed(15.0)),
         // Amount field (common to both modes)
-        .push(text("Amount in BTCSAT").size(14).color(color::GREY_3))
-        .push(Space::with_height(Length::Fixed(5.0)))
-        .push(
-            Container::new(
-                iced_aw::number_input(amount, .., |a| {
-                    BuySellMessage::Mavapay(MavapayMessage::AmountChanged(a))
-                })
-                .size(14)
-                .padding(10),
-            )
-            .width(Length::Fixed(200.0)),
+        text("Amount in BTCSAT").size(14).color(color::GREY_3),
+        Space::with_height(Length::Fixed(5.0)),
+        Container::new(
+            iced_aw::number_input(amount, .., |a| {
+                BuySellMessage::Mavapay(MavapayMessage::AmountChanged(a))
+            })
+            .size(14)
+            .padding(10),
         )
-        .push(Space::with_height(Length::Fixed(15.0)))
+        .width(Length::Fixed(200.0)),
         // TODO: Display source/target currencies, with realtime conversion rate
-        .push(text("unimplemented!"))
-        .push(Space::with_height(Length::Fixed(15.0)));
+        match buy_or_sell {
+            BuyOrSell::Buy { address: _ } => {
+                // TODO: display input amount, generated address and bank deposit details.
+                Space::with_height(0)
+            }
+            BuyOrSell::Sell => {
+                // TODO: display onchain bitcoin address for deposit, and beneficiary input forms
+                // TODO: If country uses BankTransfer, render banks selector dropdown
+                Space::with_height(0)
+            }
+        },
+        button::primary(None, "Process Payment")
+            .on_press(BuySellMessage::Mavapay(MavapayMessage::CreateQuote))
+            .width(Length::Fill)
+    ]
+    .spacing(10)
+    .align_x(Alignment::Center)
+    .width(Length::Fill);
 
-    match buy_or_sell {
-        BuyOrSell::Buy { address: _ } => {
-            // TODO: display input amount, generated address and bank deposit details.
-        }
-        BuyOrSell::Sell => {
-            // TODO: display onchain bitcoin address for deposit, and beneficiary input forms
-        }
-    }
-
-    // TODO: disable button if form is not valid (the mavapay API has minimum amounts specified in the documentation)
-    form_column = form_column
-        .push(
-            button::primary(None, "Process Payment")
-                .on_press(BuySellMessage::Mavapay(MavapayMessage::CreateQuote))
-                .width(Length::Fill),
-        )
-        .spacing(5);
-
-    let exchange_form = Container::new(form_column)
-        .padding(20)
-        .style(theme::card::simple)
-        .width(Length::Fixed(600.0)); // Fixed width for consistent layout
-
-    column = column.push(exchange_form);
-
-    // Quote display with payment confirmation
-    if let Some(quote) = current_quote {
-        let mut quote_column = Column::new()
-            .push(text::h5_medium("Quote Created Successfully").color(color::GREEN))
-            .push(Space::with_height(Length::Fixed(10.0)))
-            .push(
-                Row::new()
-                    .push(text("Amount: ").size(14).color(color::GREY_3))
-                    .push(
-                        text(format!("{} sats", quote.total_amount_in_source_currency))
-                            .size(14)
-                            .color(color::WHITE),
-                    ),
-            )
-            .push(
-                Row::new()
-                    .push(text("Rate: ").size(14).color(color::GREY_3))
-                    .push(
-                        text(format!("{:.2}", quote.exchange_rate))
-                            .size(14)
-                            .color(color::WHITE),
-                    ),
-            )
-            .push(
-                Row::new()
-                    .push(text("Expires: ").size(14).color(color::GREY_3))
-                    .push(text(&quote.expiry).size(14).color(color::ORANGE)),
-            )
-            .push(Space::with_height(Length::Fixed(10.0)))
-            .push(text("Lightning Invoice: ").size(14).color(color::GREY_3))
-            .push(
-                Container::new(text(&quote.invoice).size(12).color(color::WHITE))
-                    .padding(10)
-                    .style(theme::card::simple),
-            );
-
-        // Show NGN bank details if available (for buy-BTC flow)
-        if let Some(bank_name) = quote.bank_name.as_deref() {
-            quote_column = quote_column
-                .push(Space::with_height(Length::Fixed(10.0)))
-                .push(
-                    text("Pay to this bank account:")
-                        .size(14)
-                        .color(color::GREY_3),
-                )
-                .push(Space::with_height(Length::Fixed(5.0)))
-                .push(
-                    Container::new(
-                        Column::new()
-                            .push(
-                                text(format!("Bank: {}", bank_name))
-                                    .size(12)
-                                    .color(color::WHITE),
-                            )
-                            .push_maybe(quote.ngn_bank_account_number.as_deref().map(|ban| {
-                                text(format!("Account Number: {}", ban))
-                                    .size(12)
-                                    .color(color::WHITE)
-                            }))
-                            .push_maybe(quote.ngn_account_name.as_deref().map(|an| {
-                                text(format!("Account Name: {}", an))
-                                    .size(12)
-                                    .color(color::WHITE)
-                            }))
-                            .spacing(5),
-                    )
-                    .padding(10)
-                    .style(theme::card::simple),
-                );
-        }
-
-        // Note: "Confirm Payment" button removed - payment page opens automatically
-        // after quote creation in the simplified flow
-
-        let quote_display = Container::new(quote_column.spacing(5))
+    // combine UI, render beneficiary input form using card styling
+    price_display.push(
+        Container::new(beneficiary_input_form)
             .padding(20)
             .style(theme::card::simple)
-            .width(Length::Fixed(600.0)); // Match form width
-
-        column = column
-            .push(Space::with_height(Length::Fixed(15.0)))
-            .push(quote_display);
-    }
-
-    column
-        .spacing(10)
-        .align_x(Alignment::Center)
-        .width(Length::Fill)
+            .width(Length::Fixed(600.0)),
+    )
 }
