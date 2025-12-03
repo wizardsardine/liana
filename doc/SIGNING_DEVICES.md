@@ -34,13 +34,13 @@ Version 1.0.30 of the firmware is supported for use in P2WSH descriptors.
 
 Support for use in Taproot descriptors is not yet available in the firmware.
 
-WARNING: You won't be able to connect your Jade to Liana if you choose "QrCode" mode when setting up
+WARNING: You won't be able to connect your Jade to Coincube if you choose "QrCode" mode when setting up
 your Jade. This is because in this mode the Jade refuses to communicate through USB.
 
 WARNING: the network cannot be changed after setting up the device without a factory reset. The
 network is set at the same time as the PIN.
 
 It is sometimes useful to change the network without a factory reset, such as when testing the
-device and/or Liana. In this case the "Temporary signer" mode may be used. The network can be reset
+device and/or Coincube. In this case the "Temporary signer" mode may be used. The network can be reset
 by simply disconnecting and reconnecting it. If using this mode, we advise you to first choose the
-network in the Liana installer before setting up the network on your Jade.
+network in the Coincube installer before setting up the network on your Jade.

@@ -4,7 +4,7 @@ from bip380.descriptors import Descriptor
 from concurrent import futures
 from test_framework.bitcoind import Bitcoind
 from test_framework.electrs import Electrs
-from test_framework.lianad import Lianad
+from test_framework.coincubed import Coincubed
 from test_framework.signer import SingleSigner, MultiSigner
 from test_framework.utils import (
     BITCOIN_BACKEND_TYPE,
@@ -30,7 +30,7 @@ ATTEMPTS = {}
 def test_base_dir():
     d = os.getenv("TEST_DIR", "/tmp")
 
-    directory = tempfile.mkdtemp(prefix="lianad-tests-", dir=d)
+    directory = tempfile.mkdtemp(prefix="coincubed-tests-", dir=d)
     print("Running tests in {}".format(directory))
 
     yield directory
@@ -162,8 +162,8 @@ def single_key_desc(
 
 
 @pytest.fixture
-def lianad(bitcoin_backend, directory):
-    datadir = os.path.join(directory, "lianad")
+def coincubed(bitcoin_backend, directory):
+    datadir = os.path.join(directory, "coincubed")
     os.makedirs(datadir, exist_ok=True)
 
     signer = SingleSigner(is_taproot=USE_TAPROOT)
@@ -185,7 +185,7 @@ def lianad(bitcoin_backend, directory):
         )
     )
 
-    lianad = Lianad(
+    coincubed = Coincubed(
         datadir,
         signer,
         main_desc,
@@ -193,19 +193,19 @@ def lianad(bitcoin_backend, directory):
     )
 
     try:
-        lianad.start()
-        yield lianad
+        coincubed.start()
+        yield coincubed
     except Exception:
-        lianad.cleanup()
+        coincubed.cleanup()
         raise
 
-    lianad.cleanup()
+    coincubed.cleanup()
 
 
 # This can currently only be used with Taproot if no signing is required.
 @pytest.fixture
-def lianad_with_deriv_paths(bitcoin_backend, directory):
-    datadir = os.path.join(directory, "lianad")
+def coincubed_with_deriv_paths(bitcoin_backend, directory):
+    datadir = os.path.join(directory, "coincubed")
     os.makedirs(datadir, exist_ok=True)
 
     signer = SingleSigner(is_taproot=USE_TAPROOT)
@@ -227,7 +227,7 @@ def lianad_with_deriv_paths(bitcoin_backend, directory):
         )
     )
 
-    lianad = Lianad(
+    coincubed = Coincubed(
         datadir,
         signer,
         main_desc,
@@ -235,13 +235,13 @@ def lianad_with_deriv_paths(bitcoin_backend, directory):
     )
 
     try:
-        lianad.start()
-        yield lianad
+        coincubed.start()
+        yield coincubed
     except Exception:
-        lianad.cleanup()
+        coincubed.cleanup()
         raise
 
-    lianad.cleanup()
+    coincubed.cleanup()
 
 
 def unspendable_internal_xpub(xpubs):
@@ -283,8 +283,8 @@ def multisig_desc(multi_signer, csv_value, is_taproot, prim_thresh, recov_thresh
 
 
 @pytest.fixture
-def lianad_multisig(bitcoin_backend, directory):
-    datadir = os.path.join(directory, "lianad")
+def coincubed_multisig(bitcoin_backend, directory):
+    datadir = os.path.join(directory, "coincubed")
     os.makedirs(datadir, exist_ok=True)
 
     # A 3-of-4 that degrades into a 2-of-5 after 10 blocks
@@ -292,7 +292,7 @@ def lianad_multisig(bitcoin_backend, directory):
     signer = MultiSigner(4, {csv_value: 5}, is_taproot=USE_TAPROOT)
     main_desc = Descriptor.from_str(multisig_desc(signer, csv_value, USE_TAPROOT, 3, 2))
 
-    lianad = Lianad(
+    coincubed = Coincubed(
         datadir,
         signer,
         main_desc,
@@ -300,18 +300,18 @@ def lianad_multisig(bitcoin_backend, directory):
     )
 
     try:
-        lianad.start()
-        yield lianad
+        coincubed.start()
+        yield coincubed
     except Exception:
-        lianad.cleanup()
+        coincubed.cleanup()
         raise
 
-    lianad.cleanup()
+    coincubed.cleanup()
 
 
 @pytest.fixture
-def lianad_multisig_legacy_datadir(bitcoin_backend, directory):
-    datadir = os.path.join(directory, "lianad")
+def coincubed_multisig_legacy_datadir(bitcoin_backend, directory):
+    datadir = os.path.join(directory, "coincubed")
     os.makedirs(datadir, exist_ok=True)
 
     # A 3-of-4 that degrades into a 2-of-5 after 10 blocks
@@ -319,21 +319,21 @@ def lianad_multisig_legacy_datadir(bitcoin_backend, directory):
     signer = MultiSigner(4, {csv_value: 5}, is_taproot=USE_TAPROOT)
     main_desc = Descriptor.from_str(multisig_desc(signer, csv_value, USE_TAPROOT, 3, 2))
 
-    lianad = Lianad(datadir, signer, main_desc, bitcoin_backend, legacy_datadir=True)
+    coincubed = Coincubed(datadir, signer, main_desc, bitcoin_backend, legacy_datadir=True)
 
     try:
-        lianad.start()
-        yield lianad
+        coincubed.start()
+        yield coincubed
     except Exception:
-        lianad.cleanup()
+        coincubed.cleanup()
         raise
 
-    lianad.cleanup()
+    coincubed.cleanup()
 
 
 @pytest.fixture
-def lianad_multisig_2_of_2(bitcoin_backend, directory):
-    datadir = os.path.join(directory, "lianad")
+def coincubed_multisig_2_of_2(bitcoin_backend, directory):
+    datadir = os.path.join(directory, "coincubed")
     os.makedirs(datadir, exist_ok=True)
 
     # A 2-of-2 that degrades into a 1-of-1 after 10 blocks
@@ -341,7 +341,7 @@ def lianad_multisig_2_of_2(bitcoin_backend, directory):
     signer = MultiSigner(2, {csv_value: 1}, is_taproot=USE_TAPROOT)
     main_desc = Descriptor.from_str(multisig_desc(signer, csv_value, USE_TAPROOT, 2, 1))
 
-    lianad = Lianad(
+    coincubed = Coincubed(
         datadir,
         signer,
         main_desc,
@@ -349,13 +349,13 @@ def lianad_multisig_2_of_2(bitcoin_backend, directory):
     )
 
     try:
-        lianad.start()
-        yield lianad
+        coincubed.start()
+        yield coincubed
     except Exception:
-        lianad.cleanup()
+        coincubed.cleanup()
         raise
 
-    lianad.cleanup()
+    coincubed.cleanup()
 
 
 def multipath_desc(multi_signer, csv_values, is_taproot):
@@ -381,8 +381,8 @@ def multipath_desc(multi_signer, csv_values, is_taproot):
 
 
 @pytest.fixture
-def lianad_multipath(bitcoin_backend, directory):
-    datadir = os.path.join(directory, "lianad")
+def coincubed_multipath(bitcoin_backend, directory):
+    datadir = os.path.join(directory, "coincubed")
     os.makedirs(datadir, exist_ok=True)
 
     # A 3-of-4 that degrades into a 3-of-5 after 10 blocks and into a 1-of-10 after 20 blocks.
@@ -394,7 +394,7 @@ def lianad_multipath(bitcoin_backend, directory):
         multipath_desc(signer, csv_values, is_taproot=USE_TAPROOT)
     )
 
-    lianad = Lianad(
+    coincubed = Coincubed(
         datadir,
         signer,
         main_desc,
@@ -402,10 +402,10 @@ def lianad_multipath(bitcoin_backend, directory):
     )
 
     try:
-        lianad.start()
-        yield lianad
+        coincubed.start()
+        yield coincubed
     except Exception:
-        lianad.cleanup()
+        coincubed.cleanup()
         raise
 
-    lianad.cleanup()
+    coincubed.cleanup()

@@ -1,7 +1,7 @@
 [workspace]
 resolver = "2"
-members = ["fuzz", "liana", "lianad", "liana-gui", "liana-ui"]
-default-members = ["liana", "lianad", "liana-gui", "liana-ui"]
+members = ["fuzz", "coincube-core", "coincubed", "coincube-gui", "coincube-ui"]
+default-members = ["coincube-core", "coincubed", "coincube-gui", "coincube-ui"]
 
 [profile.app-release]
 inherits = "release"

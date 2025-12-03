@@ -1,5 +1,5 @@
 //! A quick and dirty program which reads a PSBT and an xpriv from stdin and outputs the signed
-//! PSBT to stdout. Uses function copied from Liana's hot signer and adapted.
+//! PSBT to stdout. Uses function copied from Coincube's hot signer and adapted.
 
 use std::{
     env,

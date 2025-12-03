@@ -1,5 +1,7 @@
+# Build artifacts
 tags
 target/
+
 __pycache__
 dummy_config.toml
 regtest/
@@ -15,11 +17,18 @@ result
 release_build
 release_assets
 .env
+bin/
+lib/
+pyvenv.cfg
 
 .vscode
-liana-gui/default
+coincube-gui/default
 contrib/release/macos/certificates.p12
-contrib/release/macos/Vault.icns
-contrib/release/wix/Vault.ico
+contrib/release/macos/Coincube.icns
+contrib/release/wix/Coincube.ico
 contrib/icons
 default
+
+# OS
+.DS_Store
+Thumbs.db

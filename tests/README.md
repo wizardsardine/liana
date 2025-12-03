@@ -1,6 +1,6 @@
-## Lianad blackbox tests
+## Coincubed blackbox tests
 
-Here we test `lianad` by starting it on a regression testing Bitcoin network,
+Here we test `coincubed` by starting it on a regression testing Bitcoin network,
 and by then talking to it as an user would, from the outside.
 
 Python scripts are used for the automation, and specifically the [`pytest` framework](https://docs.pytest.org/en/stable/index.html).
@@ -10,12 +10,13 @@ Credits: this test framework was taken and adapted from revaultd, which was itse
 
 ### Building the project for testing
 
-To run the tests, we must build `lianad`.
+To run the tests, we must build `coincubed`.
+
 ```
 $ cargo build --release
 ```
 
-The `lianad` and `liana-cli` binaries will be in the `target/release` directory at the root of the repository.
+The `coincubed` and `coincube-cli` binaries will be in the `target/release` directory at the root of the repository.
 
 ### Test dependencies
 
@@ -44,6 +45,7 @@ specific `bitcoind` binary by specifying the `BITCOIND_PATH` env var.
 ### Running the tests
 
 From the root of the repository:
+
 ```
 pytest tests/
 ```
@@ -51,6 +53,7 @@ pytest tests/
 For running the tests under Taproot a `bitcoind` version 26.0 or superior must be used. It can be
 pointed to using the `BITCOIND_PATH` variable. For now, one must also compile the `taproot_signer`
 Rust program:
+
 ```
 (cd tests/tools/taproot_signer && cargo build --release)
 ```
@@ -59,6 +62,7 @@ Then the test suite can be run by using Taproot descriptors instead of P2WSH des
 the `USE_TAPROOT` environment variable to `1`.
 
 ### Tips and tricks
+
 #### Logging
 
 We use the [Live Logging](https://docs.pytest.org/en/latest/logging.html#live-logs)
@@ -66,6 +70,7 @@ functionality from pytest. It is configured in (`pyproject.toml`)[../pyproject.t
 output `INFO`-level to the console. If a test fails, the entire `DEBUG` log is output.
 
 You can override the config at runtime with the `--log-cli-level` option:
+
 ```
 pytest -vvv --log-cli-level=DEBUG -k test_startup
 ```
@@ -79,6 +84,7 @@ In order to run tests in parallel, you can use `-n` arg:
 ```
 pytest -n 8 tests/
 ```
+
 ### Test lints
 
 Just use [`black`](https://github.com/psf/black).

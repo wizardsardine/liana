@@ -89,7 +89,7 @@ class Bitcoind(BitcoinBackend):
         # An RPC interface with our internal wallet, and an RPC interface with no
         # wallet to be able to call 'unloadwallet' on any wallet.
         self.rpc = BitcoindRpcInterface(
-            bitcoin_dir, "regtest", rpcport, wallet="lianad-tests"
+            bitcoin_dir, "regtest", rpcport, wallet="coincubed-tests"
         )
         self.node_rpc = BitcoindRpcInterface(bitcoin_dir, "regtest", rpcport)
 
@@ -289,7 +289,7 @@ class Bitcoind(BitcoinBackend):
             self.proc.kill()
         self.proc.wait()
 
-    def append_to_lianad_conf(self, conf_file):
+    def append_to_coincubed_conf(self, conf_file):
         cookie_path = os.path.join(self.bitcoin_dir, "regtest", ".cookie")
         with open(conf_file, "a") as f:
             f.write("[bitcoind_config]\n")

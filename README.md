@@ -1,78 +1,76 @@
 <div align="center">
-  <a href="https://wizardsardine.com/liana" target="_blank">
-    <img src="liana-ui/static/logos/liana-app-icon.svg" width="140px" />
+  <br><br>
+  <a href="https://coincube.io" target="_blank">
+    <img src="coincube-ui/static/logos/coincube-logo.svg" width="440px" />
   </a>
 
-# Liana
-
-*The missing safety net for your bitcoins*.
+_Secure Bitcoin wallet with Vault, Active spending, and inheritance_.
 
 </div>
 
-
 ## About
 
-Liana is a simple Bitcoin wallet. Like other Bitcoin wallets you have one key which can spend the
-funds in the wallet immediately. Unlike other wallets, Liana lets you in addition specify one key
-which can only spend the coins after the wallet has been inactive for some time.
+COINCUBE is a comprehensive Bitcoin wallet solution built on a hard fork of [Liana](https://github.com/wizardsardine/liana) with significant modifications by [Coincube Technology LLC](https://coincube.io). We retain the original license and acknowledge the foundational work of the Liana project. This wallet provides:
 
-We refer to these as the primary spending path (always accessible) and the recovery path (only
-available after some time of inactivity). You may have more than one key in either the primary or
-the recovery path (multisig). You may have more than one recovery path.
+**VAULT** - Secure multisig custody with time-locked inheritance paths. Like the original Liana, you have
+a primary spending path (always accessible) and recovery paths (available after inactivity periods).
+You may have multiple keys in either path. Recovery paths are enforced onchain by Bitcoin's Script
+capabilities.
 
-Here is an example of a Liana wallet configuration:
+**ACTIVE Wallet** - Lightning-enabled spending wallet powered by Breez SDK for instant, low-fee payments.
+
+**BUY/SELL** - Integrated Bitcoin on/off-ramp functionality.
+
+**KEYCHAIN** - Remote keychain-based signers for enhanced flexibility.
+
+Example VAULT configuration:
+
 - Owner's key (can always spend)
-- Any 2 keys from the owner's spouse and two kids (after 1 year)
-- A third party, in case [all else failed](https://wizardsardine.com/liana/plans#section-safety-net)
-  (after 1 year and 3 months)
+- Any 2 keys from trusted parties (after 1 year)
+- Emergency recovery key (after 1 year and 3 months)
 
-The lockup period is enforced onchain by the Bitcoin network. This is achieved by leveraging
-timelock capabilities of Bitcoin smart contracts (Script).
-
-Liana can be used for **trustless inheritance**, **loss protection** or **safer backups**. Visit
-[our website](https://wizardsardine.com/liana) for more information.
-
+COINCUBE is designed for **trustless inheritance**, **loss protection**, **active spending**, and
+**user-friendly Bitcoin custody**.
 
 ## Usage
 
-Liana is available on Windows, Mac and Linux. To install and start using it see
-[`doc/USAGE.md`](doc/USAGE.md). A more accessible version of Liana is also available as a web
-application [here](https://lianalite.com/).
+COINCUBE is available on Windows, Mac and Linux. To install and start using it see
+[`doc/USAGE.md`](doc/USAGE.md).
 
-If you just want to quickly try out Liana on Bitcoin Signet, see [`doc/TRY.md`](doc/TRY.md).
+If you just want to quickly try out COINCUBE on Bitcoin Signet or Testnet, see [`doc/TRY.md`](doc/TRY.md).
 
+## Hacking on COINCUBE
 
-## Hacking on Liana
+COINCUBE is an open source project. It is [hosted at Github](https://github.com/coincubetech/coincube).
+Contributions are welcome. See [here](CONTRIBUTING.md) for guidelines.
 
-Liana is an open source project. It is [hosted at Github](https://github.com/wizardsardine/liana).
-Contributions are very welcome. See [here](CONTRIBUTING.md) for guidelines. Most regular
-contributors hang out on [our Discord](https://discord.gg/9rAqZHwkv6). Join us there if you have any
-question about contributing.
+COINCUBE is separated in main components:
 
-Liana is separated in two main components: the daemon and the Graphical User Interface.
+#### coincubed (Vault Daemon)
 
-#### Liana daemon
+The daemon contains the core Vault logic. It is both a library (Rust crate) that exposes a
+command interface and a standalone daemon that exposes a JSONRPC API through a Unix Domain Socket.
 
-The daemon contains the core logic of the wallet. It is both a library (a Rust crate) that exposes a
-command interface and a standalone UNIX daemon that exposes a JSONRPC API through a Unix Domain
-Socket.
+The code for the daemon can be found in the [`coincubed`](coincubed) folder (to be renamed to `coincubed`).
 
-The code for the daemon can be found in the [`liana`](liana) folder.
+#### COINCUBE GUI
 
-#### Liana GUI
+The GUI provides an installer for setting up COINCUBE and a graphical interface
+built with the [`iced`](https://github.com/iced-rs/iced/) library.
 
-The GUI contains both an installer that guides a user through setting up a Liana wallet, as well as
-a graphical interface to the daemon using the [`iced`](https://github.com/iced-rs/iced/) library.
+The code for the GUI can be found in the [`coincube-gui`](coincube-gui) folder.
 
-The code for the GUI can be found in the [`liana-gui`](liana-gui) folder.
+#### Active Wallet
 
+Lightning-enabled spending wallet integration with Breez SDK (under development).
 
 ## Security
 
 See [`SECURITY.md`](SECURITY.md) for details about reporting a security vulnerability or any bug
 that could potentially impact the security of users' funds.
 
-
 ## License
+
+COINCUBE is a hard fork of Liana, originally developed by Wizardsardine.
 
 Released under the BSD 3-Clause Licence. See the [LICENCE](LICENCE) file.

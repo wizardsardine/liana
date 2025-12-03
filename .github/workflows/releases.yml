@@ -26,7 +26,7 @@ jobs:
           - os: macos-latest
 
     name: upload-binaries
-    if: github.repository == 'coincubetech/liana'
+    if: github.repository == 'coincubetech/coincube'
     runs-on: ${{ matrix.os }}
 
     steps:
@@ -41,12 +41,12 @@ jobs:
         with:
           tool: cargo-wix,apple-codesign,jaq
 
-      # Key run with liana-gui version, for caching and release artefacts
-      - name: Set arbitrary release name to package version of liana-gui
+      # Key run with coincube-gui version, for caching and release artefacts
+      - name: Set arbitrary release name to package version of coincube-gui
         shell: bash
         run: |
-          version=$(cargo metadata --no-deps --format-version 1 | jaq -r '.packages[] | select(.name=="liana-gui") | .version')
-          echo "VAULT_VERSION=$version" >> $GITHUB_ENV
+          version=$(cargo metadata --no-deps --format-version 1 | jaq -r '.packages[] | select(.name=="coincube-gui") | .version')
+          echo "COINCUBE_VERSION=$version" >> $GITHUB_ENV
 
       - name: Cache Cargo build directories
         uses: actions/cache@v4
@@ -58,7 +58,7 @@ jobs:
       # Create gh release
       - uses: taiki-e/create-gh-release-action@v1
         with:
-          title: v${{ env.VAULT_VERSION }}
+          title: v${{ env.COINCUBE_VERSION }}
           ref: ${{ github.ref }}
           branch: master
 
@@ -70,9 +70,9 @@ jobs:
       - uses: taiki-e/upload-rust-binary-action@v1
         if: matrix.os == 'ubuntu-latest'
         with:
-          package: liana-gui
-          bin: coincube-vault
-          archive: Coincube-Vault-$target
+          package: coincube-gui
+          bin: coincube
+          archive: coincube-$target
           target: x86_64-unknown-linux-gnu
           include: LICENCE,README.md,lib
           profile: app-release
@@ -89,14 +89,14 @@ jobs:
         if: matrix.os == 'windows-latest'
         run: |
           choco install wixtoolset --version=3.14.1 --yes
-          cargo wix --package liana-gui --profile app-release --output "target\wix\Coincube-Vault-x86_64-pc-windows-msvc.msi" --include ./contrib/release/wix/main.wxs --nocapture -v
+          cargo wix --package coincube-gui --profile app-release --output "target\wix\coincube-x86_64-pc-windows-msvc.msi" --include ./contrib/release/wix/main.wxs --nocapture -v
 
       - name: Upload .msi to release
         if: matrix.os == 'windows-latest'
         uses: svenstaro/upload-release-action@v2
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: "target/wix/Coincube-Vault-x86_64-pc-windows-msvc.msi"
+          file: "target/wix/coincube-x86_64-pc-windows-msvc.msi"
           tag: ${{ github.ref }}
           body: "Installers for Windows, macOS and Linux"
           overwrite: true
@@ -105,15 +105,15 @@ jobs:
       - name: Compile Project for macOS arm64
         if: matrix.os == 'macos-latest'
         run: |
-          cargo build --package liana-gui --profile app-release
+          cargo build --package coincube-gui --profile app-release
 
       - name: Copy Executable, Icons and Extra Metadata into .app folder
         if: matrix.os == 'macos-latest'
         run: |
-          unzip ./contrib/release/macos/Vault.app.zip
-          sed -i '' "s/VERSION_PLACEHOLDER/${{ env.VAULT_VERSION }}/g" ./Vault.app/Contents/Info.plist
-          mv target/app-release/coincube-vault ./Vault.app/Contents/MacOS/Vault
-          mv ./contrib/release/macos/Vault.icns ./Vault.app/Contents/Resources/Vault.icns
+          unzip ./contrib/release/macos/Coincube.app.zip
+          sed -i '' "s/VERSION_PLACEHOLDER/${{ env.COINCUBE_VERSION }}/g" ./Coincube.app/Contents/Info.plist
+          mv target/app-release/coincube ./Coincube.app/Contents/MacOS/Coincube
+          mv ./contrib/release/macos/Coincube.icns ./Coincube.app/Contents/Resources/Coincube.icns
 
       - name: CodeSign macOS App Bundle
         if: matrix.os == 'macos-latest'
@@ -123,24 +123,24 @@ jobs:
         run: |
           echo "$P12_BASE64" | base64 -d > signing_certificate.p12
           echo "$P12_PASSWORD" > signing_certificate.password
-          rcodesign sign --p12-file signing_certificate.p12 --p12-password-file signing_certificate.password --code-signature-flags runtime Vault.app
+          rcodesign sign --p12-file signing_certificate.p12 --p12-password-file signing_certificate.password --code-signature-flags runtime Coincube.app
           rm signing_certificate.p12 signing_certificate.password
 
       - name: Notarize and Staple macOS App bundle
         if: matrix.os == 'macos-latest'
         run: |
           base64 -D <<< "${{ secrets.APPSTORECONNECT_KEY_JSON }}" > appstoreconnect_key.json
-          rcodesign notary-submit --api-key-path appstoreconnect_key.json --max-wait-seconds 1800 --staple Vault.app
-          spctl --verbose=4 --assess --type execute Vault.app
+          rcodesign notary-submit --api-key-path appstoreconnect_key.json --max-wait-seconds 1800 --staple Coincube.app
+          spctl --verbose=4 --assess --type execute Coincube.app
           rm appstoreconnect_key.json
-          ditto -c -k --sequesterRsrc --keepParent Vault.app Coincube-Vault-aarch64-apple-darwin.app.zip
+          ditto -c -k --sequesterRsrc --keepParent Coincube.app coincube-aarch64-apple-darwin.app.zip
 
       - name: Upload .app.zip file as Release Artefact
         if: matrix.os == 'macos-latest'
         uses: svenstaro/upload-release-action@v2
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: "Coincube-Vault-aarch64-apple-darwin.app.zip"
+          file: "coincube-aarch64-apple-darwin.app.zip"
           tag: ${{ github.ref }}
           overwrite: true
           body: "macOS App Bundle (arm64)"

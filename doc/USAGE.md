@@ -1,34 +1,34 @@
-# Start using Liana
+# Start using Coincube
 
-This documents how to install and start using Liana. If you just want to quickly try Liana on
+This documents how to install and start using Coincube. If you just want to quickly try Coincube on
 Bitcoin Signet, check out [this guide](TRY.md) instead.
-
 
 ### Installing the software
 
 The recommended installation method for regular users is to download [an executable software release
-from our website](https://wizardsardine.com/liana/). If you prefer to build the project from source,
+from our website](https://wizardsardine.com/coincube/). If you prefer to build the project from source,
 see [`BUILD.md`](BUILD.md) instead.
 
 We recommend you verify the software you downloaded against a PGP signature made by Edouard Paris
 using his key `5B63F3B97699C7EEF3B040B19B7F629A53E77B83`. For now the PGP signatures for the
 binaries downloaded on our website are only available on the [Github release
-page](https://github.com/wizardsardine/liana/releases). Find the `.asc` file in the list
+page](https://github.com/wizardsardine/coincube/releases). Find the `.asc` file in the list
 corresponding to the binary you downloaded. Edouard's key is available elsewhere for cross-checking,
 such as on [his personal website](https://edouard.paris).
 
-For Arch users, a `liana-bin` is also available at the [AUR](https://aur.archlinux.org/). You can
-install it using your favourite wrapper (eg `paru -S liana-bin` or `yay -S liana-bin`), or manually:
+For Arch users, a `coincube-bin` is also available at the [AUR](https://aur.archlinux.org/). You can
+install it using your favourite wrapper (eg `paru -S coincube-bin` or `yay -S coincube-bin`), or manually:
+
 ```bash
-git clone https://aur.archlinux.org/liana-bin.git
-cd liana-bin
+git clone https://aur.archlinux.org/coincube-bin.git
+cd coincube-bin
 cat PKGBUILD # Review the PKGBUILD script
 makepkg -si
 ```
 
 #### A note on Linux binaries and glibc version
 
-*Skip this section if you are not running Linux or don't plan on using a released binary.*
+_Skip this section if you are not running Linux or don't plan on using a released binary._
 
 Due to technical limitations in our reproducible builds system, the Linux binaries currently link
 against `glibc` version `2.33`. This means you can't run a released Linux binary if your system has
@@ -38,34 +38,34 @@ an older glibc. This is the case most notably of Ubuntu 20 (Focal) and below, an
 The simplest workaround is to simply build the project yourself. Fear not, it's really trivial if
 you are a Linux user. Instructions [here](BUILD.md).
 
-See [this issue](https://github.com/wizardsardine/liana/issues/414) for details.
+See [this issue](https://github.com/wizardsardine/coincube/issues/414) for details.
 
 #### Apple, Windows, codesigned and notarized binaries
 
 We distribute both a non-codesigned and a codesigned-and-notarized MacOS application
-(`Liana-noncodesigned.zip` and `Liana.zip`).  To run the non-codesigned app, see [this Apple support
+(`Coincube-noncodesigned.zip` and `Coincube.zip`). To run the non-codesigned app, see [this Apple support
 guide](https://support.apple.com/en-us/HT202491) (section "If you want to open an app that hasn’t
 been notarized or is from an unidentified developer").
 
 We do not yet distribute codesigned binaries for Windows at this time.
 
-
 ### Starting the software
 
 You will most likely want to use the graphical user interface. Start the software you just installed
-in the previous section. This will start the "installer": a configuration wizard for your Liana
+in the previous section. This will start the "installer": a configuration wizard for your Coincube
 wallet.
 
 The installer will guide you through a few steps:
+
 - Configuring the policy for your wallet:
   - Set the key(s) which should be able to spend immediately
   - Set how many recovery path(s) you want, and set the lockup period
 - Making sure your backup your descriptor and register it on your signing device
 - Configuring the connection to the Bitcoin network
 
-Once you've been through these steps, your Liana wallet will open.
+Once you've been through these steps, your Coincube wallet will open.
 
-You might have to wait for Bitcoin Core to perform its initial block download. When using Liana, the
+You might have to wait for Bitcoin Core to perform its initial block download. When using Coincube, the
 connection to the Bitcoin network is established by using a full node. This means you are fully
 sovereign: you are not trusting a third party to get your onchain data. This does come with a
 drawback: you have to wait for Bitcoin Core to download and validate the historical block chain. But
@@ -74,26 +74,27 @@ fear not! This is just a one time cost. Also, the full node is pruned so it will
 
 #### Using the daemon
 
-Liana can be run as a headless server using the `lianad` program.
+Coincube can be run as a headless server using the `coincubed` program.
 
-As a Bitcoin wallet, Liana needs to be able to connect to the Bitcoin network,
+As a Bitcoin wallet, Coincube needs to be able to connect to the Bitcoin network,
 which is currently possible through the Bitcoin Core daemon (`bitcoind`) or an Electrum server.
 
-The chosen Bitcoin backend must be available while Liana is running.
+The chosen Bitcoin backend must be available while Coincube is running.
 
 If using `bitcoind`, it must be running on your machine for the desired network (mainnet, signet, testnet, testnet4 or
-regtest). Note that testnet4 will only be available if Bitcoin Core version 28.0 or later is used. It may be pruned 
+regtest). Note that testnet4 will only be available if Bitcoin Core version 28.0 or later is used. It may be pruned
 (this may affect block chain rescans) up to the maximum (around 550MB of blocks).
 
 The minimum supported version of Bitcoin Core is `24.0.1` (if you want to use Taproot it's `26.0`).
 If you don't have Bitcoin Core installed on your machine yet, you can download it
 [here](https://bitcoincore.org/en/download/).
 
-You can use the `liana-cli` program to send commands to it. It will need the path to the same
+You can use the `coincube-cli` program to send commands to it. It will need the path to the same
 configuration as the daemon. You can find a full documentation of the JSONRPC API exposed by
-`lianad` at [`API.md`](API.md). For instance:
+`coincubed` at [`API.md`](API.md). For instance:
+
 ```
-$ liana-cli --conf ./signet_config.toml getinfo
+$ coincube-cli --conf ./signet_config.toml getinfo
 {
   "result": {
     "block_height": 3083,
@@ -112,13 +113,12 @@ $ liana-cli --conf ./signet_config.toml getinfo
 }
 ```
 
-A sample configuration file is available [here](../contrib/lianad_config_example.toml). Notably you
-will need to generate an output descriptor. The easiest way to achieve it is to use the Liana GUI's
+A sample configuration file is available [here](../contrib/coincubed_config_example.toml). Notably you
+will need to generate an output descriptor. The easiest way to achieve it is to use the Coincube GUI's
 installer (see above).
 
-Note also that you might connect the GUI to a running `lianad`. If the GUI detects a daemon is
+Note also that you might connect the GUI to a running `coincubed`. If the GUI detects a daemon is
 already running, it will plug to it and communicate through the JSONRPC API.
-
 
 ### Wallet usage tips and tricks
 
@@ -127,6 +127,7 @@ already running, it will plug to it and communicate through the JSONRPC API.
 In Bitcoin, the conditions for spending a certain amount of coins are expressed using
 [Script](https://en.bitcoin.it/wiki/Script). In order to be able to recover your coins, you need to
 back up both:
+
 - The Script template, in the form of a standard [Output Script
   Descriptor](https://github.com/bitcoin/bips/blob/master/bip-0380.mediawiki)
 - The private key(s) corresponding to the public key(s) used in the Script
@@ -143,7 +144,7 @@ mediums than for storing your private key(s).
 
 #### On refreshing coins
 
-You can use Liana just like a regular wallet. Simply be aware that if you are using a relative
+You can use Coincube just like a regular wallet. Simply be aware that if you are using a relative
 timelock (the only type of timelocks supported for now), time starts ticking when you receive a
 payment. That is if you want the recovery path to never be available, each coin must be spent
 at least once every `N` blocks. (With `N` the configured value of the timelock.)
@@ -154,7 +155,7 @@ payment.)
 
 #### Signing devices and "hot" keys
 
-Liana can be used as a hot wallet. Note that mnemonics would be stored in clear on your drive. We
+Coincube can be used as a hot wallet. Note that mnemonics would be stored in clear on your drive. We
 strongly recommend using a hardware signing device for any non-trivial amount.
 
 The list of supported devices can be found [here](./SIGNING_DEVICES.md).
@@ -171,35 +172,36 @@ sweep transaction. Then sign it with the recovery key and broadcast it.
 For the daemon, see the [`createrecovery`](API.md#createrecovery) command. It will create a
 sweep PSBT to the requested address with the specified feerate, filled with all available coins.
 
-#### Recovering a Liana wallet backup on another wallet
+#### Recovering a Coincube wallet backup on another wallet
 
-You can always restore a Liana wallet backup using the Liana software. In the extremely unlikely
-scenario that you lose access to a Liana software (all copies of the binaries and source code are
+You can always restore a Coincube wallet backup using the Coincube software. In the extremely unlikely
+scenario that you lose access to a Coincube software (all copies of the binaries and source code are
 entirely wiped from the surface of the planet) or are otherwise unable to use it, we've got [a guide
-on how to recover a Liana wallet backup with Bitcoin Core 25.0 and above](RECOVER.md).
-
+on how to recover a Coincube wallet backup with Bitcoin Core 25.0 and above](RECOVER.md).
 
 ### Reproducible builds
 
-Releases of Liana are reproducibly built. Linux binaries are also bootstrappable. See
+Releases of Coincube are reproducibly built. Linux binaries are also bootstrappable. See
 [`contrib/reproducible`](../contrib/reproducible) for details and instructions if you want to check a
 release.
 
 All commits on master are merge commits signed using a set of trusted GPG keys. We use the
 [`github-merge`](https://github.com/wizardsardine/maintainer-tools) script for this purpose. Given a
 set of [trusted
-keys](https://github.com/wizardsardine/maintainer-tools/blob/master/verify-commits/liana/trusted-keys)
+keys](https://github.com/wizardsardine/maintainer-tools/blob/master/verify-commits/coincube/trusted-keys)
 (basically mine and Edouard Paris') and a [trusted git root
-commit](https://github.com/wizardsardine/maintainer-tools/blob/master/verify-commits/liana/trusted-git-root)
+commit](https://github.com/wizardsardine/maintainer-tools/blob/master/verify-commits/coincube/trusted-git-root)
 you can verify the integrity of the master branch using the
 [`verify-commits`](https://github.com/wizardsardine/maintainer-tools/tree/master/verify-commits)
 script from our
 [`maintainer-tools`](https://github.com/wizardsardine/maintainer-tools) repository. For instance:
+
 ```
-$ ../maintainer-tools/verify-commits/verify-commits.py liana
+$ ../maintainer-tools/verify-commits/verify-commits.py coincube
 ...
 There is a valid path from "9490159e7ca69678bb6995cd56d09b0a65a5b484" to da9149ccde5bf99cb70769b792fd003b079fc9ed where all commits are signed!
 ```
+
 It's worth mentioning we didn't invent anything here: we're just reusing the [great
 tooling](https://github.com/bitcoin-core/bitcoin-maintainer-tools) developed by the Bitcoin Core
 contributors over the years.

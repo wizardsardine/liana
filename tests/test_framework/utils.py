@@ -19,9 +19,9 @@ VERBOSE = os.getenv("VERBOSE", "0") == "1"
 LOG_LEVEL = os.getenv("LOG_LEVEL", "debug")
 assert LOG_LEVEL in ["trace", "debug", "info", "warn", "error"]
 DEFAULT_MS_PATH = os.path.join(
-    os.path.dirname(__file__), "..", "..", "target/release/lianad"
+    os.path.dirname(__file__), "..", "..", "target/release/coincubed"
 )
-LIANAD_PATH = os.getenv("LIANAD_PATH", DEFAULT_MS_PATH)
+COINCUBED_PATH = os.getenv("COINCUBED_PATH", DEFAULT_MS_PATH)
 
 
 class BitcoinBackendType(str, enum.Enum):
@@ -37,7 +37,7 @@ DEFAULT_BITCOIND_PATH = "bitcoind"
 BITCOIND_PATH = os.getenv("BITCOIND_PATH", DEFAULT_BITCOIND_PATH)
 DEFAULT_ELECTRS_PATH = "electrs"
 ELECTRS_PATH = os.getenv("ELECTRS_PATH", DEFAULT_ELECTRS_PATH)
-OLD_LIANAD_PATH = os.getenv("OLD_LIANAD_PATH", None)
+OLD_COINCUBED_PATH = os.getenv("OLD_COINCUBED_PATH", None)
 IS_NOT_BITCOIND_24 = bool(int(os.getenv("IS_NOT_BITCOIND_24", True)))
 USE_TAPROOT = bool(
     int(os.getenv("USE_TAPROOT", False))
@@ -89,22 +89,22 @@ def get_txid(hex_tx):
     return tx.txid().hex()
 
 
-def sign_and_broadcast(lianad, bitcoind, psbt, recovery=False):
+def sign_and_broadcast(coincubed, bitcoind, psbt, recovery=False):
     """Sign a PSBT, finalize it, extract the transaction and broadcast it."""
-    signed_psbt = lianad.signer.sign_psbt(psbt, recovery)
+    signed_psbt = coincubed.signer.sign_psbt(psbt, recovery)
     # Under Taproot i didn't bother implementing a finalizer in the test suite.
     if USE_TAPROOT:
-        lianad.rpc.updatespend(signed_psbt.to_base64())
+        coincubed.rpc.updatespend(signed_psbt.to_base64())
         txid = signed_psbt.tx.txid().hex()
-        lianad.rpc.broadcastspend(txid)
-        lianad.rpc.delspendtx(txid)
+        coincubed.rpc.broadcastspend(txid)
+        coincubed.rpc.delspendtx(txid)
         return txid
-    finalized_psbt = lianad.finalize_psbt(signed_psbt)
+    finalized_psbt = coincubed.finalize_psbt(signed_psbt)
     tx = finalized_psbt.tx.serialize_with_witness().hex()
     return bitcoind.rpc.sendrawtransaction(tx)
 
 
-def spend_coins(lianad, bitcoind, coins):
+def spend_coins(coincubed, bitcoind, coins):
     """Spend these coins, no matter how.
     This will create a single transaction spending them all at once at the minimum
     feerate. This will broadcast but not confirm the transaction.
@@ -116,17 +116,17 @@ def spend_coins(lianad, bitcoind, coins):
     destinations = {
         bitcoind.rpc.getnewaddress(): total_value - 11 - 31 - 300 * len(coins)
     }
-    res = lianad.rpc.createspend(destinations, [c["outpoint"] for c in coins], 1)
-    txid = sign_and_broadcast(lianad, bitcoind, PSBT.from_base64(res["psbt"]))
+    res = coincubed.rpc.createspend(destinations, [c["outpoint"] for c in coins], 1)
+    txid = sign_and_broadcast(coincubed, bitcoind, PSBT.from_base64(res["psbt"]))
     return bitcoind.rpc.getrawtransaction(txid)
 
 
-def sign_and_broadcast_psbt(lianad, psbt):
+def sign_and_broadcast_psbt(coincubed, psbt):
     """Sign a PSBT, save it to the DB and broadcast it."""
     txid = psbt.tx.txid().hex()
-    psbt = lianad.signer.sign_psbt(psbt)
-    lianad.rpc.updatespend(psbt.to_base64())
-    lianad.rpc.broadcastspend(txid)
+    psbt = coincubed.signer.sign_psbt(psbt)
+    coincubed.rpc.updatespend(psbt.to_base64())
+    coincubed.rpc.broadcastspend(txid)
     return txid
 
 
@@ -229,8 +229,8 @@ class UnixDomainSocketRpc(object):
                     return json.loads(buff)
                 except json.JSONDecodeError:
                     # There is more to read, continue
-                    # FIXME: this is a workaround for large reads taken from lianad.
-                    # We should use the '\n' marker instead since lianad uses that.
+                    # FIXME: this is a workaround for large reads taken from coincubed.
+                    # We should use the '\n' marker instead since coincubed uses that.
                     continue
 
     def __getattr__(self, name):
@@ -443,6 +443,6 @@ class BitcoinBackend(abc.ABC, TailableProc):
     """All Bitcoin backends should derive from this class."""
 
     @abc.abstractmethod
-    def append_to_lianad_conf(self, conf_file):
-        """Append backend config values to lianad config file."""
+    def append_to_coincubed_conf(self, conf_file):
+        """Append backend config values to coincubed config file."""
         ...

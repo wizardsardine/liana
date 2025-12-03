@@ -1,0 +1,132 @@
+[package]
+name = "coincube-gui"
+version = "13.0.0"
+readme = "README.md"
+description = "COINCUBE GUI - Secure Bitcoin wallet with multisig and inheritance"
+repository = "https://github.com/coincubetech/coincube"
+license-file = "../LICENCE"
+authors = ["Edouard Paris <m@edouard.paris>", "Coincube Team"]
+edition = "2018"
+resolver = "2"
+
+[features]
+default = []
+buysell = ["dep:iced_wry"]
+
+[package.metadata.winres]
+LegalCopyright = "Copyright © 2025"
+
+[[bin]]
+name = "coincube"
+path = "src/main.rs"
+
+
+[dependencies]
+async-trait = "0.1"
+async-hwi = "0.0.29"
+coincube-core = { path = "../coincube-core" }
+coincubed = { path = "../coincubed", default-features = false, features = [
+	"nonblocking_shutdown",
+] }
+coincube-ui = { path = "../coincube-ui" }
+backtrace = "0.3"
+hex = "0.4.3"
+dotenv = "0.15"
+
+iced = { version = "0.13.1", default-features = false, features = [
+	"tokio",
+	"svg",
+	"canvas",
+	"qr_code",
+	"image-without-codecs",
+	"advanced",
+	"wgpu",
+	"tiny-skia",
+] }
+image = { version = "*", default-features = false, features = ["png"] }
+iced_aw = { version = "0.12.2", features = ["context_menu"] }
+iced_runtime = "0.13.1"
+
+# Webview for embedded browser functionality (wry-based)
+iced_wry = { git = "https://github.com/sokorototo/iced_wry", optional = true }
+
+# Used to verify RFC-compliance of an email
+email_address = "0.2.7"
+
+tokio = { version = "1", features = ["signal"] }
+async-fd-lock = "0.2.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Used to ping bitcoind node
+jsonrpc = "0.18"
+
+# Logging stuff
+tracing = "0.1.41"
+tracing-subscriber = "0.3.20"
+log = "0.4"
+
+dirs = "6"
+toml = "0.9"
+
+chrono = "0.4.38"
+uuid = { version = "1.10", features = ["v4", "serde"] }
+argon2 = { version = "0.5", features = ["std"] }
+
+# Used for managing internal bitcoind
+base64 = "0.22"
+bitcoin_hashes = "0.16"
+reqwest = { version = "0.12", default-features = false, features = [
+	"json",
+	"rustls-tls",
+	"stream",
+] }
+rust-ini = "0.21"
+rfd = "0.15.1"
+fs4 = { version = "0.13", features = ["sync"] }
+
+# Used for opening URLs in browser
+open = "5.3"
+
+keyring = { version = "3.6.3", features = [
+	"apple-native",
+	"windows-native",
+	"sync-secret-service",
+] }
+encrypted_backup = { version = "0.0.1", default-features = false, features = [
+	"miniscript_12_0",
+], package = "bitcoin-encrypted-backup" }
+
+[target.'cfg(windows)'.dependencies]
+zip = { version = "0.6", default-features = false, features = [
+	"bzip2",
+	"deflate",
+] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+tar = { version = "0.4", default-features = false }
+flate2 = { version = "1.0", default-features = false }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt", "macros"] }
+
+[target.'cfg(windows)'.build-dependencies]
+winresource = "0.1"
+
+[lints.rust]
+mismatched_lifetime_syntaxes = "allow"
+
+[lints.clippy]
+uninlined_format_args = "allow"
+large_enum_variant = "allow"
+result_large_err = "allow"
+
+[package.metadata.winresource]
+OriginalFilename = "coincube.exe"
+FileDescription = "COINCUBE - Secure Bitcoin wallet with multisig and inheritance"
+CompanyName = "COINCUBE TECHNOLOGY LLC"
+InternalName = "Coincube"
+
+[package.metadata.wix]
+eula = false
