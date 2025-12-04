@@ -1,4 +1,5 @@
 [toolchain]
-channel = "1.80.0"
+channel = "1.85.1"
 profile = "default"
 components = ["rust-src", "rust-analyzer"]
+targets = ["x86_64-pc-windows-gnu", "aarch64-apple-darwin", "x86_64-apple-darwin"]

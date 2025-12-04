@@ -19,14 +19,10 @@
 
         inherit (pkgs) lib;
 
-        toolchain = with fenix.packages.${system};
-          combine [
-            minimal.rustc
-            minimal.cargo
-            targets.x86_64-pc-windows-gnu.latest.rust-std
-            targets.aarch64-apple-darwin.latest.rust-std
-            targets.x86_64-apple-darwin.latest.rust-std
-          ];
+        toolchain = fenix.packages.${system}.fromToolchainFile {
+          file = ./rust-toolchain.toml;
+          sha256 = "sha256-Hn2uaQzRLidAWpfmRwSRdImifGUCAb9HeAqTYFXWeQk=";
+        };
 
         craneLib = (crane.mkLib pkgs).overrideToolchain toolchain;
         commonBuildSettings = {
@@ -45,23 +41,29 @@
           };
         };
 
+        lianaInfo = craneLib.crateNameFromCargoToml { cargoToml = ./liana-gui/Cargo.toml; };
+
         x86_64-pc-windows-gnu = craneLib.buildPackage {
           inherit (commonBuildSettings) src strictDeps doCheck;
+          inherit (lianaInfo) pname version;
 
           SOURCE_DATE_EPOCH = 1;
           CARGO_BUILD_TARGET = "x86_64-pc-windows-gnu";
-          CARGO_BUILD_RUSTFLAGS = "-C link-arg=-Wl,--no-insert-timestamp";
+          # CARGO_BUILD_RUSTFLAGS = "-C link-arg=-Wl,--no-insert-timestamp -C link-arg=-L${pkgs.pkgsCross.mingwW64.windows.pthreads}/lib";
+          # CARGO_TARGET_X86_64_PC_WINDOWS_GNU_RUSTFLAGS = "-C link-arg=-Wl,--no-insert-timestamp -C link-arg=-L${pkgs.pkgsCross.mingwW64.windows.pthreads}/lib";
+          # CARGO_TARGET_X86_64_PC_WINDOWS_GNU_RUSTFLAGS = "-C link-arg=-Wl,--no-insert-timestamp -C link-arg=-Wl,--image-base,0x10000 -C link-arg=-L${pkgs.pkgsCross.mingwW64.windows.pthreads}/lib";
+          CARGO_TARGET_X86_64_PC_WINDOWS_GNU_RUSTFLAGS = "-C link-arg=-Wl,--no-insert-timestamp -C link-arg=-L${pkgs.pkgsCross.mingwW64.windows.pthreads}/lib";
+
+          HOST_CC = "${pkgs.stdenv.cc}/bin/cc";
           TARGET_CC = "${pkgs.pkgsCross.mingwW64.stdenv.cc}/bin/${pkgs.pkgsCross.mingwW64.stdenv.cc.targetPrefix}cc";
 
           AR_x86_64_pc_windows_gnu = "${pkgs.pkgsCross.mingwW64.stdenv.cc.targetPrefix}ar";
           TOOLKIT_x86_64_pc_windows_gnu = "${pkgs.pkgsCross.mingwW64.stdenv.cc.bintools.bintools}/bin";
           WINDRES_x86_64_pc_windows_gnu = "${pkgs.pkgsCross.mingwW64.stdenv.cc.targetPrefix}windres";
 
-          pname = "liana-gui";
           cargoExtraArgs = "-p liana-gui";
           depsBuildBuild = with pkgs; [
             pkgsCross.mingwW64.stdenv.cc
-            pkgsCross.mingwW64.windows.pthreads
             pkgsCross.mingwW64.buildPackages.binutils
             pkgsCross.mingwW64.buildPackages.binutils-unwrapped
           ];
@@ -74,9 +76,11 @@
 
         x86_64-apple-darwin = craneLib.buildPackage {
           inherit (commonBuildSettings) src strictDeps doCheck;
+          inherit (lianaInfo) pname version;
 
           CARGO_BUILD_TARGET = "x86_64-apple-darwin";
           buildPhaseCargoCommand = "cargo zigbuild --release --message-format json-render-diagnostics";
+          doNotPostBuildInstallCargoBinaries = true;
 
           depsBuildBuild = [
             pkgs.zig
@@ -86,16 +90,15 @@
 
           preBuild = ''
             export SDKROOT=${pkgs.darwin.xcode_12_2}/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk
-
+            export MACOSX_DEPLOYMENT_TARGET=11.0
+            export CFLAGS_x86_64_apple_darwin="-isysroot $SDKROOT -iframework $SDKROOT/System/Library/Frameworks"
+            export CARGO_TARGET_X86_64_APPLE_DARWIN_RUSTFLAGS="-C link-arg=-isysroot -C link-arg=$SDKROOT -C link-arg=-F$SDKROOT/System/Library/Frameworks"
             export XDG_CACHE_HOME=$TMPDIR/xdg_cache
             mkdir -p $XDG_CACHE_HOME
             export CARGO_ZIGBUILD_CACHE_DIR=$TMPDIR/cargo-zigbuild-cache
             mkdir -p $CARGO_ZIGBUILD_CACHE_DIR
             export CC=zigcc
             export CXX=zigc++
-
-            # rcodesign needs place to sign binary
-            export RUSTFLAGS="-C link-arg=-Wl,-headerpad_max_install_names"
           '';
 
           installPhaseCommand = ''
@@ -108,9 +111,11 @@
 
         aarch64-apple-darwin = craneLib.buildPackage {
           inherit (commonBuildSettings) src strictDeps doCheck;
+          inherit (lianaInfo) pname version;
 
           CARGO_BUILD_TARGET = "aarch64-apple-darwin";
           buildPhaseCargoCommand = "cargo zigbuild --release --message-format json-render-diagnostics";
+          doNotPostBuildInstallCargoBinaries = true;
 
           depsBuildBuild = [
             pkgs.zig
@@ -120,7 +125,9 @@
 
           preBuild = ''
             export SDKROOT=${pkgs.darwin.xcode_12_2}/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk
-
+            export MACOSX_DEPLOYMENT_TARGET=11.0
+            export CFLAGS_aarch64_apple_darwin="-isysroot $SDKROOT -iframework $SDKROOT/System/Library/Frameworks"
+            export CARGO_TARGET_AARCH64_APPLE_DARWIN_RUSTFLAGS="-C link-arg=-isysroot -C link-arg=$SDKROOT -C link-arg=-F$SDKROOT/System/Library/Frameworks"
             export XDG_CACHE_HOME=$TMPDIR/xdg_cache
             mkdir -p $XDG_CACHE_HOME
             export CARGO_ZIGBUILD_CACHE_DIR=$TMPDIR/cargo-zigbuild-cache
