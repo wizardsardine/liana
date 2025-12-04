@@ -130,6 +130,8 @@ pub struct CubeSettings {
     /// Optional security PIN (stored as Argon2id hash with salt in PHC format)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub security_pin_hash: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub active_wallet_signer_fingerprint: Option<Fingerprint>,
 }
 
 impl CubeSettings {
@@ -141,6 +143,7 @@ impl CubeSettings {
             created_at: chrono::Utc::now().timestamp(),
             vault_wallet_id: None,
             security_pin_hash: None,
+            active_wallet_signer_fingerprint: None,
         }
     }
 

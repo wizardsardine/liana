@@ -1081,12 +1081,17 @@ dependencies = [
 name = "coincube-core"
 version = "13.0.0"
 dependencies = [
+ "aes-gcm",
+ "argon2",
  "bdk_coin_select",
  "bip39",
  "getrandom 0.3.4",
+ "hex",
  "log",
  "miniscript",
+ "rand 0.9.2",
  "serde",
+ "zeroize",
 ]
 
 [[package]]
