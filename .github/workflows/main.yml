@@ -43,13 +43,13 @@ jobs:
           rustup default ${{ matrix.toolchain }}
       - name: Test on Rust ${{ matrix.toolchain }} (Windows)
         if: matrix.os == 'windows-latest'
-        run: cargo test --verbose --no-default-features
+        run: cargo test --no-default-features
       - name: Test on Rust ${{ matrix.toolchain }} (Unix)
         if: matrix.os == 'macOS-latest'
-        run: cargo test --verbose --color always -- --nocapture
+        run: cargo test --color always -- --nocapture
       - name: Test on Rust ${{ matrix.toolchain }} (Unix)
         if: matrix.os == 'ubuntu-latest'
         run: |
           sudo apt-get update &&
           sudo apt-get install libudev-dev libfontconfig1-dev pkg-config libdbus-1-dev &&
-          cargo test --verbose --color always -- --nocapture
+          cargo test --color always -- --nocapture
