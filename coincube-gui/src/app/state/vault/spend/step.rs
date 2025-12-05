@@ -638,7 +638,8 @@ impl Step for DefineSpend {
                                     6 => fee_estimator.get_mid_priority_rate().await,
                                     _ => fee_estimator.get_low_priority_rate().await,
                                 };
-                                return feerate;
+
+                                feerate
                             },
                             |feerate| match feerate {
                                 Ok(fee) => Message::View(view::Message::CreateSpend(
