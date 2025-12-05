@@ -26,7 +26,7 @@ MAX_DERIV = 2**31 - 1
 def test_getinfo(coincubed):
     res = coincubed.rpc.getinfo()
     assert "timestamp" in res.keys()
-    assert res["version"] == "13.0-dev"
+    assert res["version"] == "13.0"
     assert res["network"] == "regtest"
     wait_for(lambda: coincubed.rpc.getinfo()["block_height"] == 101)
     res = coincubed.rpc.getinfo()
