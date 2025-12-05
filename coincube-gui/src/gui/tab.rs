@@ -13,11 +13,11 @@ use crate::{
     app::{
         self,
         cache::{Cache, DaemonCache},
-        settings::{update_settings_file, WalletSettings},
+        settings::{update_settings_file, WalletId, WalletSettings},
         wallet::Wallet,
         App,
     },
-    dir::CoincubeDirectory,
+    dir::{CoincubeDirectory, NetworkDirectory},
     export::import_backup_at_launch,
     hw::HardwareWalletConfig,
     installer::{self, Installer, UserFlow},
@@ -284,6 +284,36 @@ impl Tab {
             },
             (State::Installer(i), Message::Install(msg)) => {
                 if let installer::Message::Exit(settings, internal_bitcoind) = *msg {
+                    // Associate wallet with cube
+                    let network_dir = i.datadir.network_directory(i.network);
+
+                    let cube_result = find_or_create_cube(
+                        &network_dir,
+                        &settings.wallet_id(),
+                        &settings.alias,
+                        i.network,
+                    );
+
+                    // Handle cube save failure
+                    let cube = match cube_result {
+                        Ok(c) => c,
+                        Err(_error_msg) => {
+                            error!("Aborting loader transition due to cube save failure");
+                            if i.launched_from_app {
+                                // Return to app state
+                                return Task::done(Message::Install(Box::new(
+                                    installer::Message::BackToApp(i.network),
+                                )));
+                            } else {
+                                // Return to launcher
+                                let (launcher, command) =
+                                    Launcher::new(i.datadir.clone(), Some(i.network));
+                                self.state = State::Launcher(Box::new(launcher));
+                                return command.map(|msg| Message::Launch(Box::new(msg)));
+                            }
+                        }
+                    };
+
                     if settings.remote_backend_auth.is_some() {
                         let (login, command) =
                             login::CoincubeLiteLogin::new(i.datadir.clone(), i.network, *settings);
@@ -297,159 +327,6 @@ impl Tab {
                                 .join(app::config::DEFAULT_FILE_NAME),
                         )
                         .expect("A gui configuration file must be present");
-
-                        // Associate wallet with cube
-                        let network_dir = i.datadir.network_directory(i.network);
-                        let cube_result = match app::settings::Settings::from_file(&network_dir) {
-                            Ok(mut settings_data) => {
-                                // First, check if a cube already has this wallet
-                                if let Some(existing_cube) = settings_data.cubes.iter().find(|c| {
-                                    c.vault_wallet_id.as_ref() == Some(&settings.wallet_id())
-                                }) {
-                                    Ok(existing_cube.clone())
-                                }
-                                // Second, find a cube without a vault and associate this wallet with it
-                                else if let Some(empty_cube) = settings_data
-                                    .cubes
-                                    .iter_mut()
-                                    .find(|c| c.vault_wallet_id.is_none())
-                                {
-                                    empty_cube.vault_wallet_id = Some(settings.wallet_id());
-                                    let cube_clone = empty_cube.clone();
-                                    let cube_name = empty_cube.name.clone();
-                                    let settings_path = network_dir.path().join("settings.json");
-
-                                    // Clone settings for the save operation
-                                    let settings_to_save = settings_data.clone();
-
-                                    // Save the updated settings
-                                    let save_result =
-                                        tokio::runtime::Handle::current().block_on(async {
-                                            app::settings::update_settings_file(
-                                                &network_dir,
-                                                |_| Some(settings_to_save),
-                                            )
-                                            .await
-                                        });
-
-                                    match save_result {
-                                        Ok(_) => {
-                                            info!("Successfully associated wallet {} with cube '{}' on {} network", 
-                                                  settings.wallet_id(), cube_name, i.network);
-                                            Ok(cube_clone)
-                                        }
-                                        Err(e) => {
-                                            error!("Failed to save cube association for '{}' on {} network to {:?}: {}", 
-                                                   cube_name, i.network, settings_path, e);
-                                            Err(format!("Failed to save cube configuration: {}", e))
-                                        }
-                                    }
-                                }
-                                // Third, create a new cube for this wallet
-                                else {
-                                    let cube = app::settings::CubeSettings::new(
-                                        settings
-                                            .alias
-                                            .clone()
-                                            .unwrap_or_else(|| format!("My {} Cube", i.network)),
-                                        i.network,
-                                    )
-                                    .with_vault(settings.wallet_id());
-                                    let cube_clone = cube.clone();
-                                    let cube_name = cube.name.clone();
-                                    let settings_path = network_dir.path().join("settings.json");
-
-                                    settings_data.cubes.push(cube);
-
-                                    // Clone settings for the save operation
-                                    let settings_to_save = settings_data.clone();
-
-                                    // Save the settings
-                                    let save_result =
-                                        tokio::runtime::Handle::current().block_on(async {
-                                            app::settings::update_settings_file(
-                                                &network_dir,
-                                                |_| Some(settings_to_save),
-                                            )
-                                            .await
-                                        });
-
-                                    match save_result {
-                                        Ok(_) => {
-                                            info!("Successfully created and saved cube '{}' on {} network", 
-                                                  cube_name, i.network);
-                                            Ok(cube_clone)
-                                        }
-                                        Err(e) => {
-                                            error!("Failed to save new cube '{}' on {} network to {:?}: {}", 
-                                                   cube_name, i.network, settings_path, e);
-                                            Err(format!("Failed to save cube configuration: {}", e))
-                                        }
-                                    }
-                                }
-                            }
-                            Err(_) => {
-                                // No settings file yet, create first cube
-                                let cube = app::settings::CubeSettings::new(
-                                    settings
-                                        .alias
-                                        .clone()
-                                        .unwrap_or_else(|| format!("My {} Cube", i.network)),
-                                    i.network,
-                                )
-                                .with_vault(settings.wallet_id());
-                                let cube_clone = cube.clone();
-                                let cube_name = cube.name.clone();
-                                let settings_path = network_dir.path().join("settings.json");
-
-                                let save_result =
-                                    tokio::runtime::Handle::current().block_on(async {
-                                        app::settings::update_settings_file(
-                                            &network_dir,
-                                            |mut s| {
-                                                s.cubes.push(cube.clone());
-                                                Some(s)
-                                            },
-                                        )
-                                        .await
-                                    });
-
-                                match save_result {
-                                    Ok(_) => {
-                                        info!(
-                                            "Successfully created first cube '{}' on {} network",
-                                            cube_name, i.network
-                                        );
-                                        Ok(cube_clone)
-                                    }
-                                    Err(e) => {
-                                        error!("Failed to save first cube '{}' on {} network to {:?}: {}", 
-                                               cube_name, i.network, settings_path, e);
-                                        Err(format!("Failed to save cube configuration: {}", e))
-                                    }
-                                }
-                            }
-                        };
-
-                        // Handle cube save failure
-                        let cube = match cube_result {
-                            Ok(c) => c,
-                            Err(_error_msg) => {
-                                error!("Aborting loader transition due to cube save failure");
-                                if i.launched_from_app {
-                                    // Return to app state
-                                    return Task::done(Message::Install(Box::new(
-                                        installer::Message::BackToApp(i.network),
-                                    )));
-                                } else {
-                                    // Return to launcher
-                                    let (launcher, command) =
-                                        Launcher::new(i.datadir.clone(), Some(i.network));
-                                    self.state = State::Launcher(Box::new(launcher));
-                                    return command.map(|msg| Message::Launch(Box::new(msg)));
-                                }
-                            }
-                        };
 
                         let (loader, command) = Loader::new(
                             i.datadir.clone(),
@@ -712,6 +589,113 @@ impl Tab {
             State::App(s) => s.stop(),
             State::Login(_) => {}
             State::PinEntry(_) => {}
+        }
+    }
+}
+
+fn save_cube_settings(
+    network_dir: &NetworkDirectory,
+    cube: app::settings::CubeSettings,
+    network: bitcoin::Network,
+    settings_data: app::settings::Settings,
+) -> Result<app::settings::CubeSettings, String> {
+    let cube_name = cube.name.clone();
+    let settings_path = network_dir.path().join("settings.json");
+
+    let save_result = tokio::runtime::Handle::current()
+        .block_on(async { update_settings_file(network_dir, |_| Some(settings_data)).await });
+
+    match save_result {
+        Ok(_) => {
+            info!(
+                "Successfully saved cube '{}' on {} network",
+                cube_name, network
+            );
+            Ok(cube)
+        }
+        Err(e) => {
+            error!(
+                "Failed to save cube '{}' on {} network to {:?}: {}",
+                cube_name, network, settings_path, e
+            );
+            Err(format!("Failed to save cube configuration: {}", e))
+        }
+    }
+}
+
+fn find_or_create_cube(
+    network_dir: &NetworkDirectory,
+    wallet_id: &WalletId,
+    wallet_alias: &Option<String>,
+    network: bitcoin::Network,
+) -> Result<app::settings::CubeSettings, String> {
+    match app::settings::Settings::from_file(network_dir) {
+        Ok(mut settings_data) => {
+            // First, check if a cube already has this wallet
+            if let Some(existing_cube) = settings_data
+                .cubes
+                .iter()
+                .find(|c| c.vault_wallet_id.as_ref() == Some(wallet_id))
+            {
+                return Ok(existing_cube.clone());
+            }
+
+            // Second, find a cube without a vault and associate this wallet with it
+            if let Some(empty_cube) = settings_data
+                .cubes
+                .iter_mut()
+                .find(|c| c.vault_wallet_id.is_none())
+            {
+                empty_cube.vault_wallet_id = Some(wallet_id.clone());
+                let cube_clone = empty_cube.clone();
+                let cube_name = empty_cube.name.clone();
+
+                info!(
+                    "Associating wallet {} with existing cube '{}' on {} network",
+                    wallet_id, cube_name, network
+                );
+
+                return save_cube_settings(network_dir, cube_clone, network, settings_data);
+            }
+
+            // Third, create a new cube for this wallet
+            let cube = app::settings::CubeSettings::new(
+                wallet_alias
+                    .clone()
+                    .unwrap_or_else(|| format!("My {} Cube", network)),
+                network,
+            )
+            .with_vault(wallet_id.clone());
+            let cube_name = cube.name.clone();
+
+            info!(
+                "Creating new cube '{}' for wallet {} on {} network",
+                cube_name, wallet_id, network
+            );
+
+            settings_data.cubes.push(cube.clone());
+            save_cube_settings(network_dir, cube, network, settings_data)
+        }
+        Err(_) => {
+            // No settings file yet, create first cube
+            let cube = app::settings::CubeSettings::new(
+                wallet_alias
+                    .clone()
+                    .unwrap_or_else(|| format!("My {} Cube", network)),
+                network,
+            )
+            .with_vault(wallet_id.clone());
+            let cube_name = cube.name.clone();
+
+            info!(
+                "Creating first cube '{}' for wallet {} on {} network",
+                cube_name, wallet_id, network
+            );
+
+            let mut new_settings = app::settings::Settings::default();
+            new_settings.cubes.push(cube.clone());
+
+            save_cube_settings(network_dir, cube, network, new_settings)
         }
     }
 }
