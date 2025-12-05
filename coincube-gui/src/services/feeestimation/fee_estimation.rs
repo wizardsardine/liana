@@ -8,6 +8,7 @@ use std::time::Duration;
 const MEMPOOL_FEES_API_URL: &str = "https://mempool.space/api/v1/fees/recommended";
 const ESPLORA_FEES_API_URL: &str = "https://blockstream.info/api/fee-estimates";
 
+#[derive(Default)]
 pub struct FeeEstimator;
 
 impl FeeEstimator {

@@ -39,9 +39,7 @@ impl iced::application::DefaultStyle for Theme {
 impl iced_aw::style::number_input::Catalog for Theme {
     type Class<'a> = ();
 
-    fn default<'a>() -> Self::Class<'a> {
-        ()
-    }
+    fn default<'a>() -> Self::Class<'a> {}
 
     fn style(
         &self,

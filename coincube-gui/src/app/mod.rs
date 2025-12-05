@@ -904,7 +904,6 @@ impl App {
                     (self.daemon.clone(), self.panels.current_mut())
                 {
                     return panel.update(daemon, &self.cache, msg);
-                } else {
                 }
             }
         };
