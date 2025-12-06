@@ -1,15 +1,4 @@
-// breez/config.rs
-// ============================================
-// STUB IMPLEMENTATION - Real Breez SDK code is commented out below
-// The real Breez SDK has compilation issues due to rand_core version conflicts.
-//
-// TO ENABLE REAL BREEZ SDK:
-// 1. Uncomment breez-sdk-liquid in Cargo.toml
-// 2. Comment out the STUB section below
-// 3. Uncomment the REAL IMPLEMENTATION section
-// ============================================
-
-// ========== STUB IMPLEMENTATION (ACTIVE) ==========
+use breez_sdk_liquid::prelude as breez;
 use coincube_core::miniscript::bitcoin;
 use std::path::PathBuf;
 
@@ -24,34 +13,43 @@ pub struct BreezConfig {
 
 impl BreezConfig {
     pub fn from_env(network: bitcoin::Network, datadir: &PathBuf) -> Result<Self, BreezError> {
-        // In stub mode, we don't require the API key
-        let api_key = std::env::var("BREEZ_API_KEY").unwrap_or_else(|_| "stub".to_string());
+        let api_key = std::env::var("BREEZ_API_KEY").map_err(|_| BreezError::MissingApiKey)?;
         Ok(Self {
             api_key,
             network,
             working_dir: datadir.join("breez"),
         })
     }
-}
 
-// ========== REAL IMPLEMENTATION (COMMENTED OUT) ==========
-/*
-use breez_sdk_liquid::prelude as breez;
-
-impl BreezConfig {
-    pub fn sdk_config(&self) -> breez::Config<'_> {
+    pub fn sdk_config(&self) -> breez::Config {
         breez::Config {
-            breez_api_key: &self.api_key,
-            network: match self.network {
-                bitcoin::Network::Bitcoin => breez::NodeConfig::BitcoinMainnet,
-                bitcoin::Network::Testnet | bitcoin::Network::Signet => {
-                    breez::NodeConfig::BitcoinSignet
-                }
-                bitcoin::Network::Regtest => breez::NodeConfig::BitcoinRegtest,
+            liquid_explorer: breez::BlockchainExplorer::Esplora {
+                url: "https://blockstream.info/liquid/api".to_string(),
+                use_waterfalls: false,
             },
-            working_dir: self.working_dir.clone(),
-            ..Default::default()
+            bitcoin_explorer: breez::BlockchainExplorer::Esplora {
+                url: "https://blockstream.info/api".to_string(),
+                use_waterfalls: false,
+            },
+            working_dir: self.working_dir.to_string_lossy().to_string(),
+            network: match self.network {
+                bitcoin::Network::Bitcoin => breez::LiquidNetwork::Mainnet,
+                bitcoin::Network::Testnet | bitcoin::Network::Signet => breez::LiquidNetwork::Testnet,
+                bitcoin::Network::Testnet4 => breez::LiquidNetwork::Testnet,
+                bitcoin::Network::Regtest => breez::LiquidNetwork::Testnet,
+            },
+            payment_timeout_sec: 60,
+            sync_service_url: None, // Use default
+            zero_conf_max_amount_sat: None, // Use default
+            breez_api_key: Some(self.api_key.clone()),
+            external_input_parsers: None,
+            use_default_external_input_parsers: true,
+            onchain_fee_rate_leeway_sat: None, // Use default
+            asset_metadata: None,
+            sideswap_api_key: None,
+            use_magic_routing_hints: true,
+            onchain_sync_period_sec: 10,
+            onchain_sync_request_timeout_sec: 7,
         }
     }
 }
-*/

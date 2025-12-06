@@ -27,8 +27,6 @@ use crate::{
     },
 };
 use coincube_core::signer::HotSigner;
-use std::fs;
-use std::io::Write;
 
 const NETWORKS: [Network; 5] = [
     Network::Bitcoin,

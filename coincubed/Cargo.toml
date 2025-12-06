@@ -59,7 +59,7 @@ fern = "0.7"
 # to work with our custom panic hook.
 backtrace = "0.3"
 
-rusqlite = { version = "0.37", features = ["bundled", "unlock_notify"] }
+rusqlite = { git = "https://github.com/Spxg/rusqlite", rev = "8e53118a3e1807dc9a9f59c5969fdff7e0416400", features = ["bundled", "unlock_notify"] }
 
 # To talk to bitcoind
 jsonrpc = { version = "0.18", features = [

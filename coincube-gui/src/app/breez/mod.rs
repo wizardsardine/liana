@@ -1,20 +1,13 @@
-// breez/mod.rs - STUB IMPLEMENTATION
-// ============================================
-// This is a STUB implementation of the Breez SDK integration.
-// The real Breez SDK has compilation issues due to rand_core version conflicts.
-//
-// TO ENABLE REAL BREEZ SDK:
-// 1. Uncomment breez-sdk-liquid in Cargo.toml
-// 2. Replace client.rs and config.rs with real implementations
-// 3. Remove "STUB" comments from these files
-//
-// All integration infrastructure is complete and ready - just waiting for SDK fix.
-// ============================================
 mod client;
 mod config;
 
-pub use client::{BreezClient, GetInfoResponse, ReceivePaymentResponse, SendPaymentResponse};
+pub use client::BreezClient;
 pub use config::BreezConfig;
+
+// Re-export Breez SDK response types
+pub use breez_sdk_liquid::prelude::{
+    GetInfoResponse, ReceivePaymentResponse, SendPaymentResponse,
+};
 
 use coincube_core::miniscript::bitcoin::{bip32::Fingerprint, Network};
 use coincube_core::signer::HotSigner;

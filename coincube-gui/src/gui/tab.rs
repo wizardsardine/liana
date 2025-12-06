@@ -13,7 +13,7 @@ use crate::{
     app::{
         self, breez,
         cache::{Cache, DaemonCache},
-        settings::{update_settings_file, CubeSettings, WalletId, WalletSettings},
+        settings::{update_settings_file, WalletId, WalletSettings},
         wallet::Wallet,
         App,
     },
@@ -59,6 +59,16 @@ pub enum Message {
     Run(Box<app::Message>),
     Login(Box<login::Message>),
     PinEntry(Box<crate::pin_entry::Message>),
+    RemoteBackendBreezLoaded {
+        wallet_settings: WalletSettings,
+        backend_client: BackendWalletClient,
+        wallet: api::Wallet,
+        coins: ListCoinsResult,
+        datadir: CoincubeDirectory,
+        network: bitcoin::Network,
+        config: app::Config,
+        breez_client: Result<Arc<app::breez::BreezClient>, app::breez::BreezError>,
+    },
 }
 
 pub struct Tab {
@@ -286,12 +296,10 @@ impl Tab {
                         }
                         Err(e) => {
                             tracing::error!("Failed to load BreezClient: {}", e);
-                            // Create stub BreezClient as fallback
-                            let stub_breez = Arc::new(app::breez::BreezClient::stub());
-                            let (app, command) =
-                                App::new_without_wallet(stub_breez, config, datadir, network, cube);
-                            self.state = State::App(app);
-                            command.map(|msg| Message::Run(Box::new(msg)))
+                            // BreezClient failed to load - return to launcher
+                            let (launcher, command) = Launcher::new(datadir.clone(), Some(network));
+                            self.state = State::Launcher(Box::new(launcher));
+                            command.map(|msg| Message::Launch(Box::new(msg)))
                         }
                     }
                 }
@@ -323,18 +331,65 @@ impl Tab {
                             .join(app::config::DEFAULT_FILE_NAME),
                     )
                     .expect("A gui configuration file must be present");
-                    let (app, command) = create_app_with_remote_backend(
-                        l.settings.clone(),
-                        backend_client,
-                        wallet,
-                        coins,
-                        l.datadir.clone(),
-                        l.network,
-                        config,
+                    
+                    // Load BreezClient asynchronously before creating app
+                    let wallet_settings = l.settings.clone();
+                    let datadir = l.datadir.clone();
+                    let network = l.network;
+                    
+                    return Task::perform(
+                        async move {
+                            // Load cube settings to get Active wallet fingerprint
+                            // Note: wallet.fingerprint is the VAULT wallet, not the Active wallet
+                            let breez_result = {
+                                let network_dir = datadir.network_directory(network);
+                                match app::settings::Settings::from_file(&network_dir) {
+                                    Ok(settings) => {
+                                        // Find the cube that has this vault wallet
+                                        if let Some(cube) = settings.cubes.iter().find(|c| {
+                                            c.vault_wallet_id.as_ref() == Some(&wallet_settings.wallet_id())
+                                        }) {
+                                            // Load BreezClient for the Active wallet (not Vault wallet)
+                                            if let Some(fingerprint) = cube.active_wallet_signer_fingerprint {
+                                                breez::load_breez_client(
+                                                    datadir.path(),
+                                                    network,
+                                                    fingerprint,
+                                                    None, // No PIN for decryption
+                                                )
+                                                .await
+                                            } else {
+                                                Err(breez::BreezError::SignerError(
+                                                    "Cube has no Active wallet configured".to_string(),
+                                                ))
+                                            }
+                                        } else {
+                                            Err(breez::BreezError::SignerError(
+                                                "Could not find cube for this wallet".to_string(),
+                                            ))
+                                        }
+                                    }
+                                    Err(e) => Err(breez::BreezError::SignerError(
+                                        format!("Failed to load cube settings: {}", e),
+                                    )),
+                                }
+                            };
+                            
+                            (wallet_settings, backend_client, wallet, coins, datadir, network, config, breez_result)
+                        },
+                        |(wallet_settings, backend_client, wallet, coins, datadir, network, config, breez_client)| {
+                            Message::RemoteBackendBreezLoaded {
+                                wallet_settings,
+                                backend_client,
+                                wallet,
+                                coins,
+                                datadir,
+                                network,
+                                config,
+                                breez_client,
+                            }
+                        },
                     );
-
-                    self.state = State::App(app);
-                    command.map(|msg| Message::Run(Box::new(msg)))
                 }
                 _ => l.update(*msg).map(|msg| Message::Login(Box::new(msg))),
             },
@@ -411,17 +466,39 @@ impl Tab {
                         )
                         .expect("A gui configuration file must be present");
 
-                        // TODO: Load real BreezClient - for now create stub
-                        let stub_breez = Arc::new(app::breez::BreezClient::stub());
-                        let (app, command) = app::App::new_without_wallet(
-                            stub_breez,
-                            cfg,
-                            i.datadir.clone(),
-                            network,
-                            cube.clone(),
+                        // Load BreezClient for Active wallet
+                        let cube_clone = cube.clone();
+                        let cfg_clone = cfg.clone();
+                        let datadir_clone = i.datadir.clone();
+                        return Task::perform(
+                            async move {
+                                let breez_result = if let Some(fingerprint) =
+                                    cube_clone.active_wallet_signer_fingerprint
+                                {
+                                    app::breez::load_breez_client(
+                                        datadir_clone.path(),
+                                        network,
+                                        fingerprint,
+                                        None,
+                                    )
+                                    .await
+                                } else {
+                                    Err(app::breez::BreezError::SignerError(
+                                        "No Active wallet configured".to_string(),
+                                    ))
+                                };
+                                (cfg_clone, datadir_clone, network, cube_clone, breez_result)
+                            },
+                            |(config, datadir, net, cube_settings, breez_result)| {
+                                Message::Launch(Box::new(launcher::Message::BreezClientLoaded {
+                                    config,
+                                    datadir,
+                                    network: net,
+                                    cube: cube_settings,
+                                    breez_client: breez_result,
+                                }))
+                            },
                         );
-                        self.state = State::App(app);
-                        command.map(|msg| Message::Run(Box::new(msg)))
                     } else {
                         // No cube settings stored, go to launcher
                         let (launcher, command) =
@@ -755,17 +832,40 @@ impl Tab {
                                 }
                             } else {
                                 // No wallet settings, load app without wallet
-                                // TODO: Load real BreezClient - for now create stub
-                                let stub_breez = Arc::new(app::breez::BreezClient::stub());
-                                let (app, command) = App::new_without_wallet(
-                                    stub_breez,
-                                    config.clone(),
-                                    datadir.clone(),
-                                    *network,
-                                    cube,
+                                // Load BreezClient for Active wallet
+                                let cube_clone = cube.clone();
+                                let config_clone = config.clone();
+                                let datadir_clone = datadir.clone();
+                                let network_val = *network;
+                                return Task::perform(
+                                    async move {
+                                        let breez_result = if let Some(fingerprint) =
+                                            cube_clone.active_wallet_signer_fingerprint
+                                        {
+                                            app::breez::load_breez_client(
+                                                datadir_clone.path(),
+                                                network_val,
+                                                fingerprint,
+                                                None,
+                                            )
+                                            .await
+                                        } else {
+                                            Err(app::breez::BreezError::SignerError(
+                                                "No Active wallet configured".to_string(),
+                                            ))
+                                        };
+                                        (config_clone, datadir_clone, network_val, cube_clone, breez_result)
+                                    },
+                                    |(config, datadir, net, cube_settings, breez_result)| {
+                                        Message::Launch(Box::new(launcher::Message::BreezClientLoaded {
+                                            config,
+                                            datadir,
+                                            network: net,
+                                            cube: cube_settings,
+                                            breez_client: breez_result,
+                                        }))
+                                    },
                                 );
-                                self.state = State::App(app);
-                                command.map(|msg| Message::Run(Box::new(msg)))
                             }
                         }
                     }
@@ -791,6 +891,69 @@ impl Tab {
                     .update(*msg)
                     .map(|msg| Message::PinEntry(Box::new(msg))),
             },
+            (_, Message::RemoteBackendBreezLoaded {
+                wallet_settings,
+                backend_client,
+                wallet,
+                coins,
+                datadir,
+                network,
+                config,
+                breez_client,
+            }) => {
+                match breez_client {
+                    Ok(breez) => {
+                        let (app, command) = create_app_with_remote_backend(
+                            wallet_settings,
+                            backend_client,
+                            wallet,
+                            coins,
+                            datadir,
+                            network,
+                            config,
+                            breez,
+                        );
+                        self.state = State::App(app);
+                        command.map(|msg| Message::Run(Box::new(msg)))
+                    }
+                    Err(e) => {
+                        // Failed to load BreezClient - return to launcher with error
+                        tracing::error!("Failed to load BreezClient for remote backend: {}", e);
+                        let (launcher, command) = Launcher::new(datadir, Some(network));
+                        self.state = State::Launcher(Box::new(launcher));
+                        command.map(|msg| Message::Launch(Box::new(msg)))
+                    }
+                }
+            }
+            (_, Message::Launch(msg)) => {
+                // Handle BreezClientLoaded from any state (e.g., after PIN entry)
+                if let launcher::Message::BreezClientLoaded {
+                    config,
+                    datadir,
+                    network,
+                    cube,
+                    breez_client,
+                } = *msg
+                {
+                    match breez_client {
+                        Ok(breez) => {
+                            let (app, command) =
+                                App::new_without_wallet(breez, config, datadir, network, cube);
+                            self.state = State::App(app);
+                            command.map(|msg| Message::Run(Box::new(msg)))
+                        }
+                        Err(e) => {
+                            tracing::error!("Failed to load BreezClient: {}", e);
+                            // BreezClient failed to load - return to launcher
+                            let (launcher, command) = Launcher::new(datadir.clone(), Some(network));
+                            self.state = State::Launcher(Box::new(launcher));
+                            command.map(|msg| Message::Launch(Box::new(msg)))
+                        }
+                    }
+                } else {
+                    Task::none()
+                }
+            }
             _ => Task::none(),
         }
     }
@@ -894,44 +1057,18 @@ fn find_or_create_cube(
                 return save_cube_settings(network_dir, cube_clone, network, settings_data);
             }
 
-            // Third, create a new cube for this wallet
-            let cube = app::settings::CubeSettings::new(
-                wallet_alias
-                    .clone()
-                    .unwrap_or_else(|| format!("My {} Cube", network)),
-                network,
-            )
-            .with_vault(wallet_id.clone());
-            let cube_name = cube.name.clone();
-
-            info!(
-                "Creating new cube '{}' for wallet {} on {} network",
-                cube_name, wallet_id, network
-            );
-
-            settings_data.cubes.push(cube.clone());
-            save_cube_settings(network_dir, cube, network, settings_data)
+            // No existing Cube found to associate Vault with
+            // Users must create a Cube first (through launcher) before adding a Vault
+            Err(format!(
+                "No Cube available to associate Vault wallet with. Please create a Cube first from the launcher."
+            ))
         }
         Err(_) => {
-            // No settings file yet, create first cube
-            let cube = app::settings::CubeSettings::new(
-                wallet_alias
-                    .clone()
-                    .unwrap_or_else(|| format!("My {} Cube", network)),
-                network,
-            )
-            .with_vault(wallet_id.clone());
-            let cube_name = cube.name.clone();
-
-            info!(
-                "Creating first cube '{}' for wallet {} on {} network",
-                cube_name, wallet_id, network
-            );
-
-            let mut new_settings = app::settings::Settings::default();
-            new_settings.cubes.push(cube.clone());
-
-            save_cube_settings(network_dir, cube, network, new_settings)
+            // No settings file exists yet
+            // Users must create a Cube first (through launcher) before adding a Vault
+            Err(format!(
+                "No Cube available to associate Vault wallet with. Please create a Cube first from the launcher."
+            ))
         }
     }
 }
@@ -944,6 +1081,7 @@ pub fn create_app_with_remote_backend(
     coincube_dir: CoincubeDirectory,
     network: bitcoin::Network,
     config: app::Config,
+    breez_client: Arc<app::breez::BreezClient>,
 ) -> (app::App, iced::Task<app::Message>) {
     // If someone modified the wallet_alias on Liana-Connect,
     // then the new alias is imported and stored in the settings file.
@@ -1028,7 +1166,7 @@ pub fn create_app_with_remote_backend(
                 .load_hotsigners(&coincube_dir, network)
                 .expect("Datadir should be conform"),
         ),
-        Arc::new(app::breez::BreezClient::stub()), // TODO: Load real BreezClient
+        breez_client,
         config,
         Arc::new(remote_backend),
         coincube_dir,
