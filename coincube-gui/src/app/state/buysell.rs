@@ -82,28 +82,29 @@ impl State for BuySellPanel {
             BuySellMessage::ResetWidget => {
                 if let Some(country) = &self.detected_country {
                     if mavapay_supported(&country.code) {
+                        // TODO: Re-enable keyring once Breez SDK updates security-framework dependency
                         // attempt automatic login from os-keyring
-                        match keyring::Entry::new("io.coincube.Vault", "mavapay") {
-                            Ok(entry) => {
-                                if let (Ok(token), Ok(user_data)) =
-                                    (entry.get_password(), entry.get_secret())
-                                {
-                                    self.error = None;
+                        // match keyring::Entry::new("io.coincube.Vault", "mavapay") {
+                        //     Ok(entry) => {
+                        //         if let (Ok(token), Ok(user_data)) =
+                        //             (entry.get_password(), entry.get_secret())
+                        //         {
+                        //             self.error = None;
 
-                                    // start initialization step with mavapay credentials embedded
-                                    self.flow_state = BuySellFlowState::Initialization {
-                                        buy_or_sell_selected: None,
-                                        buy_or_sell: None,
-                                        mavapay_credentials: Some((token, user_data)),
-                                    };
+                        //             // start initialization step with mavapay credentials embedded
+                        //             self.flow_state = BuySellFlowState::Initialization {
+                        //                 buy_or_sell_selected: None,
+                        //                 buy_or_sell: None,
+                        //                 mavapay_credentials: Some((token, user_data)),
+                        //             };
 
-                                    return Task::none();
-                                };
-                            }
-                            Err(e) => {
-                                log::error!("Unable to acquire OS keyring for Mavapay state: {e}");
-                            }
-                        };
+                        //             return Task::none();
+                        //         };
+                        //     }
+                        //     Err(e) => {
+                        //         log::error!("Unable to acquire OS keyring for Mavapay state: {e}");
+                        //     }
+                        // };
 
                         // send user back to mavapay login screen, to initialize login credentials
                         self.flow_state = BuySellFlowState::Mavapay(MavapayState::new())
@@ -218,7 +219,7 @@ impl State for BuySellPanel {
                             Ok(user) => {
                                 mavapay.auth_token = Some(token);
                                 mavapay.current_user = Some(user);
-                                log::info!("Mavapay session successfully restored from OS keyring");
+                                // log::info!("Mavapay session successfully restored from OS keyring");
                                 mavapay.step = MavapayFlowStep::Transaction {
                                     buy_or_sell: buy_or_sell.clone(),
                                     country: country.clone(),
@@ -246,7 +247,7 @@ impl State for BuySellPanel {
                                 };
                             }
                             Err(e) => {
-                                log::error!("Unable to parse user data from OS keyring, possibly malformed or outdated data: {e}");
+                                // log::error!("Unable to parse user data from OS keyring, possibly malformed or outdated data: {e}");
                                 self.error = Some(
                                     "Unable to restore Mavapay session, data is malformed or outdated"
                                         .to_string(),
@@ -384,18 +385,19 @@ impl State for BuySellPanel {
                             log::info!("Successfully logged in user: {}", &login.user.email);
                             let bytes = serde_json::to_vec(&login.user).unwrap();
 
+                            // TODO: Re-enable keyring once Breez SDK updates security-framework dependency
                             // store token in OS keyring
-                            if let Ok(entry) = keyring::Entry::new("io.coincube.Vault", "mavapay") {
-                                if let Err(e) = entry.set_password(&login.token) {
-                                    log::error!("Failed to store auth token in keyring: {}", e);
-                                }
+                            // if let Ok(entry) = keyring::Entry::new("io.coincube.Vault", "mavapay") {
+                            //     if let Err(e) = entry.set_password(&login.token) {
+                            //         log::error!("Failed to store auth token in keyring: {}", e);
+                            //     }
 
-                                if let Err(e) = entry.set_secret(&bytes) {
-                                    log::error!("Unable to store user data in keyring: {e}");
-                                };
-                            } else {
-                                self.error = Some("Unable to initialize OS keyring".to_string());
-                            };
+                            //     if let Err(e) = entry.set_secret(&bytes) {
+                            //         log::error!("Unable to store user data in keyring: {e}");
+                            //     };
+                            // } else {
+                            //     self.error = Some("Unable to initialize OS keyring".to_string());
+                            // };
 
                             // go straight to initialization
                             self.flow_state = BuySellFlowState::Initialization {

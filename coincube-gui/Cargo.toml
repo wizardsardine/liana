@@ -24,6 +24,8 @@ path = "src/main.rs"
 [dependencies]
 async-trait = "0.1"
 async-hwi = "0.0.29"
+# TODO: Re-enable when Breez SDK fixes rand_core version conflicts
+# breez-sdk-liquid = { git = "https://github.com/breez/breez-sdk-liquid", tag = "0.11.11" }
 coincube-core = { path = "../coincube-core" }
 coincubed = { path = "../coincubed", default-features = false, features = [
 	"nonblocking_shutdown",
@@ -88,11 +90,12 @@ fs4 = { version = "0.13", features = ["sync"] }
 # Used for opening URLs in browser
 open = "5.3"
 
-keyring = { version = "3.6.3", features = [
-	"apple-native",
-	"windows-native",
-	"sync-secret-service",
-] }
+# TODO: Re-enable keyring once Breez SDK updates security-framework dependency
+# keyring = { version = "3.6.3", features = [
+# 	"apple-native",
+# 	"windows-native",
+# 	"sync-secret-service",
+# ] }
 encrypted_backup = { version = "0.0.1", default-features = false, features = [
 	"miniscript_12_0",
 ], package = "bitcoin-encrypted-backup" }

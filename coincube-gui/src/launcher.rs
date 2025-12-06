@@ -26,6 +26,9 @@ use crate::{
         login::{connect_with_credentials, BackendState},
     },
 };
+use coincube_core::signer::HotSigner;
+use std::fs;
+use std::io::Write;
 
 const NETWORKS: [Network; 5] = [
     Network::Bitcoin,
@@ -237,27 +240,66 @@ impl Launcher {
                 }
 
                 let network = self.network;
-                let mut cube =
-                    CubeSettings::new(self.create_cube_name.value.trim().to_string(), network);
+                let cube_name = self.create_cube_name.value.trim().to_string();
+                let pin = if self.pin_enabled {
+                    Some(self.create_cube_pin.join(""))
+                } else {
+                    None
+                };
+                let datadir_path = self.datadir_path.clone();
 
-                // Add PIN if enabled
-                if self.pin_enabled {
-                    let pin = self.create_cube_pin.join("");
-                    cube = match cube.with_pin(&pin) {
-                        Ok(c) => c,
-                        Err(e) => {
-                            let error_msg = format!("Failed to hash PIN: {}", e);
-                            return Task::perform(
-                                async move { Err(error_msg) },
-                                Message::CubeCreated,
-                            );
-                        }
-                    };
-                }
-
-                let network_dir = self.datadir_path.network_directory(network);
                 Task::perform(
                     async move {
+                        // Generate Active wallet HotSigner
+                        let active_signer = HotSigner::generate(network).map_err(|e| {
+                            format!("Failed to generate Active wallet signer: {}", e)
+                        })?;
+
+                        // Create secp context for fingerprint calculation
+                        let secp = coincube_core::miniscript::bitcoin::secp256k1::Secp256k1::new();
+                        let active_fingerprint = active_signer.fingerprint(&secp);
+
+                        // Store Active wallet mnemonic (encrypted with PIN if provided)
+                        let network_dir = datadir_path.network_directory(network);
+                        network_dir
+                            .init()
+                            .map_err(|e| format!("Failed to create network directory: {}", e))?;
+
+                        // Use a timestamp for the Active wallet storage
+                        let timestamp = chrono::Utc::now().timestamp();
+                        let active_checksum = format!("active-{}", timestamp);
+
+                        // Use store_encrypted with PIN as password (if provided)
+                        active_signer
+                            .store_encrypted(
+                                datadir_path.path(),
+                                network,
+                                &secp,
+                                Some((active_checksum, timestamp)),
+                                pin.as_deref(),
+                            )
+                            .map_err(|e| {
+                                format!("Failed to store Active wallet mnemonic: {}", e)
+                            })?;
+
+                        if pin.is_some() {
+                            tracing::info!("Active wallet signer created and stored (encrypted with PIN) with fingerprint: {}", active_fingerprint);
+                        } else {
+                            tracing::info!("Active wallet signer created and stored (unencrypted) with fingerprint: {}", active_fingerprint);
+                        }
+
+                        // Create Cube settings with Active wallet signer reference
+                        let mut cube = CubeSettings::new(cube_name, network)
+                            .with_active_signer(active_fingerprint);
+
+                        // Add PIN if enabled
+                        if let Some(pin_str) = pin {
+                            cube = cube
+                                .with_pin(&pin_str)
+                                .map_err(|e| format!("Failed to hash PIN: {}", e))?;
+                        }
+
+                        // Save Cube settings to settings file
                         settings::update_settings_file(&network_dir, |mut settings| {
                             settings.cubes.push(cube.clone());
                             Some(settings)
@@ -753,6 +795,14 @@ pub enum Message {
         CubeSettings,
     ),
     CubeCreated(Result<CubeSettings, String>),
+    BreezClientLoaded {
+        config: app::config::Config,
+        datadir: CoincubeDirectory,
+        network: Network,
+        cube: CubeSettings,
+        breez_client:
+            Result<std::sync::Arc<crate::app::breez::BreezClient>, crate::app::breez::BreezError>,
+    },
 }
 
 #[derive(Debug, Clone)]

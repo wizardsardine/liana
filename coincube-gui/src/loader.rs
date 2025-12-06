@@ -110,6 +110,16 @@ pub enum Message {
         >,
         /* restored_from_backup */ bool,
     ),
+    BreezLoaded {
+        breez: std::sync::Arc<crate::app::breez::BreezClient>,
+        cache: Cache,
+        wallet: Arc<Wallet>,
+        config: app::Config,
+        daemon: Arc<dyn Daemon + Sync + Send>,
+        datadir: CoincubeDirectory,
+        bitcoind: Option<Bitcoind>,
+        restored_from_backup: bool,
+    },
     Started(StartedResult),
     Loaded(Result<(Arc<dyn Daemon + Sync + Send>, GetInfoResult), Error>),
     BitcoindLog(Option<String>),
@@ -644,6 +654,7 @@ pub enum Error {
     Bitcoind(StartInternalBitcoindError),
     BitcoindLogs(std::io::Error),
     RestoreBackup(RestoreBackupError),
+    Unexpected(String),
 }
 
 impl std::fmt::Display for Error {
@@ -655,6 +666,7 @@ impl std::fmt::Display for Error {
             Self::Bitcoind(e) => write!(f, "Bitcoind error: {}", e),
             Self::BitcoindLogs(e) => write!(f, "Bitcoind logs error: {}", e),
             Self::RestoreBackup(e) => write!(f, "Restore backup: {e}"),
+            Self::Unexpected(e) => write!(f, "Unexpected error: {}", e),
         }
     }
 }

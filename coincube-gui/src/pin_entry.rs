@@ -59,6 +59,10 @@ impl PinEntry {
         &self.cube
     }
 
+    pub fn pin(&self) -> String {
+        self.pin_digits.join("")
+    }
+
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::DigitChanged(index, value) => {

@@ -152,6 +152,11 @@ impl CubeSettings {
         self
     }
 
+    pub fn with_active_signer(mut self, fingerprint: Fingerprint) -> Self {
+        self.active_wallet_signer_fingerprint = Some(fingerprint);
+        self
+    }
+
     pub fn with_pin(mut self, pin: &str) -> Result<Self, Box<dyn std::error::Error>> {
         self.security_pin_hash = Some(Self::hash_pin(pin)?);
         Ok(self)
@@ -209,6 +214,27 @@ impl CubeSettings {
         Argon2::default()
             .verify_password(pin.as_bytes(), &parsed_hash)
             .is_ok()
+    }
+
+    /// Load Cube settings from file
+    pub fn load_from_file(
+        network_dir: &crate::dir::NetworkDirectory,
+    ) -> Result<Option<Self>, SettingsError> {
+        let path = network_dir.path().join("cube_settings.toml");
+
+        if !path.exists() {
+            return Ok(None);
+        }
+
+        let content = std::fs::read_to_string(&path).map_err(|e| {
+            SettingsError::ReadingFile(format!("Failed to read cube settings: {}", e))
+        })?;
+
+        let cube_settings: CubeSettings = toml::from_str(&content).map_err(|e| {
+            SettingsError::ReadingFile(format!("Failed to parse cube settings: {}", e))
+        })?;
+
+        Ok(Some(cube_settings))
     }
 }
 
