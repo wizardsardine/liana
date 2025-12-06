@@ -10,3 +10,17 @@ strip = "symbols"
 lto = "fat"
 codegen-units = 1
 panic = "abort"
+
+# Patch section to resolve Breez SDK dependency conflicts
+# Breez SDK uses forked dependencies which conflict with coincubed's dependencies
+# We patch them to use standard crates.io versions
+[patch.'https://github.com/Spxg/rusqlite']
+rusqlite = "0.37"
+
+[patch.'https://github.com/breez/rusqlite_migration']
+rusqlite_migration = "2.3"
+
+# Patch secp256k1-zkp with MuSig2 support (required by Breez SDK)
+# This is the official Breez fork with proper MuSig2 types
+[patch.crates-io]
+secp256k1-zkp = { git = "https://github.com/breez/rust-secp256k1-zkp.git", rev = "eac2e479255a6e32b5588bc25ee53c642fdd8395" }

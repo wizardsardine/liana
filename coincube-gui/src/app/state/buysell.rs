@@ -83,27 +83,27 @@ impl State for BuySellPanel {
                 if let Some(country) = &self.detected_country {
                     if mavapay_supported(&country.code) {
                         // attempt automatic login from os-keyring
-                        match keyring::Entry::new("io.coincube.Vault", "mavapay") {
-                            Ok(entry) => {
-                                if let (Ok(token), Ok(user_data)) =
-                                    (entry.get_password(), entry.get_secret())
-                                {
-                                    self.error = None;
+                        // match keyring::Entry::new("io.coincube.Vault", "mavapay") {
+                        //     Ok(entry) => {
+                        //         if let (Ok(token), Ok(user_data)) =
+                        //             (entry.get_password(), entry.get_secret())
+                        //         {
+                        //             self.error = None;
 
-                                    // start initialization step with mavapay credentials embedded
-                                    self.flow_state = BuySellFlowState::Initialization {
-                                        buy_or_sell_selected: None,
-                                        buy_or_sell: None,
-                                        mavapay_credentials: Some((token, user_data)),
-                                    };
+                        //             // start initialization step with mavapay credentials embedded
+                        //             self.flow_state = BuySellFlowState::Initialization {
+                        //                 buy_or_sell_selected: None,
+                        //                 buy_or_sell: None,
+                        //                 mavapay_credentials: Some((token, user_data)),
+                        //             };
 
-                                    return Task::none();
-                                };
-                            }
-                            Err(e) => {
-                                log::error!("Unable to acquire OS keyring for Mavapay state: {e}");
-                            }
-                        };
+                        //             return Task::none();
+                        //         };
+                        //     }
+                        //     Err(e) => {
+                        //         log::error!("Unable to acquire OS keyring for Mavapay state: {e}");
+                        //     }
+                        // };
 
                         // send user back to mavapay login screen, to initialize login credentials
                         self.flow_state = BuySellFlowState::Mavapay(MavapayState::new())
@@ -385,17 +385,17 @@ impl State for BuySellPanel {
                             let bytes = serde_json::to_vec(&login.user).unwrap();
 
                             // store token in OS keyring
-                            if let Ok(entry) = keyring::Entry::new("io.coincube.Vault", "mavapay") {
-                                if let Err(e) = entry.set_password(&login.token) {
-                                    log::error!("Failed to store auth token in keyring: {}", e);
-                                }
+                            // if let Ok(entry) = keyring::Entry::new("io.coincube.Vault", "mavapay") {
+                            //     if let Err(e) = entry.set_password(&login.token) {
+                            //         log::error!("Failed to store auth token in keyring: {}", e);
+                            //     }
 
-                                if let Err(e) = entry.set_secret(&bytes) {
-                                    log::error!("Unable to store user data in keyring: {e}");
-                                };
-                            } else {
-                                self.error = Some("Unable to initialize OS keyring".to_string());
-                            };
+                            //     if let Err(e) = entry.set_secret(&bytes) {
+                            //         log::error!("Unable to store user data in keyring: {e}");
+                            //     };
+                            // } else {
+                            //     self.error = Some("Unable to initialize OS keyring".to_string());
+                            // };
 
                             // go straight to initialization
                             self.flow_state = BuySellFlowState::Initialization {

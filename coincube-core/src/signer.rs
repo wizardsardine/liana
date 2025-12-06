@@ -6,7 +6,7 @@
 use crate::random;
 
 use aes_gcm::{
-    aead::{Aead, KeyInit, OsRng, rand_core::RngCore},
+    aead::{rand_core::RngCore, Aead, KeyInit, OsRng},
     Aes256Gcm, Nonce,
 };
 
@@ -171,8 +171,8 @@ impl HotSigner {
         let mut signers = Vec::new();
 
         let mnemonics_folder = Self::mnemonics_folder(datadir_root, network);
-        let mnemonic_paths = fs::read_dir(mnemonics_folder)
-            .map_err(SignerError::MnemonicStorage)?;
+        let mnemonic_paths =
+            fs::read_dir(mnemonics_folder).map_err(SignerError::MnemonicStorage)?;
 
         for entry in mnemonic_paths {
             let path = entry.map_err(SignerError::MnemonicStorage)?.path();
@@ -186,11 +186,9 @@ impl HotSigner {
                 Self::decrypt_mnemonic(&data, pwd)?
             } else {
                 // Unencrypted file (backward compatibility)
-                String::from_utf8(data)
-                    .map_err(|e| SignerError::MnemonicStorage(io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        e,
-                    )))?
+                String::from_utf8(data).map_err(|e| {
+                    SignerError::MnemonicStorage(io::Error::new(io::ErrorKind::InvalidData, e))
+                })?
             };
 
             signers.push(Self::from_str(network, &mnemonic_str)?);
@@ -267,8 +265,7 @@ impl HotSigner {
             self.mnemonic_str().as_bytes().to_vec()
         };
 
-        let mut mnemonic_file =
-            create_file(&file_path).map_err(SignerError::MnemonicStorage)?;
+        let mut mnemonic_file = create_file(&file_path).map_err(SignerError::MnemonicStorage)?;
         mnemonic_file
             .write_all(&data)
             .map_err(SignerError::MnemonicStorage)?;
@@ -292,33 +289,33 @@ impl HotSigner {
         // Generate random salt bytes
         let mut salt_bytes = [0u8; SALT_LEN];
         OsRng.fill_bytes(&mut salt_bytes);
-        
+
         // Create SaltString from the raw bytes for password hashing
         let salt = SaltString::encode_b64(&salt_bytes)
             .map_err(|e| SignerError::Encryption(e.to_string()))?;
-        
+
         // Derive key from password using Argon2
         let argon2 = Argon2::default();
         let password_hash = argon2
             .hash_password(password.as_bytes(), &salt)
             .map_err(|e| SignerError::Encryption(e.to_string()))?;
-        
+
         let hash_output = password_hash
             .hash
             .ok_or_else(|| SignerError::Encryption("Failed to derive key".to_string()))?;
-        
+
         // Use Zeroizing to automatically clear key_bytes when dropped
         // Take the first 32 bytes for AES-256 (hash output is typically longer)
         let key_bytes = Zeroizing::new({
             let hash_bytes = hash_output.as_bytes();
             if hash_bytes.len() < 32 {
                 return Err(SignerError::Encryption(
-                    "Hash output too short for AES-256 key".to_string()
+                    "Hash output too short for AES-256 key".to_string(),
                 ));
             }
             hash_bytes[..32].to_vec()
         });
-        
+
         let cipher = Aes256Gcm::new_from_slice(&key_bytes)
             .map_err(|e| SignerError::Encryption(e.to_string()))?;
 
@@ -336,14 +333,14 @@ impl HotSigner {
         // Format: MARKER + SALT + NONCE + CIPHERTEXT
         let mut result = Vec::new();
         result.extend_from_slice(ENCRYPTED_FILE_MARKER);
-        result.extend_from_slice(&salt_bytes);  // Use raw salt bytes
+        result.extend_from_slice(&salt_bytes); // Use raw salt bytes
         result.extend_from_slice(&nonce_bytes);
         result.extend_from_slice(&ciphertext);
 
         Ok(result)
         // key_bytes and plaintext are automatically zeroized when dropped here
     }
-    
+
     /// Decrypt a mnemonic
     fn decrypt_mnemonic(data: &[u8], password: &str) -> Result<String, SignerError> {
         // Check marker
@@ -354,7 +351,7 @@ impl HotSigner {
         }
 
         let data = &data[ENCRYPTED_FILE_MARKER_LEN..];
-        
+
         if data.len() < SALT_LEN + NONCE_LEN {
             return Err(SignerError::Decryption("Invalid file format".to_string()));
         }
@@ -366,16 +363,14 @@ impl HotSigner {
         // Derive key from password
         let salt = SaltString::encode_b64(salt_bytes)
             .map_err(|e| SignerError::Decryption(e.to_string()))?;
-        
+
         let argon2 = Argon2::default();
         let password_hash = argon2
             .hash_password(password.as_bytes(), &salt)
             .map_err(|_| SignerError::InvalidPassword)?;
-        
-        let hash_output = password_hash
-            .hash
-            .ok_or(SignerError::InvalidPassword)?;
-        
+
+        let hash_output = password_hash.hash.ok_or(SignerError::InvalidPassword)?;
+
         // Use Zeroizing to automatically clear key_bytes when dropped
         // Take the first 32 bytes for AES-256
         let key_bytes = Zeroizing::new({
@@ -385,20 +380,20 @@ impl HotSigner {
             }
             hash_bytes[..32].to_vec()
         });
-        
-        let cipher = Aes256Gcm::new_from_slice(&key_bytes)
-            .map_err(|_| SignerError::InvalidPassword)?;
+
+        let cipher =
+            Aes256Gcm::new_from_slice(&key_bytes).map_err(|_| SignerError::InvalidPassword)?;
 
         // Decrypt - use Zeroizing for the plaintext bytes
         let plaintext_bytes = Zeroizing::new(
             cipher
                 .decrypt(Nonce::from_slice(nonce_bytes), ciphertext)
-                .map_err(|_| SignerError::InvalidPassword)?
+                .map_err(|_| SignerError::InvalidPassword)?,
         );
 
         let result = String::from_utf8(plaintext_bytes.to_vec())
             .map_err(|e| SignerError::Decryption(e.to_string()))?;
-        
+
         Ok(result)
         // key_bytes and plaintext_bytes are automatically zeroized when dropped here
     }
