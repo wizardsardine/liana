@@ -1,6 +1,8 @@
 use crate::{
-    app::menu::Menu,
-    app::view::FiatAmountConverter,
+    app::{
+        menu::Menu,
+        view::{global_home::TransferDirection, FiatAmountConverter},
+    },
     export::ImportExportMessage,
     node::bitcoind::RpcAuthType,
     services::fiat::{Currency, PriceSource},
@@ -47,6 +49,7 @@ pub enum Message {
     ExportPsbt,
     ImportPsbt,
     OpenUrl(String),
+    Home(HomeMessage),
 }
 
 impl Close for Message {
@@ -231,4 +234,23 @@ impl From<FiatMessage> for Message {
     fn from(msg: FiatMessage) -> Self {
         Message::Settings(SettingsMessage::Fiat(msg))
     }
+}
+
+#[derive(Debug, Clone)]
+pub enum HomeMessage {
+    ToggleBalanceMask,
+    SelectTransferDirection(TransferDirection),
+    TransferFlow(TransferFlowMessage),
+    GoToStep(usize),
+    NextStep,
+    PreviousStep,
+}
+
+#[derive(Debug, Clone)]
+pub enum TransferFlowMessage {
+    Start,
+    EnterAmount(TransferDirection),
+    ConfirmTransfer(TransferDirection),
+    AmountEdited(String),
+    Cancel,
 }

@@ -232,7 +232,7 @@ pub fn building_icon() -> Text<'static> {
 }
 
 pub fn vault_icon() -> Text<'static> {
-    bootstrap_icon('\u{F65A}')
+    bootstrap_icon('\u{F53F}')
 }
 
 pub fn lightning_icon() -> Text<'static> {
@@ -241,6 +241,10 @@ pub fn lightning_icon() -> Text<'static> {
 
 pub fn eye_icon() -> Text<'static> {
     bootstrap_icon('\u{F33E}')
+}
+
+pub fn eye_outline_icon() -> Text<'static> {
+    bootstrap_icon('\u{F341}')
 }
 
 pub fn eye_slash_icon() -> Text<'static> {
@@ -253,4 +257,8 @@ pub fn cube_icon() -> Text<'static> {
 
 pub fn receipt_icon() -> Text<'static> {
     bootstrap_icon('\u{F50F}')
+}
+
+pub fn arrow_down_up_icon() -> Text<'static> {
+    bootstrap_icon('\u{F127}')
 }
