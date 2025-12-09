@@ -414,6 +414,11 @@ impl Tab {
                         self.state = State::Launcher(Box::new(launcher));
                         command.map(|msg| Message::Launch(Box::new(msg)))
                     }
+                } else if let installer::Message::BackToLauncher(network) = *msg {
+                    // User pressed Previous at first installer step - go back to launcher
+                    let (launcher, command) = Launcher::new(i.datadir.clone(), Some(network));
+                    self.state = State::Launcher(Box::new(launcher));
+                    command.map(|msg| Message::Launch(Box::new(msg)))
                 } else {
                     i.update(*msg).map(|msg| Message::Install(Box::new(msg)))
                 }
