@@ -1088,47 +1088,8 @@ async fn check_network_datadir(path: NetworkDirectory) -> Result<State, String> 
     match settings::Settings::from_file(&path) {
         Ok(s) => {
             if s.cubes.is_empty() {
-                // Check if there are existing wallets without cubes - auto-migrate them
-                if !s.wallets.is_empty() {
-                    let network = path
-                        .path()
-                        .file_name()
-                        .and_then(|n| n.to_str())
-                        .and_then(|n| {
-                            n.parse::<coincube_core::miniscript::bitcoin::Network>()
-                                .ok()
-                        })
-                        .unwrap_or(coincube_core::miniscript::bitcoin::Network::Bitcoin);
-
-                    let mut cubes = Vec::new();
-                    for wallet in &s.wallets {
-                        let cube_name = if let Some(alias) = &wallet.alias {
-                            alias.clone()
-                        } else {
-                            format!("My {} Cube", network_name(network))
-                        };
-                        let cube =
-                            CubeSettings::new(cube_name, network).with_vault(wallet.wallet_id());
-                        cubes.push(cube);
-                    }
-
-                    // Save the cubes to settings
-                    if let Err(e) = settings::update_settings_file(&path, |mut settings| {
-                        settings.cubes = cubes.clone();
-                        Some(settings)
-                    })
-                    .await
-                    {
-                        tracing::warn!("Failed to save migrated cubes: {}", e);
-                    }
-
-                    Ok(State::Cubes {
-                        cubes,
-                        create_cube: false,
-                    })
-                } else {
-                    Ok(State::NoCube)
-                }
+                // No cubes found - user needs to create one
+                Ok(State::NoCube)
             } else {
                 Ok(State::Cubes {
                     cubes: s.cubes,
@@ -1138,15 +1099,5 @@ async fn check_network_datadir(path: NetworkDirectory) -> Result<State, String> 
         }
         Err(settings::SettingsError::NotFound) => Ok(State::NoCube),
         Err(e) => Err(e.to_string()),
-    }
-}
-
-fn network_name(network: coincube_core::miniscript::bitcoin::Network) -> &'static str {
-    match network {
-        coincube_core::miniscript::bitcoin::Network::Bitcoin => "Bitcoin",
-        coincube_core::miniscript::bitcoin::Network::Testnet => "Testnet",
-        coincube_core::miniscript::bitcoin::Network::Testnet4 => "Testnet4",
-        coincube_core::miniscript::bitcoin::Network::Signet => "Signet",
-        coincube_core::miniscript::bitcoin::Network::Regtest => "Regtest",
     }
 }

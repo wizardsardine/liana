@@ -417,7 +417,7 @@ impl HotSigner {
         // key_bytes and plaintext_bytes are automatically zeroized when dropped here
     }
 
-    fn xpriv_at(
+    pub fn xpriv_at(
         &self,
         der_path: &bip32::DerivationPath,
         secp: &secp256k1::Secp256k1<impl secp256k1::Signing>,
