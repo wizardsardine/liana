@@ -144,7 +144,7 @@ impl Tab {
                         }
                     }
                     let (install, command) =
-                        Installer::new(datadir, network, None, init, false, None);
+                        Installer::new(datadir, network, None, init, false, None, None);
                     self.state = State::Installer(Box::new(install));
                     command.map(|msg| Message::Install(Box::new(msg)))
                 }
@@ -215,6 +215,7 @@ impl Tab {
                         installer::UserFlow::CreateWallet,
                         false,
                         None,
+                        None, // No breez_client from login screen
                     );
                     self.state = State::Installer(Box::new(install));
                     command.map(|msg| Message::Install(Box::new(msg)))
@@ -364,49 +365,35 @@ impl Tab {
                         command.map(|msg| Message::Load(Box::new(msg)))
                     }
                 } else if let installer::Message::BackToApp(network) = *msg {
-                    // Go back to app without vault using stored cube settings
+                    // Go back to app without vault using stored cube settings and breez_client
                     if let Some(cube) = &i.cube_settings {
-                        let cfg = app::Config::from_file(
-                            &i.datadir
-                                .network_directory(network)
-                                .path()
-                                .join(app::config::DEFAULT_FILE_NAME),
-                        )
-                        .expect("A gui configuration file must be present");
+                        if let Some(breez) = &i.breez_client {
+                            // Use the pre-loaded BreezClient (no PIN re-entry needed)
+                            let cfg = app::Config::from_file(
+                                &i.datadir
+                                    .network_directory(network)
+                                    .path()
+                                    .join(app::config::DEFAULT_FILE_NAME),
+                            )
+                            .expect("A gui configuration file must be present");
 
-                        // Load BreezClient for Active wallet
-                        let cube_clone = cube.clone();
-                        let cfg_clone = cfg.clone();
-                        let datadir_clone = i.datadir.clone();
-                        return Task::perform(
-                            async move {
-                                let breez_result = if let Some(fingerprint) =
-                                    cube_clone.active_wallet_signer_fingerprint
-                                {
-                                    app::breez::load_breez_client(
-                                        datadir_clone.path(),
-                                        network,
-                                        fingerprint,
-                                        None,
-                                    )
-                                    .await
-                                } else {
-                                    Err(app::breez::BreezError::SignerError(
-                                        "No Active wallet configured".to_string(),
-                                    ))
-                                };
-                                (cfg_clone, datadir_clone, network, cube_clone, breez_result)
-                            },
-                            |(config, datadir, net, cube_settings, breez_result)| {
-                                Message::Launch(Box::new(launcher::Message::BreezClientLoaded {
-                                    config,
-                                    datadir,
-                                    network: net,
-                                    cube: cube_settings,
-                                    breez_client: breez_result,
-                                }))
-                            },
-                        );
+                            let (app, command) = app::App::new_without_wallet(
+                                breez.clone(),
+                                cfg,
+                                i.datadir.clone(),
+                                network,
+                                cube.clone(),
+                            );
+                            self.state = State::App(app);
+                            return command.map(|msg| Message::Run(Box::new(msg)));
+                        } else {
+                            error!("BackToApp called but no BreezClient stored - should not happen");
+                            // Fallback: go to launcher
+                            let (launcher, command) =
+                                Launcher::new(i.destination_path(), Some(network));
+                            self.state = State::Launcher(Box::new(launcher));
+                            return command.map(|msg| Message::Launch(Box::new(msg)));
+                        }
                     } else {
                         // No cube settings stored, go to launcher
                         let (launcher, command) =
@@ -414,11 +401,6 @@ impl Tab {
                         self.state = State::Launcher(Box::new(launcher));
                         command.map(|msg| Message::Launch(Box::new(msg)))
                     }
-                } else if let installer::Message::BackToLauncher(network) = *msg {
-                    // User pressed Previous at first installer step - go back to launcher
-                    let (launcher, command) = Launcher::new(i.datadir.clone(), Some(network));
-                    self.state = State::Launcher(Box::new(launcher));
-                    command.map(|msg| Message::Launch(Box::new(msg)))
                 } else {
                     i.update(*msg).map(|msg| Message::Install(Box::new(msg)))
                 }
@@ -439,6 +421,7 @@ impl Tab {
                         UserFlow::CreateWallet,
                         true, // launched from app (loader is part of app flow)
                         Some(loader.cube_settings.clone()), // pass cube settings for returning
+                        loader.breez_client.clone(), // pass breez_client to avoid re-entering PIN
                     );
                     self.state = State::Installer(Box::new(install));
                     command.map(|msg| Message::Install(Box::new(msg)))
@@ -668,6 +651,7 @@ impl Tab {
                             UserFlow::CreateWallet,
                             true,                              // launched from app
                             Some(app.cube_settings().clone()), // pass cube settings for returning
+                            Some(app.breez_client()),          // pass breez_client to avoid re-entering PIN
                         );
                         self.state = State::Installer(Box::new(install));
                         command.map(|msg| Message::Install(Box::new(msg)))

@@ -474,6 +474,10 @@ impl App {
         &self.cache
     }
 
+    pub fn breez_client(&self) -> Arc<BreezClient> {
+        self.breez_client.clone()
+    }
+
     pub fn wallet(&self) -> Option<&Wallet> {
         self.wallet.as_ref().map(|w| w.as_ref())
     }
