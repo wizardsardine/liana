@@ -573,91 +573,91 @@ fn create_cube_form<'a>(
     // PIN setup section (always required)
     column = column.push(Space::with_height(Length::Fixed(10.0)));
 
-        // Enter PIN label with eye button
-        let pin_label = p1_regular("Enter PIN:").style(theme::text::secondary);
-        let pin_eye_button = button::secondary(
-            Some(if show_pin {
-                icon::eye_icon()
-            } else {
-                icon::eye_slash_icon()
-            }),
-            "",
-        )
-        .on_press(ViewMessage::ToggleShowPin)
-        .width(Length::Fixed(50.0))
-        .padding(iced::Padding::new(10.0).left(15.0));
+    // Enter PIN label with eye button
+    let pin_label = p1_regular("Enter PIN:").style(theme::text::secondary);
+    let pin_eye_button = button::secondary(
+        Some(if show_pin {
+            icon::eye_icon()
+        } else {
+            icon::eye_slash_icon()
+        }),
+        "",
+    )
+    .on_press(ViewMessage::ToggleShowPin)
+    .width(Length::Fixed(50.0))
+    .padding(iced::Padding::new(10.0).left(15.0));
 
-        let pin_label_row = Row::new()
-            .spacing(10)
-            .align_y(Alignment::Center)
-            .push(pin_label)
-            .push(pin_eye_button);
+    let pin_label_row = Row::new()
+        .spacing(10)
+        .align_y(Alignment::Center)
+        .push(pin_label)
+        .push(pin_eye_button);
 
-        column = column.push(pin_label_row);
+    column = column.push(pin_label_row);
 
-        // PIN inputs with consistent styling
-        let mut pin_inputs_row = Row::new().spacing(15).align_y(Alignment::Center);
-        for (i, digit) in pin_digits.iter().enumerate().take(4) {
-            let mut input = iced::widget::text_input("", digit)
-                .on_input(move |v| ViewMessage::PinDigitChanged(i, v))
-                .size(30)
-                .width(Length::Fixed(60.0));
+    // PIN inputs with consistent styling
+    let mut pin_inputs_row = Row::new().spacing(15).align_y(Alignment::Center);
+    for (i, digit) in pin_digits.iter().enumerate().take(4) {
+        let mut input = iced::widget::text_input("", digit)
+            .on_input(move |v| ViewMessage::PinDigitChanged(i, v))
+            .size(30)
+            .width(Length::Fixed(60.0));
 
-            if !show_pin {
-                input = input
-                    .secure(true)
-                    .padding(iced::Padding::new(15.0).left(25.0));
-            } else {
-                input = input.padding(iced::Padding::new(15.0).left(20.0));
-            }
-
-            pin_inputs_row = pin_inputs_row.push(input);
+        if !show_pin {
+            input = input
+                .secure(true)
+                .padding(iced::Padding::new(15.0).left(25.0));
+        } else {
+            input = input.padding(iced::Padding::new(15.0).left(20.0));
         }
-        column = column.push(pin_inputs_row);
 
-        column = column.push(Space::with_height(Length::Fixed(20.0)));
+        pin_inputs_row = pin_inputs_row.push(input);
+    }
+    column = column.push(pin_inputs_row);
 
-        // Confirm PIN label with eye button
-        let pin_confirm_label = p1_regular("Confirm PIN:").style(theme::text::secondary);
-        let pin_confirm_eye_button = button::secondary(
-            Some(if show_pin_confirm {
-                icon::eye_icon()
-            } else {
-                icon::eye_slash_icon()
-            }),
-            "",
-        )
-        .on_press(ViewMessage::ToggleShowConfirmPin)
-        .width(Length::Fixed(50.0))
-        .padding(iced::Padding::new(10.0).left(15.0));
+    column = column.push(Space::with_height(Length::Fixed(20.0)));
 
-        let pin_confirm_label_row = Row::new()
-            .spacing(10)
-            .align_y(Alignment::Center)
-            .push(pin_confirm_label)
-            .push(pin_confirm_eye_button);
+    // Confirm PIN label with eye button
+    let pin_confirm_label = p1_regular("Confirm PIN:").style(theme::text::secondary);
+    let pin_confirm_eye_button = button::secondary(
+        Some(if show_pin_confirm {
+            icon::eye_icon()
+        } else {
+            icon::eye_slash_icon()
+        }),
+        "",
+    )
+    .on_press(ViewMessage::ToggleShowConfirmPin)
+    .width(Length::Fixed(50.0))
+    .padding(iced::Padding::new(10.0).left(15.0));
 
-        column = column.push(pin_confirm_label_row);
+    let pin_confirm_label_row = Row::new()
+        .spacing(10)
+        .align_y(Alignment::Center)
+        .push(pin_confirm_label)
+        .push(pin_confirm_eye_button);
 
-        // Confirm PIN inputs with consistent styling
-        let mut pin_confirm_inputs_row = Row::new().spacing(15).align_y(Alignment::Center);
-        for (i, digit) in pin_confirm_digits.iter().enumerate().take(4) {
-            let mut input = iced::widget::text_input("", digit)
-                .on_input(move |v| ViewMessage::PinConfirmDigitChanged(i, v))
-                .size(30)
-                .width(Length::Fixed(60.0));
+    column = column.push(pin_confirm_label_row);
 
-            if !show_pin_confirm {
-                input = input
-                    .secure(true)
-                    .padding(iced::Padding::new(15.0).left(25.0));
-            } else {
-                input = input.padding(iced::Padding::new(15.0).left(20.0));
-            }
+    // Confirm PIN inputs with consistent styling
+    let mut pin_confirm_inputs_row = Row::new().spacing(15).align_y(Alignment::Center);
+    for (i, digit) in pin_confirm_digits.iter().enumerate().take(4) {
+        let mut input = iced::widget::text_input("", digit)
+            .on_input(move |v| ViewMessage::PinConfirmDigitChanged(i, v))
+            .size(30)
+            .width(Length::Fixed(60.0));
 
-            pin_confirm_inputs_row = pin_confirm_inputs_row.push(input);
+        if !show_pin_confirm {
+            input = input
+                .secure(true)
+                .padding(iced::Padding::new(15.0).left(25.0));
+        } else {
+            input = input.padding(iced::Padding::new(15.0).left(20.0));
         }
-        column = column.push(pin_confirm_inputs_row);
+
+        pin_confirm_inputs_row = pin_confirm_inputs_row.push(input);
+    }
+    column = column.push(pin_confirm_inputs_row);
 
     // Add extra padding before Create Cube button
     column = column.push(Space::with_height(Length::Fixed(20.0)));
@@ -669,8 +669,8 @@ fn create_cube_form<'a>(
 
     // Determine if button should be enabled
     // PIN is always required, so all PIN fields must be filled
-    let can_create = cube_name.valid 
-        && !cube_name.value.trim().is_empty() 
+    let can_create = cube_name.valid
+        && !cube_name.value.trim().is_empty()
         && !pin_digits.iter().any(|d| d.is_empty())
         && !pin_confirm_digits.iter().any(|d| d.is_empty());
 

@@ -5,9 +5,7 @@ pub use client::BreezClient;
 pub use config::BreezConfig;
 
 // Re-export Breez SDK response types
-pub use breez_sdk_liquid::prelude::{
-    GetInfoResponse, ReceivePaymentResponse, SendPaymentResponse,
-};
+pub use breez_sdk_liquid::prelude::{GetInfoResponse, ReceivePaymentResponse, SendPaymentResponse};
 
 use coincube_core::miniscript::bitcoin::{bip32::Fingerprint, Network};
 use coincube_core::signer::HotSigner;

@@ -34,7 +34,7 @@ impl BreezConfig {
             bitcoin::Network::Signet => (
                 "https://blockstream.info/liquidtestnet/api",
                 "https://blockstream.info/signet/api",
-            )
+            ),
         };
 
         breez::Config {
@@ -49,12 +49,14 @@ impl BreezConfig {
             working_dir: self.working_dir.to_string_lossy().to_string(),
             network: match self.network {
                 bitcoin::Network::Bitcoin => breez::LiquidNetwork::Mainnet,
-                bitcoin::Network::Testnet | bitcoin::Network::Signet => breez::LiquidNetwork::Testnet,
+                bitcoin::Network::Testnet | bitcoin::Network::Signet => {
+                    breez::LiquidNetwork::Testnet
+                }
                 bitcoin::Network::Testnet4 => breez::LiquidNetwork::Testnet,
                 bitcoin::Network::Regtest => breez::LiquidNetwork::Testnet,
             },
             payment_timeout_sec: 60,
-            sync_service_url: None, // Use default
+            sync_service_url: None,         // Use default
             zero_conf_max_amount_sat: None, // Use default
             breez_api_key: Some(self.api_key.clone()),
             external_input_parsers: None,
