@@ -24,11 +24,7 @@ pub enum PinEntrySuccess {
         datadir: crate::dir::CoincubeDirectory,
         config: crate::app::Config,
         network: coincube_core::miniscript::bitcoin::Network,
-    },
-    LoadLoader {
-        datadir: crate::dir::CoincubeDirectory,
-        config: crate::app::Config,
-        network: coincube_core::miniscript::bitcoin::Network,
+        // Optional Vault wallet loading fields
         internal_bitcoind: Option<crate::node::bitcoind::Bitcoind>,
         backup: Option<crate::backup::Backup>,
         wallet_settings: Option<crate::app::settings::WalletSettings>,

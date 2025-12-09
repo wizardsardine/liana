@@ -22,13 +22,28 @@ impl BreezConfig {
     }
 
     pub fn sdk_config(&self) -> breez::Config {
+        let (liquid_explorer_url, bitcoin_explorer_url) = match self.network {
+            bitcoin::Network::Bitcoin => (
+                "https://blockstream.info/liquid/api",
+                "https://blockstream.info/api",
+            ),
+            bitcoin::Network::Testnet | bitcoin::Network::Testnet4 | bitcoin::Network::Regtest => (
+                "https://blockstream.info/liquidtestnet/api",
+                "https://blockstream.info/testnet/api",
+            ),
+            bitcoin::Network::Signet => (
+                "https://blockstream.info/liquidtestnet/api",
+                "https://blockstream.info/signet/api",
+            )
+        };
+
         breez::Config {
             liquid_explorer: breez::BlockchainExplorer::Esplora {
-                url: "https://blockstream.info/liquid/api".to_string(),
+                url: liquid_explorer_url.to_string(),
                 use_waterfalls: false,
             },
             bitcoin_explorer: breez::BlockchainExplorer::Esplora {
-                url: "https://blockstream.info/api".to_string(),
+                url: bitcoin_explorer_url.to_string(),
                 use_waterfalls: false,
             },
             working_dir: self.working_dir.to_string_lossy().to_string(),

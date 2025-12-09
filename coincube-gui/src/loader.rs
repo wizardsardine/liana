@@ -65,6 +65,7 @@ pub struct Loader {
     pub backup: Option<Backup>,
     pub wallet_settings: Option<WalletSettings>,
     pub cube_settings: CubeSettings,
+    pub breez_client: Option<std::sync::Arc<crate::app::breez::BreezClient>>,
     step: Step,
 }
 
@@ -136,6 +137,7 @@ impl Loader {
         backup: Option<Backup>,
         wallet_settings: Option<WalletSettings>,
         cube_settings: CubeSettings,
+        breez_client: Option<std::sync::Arc<crate::app::breez::BreezClient>>,
     ) -> (Self, Task<Message>) {
         let task = if let Some(ref wallet) = wallet_settings {
             let socket_path = datadir_path
@@ -160,6 +162,7 @@ impl Loader {
                 wallet_settings,
                 cube_settings,
                 backup,
+                breez_client,
             },
             task,
         )
@@ -355,6 +358,7 @@ impl Loader {
                     self.backup.clone(),
                     self.wallet_settings.clone(),
                     self.cube_settings.clone(),
+                    self.breez_client.clone(),
                 );
                 *self = loader;
                 cmd
