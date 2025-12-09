@@ -43,7 +43,6 @@ pub enum Message {
     Next,
     Skip,
     Previous,
-    BackToLauncher(Network),
     BackToApp(Network),
     Install,
     Close,

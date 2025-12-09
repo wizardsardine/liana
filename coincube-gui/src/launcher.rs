@@ -26,6 +26,7 @@ use crate::{
         login::{connect_with_credentials, BackendState},
     },
 };
+use coincube_core::signer::HotSigner;
 
 const NETWORKS: [Network; 5] = [
     Network::Bitcoin,
@@ -55,7 +56,6 @@ pub struct Launcher {
     create_cube_name: coincube_ui::component::form::Value<String>,
     create_cube_pin: [String; 4],
     create_cube_pin_confirm: [String; 4],
-    pin_enabled: bool,
     show_pin: bool,
     show_pin_confirm: bool,
 }
@@ -86,7 +86,6 @@ impl Launcher {
                     String::new(),
                     String::new(),
                 ],
-                pin_enabled: false,
                 show_pin: false,
                 show_pin_confirm: false,
             },
@@ -139,7 +138,6 @@ impl Launcher {
                             [String::new(), String::new(), String::new(), String::new()];
                         self.create_cube_pin_confirm =
                             [String::new(), String::new(), String::new(), String::new()];
-                        self.pin_enabled = false;
                         self.show_pin = false;
                         self.show_pin_confirm = false;
                     }
@@ -150,19 +148,6 @@ impl Launcher {
                 self.create_cube_name.value = name;
                 self.create_cube_name.valid = !self.create_cube_name.value.trim().is_empty();
                 self.error = None; // Clear error when user makes changes
-                Task::none()
-            }
-            Message::View(ViewMessage::TogglePinEnabled(enabled)) => {
-                self.pin_enabled = enabled;
-                if !enabled {
-                    self.create_cube_pin =
-                        [String::new(), String::new(), String::new(), String::new()];
-                    self.create_cube_pin_confirm =
-                        [String::new(), String::new(), String::new(), String::new()];
-                    self.show_pin = false;
-                    self.show_pin_confirm = false;
-                    self.error = None; // Clear error when PIN is disabled
-                }
                 Task::none()
             }
             Message::View(ViewMessage::PinDigitChanged(index, value)) => {
@@ -220,44 +205,68 @@ impl Launcher {
                     return Task::none();
                 }
 
-                // Validate PIN if enabled
-                if self.pin_enabled {
-                    if self.create_cube_pin.iter().any(|d| d.is_empty()) {
-                        self.error = Some("Please enter all 4 PIN digits".to_string());
-                        return Task::none();
-                    }
-                    if self.create_cube_pin_confirm.iter().any(|d| d.is_empty()) {
-                        self.error = Some("Please confirm all 4 PIN digits".to_string());
-                        return Task::none();
-                    }
-                    if self.create_cube_pin != self.create_cube_pin_confirm {
-                        self.error = Some("PIN codes do not match".to_string());
-                        return Task::none();
-                    }
+                // Validate PIN (always required)
+                if self.create_cube_pin.iter().any(|d| d.is_empty()) {
+                    self.error = Some("Please enter all 4 PIN digits".to_string());
+                    return Task::none();
+                }
+                if self.create_cube_pin_confirm.iter().any(|d| d.is_empty()) {
+                    self.error = Some("Please confirm all 4 PIN digits".to_string());
+                    return Task::none();
+                }
+                if self.create_cube_pin != self.create_cube_pin_confirm {
+                    self.error = Some("PIN codes do not match".to_string());
+                    return Task::none();
                 }
 
                 let network = self.network;
-                let mut cube =
-                    CubeSettings::new(self.create_cube_name.value.trim().to_string(), network);
+                let cube_name = self.create_cube_name.value.trim().to_string();
+                let pin = self.create_cube_pin.join("");
+                let datadir_path = self.datadir_path.clone();
 
-                // Add PIN if enabled
-                if self.pin_enabled {
-                    let pin = self.create_cube_pin.join("");
-                    cube = match cube.with_pin(&pin) {
-                        Ok(c) => c,
-                        Err(e) => {
-                            let error_msg = format!("Failed to hash PIN: {}", e);
-                            return Task::perform(
-                                async move { Err(error_msg) },
-                                Message::CubeCreated,
-                            );
-                        }
-                    };
-                }
-
-                let network_dir = self.datadir_path.network_directory(network);
                 Task::perform(
                     async move {
+                        // Generate Active wallet HotSigner
+                        let active_signer = HotSigner::generate(network).map_err(|e| {
+                            format!("Failed to generate Active wallet signer: {}", e)
+                        })?;
+
+                        // Create secp context for fingerprint calculation
+                        let secp = coincube_core::miniscript::bitcoin::secp256k1::Secp256k1::new();
+                        let active_fingerprint = active_signer.fingerprint(&secp);
+
+                        // Store Active wallet mnemonic (encrypted with PIN if provided)
+                        let network_dir = datadir_path.network_directory(network);
+                        network_dir
+                            .init()
+                            .map_err(|e| format!("Failed to create network directory: {}", e))?;
+
+                        // Use a timestamp for the Active wallet storage
+                        let timestamp = chrono::Utc::now().timestamp();
+                        let active_checksum = format!("active-{}", timestamp);
+
+                        // Store Active wallet mnemonic encrypted with PIN (always required)
+                        active_signer
+                            .store_encrypted(
+                                datadir_path.path(),
+                                network,
+                                &secp,
+                                Some((active_checksum, timestamp)),
+                                Some(&pin),
+                            )
+                            .map_err(|e| {
+                                format!("Failed to store Active wallet mnemonic: {}", e)
+                            })?;
+
+                        tracing::info!("Active wallet signer created and stored (encrypted with PIN) with fingerprint: {}", active_fingerprint);
+
+                        // Create Cube settings with Active wallet signer reference and PIN
+                        let cube = CubeSettings::new(cube_name, network)
+                            .with_active_signer(active_fingerprint)
+                            .with_pin(&pin)
+                            .map_err(|e| format!("Failed to hash PIN: {}", e))?;
+
+                        // Save Cube settings to settings file
                         settings::update_settings_file(&network_dir, |mut settings| {
                             settings.cubes.push(cube.clone());
                             Some(settings)
@@ -279,7 +288,6 @@ impl Launcher {
                         [String::new(), String::new(), String::new(), String::new()];
                     self.create_cube_pin_confirm =
                         [String::new(), String::new(), String::new(), String::new()];
-                    self.pin_enabled = false;
                     self.show_pin = false;
                     self.show_pin_confirm = false;
                     self.reload()
@@ -467,25 +475,23 @@ impl Launcher {
                                 }
                             })
                             .push(match &self.state {
-                                State::Unchecked => Column::new(),
                                 State::Cubes { cubes, create_cube } => {
                                     if *create_cube {
-                                        Column::new().push(create_cube_form(
+                                        create_cube_form(
                                             &self.create_cube_name,
                                             &self.create_cube_pin,
                                             &self.create_cube_pin_confirm,
-                                            self.pin_enabled,
                                             self.show_pin,
                                             self.show_pin_confirm,
                                             &self.error,
-                                        ))
+                                        )
                                     } else {
-                                        let col =
+                                        let mut col =
                                             cubes.iter().enumerate().fold(
                                                 Column::new().spacing(20),
                                                 |col, (i, cube)| col.push(cubes_list_item(cube, i)),
                                             );
-                                        col.push(
+                                        col = col.push(
                                             Column::new().push(
                                                 button::secondary(
                                                     Some(icon::plus_icon()),
@@ -495,18 +501,19 @@ impl Launcher {
                                                 .padding(10)
                                                 .width(Length::Fixed(500.0)),
                                             ),
-                                        )
+                                        );
+                                        col.into()
                                     }
                                 }
-                                State::NoCube => Column::new().push(create_cube_form(
+                                State::NoCube => create_cube_form(
                                     &self.create_cube_name,
                                     &self.create_cube_pin,
                                     &self.create_cube_pin_confirm,
-                                    self.pin_enabled,
                                     self.show_pin,
                                     self.show_pin_confirm,
                                     &self.error,
-                                )),
+                                ),
+                                _ => Column::new().into(),
                             })
                             .align_x(Alignment::Center),
                     )
@@ -536,7 +543,6 @@ fn create_cube_form<'a>(
     cube_name: &coincube_ui::component::form::Value<String>,
     pin_digits: &[String; 4],
     pin_confirm_digits: &[String; 4],
-    pin_enabled: bool,
     show_pin: bool,
     show_pin_confirm: bool,
     error: &Option<String>,
@@ -550,7 +556,7 @@ fn create_cube_form<'a>(
         .push(h4_bold("Create a new Cube"))
         .push(
             p1_regular(
-                "A Cube is your account that can contain a Vault wallet and other features.",
+                "A Cube is your account which can contain an Active wallet, a Vault wallet and other features.",
             )
             .style(theme::text::secondary),
         )
@@ -564,104 +570,97 @@ fn create_cube_form<'a>(
             .width(Length::Fill),
         );
 
-    // PIN setup section
-    column = column.push(
-        iced::widget::checkbox("Enable 4-digit PIN (optional)", pin_enabled)
-            .on_toggle(ViewMessage::TogglePinEnabled),
-    );
+    // PIN setup section (always required)
+    column = column.push(Space::with_height(Length::Fixed(10.0)));
 
-    if pin_enabled {
-        column = column.push(Space::with_height(Length::Fixed(10.0)));
+    // Enter PIN label with eye button
+    let pin_label = p1_regular("Enter PIN:").style(theme::text::secondary);
+    let pin_eye_button = button::secondary(
+        Some(if show_pin {
+            icon::eye_icon()
+        } else {
+            icon::eye_slash_icon()
+        }),
+        "",
+    )
+    .on_press(ViewMessage::ToggleShowPin)
+    .width(Length::Fixed(50.0))
+    .padding(iced::Padding::new(10.0).left(15.0));
 
-        // Enter PIN label with eye button
-        let pin_label = p1_regular("Enter PIN:").style(theme::text::secondary);
-        let pin_eye_button = button::secondary(
-            Some(if show_pin {
-                icon::eye_icon()
-            } else {
-                icon::eye_slash_icon()
-            }),
-            "",
-        )
-        .on_press(ViewMessage::ToggleShowPin)
-        .width(Length::Fixed(50.0))
-        .padding(iced::Padding::new(10.0).left(15.0));
+    let pin_label_row = Row::new()
+        .spacing(10)
+        .align_y(Alignment::Center)
+        .push(pin_label)
+        .push(pin_eye_button);
 
-        let pin_label_row = Row::new()
-            .spacing(10)
-            .align_y(Alignment::Center)
-            .push(pin_label)
-            .push(pin_eye_button);
+    column = column.push(pin_label_row);
 
-        column = column.push(pin_label_row);
+    // PIN inputs with consistent styling
+    let mut pin_inputs_row = Row::new().spacing(15).align_y(Alignment::Center);
+    for (i, digit) in pin_digits.iter().enumerate().take(4) {
+        let mut input = iced::widget::text_input("", digit)
+            .on_input(move |v| ViewMessage::PinDigitChanged(i, v))
+            .size(30)
+            .width(Length::Fixed(60.0));
 
-        // PIN inputs with consistent styling
-        let mut pin_inputs_row = Row::new().spacing(15).align_y(Alignment::Center);
-        for (i, digit) in pin_digits.iter().enumerate().take(4) {
-            let mut input = iced::widget::text_input("", digit)
-                .on_input(move |v| ViewMessage::PinDigitChanged(i, v))
-                .size(30)
-                .width(Length::Fixed(60.0));
-
-            if !show_pin {
-                input = input
-                    .secure(true)
-                    .padding(iced::Padding::new(15.0).left(25.0));
-            } else {
-                input = input.padding(iced::Padding::new(15.0).left(20.0));
-            }
-
-            pin_inputs_row = pin_inputs_row.push(input);
+        if !show_pin {
+            input = input
+                .secure(true)
+                .padding(iced::Padding::new(15.0).left(25.0));
+        } else {
+            input = input.padding(iced::Padding::new(15.0).left(20.0));
         }
-        column = column.push(pin_inputs_row);
 
-        column = column.push(Space::with_height(Length::Fixed(20.0)));
-
-        // Confirm PIN label with eye button
-        let pin_confirm_label = p1_regular("Confirm PIN:").style(theme::text::secondary);
-        let pin_confirm_eye_button = button::secondary(
-            Some(if show_pin_confirm {
-                icon::eye_icon()
-            } else {
-                icon::eye_slash_icon()
-            }),
-            "",
-        )
-        .on_press(ViewMessage::ToggleShowConfirmPin)
-        .width(Length::Fixed(50.0))
-        .padding(iced::Padding::new(10.0).left(15.0));
-
-        let pin_confirm_label_row = Row::new()
-            .spacing(10)
-            .align_y(Alignment::Center)
-            .push(pin_confirm_label)
-            .push(pin_confirm_eye_button);
-
-        column = column.push(pin_confirm_label_row);
-
-        // Confirm PIN inputs with consistent styling
-        let mut pin_confirm_inputs_row = Row::new().spacing(15).align_y(Alignment::Center);
-        for (i, digit) in pin_confirm_digits.iter().enumerate().take(4) {
-            let mut input = iced::widget::text_input("", digit)
-                .on_input(move |v| ViewMessage::PinConfirmDigitChanged(i, v))
-                .size(30)
-                .width(Length::Fixed(60.0));
-
-            if !show_pin_confirm {
-                input = input
-                    .secure(true)
-                    .padding(iced::Padding::new(15.0).left(25.0));
-            } else {
-                input = input.padding(iced::Padding::new(15.0).left(20.0));
-            }
-
-            pin_confirm_inputs_row = pin_confirm_inputs_row.push(input);
-        }
-        column = column.push(pin_confirm_inputs_row);
-
-        // Add extra padding before Create Cube button
-        column = column.push(Space::with_height(Length::Fixed(20.0)));
+        pin_inputs_row = pin_inputs_row.push(input);
     }
+    column = column.push(pin_inputs_row);
+
+    column = column.push(Space::with_height(Length::Fixed(20.0)));
+
+    // Confirm PIN label with eye button
+    let pin_confirm_label = p1_regular("Confirm PIN:").style(theme::text::secondary);
+    let pin_confirm_eye_button = button::secondary(
+        Some(if show_pin_confirm {
+            icon::eye_icon()
+        } else {
+            icon::eye_slash_icon()
+        }),
+        "",
+    )
+    .on_press(ViewMessage::ToggleShowConfirmPin)
+    .width(Length::Fixed(50.0))
+    .padding(iced::Padding::new(10.0).left(15.0));
+
+    let pin_confirm_label_row = Row::new()
+        .spacing(10)
+        .align_y(Alignment::Center)
+        .push(pin_confirm_label)
+        .push(pin_confirm_eye_button);
+
+    column = column.push(pin_confirm_label_row);
+
+    // Confirm PIN inputs with consistent styling
+    let mut pin_confirm_inputs_row = Row::new().spacing(15).align_y(Alignment::Center);
+    for (i, digit) in pin_confirm_digits.iter().enumerate().take(4) {
+        let mut input = iced::widget::text_input("", digit)
+            .on_input(move |v| ViewMessage::PinConfirmDigitChanged(i, v))
+            .size(30)
+            .width(Length::Fixed(60.0));
+
+        if !show_pin_confirm {
+            input = input
+                .secure(true)
+                .padding(iced::Padding::new(15.0).left(25.0));
+        } else {
+            input = input.padding(iced::Padding::new(15.0).left(20.0));
+        }
+
+        pin_confirm_inputs_row = pin_confirm_inputs_row.push(input);
+    }
+    column = column.push(pin_confirm_inputs_row);
+
+    // Add extra padding before Create Cube button
+    column = column.push(Space::with_height(Length::Fixed(20.0)));
 
     // Show error above the button
     if let Some(err) = error {
@@ -669,15 +668,11 @@ fn create_cube_form<'a>(
     }
 
     // Determine if button should be enabled
-    let can_create = cube_name.valid && !cube_name.value.trim().is_empty() && {
-        if pin_enabled {
-            // If PIN is enabled, all PIN fields must be filled
-            !pin_digits.iter().any(|d| d.is_empty())
-                && !pin_confirm_digits.iter().any(|d| d.is_empty())
-        } else {
-            true
-        }
-    };
+    // PIN is always required, so all PIN fields must be filled
+    let can_create = cube_name.valid
+        && !cube_name.value.trim().is_empty()
+        && !pin_digits.iter().any(|d| d.is_empty())
+        && !pin_confirm_digits.iter().any(|d| d.is_empty());
 
     column = column.push(
         button::primary(None, "Create Cube")
@@ -753,6 +748,14 @@ pub enum Message {
         CubeSettings,
     ),
     CubeCreated(Result<CubeSettings, String>),
+    BreezClientLoaded {
+        config: app::config::Config,
+        datadir: CoincubeDirectory,
+        network: Network,
+        cube: CubeSettings,
+        breez_client:
+            Result<std::sync::Arc<crate::app::breez::BreezClient>, crate::app::breez::BreezError>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -762,7 +765,6 @@ pub enum ViewMessage {
     ShowCreateCube(bool),
     CubeNameEdited(String),
     CreateCube,
-    TogglePinEnabled(bool),
     PinDigitChanged(usize, String),
     PinConfirmDigitChanged(usize, String),
     ToggleShowPin,
@@ -1085,66 +1087,43 @@ async fn check_network_datadir(path: NetworkDirectory) -> Result<State, String> 
     // Try to load cubes from settings
     match settings::Settings::from_file(&path) {
         Ok(s) => {
-            if s.cubes.is_empty() {
-                // Check if there are existing wallets without cubes - auto-migrate them
-                if !s.wallets.is_empty() {
-                    let network = path
-                        .path()
-                        .file_name()
-                        .and_then(|n| n.to_str())
-                        .and_then(|n| {
-                            n.parse::<coincube_core::miniscript::bitcoin::Network>()
-                                .ok()
-                        })
-                        .unwrap_or(coincube_core::miniscript::bitcoin::Network::Bitcoin);
+            // Filter out cubes without PINs - mandatory PIN enforcement
+            let original_count = s.cubes.len();
+            let valid_cubes: Vec<_> = s.cubes.into_iter().filter(|c| c.has_pin()).collect();
 
-                    let mut cubes = Vec::new();
-                    for wallet in &s.wallets {
-                        let cube_name = if let Some(alias) = &wallet.alias {
-                            alias.clone()
-                        } else {
-                            format!("My {} Cube", network_name(network))
-                        };
-                        let cube =
-                            CubeSettings::new(cube_name, network).with_vault(wallet.wallet_id());
-                        cubes.push(cube);
-                    }
+            // If we filtered out any cubes, update the settings file
+            if valid_cubes.len() != original_count {
+                let removed_count = original_count - valid_cubes.len();
+                tracing::warn!(
+                    "Removed {} cube(s) without PIN - PINs are now mandatory",
+                    removed_count
+                );
 
-                    // Save the cubes to settings
-                    if let Err(e) = settings::update_settings_file(&path, |mut settings| {
-                        settings.cubes = cubes.clone();
-                        Some(settings)
-                    })
-                    .await
-                    {
-                        tracing::warn!("Failed to save migrated cubes: {}", e);
-                    }
-
-                    Ok(State::Cubes {
-                        cubes,
-                        create_cube: false,
-                    })
-                } else {
-                    Ok(State::NoCube)
+                // Update settings file to remove invalid cubes
+                if let Err(e) = settings::update_settings_file(&path, |mut settings| {
+                    settings.cubes = valid_cubes.clone();
+                    Some(settings)
+                })
+                .await
+                {
+                    tracing::error!(
+                        "Failed to update settings after removing cubes without PIN: {}",
+                        e
+                    );
                 }
+            }
+
+            if valid_cubes.is_empty() {
+                // No valid cubes found - user needs to create one
+                Ok(State::NoCube)
             } else {
                 Ok(State::Cubes {
-                    cubes: s.cubes,
+                    cubes: valid_cubes,
                     create_cube: false,
                 })
             }
         }
         Err(settings::SettingsError::NotFound) => Ok(State::NoCube),
         Err(e) => Err(e.to_string()),
-    }
-}
-
-fn network_name(network: coincube_core::miniscript::bitcoin::Network) -> &'static str {
-    match network {
-        coincube_core::miniscript::bitcoin::Network::Bitcoin => "Bitcoin",
-        coincube_core::miniscript::bitcoin::Network::Testnet => "Testnet",
-        coincube_core::miniscript::bitcoin::Network::Testnet4 => "Testnet4",
-        coincube_core::miniscript::bitcoin::Network::Signet => "Signet",
-        coincube_core::miniscript::bitcoin::Network::Regtest => "Regtest",
     }
 }

@@ -1,3 +1,4 @@
+pub mod breez;
 #[cfg(feature = "buysell")]
 pub mod buysell;
 pub mod cache;
@@ -35,6 +36,7 @@ use wallet::{sync_status, SyncStatus};
 
 use crate::{
     app::{
+        breez::BreezClient,
         cache::{Cache, DaemonCache},
         error::Error,
         menu::Menu,
@@ -74,21 +76,25 @@ struct Panels {
 }
 
 impl Panels {
-    fn new_without_wallet() -> Panels {
-        // NO PLACEHOLDER WALLET - All vault panels are None
+    fn new_without_vault(breez_client: Arc<BreezClient>, wallet: Option<Arc<Wallet>>) -> Panels {
+        // NO VAULT - All vault panels are None, but Active panels always work
         // The UI layer prevents navigation to vault panels when has_vault=false
 
         Self {
             current: Menu::Home,
             vault_expanded: false,
             active_expanded: false,
-            // Active panels support operation without a wallet
-            global_home: GlobalHome::new_without_wallet(),
-            active_overview: ActiveOverview::new_without_wallet(),
-            active_send: ActiveSend::new_without_wallet(),
-            active_receive: ActiveReceive::new_without_wallet(),
-            active_transactions: ActiveTransactions::new_without_wallet(),
-            active_settings: ActiveSettings::new_without_wallet(),
+            // Active panels always available (use BreezClient, not Vault wallet)
+            global_home: if let Some(w) = &wallet {
+                GlobalHome::new(w.clone())
+            } else {
+                GlobalHome::new_without_wallet()
+            },
+            active_overview: ActiveOverview::new(breez_client.clone()),
+            active_send: ActiveSend::new(breez_client.clone()),
+            active_receive: ActiveReceive::new(breez_client.clone()),
+            active_transactions: ActiveTransactions::new(breez_client.clone()),
+            active_settings: ActiveSettings::new(breez_client),
             // All vault panels are None - no vault exists
             vault_overview: None,
             coins: None,
@@ -104,6 +110,7 @@ impl Panels {
     }
 
     fn new(
+        breez_client: Arc<BreezClient>,
         cache: &Cache,
         wallet: Arc<Wallet>,
         data_dir: CoincubeDirectory,
@@ -137,11 +144,11 @@ impl Panels {
                 cache.blockheight(),
                 show_rescan_warning,
             )),
-            active_overview: ActiveOverview::new(wallet.clone()),
-            active_send: ActiveSend::new(wallet.clone()),
-            active_receive: ActiveReceive::new(wallet.clone()),
-            active_transactions: ActiveTransactions::new(wallet.clone()),
-            active_settings: ActiveSettings::new(wallet.clone()),
+            active_overview: ActiveOverview::new(breez_client.clone()),
+            active_send: ActiveSend::new(breez_client.clone()),
+            active_receive: ActiveReceive::new(breez_client.clone()),
+            active_transactions: ActiveTransactions::new(breez_client.clone()),
+            active_settings: ActiveSettings::new(breez_client),
             coins: Some(CoinsPanel::new(
                 cache.coins(),
                 wallet.main_descriptor.first_timelock_value(),
@@ -341,6 +348,7 @@ impl Panels {
 pub struct App {
     cache: Cache,
     wallet: Option<Arc<Wallet>>,
+    breez_client: Arc<BreezClient>,
     daemon: Option<Arc<dyn Daemon + Sync + Send>>,
     internal_bitcoind: Option<Bitcoind>,
     cube_settings: settings::CubeSettings,
@@ -354,6 +362,7 @@ impl App {
     pub fn new(
         cache: Cache,
         wallet: Arc<Wallet>,
+        breez_client: Arc<BreezClient>,
         config: Config,
         daemon: Arc<dyn Daemon + Sync + Send>,
         data_dir: CoincubeDirectory,
@@ -371,6 +380,7 @@ impl App {
         .with_vault(wallet.id());
 
         let mut panels = Panels::new(
+            breez_client.clone(),
             &cache,
             wallet.clone(),
             data_dir.clone(),
@@ -393,6 +403,7 @@ impl App {
                 cache: cache_with_vault,
                 daemon: Some(daemon),
                 wallet: Some(wallet),
+                breez_client,
                 internal_bitcoind,
                 cube_settings,
                 config: config_arc,
@@ -403,6 +414,7 @@ impl App {
     }
 
     pub fn new_without_wallet(
+        breez_client: Arc<BreezClient>,
         config: Config,
         datadir: CoincubeDirectory,
         network: coincube_core::miniscript::bitcoin::Network,
@@ -421,16 +433,17 @@ impl App {
         };
         tracing::debug!("Cache configured with has_vault=false");
 
-        // Create panels without wallet - only Active and other non-Vault features will be available
-        let panels = Panels::new_without_wallet();
+        // Create panels without vault - Active wallet always available via BreezClient
+        let panels = Panels::new_without_vault(breez_client.clone(), None);
 
-        tracing::info!("App created without wallet successfully");
+        tracing::info!("App created without vault successfully");
         (
             Self {
                 panels,
                 cache,
                 daemon: None,
                 wallet: None,
+                breez_client,
                 internal_bitcoind: None,
                 cube_settings,
                 config: config_arc,
@@ -459,6 +472,10 @@ impl App {
 
     pub fn cache(&self) -> &Cache {
         &self.cache
+    }
+
+    pub fn breez_client(&self) -> Arc<BreezClient> {
+        self.breez_client.clone()
     }
 
     pub fn wallet(&self) -> Option<&Wallet> {

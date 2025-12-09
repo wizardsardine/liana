@@ -82,6 +82,7 @@ impl State for BuySellPanel {
             BuySellMessage::ResetWidget => {
                 if let Some(country) = &self.detected_country {
                     if mavapay_supported(&country.code) {
+                        // TODO: Re-enable keyring once Breez SDK updates security-framework dependency
                         // attempt automatic login from os-keyring
                         // match keyring::Entry::new("io.coincube.Vault", "mavapay") {
                         //     Ok(entry) => {
@@ -218,7 +219,7 @@ impl State for BuySellPanel {
                             Ok(user) => {
                                 mavapay.auth_token = Some(token);
                                 mavapay.current_user = Some(user);
-                                log::info!("Mavapay session successfully restored from OS keyring");
+                                // log::info!("Mavapay session successfully restored from OS keyring");
                                 mavapay.step = MavapayFlowStep::Transaction {
                                     buy_or_sell: buy_or_sell.clone(),
                                     country: country.clone(),
@@ -246,7 +247,7 @@ impl State for BuySellPanel {
                                 };
                             }
                             Err(e) => {
-                                log::error!("Unable to parse user data from OS keyring, possibly malformed or outdated data: {e}");
+                                // log::error!("Unable to parse user data from OS keyring, possibly malformed or outdated data: {e}");
                                 self.error = Some(
                                     "Unable to restore Mavapay session, data is malformed or outdated"
                                         .to_string(),
@@ -384,6 +385,7 @@ impl State for BuySellPanel {
                             log::info!("Successfully logged in user: {}", &login.user.email);
                             let bytes = serde_json::to_vec(&login.user).unwrap();
 
+                            // TODO: Re-enable keyring once Breez SDK updates security-framework dependency
                             // store token in OS keyring
                             // if let Ok(entry) = keyring::Entry::new("io.coincube.Vault", "mavapay") {
                             //     if let Err(e) = entry.set_password(&login.token) {

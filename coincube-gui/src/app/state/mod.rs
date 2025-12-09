@@ -21,7 +21,11 @@ use crate::daemon::{
     model::{remaining_sequence, Coin},
     Daemon,
 };
-pub use active::{ActiveOverview, ActiveReceive, ActiveSend, ActiveSettings, ActiveTransactions};
+pub use active::overview::ActiveOverview;
+pub use active::receive::ActiveReceive;
+pub use active::send::ActiveSend;
+pub use active::settings::ActiveSettings;
+pub use active::transactions::ActiveTransactions;
 pub use global_home::GlobalHome;
 pub use vault::coins::CoinsPanel;
 pub use vault::label::LabelsEdited;

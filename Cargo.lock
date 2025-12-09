@@ -451,7 +451,7 @@ checksum = "724d232316bc0d9ce24eb3b3a6c600f487bd877513bd0e73ec02f8c890af3275"
 dependencies = [
  "async-trait",
  "bitbox-api",
- "bitcoin 0.32.7",
+ "bitcoin 0.32.8",
  "coldcard",
  "futures",
  "hidapi",
@@ -766,7 +766,7 @@ name = "bdk_chain"
 version = "0.16.0"
 source = "git+https://github.com/wizardsardine/bdk?branch=release%2F1.0.0-alpha.13#8936e828861f0f32500c4156b6534238e5154b0f"
 dependencies = [
- "bitcoin 0.32.7",
+ "bitcoin 0.32.8",
  "miniscript",
 ]
 
@@ -813,7 +813,7 @@ version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "689260fce0f6e366877a624be4c87518e80f99951c421ae80c3be6523a51bc9d"
 dependencies = [
- "bitcoin 0.32.7",
+ "bitcoin 0.32.8",
  "serde",
  "serde_json",
  "thiserror 2.0.17",
@@ -855,7 +855,7 @@ checksum = "04d5d5ce87126e79759ea758e3ed4c1113a84fd4188a61c23d425f05c9e3c791"
 dependencies = [
  "async-trait",
  "base32",
- "bitcoin 0.32.7",
+ "bitcoin 0.32.8",
  "byteorder",
  "chrono",
  "getrandom 0.2.16",
@@ -887,9 +887,9 @@ dependencies = [
 
 [[package]]
 name = "bitcoin"
-version = "0.32.7"
+version = "0.32.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0fda569d741b895131a88ee5589a467e73e9c4718e958ac9308e4f7dc44b6945"
+checksum = "1e499f9fc0407f50fe98af744ab44fa67d409f76b6772e1689ec8485eb0c0f66"
 dependencies = [
  "base58ck",
  "base64 0.21.7",
@@ -1024,7 +1024,7 @@ version = "0.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d8909583c5fab98508e80ef73e5592a651c954993dc6b7739963257d19f0e71a"
 dependencies = [
- "bitcoin 0.32.7",
+ "bitcoin 0.32.8",
  "serde",
  "serde_json",
 ]
@@ -1118,7 +1118,7 @@ source = "git+https://github.com/SatoshiPortal/boltz-rust?rev=d62288fdd1799d90df
 dependencies = [
  "async-trait",
  "bip39",
- "bitcoin 0.32.7",
+ "bitcoin 0.32.8",
  "electrum-client 0.21.0",
  "elements",
  "env_logger 0.7.1",
@@ -1588,7 +1588,7 @@ dependencies = [
 name = "coincube-ui"
 version = "0.3.0"
 dependencies = [
- "bitcoin 0.32.7",
+ "bitcoin 0.32.8",
  "chrono",
  "iced",
  "iced_aw",
@@ -2378,7 +2378,7 @@ version = "0.21.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7a0bd443023f9f5c4b7153053721939accc7113cbdf810a024434eed454b3db1"
 dependencies = [
- "bitcoin 0.32.7",
+ "bitcoin 0.32.8",
  "byteorder",
  "libc",
  "log",
@@ -2395,7 +2395,7 @@ version = "0.23.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5ed9a037f88aa61d3627a20af1c68fa0405ed5a16d9a0d9dc0e66adcda44afbe"
 dependencies = [
- "bitcoin 0.32.7",
+ "bitcoin 0.32.8",
  "byteorder",
  "libc",
  "log",
@@ -2413,7 +2413,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "81b2569d3495bfdfce36c504fd4d78752ff4a7699f8a33e6f3ee523bddf9f6ad"
 dependencies = [
  "bech32 0.11.1",
- "bitcoin 0.32.7",
+ "bitcoin 0.32.8",
  "secp256k1-zkp",
  "serde",
  "serde_json",
@@ -2425,7 +2425,7 @@ version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "571fa105690f83c7833df2109eb2e14ca0e62d633d2624ffcb166ff18a3da870"
 dependencies = [
- "bitcoin 0.32.7",
+ "bitcoin 0.32.8",
  "elements",
  "miniscript",
  "serde",
@@ -2570,7 +2570,7 @@ name = "esplora-client"
 version = "0.12.0"
 source = "git+https://github.com/breez/rust-esplora-client?branch=connect-timeout#7a022d59323e15f770d6d996d446173eaca21d73"
 dependencies = [
- "bitcoin 0.32.7",
+ "bitcoin 0.32.8",
  "hex-conservative 0.2.2",
  "log",
  "minreq",
@@ -4805,7 +4805,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "38bb192e14da7725505c49791fde863bafee2b28dede2f37e05559fe72c29416"
 dependencies = [
  "async-trait",
- "bitcoin 0.32.7",
+ "bitcoin 0.32.8",
  "miniscript",
 ]
 
@@ -4954,7 +4954,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8ffe63f56b10d214be1ade8698ee80af82d981237cae3e581e7a631f5f4959f3"
 dependencies = [
  "bech32 0.11.1",
- "bitcoin 0.32.7",
+ "bitcoin 0.32.8",
  "dnssec-prover",
  "hashbrown 0.13.2",
  "libm",
@@ -4984,7 +4984,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "90ab9f6ea77e20e3129235e62a2e6bd64ed932363df104e864ee65ccffb54a8f"
 dependencies = [
  "bech32 0.9.1",
- "bitcoin 0.32.7",
+ "bitcoin 0.32.8",
  "lightning-types 0.1.0",
 ]
 
@@ -4995,7 +4995,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "11209f386879b97198b2bfc9e9c1e5d42870825c6bd4376f17f95357244d6600"
 dependencies = [
  "bech32 0.11.1",
- "bitcoin 0.32.7",
+ "bitcoin 0.32.8",
  "lightning-types 0.2.0",
 ]
 
@@ -5006,7 +5006,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1083b8d9137000edf3bfcb1ff011c0d25e0cdd2feb98cc21d6765e64a494148f"
 dependencies = [
  "bech32 0.9.1",
- "bitcoin 0.32.7",
+ "bitcoin 0.32.8",
  "hex-conservative 0.2.2",
 ]
 
@@ -5016,7 +5016,7 @@ version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f2cd84d4e71472035903e43caded8ecc123066ce466329ccd5ae537a8d5488c7"
 dependencies = [
- "bitcoin 0.32.7",
+ "bitcoin 0.32.8",
 ]
 
 [[package]]
@@ -5344,7 +5344,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "487906208f38448e186e3deb02f2b8ef046a9078b0de00bdb28bf4fb9b76951c"
 dependencies = [
  "bech32 0.11.1",
- "bitcoin 0.32.7",
+ "bitcoin 0.32.8",
  "serde",
 ]
 

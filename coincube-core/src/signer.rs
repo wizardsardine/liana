@@ -234,6 +234,25 @@ impl HotSigner {
         self.master_xpriv.fingerprint(secp)
     }
 
+    /// Derive the SLIP-0077 master blinding key for Liquid/Elements confidential transactions.
+    /// Returns the 32-byte master blinding key derived from the BIP39 seed.
+    pub fn slip77_master_blinding_key(&self) -> [u8; 32] {
+        use bitcoin::hashes::{sha512, Hash, HashEngine, Hmac, HmacEngine};
+
+        // Get BIP39 seed (without passphrase)
+        let seed = self.mnemonic.to_seed("");
+
+        // SLIP-0077: master_blinding_key = HMAC-SHA512(key="SLIP-0077", msg=seed)[0:32]
+        let mut engine = HmacEngine::<sha512::Hash>::new(b"SLIP-0077");
+        engine.input(&seed);
+        let hmac_result = Hmac::<sha512::Hash>::from_engine(engine);
+
+        // Take first 32 bytes
+        let mut result = [0u8; 32];
+        result.copy_from_slice(&hmac_result.as_byte_array()[..32]);
+        result
+    }
+
     /// Store the mnemonic in a file within the given "data directory".
     /// The file is stored within a "mnemonics" folder, with the filename set to the fingerprint of
     /// the master xpub corresponding to this mnemonic.
@@ -398,7 +417,7 @@ impl HotSigner {
         // key_bytes and plaintext_bytes are automatically zeroized when dropped here
     }
 
-    fn xpriv_at(
+    pub fn xpriv_at(
         &self,
         der_path: &bip32::DerivationPath,
         secp: &secp256k1::Secp256k1<impl secp256k1::Signing>,
