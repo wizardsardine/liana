@@ -168,7 +168,6 @@ impl breez::Signer for HotSignerAdapter {
 #[derive(Clone)]
 pub struct BreezClient {
     sdk: Arc<breez::LiquidSdk>,
-    #[allow(dead_code)]
     signer: Arc<Mutex<HotSigner>>,
 }
 
