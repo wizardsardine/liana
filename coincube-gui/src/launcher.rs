@@ -556,7 +556,7 @@ fn create_cube_form<'a>(
         .push(h4_bold("Create a new Cube"))
         .push(
             p1_regular(
-                "A Cube is your account that can contain a Vault wallet and other features.",
+                "A Cube is your account which can contain an Active wallet, a Vault wallet and other features.",
             )
             .style(theme::text::secondary),
         )
@@ -1087,12 +1087,38 @@ async fn check_network_datadir(path: NetworkDirectory) -> Result<State, String> 
     // Try to load cubes from settings
     match settings::Settings::from_file(&path) {
         Ok(s) => {
-            if s.cubes.is_empty() {
-                // No cubes found - user needs to create one
+            // Filter out cubes without PINs - mandatory PIN enforcement
+            let original_count = s.cubes.len();
+            let valid_cubes: Vec<_> = s.cubes.into_iter().filter(|c| c.has_pin()).collect();
+
+            // If we filtered out any cubes, update the settings file
+            if valid_cubes.len() != original_count {
+                let removed_count = original_count - valid_cubes.len();
+                tracing::warn!(
+                    "Removed {} cube(s) without PIN - PINs are now mandatory",
+                    removed_count
+                );
+
+                // Update settings file to remove invalid cubes
+                if let Err(e) = settings::update_settings_file(&path, |mut settings| {
+                    settings.cubes = valid_cubes.clone();
+                    Some(settings)
+                })
+                .await
+                {
+                    tracing::error!(
+                        "Failed to update settings after removing cubes without PIN: {}",
+                        e
+                    );
+                }
+            }
+
+            if valid_cubes.is_empty() {
+                // No valid cubes found - user needs to create one
                 Ok(State::NoCube)
             } else {
                 Ok(State::Cubes {
-                    cubes: s.cubes,
+                    cubes: valid_cubes,
                     create_cube: false,
                 })
             }

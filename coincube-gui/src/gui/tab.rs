@@ -318,11 +318,11 @@ impl Tab {
                             i.datadir.clone(),
                             cfg,
                             i.network,
-                            None,
+                            internal_bitcoind,
                             i.context.backup.clone(),
                             Some(*settings),
                             cube.clone(),
-                            None, // No pre-loaded BreezClient (installer path)
+                            i.breez_client.clone(), // Pass pre-loaded BreezClient from installer
                         );
                         self.state = State::Loader(Box::new(loader));
                         command.map(|msg| Message::Load(Box::new(msg)))
