@@ -27,7 +27,7 @@ use coincube_ui::{
 use crate::{
     app::{
         error::Error,
-        view::{vault::hw, vault::label, vault::warning::warn},
+        view::{placeholder, vault::hw, vault::label, vault::warning::warn},
     },
     hw::HardwareWallet,
 };
@@ -105,6 +105,7 @@ pub fn receive<'a>(
     // Number of start and end address characters to show in collapsed view.
     const NUM_ADDR_CHARS: usize = 16;
     let mut addresses_count = 0; // for counting number of new addresses generated
+
     Column::new()
         .push(
             Row::new()
@@ -120,7 +121,13 @@ pub fn receive<'a>(
                     .on_press(Message::NextReceiveAddress)
                 }),
         )
-        .push(text("Always generate a new address for each deposit."))
+        .push_maybe((prev_addresses.is_empty() && addresses.is_empty()).then(|| {
+            placeholder(
+                icon::receive_icon().size(80),
+                "No addresses yet",
+                "Generate a new address to receive bitcoin. Always generate a new address for each deposit.",
+            )
+        }))
         .push(
             Row::new()
                 .spacing(10)
@@ -260,7 +267,7 @@ pub fn receive<'a>(
                 .style(theme::card::simple),
             ),
         )
-        .spacing(20)
+        .spacing(25)
         .into()
 }
 
