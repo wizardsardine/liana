@@ -34,7 +34,7 @@ use crate::{
 
 use super::super::message::Message;
 
-fn address_card<'a>(
+pub fn address_card<'a>(
     row_index: usize,
     address: &'a bitcoin::Address,
     labels: &'a HashMap<String, String>,

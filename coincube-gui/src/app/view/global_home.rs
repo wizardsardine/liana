@@ -9,13 +9,13 @@ use coincube_ui::{
     widget::*,
 };
 use iced::{
-    widget::{Column, Space, Stack},
+    widget::{Button, Column, Space, Stack},
     Alignment, Length,
 };
 
 use crate::app::{
     menu::Menu,
-    view::{FiatAmountConverter, HomeMessage, TransferFlowMessage},
+    view::{vault::receive::address_card, vault::warning::warn, FiatAmountConverter, HomeMessage},
 };
 use crate::app::{
     menu::{ActiveSubMenu, VaultSubMenu},
@@ -206,7 +206,7 @@ fn select_transfer_direction_view<'a>(
             .push(
                 button::secondary(None, "< Previous")
                     .width(Length::Fixed(150.0))
-                    .on_press(Message::Home(HomeMessage::GoToStep(HomeView::DASHBOARD))),
+                    .on_press(Message::Home(HomeMessage::PreviousStep)),
             )
             .push(Space::with_height(Length::Fixed(20.0)))
             .push(
@@ -333,9 +333,7 @@ fn enter_amount_card<'a>(
             Column::new()
                 .push(Container::new(
                     form::Form::new_amount_btc("Amount in BTC", amount, |msg| {
-                        Message::Home(HomeMessage::TransferFlow(
-                            TransferFlowMessage::AmountEdited(msg),
-                        ))
+                        Message::Home(HomeMessage::AmountEdited(msg))
                     })
                     .warning("Please enter an amount")
                     .size(20)
@@ -468,6 +466,171 @@ fn enter_amount_view<'a>(
         .into()
 }
 
+fn confirm_transfer_view<'a>(
+    direction: TransferDirection,
+    amount: &'a form::Value<String>,
+    receive_address: Option<&'a coincube_core::miniscript::bitcoin::Address>,
+    labels: &'a std::collections::HashMap<String, String>,
+    labels_editing: &'a std::collections::HashMap<String, form::Value<String>>,
+    address_expanded: bool,
+    warning: Option<&'a crate::app::error::Error>,
+) -> Element<'a, Message> {
+    const NUM_ADDR_CHARS: usize = 16;
+
+    let content = Column::new()
+        .width(Length::Fill)
+        .push(Space::with_height(Length::Fixed(60.0)))
+        .push(
+            button::secondary(None, "< Previous")
+                .width(Length::Fixed(150.0))
+                .on_press(Message::Home(HomeMessage::PreviousStep)),
+        )
+        .push(Space::with_height(Length::Fixed(20.0)))
+        .push_maybe(warning.map(|w| warn(Some(w))))
+        .push(Container::new(
+            Column::new()
+                .push(
+                    Column::new()
+                        .spacing(10)
+                        .push(text("Confirm Transfer").bold().size(H2_SIZE))
+                        .push(
+                            Row::new()
+                                .spacing(4)
+                                .push(text("Sending from"))
+                                .push(text(direction.display()).bold()),
+                        )
+                        .align_x(Alignment::Center)
+                        .width(Length::Fill),
+                )
+                .push(Space::with_height(60))
+                .push_maybe(match direction {
+                    TransferDirection::ActiveToVault => Some(
+                        Column::new()
+                            .spacing(10)
+                            .push(
+                                text("Receiving Address")
+                                    .bold()
+                                    .width(Length::Fill)
+                                    .align_x(Alignment::Center),
+                            )
+                            .push_maybe(receive_address.map(|addr| -> Element<'a, Message> {
+                                if address_expanded {
+                                    Button::new(address_card(0, addr, labels, labels_editing))
+                                        .padding(0)
+                                        .on_press(Message::SelectAddress(addr.clone()))
+                                        .style(theme::button::transparent_border)
+                                        .into()
+                                } else {
+                                    let addr_str = addr.to_string();
+                                    let addr_len = addr_str.chars().count();
+
+                                    Container::new(
+                                        Button::new(
+                                            Row::new()
+                                                .spacing(10)
+                                                .push(
+                                                    Container::new(
+                                                        p2_regular(
+                                                            if addr_len > 2 * NUM_ADDR_CHARS {
+                                                                format!(
+                                                                    "{}...{}",
+                                                                    addr_str
+                                                                        .chars()
+                                                                        .take(NUM_ADDR_CHARS)
+                                                                        .collect::<String>(),
+                                                                    addr_str
+                                                                        .chars()
+                                                                        .skip(
+                                                                            addr_len
+                                                                                - NUM_ADDR_CHARS
+                                                                        )
+                                                                        .collect::<String>(),
+                                                                )
+                                                            } else {
+                                                                addr_str.clone()
+                                                            },
+                                                        )
+                                                        .small()
+                                                        .style(theme::text::secondary),
+                                                    )
+                                                    .padding(10)
+                                                    .width(Length::Fixed(350.0)),
+                                                )
+                                                .push(
+                                                    Container::new(
+                                                        text(
+                                                            labels
+                                                                .get(&addr_str)
+                                                                .cloned()
+                                                                .unwrap_or_default(),
+                                                        )
+                                                        .small()
+                                                        .style(theme::text::secondary),
+                                                    )
+                                                    .padding(10)
+                                                    .width(Length::Fill),
+                                                )
+                                                .align_y(Alignment::Center),
+                                        )
+                                        .on_press(Message::SelectAddress(addr.clone()))
+                                        .padding(20)
+                                        .width(Length::Fill)
+                                        .style(theme::button::secondary),
+                                    )
+                                    .style(theme::card::simple)
+                                    .into()
+                                }
+                            }))
+                            .push_maybe(receive_address.is_none().then(|| {
+                                text("No receiving address available. Please generate one first.")
+                                    .style(theme::text::secondary)
+                            })),
+                    ),
+                    TransferDirection::VaultToActive => {
+                        // TODO: This should be implemented once Active Wallet is done
+                        Some(
+                            Column::new()
+                                .spacing(10)
+                                .push(text("Receiving Wallet").bold())
+                                .push(
+                                    text("Transferring to Active wallet")
+                                        .style(theme::text::secondary),
+                                )
+                                .push(
+                                    text("(Active wallet address generation not yet implemented)")
+                                        .size(12)
+                                        .style(theme::text::secondary),
+                                ),
+                        )
+                    }
+                }),
+        ))
+        .push(Space::with_height(Length::Fixed(20.0)))
+        .push(
+            Container::new(
+                Row::new()
+                    .padding(20)
+                    .push(text("Amount:"))
+                    .push(Space::with_width(Length::Fill))
+                    .push(text(&amount.value))
+                    .push(Space::with_width(4))
+                    .push(text("BTC")),
+            )
+            .width(Length::Fill)
+            .style(theme::card::simple),
+        )
+        .push(Space::with_height(Length::Fixed(60.0)))
+        .push(
+            button::primary(None, "Confirm Transfer")
+                .on_press(Message::Home(HomeMessage::ConfirmTransfer)),
+        );
+
+    Container::new(content)
+        .width(Length::Fill)
+        .center_x(Length::Fill)
+        .into()
+}
+
 #[derive(Clone, Copy, Debug)]
 pub enum TransferDirection {
     ActiveToVault,
@@ -503,18 +666,20 @@ pub struct GlobalViewConfig<'a> {
     pub current_view: HomeView,
     pub transfer_direction: Option<TransferDirection>,
     pub entered_amount: &'a form::Value<String>,
+    pub receive_address: Option<&'a coincube_core::miniscript::bitcoin::Address>,
+    pub receive_index: Option<&'a coincube_core::miniscript::bitcoin::bip32::ChildNumber>,
+    pub labels: &'a std::collections::HashMap<String, String>,
+    pub labels_editing: &'a std::collections::HashMap<String, form::Value<String>>,
+    pub address_expanded: bool,
+    pub warning: Option<&'a crate::app::error::Error>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct HomeView {
     pub step: usize,
 }
 
 impl HomeView {
-    pub const DASHBOARD: usize = 0;
-    pub const SELECT_TRANSFER_DIRECTION: usize = 1;
-    pub const ENTER_AMOUNT: usize = 2;
-
     pub fn next(&mut self) {
         self.step += 1;
     }
@@ -525,20 +690,8 @@ impl HomeView {
         }
     }
 
-    pub fn goto(&mut self, step: usize) {
-        self.step = step;
-    }
-
     pub fn reset(&mut self) {
-        self.step = Self::DASHBOARD;
-    }
-}
-
-impl Default for HomeView {
-    fn default() -> Self {
-        Self {
-            step: Self::DASHBOARD,
-        }
+        self.step = 0;
     }
 }
 
@@ -552,13 +705,19 @@ pub fn global_home_view<'a>(config: GlobalViewConfig<'a>) -> Element<'a, Message
         current_view,
         transfer_direction,
         entered_amount,
+        receive_address,
+        receive_index: _receive_index,
+        labels,
+        labels_editing,
+        address_expanded,
+        warning,
     } = config;
 
     match current_view.step {
-        HomeView::SELECT_TRANSFER_DIRECTION => {
+        1 => {
             return select_transfer_direction_view(transfer_direction);
         }
-        HomeView::ENTER_AMOUNT => {
+        2 => {
             if let Some(direction) = transfer_direction {
                 return enter_amount_view(
                     direction,
@@ -569,7 +728,20 @@ pub fn global_home_view<'a>(config: GlobalViewConfig<'a>) -> Element<'a, Message
                 );
             }
         }
-        HomeView::DASHBOARD => {}
+        3 => {
+            if let Some(direction) = transfer_direction {
+                return confirm_transfer_view(
+                    direction,
+                    entered_amount,
+                    receive_address,
+                    labels,
+                    labels_editing,
+                    address_expanded,
+                    warning,
+                );
+            }
+        }
+        0 => {}
         _ => {}
     }
 
@@ -631,9 +803,7 @@ pub fn global_home_view<'a>(config: GlobalViewConfig<'a>) -> Element<'a, Message
                             .height(Length::Fixed(60.0))
                             .width(Length::Fixed(150.0))
                             .padding(iced::Padding::from([15, 0]))
-                            .on_press(Message::Home(HomeMessage::GoToStep(
-                                HomeView::SELECT_TRANSFER_DIRECTION,
-                            ))),
+                            .on_press(Message::Home(HomeMessage::NextStep)),
                     )
                     .width(Length::Fill)
                     .height(Length::Fill)

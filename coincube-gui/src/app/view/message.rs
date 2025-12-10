@@ -240,17 +240,8 @@ impl From<FiatMessage> for Message {
 pub enum HomeMessage {
     ToggleBalanceMask,
     SelectTransferDirection(TransferDirection),
-    TransferFlow(TransferFlowMessage),
-    GoToStep(usize),
+    AmountEdited(String),
+    ConfirmTransfer,
     NextStep,
     PreviousStep,
-}
-
-#[derive(Debug, Clone)]
-pub enum TransferFlowMessage {
-    Start,
-    EnterAmount(TransferDirection),
-    ConfirmTransfer(TransferDirection),
-    AmountEdited(String),
-    Cancel,
 }
