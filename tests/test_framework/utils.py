@@ -42,6 +42,7 @@ IS_NOT_BITCOIND_24 = bool(int(os.getenv("IS_NOT_BITCOIND_24", True)))
 USE_TAPROOT = bool(
     int(os.getenv("USE_TAPROOT", False))
 )  # TODO: switch to True in a couple releases.
+INCLUDE_IGNORED = bool(int(os.getenv("INCLUDE_IGNORED", False)))
 
 
 COIN = 10**8
