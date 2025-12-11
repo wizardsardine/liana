@@ -504,7 +504,7 @@ mod test {
         let parsed: Result<Backup, _> = serde_json::from_str(no_network);
         assert!(parsed.is_err());
 
-        // But it's the only mandatory field,  w/ accounts array
+        // But it's the only mandatory field, w/ accounts array
         let minimal = r#"{"network":"signet","accounts":[]}"#;
         let _parsed: Backup = serde_json::from_str(minimal).unwrap();
     }
