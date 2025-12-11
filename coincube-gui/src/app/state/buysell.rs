@@ -316,6 +316,7 @@ impl State for BuySellPanel {
                                 buy_or_sell,
                                 beneficiary,
                                 transfer_speed,
+                                sending_quote,
                                 ..
                             },
                             msg,
@@ -339,6 +340,7 @@ impl State for BuySellPanel {
 
                                 // TODO: Beneficiary specific form inputs
                                 MavapayMessage::CreateQuote => {
+                                    *sending_quote = true;
                                     return mavapay
                                         .create_quote(self.coincube_client.clone())
                                         .map(|b| Message::View(ViewMessage::BuySell(b)));
@@ -353,54 +355,58 @@ impl State for BuySellPanel {
                                     // poll mavapay API for the status of the adjacent transaction (quote.hash == transaction.hash)
                                     let client = mavapay.client.clone();
                                     let quote_hash = quote.hash.clone();
-                                    let quote_order_id = quote.order_id.clone();
+                                    if let Some(quote_order_id) = quote.order_id.clone() {
+                                        let transaction_checker = Task::perform(
+                                            async move {
+                                                loop {
+                                                    let order =
+                                                        client.get_order(&quote_order_id).await;
 
-                                    let transaction_checker = Task::perform(
-                                        async move {
-                                            loop {
-                                                let order = client.get_order(&quote_order_id).await;
+                                                    match order {
+                                                        Ok(order)
+                                                            if matches!(
+                                                                order.status,
+                                                                TransactionStatus::Paid
+                                                            ) =>
+                                                        {
+                                                            break order
+                                                        }
+                                                        Ok(order) => {
+                                                            log::info!("[MAVAPAY] Current Order for Quote with hash ({}) = {{ {}: {:?} }}", quote_hash, order.id, order.status);
+                                                        }
+                                                        Err(e) => {
+                                                            log::error!("[MAVAPAY] Unable to check Mavapay API for transaction status: {:?}", e)
+                                                        }
+                                                    }
 
-                                                match order {
-                                                    Ok(order)
-                                                        if matches!(
-                                                            order.status,
-                                                            TransactionStatus::Paid
-                                                        ) =>
-                                                    {
-                                                        break order
-                                                    }
-                                                    Ok(order) => {
-                                                        log::info!("[MAVAPAY] Current order for quote with hash ({}) = {:?}", quote_hash, order);
-                                                    }
-                                                    Err(e) => {
-                                                        log::error!("[MAVAPAY] Unable to check Mavapay API for transaction status: {:?}", e)
-                                                    }
+                                                    tokio::time::sleep(
+                                                        std::time::Duration::from_secs(10),
+                                                    )
+                                                    .await
                                                 }
-
-                                                tokio::time::sleep(std::time::Duration::from_secs(
-                                                    10,
+                                            },
+                                            |res| {
+                                                Message::View(ViewMessage::BuySell(
+                                                    BuySellMessage::Mavapay(
+                                                        MavapayMessage::QuoteFulfilled(res),
+                                                    ),
                                                 ))
-                                                .await
-                                            }
-                                        },
-                                        |res| {
-                                            Message::View(ViewMessage::BuySell(
-                                                BuySellMessage::Mavapay(
-                                                    MavapayMessage::QuoteFulfilled(res),
-                                                ),
-                                            ))
-                                        },
-                                    );
+                                            },
+                                        );
 
-                                    // switch to checkout
-                                    mavapay.step = MavapayFlowStep::Checkout {
-                                        sat_amount: sat_amount.clone(),
-                                        buy_or_sell: buy_or_sell.clone(),
-                                        beneficiary: beneficiary.clone(),
-                                        quote,
+                                        // switch to checkout
+                                        mavapay.step = MavapayFlowStep::Checkout {
+                                            sat_amount: sat_amount.clone(),
+                                            buy_or_sell: buy_or_sell.clone(),
+                                            beneficiary: beneficiary.clone(),
+                                            quote,
+                                        };
+
+                                        return transaction_checker;
+                                    } else {
+                                        *sending_quote = false;
+                                        self.error = Some("Unable to process payment, Mavapay Quote created without `order-id`".to_string())
                                     };
-
-                                    return transaction_checker;
                                 }
 
                                 MavapayMessage::GetPrice => {

@@ -35,7 +35,8 @@ impl std::fmt::Display for MavapayError {
 
 impl From<reqwest::Error> for MavapayError {
     fn from(error: reqwest::Error) -> Self {
-        Self::Http(None, error.to_string())
+        log::error!("[REQWEST] {:?}", error);
+        Self::Http(error.status().map(|s| s.as_u16()), error.to_string())
     }
 }
 
@@ -287,7 +288,7 @@ pub struct GetQuoteRequest {
 #[serde(rename_all = "camelCase")]
 pub struct GetQuoteResponse {
     pub id: String,
-    pub order_id: String,
+    pub order_id: Option<String>,
     pub exchange_rate: f64,
     pub usd_to_target_currency_rate: f64,
     pub source_currency: MavapayUnitCurrency,
@@ -338,16 +339,13 @@ pub struct BankCustomerInquiry {
 #[serde(rename_all = "camelCase")]
 pub struct GetOrderResponse {
     pub id: String,
-    pub quote_id: String,
+    pub amount: u64,
     pub status: TransactionStatus,
     pub currency: MavapayCurrency,
-    pub payment_collection_method: MavapayPaymentMethod,
-    pub is_valid: bool,
+    pub payment_method: MavapayPaymentMethod,
 
     pub created_at: Option<String>,
     pub updated_at: Option<String>,
-    pub quotes: Vec<GetQuoteResponse>,
-    pub transactions: Vec<Transaction>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

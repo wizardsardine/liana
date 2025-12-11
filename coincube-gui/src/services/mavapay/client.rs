@@ -93,7 +93,7 @@ impl MavapayClient {
     pub async fn get_order(&self, order_id: &str) -> Result<GetOrderResponse, MavapayError> {
         let response = self
             .request(Method::GET, "/v1/order")
-            .query(&["id", order_id])
+            .query(&[("id", order_id)])
             .send()
             .await?
             .check_success()

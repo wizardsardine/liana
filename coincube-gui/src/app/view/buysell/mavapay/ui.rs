@@ -30,12 +30,11 @@ fn checkout_form<'a>(state: &'a MavapayState) -> Column<'a, BuySellMessage> {
     iced::widget::column![match buy_or_sell {
         BuyOrSell::Buy { address: _ } => {
             // TODO: display BTC amount to be deposited, generated address and bank deposit details.
-            Space::with_height(0)
+            text::h4_bold("Your turn now, send funds into the provided account details to drive the bitcoin deposit")
         }
         BuyOrSell::Sell => {
             // TODO: display bitcoin address or lightning invoice for deposit, and beneficiary input forms
-            // TODO: If country uses BankTransfer, render banks selector dropdown
-            Space::with_height(0)
+            text::h4_bold("Onchain Sell is currently unsupported")
         }
     }]
 }
@@ -47,6 +46,7 @@ fn transactions_form<'a>(state: &'a MavapayState) -> Column<'a, BuySellMessage> 
         buy_or_sell,
         country,
         transfer_speed,
+        sending_quote,
         ..
     } = &state.step
     else {
@@ -121,10 +121,13 @@ fn transactions_form<'a>(state: &'a MavapayState) -> Column<'a, BuySellMessage> 
                         // TODO: onchain sell currently unsupported, lightning integration will be required to proceed
                         button::primary(Some(send_icon()), "Send Bitcoin (Currently Unsupported)")
                     }
-                    BuyOrSell::Buy { .. } =>
-                        // TODO: Disable after initial click while waiting for quote to be fulfilled
-                        button::primary(Some(card_icon()), "Proceed to Payment")
-                            .on_press(BuySellMessage::Mavapay(MavapayMessage::CreateQuote)),
+                    BuyOrSell::Buy { .. } => match sending_quote {
+                        true => button::primary(Some(reload_icon()), "Processing Quote..."),
+                        false => {
+                            button::primary(Some(card_icon()), "Proceed to Payment")
+                                .on_press(BuySellMessage::Mavapay(MavapayMessage::CreateQuote))
+                        }
+                    },
                 }
                 .width(Length::Fill)
             ]

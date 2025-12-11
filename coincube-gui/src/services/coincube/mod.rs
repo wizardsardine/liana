@@ -52,7 +52,6 @@ pub struct SaveQuoteRequest<'a, T: Serialize> {
 #[derive(Debug, Clone, Deserialize)]
 pub struct SaveQuoteResponse {
     pub success: bool,
-    pub quote_id: String,
 }
 
 #[derive(Serialize, Deserialize)]

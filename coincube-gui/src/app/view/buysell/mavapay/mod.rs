@@ -17,6 +17,7 @@ pub enum MavapayFlowStep {
         selected_bank: Option<usize>,
         transfer_speed: OnchainTransferSpeed,
         btc_price: Option<GetPriceResponse>,
+        sending_quote: bool,
     },
     Checkout {
         sat_amount: f64,
@@ -43,6 +44,7 @@ impl MavapayState {
                 banks: None,
                 selected_bank: None,
                 btc_price: None,
+                sending_quote: false,
             },
             client: MavapayClient::new(),
         }
@@ -147,7 +149,7 @@ impl MavapayState {
 
                 // Step 2: Save quote to coincube-api
                 match coincube_client.save_quote(&quote.id, &quote).await {
-                    Ok(save) => log::info!("[COINCUBE] Successfully saved quote: {:?}", save),
+                    Ok(_) => log::info!("[COINCUBE] Successfully saved quote: {}", quote.id),
                     Err(err) => log::error!("[COINCUBE] Unable to save quote: {:?}", err),
                 };
 
