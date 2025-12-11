@@ -17,62 +17,62 @@ name = "liana-gui"
 path = "src/main.rs"
 
 [dependencies]
-async-trait = "0.1"
-async-hwi = "0.0.29"
+async-trait = { workspace = true }
+async-hwi = { workspace = true }
 liana = { path = "../liana" }
 lianad = { path = "../lianad", default-features = false, features = ["nonblocking_shutdown"] }
 liana-ui = { path = "../liana-ui" }
-backtrace = "0.3"
-hex = "0.4.3"
+backtrace = { workspace = true }
+hex = { workspace = true }
 
-iced = { version = "0.13.1", default-features = false, features = ["tokio", "svg", "qr_code", "image", "lazy", "wgpu", "advanced", "tiny-skia"] }
-iced_aw = { version = "0.12.2", features = ["context_menu"] }
-iced_runtime = "0.13.1"
+iced = { workspace = true, default-features = false, features = ["tokio", "svg", "qr_code", "image", "lazy", "wgpu", "advanced", "tiny-skia"] }
+iced_aw = { workspace = true, features = ["context_menu"] }
+iced_runtime = { workspace = true }
 
 # Used to verify RFC-compliance of an email
-email_address = "0.2.7"
+email_address = { workspace = true }
 
-tokio = {version = "1.21.0", features = ["signal"]}
-async-fd-lock = "0.2.0"
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
+tokio = { workspace = true, features = ["signal"] }
+async-fd-lock = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
 
 # Used to ping bitcoind node
 jsonrpc = "0.12"
 
 # Logging stuff
-tracing = "0.1.37"
-tracing-subscriber = "0.3.16"
-log = "0.4"
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+log = { workspace = true }
 
 dirs = "3.0.1"
-toml = "0.5"
+toml = { workspace = true }
 
-chrono = "0.4.38"
+chrono = { workspace = true }
 
 # Used for managing internal bitcoind
-libc = "0.2"
-base64 = "0.21"
-bitcoin_hashes = "0.12"
-reqwest = { version = "0.11", default-features=false, features = ["json", "rustls-tls", "stream"] }
-rust-ini = "0.19.0"
-rfd = "0.15.1"
-fs2 = "0.4.3"
+libc = { workspace = true }
+base64 = { workspace = true }
+bitcoin_hashes = { workspace = true }
+reqwest = { workspace = true, default-features = false, features = ["json", "rustls-tls", "stream"] }
+rust-ini = { workspace = true }
+rfd = { workspace = true }
+fs2 = { workspace = true }
 
 # Used for opening URLs in browser
-open = "5.3"
+open = { workspace = true }
 
-encrypted_backup = { version = "=0.0.2", default-features=false, features = ["miniscript_12_0", "rand"], package = "bitcoin-encrypted-backup" }
+encrypted_backup = { workspace = true }
 
 [target.'cfg(windows)'.dependencies]
-zip = { version = "0.6", default-features=false, features = ["bzip2", "deflate"] }
+zip = { workspace = true, default-features = false, features = ["bzip2", "deflate"] }
 
 [target.'cfg(unix)'.dependencies]
-tar = { version = "0.4", default-features=false }
-flate2 = { version = "1.0", default-features=false }
+tar = { workspace = true, default-features = false }
+flate2 = { workspace = true, default-features = false }
 
 [build-dependencies]
-winresource = "0.1.24"
+winresource = { workspace = true }
 
 [dev-dependencies]
-tokio = {version = "1.9.0", features = ["rt", "macros"]}
+tokio = {workspace = true, features = ["rt", "macros"]}
