@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use iced::{
     alignment,
-    widget::{checkbox, scrollable, tooltip, Column, Container, Row, Space},
+    widget::{checkbox, column, scrollable, tooltip, Column, Container, Row, Space},
     Alignment, Length,
 };
 
@@ -12,6 +12,7 @@ use liana::{
 };
 
 use liana_ui::{
+    color,
     component::{amount::*, badge, button, form, text::*},
     icon, theme,
     widget::*,
@@ -140,6 +141,7 @@ pub fn create_spend_tx<'a>(
     fee_amount: Option<&Amount>,
     error: Option<&Error>,
     is_first_step: bool,
+    max_under_dust: bool,
 ) -> Element<'a, Message> {
     let is_self_send = recipients.is_empty();
 
@@ -261,8 +263,10 @@ pub fn create_spend_tx<'a>(
             Row::new().push(
                 text(if feerate.value.is_empty() || !feerate.valid {
                     "Feerate needs to be set."
-                } else {
+                } else if !max_under_dust {
                     "Add recipient details."
+                } else {
+                    "Select or add more funds."
                 })
                 .style(theme::text::secondary),
             )
@@ -358,8 +362,14 @@ pub fn recipient_view<'a>(
     label: &'a form::Value<String>,
     is_max_selected: bool,
     is_recovery: bool,
+    dust_warning: &'a Option<String>,
+    max_estimated_amount: Option<Amount>,
 ) -> Element<'a, CreateSpendMessage> {
-    let btc_amt = Amount::from_str_in(&amount.value, Denomination::Bitcoin).ok();
+    let btc_amt = if dust_warning.is_some() {
+        max_estimated_amount
+    } else {
+        Amount::from_str_in(&amount.value, Denomination::Bitcoin).ok()
+    };
 
     // Recipient for recovery cannot be deleted.
     let header = (!is_recovery).then_some(
@@ -499,13 +509,17 @@ pub fn recipient_view<'a>(
         .push_maybe(fiat_price)
         .push_maybe(max)
         .width(Length::Fill);
+    let dust_warning_row = Row::new()
+        .push(Space::with_width(20))
+        .push_maybe(dust_warning.as_ref().map(|w| caption(w).color(color::RED)));
+    let amount_col = column![amount_row, dust_warning_row];
 
     Container::new(
         Column::new()
             .push_maybe(header)
             .push(address_row)
             .push(label_row)
-            .push(amount_row)
+            .push(amount_col)
             .spacing(10),
     )
     .padding(20)
