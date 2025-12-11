@@ -6,8 +6,9 @@ members = [
     "lianad",
     "liana-gui",
     "liana-ui",
+    "liana-business"
 ]
-default-members = ["liana", "lianad", "liana-gui", "liana-ui"]
+default-members = ["liana", "lianad", "liana-gui", "liana-ui", "liana-business"]
 
 [workspace.dependencies]
 # Common dependencies
@@ -65,3 +66,5 @@ flate2 = { version = "1.0", default-features = false }
 winresource = "0.1.24"
 unicode-segmentation = "1.0"
 bitcoin = "0.32"
+uuid = { version = "1.19.0" }
+thiserror = { version = "2.0.17" }

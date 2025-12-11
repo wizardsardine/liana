@@ -1,0 +1,13 @@
+[package]
+name = "liana-business"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+email_address = { workspace = true }
+liana-ui = { path = "../liana-ui" }
+miniscript = { workspace = true }
+thiserror = { workspace = true }
+uuid = { workspace = true , features = ["v4"] }
+
+iced = { workspace = true , default-features = false, features = [ "svg", "image", "wgpu", "tiny-skia"] }
