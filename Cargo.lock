@@ -485,15 +485,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
 
 [[package]]
-name = "base64-compat"
-version = "1.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5a8d4d2746f89841e49230dd26917df1876050f95abafafbe34f47cb534b88d7"
-dependencies = [
- "byteorder",
-]
-
-[[package]]
 name = "base64ct"
 version = "1.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2895,18 +2886,6 @@ dependencies = [
 
 [[package]]
 name = "jsonrpc"
-version = "0.12.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7f8423b78fc94d12ef1a4a9d13c348c9a78766dda0cc18817adf0faf77e670c8"
-dependencies = [
- "base64-compat",
- "serde",
- "serde_derive",
- "serde_json",
-]
-
-[[package]]
-name = "jsonrpc"
 version = "0.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a26d9104d516092f092d97448787505881fdb6518293b2d6500bf9c180c839dd"
@@ -3080,7 +3059,7 @@ dependencies = [
  "iced",
  "iced_aw",
  "iced_runtime",
- "jsonrpc 0.12.1",
+ "jsonrpc",
  "liana",
  "liana-ui",
  "lianad",
@@ -3123,7 +3102,7 @@ dependencies = [
  "bip329",
  "dirs",
  "fern",
- "jsonrpc 0.17.0",
+ "jsonrpc",
  "liana",
  "log",
  "miniscript",

@@ -38,7 +38,7 @@ serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 
 # Used to ping bitcoind node
-jsonrpc = "0.12"
+jsonrpc = { workspace = true, features = ["simple_http"], default-features = false }
 
 # Logging stuff
 tracing = { workspace = true }
