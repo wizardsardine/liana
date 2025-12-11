@@ -109,6 +109,7 @@ pub enum BackendState {
     WalletExists(BackendWalletClient, api::Wallet, ListCoinsResult),
 }
 
+#[derive(Debug, Clone)]
 pub struct LianaLiteLogin {
     pub datadir: LianaDirectory,
     pub network: Network,
@@ -126,6 +127,7 @@ pub struct LianaLiteLogin {
     auth_error: Option<&'static str>,
 }
 
+#[derive(Debug, Clone)]
 pub enum ConnectionStep {
     CheckingAuthFile,
     CheckEmail,

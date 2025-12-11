@@ -27,7 +27,7 @@ use crate::{
     },
     dir::LianaDirectory,
     gui::cache::GlobalCache,
-    launcher,
+    installer, launcher,
     logger::setup_logger,
     services::fiat::{
         api::{ListCurrenciesResult, PriceApi, PriceApiError},
@@ -37,15 +37,23 @@ use crate::{
 };
 
 use iced::window::Id;
+use std::marker::PhantomData;
 
-pub struct GUI {
-    panes: pane_grid::State<pane::Pane>,
+pub type LianaGUI = GUI<installer::LianaInstaller, installer::Message>;
+
+pub struct GUI<I, M>
+where
+    I: for<'a> installer::Installer<'a, M>,
+    M: Clone + Send + 'static,
+{
+    panes: pane_grid::State<pane::Pane<I, M>>,
     focus: Option<pane_grid::Pane>,
     config: Config,
     window_id: Option<Id>,
     window_init: Option<bool>,
     window_config: Option<WindowConfig>,
     global_cache: GlobalCache,
+    _phantom: PhantomData<M>,
 }
 
 #[derive(Debug)]
@@ -54,11 +62,14 @@ pub enum Key {
 }
 
 #[derive(Debug)]
-pub enum Message {
+pub enum Message<M>
+where
+    M: Clone + Send + 'static,
+{
     CtrlC,
     Tick,
     FontLoaded(Result<(), iced::font::Error>),
-    Pane(pane_grid::Pane, pane::Message),
+    Pane(pane_grid::Pane, pane::Message<M>),
     KeyPressed(Key),
     Event(iced::Event),
 
@@ -86,13 +97,19 @@ pub enum FiatMessage {
     ),
 }
 
-impl From<FiatMessage> for Message {
+impl<M> From<FiatMessage> for Message<M>
+where
+    M: Clone + Send + 'static,
+{
     fn from(value: FiatMessage) -> Self {
         Self::Fiat(value)
     }
 }
 
-impl From<Result<(), iced::font::Error>> for Message {
+impl<M> From<Result<(), iced::font::Error>> for Message<M>
+where
+    M: Clone + Send + 'static,
+{
     fn from(value: Result<(), iced::font::Error>) -> Self {
         Self::FontLoaded(value)
     }
@@ -106,12 +123,18 @@ async fn ctrl_c() -> Result<(), ()> {
     Ok(())
 }
 
-impl GUI {
+impl<I, M> GUI<I, M>
+where
+    I: for<'a> installer::Installer<'a, M>,
+    M: Clone + Send + 'static,
+{
     pub fn title(&self) -> String {
         format!("Liana v{}", VERSION)
     }
 
-    pub fn new((config, log_level): (Config, Option<LevelFilter>)) -> (GUI, Task<Message>) {
+    pub fn new(
+        (config, log_level): (Config, Option<LevelFilter>),
+    ) -> (GUI<I, M>, Task<Message<M>>) {
         let log_level = log_level.unwrap_or(LevelFilter::INFO);
         if let Err(e) = setup_logger(log_level, config.liana_directory.clone()) {
             tracing::warn!("Error while setting error: {}", e);
@@ -120,7 +143,7 @@ impl GUI {
             window::get_oldest().map(Message::Window),
             Task::perform(ctrl_c(), |_| Message::CtrlC),
         ];
-        let (pane, cmd) = pane::Pane::new(&config);
+        let (pane, cmd) = pane::Pane::<I, M>::new(&config);
         let (panes, focused_pane) = pane_grid::State::new(pane);
         cmds.push(cmd.map(move |msg| Message::Pane(focused_pane, msg)));
         let window_config =
@@ -135,12 +158,13 @@ impl GUI {
                 window_init,
                 window_config,
                 global_cache: GlobalCache::default(),
+                _phantom: PhantomData,
             },
             Task::batch(cmds),
         )
     }
 
-    pub fn update(&mut self, message: Message) -> Task<Message> {
+    pub fn update(&mut self, message: Message<M>) -> Task<Message<M>> {
         match message {
             // we get this message only once at startup
             Message::Window(id) => {
@@ -548,7 +572,7 @@ impl GUI {
         }
     }
 
-    pub fn subscription(&self) -> Subscription<Message> {
+    pub fn subscription(&self) -> Subscription<Message<M>> {
         let mut vec = vec![
             iced::time::every(Duration::from_secs(1)).map(|_| Message::Tick),
             iced::event::listen_with(|event, status, _| match (&event, status) {
@@ -580,7 +604,7 @@ impl GUI {
         Subscription::batch(vec)
     }
 
-    pub fn view(&self) -> Element<Message> {
+    pub fn view(&self) -> Element<Message<M>> {
         if self.panes.len() == 1 {
             if let Some((&id, pane)) = self.panes.iter().nth(0) {
                 return Column::new()

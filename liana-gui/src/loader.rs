@@ -55,6 +55,7 @@ type StartedResult = Result<
     Error,
 >;
 
+#[derive(Debug)]
 pub struct Loader {
     pub datadir_path: LianaDirectory,
     pub network: bitcoin::Network,
@@ -67,6 +68,7 @@ pub struct Loader {
     step: Step,
 }
 
+#[derive(Debug)]
 pub enum Step {
     Connecting,
     StartingDaemon,

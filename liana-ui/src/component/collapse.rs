@@ -20,7 +20,7 @@ where
     Renderer: advanced::Renderer,
     Theme: iced::widget::button::Catalog,
     Message: 'a,
-    T: Into<Message> + Clone + 'a,
+    T: Into<Message> + Clone + 'a + From<Message>,
     H: Fn() -> Button<'a, Event<T>, Theme, Renderer> + 'a,
     F: Fn() -> Button<'a, Event<T>, Theme, Renderer> + 'a,
     C: Fn() -> Element<'a, T, Theme, Renderer> + 'a,
@@ -50,7 +50,7 @@ pub enum Event<T> {
 impl<'a, Message, T, H, F, C, Theme, Renderer> Component<Message, Theme, Renderer>
     for Collapse<'a, Message, H, F, C>
 where
-    T: Into<Message> + Clone + 'a,
+    T: Into<Message> + Clone + 'a + From<Message>,
     H: Fn() -> Button<'a, Event<T>, Theme, Renderer>,
     F: Fn() -> Button<'a, Event<T>, Theme, Renderer>,
     C: Fn() -> Element<'a, T, Theme, Renderer>,
@@ -99,7 +99,7 @@ where
     Message: 'a,
     Renderer: 'a + advanced::Renderer,
     Theme: 'a + iced::widget::button::Catalog,
-    T: Into<Message> + Clone + 'a,
+    T: Into<Message> + Clone + 'a + From<Message>,
     H: Fn() -> Button<'a, Event<T>, Theme, Renderer>,
     F: Fn() -> Button<'a, Event<T>, Theme, Renderer>,
     C: Fn() -> Element<'a, T, Theme, Renderer>,
