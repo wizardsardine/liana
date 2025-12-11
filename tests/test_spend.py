@@ -8,6 +8,7 @@ from test_framework.utils import (
     COIN,
     RpcError,
     USE_TAPROOT,
+    INCLUDE_IGNORED,
 )
 
 
@@ -18,6 +19,7 @@ def additional_fees(anc_vsize, anc_fee, target_feerate):
     return extra_vsize * target_feerate
 
 
+@pytest.mark.skipif(not INCLUDE_IGNORED, reason="Ported to Rust.")
 def test_spend_change(lianad, bitcoind):
     """We can spend a coin that was received on a change address."""
     # Receive a coin on a receive address
