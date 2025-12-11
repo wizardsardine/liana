@@ -485,15 +485,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
 
 [[package]]
-name = "base64-compat"
-version = "1.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5a8d4d2746f89841e49230dd26917df1876050f95abafafbe34f47cb534b88d7"
-dependencies = [
- "byteorder",
-]
-
-[[package]]
 name = "base64ct"
 version = "1.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1344,31 +1335,11 @@ dependencies = [
 
 [[package]]
 name = "dirs"
-version = "3.0.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "30baa043103c9d0c2a57cf537cc2f35623889dc0d405e6c3cccfadbc81c71309"
-dependencies = [
- "dirs-sys 0.3.7",
-]
-
-[[package]]
-name = "dirs"
 version = "5.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "44c45a9d03d6676652bcb5e724c7e988de1acad23a711b5217ab9cbecbec2225"
 dependencies = [
- "dirs-sys 0.4.1",
-]
-
-[[package]]
-name = "dirs-sys"
-version = "0.3.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1b1d1d91c932ef41c0f2663aa8b0ca0342d444d842c06914aa0a7e352d0bada6"
-dependencies = [
- "libc",
- "redox_users",
- "winapi",
+ "dirs-sys",
 ]
 
 [[package]]
@@ -2915,18 +2886,6 @@ dependencies = [
 
 [[package]]
 name = "jsonrpc"
-version = "0.12.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7f8423b78fc94d12ef1a4a9d13c348c9a78766dda0cc18817adf0faf77e670c8"
-dependencies = [
- "base64-compat",
- "serde",
- "serde_derive",
- "serde_json",
-]
-
-[[package]]
-name = "jsonrpc"
 version = "0.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a26d9104d516092f092d97448787505881fdb6518293b2d6500bf9c180c839dd"
@@ -3092,7 +3051,7 @@ dependencies = [
  "bitcoin-encrypted-backup",
  "bitcoin_hashes 0.12.0",
  "chrono",
- "dirs 3.0.2",
+ "dirs",
  "email_address",
  "flate2",
  "fs2",
@@ -3100,7 +3059,7 @@ dependencies = [
  "iced",
  "iced_aw",
  "iced_runtime",
- "jsonrpc 0.12.1",
+ "jsonrpc",
  "liana",
  "liana-ui",
  "lianad",
@@ -3141,9 +3100,9 @@ dependencies = [
  "backtrace",
  "bdk_electrum",
  "bip329",
- "dirs 5.0.1",
+ "dirs",
  "fern",
- "jsonrpc 0.17.0",
+ "jsonrpc",
  "liana",
  "log",
  "miniscript",
