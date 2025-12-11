@@ -73,7 +73,7 @@ pub fn label_non_editable(
     label: Option<&String>,
     size: u16,
 ) -> Element<view::Message> {
-    let label_text = label.map(|s| s.as_str()).unwrap_or("(External Ouput)");
+    let label_text = label.map(|s| s.as_str()).unwrap_or("(External Output)");
 
     let e: Element<view::LabelMessage> = Container::new(
         row![Container::new(
