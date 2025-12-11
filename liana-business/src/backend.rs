@@ -18,6 +18,17 @@ pub enum WalletStatus {
     Finalized, // All key metadata filled, ready for prod
 }
 
+impl WalletStatus {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            WalletStatus::Created => "Created",
+            WalletStatus::Drafted => "Drafted",
+            WalletStatus::Validated => "Validated",
+            WalletStatus::Finalized => "Finalized",
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Org {
     pub name: String,
@@ -78,30 +89,6 @@ impl Error {
 }
 
 #[derive(Debug, Clone)]
-pub enum Response {
-    Connected { version: u8 },
-    Pong,
-    // email login step
-    AuthCodeSent, // auth code has been send to email
-    InvalidEmail, // the backend refuse you to connect with this email
-    AuthCodeFail, // fail
-
-    // code login step
-    LoginSuccess,
-    LoginFail,
-
-    // Notifications
-    Org(Org),
-    Wallet(Wallet),
-    User(User),
-
-    // Orgs management responses
-    Orgs(BTreeMap<Uuid, Org>),
-
-    Error(Error),
-}
-
-#[derive(Debug, Clone)]
 pub enum Notification {
     Connected,
     AuthCodeSent,
@@ -132,7 +119,7 @@ pub trait Backend {
     fn get_wallet(&self, id: Uuid) -> Option<Wallet>;
 
     // Connection (WSS)
-    fn connect(&mut self, url: String, version: u8) -> mpsc::Receiver<Response>; // -> Response::Connected
+    fn connect(&mut self, url: String, version: u8) -> mpsc::Receiver<Notification>; // -> Response::Connected
     fn ping(&mut self); // -> Response::Pong
     fn close(&mut self);    // Connection closed
 
@@ -155,11 +142,11 @@ pub trait Backend {
 
 /// Stream wrapper for Backend responses
 pub struct BackendStream {
-    pub receiver: mpsc::Receiver<Response>,
+    pub receiver: mpsc::Receiver<Notification>,
 }
 
 impl Stream for BackendStream {
-    type Item = Response;
+    type Item = Notification;
 
     fn poll_next(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         // Use try_recv for non-blocking check
@@ -174,7 +161,7 @@ impl Stream for BackendStream {
 /// Mock backend implementation for testing
 #[derive(Debug)]
 pub struct MockBackend {
-    pub sender: Option<mpsc::Sender<Response>>,
+    pub sender: Option<mpsc::Sender<Notification>>,
     orgs: BTreeMap<Uuid, Org>,
     wallets: BTreeMap<Uuid, Wallet>,
     users: BTreeMap<Uuid, User>,
@@ -319,20 +306,16 @@ impl MockBackend {
 }
 
 impl Backend for MockBackend {
-    fn connect(&mut self, _url: String, version: u8) -> mpsc::Receiver<Response> {
+    fn connect(&mut self, _url: String, _version: u8) -> mpsc::Receiver<Notification> {
         self.connected = true;
         let (sender, receiver) = mpsc::channel();
-        let _ = sender.send(Response::Connected { version });
+        let _ = sender.send(Notification::Connected);
         self.sender = Some(sender);
         receiver
     }
 
     fn ping(&mut self) {
-        if self.connected {
-            if let Some(sender) = &self.sender {
-                let _ = sender.send(Response::Pong);
-            }
-        }
+        //
     }
 
     fn close(&mut self) {
@@ -341,7 +324,7 @@ impl Backend for MockBackend {
 
     fn auth_request(&mut self, _email: String) {
         if let Some(sender) = &self.sender {
-            sender.send(Response::AuthCodeSent).unwrap();
+            sender.send(Notification::AuthCodeSent).unwrap();
         } else {
             panic!("auth_token()");
         }
@@ -352,10 +335,9 @@ impl Backend for MockBackend {
         if let Some(sender) = &self.sender {
             if code == self.auth_code {
                 // Send orgs on successful auth
-                let _ = sender.send(Response::LoginSuccess);
-                let _ = sender.send(Response::Orgs(self.orgs.clone()));
+                let _ = sender.send(Notification::LoginSuccess);
             } else {
-                let _ = sender.send(Response::LoginFail);
+                let _ = sender.send(Notification::LoginFail);
             }
         }
     }

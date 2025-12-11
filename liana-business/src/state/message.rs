@@ -52,7 +52,7 @@ pub enum Msg {
     NavigateBack,
 
     // Backend
-    BackendResponse(crate::backend::Response),
+    BackendNotif(crate::backend::Notification),
     BackendDisconnected,
 
     // Warnings

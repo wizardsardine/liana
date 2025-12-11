@@ -13,7 +13,6 @@ pub struct AppState {
     pub selected_org: Option<Uuid>,
     pub selected_wallet: Option<Uuid>,
     pub current_wallet_template: Option<PolicyTemplate>,
-    pub connected: bool,
 }
 
 impl AppState {
@@ -26,7 +25,6 @@ impl AppState {
             selected_org: None,
             selected_wallet: None,
             current_wallet_template: None,
-            connected: false,
         }
     }
 }
@@ -65,7 +63,6 @@ impl From<PolicyTemplate> for AppState {
             selected_org: None,
             selected_wallet: None,
             current_wallet_template: None,
-            connected: false,
         }
     }
 }
