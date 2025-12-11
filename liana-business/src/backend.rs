@@ -38,11 +38,19 @@ pub struct OrgData {
 }
 
 #[derive(Debug, Clone)]
+pub enum UserRole {
+    WSManager,
+    Owner,
+    Participant,
+}
+
+#[derive(Debug, Clone)]
 pub struct User {
     pub name: String,
     pub uuid: Uuid,
     pub email: String,
     pub orgs: Vec<Uuid>,
+    pub role: UserRole,
 }
 
 #[derive(Debug, Clone)]
@@ -93,6 +101,20 @@ pub enum Response {
     Error(Error),
 }
 
+#[derive(Debug, Clone)]
+pub enum Notification {
+    Connected,
+    AuthCodeSent,
+    InvalidEmail,
+    AuthCodeFail,
+    LoginSuccess,
+    LoginFail,
+    Org(Uuid),
+    Wallet(Uuid),
+    User(Uuid),
+    Error(Error),
+}
+
 #[allow(unused)]
 #[rustfmt::skip]
 pub trait Backend {
@@ -107,6 +129,7 @@ pub trait Backend {
     fn get_orgs(&self) -> BTreeMap<Uuid, Org>;
     fn get_org(&self, id: Uuid) -> Option<OrgData>;
     fn get_user(&self, id: Uuid) -> Option<User>;
+    fn get_wallet(&self, id: Uuid) -> Option<Wallet>;
 
     // Connection (WSS)
     fn connect(&mut self, url: String, version: u8) -> mpsc::Receiver<Response>; // -> Response::Connected
@@ -114,10 +137,7 @@ pub trait Backend {
     fn close(&mut self);    // Connection closed
 
     // Org management (WSS)
-    fn create_org(&mut self, name: String);                                 // -> Response::Org
     fn fetch_org(&mut self, id: Uuid);                                      // -> Response::Org
-    fn add_user_to_org(&mut self, user_id: Uuid, org_id: Uuid);             // -> Response::Org
-    fn remove_user_from_org(&mut self, user_id: Uuid, org_id: Uuid);        // -> Response::Org
     fn remove_wallet_from_org(&mut self, wallet_id: Uuid, org_id: Uuid);    // -> Response::Org
 
     fn create_wallet(&mut self, name: String, org: Uuid, owner: Uuid);      // -> Response::Wallet
@@ -129,8 +149,6 @@ pub trait Backend {
         xpub: Option<DescriptorPublicKey>,
         key_id: u8);                                                     // -> Response::Wallet
 
-    fn create_user(&mut self, name: String);    // Response::User
-    fn edit_user(&mut self, user: User);        // -> Response::User
     fn fetch_user(&mut self, id: Uuid);         // -> Response::User
 
 }
@@ -189,6 +207,7 @@ impl MockBackend {
             uuid: Uuid::new_v4(),
             email: "test@example.com".to_string(),
             orgs: Vec::new(),
+            role: UserRole::Owner,
         };
         self.users.insert(user1.uuid, user1.clone());
 
@@ -341,21 +360,6 @@ impl Backend for MockBackend {
         }
     }
 
-    fn create_org(&mut self, name: String) {
-        let org_id = Uuid::new_v4();
-        let org = Org {
-            name: name.clone(),
-            id: org_id,
-            wallets: BTreeSet::new(),
-            users: Default::default(),
-            owners: Default::default(),
-        };
-        self.orgs.insert(org_id, org.clone());
-        if let Some(sender) = &self.sender {
-            let _ = sender.send(Response::Org(org));
-        }
-    }
-
     fn edit_wallet(&mut self, _wallet: Wallet) {
         todo!()
     }
@@ -388,14 +392,6 @@ impl Backend for MockBackend {
         todo!()
     }
 
-    fn add_user_to_org(&mut self, _user_id: Uuid, _org_id: Uuid) {
-        todo!()
-    }
-
-    fn remove_user_from_org(&mut self, _user_id: Uuid, _org_id: Uuid) {
-        todo!()
-    }
-
     fn remove_wallet_from_org(&mut self, _wallet_id: Uuid, _org_id: Uuid) {
         todo!()
     }
@@ -412,15 +408,11 @@ impl Backend for MockBackend {
         todo!()
     }
 
-    fn create_user(&mut self, _name: String) {
-        todo!()
-    }
-
-    fn edit_user(&mut self, _user: User) {
-        todo!()
-    }
-
     fn fetch_user(&mut self, _id: Uuid) {
+        todo!()
+    }
+
+    fn get_wallet(&self, _id: Uuid) -> Option<Wallet> {
         todo!()
     }
 }
