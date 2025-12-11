@@ -64,7 +64,7 @@ pub struct Context {
     pub network: bitcoin::Network,
     pub hw_is_used: bool,
     // In case a user entered a mnemonic,
-    // we dont want to override the generated signer with it.
+    // we don't want to override the generated signer with it.
     pub recovered_signer: Option<Arc<Signer>>,
     pub bitcoind_is_external: bool,
     pub internal_bitcoind_config: Option<InternalBitcoindConfig>,
