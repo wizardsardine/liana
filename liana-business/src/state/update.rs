@@ -1,6 +1,6 @@
 use super::{app::AppState, message::Msg, views, State, View};
 use crate::{
-    backend::{Backend, Error, Response},
+    backend::{Backend, Error, Notification},
     models::{Key, PolicyTemplate, SpendingPath, Timelock},
     BACKEND_URL, PROTOCOL_VERSION,
 };
@@ -59,7 +59,7 @@ impl State {
             Msg::NavigateBack => self.on_navigate_back(),
 
             // Backend
-            Msg::BackendResponse(response) => self.on_backend_response(response),
+            Msg::BackendNotif(notif) => self.on_backend_notif(notif),
             Msg::BackendDisconnected => self.on_backend_disconnected(),
 
             // Warnings
@@ -70,20 +70,19 @@ impl State {
     }
 
     #[rustfmt::skip]
-    fn on_backend_response(&mut self, response: Response) {
+    fn on_backend_notif(&mut self, response: Notification) {
         match response {
-            Response::Connected { version } => self.on_backend_connected(version),
-            Response::Orgs(_) => self.on_backend_orgs(),
-            Response::Pong => self.on_backend_pong(),
-            Response::AuthCodeSent => self.on_backend_auth_code_sent(),
-            Response::InvalidEmail => self.on_backend_invalid_email(),
-            Response::AuthCodeFail => self.on_backend_auth_code_fail(),
-            Response::LoginSuccess => self.on_backend_login_success(),
-            Response::LoginFail => self.on_backend_login_fail(),
-            Response::Error(error) => self.on_backend_error(error),
-            Response::Org(_) => todo!(),
-            Response::Wallet(_) => todo!(),
-            Response::User(_) => todo!(),
+            Notification::Connected => self.on_backend_connected(),
+            // Notification::Orgs(_) => self.on_backend_orgs(),
+            Notification::AuthCodeSent => self.on_backend_auth_code_sent(),
+            Notification::InvalidEmail => self.on_backend_invalid_email(),
+            Notification::AuthCodeFail => self.on_backend_auth_code_fail(),
+            Notification::LoginSuccess => self.on_backend_login_success(),
+            Notification::LoginFail => self.on_backend_login_fail(),
+            Notification::Error(error) => self.on_backend_error(error),
+            Notification::Org(_) => todo!(),
+            Notification::Wallet(_) => todo!(),
+            Notification::User(_) => todo!(),
         }
     }
 }
@@ -390,15 +389,8 @@ impl State {
 
 // Backend updates
 impl State {
-    fn on_backend_connected(&mut self, version: u8) {
-        if version <= PROTOCOL_VERSION {
-            self.app.connected = true;
-        } else {
-            self.on_warning_show_modal(
-                "Backend protocol mismatch",
-                "The version of the backend is uncompatible.",
-            );
-        }
+    fn on_backend_connected(&mut self) {
+        // TODO: ?
     }
 
     fn on_backend_orgs(&mut self) {
@@ -415,10 +407,6 @@ impl State {
 
     fn on_backend_user(&mut self) {
         // TODO: ?
-    }
-
-    fn on_backend_pong(&mut self) {
-        // Currently no-op, but available for future use
     }
 
     fn on_backend_auth_code_sent(&mut self) {
