@@ -1,16 +1,17 @@
 mod backend;
+mod client;
 mod models;
 mod state;
 mod views;
 
-use backend::Response;
+use backend::Notification;
 use iced::{Pixels, Settings, Subscription, Task};
 use liana_ui::theme::Theme;
 use state::{Msg, State};
 use std::sync::{mpsc, Mutex};
 
 // Global channel for backend communication
-static BACKEND_RECV: Mutex<Option<mpsc::Receiver<backend::Response>>> = Mutex::new(None);
+static BACKEND_RECV: Mutex<Option<mpsc::Receiver<backend::Notification>>> = Mutex::new(None);
 const BACKEND_URL: &str = "127.0.0.1:8081";
 const PROTOCOL_VERSION: u8 = 1;
 
@@ -72,7 +73,7 @@ impl PolicyBuilder {
 
 // Subscription for backend stream
 struct BackendSubscription {
-    receiver: mpsc::Receiver<backend::Response>,
+    receiver: mpsc::Receiver<backend::Notification>,
 }
 
 impl BackendSubscription {
@@ -85,7 +86,7 @@ impl BackendSubscription {
         // Fallback: create a dummy channel if not available and error
         let (sender, receiver) = mpsc::channel();
         sender
-            .send(Response::Error(backend::Error::SubscriptionFailed))
+            .send(Notification::Error(backend::Error::SubscriptionFailed))
             .unwrap();
         Self { receiver }
     }
@@ -109,7 +110,7 @@ impl iced::futures::Stream for BackendSubscription {
         // NOTE: if we send a Poll::Ready(None), iced will drop subscription so
         // we call (blocking) .recv().
         if let Ok(m) = self.receiver.recv() {
-            Poll::Ready(Some(Msg::BackendResponse(m)))
+            Poll::Ready(Some(Msg::BackendNotif(m)))
         } else {
             Poll::Ready(Some(Msg::BackendDisconnected))
         }

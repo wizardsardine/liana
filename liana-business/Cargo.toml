@@ -9,5 +9,10 @@ liana-ui = { path = "../liana-ui" }
 miniscript = { workspace = true }
 thiserror = { workspace = true }
 uuid = { workspace = true , features = ["v4"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+tungstenite = { workspace = true , features = ["rustls-tls-webpki-roots"]}
+url = { workspace = true }
 
 iced = { workspace = true , default-features = false, features = [ "svg", "image", "wgpu", "tiny-skia"] }
+rustls = { workspace = true }
