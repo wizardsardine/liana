@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
+use crossbeam::channel;
 use iced::futures::Stream;
 use miniscript::DescriptorPublicKey;
 use std::sync::mpsc;
@@ -9,6 +10,7 @@ use thiserror::Error;
 use uuid::Uuid;
 
 use crate::models::PolicyTemplate;
+use crate::wss::WssError;
 
 #[derive(Debug, Clone)]
 pub enum WalletStatus {
@@ -80,6 +82,14 @@ pub enum Error {
     None,
     #[error("Iced subscription failed!")]
     SubscriptionFailed,
+    #[error("Missing token for auth on backend!")]
+    TokenMissing,
+    #[error("Failed to open the websocket connection")]
+    WsConnection,
+    #[error("Failed to handle a Websocket response: {0}")]
+    WsMessageHandling(String),
+    #[error("Receive an error from the server: {0}")]
+    Wss(WssError),
 }
 
 impl Error {
@@ -91,6 +101,7 @@ impl Error {
 #[derive(Debug, Clone)]
 pub enum Notification {
     Connected,
+    Disconnected,
     AuthCodeSent,
     InvalidEmail,
     AuthCodeFail,
@@ -119,7 +130,7 @@ pub trait Backend {
     fn get_wallet(&self, id: Uuid) -> Option<Wallet>;
 
     // Connection (WSS)
-    fn connect(&mut self, url: String, version: u8) -> mpsc::Receiver<Notification>; // -> Response::Connected
+    fn connect(&mut self, url: String, version: u8) -> channel::Receiver<Notification>; // -> Response::Connected
     fn ping(&mut self); // -> Response::Pong
     fn close(&mut self);    // Connection closed
 
@@ -161,7 +172,7 @@ impl Stream for BackendStream {
 /// Mock backend implementation for testing
 #[derive(Debug)]
 pub struct MockBackend {
-    pub sender: Option<mpsc::Sender<Notification>>,
+    pub sender: Option<channel::Sender<Notification>>,
     orgs: BTreeMap<Uuid, Org>,
     wallets: BTreeMap<Uuid, Wallet>,
     users: BTreeMap<Uuid, User>,
@@ -306,9 +317,9 @@ impl MockBackend {
 }
 
 impl Backend for MockBackend {
-    fn connect(&mut self, _url: String, _version: u8) -> mpsc::Receiver<Notification> {
+    fn connect(&mut self, _url: String, _version: u8) -> channel::Receiver<Notification> {
         self.connected = true;
-        let (sender, receiver) = mpsc::channel();
+        let (sender, receiver) = channel::unbounded();
         let _ = sender.send(Notification::Connected);
         self.sender = Some(sender);
         receiver
