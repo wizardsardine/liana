@@ -588,7 +588,9 @@ impl Request {
 
 impl Response {
     /// Convert WebSocket message to application-level response, extracting protocol details
-    pub fn from_ws_message(msg: WsMessage) -> Result<Self, WssConversionError> {
+    pub fn from_ws_message(
+        msg: WsMessage,
+    ) -> Result<(Self, Option<String> /* request_id */), WssConversionError> {
         let text = match msg {
             WsMessage::Text(text) => text,
             _ => return Err(WssConversionError::InvalidMessageType),
@@ -597,30 +599,32 @@ impl Response {
         let protocol_response: ProtocolResponse = serde_json::from_str(&text)
             .map_err(|e| WssConversionError::DeserializationFailed(e.to_string()))?;
 
+        let request_id = protocol_response.request_id;
+
         // Handle error responses
         if let Some(error) = protocol_response.error {
-            return Ok(Response::Error { error });
+            return Ok((Response::Error { error }, request_id));
         }
 
-        match protocol_response.msg_type.as_str() {
+        let response = match protocol_response.msg_type.as_str() {
             "connected" => {
                 let payload: ConnectedPayload =
                     serde_json::from_value(protocol_response.payload.ok_or_else(|| {
                         WssConversionError::DeserializationFailed("Missing payload".to_string())
                     })?)
                     .map_err(|e| WssConversionError::DeserializationFailed(e.to_string()))?;
-                Ok(Response::Connected {
+                Response::Connected {
                     version: payload.version,
-                })
+                }
             }
-            "pong" => Ok(Response::Pong),
+            "pong" => Response::Pong,
             "org" => {
                 let payload: OrgJson =
                     serde_json::from_value(protocol_response.payload.ok_or_else(|| {
                         WssConversionError::DeserializationFailed("Missing payload".to_string())
                     })?)
                     .map_err(|e| WssConversionError::DeserializationFailed(e.to_string()))?;
-                Ok(Response::Org { org: payload })
+                Response::Org { org: payload }
             }
             "wallet" => {
                 let payload: WalletJson =
@@ -628,7 +632,7 @@ impl Response {
                         WssConversionError::DeserializationFailed("Missing payload".to_string())
                     })?)
                     .map_err(|e| WssConversionError::DeserializationFailed(e.to_string()))?;
-                Ok(Response::Wallet { wallet: payload })
+                Response::Wallet { wallet: payload }
             }
             "user" => {
                 let payload: UserJson =
@@ -636,12 +640,16 @@ impl Response {
                         WssConversionError::DeserializationFailed("Missing payload".to_string())
                     })?)
                     .map_err(|e| WssConversionError::DeserializationFailed(e.to_string()))?;
-                Ok(Response::User { user: payload })
+                Response::User { user: payload }
             }
-            _ => Err(WssConversionError::DeserializationFailed(format!(
-                "Unknown message type: {}",
-                protocol_response.msg_type
-            ))),
-        }
+            _ => {
+                return Err(WssConversionError::DeserializationFailed(format!(
+                    "Unknown message type: {}",
+                    protocol_response.msg_type
+                )))
+            }
+        };
+
+        Ok((response, request_id))
     }
 }
