@@ -159,6 +159,7 @@ pub enum BuySellMessage {
     ResetWidget,
     SelectBuyOrSell(bool), // true = buy, false = sell
     StartSession,
+    LogOut,
 
     // automatic user login
     SubmitLogin {
@@ -228,6 +229,7 @@ pub enum MavapayMessage {
     GetBanks,
     BanksReceived(MavapayBanks),
     // checkout
+    SimulatePayIn,
     QuoteFulfilled(crate::services::mavapay::GetOrderResponse),
 }
 

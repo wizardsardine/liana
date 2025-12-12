@@ -27,16 +27,30 @@ fn checkout_form<'a>(state: &'a MavapayState) -> Column<'a, BuySellMessage> {
         unreachable!()
     };
 
-    iced::widget::column![match buy_or_sell {
-        BuyOrSell::Buy { address: _ } => {
-            // TODO: display BTC amount to be deposited, generated address and bank deposit details.
-            text::h4_bold("Your turn now, send funds into the provided account details to drive the bitcoin deposit")
+    iced::widget::column![
+        text::h4_bold("Checkout"),
+        match buy_or_sell {
+            BuyOrSell::Buy { address: _ } => {
+                // TODO: display BTC amount to be deposited, generated address and bank deposit details.
+                container(text::p1_italic("Display account deposit details here..."))
+            }
+            BuyOrSell::Sell => {
+                // TODO: display bitcoin address or lightning invoice for deposit, and beneficiary input forms
+                container(text::p1_italic(
+                    "Display lightning invoice or bitcoin address for deposit here...",
+                ))
+            }
+            .style(theme::card::simple),
         }
-        BuyOrSell::Sell => {
-            // TODO: display bitcoin address or lightning invoice for deposit, and beneficiary input forms
-            text::h4_bold("Onchain Sell is currently unsupported")
-        }
-    }]
+    ]
+    .push_maybe(
+        (cfg!(debug_assertions) && option_env!("MAVAPAY_API_KEY").is_none()).then(|| {
+            button::primary(Some(wrench_icon()), "Simulate Pay-In (Developer Option)")
+                .on_press(BuySellMessage::Mavapay(MavapayMessage::SimulatePayIn))
+        }),
+    )
+    .align_x(Alignment::Center)
+    .width(600)
 }
 
 fn transactions_form<'a>(state: &'a MavapayState) -> Column<'a, BuySellMessage> {
@@ -82,6 +96,7 @@ fn transactions_form<'a>(state: &'a MavapayState) -> Column<'a, BuySellMessage> 
                     .align_x(Alignment::Center),
                     container(up_down_icon().size(20).center()).padding(12),
                     iced::widget::column![
+                        // TODO: ensure user has BTC balance to satisfy quote
                         text("Satoshis (BTCSAT)").size(14).color(color::GREY_2),
                         Space::with_height(5),
                         iced_aw::number_input(&(*sat_amount).round(), .., |a| {

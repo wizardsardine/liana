@@ -108,8 +108,7 @@ pub struct BuySellPanel {
     pub detected_country: Option<crate::services::coincube::Country>,
 
     // coincube session information, restored from OS keyring
-    pub current_user: Option<User>,
-    pub auth_token: Option<String>,
+    pub login: Option<LoginResponse>,
 
     // only really useful for address generation
     pub wallet: std::sync::Arc<crate::app::wallet::Wallet>,
@@ -129,8 +128,7 @@ impl BuySellPanel {
             // API state
             coincube_client: crate::services::coincube::CoincubeClient::new(),
             detected_country: None,
-            auth_token: None,
-            current_user: None,
+            login: None,
         }
     }
 
@@ -201,54 +199,60 @@ impl BuySellPanel {
             unreachable!();
         };
 
-        let col = iced::widget::column![
-            // header
-            text::h3("Sign in to your account").color(color::WHITE),
-            Space::with_height(Length::Fixed(35.0)),
-            // input fields
-            text_input("Email", email)
-                .on_input(|e| BuySellMessage::LoginUsernameChanged(e))
-                .size(16)
-                .padding(15),
-            Space::with_height(Length::Fixed(5.0)),
-            text_input("Password", password)
-                .secure(true)
-                .on_input(|p| BuySellMessage::LoginPasswordChanged(p))
-                .size(16)
-                .padding(15),
-            Space::with_height(Length::Fixed(15.0)),
-            // submit button
-            button::primary(None, "Log In")
-                .on_press_maybe(
-                    (email.contains('.') && email.contains('@') && !password.is_empty()).then_some(
-                        BuySellMessage::SubmitLogin {
-                            skip_email_verification: false
-                        }
-                    ),
+        let col =
+            iced::widget::column![
+                // header
+                text::h3("Sign in to your account").color(color::WHITE),
+                Space::with_height(Length::Fixed(35.0)),
+                // input fields
+                text_input("Email", email)
+                    .on_input(|e| BuySellMessage::LoginUsernameChanged(e))
+                    .size(16)
+                    .padding(15),
+                Space::with_height(Length::Fixed(5.0)),
+                text_input("Password", password)
+                    .secure(true)
+                    .on_input(|p| BuySellMessage::LoginPasswordChanged(p))
+                    .on_submit_maybe(
+                        (email.contains('.') && email.contains('@') && !password.is_empty())
+                            .then_some(BuySellMessage::SubmitLogin {
+                                skip_email_verification: false
+                            }),
+                    )
+                    .size(16)
+                    .padding(15),
+                Space::with_height(Length::Fixed(15.0)),
+                // submit button
+                button::primary(None, "Log In")
+                    .on_press_maybe(
+                        (email.contains('.') && email.contains('@') && !password.is_empty())
+                            .then_some(BuySellMessage::SubmitLogin {
+                                skip_email_verification: false
+                            }),
+                    )
+                    .width(Length::Fill),
+                Space::with_height(Length::Fixed(10.0)),
+                // separator
+                container(Space::new(iced::Length::Fill, iced::Length::Fixed(3.0)))
+                    .style(|_| { color::GREY_6.into() }),
+                Space::with_height(Length::Fixed(5.0)),
+                // sign-up redirect
+                iced::widget::button(
+                    text::p2_regular("Don't have an account? Sign up").color(color::BLUE),
                 )
-                .width(Length::Fill),
-            Space::with_height(Length::Fixed(10.0)),
-            // separator
-            container(Space::new(iced::Length::Fill, iced::Length::Fixed(3.0)))
-                .style(|_| { color::GREY_6.into() }),
-            Space::with_height(Length::Fixed(5.0)),
-            // sign-up redirect
-            iced::widget::button(
-                text::p2_regular("Don't have an account? Sign up").color(color::BLUE),
-            )
-            .style(theme::button::link)
-            .on_press(BuySellMessage::CreateNewAccount),
-            // password reset button
-            iced::widget::button(
-                text::p2_regular("Forgot your Password? Reset it here...").color(color::ORANGE),
-            )
-            .style(theme::button::link)
-            .on_press(BuySellMessage::ResetPassword)
-        ]
-        .align_x(Alignment::Center)
-        .spacing(2)
-        .max_width(500)
-        .width(Length::Fill);
+                .style(theme::button::link)
+                .on_press(BuySellMessage::CreateNewAccount),
+                // password reset button
+                iced::widget::button(
+                    text::p2_regular("Forgot your Password? Reset it here...").color(color::ORANGE),
+                )
+                .style(theme::button::link)
+                .on_press(BuySellMessage::ResetPassword)
+            ]
+            .align_x(Alignment::Center)
+            .spacing(2)
+            .max_width(500)
+            .width(Length::Fill);
 
         let elem: iced::Element<BuySellMessage, theme::Theme> = col.into();
         elem.map(|b| ViewMessage::BuySell(b))
@@ -410,6 +414,10 @@ impl BuySellPanel {
             text_input("Confirm Password", password2).on_input(|v| {
                 BuySellMessage::Password2Changed(v)
             })
+            .on_submit_maybe(
+                (!legal_name.is_empty() && email.contains('.') &&  email.contains('@')  && !password1.is_empty() && (password1 == password2))
+                    .then_some(BuySellMessage::SubmitRegistration),
+            )
             .size(16)
             .padding(15)
             .secure(false),
@@ -684,10 +692,10 @@ impl BuySellPanel {
                         .padding(5)
                 })
                 .push(
-                    iced::widget::container(Space::with_height(1))
+                    iced::widget::container(Space::with_height(3))
                         .style(|_| {
                             iced::widget::container::background(iced::Background::Color(
-                                color::GREY_6,
+                                color::GREY_3,
                             ))
                         })
                         .width(Length::Fill),
@@ -707,6 +715,13 @@ impl BuySellPanel {
                                     .is_some()
                                     .then_some(ViewMessage::BuySell(BuySellMessage::StartSession)),
                             )
+                            .width(iced::Length::Fill)
+                    })
+                })
+                .push_maybe({
+                    buy_or_sell_selected.is_none().then(|| {
+                        button::secondary(Some(escape_icon()), "Log Out")
+                            .on_press(ViewMessage::BuySell(BuySellMessage::LogOut))
                             .width(iced::Length::Fill)
                     })
                 }),

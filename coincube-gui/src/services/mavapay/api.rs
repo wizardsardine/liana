@@ -134,6 +134,17 @@ impl MavapayUnitCurrency {
     }
 }
 
+impl From<MavapayUnitCurrency> for MavapayCurrency {
+    fn from(value: MavapayUnitCurrency) -> Self {
+        match value {
+            MavapayUnitCurrency::KenyanShillingCent => MavapayCurrency::KenyanShilling,
+            MavapayUnitCurrency::SouthAfricanRandCent => MavapayCurrency::SouthAfricanRand,
+            MavapayUnitCurrency::NigerianNairaKobo => MavapayCurrency::NigerianNaira,
+            MavapayUnitCurrency::BitcoinSatoshi => MavapayCurrency::Bitcoin,
+        }
+    }
+}
+
 impl std::fmt::Display for MavapayUnitCurrency {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -435,4 +446,13 @@ pub enum GetTransactionResponse {
         pagination: GetTransactionPagination,
         data: Vec<Transaction>,
     },
+}
+
+#[cfg(debug_assertions)]
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SimulatePayInRequest {
+    pub quote_id: String,
+    pub amount: u64,
+    pub currency: MavapayCurrency,
 }

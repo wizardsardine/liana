@@ -105,6 +105,24 @@ impl MavapayClient {
         }
     }
 
+    #[cfg(debug_assertions)]
+    pub async fn simulate_pay_in(
+        &self,
+        request: &SimulatePayInRequest,
+    ) -> Result<String, MavapayError> {
+        let response = self
+            .request(Method::POST, "/v1/simulation/pay-in")
+            .json(&request)
+            .send()
+            .await?;
+        let response = response.check_success().await?;
+
+        match response.json().await? {
+            MavapayResponse::Error { message } => Err(MavapayError::ApiError(message)),
+            MavapayResponse::Success { data } => Ok(data),
+        }
+    }
+
     pub async fn get_banks(&self, country_code: &str) -> Result<MavapayBanks, MavapayError> {
         let response = self
             .request(Method::GET, "/v1/bank/bankcode")

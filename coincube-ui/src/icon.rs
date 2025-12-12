@@ -219,6 +219,10 @@ pub fn history_icon() -> Text<'static> {
     bootstrap_icon('\u{F479}')
 }
 
+pub fn escape_icon() -> Text<'static> {
+    bootstrap_icon('\u{F7EE}')
+}
+
 pub fn coins_icon() -> Text<'static> {
     bootstrap_icon('\u{F585}')
 }

@@ -92,29 +92,32 @@ impl State for BuySellPanel {
 
         match message {
             BuySellMessage::ResetWidget => {
+                self.error = None;
+
                 if let Some(country) = &self.detected_country {
-                    // attempt automatic refresh from os-keyring
-                    match keyring::Entry::new("io.coincube.Vault", &self.wallet.name) {
-                        Ok(entry) => {
-                            if let Ok(user_data) = entry.get_secret() {
-                                match serde_json::from_slice::<LoginResponse>(&user_data) {
-                                    Ok(login) => {
-                                        self.current_user = Some(login.user);
-                                        self.auth_token = Some(login.token);
-                                    }
-                                    Err(er) => {
-                                        log::error!("Unable to parse user information found in OS keyring: {:?}", er)
-                                    }
+                    if self.login.is_none() {
+                        // attempt automatic refresh from os-keyring
+                        match keyring::Entry::new("io.coincube.Vault", &self.wallet.name) {
+                            Ok(entry) => {
+                                if let Ok(user_data) = entry.get_secret() {
+                                    match serde_json::from_slice::<LoginResponse>(&user_data) {
+                                        Ok(login) => self.login = Some(login),
+                                        Err(er) => {
+                                            log::error!("Unable to parse user information found in OS keyring: {:?}", er)
+                                        }
+                                    };
                                 };
-                            };
-                        }
-                        Err(e) => {
-                            log::error!("Unable to restore login state from OS keyring: {e}");
-                        }
-                    };
+                            }
+                            Err(e) => {
+                                log::error!("Unable to restore login state from OS keyring: {e}");
+                            }
+                        };
+                    }
+
+                    // TODO: check if login token is expired
 
                     if mavapay_supported(&country.code) {
-                        match self.auth_token {
+                        match self.login {
                             // send user directly to initialization
                             Some(_) => {
                                 self.step = BuySellFlowState::Initialization {
@@ -144,6 +147,21 @@ impl State for BuySellPanel {
                     self.step = BuySellFlowState::DetectingLocation(true);
                 }
             }
+            BuySellMessage::LogOut => {
+                self.login = None;
+                self.detected_country = None;
+
+                // clear keyring credentials
+                if let Ok(entry) = keyring::Entry::new("io.coincube.Vault", &self.wallet.name) {
+                    if let Err(e) = entry.delete_credential() {
+                        log::error!("[BUYSELL] Unable to delete credentials from OS keyring: {e:?}")
+                    };
+                }
+
+                return Task::done(Message::View(ViewMessage::BuySell(
+                    BuySellMessage::ResetWidget,
+                )));
+            }
 
             // initialization flow: for creating a new address and setting panel mode (buy or sell)
             BuySellMessage::SelectBuyOrSell(bs) => {
@@ -152,7 +170,12 @@ impl State for BuySellPanel {
                     ..
                 } = &mut self.step
                 {
-                    *buy_or_sell_selected = Some(bs)
+                    if *buy_or_sell_selected == Some(bs) {
+                        // toggle off
+                        *buy_or_sell_selected = None;
+                    } else {
+                        *buy_or_sell_selected = Some(bs)
+                    }
                 }
             }
             BuySellMessage::CreateNewAddress => {
@@ -435,7 +458,7 @@ impl State for BuySellPanel {
                                     // poll mavapay API for the status of the adjacent transaction (quote.hash == transaction.hash)
                                     if let Some(quote_order_id) = quote.order_id.clone() {
                                         let client = mavapay.client.clone();
-                                        let quote_hash = quote.hash.clone();
+                                        let quote_id = quote.id.clone();
 
                                         let transaction_checker = Task::perform(
                                             async move {
@@ -453,7 +476,7 @@ impl State for BuySellPanel {
                                                             break order
                                                         }
                                                         Ok(order) => {
-                                                            log::info!("[MAVAPAY] Current Order for Quote with hash ({}) = {{ {}: {:?} }}", quote_hash, order.id, order.status);
+                                                            log::info!("[MAVAPAY] Quote({}).order = {{ {}: {:?} }}", quote_id, order.id, order.status);
                                                         }
                                                         Err(e) => {
                                                             log::error!("[MAVAPAY] Unable to check Mavapay API for transaction status: {:?}", e)
@@ -461,7 +484,7 @@ impl State for BuySellPanel {
                                                     }
 
                                                     tokio::time::sleep(
-                                                        std::time::Duration::from_secs(10),
+                                                        std::time::Duration::from_secs(30),
                                                     )
                                                     .await
                                                 }
@@ -546,7 +569,53 @@ impl State for BuySellPanel {
                             }
                         }
                         // checkout form
-                        (MavapayFlowStep::Checkout { .. }, msg) => match msg {
+                        (MavapayFlowStep::Checkout { quote, .. }, msg) => match msg {
+                            MavapayMessage::QuoteFulfilled(order) => {
+                                log::info!(
+                                    "[MAVAPAY] Quote({}) has been fulfilled: Order = {:?}",
+                                    quote.id,
+                                    order
+                                );
+
+                                // TODO: Display success UI and reset widget
+                            }
+
+                            #[cfg(debug_assertions)]
+                            MavapayMessage::SimulatePayIn => {
+                                log::info!(
+                                    "[MAVAPAY] Simulating Pay-In for Quote({}), Order ID({:?})",
+                                    quote.id,
+                                    quote.order_id
+                                );
+
+                                let client = mavapay.client.clone();
+                                let request = SimulatePayInRequest {
+                                    quote_id: quote.id.clone(),
+                                    amount: quote.amount_in_source_currency,
+                                    currency: quote.source_currency.clone().into(),
+                                };
+
+                                return Task::perform(
+                                    async move { client.simulate_pay_in(&request).await },
+                                    |s| match s {
+                                        Ok(message) => log::info!("[MAVAPAY] {}", message),
+                                        Err(error) => log::error!(
+                                            "[MAVAPAY] Unable to simulate Pay-In: {}",
+                                            error
+                                        ),
+                                    },
+                                )
+                                .then(|_| Task::none());
+                            }
+
+                            #[cfg(not(debug_assertions))]
+                            MavapayMessage::SimulatePayIn => {
+                                log::warn!(
+                                    "[MAVAPAY] Unable to simulate pay-in for Quote({}), app built in release mode",
+                                    quote.id,
+                                );
+                            }
+
                             msg => log::warn!(
                                 "Current {:?} has ignored message: {:?}",
                                 &mavapay.step,
@@ -684,10 +753,7 @@ impl State for BuySellPanel {
                         };
 
                         // persist login information in state
-                        self.auth_token = Some(login.token);
-                        self.current_user = Some(login.user);
-
-                        // go straight to initialization
+                        self.login = Some(login);
                         self.step = BuySellFlowState::Initialization {
                             modal: state::vault::receive::Modal::None,
                             buy_or_sell_selected: None,
