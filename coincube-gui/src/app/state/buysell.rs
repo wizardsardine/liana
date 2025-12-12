@@ -341,9 +341,89 @@ impl State for BuySellPanel {
                                 // TODO: Beneficiary specific form inputs
                                 MavapayMessage::CreateQuote => {
                                     *sending_quote = true;
-                                    return mavapay
-                                        .create_quote(self.coincube_client.clone())
-                                        .map(|b| Message::View(ViewMessage::BuySell(b)));
+                                    let local_currency = match country.code {
+                                        "KE" => MavapayUnitCurrency::KenyanShillingCent,
+                                        "NG" => MavapayUnitCurrency::NigerianNairaKobo,
+                                        "ZA" => MavapayUnitCurrency::SouthAfricanRandCent,
+                                        iso => unreachable!(
+                                            "Country ({}) is unsupported by Mavapay",
+                                            iso
+                                        ),
+                                    };
+
+                                    let request = match buy_or_sell {
+                                        panel::BuyOrSell::Sell => GetQuoteRequest {
+                                            amount: sat_amount.clone().round() as _,
+                                            source_currency: MavapayUnitCurrency::BitcoinSatoshi,
+                                            target_currency: local_currency,
+                                            // TODO: Mavapay only supports lightning transactions for selling BTC, meaning we are currently blocked by the breeze integration
+                                            payment_method: MavapayPaymentMethod::Lightning,
+                                            payment_currency: MavapayUnitCurrency::BitcoinSatoshi,
+                                            // automatically deposit fiat funds in beneficiary account
+                                            speed: transfer_speed.clone(),
+                                            autopayout: true,
+                                            customer_internal_fee: Some(0),
+                                            beneficiary: beneficiary.clone(),
+                                        },
+                                        panel::BuyOrSell::Buy { address } => {
+                                            GetQuoteRequest {
+                                                amount: sat_amount.clone().round() as _,
+                                                source_currency: local_currency,
+                                                target_currency:
+                                                    MavapayUnitCurrency::BitcoinSatoshi,
+                                                // TODO: Currently, Kenyan beneficiaries are not supported by Mavapay, as only BankTransfer is currently supported by `onchain` buy
+                                                payment_method: MavapayPaymentMethod::BankTransfer,
+                                                payment_currency:
+                                                    MavapayUnitCurrency::BitcoinSatoshi,
+                                                speed: transfer_speed.clone(),
+                                                autopayout: true,
+                                                customer_internal_fee: None,
+                                                beneficiary: Some(Beneficiary::Onchain {
+                                                    on_chain_address: address.address.to_string(),
+                                                }),
+                                            }
+                                        }
+                                    };
+
+                                    // prepare request
+                                    let client = mavapay.client.clone();
+                                    let coincube_client = self.coincube_client.clone();
+
+                                    return Task::perform(
+                                        async move {
+                                            // Step 1: Create quote with Mavapay
+                                            let quote = client.create_quote(request).await?;
+
+                                            // Step 2: Save quote to coincube-api
+                                            match coincube_client
+                                                .save_quote(&quote.id, &quote)
+                                                .await
+                                            {
+                                                Ok(_) => log::info!(
+                                                    "[COINCUBE] Successfully saved quote: {}",
+                                                    quote.id
+                                                ),
+                                                Err(err) => log::error!(
+                                                    "[COINCUBE] Unable to save quote: {:?}",
+                                                    err
+                                                ),
+                                            };
+
+                                            Ok(quote)
+                                        },
+                                        move |result: Result<GetQuoteResponse, MavapayError>| {
+                                            match result {
+                                                Ok(quote) => BuySellMessage::Mavapay(
+                                                    MavapayMessage::QuoteCreated(quote),
+                                                ),
+                                                Err(e) => BuySellMessage::SessionError(
+                                                    "Unable to create quote",
+                                                    e.to_string(),
+                                                ),
+                                            }
+                                        },
+                                    )
+                                    .map(|b| Message::View(ViewMessage::BuySell(b)));
                                 }
                                 MavapayMessage::QuoteCreated(quote) => {
                                     log::info!(
@@ -353,9 +433,10 @@ impl State for BuySellPanel {
                                     );
 
                                     // poll mavapay API for the status of the adjacent transaction (quote.hash == transaction.hash)
-                                    let client = mavapay.client.clone();
-                                    let quote_hash = quote.hash.clone();
                                     if let Some(quote_order_id) = quote.order_id.clone() {
+                                        let client = mavapay.client.clone();
+                                        let quote_hash = quote.hash.clone();
+
                                         let transaction_checker = Task::perform(
                                             async move {
                                                 loop {
@@ -410,16 +491,48 @@ impl State for BuySellPanel {
                                 }
 
                                 MavapayMessage::GetPrice => {
-                                    let code = country.code;
-                                    return mavapay
-                                        .get_price(code)
-                                        .map(|b| Message::View(ViewMessage::BuySell(b)));
+                                    let client = mavapay.client.clone();
+                                    let currency = match country.code {
+                                        "KE" => MavapayCurrency::KenyanShilling,
+                                        "ZA" => MavapayCurrency::SouthAfricanRand,
+                                        "NG" => MavapayCurrency::NigerianNaira,
+                                        c => unreachable!(
+                                            "Country {:?} is not supported by Mavapay",
+                                            c
+                                        ),
+                                    };
+
+                                    return Task::perform(
+                                        async move { client.get_price(currency).await },
+                                        |result| match result {
+                                            Ok(price) => BuySellMessage::Mavapay(
+                                                MavapayMessage::PriceReceived(price),
+                                            ),
+                                            Err(e) => BuySellMessage::SessionError(
+                                                "Unable to get latest Bitcoin price",
+                                                e.to_string(),
+                                            ),
+                                        },
+                                    )
+                                    .map(|b| Message::View(ViewMessage::BuySell(b)));
                                 }
                                 MavapayMessage::GetBanks => {
                                     let code = country.code;
-                                    return mavapay
-                                        .get_banks(code)
-                                        .map(|b| Message::View(ViewMessage::BuySell(b)));
+                                    let client = mavapay.client.clone();
+
+                                    return Task::perform(
+                                        async move { client.get_banks(code).await },
+                                        |result| match result {
+                                            Ok(banks) => BuySellMessage::Mavapay(
+                                                MavapayMessage::BanksReceived(banks),
+                                            ),
+                                            Err(e) => BuySellMessage::SessionError(
+                                                "Unable to fetch supported banks for your country",
+                                                e.to_string(),
+                                            ),
+                                        },
+                                    )
+                                    .map(|b| Message::View(ViewMessage::BuySell(b)));
                                 }
 
                                 MavapayMessage::PriceReceived(price) => *btc_price = Some(price),
