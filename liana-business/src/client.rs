@@ -1,16 +1,14 @@
 use std::collections::BTreeMap;
-use std::net::{SocketAddr, TcpStream};
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Duration;
 
+use crossbeam::channel;
 use miniscript::DescriptorPublicKey;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::sync::mpsc;
-use tungstenite::client::{connect_with_config, IntoClientRequest};
-use tungstenite::{connect, Message as WsMessage};
+use tungstenite::Message as WsMessage;
 use uuid::Uuid;
 
 use crate::backend::{
@@ -414,7 +412,7 @@ pub struct WssClient {
     wallets: Arc<Mutex<BTreeMap<Uuid, Wallet>>>,
     users: Arc<Mutex<BTreeMap<Uuid, User>>>,
     token: Option<String>,
-    request_sender: Option<mpsc::Sender<WssRequestMessage>>,
+    request_sender: Option<channel::Sender<WssRequestMessage>>,
     wss_thread_handle: Option<thread::JoinHandle<()>>,
     connected: bool,
 }
@@ -446,17 +444,15 @@ fn wss_thread(
     orgs: Arc<Mutex<BTreeMap<Uuid, Org>>>,
     wallets: Arc<Mutex<BTreeMap<Uuid, Wallet>>>,
     users: Arc<Mutex<BTreeMap<Uuid, User>>>,
-    request_receiver: mpsc::Receiver<WssRequestMessage>,
+    request_receiver: channel::Receiver<WssRequestMessage>,
     notif_sender: mpsc::Sender<Notification>,
 ) {
-    // Ensure URL has proper scheme
     let url = if url.starts_with("ws://") || url.starts_with("wss://") {
         url
     } else {
         format!("wss://{}", url)
     };
 
-    // Connect to WSS
     let (mut ws_stream, _) = match tungstenite::connect(&url) {
         Ok(stream) => stream,
         Err(e) => {
@@ -498,52 +494,67 @@ fn wss_thread(
 
     // Main message loop
     loop {
-        // Check for outgoing requests (non-blocking)
-        while let Ok(request) = request_receiver.try_recv() {
-            // Handle close request specially
-            if request.msg_type == "close" {
-                let _ = ws_stream.close(None);
-                break;
-            }
+        channel::select! {
+            recv(request_receiver) -> msg => {
+                match msg {
+                    Ok(request) => {
+                        // Handle close request specially
+                        if request.msg_type == "close" {
+                            let _ = ws_stream.close(None);
+                            break;
+                        }
 
-            let wss_request = WssRequest {
-                msg_type: request.msg_type,
-                token: token.clone(),
-                request_id: Uuid::new_v4().to_string(),
-                payload: request.payload,
-            };
+                        let wss_request = WssRequest {
+                            msg_type: request.msg_type,
+                            token: token.clone(),
+                            request_id: Uuid::new_v4().to_string(),
+                            payload: request.payload,
+                        };
 
-            if let Err(e) = ws_stream.send(WsMessage::Text(
-                serde_json::to_string(&wss_request).unwrap(),
-            )) {
-                eprintln!("Failed to send request: {}", e);
-                break;
-            }
-        }
-
-        // Check for incoming messages (blocking, but that's OK in a thread)
-        match ws_stream.read() {
-            Ok(WsMessage::Text(text)) => {
-                if let Err(e) = handle_wss_message(&text, &orgs, &wallets, &users, &notif_sender) {
-                    eprintln!("Error handling WSS message: {}", e);
+                        if let Err(e) = ws_stream.send(WsMessage::Text(
+                            serde_json::to_string(&wss_request).unwrap(),
+                        )) {
+                            eprintln!("Failed to send request: {}", e);
+                            break;
+                        }
+                    }
+                    Err(_) => {
+                        // Channel closed, exit loop
+                        break;
+                    }
                 }
             }
-            Ok(WsMessage::Close(_)) => {
-                let _ = notif_sender.send(Notification::Error(Error::SubscriptionFailed));
-                break;
-            }
-            Ok(_) => {} // Ignore other message types
-            Err(tungstenite::Error::ConnectionClosed) => {
-                let _ = notif_sender.send(Notification::Error(Error::SubscriptionFailed));
-                break;
-            }
-            Err(tungstenite::Error::AlreadyClosed) => {
-                break;
-            }
-            Err(e) => {
-                eprintln!("WSS error: {}", e);
-                let _ = notif_sender.send(Notification::Error(Error::SubscriptionFailed));
-                break;
+            default => {
+                // NOTE: .read() is non-blocking here, as the tcp stream has be
+                // configured with .setnonblocking(true)
+                match ws_stream.read() {
+                    Ok(WsMessage::Text(text)) => {
+                        if let Err(e) = handle_wss_message(&text, &orgs, &wallets, &users, &notif_sender) {
+                            eprintln!("Error handling WSS message: {}", e);
+                        }
+                    }
+                    Ok(WsMessage::Close(_)) => {
+                        let _ = notif_sender.send(Notification::Error(Error::SubscriptionFailed));
+                        break;
+                    }
+                    Ok(_) => {} // Ignore other message types
+                    Err(tungstenite::Error::ConnectionClosed) => {
+                        let _ = notif_sender.send(Notification::Error(Error::SubscriptionFailed));
+                        break;
+                    }
+                    Err(tungstenite::Error::AlreadyClosed) => {
+                        break;
+                    }
+                    Err(tungstenite::Error::Io(io_err)) if io_err.kind() == std::io::ErrorKind::WouldBlock => {
+                        // Expected when no data is available on non-blocking stream
+                        // Continue to next iteration
+                    }
+                    Err(e) => {
+                        eprintln!("WSS error: {}", e);
+                        let _ = notif_sender.send(Notification::Error(Error::SubscriptionFailed));
+                        break;
+                    }
+                }
             }
         }
     }
@@ -725,7 +736,7 @@ impl Backend for WssClient {
             }
         };
 
-        let (request_sender, request_receiver) = mpsc::channel();
+        let (request_sender, request_receiver) = channel::unbounded();
         let (notif_sender, notif_receiver) = mpsc::channel();
 
         let orgs = Arc::clone(&self.orgs);
