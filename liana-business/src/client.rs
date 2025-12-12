@@ -86,7 +86,7 @@ fn wss_thread(
     // we expect the server to ACK the connection
     // NOTE: .read() is still blocking at this point
     if let Ok(msg) = ws_stream.read() {
-        if let Ok(Response::Connected { .. }) = Response::from_ws_message(msg)
+        if let Ok((Response::Connected { .. }, _)) = Response::from_ws_message(msg)
             .map_err(|e| format!("Failed to convert WSS message: {}", e))
         {
             connected.store(true, Ordering::Relaxed);
@@ -109,6 +109,12 @@ fn wss_thread(
         }
         _ => unreachable!(),
     }
+
+    // Cache for sent requests to validate response types
+    let sent_requests: Arc<Mutex<BTreeMap<String, Request>>> =
+        Arc::new(Mutex::new(BTreeMap::new()));
+    let sent_requests2 = sent_requests.clone();
+    let sent_requests3 = sent_requests.clone();
 
     // Ping/pong tracking state
     let last_ping = Arc::new(Mutex::new(None::<Instant>));
@@ -181,9 +187,16 @@ fn wss_thread(
                         }
 
                         let request_id = Uuid::new_v4().to_string();
-                        // FIXME: we should cache sent message in a BTreeMap<Uuid,Request>
-                        let ws_msg  = request.to_ws_message(&token, &request_id);
+                        // Cache sent request for response validation
+                        {
+                            let mut requests = sent_requests2.lock().unwrap();
+                            requests.insert(request_id.clone(), request.clone());
+                        }
+                        let ws_msg = request.to_ws_message(&token, &request_id);
                         if let Err(e) = ws_stream.send(ws_msg) {
+                            // Remove from cache on send failure
+                            let mut requests = sent_requests2.lock().unwrap();
+                            requests.remove(&request_id);
                             let _ = notif_sender.send(Notification::Error(Error::WsConnection));
                             eprintln!("Failed to send request: {}", e);
                             break;
@@ -203,7 +216,7 @@ fn wss_thread(
                     Ok(WsMessage::Text(text)) => {
                         // Pass the message directly to the handler
                         let msg = WsMessage::Text(text);
-                        if let Err(e) = handle_wss_message(msg, &orgs, &wallets, &users, &request_sender, &last_ping, &notif_sender) {
+                        if let Err(e) = handle_wss_message(msg, &orgs, &wallets, &users, &request_sender, &sent_requests3, &last_ping, &notif_sender) {
                             eprintln!("Error handling WSS message: {}", e);
                         }
                     }
@@ -221,21 +234,56 @@ fn wss_thread(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn handle_wss_message(
     msg: WsMessage,
     orgs: &Arc<Mutex<BTreeMap<Uuid, Org>>>,
     wallets: &Arc<Mutex<BTreeMap<Uuid, Wallet>>>,
     users: &Arc<Mutex<BTreeMap<Uuid, User>>>,
     request_sender: &channel::Sender<Request>,
+    sent_requests: &Arc<Mutex<BTreeMap<String, Request>>>,
     last_ping_time: &Arc<Mutex<Option<Instant>>>,
     n_sender: &channel::Sender<Notification>,
 ) -> Result<(), String> {
-    let response = Response::from_ws_message(msg)
+    let (response, request_id) = Response::from_ws_message(msg)
         .map_err(|e| format!("Failed to convert WSS message: {}", e))?;
 
+    // Handle error responses first - they're always valid and we remove from cache
+    if let Response::Error { error } = &response {
+        if let Some(req_id) = &request_id {
+            let mut requests = sent_requests.lock().unwrap();
+            requests.remove(req_id);
+        }
+        return Err(format!("WSS error: {} - {}", error.code, error.message));
+    }
+
+    // Validate response type matches request type if request_id is present
+    if let Some(req_id) = &request_id {
+        let expected_response_type = {
+            let requests = sent_requests.lock().unwrap();
+            requests.get(req_id).map(get_expected_response_type)
+        };
+
+        if let Some(expected) = expected_response_type {
+            if !matches_response_type(&response, expected) {
+                // Remove from cache on mismatch
+                let mut requests = sent_requests.lock().unwrap();
+                requests.remove(req_id);
+                return Err(format!(
+                    "Response type mismatchfor {req_id}: expected {:?}, got {:?}",
+                    expected, response
+                ));
+            }
+            // Remove from cache on successful match
+            let mut requests = sent_requests.lock().unwrap();
+            requests.remove(req_id);
+        }
+    }
+
     match response {
-        Response::Error { error } => {
-            return Err(format!("WSS error: {} - {}", error.code, error.message));
+        Response::Error { .. } => {
+            // Already handled above, but needed for exhaustiveness
+            unreachable!()
         }
         Response::Connected { version } => {
             // FIXME: we should never land here
@@ -256,6 +304,44 @@ fn handle_wss_message(
     }
 
     Ok(())
+}
+
+/// Get the expected response type for a given request
+fn get_expected_response_type(request: &Request) -> ExpectedResponseType {
+    match request {
+        Request::Connect { .. } => ExpectedResponseType::Connected,
+        Request::Ping => ExpectedResponseType::Pong,
+        Request::Close => ExpectedResponseType::None, // No response expected
+        Request::FetchOrg { .. } | Request::RemoveWalletFromOrg { .. } => ExpectedResponseType::Org,
+        Request::CreateWallet { .. }
+        | Request::EditWallet { .. }
+        | Request::FetchWallet { .. }
+        | Request::EditXpub { .. } => ExpectedResponseType::Wallet,
+        Request::FetchUser { .. } => ExpectedResponseType::User,
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum ExpectedResponseType {
+    Connected,
+    Pong,
+    Org,
+    Wallet,
+    User,
+    None,
+}
+
+/// Check if a response matches the expected response type
+fn matches_response_type(response: &Response, expected: ExpectedResponseType) -> bool {
+    match (response, expected) {
+        (Response::Connected { .. }, ExpectedResponseType::Connected) => true,
+        (Response::Pong, ExpectedResponseType::Pong) => true,
+        (Response::Org { .. }, ExpectedResponseType::Org) => true,
+        (Response::Wallet { .. }, ExpectedResponseType::Wallet) => true,
+        (Response::User { .. }, ExpectedResponseType::User) => true,
+        (Response::Error { .. }, _) => true, // Error responses are always valid
+        _ => false,
+    }
 }
 
 fn handle_connected(
