@@ -129,6 +129,9 @@ Server confirms connection establishment.
 }
 ```
 
+**Note:** The `request_id` field is required when this is a response to a `connect` request,
+matching the `request_id` from the original request.
+
 **Maps to:** `Response::Connected { version: u8 }`
 
 #### `ping`
@@ -157,6 +160,8 @@ Server heartbeat response.
   "payload": {}
 }
 ```
+
+**Note:** The `payload` field is optional and may be omitted or set to an empty object `{}`.
 
 **Maps to:** `Response::Pong`
 
@@ -571,7 +576,18 @@ user or the system modifies the user data).
 When an error occurs, the server responds with an error message:
 
 ```json
-`request_id` field at the protocol level is always present in error
+{
+  "type": "error",
+  "request_id": "<uuid>",
+  "error": {
+    "code": "<error_code>",
+    "message": "<error_message>",
+    "request_id": "<uuid>"
+  }
+}
+```
+
+**Note:** The `request_id` field at the protocol level is always present in error
 responses, matching the `request_id` from the original request. When an error is
 related to a specific request, the `request_id` field must also be included within
 the error object itself, matching the protocol-level `request_id`. This allows
@@ -628,7 +644,7 @@ Client -> Server: {
 }
 
 Server -> Client: {
-  "type": "fetch_org",
+  "type": "error",
   "request_id": "<uuid>",
   "error": {
     "code": "<error_code>",
