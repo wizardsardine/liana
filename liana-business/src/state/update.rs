@@ -73,6 +73,7 @@ impl State {
     fn on_backend_notif(&mut self, response: Notification) {
         match response {
             Notification::Connected => self.on_backend_connected(),
+            Notification::Disconnected => self.on_backend_disconnected(),
             // Notification::Orgs(_) => self.on_backend_orgs(),
             Notification::AuthCodeSent => self.on_backend_auth_code_sent(),
             Notification::InvalidEmail => self.on_backend_invalid_email(),

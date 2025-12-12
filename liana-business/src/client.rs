@@ -1,423 +1,31 @@
 use std::collections::BTreeMap;
-use std::str::FromStr;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
+use std::time::{Duration, Instant};
 
 use crossbeam::channel;
 use miniscript::DescriptorPublicKey;
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
-use std::sync::mpsc;
 use tungstenite::Message as WsMessage;
 use uuid::Uuid;
 
-use crate::backend::{
-    Backend, Error, Notification, Org, OrgData, User, UserRole, Wallet, WalletStatus,
-};
-use crate::models::{Key, KeyType, PolicyTemplate, SpendingPath, Timelock};
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum WssRequestType {
-    Connect,
-    Ping,
-    Close,
-    FetchOrg,
-    RemoveWalletFromOrg,
-    CreateWallet,
-    EditWallet,
-    FetchWallet,
-    EditXpub,
-    FetchUser,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum WssResponseType {
-    Connected,
-    Pong,
-    Org,
-    Wallet,
-    User,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WssRequest {
-    #[serde(rename = "type")]
-    pub msg_type: String,
-    pub token: String,
-    pub request_id: String,
-    pub payload: Value,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WssResponse {
-    #[serde(rename = "type")]
-    pub msg_type: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub request_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub payload: Option<Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<WssError>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WssError {
-    pub code: String,
-    pub message: String,
-}
-
-// JSON structures for protocol messages
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ConnectPayload {
-    pub version: u8,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ConnectedPayload {
-    pub version: u8,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FetchOrgPayload {
-    pub id: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RemoveWalletFromOrgPayload {
-    pub wallet_id: String,
-    pub org_id: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CreateWalletPayload {
-    pub name: String,
-    pub org_id: String,
-    pub owner_id: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EditWalletPayload {
-    pub wallet: WalletJson,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FetchWalletPayload {
-    pub id: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EditXpubPayload {
-    pub wallet_id: String,
-    pub key_id: u8,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub xpub: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FetchUserPayload {
-    pub id: String,
-}
-
-// JSON representations of domain objects
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct OrgJson {
-    pub name: String,
-    pub id: String,
-    pub wallets: Vec<String>,
-    pub users: Vec<String>,
-    pub owners: Vec<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WalletJson {
-    pub id: String,
-    pub alias: String,
-    pub org: String,
-    pub owner: String,
-    #[serde(rename = "status")]
-    pub status_str: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub template: Option<PolicyTemplateJson>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UserJson {
-    pub name: String,
-    pub uuid: String,
-    pub email: String,
-    pub orgs: Vec<String>,
-    #[serde(rename = "role")]
-    pub role_str: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PolicyTemplateJson {
-    pub keys: BTreeMap<String, KeyJson>,
-    pub primary_path: SpendingPathJson,
-    pub secondary_paths: Vec<SecondaryPathJson>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct KeyJson {
-    pub id: u8,
-    pub alias: String,
-    pub description: String,
-    pub email: String,
-    #[serde(rename = "key_type")]
-    pub key_type_str: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub xpub: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SpendingPathJson {
-    pub is_primary: bool,
-    pub threshold_n: u8,
-    pub key_ids: Vec<u8>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SecondaryPathJson {
-    pub path: SpendingPathJson,
-    pub timelock: TimelockJson,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TimelockJson {
-    pub blocks: u64,
-}
-
-// Conversion helpers
-impl WalletStatus {
-    fn from_str(s: &str) -> Option<Self> {
-        match s {
-            "Created" => Some(WalletStatus::Created),
-            "Drafted" => Some(WalletStatus::Drafted),
-            "Validated" => Some(WalletStatus::Validated),
-            "Finalized" => Some(WalletStatus::Finalized),
-            _ => None,
-        }
-    }
-}
-
-impl UserRole {
-    fn from_str(s: &str) -> Option<Self> {
-        match s {
-            "WSManager" => Some(UserRole::WSManager),
-            "Owner" => Some(UserRole::Owner),
-            "Participant" => Some(UserRole::Participant),
-            _ => None,
-        }
-    }
-
-    #[allow(dead_code)]
-    fn as_str(&self) -> &'static str {
-        match self {
-            UserRole::WSManager => "WSManager",
-            UserRole::Owner => "Owner",
-            UserRole::Participant => "Participant",
-        }
-    }
-}
-
-impl KeyType {
-    fn from_str(s: &str) -> Option<Self> {
-        match s {
-            "Internal" => Some(KeyType::Internal),
-            "External" => Some(KeyType::External),
-            "Cosigner" => Some(KeyType::Cosigner),
-            "SafetyNet" => Some(KeyType::SafetyNet),
-            _ => None,
-        }
-    }
-}
-
-// Conversion from JSON to domain objects
-impl TryFrom<OrgJson> for Org {
-    type Error = String;
-
-    fn try_from(json: OrgJson) -> Result<Self, Self::Error> {
-        let id = Uuid::parse_str(&json.id).map_err(|e| format!("Invalid org UUID: {}", e))?;
-        let wallets = json
-            .wallets
-            .into_iter()
-            .map(|w| Uuid::parse_str(&w))
-            .collect::<Result<std::collections::BTreeSet<_>, _>>()
-            .map_err(|e| format!("Invalid wallet UUID: {}", e))?;
-        let users = json
-            .users
-            .into_iter()
-            .map(|u| Uuid::parse_str(&u))
-            .collect::<Result<std::collections::BTreeSet<_>, _>>()
-            .map_err(|e| format!("Invalid user UUID: {}", e))?;
-        let owners = json
-            .owners
-            .into_iter()
-            .map(|o| Uuid::parse_str(&o))
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| format!("Invalid owner UUID: {}", e))?;
-
-        Ok(Org {
-            name: json.name,
-            id,
-            wallets,
-            users,
-            owners,
-        })
-    }
-}
-
-impl TryFrom<UserJson> for User {
-    type Error = String;
-
-    fn try_from(json: UserJson) -> Result<Self, Self::Error> {
-        let uuid = Uuid::parse_str(&json.uuid).map_err(|e| format!("Invalid user UUID: {}", e))?;
-        let orgs = json
-            .orgs
-            .into_iter()
-            .map(|o| Uuid::parse_str(&o))
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| format!("Invalid org UUID: {}", e))?;
-        let role = UserRole::from_str(&json.role_str)
-            .ok_or_else(|| format!("Invalid user role: {}", json.role_str))?;
-
-        Ok(User {
-            name: json.name,
-            uuid,
-            email: json.email,
-            orgs,
-            role,
-        })
-    }
-}
-
-impl TryFrom<WalletJson> for Wallet {
-    type Error = String;
-
-    fn try_from(json: WalletJson) -> Result<Self, Self::Error> {
-        let id = Uuid::parse_str(&json.id).map_err(|e| format!("Invalid wallet UUID: {}", e))?;
-        let org = Uuid::parse_str(&json.org).map_err(|e| format!("Invalid org UUID: {}", e))?;
-        let owner_id =
-            Uuid::parse_str(&json.owner).map_err(|e| format!("Invalid owner UUID: {}", e))?;
-        let status = WalletStatus::from_str(&json.status_str)
-            .ok_or_else(|| format!("Invalid wallet status: {}", json.status_str))?;
-
-        // Note: owner User will need to be fetched separately or provided
-        // For now, we'll create a placeholder - the actual implementation should fetch it
-        let owner = User {
-            name: String::new(),
-            uuid: owner_id,
-            email: String::new(),
-            orgs: Vec::new(),
-            role: UserRole::Owner,
-        };
-
-        let template = json.template.map(|t| t.try_into()).transpose()?;
-
-        Ok(Wallet {
-            alias: json.alias,
-            org,
-            owner,
-            id,
-            status,
-            template,
-        })
-    }
-}
-
-impl TryFrom<PolicyTemplateJson> for PolicyTemplate {
-    type Error = String;
-
-    fn try_from(json: PolicyTemplateJson) -> Result<Self, Self::Error> {
-        let mut keys = BTreeMap::new();
-        for (k, v) in json.keys {
-            let key_id = k
-                .parse::<u8>()
-                .map_err(|_| format!("Invalid key ID: {}", k))?;
-            let key = v.try_into()?;
-            keys.insert(key_id, key);
-        }
-
-        let primary_path = json.primary_path.try_into()?;
-        let secondary_paths = json
-            .secondary_paths
-            .into_iter()
-            .map(|sp| Ok((sp.path.try_into()?, sp.timelock.try_into()?)))
-            .collect::<Result<Vec<_>, String>>()?;
-
-        Ok(PolicyTemplate {
-            keys,
-            primary_path,
-            secondary_paths,
-        })
-    }
-}
-
-impl TryFrom<KeyJson> for Key {
-    type Error = String;
-
-    fn try_from(json: KeyJson) -> Result<Self, Self::Error> {
-        let key_type = KeyType::from_str(&json.key_type_str)
-            .ok_or_else(|| format!("Invalid key type: {}", json.key_type_str))?;
-        let xpub = json
-            .xpub
-            .map(|x| DescriptorPublicKey::from_str(&x).map_err(|e| format!("Invalid xpub: {}", e)))
-            .transpose()?;
-
-        Ok(Key {
-            id: json.id,
-            alias: json.alias,
-            description: json.description,
-            email: json.email,
-            key_type,
-            xpub,
-        })
-    }
-}
-
-impl TryFrom<SpendingPathJson> for SpendingPath {
-    type Error = String;
-
-    fn try_from(json: SpendingPathJson) -> Result<Self, Self::Error> {
-        Ok(SpendingPath {
-            is_primary: json.is_primary,
-            threshold_n: json.threshold_n,
-            key_ids: json.key_ids,
-        })
-    }
-}
-
-impl TryFrom<TimelockJson> for Timelock {
-    type Error = String;
-
-    fn try_from(json: TimelockJson) -> Result<Self, Self::Error> {
-        Ok(Timelock {
-            blocks: json.blocks,
-        })
-    }
-}
-
-#[derive(Debug)]
-pub struct WssRequestMessage {
-    pub msg_type: String,
-    pub payload: Value,
-}
+use crate::backend::{Backend, Error, Notification, Org, OrgData, User, Wallet};
+use crate::wss::{OrgJson, Request, Response, UserJson, WalletJson};
 
 /// WSS Backend implementation
 #[derive(Debug)]
-pub struct WssClient {
+pub struct Client {
     orgs: Arc<Mutex<BTreeMap<Uuid, Org>>>,
     wallets: Arc<Mutex<BTreeMap<Uuid, Wallet>>>,
     users: Arc<Mutex<BTreeMap<Uuid, User>>>,
     token: Option<String>,
-    request_sender: Option<channel::Sender<WssRequestMessage>>,
+    request_sender: Option<channel::Sender<Request>>,
+    notif_sender: Option<channel::Sender<Notification>>,
     wss_thread_handle: Option<thread::JoinHandle<()>>,
-    connected: bool,
+    connected: Arc<AtomicBool>,
 }
 
-impl WssClient {
+impl Client {
     pub fn new() -> Self {
         Self {
             orgs: Arc::new(Mutex::new(BTreeMap::new())),
@@ -425,8 +33,9 @@ impl WssClient {
             users: Arc::new(Mutex::new(BTreeMap::new())),
             token: None,
             request_sender: None,
+            notif_sender: None,
             wss_thread_handle: None,
-            connected: false,
+            connected: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -444,8 +53,10 @@ fn wss_thread(
     orgs: Arc<Mutex<BTreeMap<Uuid, Org>>>,
     wallets: Arc<Mutex<BTreeMap<Uuid, Wallet>>>,
     users: Arc<Mutex<BTreeMap<Uuid, User>>>,
-    request_receiver: channel::Receiver<WssRequestMessage>,
-    notif_sender: mpsc::Sender<Notification>,
+    request_receiver: channel::Receiver<Request>,
+    request_sender: channel::Sender<Request>,
+    notif_sender: channel::Sender<Notification>,
+    connected: Arc<AtomicBool>,
 ) {
     let url = if url.starts_with("ws://") || url.starts_with("wss://") {
         url
@@ -456,13 +67,36 @@ fn wss_thread(
     let (mut ws_stream, _) = match tungstenite::connect(&url) {
         Ok(stream) => stream,
         Err(e) => {
-            let _ = notif_sender.send(Notification::Error(Error::SubscriptionFailed));
+            let _ = notif_sender.send(Notification::Error(Error::WsConnection));
             eprintln!("Failed to connect to WSS: {}", e);
             return;
         }
     };
 
-    // We need to enable non-blocking read
+    // Send connect message
+    let connect_request = Request::Connect { version };
+    let request_id = Uuid::new_v4().to_string();
+    let msg = connect_request.to_ws_message(&token, &request_id);
+
+    if ws_stream.send(msg).is_err() {
+        let _ = notif_sender.send(Notification::Error(Error::WsConnection));
+        return;
+    }
+
+    // we expect the server to ACK the connection
+    // NOTE: .read() is still blocking at this point
+    if let Ok(msg) = ws_stream.read() {
+        if let Ok(Response::Connected { .. }) = Response::from_ws_message(msg)
+            .map_err(|e| format!("Failed to convert WSS message: {}", e))
+        {
+            connected.store(true, Ordering::Relaxed);
+        } else {
+            let _ = notif_sender.send(Notification::Error(Error::WsConnection));
+            return;
+        }
+    }
+
+    // We need to enable non-blocking read now
     match ws_stream.get_ref() {
         tungstenite::stream::MaybeTlsStream::Plain(stream) => {
             stream.set_nonblocking(true).expect("must not fail");
@@ -476,44 +110,81 @@ fn wss_thread(
         _ => unreachable!(),
     }
 
-    // Send connect message
-    let connect_request = WssRequest {
-        msg_type: "connect".to_string(),
-        token: token.clone(),
-        request_id: Uuid::new_v4().to_string(),
-        payload: serde_json::to_value(ConnectPayload { version }).unwrap(),
-    };
+    // Ping/pong tracking state
+    let last_ping = Arc::new(Mutex::new(None::<Instant>));
+    let last_ping_1 = last_ping.clone();
+    let last_ping_2 = last_ping.clone();
+    let request_sender_for_ping = request_sender.clone();
+    let connected2 = connected.clone();
+    let connected3 = connected.clone();
+    let notif_sender_for_timeout = notif_sender.clone();
 
-    if let Err(e) = ws_stream.send(WsMessage::Text(
-        serde_json::to_string(&connect_request).unwrap(),
-    )) {
-        let _ = notif_sender.send(Notification::Error(Error::SubscriptionFailed));
-        eprintln!("Failed to send connect message: {}", e);
-        return;
-    }
+    // Spawn ping timer thread: send ping every minute
+    thread::spawn(move || {
+        // Send first ping immediately after connection
+        let _ = request_sender_for_ping.send(Request::Ping);
+        {
+            let mut ping_time = last_ping_1.lock().unwrap();
+            *ping_time = Some(Instant::now());
+        }
 
-    // Main message loop
+        loop {
+            thread::sleep(Duration::from_secs(60));
+            if !connected2.load(Ordering::Relaxed) {
+                break;
+            }
+            // Send ping
+            let _ = request_sender_for_ping.send(Request::Ping);
+            // Record ping time
+            {
+                let mut ping_time = last_ping_1.lock().unwrap();
+                *ping_time = Some(Instant::now());
+            }
+        }
+    });
+
+    // Spawn timeout checker thread: check if 30 seconds passed without pong
+    thread::spawn(move || {
+        loop {
+            thread::sleep(Duration::from_secs(1));
+            if !connected3.load(Ordering::Relaxed) {
+                break;
+            }
+            let should_disconnect = {
+                let ping_time = last_ping_2.lock().unwrap();
+                if let Some(time) = *ping_time {
+                    // If we sent a ping and 30 seconds have passed without pong, disconnect
+                    time.elapsed() > Duration::from_secs(30)
+                } else {
+                    false
+                }
+            };
+            if should_disconnect {
+                connected3.store(false, Ordering::Relaxed);
+                let _ = notif_sender_for_timeout.send(Notification::Disconnected);
+                break;
+            }
+        }
+    });
+
     loop {
         channel::select! {
+            // Send to WS, we just forward the message trough the WS stream
             recv(request_receiver) -> msg => {
                 match msg {
                     Ok(request) => {
                         // Handle close request specially
-                        if request.msg_type == "close" {
+                        if matches!(request, Request::Close) {
                             let _ = ws_stream.close(None);
+                            connected.store(false, Ordering::Relaxed);
                             break;
                         }
 
-                        let wss_request = WssRequest {
-                            msg_type: request.msg_type,
-                            token: token.clone(),
-                            request_id: Uuid::new_v4().to_string(),
-                            payload: request.payload,
-                        };
-
-                        if let Err(e) = ws_stream.send(WsMessage::Text(
-                            serde_json::to_string(&wss_request).unwrap(),
-                        )) {
+                        let request_id = Uuid::new_v4().to_string();
+                        // FIXME: we should cache sent message in a BTreeMap<Uuid,Request>
+                        let ws_msg  = request.to_ws_message(&token, &request_id);
+                        if let Err(e) = ws_stream.send(ws_msg) {
+                            let _ = notif_sender.send(Notification::Error(Error::WsConnection));
                             eprintln!("Failed to send request: {}", e);
                             break;
                         }
@@ -524,36 +195,26 @@ fn wss_thread(
                     }
                 }
             }
+            // Receive from WS
             default => {
                 // NOTE: .read() is non-blocking here, as the tcp stream has be
                 // configured with .setnonblocking(true)
                 match ws_stream.read() {
                     Ok(WsMessage::Text(text)) => {
-                        if let Err(e) = handle_wss_message(&text, &orgs, &wallets, &users, &notif_sender) {
+                        // Pass the message directly to the handler
+                        let msg = WsMessage::Text(text);
+                        if let Err(e) = handle_wss_message(msg, &orgs, &wallets, &users, &request_sender, &last_ping, &notif_sender) {
                             eprintln!("Error handling WSS message: {}", e);
                         }
                     }
-                    Ok(WsMessage::Close(_)) => {
-                        let _ = notif_sender.send(Notification::Error(Error::SubscriptionFailed));
+                    // TODO: we should log errors here
+                    Ok(WsMessage::Close(_)) | Err(_)
+                    => {
+                        let _ = notif_sender.send(Notification::Disconnected);
                         break;
                     }
+                    // TODO: we should log these messages at trace level
                     Ok(_) => {} // Ignore other message types
-                    Err(tungstenite::Error::ConnectionClosed) => {
-                        let _ = notif_sender.send(Notification::Error(Error::SubscriptionFailed));
-                        break;
-                    }
-                    Err(tungstenite::Error::AlreadyClosed) => {
-                        break;
-                    }
-                    Err(tungstenite::Error::Io(io_err)) if io_err.kind() == std::io::ErrorKind::WouldBlock => {
-                        // Expected when no data is available on non-blocking stream
-                        // Continue to next iteration
-                    }
-                    Err(e) => {
-                        eprintln!("WSS error: {}", e);
-                        let _ = notif_sender.send(Notification::Error(Error::SubscriptionFailed));
-                        break;
-                    }
                 }
             }
         }
@@ -561,31 +222,36 @@ fn wss_thread(
 }
 
 fn handle_wss_message(
-    text: &str,
+    msg: WsMessage,
     orgs: &Arc<Mutex<BTreeMap<Uuid, Org>>>,
     wallets: &Arc<Mutex<BTreeMap<Uuid, Wallet>>>,
     users: &Arc<Mutex<BTreeMap<Uuid, User>>>,
-    n_sender: &mpsc::Sender<Notification>,
+    request_sender: &channel::Sender<Request>,
+    last_ping_time: &Arc<Mutex<Option<Instant>>>,
+    n_sender: &channel::Sender<Notification>,
 ) -> Result<(), String> {
-    let response: WssResponse =
-        serde_json::from_str(text).map_err(|e| format!("Failed to parse WSS response: {}", e))?;
+    let response = Response::from_ws_message(msg)
+        .map_err(|e| format!("Failed to convert WSS message: {}", e))?;
 
-    // Handle errors
-    if let Some(error) = response.error {
-        let _ = n_sender.send(Notification::Error(Error::SubscriptionFailed));
-        return Err(format!("WSS error: {} - {}", error.code, error.message));
-    }
-
-    match response.msg_type.as_str() {
-        "connected" => handle_connected(response.payload, n_sender)?,
-        "pong" => handle_pong()?,
-        "org" => handle_org(response.payload, orgs, n_sender)?,
-        "wallet" => handle_wallet(response.payload, wallets, n_sender)?,
-        "user" => handle_user(response.payload, users, n_sender)?,
-        _ => {
-            let error_msg = format!("Unknown message type: {}", response.msg_type);
-            let _ = n_sender.send(Notification::Error(Error::SubscriptionFailed));
-            return Err(error_msg);
+    match response {
+        Response::Error { error } => {
+            return Err(format!("WSS error: {} - {}", error.code, error.message));
+        }
+        Response::Connected { version } => {
+            // FIXME: we should never land here
+            handle_connected(version, n_sender)?;
+        }
+        Response::Pong => {
+            handle_pong(last_ping_time)?;
+        }
+        Response::Org { org } => {
+            handle_org(org, orgs, wallets, users, request_sender, n_sender)?;
+        }
+        Response::Wallet { wallet } => {
+            handle_wallet(wallet, wallets, users, request_sender, n_sender)?;
+        }
+        Response::User { user } => {
+            handle_user(user, users, n_sender)?;
         }
     }
 
@@ -593,28 +259,31 @@ fn handle_wss_message(
 }
 
 fn handle_connected(
-    _payload: Option<Value>,
-    notification_sender: &mpsc::Sender<Notification>,
+    _version: u8,
+    notification_sender: &channel::Sender<Notification>,
 ) -> Result<(), String> {
     let _ = notification_sender.send(Notification::Connected);
     Ok(())
 }
 
-fn handle_pong() -> Result<(), String> {
-    // TODO:
+fn handle_pong(last_ping_time: &Arc<Mutex<Option<Instant>>>) -> Result<(), String> {
+    // Reset ping tracking on successful pong
+    {
+        let mut ping_time = last_ping_time.lock().unwrap();
+        *ping_time = None;
+    }
     Ok(())
 }
 
 fn handle_org(
-    payload: Option<Value>,
+    org_json: OrgJson,
     orgs: &Arc<Mutex<BTreeMap<Uuid, Org>>>,
-    notification_sender: &mpsc::Sender<Notification>,
+    wallets: &Arc<Mutex<BTreeMap<Uuid, Wallet>>>,
+    users: &Arc<Mutex<BTreeMap<Uuid, User>>>,
+    request_sender: &channel::Sender<Request>,
+    notification_sender: &channel::Sender<Notification>,
 ) -> Result<(), String> {
-    let payload: OrgJson =
-        serde_json::from_value(payload.ok_or_else(|| "Missing payload".to_string())?)
-            .map_err(|e| format!("Failed to parse org payload: {}", e))?;
-
-    let org = Org::try_from(payload)?;
+    let org = Org::try_from(org_json)?;
     let org_id = org.id;
 
     // Update cache
@@ -623,29 +292,57 @@ fn handle_org(
         orgs_guard.insert(org_id, org.clone());
     }
 
+    // If any users are not cached, send fetch_user requests.
+    // The responses will be handled automatically by handle_user().
+    {
+        let users_guard = users.lock().unwrap();
+        for user_id in &org.users {
+            if !users_guard.contains_key(user_id) {
+                let _ = request_sender.send(Request::FetchUser { id: *user_id });
+            }
+        }
+    }
+
+    // If any wallets are not cached, send fetch_wallet requests.
+    // The responses will be handled automatically by handle_wallet().
+    {
+        let wallets_guard = wallets.lock().unwrap();
+        for wallet_id in &org.wallets {
+            if !wallets_guard.contains_key(wallet_id) {
+                let _ = request_sender.send(Request::FetchWallet { id: *wallet_id });
+            }
+        }
+    }
+
     // Send response
     let _ = notification_sender.send(Notification::Org(org_id));
     Ok(())
 }
 
 fn handle_wallet(
-    payload: Option<Value>,
+    wallet_json: WalletJson,
     wallets: &Arc<Mutex<BTreeMap<Uuid, Wallet>>>,
-    notification_sender: &mpsc::Sender<Notification>,
+    users: &Arc<Mutex<BTreeMap<Uuid, User>>>,
+    request_sender: &channel::Sender<Request>,
+    notification_sender: &channel::Sender<Notification>,
 ) -> Result<(), String> {
-    let payload: WalletJson =
-        serde_json::from_value(payload.ok_or_else(|| "Missing payload".to_string())?)
-            .map_err(|e| format!("Failed to parse wallet payload: {}", e))?;
-
-    let wallet = Wallet::try_from(payload)?;
+    let wallet = Wallet::try_from(wallet_json)?;
     let wallet_id = wallet.id;
+    let owner_id = wallet.owner.uuid;
 
-    // Check if owner user is cached, if not we need to fetch it
-    // For now, we'll just update the wallet cache
-    // The owner User should be fetched separately if needed
+    // Update cache
     {
         let mut wallets_guard = wallets.lock().unwrap();
         wallets_guard.insert(wallet_id, wallet.clone());
+    }
+
+    // If the owner user is not cached, send a fetch_user request.
+    // The response will be handled automatically by handle_user().
+    {
+        let users_guard = users.lock().unwrap();
+        if !users_guard.contains_key(&owner_id) {
+            let _ = request_sender.send(Request::FetchUser { id: owner_id });
+        }
     }
 
     // Send response
@@ -654,15 +351,11 @@ fn handle_wallet(
 }
 
 fn handle_user(
-    payload: Option<Value>,
+    user_json: UserJson,
     users: &Arc<Mutex<BTreeMap<Uuid, User>>>,
-    notification_sender: &mpsc::Sender<Notification>,
+    notification_sender: &channel::Sender<Notification>,
 ) -> Result<(), String> {
-    let payload: UserJson =
-        serde_json::from_value(payload.ok_or_else(|| "Missing payload".to_string())?)
-            .map_err(|e| format!("Failed to parse user payload: {}", e))?;
-
-    let user = User::try_from(payload)?;
+    let user = User::try_from(user_json)?;
     let user_id = user.uuid;
 
     // Update cache
@@ -676,7 +369,68 @@ fn handle_user(
     Ok(())
 }
 
-impl Backend for WssClient {
+macro_rules! check_connection {
+    ($s: ident) => {
+        if !$s.connected.load(Ordering::Relaxed) {
+            if let Some(sender) = $s.notif_sender.as_mut() {
+                let _ = sender.send(Notification::Disconnected);
+            }
+            return;
+        }
+    };
+}
+
+impl Backend for Client {
+    fn connect(&mut self, url: String, version: u8) -> channel::Receiver<Notification> {
+        // Close existing connection if any
+        if self.connected.load(Ordering::Relaxed) {
+            self.close();
+        }
+
+        // Get token - it should have been set before connect
+        // If not set, create a dummy channel and return error
+        let token = match self.token.clone() {
+            Some(t) => t,
+            None => {
+                let (sender, receiver) = channel::unbounded();
+                let _ = sender.send(Notification::Error(Error::TokenMissing));
+                return receiver;
+            }
+        };
+
+        let (request_sender, request_receiver) = channel::unbounded();
+        let (notif_sender, notif_receiver) = channel::unbounded();
+
+        let orgs = Arc::clone(&self.orgs);
+        let wallets = Arc::clone(&self.wallets);
+        let users = Arc::clone(&self.users);
+
+        let notif = notif_sender.clone();
+        self.request_sender = Some(request_sender.clone());
+        self.connected = Arc::new(AtomicBool::new(false));
+        let connected = self.connected.clone();
+
+        let handle = thread::spawn(move || {
+            wss_thread(
+                url,
+                token,
+                version,
+                orgs,
+                wallets,
+                users,
+                request_receiver,
+                request_sender,
+                notif,
+                connected,
+            );
+        });
+
+        self.notif_sender = Some(notif_sender);
+        self.wss_thread_handle = Some(handle);
+
+        notif_receiver
+    }
+
     fn auth_request(&mut self, _email: String) {
         // Skip implementation for now
     }
@@ -719,74 +473,22 @@ impl Backend for WssClient {
         wallets_guard.get(&id).cloned()
     }
 
-    fn connect(&mut self, url: String, version: u8) -> mpsc::Receiver<Notification> {
-        // Close existing connection if any
-        if self.connected {
-            self.close();
-        }
-
-        // Get token - it should have been set before connect
-        // If not set, create a dummy channel and return error
-        let token = match self.token.clone() {
-            Some(t) => t,
-            None => {
-                let (sender, receiver) = mpsc::channel();
-                let _ = sender.send(Notification::Error(Error::SubscriptionFailed));
-                return receiver;
-            }
-        };
-
-        let (request_sender, request_receiver) = channel::unbounded();
-        let (notif_sender, notif_receiver) = mpsc::channel();
-
-        let orgs = Arc::clone(&self.orgs);
-        let wallets = Arc::clone(&self.wallets);
-        let users = Arc::clone(&self.users);
-
-        let handle = thread::spawn(move || {
-            wss_thread(
-                url,
-                token,
-                version,
-                orgs,
-                wallets,
-                users,
-                request_receiver,
-                notif_sender,
-            );
-        });
-
-        self.request_sender = Some(request_sender);
-        self.wss_thread_handle = Some(handle);
-        self.connected = true;
-
-        notif_receiver
-    }
-
     fn ping(&mut self) {
-        if !self.connected {
-            return;
-        }
+        check_connection!(self);
 
         if let Some(sender) = &self.request_sender {
-            let _ = sender.send(WssRequestMessage {
-                msg_type: "ping".to_string(),
-                payload: serde_json::json!({}),
-            });
+            let _ = sender.send(Request::Ping);
         }
     }
 
     fn close(&mut self) {
-        if !self.connected {
+        if !self.connected.load(Ordering::Relaxed) {
             return;
         }
 
         // Send close message if possible
         if let Some(sender) = &self.request_sender {
-            let _ = sender.send(WssRequestMessage {
-                msg_type: "close".to_string(),
-                payload: serde_json::json!({}),
-            });
+            let _ = sender.send(Request::Close);
         }
 
         // Wait for thread to finish
@@ -794,181 +496,76 @@ impl Backend for WssClient {
             let _ = handle.join();
         }
 
-        self.connected = false;
+        self.connected.store(false, Ordering::Relaxed);
         self.request_sender = None;
     }
 
     fn fetch_org(&mut self, id: Uuid) {
-        if !self.connected {
-            return;
-        }
+        check_connection!(self);
 
         if let Some(sender) = &self.request_sender {
-            let payload = serde_json::to_value(FetchOrgPayload { id: id.to_string() }).unwrap();
-            let _ = sender.send(WssRequestMessage {
-                msg_type: "fetch_org".to_string(),
-                payload,
-            });
+            let _ = sender.send(Request::FetchOrg { id });
         }
     }
 
     fn remove_wallet_from_org(&mut self, wallet_id: Uuid, org_id: Uuid) {
-        if !self.connected {
-            return;
-        }
+        check_connection!(self);
 
         if let Some(sender) = &self.request_sender {
-            let payload = serde_json::to_value(RemoveWalletFromOrgPayload {
-                wallet_id: wallet_id.to_string(),
-                org_id: org_id.to_string(),
-            })
-            .unwrap();
-            let _ = sender.send(WssRequestMessage {
-                msg_type: "remove_wallet_from_org".to_string(),
-                payload,
-            });
+            let _ = sender.send(Request::RemoveWalletFromOrg { wallet_id, org_id });
         }
     }
 
     fn create_wallet(&mut self, name: String, org: Uuid, owner: Uuid) {
-        if !self.connected {
-            return;
-        }
+        check_connection!(self);
 
         if let Some(sender) = &self.request_sender {
-            let payload = serde_json::to_value(CreateWalletPayload {
+            let _ = sender.send(Request::CreateWallet {
                 name,
-                org_id: org.to_string(),
-                owner_id: owner.to_string(),
-            })
-            .unwrap();
-            let _ = sender.send(WssRequestMessage {
-                msg_type: "create_wallet".to_string(),
-                payload,
+                org_id: org,
+                owner_id: owner,
             });
         }
     }
 
     fn edit_wallet(&mut self, wallet: Wallet) {
-        if !self.connected {
-            return;
-        }
+        check_connection!(self);
 
         if let Some(sender) = &self.request_sender {
-            // Convert Wallet to WalletJson
-            let wallet_json = WalletJson {
-                id: wallet.id.to_string(),
-                alias: wallet.alias,
-                org: wallet.org.to_string(),
-                owner: wallet.owner.uuid.to_string(),
-                status_str: wallet.status.as_str().to_string(),
-                template: wallet.template.map(|t| {
-                    // Convert PolicyTemplate to PolicyTemplateJson
-                    let mut keys_json = BTreeMap::new();
-                    for (k, v) in &t.keys {
-                        keys_json.insert(
-                            k.to_string(),
-                            KeyJson {
-                                id: v.id,
-                                alias: v.alias.clone(),
-                                description: v.description.clone(),
-                                email: v.email.clone(),
-                                key_type_str: crate::models::KeyType::as_str(&v.key_type)
-                                    .to_string(),
-                                xpub: v.xpub.as_ref().map(|x| x.to_string()),
-                            },
-                        );
-                    }
-
-                    let primary_path_json = SpendingPathJson {
-                        is_primary: t.primary_path.is_primary,
-                        threshold_n: t.primary_path.threshold_n,
-                        key_ids: t.primary_path.key_ids.clone(),
-                    };
-
-                    let secondary_paths_json = t
-                        .secondary_paths
-                        .iter()
-                        .map(|(path, timelock)| SecondaryPathJson {
-                            path: SpendingPathJson {
-                                is_primary: path.is_primary,
-                                threshold_n: path.threshold_n,
-                                key_ids: path.key_ids.clone(),
-                            },
-                            timelock: TimelockJson {
-                                blocks: timelock.blocks,
-                            },
-                        })
-                        .collect();
-
-                    PolicyTemplateJson {
-                        keys: keys_json,
-                        primary_path: primary_path_json,
-                        secondary_paths: secondary_paths_json,
-                    }
-                }),
-            };
-
-            let payload = serde_json::to_value(EditWalletPayload {
-                wallet: wallet_json,
-            })
-            .unwrap();
-            let _ = sender.send(WssRequestMessage {
-                msg_type: "edit_wallet".to_string(),
-                payload,
-            });
+            let _ = sender.send(Request::EditWallet { wallet });
         }
     }
 
     fn fetch_wallet(&mut self, id: Uuid) {
-        if !self.connected {
-            return;
-        }
+        check_connection!(self);
 
         if let Some(sender) = &self.request_sender {
-            let payload = serde_json::to_value(FetchWalletPayload { id: id.to_string() }).unwrap();
-            let _ = sender.send(WssRequestMessage {
-                msg_type: "fetch_wallet".to_string(),
-                payload,
-            });
+            let _ = sender.send(Request::FetchWallet { id });
         }
     }
 
     fn edit_xpub(&mut self, wallet_id: Uuid, xpub: Option<DescriptorPublicKey>, key_id: u8) {
-        if !self.connected {
-            return;
-        }
+        check_connection!(self);
 
         if let Some(sender) = &self.request_sender {
-            let payload = serde_json::to_value(EditXpubPayload {
-                wallet_id: wallet_id.to_string(),
+            let _ = sender.send(Request::EditXpub {
+                wallet_id,
                 key_id,
-                xpub: xpub.map(|x| x.to_string()),
-            })
-            .unwrap();
-            let _ = sender.send(WssRequestMessage {
-                msg_type: "edit_xpub".to_string(),
-                payload,
+                xpub,
             });
         }
     }
 
     fn fetch_user(&mut self, id: Uuid) {
-        if !self.connected {
-            return;
-        }
+        check_connection!(self);
 
         if let Some(sender) = &self.request_sender {
-            let payload = serde_json::to_value(FetchUserPayload { id: id.to_string() }).unwrap();
-            let _ = sender.send(WssRequestMessage {
-                msg_type: "fetch_user".to_string(),
-                payload,
-            });
+            let _ = sender.send(Request::FetchUser { id });
         }
     }
 }
 
-impl Default for WssClient {
+impl Default for Client {
     fn default() -> Self {
         Self::new()
     }

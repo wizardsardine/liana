@@ -1,0 +1,647 @@
+use std::collections::BTreeMap;
+use std::fmt::Display;
+use std::str::FromStr;
+
+use miniscript::DescriptorPublicKey;
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use tungstenite::Message as WsMessage;
+use uuid::Uuid;
+
+use crate::backend::{Org, User, UserRole, Wallet, WalletStatus};
+use crate::models::{Key, KeyType, PolicyTemplate, SpendingPath, Timelock};
+
+// JSON structures for protocol messages
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConnectPayload {
+    pub version: u8,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConnectedPayload {
+    pub version: u8,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FetchOrgPayload {
+    pub id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RemoveWalletFromOrgPayload {
+    pub wallet_id: String,
+    pub org_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateWalletPayload {
+    pub name: String,
+    pub org_id: String,
+    pub owner_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EditWalletPayload {
+    pub wallet: WalletJson,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FetchWalletPayload {
+    pub id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EditXpubPayload {
+    pub wallet_id: String,
+    pub key_id: u8,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub xpub: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FetchUserPayload {
+    pub id: String,
+}
+
+// JSON representations of domain objects
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OrgJson {
+    pub name: String,
+    pub id: String,
+    pub wallets: Vec<String>,
+    pub users: Vec<String>,
+    pub owners: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WalletJson {
+    pub id: String,
+    pub alias: String,
+    pub org: String,
+    pub owner: String,
+    #[serde(rename = "status")]
+    pub status_str: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub template: Option<PolicyTemplateJson>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UserJson {
+    pub name: String,
+    pub uuid: String,
+    pub email: String,
+    pub orgs: Vec<String>,
+    #[serde(rename = "role")]
+    pub role_str: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PolicyTemplateJson {
+    pub keys: BTreeMap<String, KeyJson>,
+    pub primary_path: SpendingPathJson,
+    pub secondary_paths: Vec<SecondaryPathJson>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KeyJson {
+    pub id: u8,
+    pub alias: String,
+    pub description: String,
+    pub email: String,
+    #[serde(rename = "key_type")]
+    pub key_type_str: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub xpub: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SpendingPathJson {
+    pub is_primary: bool,
+    pub threshold_n: u8,
+    pub key_ids: Vec<u8>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SecondaryPathJson {
+    pub path: SpendingPathJson,
+    pub timelock: TimelockJson,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TimelockJson {
+    pub blocks: u64,
+}
+
+// Conversion helpers
+impl WalletStatus {
+    pub(crate) fn from_str(s: &str) -> Option<Self> {
+        match s {
+            "Created" => Some(WalletStatus::Created),
+            "Drafted" => Some(WalletStatus::Drafted),
+            "Validated" => Some(WalletStatus::Validated),
+            "Finalized" => Some(WalletStatus::Finalized),
+            _ => None,
+        }
+    }
+}
+
+impl UserRole {
+    pub(crate) fn from_str(s: &str) -> Option<Self> {
+        match s {
+            "WSManager" => Some(UserRole::WSManager),
+            "Owner" => Some(UserRole::Owner),
+            "Participant" => Some(UserRole::Participant),
+            _ => None,
+        }
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn as_str(&self) -> &'static str {
+        match self {
+            UserRole::WSManager => "WSManager",
+            UserRole::Owner => "Owner",
+            UserRole::Participant => "Participant",
+        }
+    }
+}
+
+impl KeyType {
+    pub(crate) fn from_str(s: &str) -> Option<Self> {
+        match s {
+            "Internal" => Some(KeyType::Internal),
+            "External" => Some(KeyType::External),
+            "Cosigner" => Some(KeyType::Cosigner),
+            "SafetyNet" => Some(KeyType::SafetyNet),
+            _ => None,
+        }
+    }
+}
+
+// Conversion from JSON to domain objects
+impl TryFrom<OrgJson> for Org {
+    type Error = String;
+
+    fn try_from(json: OrgJson) -> Result<Self, Self::Error> {
+        let id = Uuid::parse_str(&json.id).map_err(|e| format!("Invalid org UUID: {}", e))?;
+        let wallets = json
+            .wallets
+            .into_iter()
+            .map(|w| Uuid::parse_str(&w))
+            .collect::<Result<std::collections::BTreeSet<_>, _>>()
+            .map_err(|e| format!("Invalid wallet UUID: {}", e))?;
+        let users = json
+            .users
+            .into_iter()
+            .map(|u| Uuid::parse_str(&u))
+            .collect::<Result<std::collections::BTreeSet<_>, _>>()
+            .map_err(|e| format!("Invalid user UUID: {}", e))?;
+        let owners = json
+            .owners
+            .into_iter()
+            .map(|o| Uuid::parse_str(&o))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| format!("Invalid owner UUID: {}", e))?;
+
+        Ok(Org {
+            name: json.name,
+            id,
+            wallets,
+            users,
+            owners,
+        })
+    }
+}
+
+impl TryFrom<UserJson> for User {
+    type Error = String;
+
+    fn try_from(json: UserJson) -> Result<Self, Self::Error> {
+        let uuid = Uuid::parse_str(&json.uuid).map_err(|e| format!("Invalid user UUID: {}", e))?;
+        let orgs = json
+            .orgs
+            .into_iter()
+            .map(|o| Uuid::parse_str(&o))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| format!("Invalid org UUID: {}", e))?;
+        let role = UserRole::from_str(&json.role_str)
+            .ok_or_else(|| format!("Invalid user role: {}", json.role_str))?;
+
+        Ok(User {
+            name: json.name,
+            uuid,
+            email: json.email,
+            orgs,
+            role,
+        })
+    }
+}
+
+impl TryFrom<WalletJson> for Wallet {
+    type Error = String;
+
+    fn try_from(json: WalletJson) -> Result<Self, Self::Error> {
+        let id = Uuid::parse_str(&json.id).map_err(|e| format!("Invalid wallet UUID: {}", e))?;
+        let org = Uuid::parse_str(&json.org).map_err(|e| format!("Invalid org UUID: {}", e))?;
+        let owner_id =
+            Uuid::parse_str(&json.owner).map_err(|e| format!("Invalid owner UUID: {}", e))?;
+        let status = WalletStatus::from_str(&json.status_str)
+            .ok_or_else(|| format!("Invalid wallet status: {}", json.status_str))?;
+
+        // Note: owner User will need to be fetched separately or provided
+        // For now, we'll create a placeholder - the actual implementation should fetch it
+        let owner = User {
+            name: String::new(),
+            uuid: owner_id,
+            email: String::new(),
+            orgs: Vec::new(),
+            role: UserRole::Owner,
+        };
+
+        let template = json.template.map(|t| t.try_into()).transpose()?;
+
+        Ok(Wallet {
+            alias: json.alias,
+            org,
+            owner,
+            id,
+            status,
+            template,
+        })
+    }
+}
+
+impl TryFrom<PolicyTemplateJson> for PolicyTemplate {
+    type Error = String;
+
+    fn try_from(json: PolicyTemplateJson) -> Result<Self, Self::Error> {
+        let mut keys = BTreeMap::new();
+        for (k, v) in json.keys {
+            let key_id = k
+                .parse::<u8>()
+                .map_err(|_| format!("Invalid key ID: {}", k))?;
+            let key = v.try_into()?;
+            keys.insert(key_id, key);
+        }
+
+        let primary_path = json.primary_path.try_into()?;
+        let secondary_paths = json
+            .secondary_paths
+            .into_iter()
+            .map(|sp| Ok((sp.path.try_into()?, sp.timelock.try_into()?)))
+            .collect::<Result<Vec<_>, String>>()?;
+
+        Ok(PolicyTemplate {
+            keys,
+            primary_path,
+            secondary_paths,
+        })
+    }
+}
+
+impl TryFrom<KeyJson> for Key {
+    type Error = String;
+
+    fn try_from(json: KeyJson) -> Result<Self, Self::Error> {
+        let key_type = KeyType::from_str(&json.key_type_str)
+            .ok_or_else(|| format!("Invalid key type: {}", json.key_type_str))?;
+        let xpub = json
+            .xpub
+            .map(|x| DescriptorPublicKey::from_str(&x).map_err(|e| format!("Invalid xpub: {}", e)))
+            .transpose()?;
+
+        Ok(Key {
+            id: json.id,
+            alias: json.alias,
+            description: json.description,
+            email: json.email,
+            key_type,
+            xpub,
+        })
+    }
+}
+
+impl TryFrom<SpendingPathJson> for SpendingPath {
+    type Error = String;
+
+    fn try_from(json: SpendingPathJson) -> Result<Self, Self::Error> {
+        Ok(SpendingPath {
+            is_primary: json.is_primary,
+            threshold_n: json.threshold_n,
+            key_ids: json.key_ids,
+        })
+    }
+}
+
+impl TryFrom<TimelockJson> for Timelock {
+    type Error = String;
+
+    fn try_from(json: TimelockJson) -> Result<Self, Self::Error> {
+        Ok(Timelock {
+            blocks: json.blocks,
+        })
+    }
+}
+
+// Application-level request and response enums
+#[derive(Debug, Clone)]
+pub enum Request {
+    Connect {
+        version: u8,
+    },
+    Ping,
+    Close,
+    FetchOrg {
+        id: Uuid,
+    },
+    RemoveWalletFromOrg {
+        wallet_id: Uuid,
+        org_id: Uuid,
+    },
+    CreateWallet {
+        name: String,
+        org_id: Uuid,
+        owner_id: Uuid,
+    },
+    EditWallet {
+        wallet: Wallet,
+    },
+    FetchWallet {
+        id: Uuid,
+    },
+    EditXpub {
+        wallet_id: Uuid,
+        key_id: u8,
+        xpub: Option<DescriptorPublicKey>,
+    },
+    FetchUser {
+        id: Uuid,
+    },
+}
+
+#[derive(Debug, Clone)]
+pub enum Response {
+    Connected { version: u8 },
+    Pong,
+    Org { org: OrgJson },
+    Wallet { wallet: WalletJson },
+    User { user: UserJson },
+    Error { error: WssError },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WssError {
+    pub code: String,
+    pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub request_id: Option<String>,
+}
+
+impl Display for WssError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            serde_json::to_string_pretty(&self).expect("serialization must not fail")
+        )
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum WssConversionError {
+    DeserializationFailed(String),
+    InvalidMessageType,
+}
+
+impl std::fmt::Display for WssConversionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            WssConversionError::DeserializationFailed(msg) => {
+                write!(f, "Failed to deserialize WSS response: {}", msg)
+            }
+            WssConversionError::InvalidMessageType => {
+                write!(f, "Invalid WebSocket message type (expected Text)")
+            }
+        }
+    }
+}
+
+impl std::error::Error for WssConversionError {}
+
+// Protocol-level request structure for serialization
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ProtocolRequest {
+    #[serde(rename = "type")]
+    msg_type: String,
+    token: String,
+    request_id: String,
+    payload: Value,
+}
+
+// Protocol-level response structure for deserialization
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ProtocolResponse {
+    #[serde(rename = "type")]
+    msg_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    request_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    payload: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<WssError>,
+}
+
+impl Request {
+    /// Convert application-level request to WebSocket message with protocol details
+    pub fn to_ws_message(&self, token: &str, request_id: &str) -> WsMessage {
+        let (msg_type, payload) = match self {
+            Request::Connect { version } => (
+                "connect",
+                serde_json::to_value(ConnectPayload { version: *version })
+                    .expect("serialization must not fail"),
+            ),
+            Request::Ping => ("ping", serde_json::json!({})),
+            Request::Close => ("close", serde_json::json!({})),
+            Request::FetchOrg { id } => (
+                "fetch_org",
+                serde_json::to_value(FetchOrgPayload { id: id.to_string() })
+                    .expect("serialization must not fail"),
+            ),
+            Request::RemoveWalletFromOrg { wallet_id, org_id } => (
+                "remove_wallet_from_org",
+                serde_json::to_value(RemoveWalletFromOrgPayload {
+                    wallet_id: wallet_id.to_string(),
+                    org_id: org_id.to_string(),
+                })
+                .expect("serialization must not fail"),
+            ),
+            Request::CreateWallet {
+                name,
+                org_id,
+                owner_id,
+            } => (
+                "create_wallet",
+                serde_json::to_value(CreateWalletPayload {
+                    name: name.clone(),
+                    org_id: org_id.to_string(),
+                    owner_id: owner_id.to_string(),
+                })
+                .expect("serialization must not fail"),
+            ),
+            Request::EditWallet { wallet } => {
+                // Convert Wallet to WalletJson
+                let wallet_json = WalletJson {
+                    id: wallet.id.to_string(),
+                    alias: wallet.alias.clone(),
+                    org: wallet.org.to_string(),
+                    owner: wallet.owner.uuid.to_string(),
+                    status_str: wallet.status.as_str().to_string(),
+                    template: wallet.template.as_ref().map(|t| {
+                        let mut keys_json = BTreeMap::new();
+                        for (k, v) in &t.keys {
+                            keys_json.insert(
+                                k.to_string(),
+                                KeyJson {
+                                    id: v.id,
+                                    alias: v.alias.clone(),
+                                    description: v.description.clone(),
+                                    email: v.email.clone(),
+                                    key_type_str: crate::models::KeyType::as_str(&v.key_type)
+                                        .to_string(),
+                                    xpub: v.xpub.as_ref().map(|x| x.to_string()),
+                                },
+                            );
+                        }
+
+                        let primary_path_json = SpendingPathJson {
+                            is_primary: t.primary_path.is_primary,
+                            threshold_n: t.primary_path.threshold_n,
+                            key_ids: t.primary_path.key_ids.clone(),
+                        };
+
+                        let secondary_paths_json = t
+                            .secondary_paths
+                            .iter()
+                            .map(|(path, timelock)| SecondaryPathJson {
+                                path: SpendingPathJson {
+                                    is_primary: path.is_primary,
+                                    threshold_n: path.threshold_n,
+                                    key_ids: path.key_ids.clone(),
+                                },
+                                timelock: TimelockJson {
+                                    blocks: timelock.blocks,
+                                },
+                            })
+                            .collect();
+
+                        PolicyTemplateJson {
+                            keys: keys_json,
+                            primary_path: primary_path_json,
+                            secondary_paths: secondary_paths_json,
+                        }
+                    }),
+                };
+
+                (
+                    "edit_wallet",
+                    serde_json::to_value(EditWalletPayload {
+                        wallet: wallet_json,
+                    })
+                    .expect("serialization must not fail"),
+                )
+            }
+            Request::FetchWallet { id } => (
+                "fetch_wallet",
+                serde_json::to_value(FetchWalletPayload { id: id.to_string() })
+                    .expect("serialization must not fail"),
+            ),
+            Request::EditXpub {
+                wallet_id,
+                key_id,
+                xpub,
+            } => (
+                "edit_xpub",
+                serde_json::to_value(EditXpubPayload {
+                    wallet_id: wallet_id.to_string(),
+                    key_id: *key_id,
+                    xpub: xpub.as_ref().map(|x| x.to_string()),
+                })
+                .expect("serialization must not fail"),
+            ),
+            Request::FetchUser { id } => (
+                "fetch_user",
+                serde_json::to_value(FetchUserPayload { id: id.to_string() })
+                    .expect("serialization must not fail"),
+            ),
+        };
+
+        let protocol_request = ProtocolRequest {
+            msg_type: msg_type.to_string(),
+            token: token.to_string(),
+            request_id: request_id.to_string(),
+            payload,
+        };
+
+        let json = serde_json::to_string(&protocol_request).expect("serialization must not fail");
+        WsMessage::Text(json)
+    }
+}
+
+impl Response {
+    /// Convert WebSocket message to application-level response, extracting protocol details
+    pub fn from_ws_message(msg: WsMessage) -> Result<Self, WssConversionError> {
+        let text = match msg {
+            WsMessage::Text(text) => text,
+            _ => return Err(WssConversionError::InvalidMessageType),
+        };
+
+        let protocol_response: ProtocolResponse = serde_json::from_str(&text)
+            .map_err(|e| WssConversionError::DeserializationFailed(e.to_string()))?;
+
+        // Handle error responses
+        if let Some(error) = protocol_response.error {
+            return Ok(Response::Error { error });
+        }
+
+        match protocol_response.msg_type.as_str() {
+            "connected" => {
+                let payload: ConnectedPayload =
+                    serde_json::from_value(protocol_response.payload.ok_or_else(|| {
+                        WssConversionError::DeserializationFailed("Missing payload".to_string())
+                    })?)
+                    .map_err(|e| WssConversionError::DeserializationFailed(e.to_string()))?;
+                Ok(Response::Connected {
+                    version: payload.version,
+                })
+            }
+            "pong" => Ok(Response::Pong),
+            "org" => {
+                let payload: OrgJson =
+                    serde_json::from_value(protocol_response.payload.ok_or_else(|| {
+                        WssConversionError::DeserializationFailed("Missing payload".to_string())
+                    })?)
+                    .map_err(|e| WssConversionError::DeserializationFailed(e.to_string()))?;
+                Ok(Response::Org { org: payload })
+            }
+            "wallet" => {
+                let payload: WalletJson =
+                    serde_json::from_value(protocol_response.payload.ok_or_else(|| {
+                        WssConversionError::DeserializationFailed("Missing payload".to_string())
+                    })?)
+                    .map_err(|e| WssConversionError::DeserializationFailed(e.to_string()))?;
+                Ok(Response::Wallet { wallet: payload })
+            }
+            "user" => {
+                let payload: UserJson =
+                    serde_json::from_value(protocol_response.payload.ok_or_else(|| {
+                        WssConversionError::DeserializationFailed("Missing payload".to_string())
+                    })?)
+                    .map_err(|e| WssConversionError::DeserializationFailed(e.to_string()))?;
+                Ok(Response::User { user: payload })
+            }
+            _ => Err(WssConversionError::DeserializationFailed(format!(
+                "Unknown message type: {}",
+                protocol_response.msg_type
+            ))),
+        }
+    }
+}

@@ -3,15 +3,17 @@ mod client;
 mod models;
 mod state;
 mod views;
+mod wss;
 
 use backend::Notification;
+use crossbeam::channel;
 use iced::{Pixels, Settings, Subscription, Task};
 use liana_ui::theme::Theme;
 use state::{Msg, State};
-use std::sync::{mpsc, Mutex};
+use std::sync::Mutex;
 
 // Global channel for backend communication
-static BACKEND_RECV: Mutex<Option<mpsc::Receiver<backend::Notification>>> = Mutex::new(None);
+static BACKEND_RECV: Mutex<Option<channel::Receiver<backend::Notification>>> = Mutex::new(None);
 const BACKEND_URL: &str = "127.0.0.1:8081";
 const PROTOCOL_VERSION: u8 = 1;
 
@@ -73,7 +75,7 @@ impl PolicyBuilder {
 
 // Subscription for backend stream
 struct BackendSubscription {
-    receiver: mpsc::Receiver<backend::Notification>,
+    receiver: channel::Receiver<backend::Notification>,
 }
 
 impl BackendSubscription {
@@ -84,7 +86,7 @@ impl BackendSubscription {
             }
         }
         // Fallback: create a dummy channel if not available and error
-        let (sender, receiver) = mpsc::channel();
+        let (sender, receiver) = channel::unbounded();
         sender
             .send(Notification::Error(backend::Error::SubscriptionFailed))
             .unwrap();
