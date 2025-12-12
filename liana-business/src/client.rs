@@ -1048,9 +1048,12 @@ mod tests {
         }
 
         #[test]
-        fn test_parse_error_response_no_request_id() {
+        fn test_parse_error_response_without_error_object_request_id() {
+            // Test error response where request_id is at protocol level but not in error object
+            // According to spec, request_id should be in error object when error is related to a request
             let json = r#"{
                 "type": "error",
+                "request_id": "550e8400-e29b-41d4-a716-446655440006",
                 "error": {
                     "code": "SERVER_ERROR",
                     "message": "Internal server error"
@@ -1063,11 +1066,14 @@ mod tests {
                 Response::Error { error } => {
                     assert_eq!(error.code, "SERVER_ERROR");
                     assert_eq!(error.message, "Internal server error");
-                    assert_eq!(error.request_id, None);
+                    // request_id may not be in error object, but should be at protocol level
+                    assert_eq!(
+                        request_id,
+                        Some("550e8400-e29b-41d4-a716-446655440006".to_string())
+                    );
                 }
                 _ => panic!("Expected Error response"),
             }
-            assert_eq!(request_id, None);
         }
 
         // Edge cases
