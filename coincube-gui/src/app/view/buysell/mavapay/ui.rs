@@ -81,8 +81,11 @@ fn transactions_form<'a>(state: &'a MavapayState) -> Column<'a, BuySellMessage> 
                         .color(color::GREY_2),
                         Space::with_height(5),
                         iced_aw::number_input(
-                            &{ *sat_amount * (price.btc_price_in_unit_currency / 100_000_000.0) }
-                                .round(),
+                            &{
+                                *sat_amount as f64
+                                    * (price.btc_price_in_unit_currency / 100_000_000.0)
+                            }
+                            .round(),
                             ..,
                             |a| { BuySellMessage::Mavapay(MavapayMessage::FiatAmountChanged(a)) }
                         )
@@ -94,12 +97,12 @@ fn transactions_form<'a>(state: &'a MavapayState) -> Column<'a, BuySellMessage> 
                         .padding(10)
                     ]
                     .align_x(Alignment::Center),
-                    container(up_down_icon().size(20).center()).padding(12),
+                    container(left_right_icon().size(20).center()).padding(12),
                     iced::widget::column![
                         // TODO: ensure user has BTC balance to satisfy quote
                         text("Satoshis (BTCSAT)").size(14).color(color::GREY_2),
                         Space::with_height(5),
-                        iced_aw::number_input(&(*sat_amount).round(), .., |a| {
+                        iced_aw::number_input(&(*sat_amount as f64), .., |a| {
                             BuySellMessage::Mavapay(MavapayMessage::SatAmountChanged(a))
                         })
                         .on_submit(BuySellMessage::Mavapay(MavapayMessage::NormalizeAmounts))

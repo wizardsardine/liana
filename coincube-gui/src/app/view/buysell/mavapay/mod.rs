@@ -9,7 +9,7 @@ pub enum MavapayFlowStep {
         buy_or_sell: BuyOrSell,
         country: Country,
         beneficiary: Option<Beneficiary>,
-        sat_amount: f64, // Unit Amount in BTCSAT
+        sat_amount: u64, // Unit Amount in BTCSAT
         banks: Option<MavapayBanks>,
         selected_bank: Option<usize>,
         transfer_speed: OnchainTransferSpeed,
@@ -17,10 +17,11 @@ pub enum MavapayFlowStep {
         sending_quote: bool,
     },
     Checkout {
-        sat_amount: f64,
+        sat_amount: u64,
         buy_or_sell: BuyOrSell,
         beneficiary: Option<Beneficiary>,
         quote: GetQuoteResponse,
+        abort: iced::task::Handle,
     },
 }
 
@@ -35,7 +36,7 @@ impl MavapayState {
             step: MavapayFlowStep::Transaction {
                 buy_or_sell,
                 country,
-                sat_amount: 6000.0,
+                sat_amount: 6000,
                 beneficiary: None,
                 transfer_speed: OnchainTransferSpeed::Fast,
                 banks: None,

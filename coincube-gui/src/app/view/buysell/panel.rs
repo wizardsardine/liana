@@ -420,7 +420,7 @@ impl BuySellPanel {
             )
             .size(16)
             .padding(15)
-            .secure(false),
+            .secure(true),
             Space::with_height(Length::Fixed(20.0)),
             button::primary(None, "Create Account")
                 .on_press_maybe(

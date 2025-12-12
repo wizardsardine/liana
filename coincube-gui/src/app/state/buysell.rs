@@ -346,14 +346,16 @@ impl State for BuySellPanel {
                         ) => {
                             match msg {
                                 MavapayMessage::NormalizeAmounts => {
-                                    *sat_amount = (*sat_amount).max(6000.0)
+                                    *sat_amount = (*sat_amount).max(6000).min(2_100_000_000_000_000)
                                 }
-                                MavapayMessage::SatAmountChanged(sats) => *sat_amount = sats,
+                                MavapayMessage::SatAmountChanged(sats) => {
+                                    *sat_amount = sats.round() as _
+                                }
                                 MavapayMessage::FiatAmountChanged(fiat) => match btc_price {
                                     Some(price) => {
                                         let sat_price =
                                             price.btc_price_in_unit_currency / 100_000_000.0;
-                                        *sat_amount = fiat / sat_price
+                                        *sat_amount = (fiat / sat_price).round() as _
                                     }
                                     None => log::warn!(
                                         "Unable to update BTC amount, BTC price is unknown"
@@ -376,7 +378,7 @@ impl State for BuySellPanel {
 
                                     let request = match buy_or_sell {
                                         panel::BuyOrSell::Sell => GetQuoteRequest {
-                                            amount: sat_amount.clone().round() as _,
+                                            amount: sat_amount.clone(),
                                             source_currency: MavapayUnitCurrency::BitcoinSatoshi,
                                             target_currency: local_currency,
                                             // TODO: Mavapay only supports lightning transactions for selling BTC, meaning we are currently blocked by the breeze integration
@@ -390,7 +392,7 @@ impl State for BuySellPanel {
                                         },
                                         panel::BuyOrSell::Buy { address } => {
                                             GetQuoteRequest {
-                                                amount: sat_amount.clone().round() as _,
+                                                amount: sat_amount.clone(),
                                                 source_currency: local_currency,
                                                 target_currency:
                                                     MavapayUnitCurrency::BitcoinSatoshi,
@@ -460,7 +462,7 @@ impl State for BuySellPanel {
                                         let client = mavapay.client.clone();
                                         let quote_id = quote.id.clone();
 
-                                        let transaction_checker = Task::perform(
+                                        let (transaction_checker, abort) = Task::perform(
                                             async move {
                                                 loop {
                                                     let order =
@@ -496,7 +498,7 @@ impl State for BuySellPanel {
                                                     ),
                                                 ))
                                             },
-                                        );
+                                        ).abortable();
 
                                         // switch to checkout
                                         mavapay.step = MavapayFlowStep::Checkout {
@@ -504,6 +506,7 @@ impl State for BuySellPanel {
                                             buy_or_sell: buy_or_sell.clone(),
                                             beneficiary: beneficiary.clone(),
                                             quote,
+                                            abort: abort.abort_on_drop(),
                                         };
 
                                         return transaction_checker;
@@ -826,7 +829,12 @@ impl State for BuySellPanel {
                         msg,
                     ) => match msg {
                         BuySellMessage::SendVerificationEmail => {
-                            tracing::info!("Sending verification email to: {}", email);
+                            match email.get(..8) {
+                                Some(e) => {
+                                    log::info!("[COINCUBE] Sending verification email to: {}..", e)
+                                }
+                                None => log::info!("[COINCUBE] Sending verification email"),
+                            }
 
                             let client = self.coincube_client.clone();
                             let email = email.clone();

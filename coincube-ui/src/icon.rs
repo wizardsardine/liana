@@ -132,7 +132,7 @@ pub fn left_right_icon() -> Text<'static> {
 }
 
 pub fn up_down_icon() -> Text<'static> {
-    bootstrap_icon('\u{F12B}')
+    bootstrap_icon('\u{F127}')
 }
 
 pub fn network_icon() -> Text<'static> {
