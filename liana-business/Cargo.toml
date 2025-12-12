@@ -1,0 +1,18 @@
+[package]
+name = "liana-business"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+email_address = { workspace = true }
+liana-ui = { path = "../liana-ui" }
+miniscript = { workspace = true }
+thiserror = { workspace = true }
+uuid = { workspace = true , features = ["v4"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+tungstenite = { workspace = true , features = ["rustls-tls-webpki-roots"]}
+url = { workspace = true }
+iced = { workspace = true , default-features = false, features = [ "svg", "image", "wgpu", "tiny-skia"] }
+rustls = { workspace = true }
+crossbeam = { version = "0.8.4", features = ["crossbeam-channel"] }
