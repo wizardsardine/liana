@@ -571,18 +571,12 @@ user or the system modifies the user data).
 When an error occurs, the server responds with an error message:
 
 ```json
-{
-  "type": "<original_message_type>",
-  "request_id": "<uuid>",
-  "error": {
-    "code": "<error_code>",
-    "message": "<error_message>"
-  }
-}
-```
-
-**Note:** The `request_id` field is always present in error responses, matching 
-the `request_id` from the original request.
+`request_id` field at the protocol level is always present in error
+responses, matching the `request_id` from the original request. When an error is
+related to a specific request, the `request_id` field must also be included within
+the error object itself, matching the protocol-level `request_id`. This allows
+clients to correlate errors with their corresponding requests even when processing
+the error object in isolation.
 
 ### Error Codes
 
@@ -638,7 +632,8 @@ Server -> Client: {
   "request_id": "<uuid>",
   "error": {
     "code": "<error_code>",
-    "message": "<error_message>"
+    "message": "<error_message>",
+    "request_id": "<uuid>"
   }
 }
 ```
@@ -689,7 +684,9 @@ The protocol uses `request_id` for request/response correlation:
     original request
   - Unsolicited notifications do not include `request_id`
 - **Error correlation**: Error responses always include the `request_id` from the
-  original request
+  original request at the protocol level. When an error is related to a specific
+  request, the `request_id` must also be included within the error object itself,
+  matching the protocol-level `request_id`
 
 Clients should use `request_id` to match responses and notifications to their
 corresponding requests. This is especially important when multiple requests are
