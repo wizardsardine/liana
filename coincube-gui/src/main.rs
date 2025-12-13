@@ -9,7 +9,7 @@ extern crate serde;
 extern crate serde_json;
 
 use coincube_core::miniscript::bitcoin;
-use coincube_ui::{component::text, font, image, theme};
+use coincube_ui::{component::text, font, image};
 
 use coincube_gui::{
     app::settings::global::{GlobalSettings, WindowConfig},
@@ -101,7 +101,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let settings = Settings {
         id: Some("Vault".to_string()),
         antialiasing: true,
-
+        vsync: true,
         default_text_size: text::P1_SIZE.into(),
         default_font: coincube_ui::font::REGULAR,
         fonts: font::load(),
@@ -137,13 +137,18 @@ fn main() -> Result<(), Box<dyn Error>> {
         };
     }
 
-    if let Err(e) = iced::application(GUI::title, GUI::update, GUI::view)
-        .theme(|_| theme::Theme::default())
-        .scale_factor(GUI::scale_factor)
-        .subscription(GUI::subscription)
-        .settings(settings)
-        .window(window_settings)
-        .run_with(move || GUI::new((config, log_level)))
+    if let Err(e) = iced::application(
+        move || GUI::new((config.clone(), log_level)),
+        GUI::update,
+        GUI::view,
+    )
+    .title(GUI::title)
+    .theme(GUI::theme)
+    .scale_factor(GUI::scale_factor)
+    .subscription(GUI::subscription)
+    .settings(settings)
+    .window(window_settings)
+    .run()
     {
         log::error!("{}", e);
         Err(format!("Failed to launch UI: {}", e).into())

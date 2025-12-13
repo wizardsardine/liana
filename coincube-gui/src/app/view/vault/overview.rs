@@ -44,7 +44,7 @@ fn rescan_warning<'a>() -> Element<'a, Message> {
             .push(
                 Row::new()
                     .spacing(5)
-                    .push(Space::with_width(Length::Fill))
+                    .push(Space::new().width(Length::Fill))
                     .push(
                         button::secondary(None, "Go to rescan").on_press(Message::Menu(
                             Menu::Vault(menu::VaultSubMenu::Settings(Some(
@@ -90,7 +90,7 @@ pub fn vault_overview_view<'a>(
                             .push_maybe(fiat_balance.map(|fiat| {
                                 Row::new()
                                     .align_y(Alignment::Center)
-                                    .push(Space::with_width(20))
+                                    .push(Space::new().width(20))
                                     .push(fiat.to_text().size(H2_SIZE).color(color::GREY_2))
                             }))
                     } else {
@@ -149,7 +149,7 @@ pub fn vault_overview_view<'a>(
                                 .push_maybe(fiat_unconfirmed.map(|fiat| {
                                     Row::new()
                                         .align_y(Alignment::Center)
-                                        .push(Space::with_width(10)) // total spacing = 20 including row spacing
+                                        .push(Space::new().width(10)) // total spacing = 20 including row spacing
                                         .push(fiat.to_text().size(H4_SIZE).color(color::GREY_3))
                                 }))
                                 .wrap(),
@@ -345,7 +345,7 @@ pub fn payment_view<'a>(
                 &tx.tx.output[output_index].value,
                 H3_SIZE,
             )))
-            .push(Space::with_height(H3_SIZE))
+            .push(Space::new().height(H3_SIZE))
             .push(Container::new(h3("Transaction")).width(Length::Fill))
             .push_maybe(if tx.is_batch() {
                 if let Some(label) = labels_editing.get(&txid) {

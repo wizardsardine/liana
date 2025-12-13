@@ -4,7 +4,7 @@ use coincube_ui::{
         text::{h4_bold, text},
     },
     icon,
-    widget::Element,
+    widget::{ColumnExt, Element, RowExt},
 };
 use iced::{
     alignment::{self, Horizontal},
@@ -65,7 +65,7 @@ pub fn export_modal<'a, Message: From<ImportExportMessage> + Clone + 'static>(
                     button::secondary(None, "Overwrite")
                         .on_press(ImportExportMessage::Overwrite.into()),
                 )
-                .push(Space::with_width(30))
+                .push(Space::new().width(30))
                 .push(
                     button::secondary(None, "Ignore").on_press(ImportExportMessage::Ignore.into()),
                 ),
@@ -79,7 +79,7 @@ pub fn export_modal<'a, Message: From<ImportExportMessage> + Clone + 'static>(
                     button::secondary(None, "Overwrite")
                         .on_press(ImportExportMessage::Overwrite.into()),
                 )
-                .push(Space::with_width(30))
+                .push(Space::new().width(30))
                 .push(
                     button::secondary(None, "Ignore").on_press(ImportExportMessage::Ignore.into()),
                 ),
@@ -120,27 +120,27 @@ pub fn export_modal<'a, Message: From<ImportExportMessage> + Clone + 'static>(
         p += 2.5;
     }
     let progress_bar_row = Row::new()
-        .push(Space::with_width(30))
+        .push(Space::new().width(30))
         .push(progress_bar(0.0..=100.0, p))
-        .push(Space::with_width(30));
+        .push(Space::new().width(30));
     card::simple(
         Column::new()
             .spacing(10)
             .push(
                 Row::new()
-                    .push(Space::with_width(20))
+                    .push(Space::new().width(20))
                     .push(h4_bold(title))
-                    .push(Space::with_width(Length::Fill))
+                    .push(Space::new().width(Length::Fill))
                     .push_maybe(cross)
                     .align_y(alignment::Vertical::Center),
             )
-            .push(Space::with_height(Length::Fill))
+            .push(Space::new().height(Length::Fill))
             .push(progress_bar_row)
-            .push(Space::with_height(Length::Fill))
+            .push(Space::new().height(Length::Fill))
             .push(Row::new().push(text(msg)))
-            .push(Space::with_height(Length::Fill))
+            .push(Space::new().height(Length::Fill))
             .push_maybe(button)
-            .push(Space::with_height(5)),
+            .push(Space::new().height(5)),
     )
     .width(Length::Fixed(500.0))
     .height(Length::Fixed(300.0))

@@ -505,17 +505,17 @@ fn invalid_content(hint: &str) -> Container<'_, installer::Message> {
     Container::new(
         Column::new()
             .spacing(5)
-            .push(Space::with_height(Length::Fill))
+            .push(Space::new().height(Length::Fill))
             .push(
                 row![
-                    Space::with_width(Length::Fill),
+                    Space::new().width(Length::Fill),
                     icon::warning_icon().size(250),
-                    Space::with_width(Length::Fill),
+                    Space::new().width(Length::Fill),
                 ]
                 .align_y(alignment::Vertical::Center),
             )
             .push(text::text(hint))
-            .push(Space::with_height(Length::Fill)),
+            .push(Space::new().height(Length::Fill)),
     )
 }
 
@@ -542,10 +542,10 @@ fn widget_signing_device(
     let designation =
         column![text::p1_bold(name), text::p1_regular(fg)].align_x(alignment::Horizontal::Center);
     let row = row![
-        Space::with_width(5),
+        Space::new().width(5),
         designation,
         message,
-        Space::with_width(Length::Fill)
+        Space::new().width(Length::Fill)
     ]
     .align_y(alignment::Vertical::Center)
     .spacing(10);
@@ -595,7 +595,7 @@ fn valid_content(state: &DecryptModal) -> Container<'static, installer::Message>
     for d in devices {
         col = col.push(d);
     }
-    col = col.push(Space::with_height(10)).push(options_btn);
+    col = col.push(Space::new().height(10)).push(options_btn);
     if state.show_options {
         col = col.push(optional_content(state));
     }
@@ -649,13 +649,13 @@ fn optional_content(state: &DecryptModal) -> Container<'static, installer::Messa
 
     let col = column![
         airgap_hint,
-        Space::with_height(modal::V_SPACING),
+        Space::new().height(modal::V_SPACING),
         import,
-        Space::with_height(modal::V_SPACING),
+        Space::new().height(modal::V_SPACING),
         xpub,
-        Space::with_height(modal::V_SPACING),
+        Space::new().height(modal::V_SPACING),
         mnemonic,
-        Space::with_height(modal::V_SPACING),
+        Space::new().height(modal::V_SPACING),
     ];
 
     Container::new(col)
@@ -686,12 +686,13 @@ pub fn mnemonic_input_button<'a>(
 
     if collapsed {
         let line = Row::new().push(form).push(paste).spacing(V_SPACING);
-        let check_box =
-            CheckBox::new(disclaimer, ack).on_toggle(|ack| Decrypt::MnemonicAck(ack).into());
+        let check_box = CheckBox::new(ack)
+            .label(disclaimer)
+            .on_toggle(|ack| Decrypt::MnemonicAck(ack).into());
         let col = Column::new()
             .push(row![
                 text::p1_regular(label).color(color::WHITE),
-                Space::with_width(Length::Fill)
+                Space::new().width(Length::Fill)
             ])
             .push(line);
         let content = if ack {

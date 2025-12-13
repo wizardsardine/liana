@@ -54,10 +54,10 @@ pub fn address_card<'a>(
                         Container::new(
                             scrollable(
                                 Column::new()
-                                    .push(Space::with_height(Length::Fixed(10.0)))
+                                    .push(Space::new().height(Length::Fixed(10.0)))
                                     .push(p2_regular(address).small().style(theme::text::secondary))
                                     // Space between the address and the scrollbar
-                                    .push(Space::with_height(Length::Fixed(10.0))),
+                                    .push(Space::new().height(Length::Fixed(10.0))),
                             )
                             .direction(
                                 scrollable::Direction::Horizontal(
@@ -80,7 +80,7 @@ pub fn address_card<'a>(
                         button::secondary(None, "Verify on hardware device")
                             .on_press(Message::Select(row_index)),
                     )
-                    .push(Space::with_width(Length::Fill))
+                    .push(Space::new().width(Length::Fill))
                     .push(
                         button::secondary(None, "Show QR Code")
                             .on_press(Message::ShowQrCode(row_index)),
@@ -202,7 +202,7 @@ pub fn receive<'a>(
                                     Container::new(
                                         scrollable(
                                             Column::new()
-                                                .push(Space::with_height(Length::Fixed(10.0)))
+                                                .push(Space::new().height(Length::Fixed(10.0)))
                                                 .push(
                                                     text(
                                                         prev_labels
@@ -214,7 +214,7 @@ pub fn receive<'a>(
                                                     .style(theme::text::secondary),
                                                 )
                                                 // Space between the label and the scrollbar
-                                                .push(Space::with_height(Length::Fixed(10.0))),
+                                                .push(Space::new().height(Length::Fixed(10.0))),
                                         )
                                         .direction(
                                             scrollable::Direction::Horizontal(
@@ -358,14 +358,14 @@ pub fn qr_modal<'a>(qr: &'a qr_code::Data, address: &'a String) -> Element<'a, M
     Column::new()
         .push(
             Row::new()
-                .push(Space::with_width(Length::Fill))
+                .push(Space::new().width(Length::Fill))
                 .push(
                     Container::new(QRCode::<coincube_ui::theme::Theme>::new(qr).cell_size(8))
                         .padding(10),
                 )
-                .push(Space::with_width(Length::Fill)),
+                .push(Space::new().width(Length::Fill)),
         )
-        .push(Space::with_height(Length::Fixed(15.0)))
+        .push(Space::new().height(Length::Fixed(15.0)))
         .push(Container::new(text(address).size(15)).center_x(Length::Fill))
         .width(Length::Fill)
         .max_width(400)

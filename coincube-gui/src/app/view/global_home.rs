@@ -65,7 +65,7 @@ fn wallet_card<'a>(
                 .push(
                     Row::new()
                         .align_y(Alignment::Center)
-                        .push(Space::with_width(Length::Fill))
+                        .push(Space::new().width(Length::Fill))
                         .push(
                             button::primary(None, "Create Vault")
                                 .width(Length::Fixed(160.0))
@@ -104,13 +104,13 @@ fn wallet_card<'a>(
                                     .map(|fiat| fiat.to_text().size(P1_SIZE).color(color::GREY_2))
                             }),
                     )
-                    .push(Space::with_width(Length::Fill))
+                    .push(Space::new().width(Length::Fill))
                     .push(
                         button::primary(None, "Send")
                             .width(Length::Fixed(120.0))
                             .on_press(send_action),
                     )
-                    .push(Space::with_width(Length::Fixed(8.0)))
+                    .push(Space::new().width(Length::Fixed(8.0)))
                     .push(
                         button::secondary(None, "Receive")
                             .style(|_t, _s| iced::widget::button::Style {
@@ -202,13 +202,13 @@ fn select_transfer_direction_view<'a>(
     let content =
         Column::new()
             .width(Length::Fill)
-            .push(Space::with_height(Length::Fixed(60.0)))
+            .push(Space::new().height(Length::Fixed(60.0)))
             .push(
                 button::secondary(None, "< Previous")
                     .width(Length::Fixed(150.0))
                     .on_press(Message::Home(HomeMessage::PreviousStep)),
             )
-            .push(Space::with_height(Length::Fixed(20.0)))
+            .push(Space::new().height(Length::Fixed(20.0)))
             .push(
                 Container::new(
                     Column::new()
@@ -321,14 +321,14 @@ fn enter_amount_card<'a>(
 ) -> Element<'a, Message> {
     let content = Column::new()
         .push(text("Enter Amount").bold().size(H2_SIZE))
-        .push(Space::with_height(Length::Fixed(10.0)))
+        .push(Space::new().height(Length::Fixed(10.0)))
         .push(
             Row::new()
                 .spacing(4)
                 .push(text("Sending from"))
                 .push(text(direction.display()).bold()),
         )
-        .push(Space::with_height(Length::Fixed(80.0)))
+        .push(Space::new().height(Length::Fixed(80.0)))
         .push(
             Column::new()
                 .push(Container::new(
@@ -404,7 +404,7 @@ fn enter_amount_view<'a>(
     };
 
     let content = Column::new()
-        .push(Space::with_height(Length::Fixed(60.0)))
+        .push(Space::new().height(Length::Fixed(60.0)))
         .spacing(20)
         .push(
             Column::new()
@@ -422,7 +422,7 @@ fn enter_amount_view<'a>(
                                 .width(Length::Fill)
                                 .align_x(Alignment::Center),
                         )
-                        .push(Space::with_width(Length::Fixed(150.0))),
+                        .push(Space::new().width(Length::Fixed(150.0))),
                 )
                 .width(Length::Fill),
         )
@@ -479,13 +479,13 @@ fn confirm_transfer_view<'a>(
 
     let content = Column::new()
         .width(Length::Fill)
-        .push(Space::with_height(Length::Fixed(60.0)))
+        .push(Space::new().height(Length::Fixed(60.0)))
         .push(
             button::secondary(None, "< Previous")
                 .width(Length::Fixed(150.0))
                 .on_press(Message::Home(HomeMessage::PreviousStep)),
         )
-        .push(Space::with_height(Length::Fixed(20.0)))
+        .push(Space::new().height(Length::Fixed(20.0)))
         .push_maybe(warning.map(|w| warn(Some(w))))
         .push(Container::new(
             Column::new()
@@ -502,7 +502,7 @@ fn confirm_transfer_view<'a>(
                         .align_x(Alignment::Center)
                         .width(Length::Fill),
                 )
-                .push(Space::with_height(60))
+                .push(Space::new().height(60))
                 .push_maybe(match direction {
                     TransferDirection::ActiveToVault => Some(
                         Column::new()
@@ -605,21 +605,21 @@ fn confirm_transfer_view<'a>(
                     }
                 }),
         ))
-        .push(Space::with_height(Length::Fixed(20.0)))
+        .push(Space::new().height(Length::Fixed(20.0)))
         .push(
             Container::new(
                 Row::new()
                     .padding(20)
                     .push(text("Amount:"))
-                    .push(Space::with_width(Length::Fill))
+                    .push(Space::new().width(Length::Fill))
                     .push(text(&amount.value))
-                    .push(Space::with_width(4))
+                    .push(Space::new().width(4))
                     .push(text("BTC")),
             )
             .width(Length::Fill)
             .style(theme::card::simple),
         )
-        .push(Space::with_height(Length::Fixed(60.0)))
+        .push(Space::new().height(Length::Fixed(60.0)))
         .push(
             button::primary(None, "Confirm Transfer")
                 .on_press(Message::Home(HomeMessage::ConfirmTransfer)),

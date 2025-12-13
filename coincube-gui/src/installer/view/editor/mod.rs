@@ -66,7 +66,7 @@ pub fn define_descriptor_advanced_settings<'a>(use_taproot: bool) -> Element<'a,
     container(
         Column::new()
             .spacing(20)
-            .push(Space::with_height(0))
+            .push(Space::new().height(0))
             .push(separation().width(500))
             .push(Row::new().push(col_wallet))
             .push_maybe(if use_taproot {
@@ -94,7 +94,7 @@ pub fn path(
     Container::new(
         Column::new()
             .spacing(10)
-            .push_maybe(title.map(|t| Row::new().push(Space::with_width(10)).push(p1_bold(t))))
+            .push_maybe(title.map(|t| Row::new().push(Space::new().width(10)).push(p1_bold(t))))
             .push(defined_sequence(sequence, warning))
             .push(
                 Column::new()

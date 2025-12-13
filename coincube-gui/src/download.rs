@@ -1,30 +1,19 @@
 // This is based on https://github.com/iced-rs/iced/blob/master/examples/download_progress/src/download.rs
-// with some modifications to store the downloaded bytes in `Progress::Finished` and `State::Downloading`
-// and to keep track of any download errors.
-use iced::futures::{SinkExt, Stream, StreamExt};
-use iced::stream::try_channel;
-use iced::Subscription;
+// with some modifications to return the downloaded bytes upon completion
+use iced::futures::StreamExt;
+use iced::task::{sipper, Straw};
 
-use std::hash::Hash;
 use std::sync::Arc;
 
-// Just a little utility function
-pub fn file<I: 'static + Hash + Copy + Send + Sync, T: ToString>(
-    id: I,
-    url: T,
-) -> iced::Subscription<(I, Result<Progress, DownloadError>)> {
-    Subscription::run_with_id(
-        id,
-        download(url.to_string()).map(move |progress| (id, progress)),
-    )
-}
-
-fn download(url: String) -> impl Stream<Item = Result<Progress, DownloadError>> {
-    try_channel(100, move |mut output| async move {
+/// Downloads a file from the given URL, reporting progress.
+/// Returns a Straw that yields Progress updates and completes with the downloaded bytes.
+pub fn download(url: impl AsRef<str>) -> impl Straw<Vec<u8>, Progress, DownloadError> {
+    let url = url.as_ref().to_string();
+    sipper(async move |mut progress| {
         let response = reqwest::get(&url).await?;
         let total = response.content_length();
 
-        let _ = output.send(Progress::Downloading(0.0)).await;
+        progress.send(Progress::downloading(0.0)).await;
 
         let mut byte_stream = response.bytes_stream();
         let mut downloaded = 0;
@@ -36,24 +25,27 @@ fn download(url: String) -> impl Stream<Item = Result<Progress, DownloadError>> 
             bytes.append(&mut chunk.to_vec());
 
             if let Some(total) = total {
-                let _ = output
-                    .send(Progress::Downloading(
+                progress
+                    .send(Progress::downloading(
                         100.0 * downloaded as f32 / total as f32,
                     ))
                     .await;
             }
         }
 
-        let _ = output.send(Progress::Finished(bytes)).await;
-
-        Ok(())
+        Ok(bytes)
     })
 }
 
 #[derive(Debug, Clone)]
-pub enum Progress {
-    Downloading(f32),
-    Finished(Vec<u8>),
+pub struct Progress {
+    pub percent: f32,
+}
+
+impl Progress {
+    pub fn downloading(percent: f32) -> Self {
+        Self { percent }
+    }
 }
 
 #[derive(Debug, Clone)]

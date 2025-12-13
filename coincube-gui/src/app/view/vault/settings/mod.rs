@@ -4,7 +4,7 @@ use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
 
 use iced::alignment::{Horizontal, Vertical};
-use iced::widget::{container, Column, Rule};
+use iced::widget::{container, rule, Column};
 use iced::{
     alignment,
     widget::{radio, scrollable, tooltip as iced_tooltip, Space},
@@ -215,11 +215,11 @@ pub fn import_export<'a>(
     let header = header("Import/Export", SettingsMessage::ImportExportSection);
 
     let description = Row::new()
-        .push(Space::with_width(30))
+        .push(Space::new().width(30))
         .push(text(
             "A collection of the export and import functions present in Coincube.",
         ))
-        .push(Space::with_width(Length::Fill));
+        .push(Space::new().width(Length::Fill));
 
     let export_encrypted_descriptor = export_section(
         "Encrypted descriptor",
@@ -264,11 +264,11 @@ pub fn import_export<'a>(
     );
 
     let separator = Row::new()
-        .push(Space::with_width(30))
+        .push(Space::new().width(30))
         .push(text("Other formats"))
-        .push(Space::with_width(15))
-        .push(Rule::horizontal(2))
-        .push(Space::with_width(30))
+        .push(Space::new().width(15))
+        .push(rule::horizontal(2))
+        .push(Space::new().width(30))
         .align_y(Vertical::Center);
 
     dashboard(
@@ -310,9 +310,9 @@ pub fn about_section<'a>(
                     .width(Length::Fill),
             )
             .push(separation().width(Length::Fill))
-            .push(Space::with_height(Length::Fixed(10.0)))
+            .push(Space::new().height(Length::Fixed(10.0)))
             .push(
-                Row::new().push(Space::with_width(Length::Fill)).push(
+                Row::new().push(Space::new().width(Length::Fill)).push(
                     Column::new()
                         .push(text(format!("coincube-gui v{}", crate::VERSION)))
                         .push_maybe(
@@ -366,7 +366,7 @@ pub fn remote_backend_section<'a>(
                     } else {
                         None
                     })
-                    .push(Space::with_width(Length::Fill))
+                    .push(Space::new().width(Length::Fill))
                     .push(button::secondary(None, "Send invitation").on_press_maybe(
                         if !processing && email_form.valid {
                             Some(Message::Settings(SettingsMessage::RemoteBackendSettings(
@@ -609,10 +609,10 @@ pub fn bitcoind<'a>(
                     Container::new(
                         scrollable(
                             Column::new()
-                                .push(Space::with_height(Length::Fixed(10.0)))
+                                .push(Space::new().height(Length::Fixed(10.0)))
                                 .push(text(t).small())
                                 // Space between the text and the scrollbar
-                                .push(Space::with_height(Length::Fixed(10.0))),
+                                .push(Space::new().height(Length::Fixed(10.0))),
                         )
                         .direction(scrollable::Direction::Horizontal(
                             scrollable::Scrollbar::new().width(2).scroller_width(2),
@@ -622,7 +622,7 @@ pub fn bitcoind<'a>(
                     .padding(10)
                     .width(Length::FillPortion(3)),
                 )
-                .push(Space::with_width(10))
+                .push(Space::new().width(10))
                 .push(
                     Button::new(icon::clipboard_icon())
                         .style(theme::button::transparent_border)
@@ -812,7 +812,7 @@ pub fn electrum<'a>(
             Row::new()
                 .push(Container::new(text(k).bold().small()).width(Length::Fill))
                 .push(text(v.clone()).small())
-                .push(Space::with_width(10))
+                .push(Space::new().width(10))
                 .push(
                     Button::new(icon::clipboard_icon())
                         .style(theme::button::transparent_border)
@@ -914,7 +914,7 @@ pub fn rescan<'a>(
                 Container::new(
                     Column::new()
                         .width(Length::Fill)
-                        .push(ProgressBar::new(0.0..=1.0, p as f32).width(Length::Fill))
+                        .push(ProgressBar::new(0.0..=1.0, p as f32).length(Length::Fill))
                         .push(text(format!("Rescanning...{:.2}%", p * 100.0))),
                 )
             } else {
@@ -1054,7 +1054,7 @@ pub fn wallet_settings<'a>(
                 scrollable(
                     Column::new()
                         .push(text(descriptor.to_string()).small())
-                        .push(Space::with_height(Length::Fixed(5.0))),
+                        .push(Space::new().height(Length::Fixed(5.0))),
                 )
                 .direction(scrollable::Direction::Horizontal(
                     scrollable::Scrollbar::new().width(5).scroller_width(5),
@@ -1115,7 +1115,7 @@ pub fn wallet_settings<'a>(
             .push(
                 Row::new()
                     .align_y(Alignment::Center)
-                    .push(Space::with_width(Length::Fill))
+                    .push(Space::new().width(Length::Fill))
                     .push_maybe(if updated {
                         Some(
                             Row::new()

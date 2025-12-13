@@ -2,14 +2,14 @@ use crate::{font, theme::Theme};
 use iced::advanced::text::Shaping;
 use std::fmt::Display;
 
-pub const H1_SIZE: u16 = 40;
-pub const H2_SIZE: u16 = 29;
-pub const H3_SIZE: u16 = 24;
-pub const H4_SIZE: u16 = 20;
-pub const H5_SIZE: u16 = 18;
-pub const P1_SIZE: u16 = 16;
-pub const P2_SIZE: u16 = 14;
-pub const CAPTION_SIZE: u16 = 12;
+pub const H1_SIZE: u32 = 40;
+pub const H2_SIZE: u32 = 29;
+pub const H3_SIZE: u32 = 24;
+pub const H4_SIZE: u32 = 20;
+pub const H5_SIZE: u32 = 18;
+pub const P1_SIZE: u32 = 16;
+pub const P2_SIZE: u32 = 14;
+pub const CAPTION_SIZE: u32 = 12;
 
 pub fn h1<'a>(content: impl Display) -> iced::widget::Text<'a, Theme> {
     iced::widget::text!("{}", content)

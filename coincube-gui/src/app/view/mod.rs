@@ -35,7 +35,7 @@ use coincube_ui::icon::bitcoin_icon;
 use crate::app::{cache::Cache, error::Error, menu::Menu};
 
 fn menu_bar_highlight<'a, T: 'a>() -> Container<'a, T> {
-    Container::new(Space::with_width(Length::Fixed(5.0)))
+    Container::new(Space::new().width(Length::Fixed(5.0)))
         .height(Length::Fixed(50.0))
         .style(theme::container::custom(color::ORANGE))
 }
@@ -98,7 +98,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<
             .align_y(iced::alignment::Vertical::Center)
             .push(lightning_icon().style(theme::text::secondary))
             .push(text("Active").size(15))
-            .push(Space::with_width(Length::Fill))
+            .push(Space::new().width(Length::Fill))
             .push(active_chevron.style(theme::text::secondary))
             .padding(10),
     )
@@ -115,7 +115,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<
         // Active Overview
         let active_overview_button = if matches!(menu, Menu::Active(ActiveSubMenu::Overview)) {
             row!(
-                Space::with_width(Length::Fixed(20.0)),
+                Space::new().width(Length::Fixed(20.0)),
                 button::menu_active(Some(home_icon()), "Overview")
                     .on_press(Message::Reload)
                     .width(iced::Length::Fill),
@@ -124,7 +124,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<
             .width(Length::Fill)
         } else {
             row!(
-                Space::with_width(Length::Fixed(20.0)),
+                Space::new().width(Length::Fixed(20.0)),
                 button::menu(Some(home_icon()), "Overview")
                     .on_press(Message::Menu(Menu::Active(ActiveSubMenu::Overview)))
                     .width(iced::Length::Fill),
@@ -135,7 +135,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<
         // Active Send
         let active_send_button = if matches!(menu, Menu::Active(ActiveSubMenu::Send)) {
             row!(
-                Space::with_width(Length::Fixed(20.0)),
+                Space::new().width(Length::Fixed(20.0)),
                 button::menu_active(Some(send_icon()), "Send")
                     .on_press(Message::Reload)
                     .width(iced::Length::Fill),
@@ -144,7 +144,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<
             .width(Length::Fill)
         } else {
             row!(
-                Space::with_width(Length::Fixed(20.0)),
+                Space::new().width(Length::Fixed(20.0)),
                 button::menu(Some(send_icon()), "Send")
                     .on_press(Message::Menu(Menu::Active(ActiveSubMenu::Send)))
                     .width(iced::Length::Fill),
@@ -155,7 +155,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<
         // Active Receive
         let active_receive_button = if matches!(menu, Menu::Active(ActiveSubMenu::Receive)) {
             row!(
-                Space::with_width(Length::Fixed(20.0)),
+                Space::new().width(Length::Fixed(20.0)),
                 button::menu_active(Some(receive_icon()), "Receive")
                     .on_press(Message::Reload)
                     .width(iced::Length::Fill),
@@ -164,7 +164,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<
             .width(Length::Fill)
         } else {
             row!(
-                Space::with_width(Length::Fixed(20.0)),
+                Space::new().width(Length::Fixed(20.0)),
                 button::menu(Some(receive_icon()), "Receive")
                     .on_press(Message::Menu(Menu::Active(ActiveSubMenu::Receive)))
                     .width(iced::Length::Fill),
@@ -176,7 +176,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<
         let active_transactions_button =
             if matches!(menu, Menu::Active(ActiveSubMenu::Transactions(_))) {
                 row!(
-                    Space::with_width(Length::Fixed(20.0)),
+                    Space::new().width(Length::Fixed(20.0)),
                     button::menu_active(Some(receipt_icon()), "Transactions")
                         .on_press(Message::Reload)
                         .width(iced::Length::Fill),
@@ -185,7 +185,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<
                 .width(Length::Fill)
             } else {
                 row!(
-                    Space::with_width(Length::Fixed(20.0)),
+                    Space::new().width(Length::Fixed(20.0)),
                     button::menu(Some(receipt_icon()), "Transactions")
                         .on_press(Message::Menu(Menu::Active(ActiveSubMenu::Transactions(
                             None
@@ -198,7 +198,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<
         // Active Settings
         let active_settings_button = if matches!(menu, Menu::Active(ActiveSubMenu::Settings(_))) {
             row!(
-                Space::with_width(Length::Fixed(20.0)),
+                Space::new().width(Length::Fixed(20.0)),
                 button::menu_active(Some(settings_icon()), "Settings")
                     .on_press(Message::Reload)
                     .width(iced::Length::Fill),
@@ -207,7 +207,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<
             .width(Length::Fill)
         } else {
             row!(
-                Space::with_width(Length::Fixed(20.0)),
+                Space::new().width(Length::Fixed(20.0)),
                 button::menu(Some(settings_icon()), "Settings")
                     .on_press(Message::Menu(Menu::Active(ActiveSubMenu::Settings(None))))
                     .width(iced::Length::Fill),
@@ -235,7 +235,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<
                 .align_y(iced::alignment::Vertical::Center)
                 .push(vault_icon().style(theme::text::secondary))
                 .push(text("Vault").size(15))
-                .push(Space::with_width(Length::Fill))
+                .push(Space::new().width(Length::Fill))
                 .push(
                     Container::new(plus_icon().style(theme::text::secondary))
                         .padding(iced::Padding::from([3.0, 0.0])) // Add 3px top and bottom padding for better centering
@@ -261,7 +261,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<
                 .align_y(iced::alignment::Vertical::Center)
                 .push(vault_icon().style(theme::text::secondary))
                 .push(text("Vault").size(15))
-                .push(Space::with_width(Length::Fill))
+                .push(Space::new().width(Length::Fill))
                 .push(vault_chevron.style(theme::text::secondary))
                 .padding(10),
         )
@@ -279,7 +279,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<
         // Overview
         let vault_overview_button = if matches!(menu, Menu::Vault(VaultSubMenu::Overview)) {
             row!(
-                Space::with_width(Length::Fixed(20.0)),
+                Space::new().width(Length::Fixed(20.0)),
                 button::menu_active(Some(home_icon()), "Overview")
                     .on_press(Message::Reload)
                     .width(iced::Length::Fill),
@@ -288,7 +288,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<
             .width(Length::Fill)
         } else {
             row!(
-                Space::with_width(Length::Fixed(20.0)),
+                Space::new().width(Length::Fixed(20.0)),
                 button::menu(Some(home_icon()), "Overview")
                     .on_press(Message::Menu(Menu::Vault(VaultSubMenu::Overview)))
                     .width(iced::Length::Fill),
@@ -299,7 +299,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<
         // Send
         let vault_send_button = if matches!(menu, Menu::Vault(VaultSubMenu::Send)) {
             row!(
-                Space::with_width(Length::Fixed(20.0)),
+                Space::new().width(Length::Fixed(20.0)),
                 button::menu_active(Some(send_icon()), "Send")
                     .on_press(Message::Reload)
                     .width(iced::Length::Fill),
@@ -308,7 +308,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<
             .width(Length::Fill)
         } else {
             row!(
-                Space::with_width(Length::Fixed(20.0)),
+                Space::new().width(Length::Fixed(20.0)),
                 button::menu(Some(send_icon()), "Send")
                     .on_press(Message::Menu(Menu::Vault(VaultSubMenu::Send)))
                     .width(iced::Length::Fill),
@@ -319,7 +319,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<
         // Receive
         let vault_receive_button = if matches!(menu, Menu::Vault(VaultSubMenu::Receive)) {
             row!(
-                Space::with_width(Length::Fixed(20.0)),
+                Space::new().width(Length::Fixed(20.0)),
                 button::menu_active(Some(receive_icon()), "Receive")
                     .on_press(Message::Reload)
                     .width(iced::Length::Fill),
@@ -328,7 +328,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<
             .width(Length::Fill)
         } else {
             row!(
-                Space::with_width(Length::Fixed(20.0)),
+                Space::new().width(Length::Fixed(20.0)),
                 button::menu(Some(receive_icon()), "Receive")
                     .on_press(Message::Menu(Menu::Vault(VaultSubMenu::Receive)))
                     .width(iced::Length::Fill),
@@ -339,7 +339,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<
         // Coins
         let vault_coins_button = if matches!(menu, Menu::Vault(VaultSubMenu::Coins(_))) {
             row!(
-                Space::with_width(Length::Fixed(20.0)),
+                Space::new().width(Length::Fixed(20.0)),
                 button::menu_active(Some(coins_icon()), "Coins")
                     .on_press(Message::Reload)
                     .width(iced::Length::Fill),
@@ -348,7 +348,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<
             .width(Length::Fill)
         } else {
             row!(
-                Space::with_width(Length::Fixed(20.0)),
+                Space::new().width(Length::Fixed(20.0)),
                 button::menu(Some(coins_icon()), "Coins")
                     .on_press(Message::Menu(Menu::Vault(VaultSubMenu::Coins(None))))
                     .width(iced::Length::Fill),
@@ -360,7 +360,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<
         let vault_transactions_button =
             if matches!(menu, Menu::Vault(VaultSubMenu::Transactions(_))) {
                 row!(
-                    Space::with_width(Length::Fixed(20.0)),
+                    Space::new().width(Length::Fixed(20.0)),
                     button::menu_active(Some(receipt_icon()), "Transactions")
                         .on_press(Message::Reload)
                         .width(iced::Length::Fill),
@@ -369,7 +369,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<
                 .width(Length::Fill)
             } else {
                 row!(
-                    Space::with_width(Length::Fixed(20.0)),
+                    Space::new().width(Length::Fixed(20.0)),
                     button::menu(Some(receipt_icon()), "Transactions")
                         .on_press(Message::Menu(Menu::Vault(VaultSubMenu::Transactions(None))))
                         .width(iced::Length::Fill),
@@ -380,7 +380,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<
         // PSBTs
         let vault_psbts_button = if matches!(menu, Menu::Vault(VaultSubMenu::PSBTs(_))) {
             row!(
-                Space::with_width(Length::Fixed(20.0)),
+                Space::new().width(Length::Fixed(20.0)),
                 button::menu_active(Some(receipt_icon()), "PSBTs")
                     .on_press(Message::Reload)
                     .width(iced::Length::Fill),
@@ -389,7 +389,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<
             .width(Length::Fill)
         } else {
             row!(
-                Space::with_width(Length::Fixed(20.0)),
+                Space::new().width(Length::Fixed(20.0)),
                 button::menu(Some(receipt_icon()), "PSBTs")
                     .on_press(Message::Menu(Menu::Vault(VaultSubMenu::PSBTs(None))))
                     .width(iced::Length::Fill),
@@ -400,7 +400,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<
         // Recovery
         let vault_recovery_button = if matches!(menu, Menu::Vault(VaultSubMenu::Recovery)) {
             row!(
-                Space::with_width(Length::Fixed(20.0)),
+                Space::new().width(Length::Fixed(20.0)),
                 button::menu_active(Some(recovery_icon()), "Recovery")
                     .on_press(Message::Reload)
                     .width(iced::Length::Fill),
@@ -409,7 +409,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<
             .width(Length::Fill)
         } else {
             row!(
-                Space::with_width(Length::Fixed(20.0)),
+                Space::new().width(Length::Fixed(20.0)),
                 button::menu(Some(recovery_icon()), "Recovery")
                     .on_press(Message::Menu(Menu::Vault(VaultSubMenu::Recovery)))
                     .width(iced::Length::Fill),
@@ -420,7 +420,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<
         // Settings
         let vault_settings_button = if matches!(menu, Menu::Vault(VaultSubMenu::Settings(_))) {
             row!(
-                Space::with_width(Length::Fixed(20.0)),
+                Space::new().width(Length::Fixed(20.0)),
                 button::menu_active(Some(settings_icon()), "Settings")
                     .on_press(Message::Reload)
                     .width(iced::Length::Fill),
@@ -429,7 +429,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<
             .width(Length::Fill)
         } else {
             row!(
-                Space::with_width(Length::Fixed(20.0)),
+                Space::new().width(Length::Fixed(20.0)),
                 button::menu(Some(settings_icon()), "Settings")
                     .on_press(Message::Menu(Menu::Vault(VaultSubMenu::Settings(None))))
                     .width(iced::Length::Fill),
@@ -491,11 +491,11 @@ pub fn dashboard<'a, T: Into<Element<'a, Message>>>(
                 .push(
                     Container::new(
                         scrollable(row!(
-                            Space::with_width(Length::FillPortion(1)),
-                            column!(Space::with_height(Length::Fixed(30.0)), content.into())
+                            Space::new().width(Length::FillPortion(1)),
+                            column!(Space::new().height(Length::Fixed(30.0)), content.into())
                                 .width(Length::FillPortion(8))
                                 .max_width(1500),
-                            Space::with_width(Length::FillPortion(1)),
+                            Space::new().width(Length::FillPortion(1)),
                         ))
                         .on_scroll(|w| Message::Scroll(w.absolute_offset().y)),
                     )

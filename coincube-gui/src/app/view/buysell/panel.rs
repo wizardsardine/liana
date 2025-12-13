@@ -135,7 +135,7 @@ impl BuySellPanel {
     pub fn view<'a>(&'a self) -> iced::Element<'a, ViewMessage, theme::Theme> {
         let column = {
             let column = Column::new()
-                .push(Space::with_height(60))
+                .push(Space::new().height(60))
                 // COINCUBE branding
                 .push(
                     Row::new()
@@ -145,7 +145,7 @@ impl BuySellPanel {
                                 .push(text::h4_bold("CUBE").color(color::WHITE))
                                 .spacing(0),
                         )
-                        .push(Space::with_width(Length::Fixed(8.0)))
+                        .push(Space::new().width(Length::Fixed(8.0)))
                         .push(text::h5_regular("BUY/SELL").color(color::GREY_3))
                         // TODO: Render a small `Start Over` button for resetting the panel state
                         .align_y(Alignment::Center),
@@ -159,7 +159,7 @@ impl BuySellPanel {
                 .push_maybe(
                     self.error
                         .is_some()
-                        .then(|| Space::with_height(Length::Fixed(20.0))),
+                        .then(|| Space::new().height(Length::Fixed(20.0))),
                 )
                 // render flow state
                 .push({
@@ -203,13 +203,13 @@ impl BuySellPanel {
             iced::widget::column![
                 // header
                 text::h3("Sign in to your account").color(color::WHITE),
-                Space::with_height(Length::Fixed(35.0)),
+                Space::new().height(Length::Fixed(35.0)),
                 // input fields
                 text_input("Email", email)
                     .on_input(|e| BuySellMessage::LoginUsernameChanged(e))
                     .size(16)
                     .padding(15),
-                Space::with_height(Length::Fixed(5.0)),
+                Space::new().height(Length::Fixed(5.0)),
                 text_input("Password", password)
                     .secure(true)
                     .on_input(|p| BuySellMessage::LoginPasswordChanged(p))
@@ -221,7 +221,7 @@ impl BuySellPanel {
                     )
                     .size(16)
                     .padding(15),
-                Space::with_height(Length::Fixed(15.0)),
+                Space::new().height(Length::Fixed(15.0)),
                 // submit button
                 button::primary(None, "Log In")
                     .on_press_maybe(
@@ -231,11 +231,11 @@ impl BuySellPanel {
                             }),
                     )
                     .width(Length::Fill),
-                Space::with_height(Length::Fixed(10.0)),
+                Space::new().height(Length::Fixed(10.0)),
                 // separator
-                container(Space::new(iced::Length::Fill, iced::Length::Fixed(3.0)))
+                container(Space::new().height(Length::Fixed(3.0)).width(Length::Fill))
                     .style(|_| { color::GREY_6.into() }),
-                Space::with_height(Length::Fixed(5.0)),
+                Space::new().height(Length::Fixed(5.0)),
                 // sign-up redirect
                 iced::widget::button(
                     text::p2_regular("Don't have an account? Sign up").color(color::BLUE),
@@ -266,9 +266,9 @@ impl BuySellPanel {
         };
 
         let col = iced::widget::column![
-            Space::with_height(Length::Fixed(15.0)),
+            Space::new().height(Length::Fixed(15.0)),
             text::p1_bold("Password Reset Form"),
-            Space::with_height(Length::Fixed(10.0)),
+            Space::new().height(Length::Fixed(10.0)),
             iced::widget::row![
                 container(email_icon().color(color::BLACK).size(20))
                     .style(|_| {
@@ -321,11 +321,15 @@ impl BuySellPanel {
         ]
         .push(
             iced::widget::column![
-                Space::with_height(Length::Fixed(10.0)),
+                Space::new().height(Length::Fixed(10.0)),
                 // separator
-                container(Space::new(iced::Length::Fill, iced::Length::Fixed(2.0)))
-                    .style(|_| { color::GREY_7.into() }),
-                Space::with_height(Length::Fixed(10.0)),
+                container(
+                    Space::new()
+                        .height(iced::Length::Fixed(2.0))
+                        .width(iced::Length::Fill)
+                )
+                .style(|_| { color::GREY_7.into() }),
+                Space::new().height(Length::Fixed(10.0)),
                 match sent {
                     // log-in redirect
                     true => iced::widget::button(
@@ -371,7 +375,7 @@ impl BuySellPanel {
             Button::new(
                 Row::new()
                     .push(previous_icon().color(color::GREY_2))
-                    .push(Space::with_width(Length::Fixed(5.0)))
+                    .push(Space::new().width(Length::Fixed(5.0)))
                     .push(text::p1_medium("Previous").color(color::GREY_2))
                     .spacing(5)
                     .align_y(Alignment::Center),
@@ -381,9 +385,10 @@ impl BuySellPanel {
                 text_color: color::GREY_2,
                 border: iced::Border::default(),
                 shadow: iced::Shadow::default(),
+                snap: true
             })
             .on_press(BuySellMessage::ResetWidget),
-            Space::with_height(Length::Fixed(10.0)),
+            Space::new().height(Length::Fixed(10.0)),
             // Title and subtitle
             iced::widget::column![
                 text::h3("Create an Account").color(color::WHITE),
@@ -391,7 +396,7 @@ impl BuySellPanel {
             ]
             .spacing(10)
             .align_x(Alignment::Center),
-            Space::with_height(Length::Fixed(20.0)),
+            Space::new().height(Length::Fixed(20.0)),
             // Name Input
             text_input("Full Legal Name: ", legal_name).on_input(|v| BuySellMessage::LegalNameChanged(v))
                 .width(Length::Fill)
@@ -403,7 +408,7 @@ impl BuySellPanel {
             })
             .size(16)
             .padding(15),
-            Space::with_height(Length::Fixed(10.0)),
+            Space::new().height(Length::Fixed(10.0)),
             // Password Inputs
             text_input("Password", password1).on_input(|v| {
                 BuySellMessage::Password1Changed(v)
@@ -421,7 +426,7 @@ impl BuySellPanel {
             .size(16)
             .padding(15)
             .secure(true),
-            Space::with_height(Length::Fixed(20.0)),
+            Space::new().height(Length::Fixed(20.0)),
             button::primary(None, "Create Account")
                 .on_press_maybe(
                     (!legal_name.is_empty() && email.contains('.') &&  email.contains('@')  && !password1.is_empty() && (password1 == password2))
@@ -454,7 +459,7 @@ impl BuySellPanel {
                 Button::new(
                     Row::new()
                         .push(previous_icon().color(color::GREY_2))
-                        .push(Space::with_width(Length::Fixed(5.0)))
+                        .push(Space::new().width(Length::Fixed(5.0)))
                         .push(text("Previous").color(color::GREY_2))
                         .spacing(5)
                         .align_y(Alignment::Center),
@@ -464,6 +469,7 @@ impl BuySellPanel {
                     text_color: color::GREY_2,
                     border: iced::Border::default(),
                     shadow: iced::Shadow::default(),
+                    snap: true,
                 })
                 .on_press(BuySellMessage::ResetWidget),
             )
@@ -503,7 +509,7 @@ impl BuySellPanel {
                         .on_press(BuySellMessage::CheckEmailVerificationStatus)
                         .width(Length::FillPortion(1)),
                 )
-                .push(Space::with_width(Length::Fixed(10.0)))
+                .push(Space::new().width(Length::Fixed(10.0)))
                 .push(
                     button::primary(Some(email_icon()), "Resend Email")
                         .on_press(BuySellMessage::SendVerificationEmail),
@@ -514,11 +520,11 @@ impl BuySellPanel {
 
         let col = iced::widget::column![
             top_bar,
-            Space::with_height(Length::Fixed(10.0)),
+            Space::new().height(Length::Fixed(10.0)),
             title,
-            Space::with_height(Length::Fixed(30.0)),
+            Space::new().height(Length::Fixed(30.0)),
             email_display,
-            Space::with_height(Length::Fixed(30.0)),
+            Space::new().height(Length::Fixed(30.0)),
             action_buttons,
         ]
         .align_x(Alignment::Center)
@@ -538,7 +544,7 @@ impl BuySellPanel {
         let col = iced::widget::column![
             active.view(Length::Fixed(640.0), Length::Fixed(600.0)),
             // Network display banner
-            Space::with_height(Length::Fixed(15.0)),
+            Space::new().height(Length::Fixed(15.0)),
             {
                 let (network_name, network_color) = match self.network {
                     coincube_core::miniscript::bitcoin::Network::Bitcoin => {
@@ -563,7 +569,7 @@ impl BuySellPanel {
                     text("Network: ").size(12).color(color::GREY_3),
                     text(network_name).size(12).color(network_color),
                     // render a button that closes the webview
-                    Space::with_width(Length::Fixed(20.0)),
+                    Space::new().width(Length::Fixed(20.0)),
                     {
                         button::secondary(Some(arrow_back()), "Start Over")
                             .on_press(BuySellMessage::ResetWidget)
@@ -607,13 +613,13 @@ impl BuySellPanel {
                                 Container::new(
                                     scrollable(
                                         Column::new()
-                                            .push(Space::with_height(Length::Fixed(10.0)))
+                                            .push(Space::new().height(Length::Fixed(10.0)))
                                             .push(
                                                 text::Text::small(text::p2_regular(&address_text))
                                                     .style(theme::text::secondary),
                                             )
                                             // Space between the address and the scrollbar
-                                            .push(Space::with_height(Length::Fixed(10.0))),
+                                            .push(Space::new().height(Length::Fixed(10.0))),
                                     )
                                     .direction(
                                         scrollable::Direction::Horizontal(
@@ -629,7 +635,7 @@ impl BuySellPanel {
                                         button::secondary(None, "Verify on hardware device")
                                             .on_press(ViewMessage::Select(0)),
                                     )
-                                    .push(Space::with_width(Length::Fill))
+                                    .push(Space::new().width(Length::Fill))
                                     .push(
                                         Button::new(qr_code_icon().style(theme::text::secondary))
                                             .on_press(ViewMessage::ShowQrCode(0))
@@ -692,7 +698,7 @@ impl BuySellPanel {
                         .padding(5)
                 })
                 .push(
-                    iced::widget::container(Space::with_height(3))
+                    iced::widget::container(Space::new().height(3))
                         .style(|_| {
                             iced::widget::container::background(iced::Background::Color(
                                 color::GREY_3,
@@ -753,9 +759,9 @@ impl BuySellPanel {
                 .align_x(Alignment::Center)
                 .width(Length::Fill),
             false => Column::new()
-                .push(Space::with_height(Length::Fixed(30.0)))
+                .push(Space::new().height(Length::Fixed(30.0)))
                 .push(text::p1_bold("Detecting your location...").color(color::WHITE))
-                .push(Space::with_height(Length::Fixed(20.0)))
+                .push(Space::new().height(Length::Fixed(20.0)))
                 .push(text("Please wait...").size(14).color(color::GREY_3))
                 .align_x(Alignment::Center)
                 .spacing(10)

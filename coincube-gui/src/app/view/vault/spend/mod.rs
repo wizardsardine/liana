@@ -120,7 +120,7 @@ pub fn spend_view<'a>(
                                 Some(Message::Previous)
                             }),
                     )
-                    .push(Space::with_width(Length::Fill))
+                    .push(Space::new().width(Length::Fill))
                     .push(
                         button::secondary(None, "Save")
                             .width(Length::Fixed(150.0))
@@ -196,7 +196,7 @@ pub fn create_spend_tx<'a>(
                             } else {
                                 None
                             })
-                            .push(Space::with_width(Length::Fill))
+                            .push(Space::new().width(Length::Fill))
                             .push_maybe(if is_self_send || recovery_timelock.is_some() {
                                 // Recipients cannot be added for self-send (zero recipients) and recovery (exactly one recipient).
                                 None
@@ -365,7 +365,7 @@ pub fn create_spend_tx<'a>(
                                 .on_press(Message::Previous),
                         ),
                     )
-                    .push(Space::with_width(Length::Fill))
+                    .push(Space::new().width(Length::Fill))
                     .push(
                         button::secondary(None, "Clear")
                             .on_press(Message::CreateSpend(CreateSpendMessage::Clear))
@@ -387,7 +387,7 @@ pub fn create_spend_tx<'a>(
                         },
                     ),
             )
-            .push(Space::with_height(Length::Fixed(20.0)))
+            .push(Space::new().height(Length::Fixed(20.0)))
             .spacing(20),
     )
 }
@@ -411,7 +411,7 @@ pub fn recipient_view<'a>(
             .push_maybe(
                 // Recipient for recovery cannot be deleted.
                 (!is_recovery).then_some(
-                    Row::new().push(Space::with_width(Length::Fill)).push(
+                    Row::new().push(Space::new().width(Length::Fill)).push(
                         Button::new(icon::cross_icon())
                             .style(theme::button::transparent)
                             .on_press(CreateSpendMessage::DeleteRecipient(index))
@@ -494,9 +494,9 @@ pub fn recipient_view<'a>(
                                 Row::new()
                                     .align_y(Alignment::Center)
                                     .spacing(5)
-                                    .push(Space::with_width(Length::Fixed(20.0))) // add some space between BTC and fiat amounts
+                                    .push(Space::new().width(Length::Fixed(20.0))) // add some space between BTC and fiat amounts
                                     .push(p1_bold(format!("~{}", conv.currency())))
-                                    .push(Space::with_width(Length::Fixed(5.0)))
+                                    .push(Space::new().width(Length::Fixed(5.0)))
                                     .push(if is_max_selected {
                                         let fiat_from_btc = btc_amt
                                             .map(|a| conv.convert(a))
@@ -542,13 +542,13 @@ pub fn recipient_view<'a>(
                                         conv.to_container_summary(),
                                         tooltip::Position::Bottom,
                                     ))
-                                    .push(Space::with_width(Length::Fixed(10.0)))
+                                    .push(Space::new().width(Length::Fixed(10.0)))
                             })),
                     )
                     .push_maybe(
                         // The MAX option cannot be edited for recovery recipients.
                         (!is_recovery).then_some(tooltip::Tooltip::new(
-                            checkbox("MAX", is_max_selected)
+                            checkbox(is_max_selected).label("MAX")
                                 .on_toggle(move |_| CreateSpendMessage::SendMaxToRecipient(index)),
                             // Add spaces at end so that text is padded at screen edge.
                             "Total amount remaining after paying fee and any other recipients     ",
@@ -575,7 +575,7 @@ fn coin_list_view<'a>(
         .push(
             Row::new()
                 .push(
-                    checkbox("", selected).on_toggle(move |_| {
+                    checkbox(selected).on_toggle(move |_| {
                         Message::CreateSpend(CreateSpendMessage::SelectCoin(i))
                     }),
                 )
@@ -612,8 +612,6 @@ fn coin_list_view<'a>(
                 .width(Length::Fill),
         )
         .push(amount(&coin.amount))
-        // give some space for the scroll bar without using padding
-        .push(Space::with_width(Length::Fixed(0.0)))
         .align_y(Alignment::Center)
         .spacing(20)
         .into()

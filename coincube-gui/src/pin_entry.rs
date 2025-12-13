@@ -4,7 +4,7 @@ use coincube_ui::{
     widget::*,
 };
 use iced::{
-    widget::{focus_next, focus_previous, Space},
+    widget::{operation::focus_next, operation::focus_previous, Space},
     Alignment, Length, Task,
 };
 
@@ -120,8 +120,8 @@ impl PinEntry {
         let header = Row::new()
             .align_y(Alignment::Center)
             .push(Container::new(back_button).center_x(Length::FillPortion(2)))
-            .push(Space::with_width(Length::FillPortion(8)))
-            .push(Space::with_width(Length::FillPortion(2)));
+            .push(Space::new().width(Length::FillPortion(8)))
+            .push(Space::new().width(Length::FillPortion(2)));
 
         // Title with eye button
         let title = h3(format!("Enter PIN for {}", self.cube.name));
@@ -186,9 +186,9 @@ impl PinEntry {
         Container::new(
             Column::new()
                 .width(Length::Fill)
-                .push(Space::with_height(Length::Fixed(100.0)))
+                .push(Space::new().height(Length::Fixed(100.0)))
                 .push(header)
-                .push(Space::with_height(Length::Fixed(100.0)))
+                .push(Space::new().height(Length::Fixed(100.0)))
                 .push(Container::new(content).center_x(Length::Fill)),
         )
         .width(Length::Fill)

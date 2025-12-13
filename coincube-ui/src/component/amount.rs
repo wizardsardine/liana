@@ -19,7 +19,7 @@ pub fn amount<'a, T: 'a>(a: &Amount) -> Row<'a, T> {
 }
 
 /// Amount with default colors.
-pub fn amount_with_size<'a, T: 'a>(a: &Amount, size: u16) -> Row<'a, T> {
+pub fn amount_with_size<'a, T: 'a>(a: &Amount, size: u32) -> Row<'a, T> {
     amount_with_size_and_colors(a, size, color::GREY_3, None)
 }
 
@@ -33,14 +33,14 @@ pub fn amount_with_size<'a, T: 'a>(a: &Amount, size: u16) -> Row<'a, T> {
 /// will be used.
 pub fn amount_with_size_and_colors<'a, T: 'a>(
     a: &Amount,
-    size: u16,
+    size: u32,
     color_before: Color,
     color_after: Option<Color>,
 ) -> Row<'a, T> {
     render_amount(a.to_formatted_string(), size, color_before, color_after)
 }
 
-pub fn unconfirmed_amount_with_size<'a, T: 'a>(a: &Amount, size: u16) -> Row<'a, T> {
+pub fn unconfirmed_amount_with_size<'a, T: 'a>(a: &Amount, size: u32) -> Row<'a, T> {
     render_unconfirmed_amount(a.to_formatted_string(), size)
 }
 
@@ -116,7 +116,7 @@ fn split_at_first_non_zero(s: String) -> Option<(String, String)> {
 // The text should be bolded beginning where the BTC amount is non-zero.
 fn render_amount<'a, T: 'a>(
     amount: String,
-    size: u16,
+    size: u32,
     color_before: Color,
     color_after: Option<Color>,
 ) -> Row<'a, T> {
@@ -144,7 +144,7 @@ fn render_amount<'a, T: 'a>(
 }
 
 // Build the rendering elements for displaying a Bitcoin amount.
-fn render_unconfirmed_amount<'a, T: 'a>(amount: String, size: u16) -> Row<'a, T> {
+fn render_unconfirmed_amount<'a, T: 'a>(amount: String, size: u32) -> Row<'a, T> {
     let spacing = if size > P1_SIZE { 10 } else { 5 };
 
     Row::with_children(vec![

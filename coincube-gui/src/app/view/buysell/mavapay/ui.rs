@@ -8,8 +8,11 @@ use crate::{
 
 use iced::{widget::*, Alignment, Length};
 
-use coincube_ui::component::{button, text};
 use coincube_ui::{color, icon::*, theme, widget::Column};
+use coincube_ui::{
+    component::{button, text},
+    widget::ColumnExt as _,
+};
 
 pub fn form<'a>(state: &'a MavapayState) -> iced::Element<'a, ViewMessage, theme::Theme> {
     let form = match &state.step {
@@ -70,7 +73,7 @@ fn transactions_form<'a>(state: &'a MavapayState) -> Column<'a, BuySellMessage> 
     let input_form = match current_price {
         Some(price) => Container::new(
             iced::widget::column![
-                Space::with_height(17),
+                Space::new().height(17),
                 iced::widget::row![
                     iced::widget::column![
                         text(format!(
@@ -79,7 +82,7 @@ fn transactions_form<'a>(state: &'a MavapayState) -> Column<'a, BuySellMessage> 
                         ))
                         .size(14)
                         .color(color::GREY_2),
-                        Space::with_height(5),
+                        Space::new().height(5),
                         iced_aw::number_input(
                             &{
                                 *sat_amount as f64
@@ -93,7 +96,7 @@ fn transactions_form<'a>(state: &'a MavapayState) -> Column<'a, BuySellMessage> 
                         .align_x(Alignment::Center)
                         .step(500.0)
                         .width(150)
-                        .size(18)
+                        .set_size(18)
                         .padding(10)
                     ]
                     .align_x(Alignment::Center),
@@ -101,7 +104,7 @@ fn transactions_form<'a>(state: &'a MavapayState) -> Column<'a, BuySellMessage> 
                     iced::widget::column![
                         // TODO: ensure user has BTC balance to satisfy quote
                         text("Satoshis (BTCSAT)").size(14).color(color::GREY_2),
-                        Space::with_height(5),
+                        Space::new().height(5),
                         iced_aw::number_input(&(*sat_amount as f64), .., |a| {
                             BuySellMessage::Mavapay(MavapayMessage::SatAmountChanged(a))
                         })
@@ -109,7 +112,7 @@ fn transactions_form<'a>(state: &'a MavapayState) -> Column<'a, BuySellMessage> 
                         .align_x(Alignment::Center)
                         .step(1000.0)
                         .width(150)
-                        .size(18)
+                        .set_size(18)
                         .padding(10)
                     ]
                     .align_x(Alignment::Center)
@@ -118,7 +121,7 @@ fn transactions_form<'a>(state: &'a MavapayState) -> Column<'a, BuySellMessage> 
                 .spacing(20)
                 .padding(0),
                 iced::widget::row![
-                    Space::with_width(Length::Fill),
+                    Space::new().width(Length::Fill),
                     text::p1_medium("Select an onchain transfer speed: ")
                         .width(Length::Shrink)
                         .center(),
@@ -129,11 +132,11 @@ fn transactions_form<'a>(state: &'a MavapayState) -> Column<'a, BuySellMessage> 
                     )
                     .padding(10)
                     .width(100),
-                    Space::with_width(Length::Fill),
+                    Space::new().width(Length::Fill),
                 ]
                 .width(Length::Fill)
                 .align_y(Alignment::Center),
-                Space::with_height(20),
+                Space::new().height(20),
                 match buy_or_sell {
                     BuyOrSell::Sell => {
                         // TODO: onchain sell currently unsupported, lightning integration will be required to proceed
@@ -168,9 +171,10 @@ fn transactions_form<'a>(state: &'a MavapayState) -> Column<'a, BuySellMessage> 
     // combine UI, render beneficiary input form using card styling
     iced::widget::column![
         // separator
-        Space::with_height(Length::Fixed(5.0)),
-        container(Space::new(Length::Fill, Length::Fixed(4.0))).style(theme::card::simple),
-        Space::with_height(Length::Fixed(5.0)),
+        Space::new().height(Length::Fixed(5.0)),
+        container(Space::new().height(Length::Fixed(4.0)).width(Length::Fill))
+            .style(theme::card::simple),
+        Space::new().height(Length::Fixed(5.0)),
         // header text
         text::h4_bold(match buy_or_sell {
             BuyOrSell::Sell => "Sell Bitcoin to Fiat Money",
@@ -178,9 +182,9 @@ fn transactions_form<'a>(state: &'a MavapayState) -> Column<'a, BuySellMessage> 
         })
         .color(color::WHITE)
         .center(),
-        Space::with_height(Length::Fixed(20.0)),
+        Space::new().height(Length::Fixed(20.0)),
         input_form,
-        Space::with_height(Length::Fixed(5.0)),
+        Space::new().height(Length::Fixed(5.0)),
         text::p2_medium("Powered by Mavapay").color(color::GREY_3)
     ]
     .align_x(Alignment::Center)

@@ -27,12 +27,28 @@ pub struct Theme {
     pub colors: palette::Palette,
 }
 
-impl iced::application::DefaultStyle for Theme {
-    fn default_style(&self) -> iced::application::Appearance {
-        iced::application::Appearance {
+impl iced::theme::Base for Theme {
+    fn default(_preference: iced::theme::Mode) -> Self {
+        <Self as std::default::Default>::default()
+    }
+
+    fn mode(&self) -> iced::theme::Mode {
+        iced::theme::Mode::Dark
+    }
+
+    fn base(&self) -> iced::theme::Style {
+        iced::theme::Style {
             background_color: self.colors.general.background,
             text_color: self.colors.text.primary,
         }
+    }
+
+    fn palette(&self) -> Option<iced::theme::Palette> {
+        None
+    }
+
+    fn name(&self) -> &str {
+        "CoincubeTheme"
     }
 }
 
