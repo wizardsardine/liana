@@ -9,26 +9,29 @@ use coincube_ui::{
 use iced::Alignment;
 use iced::{widget::container, widget::Column, widget::Space, Length};
 
-use crate::app::state::BackupWalletStep;
+use crate::app::state::{ActiveSettingsFlowState, BackupWalletState};
 use crate::app::view::message::{BackupWalletMessage, Message};
+use crate::app::view::ActiveSettingsMessage;
 
 pub fn active_settings_view<'a>(
     active_signer: Arc<Mutex<HotSigner>>,
-    backup_step: &'a BackupWalletStep,
+    flow_state: &'a ActiveSettingsFlowState,
 ) -> Element<'a, Message> {
-    match backup_step {
-        BackupWalletStep::MainMenu { backed_up, mfa } => main_menu_view(*backed_up, *mfa),
-        BackupWalletStep::Intro(checked) => backup_intro_view(*checked),
-        BackupWalletStep::RecoveryPhrase => {
+    match flow_state {
+        ActiveSettingsFlowState::MainMenu { backed_up, mfa } => main_menu_view(*backed_up, *mfa),
+        ActiveSettingsFlowState::BackupWallet(BackupWalletState::Intro(checked)) => {
+            backup_intro_view(*checked)
+        }
+        ActiveSettingsFlowState::BackupWallet(BackupWalletState::RecoveryPhrase) => {
             recovery_phrase_view(active_signer.lock().expect("Mutex Lock Poisoned").words())
         }
-        BackupWalletStep::Verification {
+        ActiveSettingsFlowState::BackupWallet(BackupWalletState::Verification {
             word_2,
             word_5,
             word_9,
             error,
-        } => verification_view(word_2, word_5, word_9, error.as_deref()),
-        BackupWalletStep::Completed => completed_view(),
+        }) => verification_view(word_2, word_5, word_9, error.as_deref()),
+        ActiveSettingsFlowState::BackupWallet(BackupWalletState::Completed) => completed_view(),
     }
 }
 
@@ -53,7 +56,9 @@ fn main_menu_view(backed_up: bool, mfa: bool) -> Element<'static, Message> {
         } else {
             "Completed"
         },
-        Message::ActiveSettings(BackupWalletMessage::Start),
+        Message::ActiveSettings(ActiveSettingsMessage::BackupWallet(
+            BackupWalletMessage::Start,
+        )),
     );
 
     let mfa = settings_section(
@@ -100,7 +105,7 @@ fn backup_intro_view(checked: bool) -> Element<'static, Message> {
                 .align_y(Alignment::Start)
                 .push(
                     coincube_ui::component::button::secondary(Some(icon::chevron_left().size(24)), "PREVIOUS")
-                        .on_press(Message::ActiveSettings(BackupWalletMessage::PreviousStep))
+                        .on_press(Message::ActiveSettings(ActiveSettingsMessage::BackupWallet(BackupWalletMessage::PreviousStep)))
                         .style(theme::button::transparent)
                 )
                 .push(Space::with_width(Length::Fill))
@@ -165,7 +170,7 @@ fn backup_intro_view(checked: bool) -> Element<'static, Message> {
                         "I UNDERSTAND THAT IF I LOSE THESE WORDS, MY FUNDS CANNOT BE RECOVERED",
                         checked
                     )
-                    .on_toggle(|_| Message::ActiveSettings(BackupWalletMessage::ToggleBackupIntroCheck))
+                    .on_toggle(|_| Message::ActiveSettings(ActiveSettingsMessage::BackupWallet(BackupWalletMessage::ToggleBackupIntroCheck)))
                     .style(theme::checkbox::primary).size(20)
                 )
                 .push(Space::with_width(Length::Fill))
@@ -179,7 +184,7 @@ fn backup_intro_view(checked: bool) -> Element<'static, Message> {
                 .push({
                     let btn: Element<'static, Message> = if checked {
                         coincube_ui::component::button::primary(None, "Show My Recovery Phrase")
-                            .on_press(Message::ActiveSettings(BackupWalletMessage::NextStep))
+                            .on_press(Message::ActiveSettings(ActiveSettingsMessage::BackupWallet(BackupWalletMessage::NextStep)))
                             .padding([8, 16])
                             .width(Length::Fixed(300.0))
                             .into()
@@ -241,7 +246,7 @@ fn recovery_phrase_view(mnemonic: [&'static str; 12]) -> Element<'static, Messag
                 .align_y(Alignment::Start)
                 .push(
                     coincube_ui::component::button::secondary(Some(icon::chevron_left().size(24)), "PREVIOUS")
-                        .on_press(Message::ActiveSettings(BackupWalletMessage::PreviousStep))
+                        .on_press(Message::ActiveSettings(ActiveSettingsMessage::BackupWallet(BackupWalletMessage::PreviousStep)))
                         .style(theme::button::transparent)
                 )
                 .push(Space::with_width(Length::Fill))
@@ -292,7 +297,7 @@ fn recovery_phrase_view(mnemonic: [&'static str; 12]) -> Element<'static, Messag
                 .push(Space::with_width(Length::Fill))
                 .push(
                     coincube_ui::component::button::primary(None, "I've Written It Down")
-                        .on_press(Message::ActiveSettings(BackupWalletMessage::NextStep))
+                        .on_press(Message::ActiveSettings(ActiveSettingsMessage::BackupWallet(BackupWalletMessage::NextStep)))
                         .padding([8, 16])
                         .width(Length::Fixed(300.0))
                 )
@@ -323,7 +328,9 @@ fn verification_view<'a>(
                     Some(icon::chevron_left().size(24)),
                     "PREVIOUS",
                 )
-                .on_press(Message::ActiveSettings(BackupWalletMessage::PreviousStep))
+                .on_press(Message::ActiveSettings(
+                    ActiveSettingsMessage::BackupWallet(BackupWalletMessage::PreviousStep),
+                ))
                 .style(theme::button::transparent),
             )
             .push(Space::with_width(Length::Fill)),
@@ -419,7 +426,9 @@ fn verification_view<'a>(
                         .push(
                             TextInput::new("", word_2)
                                 .on_input(|input| {
-                                    Message::ActiveSettings(BackupWalletMessage::Word2Input(input))
+                                    Message::ActiveSettings(ActiveSettingsMessage::BackupWallet(
+                                        BackupWalletMessage::Word2Input(input),
+                                    ))
                                 })
                                 .padding(8)
                                 .width(Length::Fixed(300.0))
@@ -448,7 +457,9 @@ fn verification_view<'a>(
                         .push(
                             TextInput::new("", word_5)
                                 .on_input(|input| {
-                                    Message::ActiveSettings(BackupWalletMessage::Word5Input(input))
+                                    Message::ActiveSettings(ActiveSettingsMessage::BackupWallet(
+                                        BackupWalletMessage::Word5Input(input),
+                                    ))
                                 })
                                 .padding(8)
                                 .width(Length::Fixed(300.0))
@@ -477,7 +488,9 @@ fn verification_view<'a>(
                         .push(
                             TextInput::new("", word_9)
                                 .on_input(|input| {
-                                    Message::ActiveSettings(BackupWalletMessage::Word9Input(input))
+                                    Message::ActiveSettings(ActiveSettingsMessage::BackupWallet(
+                                        BackupWalletMessage::Word9Input(input),
+                                    ))
                                 })
                                 .padding(8)
                                 .width(Length::Fixed(300.0))
@@ -516,7 +529,9 @@ fn verification_view<'a>(
             .push(Space::with_width(Length::Fill))
             .push(if all_filled {
                 coincube_ui::component::button::primary(None, "Verify")
-                    .on_press(Message::ActiveSettings(BackupWalletMessage::VerifyPhrase))
+                    .on_press(Message::ActiveSettings(
+                        ActiveSettingsMessage::BackupWallet(BackupWalletMessage::VerifyPhrase),
+                    ))
                     .padding([8, 16])
                     .width(Length::Fixed(300.0))
             } else {
@@ -584,7 +599,7 @@ fn completed_view() -> Element<'static, Message> {
                 .push(Space::with_width(Length::Fill))
                 .push(
                     coincube_ui::component::button::primary(None, "Back to Settings")
-                        .on_press(Message::ActiveSettings(BackupWalletMessage::Complete))
+                        .on_press(Message::ActiveSettings(ActiveSettingsMessage::BackupWallet(BackupWalletMessage::Complete)))
                         .padding([8, 16])
                         .width(Length::Fixed(300.0))
                 )

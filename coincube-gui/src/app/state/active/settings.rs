@@ -4,17 +4,14 @@ use coincube_ui::widget::*;
 use iced::Task;
 
 use crate::app::settings::{update_settings_file, Settings};
+use crate::app::view::ActiveSettingsMessage;
 use crate::app::{breez::BreezClient, cache::Cache, menu::Menu, state::State};
 use crate::app::{message::Message, view, wallet::Wallet};
 use crate::daemon::Daemon;
 use crate::dir::CoincubeDirectory;
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum BackupWalletStep {
-    MainMenu {
-        backed_up: bool,
-        mfa: bool,
-    },
+pub enum BackupWalletState {
     Intro(bool),
     RecoveryPhrase,
     Verification {
@@ -26,10 +23,16 @@ pub enum BackupWalletStep {
     Completed,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum ActiveSettingsFlowState {
+    MainMenu { backed_up: bool, mfa: bool },
+    BackupWallet(BackupWalletState),
+}
+
 /// ActiveSettings is a placeholder panel for the Active Settings page
 pub struct ActiveSettings {
     breez_client: Arc<BreezClient>,
-    backup_wallet_step: BackupWalletStep,
+    flow_state: ActiveSettingsFlowState,
 }
 
 impl ActiveSettings {
@@ -37,7 +40,7 @@ impl ActiveSettings {
         let (backed_up, mfa) = fetch_main_menu_state(breez_client.clone());
         Self {
             breez_client,
-            backup_wallet_step: BackupWalletStep::MainMenu { backed_up, mfa },
+            flow_state: ActiveSettingsFlowState::MainMenu { backed_up, mfa },
         }
     }
 }
@@ -48,10 +51,7 @@ impl State for ActiveSettings {
             menu,
             cache,
             None,
-            view::active::active_settings_view(
-                self.breez_client.active_signer(),
-                &self.backup_wallet_step,
-            ),
+            view::active::active_settings_view(self.breez_client.active_signer(), &self.flow_state),
         )
     }
 
@@ -62,44 +62,66 @@ impl State for ActiveSettings {
         message: Message,
     ) -> Task<Message> {
         match message {
-            Message::View(view::Message::ActiveSettings(backup_msg)) => {
+            Message::View(view::Message::ActiveSettings(ActiveSettingsMessage::BackupWallet(
+                backup_msg,
+            ))) => {
                 tracing::info!("Got BackupWallet message: {:?}", backup_msg);
                 match backup_msg {
                     view::BackupWalletMessage::ToggleBackupIntroCheck => {
-                        if let BackupWalletStep::Intro(checked) = self.backup_wallet_step {
-                            self.backup_wallet_step = BackupWalletStep::Intro(!checked);
+                        if let ActiveSettingsFlowState::BackupWallet(BackupWalletState::Intro(
+                            checked,
+                        )) = self.flow_state
+                        {
+                            self.flow_state = ActiveSettingsFlowState::BackupWallet(
+                                BackupWalletState::Intro(!checked),
+                            );
                         }
                     }
                     view::BackupWalletMessage::Start => {
-                        self.backup_wallet_step = BackupWalletStep::Intro(false);
+                        self.flow_state =
+                            ActiveSettingsFlowState::BackupWallet(BackupWalletState::Intro(false));
                     }
                     view::BackupWalletMessage::NextStep => {
-                        self.backup_wallet_step = match &self.backup_wallet_step {
-                            BackupWalletStep::Intro(true) => BackupWalletStep::RecoveryPhrase,
-                            BackupWalletStep::RecoveryPhrase => BackupWalletStep::Verification {
-                                word_2: String::new(),
-                                word_5: String::new(),
-                                word_9: String::new(),
-                                error: None,
-                            },
-                            _ => self.backup_wallet_step.clone(),
+                        self.flow_state = match &self.flow_state {
+                            ActiveSettingsFlowState::BackupWallet(BackupWalletState::Intro(
+                                true,
+                            )) => ActiveSettingsFlowState::BackupWallet(
+                                BackupWalletState::RecoveryPhrase,
+                            ),
+                            ActiveSettingsFlowState::BackupWallet(
+                                BackupWalletState::RecoveryPhrase,
+                            ) => ActiveSettingsFlowState::BackupWallet(
+                                BackupWalletState::Verification {
+                                    word_2: String::new(),
+                                    word_5: String::new(),
+                                    word_9: String::new(),
+                                    error: None,
+                                },
+                            ),
+                            _ => self.flow_state.clone(),
                         };
                     }
                     view::BackupWalletMessage::PreviousStep => {
                         let (backed_up, mfa) = fetch_main_menu_state(self.breez_client.clone());
-                        self.backup_wallet_step = match &self.backup_wallet_step {
-                            BackupWalletStep::Intro(_) => {
-                                BackupWalletStep::MainMenu { backed_up, mfa }
+                        self.flow_state = match &self.flow_state {
+                            ActiveSettingsFlowState::BackupWallet(BackupWalletState::Intro(_)) => {
+                                ActiveSettingsFlowState::MainMenu { backed_up, mfa }
                             }
-                            BackupWalletStep::RecoveryPhrase => BackupWalletStep::Intro(false),
-                            BackupWalletStep::Verification { .. } => {
-                                BackupWalletStep::RecoveryPhrase
+                            ActiveSettingsFlowState::BackupWallet(
+                                BackupWalletState::RecoveryPhrase,
+                            ) => ActiveSettingsFlowState::BackupWallet(BackupWalletState::Intro(
+                                false,
+                            )),
+                            ActiveSettingsFlowState::BackupWallet(
+                                BackupWalletState::Verification { .. },
+                            ) => ActiveSettingsFlowState::BackupWallet(
+                                BackupWalletState::RecoveryPhrase,
+                            ),
+                            ActiveSettingsFlowState::BackupWallet(BackupWalletState::Completed) => {
+                                ActiveSettingsFlowState::MainMenu { backed_up, mfa }
                             }
-                            BackupWalletStep::Completed => {
-                                BackupWalletStep::MainMenu { backed_up, mfa }
-                            }
-                            BackupWalletStep::MainMenu { backed_up, mfa } => {
-                                BackupWalletStep::MainMenu {
+                            ActiveSettingsFlowState::MainMenu { backed_up, mfa } => {
+                                ActiveSettingsFlowState::MainMenu {
                                     backed_up: *backed_up,
                                     mfa: *mfa,
                                 }
@@ -107,60 +129,74 @@ impl State for ActiveSettings {
                         };
                     }
                     view::BackupWalletMessage::Word2Input(input) => {
-                        if let BackupWalletStep::Verification {
-                            word_5,
-                            word_9,
-                            error,
-                            ..
-                        } = &self.backup_wallet_step
+                        if let ActiveSettingsFlowState::BackupWallet(
+                            BackupWalletState::Verification {
+                                word_5,
+                                word_9,
+                                error,
+                                ..
+                            },
+                        ) = &self.flow_state
                         {
-                            self.backup_wallet_step = BackupWalletStep::Verification {
-                                word_2: input,
-                                word_5: word_5.clone(),
-                                word_9: word_9.clone(),
-                                error: error.clone(),
-                            };
+                            self.flow_state = ActiveSettingsFlowState::BackupWallet(
+                                BackupWalletState::Verification {
+                                    word_2: input,
+                                    word_5: word_5.clone(),
+                                    word_9: word_9.clone(),
+                                    error: error.clone(),
+                                },
+                            );
                         }
                     }
                     view::BackupWalletMessage::Word5Input(input) => {
-                        if let BackupWalletStep::Verification {
-                            word_2,
-                            word_9,
-                            error,
-                            ..
-                        } = &self.backup_wallet_step
+                        if let ActiveSettingsFlowState::BackupWallet(
+                            BackupWalletState::Verification {
+                                word_2,
+                                word_9,
+                                error,
+                                ..
+                            },
+                        ) = &self.flow_state
                         {
-                            self.backup_wallet_step = BackupWalletStep::Verification {
-                                word_2: word_2.clone(),
-                                word_5: input,
-                                word_9: word_9.clone(),
-                                error: error.clone(),
-                            };
+                            self.flow_state = ActiveSettingsFlowState::BackupWallet(
+                                BackupWalletState::Verification {
+                                    word_2: word_2.clone(),
+                                    word_5: input,
+                                    word_9: word_9.clone(),
+                                    error: error.clone(),
+                                },
+                            );
                         }
                     }
                     view::BackupWalletMessage::Word9Input(input) => {
-                        if let BackupWalletStep::Verification {
-                            word_2,
-                            word_5,
-                            error,
-                            ..
-                        } = &self.backup_wallet_step
+                        if let ActiveSettingsFlowState::BackupWallet(
+                            BackupWalletState::Verification {
+                                word_2,
+                                word_5,
+                                error,
+                                ..
+                            },
+                        ) = &self.flow_state
                         {
-                            self.backup_wallet_step = BackupWalletStep::Verification {
-                                word_2: word_2.clone(),
-                                word_5: word_5.clone(),
-                                word_9: input,
-                                error: error.clone(),
-                            };
+                            self.flow_state = ActiveSettingsFlowState::BackupWallet(
+                                BackupWalletState::Verification {
+                                    word_2: word_2.clone(),
+                                    word_5: word_5.clone(),
+                                    word_9: input,
+                                    error: error.clone(),
+                                },
+                            );
                         }
                     }
                     view::BackupWalletMessage::VerifyPhrase => {
-                        if let BackupWalletStep::Verification {
-                            word_2,
-                            word_5,
-                            word_9,
-                            ..
-                        } = &self.backup_wallet_step
+                        if let ActiveSettingsFlowState::BackupWallet(
+                            BackupWalletState::Verification {
+                                word_2,
+                                word_5,
+                                word_9,
+                                ..
+                            },
+                        ) = &self.flow_state
                         {
                             // Get the actual mnemonic words
                             let mnemonic = self
@@ -180,26 +216,28 @@ impl State for ActiveSettings {
                                 && word_9.trim() == correct_word_9
                             {
                                 // Verification successful
-                                self.backup_wallet_step = BackupWalletStep::Completed;
+                                self.flow_state = ActiveSettingsFlowState::BackupWallet(
+                                    BackupWalletState::Completed,
+                                );
                             } else {
                                 // Verification failed
-                                self.backup_wallet_step = BackupWalletStep::Verification {
-                                    word_2: word_2.clone(),
-                                    word_5: word_5.clone(),
-                                    word_9: word_9.clone(),
-                                    error: Some(
-                                        "The words you entered don't match. Please try again."
-                                            .to_string(),
-                                    ),
-                                };
+                                self.flow_state = ActiveSettingsFlowState::BackupWallet(
+                                    BackupWalletState::Verification {
+                                        word_2: word_2.clone(),
+                                        word_5: word_5.clone(),
+                                        word_9: word_9.clone(),
+                                        error: Some(
+                                            "The words you entered don't match. Please try again."
+                                                .to_string(),
+                                        ),
+                                    },
+                                );
                             }
                         }
                     }
                     view::BackupWalletMessage::Complete => {
-                        // Update settings.json to mark the cube as backed up
-                        // Fetch the updated main menu state
                         let (_, mfa) = fetch_main_menu_state(self.breez_client.clone());
-                        self.backup_wallet_step = BackupWalletStep::MainMenu {
+                        self.flow_state = ActiveSettingsFlowState::MainMenu {
                             backed_up: true,
                             mfa,
                         };
