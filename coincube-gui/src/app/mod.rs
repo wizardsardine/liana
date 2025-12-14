@@ -44,7 +44,7 @@ use crate::{
         settings::WalletId,
         wallet::Wallet,
     },
-    daemon::{embedded::EmbeddedDaemon, Daemon, DaemonBackend},
+    daemon::{dummy::DummyDaemon, embedded::EmbeddedDaemon, Daemon, DaemonBackend},
     dir::CoincubeDirectory,
     node::{bitcoind::Bitcoind, NodeType},
 };
@@ -921,6 +921,8 @@ impl App {
                     (self.daemon.clone(), self.panels.current_mut())
                 {
                     return panel.update(daemon, &self.cache, msg);
+                } else if let Some(panel) = self.panels.current_mut() {
+                    return panel.update(std::sync::Arc::new(DummyDaemon), &self.cache, msg);
                 }
             }
         };

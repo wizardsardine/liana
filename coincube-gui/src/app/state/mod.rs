@@ -24,7 +24,7 @@ use crate::daemon::{
 pub use active::overview::ActiveOverview;
 pub use active::receive::ActiveReceive;
 pub use active::send::ActiveSend;
-pub use active::settings::ActiveSettings;
+pub use active::settings::{ActiveSettings, BackupWalletStep};
 pub use active::transactions::ActiveTransactions;
 pub use global_home::GlobalHome;
 pub use vault::coins::CoinsPanel;
