@@ -323,6 +323,17 @@ impl State for BuySellPanel {
             }
             BuySellMessage::SessionError(description, error) => {
                 self.error = Some(format!("{} ({})", description, error));
+
+                // unblock UI retry buttons in step-specific flows
+                if let BuySellFlowState::Mavapay(m) = &mut self.step {
+                    if let MavapayFlowStep::Transaction { sending_quote, .. } = &mut m.step {
+                        *sending_quote = false;
+                    }
+                }
+
+                if let BuySellFlowState::VerifyEmail { checking, .. } = &mut self.step {
+                    *checking = false;
+                }
             }
 
             // mavapay session logic

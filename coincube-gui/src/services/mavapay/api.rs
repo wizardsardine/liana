@@ -35,6 +35,8 @@ impl std::fmt::Display for MavapayError {
 
 impl From<reqwest::Error> for MavapayError {
     fn from(error: reqwest::Error) -> Self {
+        let error = error.without_url();
+
         log::error!("[REQWEST] {:?}", error);
         Self::Http(error.status().map(|s| s.as_u16()), error.to_string())
     }
