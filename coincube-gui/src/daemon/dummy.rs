@@ -7,14 +7,12 @@ use coincubed::commands::{CoinStatus, LabelItem, UpdateDerivIndexesResult};
 use coincubed::config::Config;
 use std::collections::{HashMap, HashSet};
 
-// Ensure this struct is visible where you need it
 #[derive(Debug, Clone)]
 pub struct DummyDaemon;
 
 #[async_trait::async_trait]
 impl super::Daemon for DummyDaemon {
     fn backend(&self) -> super::DaemonBackend {
-        // Return a variant that makes sense for a dummy, usually Remote or External
         super::DaemonBackend::RemoteBackend
     }
 
@@ -27,7 +25,6 @@ impl super::Daemon for DummyDaemon {
         _datadir: &crate::dir::CoincubeDirectory,
         _network: Network,
     ) -> Result<(), DaemonError> {
-        // You might want this to return Ok(()) to simulate a running daemon
         Ok(())
     }
 
@@ -138,7 +135,6 @@ impl super::Daemon for DummyDaemon {
         &self,
         _labels: &HashSet<LabelItem>,
     ) -> Result<HashMap<String, String>, DaemonError> {
-        // Return empty map to prevent iteration errors if called
         Ok(HashMap::new())
     }
 

@@ -49,7 +49,14 @@ use crate::{
     node::{bitcoind::Bitcoind, NodeType},
 };
 
+use std::sync::OnceLock;
+
 use self::state::SettingsState;
+
+static DUMMY_DAEMON: OnceLock<Arc<dyn Daemon + Sync + Send>> = OnceLock::new();
+fn dummy_daemon() -> Arc<dyn Daemon + Sync + Send> {
+    DUMMY_DAEMON.get_or_init(|| Arc::new(DummyDaemon)).clone()
+}
 
 struct Panels {
     current: Menu,
@@ -922,7 +929,7 @@ impl App {
                 {
                     return panel.update(daemon, &self.cache, msg);
                 } else if let Some(panel) = self.panels.current_mut() {
-                    return panel.update(std::sync::Arc::new(DummyDaemon), &self.cache, msg);
+                    return panel.update(dummy_daemon(), &self.cache, msg);
                 }
             }
         };

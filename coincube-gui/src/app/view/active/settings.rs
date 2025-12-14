@@ -104,7 +104,7 @@ fn backup_intro_view(checked: bool) -> Element<'static, Message> {
                 .width(Length::Fill)
                 .align_y(Alignment::Start)
                 .push(
-                    coincube_ui::component::button::secondary(Some(icon::chevron_left().size(24)), "PREVIOUS")
+                    coincube_ui::component::button::secondary(Some(icon::previous_icon().size(24)), "PREVIOUS")
                         .on_press(Message::ActiveSettings(ActiveSettingsMessage::BackupWallet(BackupWalletMessage::PreviousStep)))
                         .style(theme::button::transparent)
                 )
@@ -245,7 +245,7 @@ fn recovery_phrase_view(mnemonic: [&'static str; 12]) -> Element<'static, Messag
                 .width(Length::Fill)
                 .align_y(Alignment::Start)
                 .push(
-                    coincube_ui::component::button::secondary(Some(icon::chevron_left().size(24)), "PREVIOUS")
+                    coincube_ui::component::button::secondary(Some(icon::previous_icon().size(24)), "PREVIOUS")
                         .on_press(Message::ActiveSettings(ActiveSettingsMessage::BackupWallet(BackupWalletMessage::PreviousStep)))
                         .style(theme::button::transparent)
                 )
@@ -325,7 +325,7 @@ fn verification_view<'a>(
             .align_y(Alignment::Start)
             .push(
                 coincube_ui::component::button::secondary(
-                    Some(icon::chevron_left().size(24)),
+                    Some(icon::previous_icon().size(24)),
                     "PREVIOUS",
                 )
                 .on_press(Message::ActiveSettings(

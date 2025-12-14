@@ -123,7 +123,9 @@ pub struct CubeSettings {
     pub id: String,
     pub name: String,
     pub network: Network,
+    #[serde(default)]
     pub backed_up: bool,
+    #[serde(default)]
     pub mfa_done: bool,
     pub created_at: i64,
     /// The Vault wallet for this Cube (optional - may not be set up yet)

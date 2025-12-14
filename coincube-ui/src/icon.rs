@@ -263,10 +263,6 @@ pub fn file_earmark() -> Text<'static> {
     bootstrap_icon('\u{F373}')
 }
 
-pub fn chevron_left() -> Text<'static> {
-    bootstrap_icon('\u{F284}')
-}
-
 pub fn check_circle() -> Text<'static> {
     bootstrap_icon('\u{F26B}')
 }

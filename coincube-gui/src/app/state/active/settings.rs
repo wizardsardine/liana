@@ -236,14 +236,8 @@ impl State for ActiveSettings {
                         }
                     }
                     view::BackupWalletMessage::Complete => {
-                        let (_, mfa) = fetch_main_menu_state(self.breez_client.clone());
-                        self.flow_state = ActiveSettingsFlowState::MainMenu {
-                            backed_up: true,
-                            mfa,
-                        };
-
                         let breez_client = self.breez_client.clone();
-                        let update_task = Task::perform(
+                        return Task::perform(
                             async move {
                                 let secp =
                                     coincube_core::miniscript::bitcoin::secp256k1::Secp256k1::new();
@@ -277,12 +271,19 @@ impl State for ActiveSettings {
                                     tracing::error!("Failed to update settings file: {}", e);
                                 }
                             },
-                            |_| Message::Tick,
+                            |_| Message::View(view::Message::ActiveSettings(
+                                view::ActiveSettingsMessage::SettingsUpdated
+                            )),
                         );
-
-                        return update_task;
                     }
                 }
+            }
+            Message::View(view::Message::ActiveSettings(
+                ActiveSettingsMessage::SettingsUpdated,
+            )) => {
+                // Settings file was updated, refresh the state
+                let (backed_up, mfa) = fetch_main_menu_state(self.breez_client.clone());
+                self.flow_state = ActiveSettingsFlowState::MainMenu { backed_up, mfa };
             }
             _ => {}
         }
@@ -299,32 +300,42 @@ impl State for ActiveSettings {
     }
 }
 
+/// Fetches the main menu state (backed_up, mfa) from settings file.
+/// Uses spawn_blocking to avoid blocking the async runtime if file I/O hangs.
 fn fetch_main_menu_state(breez_client: Arc<BreezClient>) -> (bool, bool) {
-    let mut backed_up = false;
-    let mut mfa = false;
-    let secp = coincube_core::miniscript::bitcoin::secp256k1::Secp256k1::new();
-    let fingerprint = breez_client
-        .active_signer()
-        .lock()
-        .expect("Mutex Lock Poisoned")
-        .fingerprint(&secp);
-    match CoincubeDirectory::new_default() {
-        Ok(dir) => {
-            let network_dir = dir.network_directory(breez_client.network());
-            match Settings::from_file(&network_dir) {
-                Ok(settings) => {
-                    let cube = settings.cubes.into_iter().find(|cube| {
-                        cube.active_wallet_signer_fingerprint.as_ref() == Some(&fingerprint)
-                    });
-                    if let Some(cube) = cube {
-                        backed_up = cube.backed_up;
-                        mfa = cube.mfa_done;
+    // Run blocking I/O in a blocking context to prevent hanging the async runtime
+    tokio::task::block_in_place(|| {
+        let mut backed_up = false;
+        let mut mfa = false;
+        let secp = coincube_core::miniscript::bitcoin::secp256k1::Secp256k1::new();
+        let fingerprint = breez_client
+            .active_signer()
+            .lock()
+            .expect("Mutex Lock Poisoned")
+            .fingerprint(&secp);
+        
+        match CoincubeDirectory::new_default() {
+            Ok(dir) => {
+                let network_dir = dir.network_directory(breez_client.network());
+                match Settings::from_file(&network_dir) {
+                    Ok(settings) => {
+                        let cube = settings.cubes.into_iter().find(|cube| {
+                            cube.active_wallet_signer_fingerprint.as_ref() == Some(&fingerprint)
+                        });
+                        if let Some(cube) = cube {
+                            backed_up = cube.backed_up;
+                            mfa = cube.mfa_done;
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to read settings file: {}", e);
                     }
                 }
-                _ => {}
+            }
+            Err(e) => {
+                tracing::error!("Failed to get CoincubeDirectory: {}", e);
             }
         }
-        _ => {}
-    }
-    (backed_up, mfa)
+        (backed_up, mfa)
+    })
 }

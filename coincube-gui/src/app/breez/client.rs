@@ -177,6 +177,7 @@ impl std::fmt::Debug for BreezClient {
         f.debug_struct("BreezClient")
             .field("sdk", &"<LiquidSdk>")
             .field("signer", &"<HotSigner>")
+            .field("network", &self.network)
             .finish()
     }
 }
