@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::pin::Pin;
+use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
 
 use crossbeam::channel;
@@ -9,8 +10,9 @@ use std::sync::mpsc;
 use thiserror::Error;
 use uuid::Uuid;
 
+use crate::client::{Client, DummyServer};
 use crate::models::PolicyTemplate;
-use crate::wss::WssError;
+use crate::wss::{OrgJson, Request, Response, UserJson, WalletJson, WssError};
 
 #[derive(Debug, Clone)]
 pub enum WalletStatus {
@@ -130,7 +132,7 @@ pub trait Backend {
     fn get_wallet(&self, id: Uuid) -> Option<Wallet>;
 
     // Connection (WSS)
-    fn connect(&mut self, url: String, version: u8) -> channel::Receiver<Notification>; // -> Response::Connected
+    fn connect_ws(&mut self, url: String, version: u8) -> Option<channel::Receiver<Notification>>; // -> Response::Connected
     fn ping(&mut self); // -> Response::Pong
     fn close(&mut self);    // Connection closed
 
@@ -169,192 +171,472 @@ impl Stream for BackendStream {
     }
 }
 
-/// Mock backend implementation for testing
+// Helper functions to convert domain objects to JSON
+fn org_to_json(org: &Org) -> OrgJson {
+    OrgJson {
+        name: org.name.clone(),
+        id: org.id.to_string(),
+        wallets: org.wallets.iter().map(|w| w.to_string()).collect(),
+        users: org.users.iter().map(|u| u.to_string()).collect(),
+        owners: org.owners.iter().map(|o| o.to_string()).collect(),
+    }
+}
+
+fn wallet_to_json(wallet: &Wallet) -> WalletJson {
+    use crate::models::KeyType;
+    use crate::wss::{
+        KeyJson, PolicyTemplateJson, SecondaryPathJson, SpendingPathJson, TimelockJson,
+    };
+
+    let template = wallet.template.as_ref().map(|t| {
+        let mut keys_json = BTreeMap::new();
+        for (id, key) in &t.keys {
+            keys_json.insert(
+                id.to_string(),
+                KeyJson {
+                    id: key.id,
+                    alias: key.alias.clone(),
+                    description: key.description.clone(),
+                    email: key.email.clone(),
+                    key_type_str: match key.key_type {
+                        KeyType::Internal => "Internal",
+                        KeyType::External => "External",
+                        KeyType::Cosigner => "Cosigner",
+                        KeyType::SafetyNet => "SafetyNet",
+                    }
+                    .to_string(),
+                    xpub: key.xpub.as_ref().map(|x| x.to_string()),
+                },
+            );
+        }
+
+        let secondary_paths = t
+            .secondary_paths
+            .iter()
+            .map(|(path, timelock)| SecondaryPathJson {
+                path: SpendingPathJson {
+                    is_primary: path.is_primary,
+                    threshold_n: path.threshold_n,
+                    key_ids: path.key_ids.clone(),
+                },
+                timelock: TimelockJson {
+                    blocks: timelock.blocks,
+                },
+            })
+            .collect();
+
+        PolicyTemplateJson {
+            keys: keys_json,
+            primary_path: SpendingPathJson {
+                is_primary: t.primary_path.is_primary,
+                threshold_n: t.primary_path.threshold_n,
+                key_ids: t.primary_path.key_ids.clone(),
+            },
+            secondary_paths,
+        }
+    });
+
+    WalletJson {
+        id: wallet.id.to_string(),
+        alias: wallet.alias.clone(),
+        org: wallet.org.to_string(),
+        owner: wallet.owner.uuid.to_string(),
+        status_str: wallet.status.as_str().to_string(),
+        template,
+    }
+}
+
+fn user_to_json(user: &User) -> UserJson {
+    UserJson {
+        name: user.name.clone(),
+        uuid: user.uuid.to_string(),
+        email: user.email.clone(),
+        orgs: user.orgs.iter().map(|o| o.to_string()).collect(),
+        role_str: match user.role {
+            UserRole::WSManager => "WSManager",
+            UserRole::Owner => "Owner",
+            UserRole::Participant => "Participant",
+        }
+        .to_string(),
+    }
+}
+
+/// Development backend that uses DummyServer and Client for local testing
+/// This is a temporary test feature that will be removed when the server launches.
+/// The dummy server is spawned automatically by Client::connect() when connecting to localhost.
 #[derive(Debug)]
-pub struct MockBackend {
-    pub sender: Option<channel::Sender<Notification>>,
+pub struct DevBackend {
+    server: Option<DummyServer>,
+    client: Client,
     orgs: BTreeMap<Uuid, Org>,
     wallets: BTreeMap<Uuid, Wallet>,
     users: BTreeMap<Uuid, User>,
-    connected: bool,
-    auth_code: String, // Simple mock: always accepts "123456"
+    auth_code: String,
 }
 
-impl MockBackend {
+/// Initialize a Client with test data (DEBUG feature for local testing)
+pub fn init_client_with_test_data() -> Client {
+    let client = Client::new();
+    let mut orgs = BTreeMap::new();
+    let mut wallets = BTreeMap::new();
+    let mut users = BTreeMap::new();
+
+    init_test_data(&mut orgs, &mut wallets, &mut users);
+
+    // Populate Client's data structures with test data
+    {
+        let mut orgs_guard = client.orgs.lock().unwrap();
+        *orgs_guard = orgs;
+    }
+    {
+        let mut wallets_guard = client.wallets.lock().unwrap();
+        *wallets_guard = wallets;
+    }
+    {
+        let mut users_guard = client.users.lock().unwrap();
+        *users_guard = users;
+    }
+
+    client
+}
+
+fn init_test_data(
+    orgs: &mut BTreeMap<Uuid, Org>,
+    wallets: &mut BTreeMap<Uuid, Wallet>,
+    users: &mut BTreeMap<Uuid, User>,
+) {
+    use crate::models::{Key, KeyType};
+
+    // Create test user
+    let user1 = User {
+        name: "Test User".to_string(),
+        uuid: Uuid::new_v4(),
+        email: "test@example.com".to_string(),
+        orgs: Vec::new(),
+        role: UserRole::Owner,
+    };
+    users.insert(user1.uuid, user1.clone());
+
+    // Create Org 1: "Acme Corp"
+    let org1_id = Uuid::new_v4();
+    let mut org1_wallets = BTreeSet::new();
+
+    // Wallet 1 for Org 1
+    let wallet1_id = Uuid::new_v4();
+    let mut wallet1_template = PolicyTemplate::new();
+    wallet1_template.keys.insert(
+        0,
+        Key {
+            id: 0,
+            alias: "Main Key".to_string(),
+            description: "Primary signing key".to_string(),
+            email: "key1@example.com".to_string(),
+            key_type: KeyType::Internal,
+            xpub: None,
+        },
+    );
+    wallet1_template.primary_path.key_ids.push(0);
+    wallet1_template.primary_path.threshold_n = 1;
+
+    let wallet1 = Wallet {
+        alias: "Main Wallet".to_string(),
+        org: org1_id,
+        owner: user1.clone(),
+        id: wallet1_id,
+        template: Some(wallet1_template),
+        status: WalletStatus::Created,
+    };
+    org1_wallets.insert(wallet1_id);
+    wallets.insert(wallet1_id, wallet1);
+
+    let org1 = Org {
+        name: "Acme Corp".to_string(),
+        id: org1_id,
+        wallets: org1_wallets,
+        users: Default::default(),
+        owners: Default::default(),
+    };
+    orgs.insert(org1_id, org1);
+
+    // Create Org 2: "Tech Solutions"
+    let org2_id = Uuid::new_v4();
+    let mut org2_wallets = BTreeSet::new();
+
+    // Wallet 1 for Org 2
+    let wallet2_id = Uuid::new_v4();
+    let mut wallet2_template = PolicyTemplate::new();
+    wallet2_template.keys.insert(
+        0,
+        Key {
+            id: 0,
+            alias: "Admin Key".to_string(),
+            description: "Administrative key".to_string(),
+            email: "admin@example.com".to_string(),
+            key_type: KeyType::Internal,
+            xpub: None,
+        },
+    );
+    wallet2_template.keys.insert(
+        1,
+        Key {
+            id: 1,
+            alias: "Backup Key".to_string(),
+            description: "Backup signing key".to_string(),
+            email: "backup@example.com".to_string(),
+            key_type: KeyType::External,
+            xpub: None,
+        },
+    );
+    wallet2_template.primary_path.key_ids.push(0);
+    wallet2_template.primary_path.key_ids.push(1);
+    wallet2_template.primary_path.threshold_n = 2;
+
+    let wallet2 = Wallet {
+        alias: "Company Wallet".to_string(),
+        org: org2_id,
+        owner: user1.clone(),
+        id: wallet2_id,
+        template: Some(wallet2_template),
+        status: WalletStatus::Created,
+    };
+    org2_wallets.insert(wallet2_id);
+    wallets.insert(wallet2_id, wallet2);
+
+    let org2 = Org {
+        name: "Tech Solutions".to_string(),
+        id: org2_id,
+        wallets: org2_wallets,
+        users: Default::default(),
+        owners: Default::default(),
+    };
+    orgs.insert(org2_id, org2);
+
+    // Create Org 3: "Startup Inc"
+    let org3_id = Uuid::new_v4();
+    let org3 = Org {
+        name: "Startup Inc".to_string(),
+        id: org3_id,
+        wallets: BTreeSet::new(),
+        users: Default::default(),
+        owners: Default::default(),
+    };
+    orgs.insert(org3_id, org3);
+}
+
+impl DevBackend {
     pub fn new() -> Self {
         let mut backend = Self {
-            sender: None,
+            server: None,
+            client: init_client_with_test_data(),
             orgs: BTreeMap::new(),
             wallets: BTreeMap::new(),
             users: BTreeMap::new(),
-            connected: false,
             auth_code: "123456".to_string(),
         };
 
-        // Initialize with predefined test data
-        backend.init_test_data();
+        // Populate local data from client for get_org, get_orgs, etc.
+        {
+            let orgs_guard = backend.client.orgs.lock().unwrap();
+            backend.orgs = orgs_guard.clone();
+        }
+        {
+            let wallets_guard = backend.client.wallets.lock().unwrap();
+            backend.wallets = wallets_guard.clone();
+        }
+        {
+            let users_guard = backend.client.users.lock().unwrap();
+            backend.users = users_guard.clone();
+        }
+
         backend
-    }
-
-    fn init_test_data(&mut self) {
-        use crate::models::{Key, KeyType};
-
-        // Create test user
-        let user1 = User {
-            name: "Test User".to_string(),
-            uuid: Uuid::new_v4(),
-            email: "test@example.com".to_string(),
-            orgs: Vec::new(),
-            role: UserRole::Owner,
-        };
-        self.users.insert(user1.uuid, user1.clone());
-
-        // Create Org 1: "Acme Corp"
-        let org1_id = Uuid::new_v4();
-        let mut org1_wallets = BTreeSet::new();
-
-        // Wallet 1 for Org 1
-        let wallet1_id = Uuid::new_v4();
-        let mut wallet1_template = PolicyTemplate::new();
-        wallet1_template.keys.insert(
-            0,
-            Key {
-                id: 0,
-                alias: "Main Key".to_string(),
-                description: "Primary signing key".to_string(),
-                email: "key1@example.com".to_string(),
-                key_type: KeyType::Internal,
-                xpub: None,
-            },
-        );
-        wallet1_template.primary_path.key_ids.push(0);
-        wallet1_template.primary_path.threshold_n = 1;
-
-        let wallet1 = Wallet {
-            alias: "Main Wallet".to_string(),
-            org: org1_id,
-            owner: user1.clone(),
-            id: wallet1_id,
-            template: Some(wallet1_template),
-            status: WalletStatus::Created,
-        };
-        org1_wallets.insert(wallet1_id);
-        self.wallets.insert(wallet1_id, wallet1);
-
-        let org1 = Org {
-            name: "Acme Corp".to_string(),
-            id: org1_id,
-            wallets: org1_wallets,
-            users: Default::default(),
-            owners: Default::default(),
-        };
-        self.orgs.insert(org1_id, org1);
-
-        // Create Org 2: "Tech Solutions"
-        let org2_id = Uuid::new_v4();
-        let mut org2_wallets = BTreeSet::new();
-
-        // Wallet 1 for Org 2
-        let wallet2_id = Uuid::new_v4();
-        let mut wallet2_template = PolicyTemplate::new();
-        wallet2_template.keys.insert(
-            0,
-            Key {
-                id: 0,
-                alias: "Admin Key".to_string(),
-                description: "Administrative key".to_string(),
-                email: "admin@example.com".to_string(),
-                key_type: KeyType::Internal,
-                xpub: None,
-            },
-        );
-        wallet2_template.keys.insert(
-            1,
-            Key {
-                id: 1,
-                alias: "Backup Key".to_string(),
-                description: "Backup signing key".to_string(),
-                email: "backup@example.com".to_string(),
-                key_type: KeyType::External,
-                xpub: None,
-            },
-        );
-        wallet2_template.primary_path.key_ids.push(0);
-        wallet2_template.primary_path.key_ids.push(1);
-        wallet2_template.primary_path.threshold_n = 2;
-
-        let wallet2 = Wallet {
-            alias: "Company Wallet".to_string(),
-            org: org2_id,
-            owner: user1.clone(),
-            id: wallet2_id,
-            template: Some(wallet2_template),
-            status: WalletStatus::Created,
-        };
-        org2_wallets.insert(wallet2_id);
-        self.wallets.insert(wallet2_id, wallet2);
-
-        let org2 = Org {
-            name: "Tech Solutions".to_string(),
-            id: org2_id,
-            wallets: org2_wallets,
-            users: Default::default(),
-            owners: Default::default(),
-        };
-        self.orgs.insert(org2_id, org2);
-
-        // Create Org 3: "Startup Inc"
-        let org3_id = Uuid::new_v4();
-        let org3 = Org {
-            name: "Startup Inc".to_string(),
-            id: org3_id,
-            wallets: BTreeSet::new(),
-            users: Default::default(),
-            owners: Default::default(),
-        };
-        self.orgs.insert(org3_id, org3);
     }
 }
 
-impl Backend for MockBackend {
-    fn connect(&mut self, _url: String, _version: u8) -> channel::Receiver<Notification> {
-        self.connected = true;
-        let (sender, receiver) = channel::unbounded();
-        let _ = sender.send(Notification::Connected);
-        self.sender = Some(sender);
-        receiver
+// Handler creation for dummy server (DEBUG feature)
+pub fn create_dummy_server_handler(
+    orgs: Arc<Mutex<BTreeMap<Uuid, Org>>>,
+    wallets: Arc<Mutex<BTreeMap<Uuid, Wallet>>>,
+    users: Arc<Mutex<BTreeMap<Uuid, User>>>,
+) -> Box<dyn Fn(Request) -> Response + Send + Sync> {
+    Box::new(move |request| match request {
+        Request::FetchOrg { id } => handle_fetch_org(orgs.clone(), id),
+        Request::FetchWallet { id } => handle_fetch_wallet(wallets.clone(), id),
+        Request::FetchUser { id } => handle_fetch_user(users.clone(), id),
+        Request::CreateWallet {
+            name,
+            org_id,
+            owner_id,
+        } => handle_create_wallet(users.clone(), name, org_id, owner_id),
+        Request::EditWallet { wallet } => handle_edit_wallet(wallet),
+        Request::RemoveWalletFromOrg { org_id, .. } => {
+            handle_remove_wallet_from_org(orgs.clone(), org_id)
+        }
+        Request::EditXpub { wallet_id, .. } => handle_edit_xpub(wallets.clone(), wallet_id),
+        _ => handle_unknown_request(),
+    })
+}
+
+fn handle_fetch_org(orgs: Arc<Mutex<BTreeMap<Uuid, Org>>>, id: Uuid) -> Response {
+    let orgs_guard = orgs.lock().unwrap();
+    if let Some(org) = orgs_guard.get(&id) {
+        Response::Org {
+            org: org_to_json(org),
+        }
+    } else {
+        Response::Error {
+            error: WssError {
+                code: "NOT_FOUND".to_string(),
+                message: format!("Org {} not found", id),
+                request_id: None,
+            },
+        }
+    }
+}
+
+fn handle_fetch_wallet(wallets: Arc<Mutex<BTreeMap<Uuid, Wallet>>>, id: Uuid) -> Response {
+    let wallets_guard = wallets.lock().unwrap();
+    if let Some(wallet) = wallets_guard.get(&id) {
+        Response::Wallet {
+            wallet: wallet_to_json(wallet),
+        }
+    } else {
+        Response::Error {
+            error: WssError {
+                code: "NOT_FOUND".to_string(),
+                message: format!("Wallet {} not found", id),
+                request_id: None,
+            },
+        }
+    }
+}
+
+fn handle_fetch_user(users: Arc<Mutex<BTreeMap<Uuid, User>>>, id: Uuid) -> Response {
+    let users_guard = users.lock().unwrap();
+    if let Some(user) = users_guard.get(&id) {
+        Response::User {
+            user: user_to_json(user),
+        }
+    } else {
+        Response::Error {
+            error: WssError {
+                code: "NOT_FOUND".to_string(),
+                message: format!("User {} not found", id),
+                request_id: None,
+            },
+        }
+    }
+}
+
+fn handle_create_wallet(
+    users: Arc<Mutex<BTreeMap<Uuid, User>>>,
+    name: String,
+    org_id: Uuid,
+    owner_id: Uuid,
+) -> Response {
+    let users_guard = users.lock().unwrap();
+    let owner = users_guard.get(&owner_id).cloned().unwrap_or_else(|| User {
+        name: "Unknown User".to_string(),
+        uuid: owner_id,
+        email: "unknown@example.com".to_string(),
+        orgs: Vec::new(),
+        role: UserRole::Owner,
+    });
+    let wallet_id = Uuid::new_v4();
+    let wallet = Wallet {
+        alias: name.clone(),
+        org: org_id,
+        owner: owner.clone(),
+        id: wallet_id,
+        template: None,
+        status: WalletStatus::Created,
+    };
+    Response::Wallet {
+        wallet: wallet_to_json(&wallet),
+    }
+}
+
+fn handle_edit_wallet(wallet: Wallet) -> Response {
+    Response::Wallet {
+        wallet: wallet_to_json(&wallet),
+    }
+}
+
+fn handle_remove_wallet_from_org(orgs: Arc<Mutex<BTreeMap<Uuid, Org>>>, org_id: Uuid) -> Response {
+    let orgs_guard = orgs.lock().unwrap();
+    if let Some(org) = orgs_guard.get(&org_id) {
+        Response::Org {
+            org: org_to_json(org),
+        }
+    } else {
+        Response::Error {
+            error: WssError {
+                code: "NOT_FOUND".to_string(),
+                message: format!("Org {} not found", org_id),
+                request_id: None,
+            },
+        }
+    }
+}
+
+fn handle_edit_xpub(wallets: Arc<Mutex<BTreeMap<Uuid, Wallet>>>, wallet_id: Uuid) -> Response {
+    let wallets_guard = wallets.lock().unwrap();
+    if let Some(wallet) = wallets_guard.get(&wallet_id) {
+        Response::Wallet {
+            wallet: wallet_to_json(wallet),
+        }
+    } else {
+        Response::Error {
+            error: WssError {
+                code: "NOT_FOUND".to_string(),
+                message: format!("Wallet {} not found", wallet_id),
+                request_id: None,
+            },
+        }
+    }
+}
+
+fn handle_unknown_request() -> Response {
+    Response::Error {
+        error: WssError {
+            code: "NOT_IMPLEMENTED".to_string(),
+            message: "Request type not implemented".to_string(),
+            request_id: None,
+        },
+    }
+}
+
+impl Backend for DevBackend {
+    fn connect_ws(&mut self, url: String, version: u8) -> Option<channel::Receiver<Notification>> {
+        self.client.set_token("dev-token".to_string());
+        self.client.connect_ws(url, version)
     }
 
     fn ping(&mut self) {
-        //
+        self.client.ping();
     }
 
     fn close(&mut self) {
-        self.connected = false;
+        if let Some(_server) = self.server.take() {
+            // server will be dropped and close automatically
+        }
+        self.client.close();
     }
 
     fn auth_request(&mut self, _email: String) {
-        if let Some(sender) = &self.sender {
-            sender.send(Notification::AuthCodeSent).unwrap();
-        } else {
-            panic!("auth_token()");
-        }
+        // In dev mode, always send auth code
+        todo!()
     }
 
     fn auth_code(&mut self, code: String) {
         // Simulate code verification
-        if let Some(sender) = &self.sender {
-            if code == self.auth_code {
-                // Send orgs on successful auth
-                let _ = sender.send(Notification::LoginSuccess);
-            } else {
-                let _ = sender.send(Notification::LoginFail);
-            }
+        if code == self.auth_code {
+            // Send orgs on successful auth - this would be handled by the Client
+            todo!()
         }
     }
 
-    fn edit_wallet(&mut self, _wallet: Wallet) {
-        todo!()
+    fn get_orgs(&self) -> BTreeMap<Uuid, Org> {
+        self.orgs.clone()
     }
 
     fn get_org(&self, id: Uuid) -> Option<OrgData> {
@@ -377,35 +659,35 @@ impl Backend for MockBackend {
         self.users.get(&id).cloned()
     }
 
-    fn get_orgs(&self) -> BTreeMap<Uuid, Org> {
-        self.orgs.clone()
+    fn get_wallet(&self, id: Uuid) -> Option<Wallet> {
+        self.wallets.get(&id).cloned()
     }
 
-    fn fetch_org(&mut self, _id: Uuid) {
-        todo!()
+    fn fetch_org(&mut self, id: Uuid) {
+        self.client.fetch_org(id);
     }
 
-    fn remove_wallet_from_org(&mut self, _wallet_id: Uuid, _org_id: Uuid) {
-        todo!()
+    fn remove_wallet_from_org(&mut self, wallet_id: Uuid, org_id: Uuid) {
+        self.client.remove_wallet_from_org(wallet_id, org_id);
     }
 
-    fn create_wallet(&mut self, _name: String, _org: Uuid, _owner: Uuid) {
-        todo!()
+    fn create_wallet(&mut self, name: String, org: Uuid, owner: Uuid) {
+        self.client.create_wallet(name, org, owner);
     }
 
-    fn fetch_wallet(&mut self, _id: Uuid) {
-        todo!()
+    fn edit_wallet(&mut self, wallet: Wallet) {
+        self.client.edit_wallet(wallet);
     }
 
-    fn edit_xpub(&mut self, _wallet_id: Uuid, _xpub: Option<DescriptorPublicKey>, _key_id: u8) {
-        todo!()
+    fn fetch_wallet(&mut self, id: Uuid) {
+        self.client.fetch_wallet(id);
     }
 
-    fn fetch_user(&mut self, _id: Uuid) {
-        todo!()
+    fn edit_xpub(&mut self, wallet_id: Uuid, xpub: Option<DescriptorPublicKey>, key_id: u8) {
+        self.client.edit_xpub(wallet_id, xpub, key_id);
     }
 
-    fn get_wallet(&self, _id: Uuid) -> Option<Wallet> {
-        todo!()
+    fn fetch_user(&mut self, id: Uuid) {
+        self.client.fetch_user(id);
     }
 }

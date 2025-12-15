@@ -1,5 +1,6 @@
 use crate::{
-    backend::{Backend, MockBackend},
+    backend::{init_client_with_test_data, Backend},
+    client::Client,
     state::app::AppState,
     views::{
         home_view, keys_view, login_view, modals, org_select_view, paths_view, wallet_select_view,
@@ -30,7 +31,7 @@ pub enum View {
 pub struct State {
     pub app: AppState,
     pub views: views::ViewsState,
-    pub backend: MockBackend,
+    pub backend: Client,
     pub current_view: View,
 }
 
@@ -39,7 +40,7 @@ impl State {
         Self {
             app: AppState::new(),
             views: views::ViewsState::new(),
-            backend: MockBackend::new(),
+            backend: init_client_with_test_data(),
             current_view: View::Login,
         }
     }
@@ -49,8 +50,8 @@ impl State {
         // NOTE: if connect_backend() is called with an ongoing connexion,
         // the ongoing connexion will be dropped & replaced by the new one.
         // See [`BackendSubscription::poll_next()`]
-        let recv = self.backend.connect(url, version);
-        *BACKEND_RECV.lock().expect("poisoned") = Some(recv);
+        let recv = self.backend.connect_ws(url, version);
+        *BACKEND_RECV.lock().expect("poisoned") = recv;
     }
 
     /// Close the backend connection

@@ -5,16 +5,15 @@ mod state;
 mod views;
 mod wss;
 
-use backend::Notification;
 use crossbeam::channel;
 use iced::{Pixels, Settings, Subscription, Task};
 use liana_ui::theme::Theme;
 use state::{Msg, State};
-use std::sync::Mutex;
+use std::{pin::Pin, sync::Mutex, thread, time::Duration};
 
 // Global channel for backend communication
 static BACKEND_RECV: Mutex<Option<channel::Receiver<backend::Notification>>> = Mutex::new(None);
-const BACKEND_URL: &str = "127.0.0.1:8081";
+const BACKEND_URL: &str = "debug";
 const PROTOCOL_VERSION: u8 = 1;
 
 fn main() -> iced::Result {
@@ -75,22 +74,19 @@ impl PolicyBuilder {
 
 // Subscription for backend stream
 struct BackendSubscription {
-    receiver: channel::Receiver<backend::Notification>,
+    receiver: Option<channel::Receiver<backend::Notification>>,
 }
 
 impl BackendSubscription {
     fn new() -> Self {
         if let Ok(mut channel_guard) = BACKEND_RECV.lock() {
             if let Some(receiver) = channel_guard.take() {
-                return Self { receiver };
+                return Self {
+                    receiver: Some(receiver),
+                };
             }
         }
-        // Fallback: create a dummy channel if not available and error
-        let (sender, receiver) = channel::unbounded();
-        sender
-            .send(Notification::Error(backend::Error::SubscriptionFailed))
-            .unwrap();
-        Self { receiver }
+        Self { receiver: None }
     }
 }
 
@@ -103,18 +99,26 @@ impl iced::futures::Stream for BackendSubscription {
     ) -> std::task::Poll<Option<Self::Item>> {
         use std::task::Poll;
 
-        // NOTE: If there is a new connection we drop this one
-        if BACKEND_RECV.lock().expect("poisoned").is_some() {
-            // Iced will drop the subscription after this
-            return Poll::Ready(None);
-        }
+        let this = Pin::get_mut(self);
+        loop {
+            // NOTE: If there is a new connection we replace this one
+            if let Some(recv) = BACKEND_RECV.lock().expect("poisoned").take() {
+                println!("poll_next() new connection");
+                this.receiver = Some(recv);
+            }
 
-        // NOTE: if we send a Poll::Ready(None), iced will drop subscription so
-        // we call (blocking) .recv().
-        if let Ok(m) = self.receiver.recv() {
-            Poll::Ready(Some(Msg::BackendNotif(m)))
-        } else {
-            Poll::Ready(Some(Msg::BackendDisconnected))
+            if let Some(receiver) = this.receiver.as_mut() {
+                // NOTE: if we send a Poll::Ready(None), iced will drop subscription so
+                // we call (blocking) .recv().
+                if let Ok(m) = receiver.recv() {
+                    return Poll::Ready(Some(Msg::BackendNotif(m)));
+                } else {
+                    this.receiver = None;
+                };
+            }
+            // NOTE: is there is no receiver we just block until there is one
+            // with a delay to avoid spinloop
+            thread::sleep(Duration::from_millis(500));
         }
     }
 }

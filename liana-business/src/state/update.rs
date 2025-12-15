@@ -442,6 +442,14 @@ impl State {
         self.views.login.code.form.value = String::new();
         self.current_view = View::OrgSelect;
         self.views.login.code.processing = false;
+
+        // Set the token and connect the WS
+        // TODO: In production, the token should come from the auth response
+        self.backend.set_token("auth-token".to_string());
+
+        // Mark that we're intentionally reconnecting (old channel will close)
+        self.app.reconnecting = true;
+        self.connect_backend(BACKEND_URL.to_string(), PROTOCOL_VERSION);
     }
 
     fn on_backend_login_fail(&mut self) {
@@ -457,6 +465,16 @@ impl State {
     }
 
     fn on_backend_disconnected(&mut self) {
-        self.connect_backend(BACKEND_URL.to_string(), PROTOCOL_VERSION);
+        // // If we're intentionally reconnecting, don't show error
+        // if self.app.reconnecting {
+        //     self.app.reconnecting = false;
+        //     return;
+        // }
+
+        // Show error modal - don't retry connection
+        self.on_warning_show_modal(
+            "Connection Error",
+            "Lost connection to the server. Please restart the application.",
+        );
     }
 }
