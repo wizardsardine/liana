@@ -164,6 +164,12 @@ impl Step for Final {
                     return Task::perform(async move {}, |_| Message::RedeemNextKey);
                 }
             },
+            Message::CubeSaveFailed(err) => {
+                // Cube save failed after installation
+                self.generating = false;
+                self.wallet_settings = None;
+                self.warning = Some(err);
+            }
             Message::Install => {
                 self.generating = true;
                 self.wallet_settings = None;

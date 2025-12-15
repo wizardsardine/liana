@@ -17,7 +17,7 @@ use super::{
 };
 use crate::{
     app::{
-        settings::{self, ProviderKey},
+        settings::{self, CubeSettings, ProviderKey},
         view::Close,
     },
     backup::Backup,
@@ -79,6 +79,12 @@ pub enum Message {
     SelectKeySource(SelectKeySourceMessage),
     EditKeyAlias(EditKeyAliasMessage),
     Decrypt(Decrypt),
+    CubeSaved(
+        Result<CubeSettings, String>,
+        Box<settings::WalletSettings>,
+        Option<Bitcoind>,
+    ),
+    CubeSaveFailed(String),
     None,
 }
 
