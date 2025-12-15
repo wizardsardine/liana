@@ -6,7 +6,9 @@ mod views;
 mod wss;
 
 use crossbeam::channel;
-use iced::{Pixels, Settings, Subscription, Task};
+use iced::{
+    advanced::graphics::futures::backend::native::tokio, Pixels, Settings, Subscription, Task,
+};
 use liana_ui::theme::Theme;
 use state::{Msg, State};
 use std::{pin::Pin, sync::Mutex, thread, time::Duration};
@@ -38,6 +40,8 @@ fn main() -> iced::Result {
     .settings(settings)
     .window(window_settings)
     .subscription(PolicyBuilder::subscription)
+    // HACK: poll_next() will hang forever with tokio executor
+    .executor::<futures::executor::ThreadPool>()
     .run_with(|| PolicyBuilder::new(()))
 }
 
@@ -103,7 +107,6 @@ impl iced::futures::Stream for BackendSubscription {
         loop {
             // NOTE: If there is a new connection we replace this one
             if let Some(recv) = BACKEND_RECV.lock().expect("poisoned").take() {
-                println!("poll_next() new connection");
                 this.receiver = Some(recv);
             }
 

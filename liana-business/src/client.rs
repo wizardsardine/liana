@@ -5,8 +5,14 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use bitcoin::Network;
 use crossbeam::channel;
-use miniscript::DescriptorPublicKey;
+use futures::executor::block_on;
+use liana_gui::dir::NetworkDirectory;
+use liana_gui::services::connect::client::auth::AuthClient;
+use liana_gui::services::connect::client::cache::{update_connect_cache, Account};
+use liana_gui::services::connect::client::get_service_config;
+use miniscript::{bitcoin, DescriptorPublicKey};
 use serde_json::json;
 use tungstenite::{accept, Message as WsMessage};
 use uuid::Uuid;
@@ -20,7 +26,7 @@ pub struct Client {
     pub(crate) orgs: Arc<Mutex<BTreeMap<Uuid, Org>>>,
     pub(crate) wallets: Arc<Mutex<BTreeMap<Uuid, Wallet>>>,
     pub(crate) users: Arc<Mutex<BTreeMap<Uuid, User>>>,
-    token: Option<String>,
+    token: Arc<Mutex<Option<String>>>,
     request_sender: Option<channel::Sender<Request>>,
     notif_sender: Option<channel::Sender<Notification>>,
     wss_thread_handle: Option<thread::JoinHandle<()>>,
@@ -28,6 +34,12 @@ pub struct Client {
     // DEBUG: Temporary field to store dummy server thread handle (will be removed when server launches)
     dummy_server_handle: Option<thread::JoinHandle<()>>,
     dummy_server_shutdown: Option<channel::Sender<()>>,
+    // Auth client integration
+    auth_client: Arc<Mutex<Option<AuthClient>>>,
+    network: Option<Network>,
+    network_dir: Option<NetworkDirectory>,
+    email: Option<String>,
+    backend_url: Option<String>, // Store backend URL to check for debug mode
 }
 
 impl Client {
@@ -36,22 +48,117 @@ impl Client {
             orgs: Arc::new(Mutex::new(BTreeMap::new())),
             wallets: Arc::new(Mutex::new(BTreeMap::new())),
             users: Arc::new(Mutex::new(BTreeMap::new())),
-            token: None,
+            token: Arc::new(Mutex::new(None)),
             request_sender: None,
             notif_sender: None,
             wss_thread_handle: None,
             connected: Arc::new(AtomicBool::new(false)),
             dummy_server_handle: None,
             dummy_server_shutdown: None,
+            auth_client: Arc::new(Mutex::new(None)),
+            network: None,
+            network_dir: None,
+            email: None,
+            backend_url: None,
         }
     }
 
     pub fn set_token(&mut self, token: String) {
-        self.token = Some(token);
+        if let Ok(mut token_guard) = self.token.lock() {
+            *token_guard = Some(token);
+        }
     }
 
     pub fn is_connected(&self) -> bool {
         self.connected.load(Ordering::Relaxed)
+    }
+
+    /// Try to get a cached token, refreshing it if expired
+    fn try_get_cached_token(&self) -> Option<String> {
+        // Check if we have network_dir and email
+        let (network_dir, email) = match (self.network_dir.clone(), self.email.clone()) {
+            (Some(nd), Some(e)) => (nd, e),
+            _ => return None,
+        };
+
+        let network = self.network.unwrap_or(Network::Signet);
+        let auth_client = self.auth_client.clone();
+        let token = self.token.clone();
+
+        let result = block_on(async {
+            // Try to get cached account
+            match Account::from_cache(&network_dir, &email) {
+                Ok(Some(account)) => {
+                    let tokens = &account.tokens;
+                    let now = chrono::Utc::now().timestamp();
+
+                    // Check if token is expired (with some buffer time)
+                    if tokens.expires_at > now + 60 {
+                        // Token is still valid
+                        Ok(tokens.access_token.clone())
+                    } else {
+                        // Token expired, try to refresh
+                        let auth_client = {
+                            let client_guard = auth_client.lock().unwrap();
+                            client_guard.clone()
+                        };
+
+                        // Try to get existing auth client, or create one if we have email and network
+                        let auth_client = if let Some(client) = auth_client {
+                            Some(client)
+                        } else {
+                            // Create auth client on the fly using stored network
+                            let config = match get_service_config(network).await {
+                                Ok(cfg) => cfg,
+                                Err(_) => return Err(()),
+                            };
+
+                            Some(AuthClient::new(
+                                config.auth_api_url,
+                                config.auth_api_public_key,
+                                email.clone(),
+                            ))
+                        };
+
+                        if let Some(client) = auth_client {
+                            match client.refresh_token(&tokens.refresh_token).await {
+                                Ok(new_tokens) => {
+                                    // Update cache
+                                    match update_connect_cache(
+                                        &network_dir,
+                                        &new_tokens,
+                                        &client,
+                                        false,
+                                    )
+                                    .await
+                                    {
+                                        Ok(updated) => Ok(updated.access_token),
+                                        Err(_) => Ok(new_tokens.access_token),
+                                    }
+                                }
+                                Err(_) => Err(()),
+                            }
+                        } else {
+                            // No auth client, can't refresh
+                            Err(())
+                        }
+                    }
+                }
+                Ok(None) => Err(()), // No cached account
+                Err(_) => Err(()),   // Error reading cache
+            }
+        });
+
+        match result {
+            Ok(access_token) => {
+                // Store token
+                if let Ok(mut token_guard) = token.lock() {
+                    *token_guard = Some(access_token.clone());
+                }
+                Some(access_token)
+            }
+            Err(_) => None,
+        }
     }
 }
 
@@ -494,13 +601,25 @@ impl Backend for Client {
             self.close();
         }
 
+        self.backend_url = Some(url.clone());
+
         // Always create notification channel - needed for auth flow even without WSS connection
         let (notif, notif_receiver) = channel::unbounded();
         self.notif_sender = Some(notif.clone());
 
-        // Get token - if no token, return channel but don't attempt WSS connection
-        // The user must auth first, then we'll connect after login success
-        let token = match self.token.clone() {
+        // Get token from cache, if any
+        let mut token = {
+            let token_guard = self.token.lock().unwrap();
+            token_guard.clone()
+        };
+
+        // If no token, try to get it from cache
+        if token.is_none() && url != "debug" {
+            token = self.try_get_cached_token();
+        }
+
+        // If still no token, return channel but don't attempt WSS connection
+        let token = match token {
             Some(t) => t,
             None => {
                 // Return the channel so auth notifications can work
@@ -578,16 +697,181 @@ impl Backend for Client {
         Some(notif_receiver)
     }
 
-    fn auth_request(&mut self, _email: String) {
-        if let Some(sender) = self.notif_sender.as_mut() {
-            sender.send(Notification::AuthCodeSent).unwrap();
+    fn auth_request(&mut self, email: String) {
+        // Ensure notification channel exists
+        if self.notif_sender.is_none() {
+            let (notif, _) = channel::unbounded();
+            self.notif_sender = Some(notif);
         }
+
+        // Store email for later use
+        self.email = Some(email.clone());
+
+        // Check if we're in debug mode
+        if let Some(ref url) = self.backend_url {
+            if url == "debug" {
+                // Mock auth: immediately send AuthCodeSent
+                if let Some(sender) = self.notif_sender.as_mut() {
+                    let _ = sender.send(Notification::AuthCodeSent);
+                }
+                return;
+            }
+        }
+
+        let notif_sender = self.notif_sender.clone();
+        let network = self.network.unwrap_or(Network::Signet); // Default to signet if not set
+        let email_clone = email.clone();
+        let auth_client_2 = self.auth_client.clone();
+
+        thread::spawn(move || {
+            let result = block_on(async {
+                // Get service config
+                let config = match get_service_config(network).await {
+                    Ok(cfg) => cfg,
+                    Err(_e) => {
+                        if let Some(sender) = notif_sender.as_ref() {
+                            let _ = sender.send(Notification::AuthCodeFail);
+                        }
+                        return Err(());
+                    }
+                };
+
+                // Create auth client
+                let auth_client = AuthClient::new(
+                    config.auth_api_url,
+                    config.auth_api_public_key,
+                    email_clone.clone(),
+                );
+
+                // Send OTP
+                match auth_client.sign_in_otp().await {
+                    Ok(()) => {
+                        // Store auth client
+                        if let Ok(mut client_guard) = auth_client_2.lock() {
+                            *client_guard = Some(auth_client);
+                        }
+                        Ok(())
+                    }
+                    Err(e) => {
+                        if let Some(sender) = notif_sender.as_ref() {
+                            // Check if it's an invalid email error
+                            if let Some(status) = e.http_status {
+                                if status == 400 || status == 422 {
+                                    let _ = sender.send(Notification::InvalidEmail);
+                                } else {
+                                    let _ = sender.send(Notification::AuthCodeFail);
+                                }
+                            } else {
+                                let _ = sender.send(Notification::AuthCodeFail);
+                            }
+                        }
+                        Err(())
+                    }
+                }
+            });
+
+            // Send success notification
+            if result.is_ok() {
+                if let Some(sender) = notif_sender.as_ref() {
+                    let _ = sender.send(Notification::AuthCodeSent);
+                }
+            }
+        });
     }
 
-    fn auth_code(&mut self, _code: String) {
-        if let Some(sender) = self.notif_sender.as_mut() {
-            sender.send(Notification::LoginSuccess).unwrap();
+    fn auth_code(&mut self, code: String) {
+        // Ensure notification channel exists
+        if self.notif_sender.is_none() {
+            let (notif, _) = channel::unbounded();
+            self.notif_sender = Some(notif);
         }
+
+        // Check if we're in debug mode
+        if let Some(ref url) = self.backend_url {
+            if url == "debug" {
+                // Mock auth: accept dummy token "123456"
+                if code.trim() == "123456" {
+                    *self.token.lock().expect("poisoned") = Some("123456".to_string());
+                    if let Some(sender) = self.notif_sender.as_mut() {
+                        let _ = sender.send(Notification::LoginSuccess);
+                    }
+                } else {
+                    // Invalid code in debug mode
+                    if let Some(sender) = self.notif_sender.as_mut() {
+                        let _ = sender.send(Notification::LoginFail);
+                    }
+                }
+                return;
+            }
+        }
+
+        let notif_sender = self.notif_sender.clone();
+        let auth_client_shared = Arc::clone(&self.auth_client);
+        let network_dir = self.network_dir.clone();
+        let _email = self.email.clone();
+        let token_shared = Arc::clone(&self.token);
+
+        thread::spawn(move || {
+            let result = block_on(async {
+                // Get auth client
+                let auth_client = {
+                    let client_guard = auth_client_shared.lock().unwrap();
+                    client_guard.clone()
+                };
+
+                let auth_client = match auth_client {
+                    Some(client) => client,
+                    None => {
+                        if let Some(sender) = notif_sender.as_ref() {
+                            let _ = sender.send(Notification::LoginFail);
+                        }
+                        return Err(());
+                    }
+                };
+
+                // Verify OTP
+                let tokens = match auth_client.verify_otp(code.trim()).await {
+                    Ok(tokens) => tokens,
+                    Err(_) => {
+                        if let Some(sender) = notif_sender.as_ref() {
+                            let _ = sender.send(Notification::LoginFail);
+                        }
+                        return Err(());
+                    }
+                };
+
+                // Update cache if network_dir is available
+                let access_token = if let Some(ref network_dir) = network_dir {
+                    match update_connect_cache(network_dir, &tokens, &auth_client, false).await {
+                        Ok(updated_tokens) => updated_tokens.access_token,
+                        Err(_) => {
+                            // Cache update failed, but we still have tokens
+                            tokens.access_token
+                        }
+                    }
+                } else {
+                    // No network_dir, just use the token
+                    tokens.access_token
+                };
+
+                if let Ok(mut token_guard) = token_shared.lock() {
+                    *token_guard = Some(access_token.clone());
+                }
+
+                Ok(access_token)
+            });
+
+            match result {
+                Ok(_) => {
+                    if let Some(sender) = notif_sender.as_ref() {
+                        let _ = sender.send(Notification::LoginSuccess);
+                    }
+                }
+                Err(_) => {
+                    // Error already handled above
+                }
+            }
+        });
     }
 
     fn get_orgs(&self) -> BTreeMap<Uuid, Org> {
@@ -1636,7 +1920,9 @@ mod tests {
             let mut client = Client::new();
             client.set_token("test-token".to_string());
             let url = format!("ws://127.0.0.1:{}", port);
-            let receiver = client.connect_ws(url, 1).expect("Should return receiver when token is set");
+            let receiver = client
+                .connect_ws(url, 1)
+                .expect("Should return receiver when token is set");
 
             // Wait for connection notification (give more time for handshake)
             for _ in 0..10 {
@@ -1695,7 +1981,9 @@ mod tests {
             let mut client = Client::new();
             client.set_token("test-token".to_string());
             let url = format!("ws://127.0.0.1:{}", port);
-            let receiver = client.connect_ws(url, 1).expect("Should return receiver when token is set");
+            let receiver = client
+                .connect_ws(url, 1)
+                .expect("Should return receiver when token is set");
 
             // Wait for connection
             thread::sleep(Duration::from_millis(500));
@@ -1751,7 +2039,9 @@ mod tests {
             let mut client = Client::new();
             client.set_token("test-token".to_string());
             let url = format!("ws://127.0.0.1:{}", port);
-            let receiver = client.connect_ws(url, 1).expect("Should return receiver when token is set");
+            let receiver = client
+                .connect_ws(url, 1)
+                .expect("Should return receiver when token is set");
 
             // Wait for connection
             thread::sleep(Duration::from_millis(500));
@@ -1808,7 +2098,9 @@ mod tests {
             let mut client = Client::new();
             client.set_token("test-token".to_string());
             let url = format!("ws://127.0.0.1:{}", port);
-            let receiver = client.connect_ws(url, 1).expect("Should return receiver when token is set");
+            let receiver = client
+                .connect_ws(url, 1)
+                .expect("Should return receiver when token is set");
 
             // Wait for connection
             thread::sleep(Duration::from_millis(500));
@@ -1865,7 +2157,9 @@ mod tests {
             let mut client = Client::new();
             client.set_token("test-token".to_string());
             let url = format!("ws://127.0.0.1:{}", port);
-            let receiver = client.connect_ws(url, 1).expect("Should return receiver when token is set");
+            let receiver = client
+                .connect_ws(url, 1)
+                .expect("Should return receiver when token is set");
 
             // Wait for connection
             thread::sleep(Duration::from_millis(500));
@@ -1908,7 +2202,9 @@ mod tests {
             let mut client = Client::new();
             client.set_token("test-token".to_string());
             let url = format!("ws://127.0.0.1:{}", port);
-            let receiver = client.connect_ws(url, 1).expect("Should return receiver when token is set");
+            let receiver = client
+                .connect_ws(url, 1)
+                .expect("Should return receiver when token is set");
 
             // Wait for connection
             thread::sleep(Duration::from_millis(500));
@@ -1965,7 +2261,10 @@ mod tests {
                 }
             }
 
-            assert!(auth_code_sent, "Auth notifications should work without WSS connection");
+            assert!(
+                auth_code_sent,
+                "Auth notifications should work without WSS connection"
+            );
         }
 
         #[test]
@@ -1983,7 +2282,9 @@ mod tests {
             let mut client = Client::new();
             client.set_token("test-token".to_string());
             let url = format!("ws://127.0.0.1:{}", port);
-            let receiver = client.connect_ws(url, 1).expect("Should return receiver when token is set");
+            let receiver = client
+                .connect_ws(url, 1)
+                .expect("Should return receiver when token is set");
 
             // Wait for connection
             thread::sleep(Duration::from_millis(500));
@@ -2048,7 +2349,9 @@ mod tests {
             let mut client = Client::new();
             client.set_token("test-token".to_string());
             let url = format!("ws://127.0.0.1:{}", port);
-            let receiver = client.connect_ws(url, 1).expect("Should return receiver when token is set");
+            let receiver = client
+                .connect_ws(url, 1)
+                .expect("Should return receiver when token is set");
 
             // Wait for connection
             thread::sleep(Duration::from_millis(500));
