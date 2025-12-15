@@ -3130,9 +3130,12 @@ dependencies = [
 name = "liana-business"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "crossbeam",
  "email_address",
+ "futures",
  "iced",
+ "liana-gui",
  "liana-ui",
  "miniscript",
  "rustls 0.23.35",

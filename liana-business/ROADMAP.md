@@ -3,7 +3,7 @@
 ## Priority
 
 - [ ] **2. Back**
-  - [ ] 2.1 Auth Client
+  - [x] 2.1 Auth Client
   - [ ] 2.2 Installer Trait Integration
 - [ ] **3.1 Ws Manager Flow**
 - [ ] **1. Front** (needed for completion of WS Manager flow)
@@ -29,16 +29,27 @@
 ## 2. Back
 
 ### 2.1 Auth Client
-- [ ] Implement auth client
-  - [ ] Complete authentication client implementation
-  - [ ] Integrate with existing auth flow
-  - [ ] Ensure proper token management
+- [x] Implement auth client
+  - [x] Export required auth types from liana-gui (AuthClient, AuthError,
+  AccessTokenResponse, cache types, http traits, NetworkDirectory, get_service_config)
+  - [x] Add liana-gui dependency to liana-business Cargo.toml
+  - [x] Extend Client struct with auth_client, network, network_dir, email fields
+  - [x] Implement auth_request() using AuthClient::sign_in_otp() with async-to-sync
+  bridge (spawn thread + block_on)
+  - [x] Implement auth_code() using AuthClient::verify_otp() with token caching via
+  update_connect_cache()
+  - [x] Implement token caching in connect_ws() - check cached token, refresh if
+  expired, use cached token for connection
 
 ### 2.2 Installer Trait Integration
 - [ ] Wrap complete app under the Installer trait of liana-gui
   - [ ] Implement Installer trait for the application
   - [ ] Support standalone mode
   - [ ] Support integration into liana-gui
+
+### 2.3 Auth improvements
+- [ ] Automatically refresh token
+- [ ] Async instead threading?
 
 ## 3. Flows
 
