@@ -82,16 +82,6 @@ pub fn home_view(state: &State) -> Element<'_, Msg> {
     };
     left_column = left_column.push(validate_button);
 
-    // Test warning modal button
-    left_column = left_column.push(
-        button::secondary(None, "Test Warning Modal")
-            .on_press(Msg::WarningShowModal(
-                "Warning".to_string(),
-                "This is a test warning message. The warning modal has the highest priority and will be displayed on top of other modals.".to_string(),
-            ))
-            .width(Length::Fixed(200.0)),
-    );
-
     // Right panel: Template Visualization
     let right_panel = template_visualization(state);
 

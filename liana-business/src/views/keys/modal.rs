@@ -113,14 +113,6 @@ pub fn edit_key_modal(modal_state: &EditKeyModalState) -> Element<'_, Message> {
                     .width(Length::Fixed(120.0)),
             )
             .push(
-                button::secondary(None, "Test Warning")
-                    .on_press(Message::WarningShowModal(
-                        "Warning from Edit Key Modal".to_string(),
-                        "This warning modal is displayed on top of the edit key modal, demonstrating its priority.".to_string(),
-                    ))
-                    .width(Length::Fixed(120.0)),
-            )
-            .push(
                 button::primary(None, "Save")
                     .on_press(Message::KeySave)
                     .width(Length::Fixed(120.0)),
