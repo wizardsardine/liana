@@ -52,13 +52,6 @@ pub struct SaveQuoteRequest<'a, T: Serialize> {
 #[derive(Debug, Clone, Deserialize)]
 pub struct SaveQuoteResponse {
     pub success: bool,
-    pub quote_id: String,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct PaymentLinkStatusResponse {
-    pub status: String,
-    pub order_id: String,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -70,7 +63,7 @@ pub struct AuthDetail {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum AccountType {
-    // TODO: is support for businesses even planned?
+    // businesses are not supported yet
     Business,
     Individual,
 }
@@ -134,7 +127,7 @@ pub struct VerifyEmailResponse {
     pub email: String,
 }
 
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Deserialize, Serialize, Debug, Clone)]
 pub struct LoginResponse {
     pub requires_2fa: bool,
     pub token: String,

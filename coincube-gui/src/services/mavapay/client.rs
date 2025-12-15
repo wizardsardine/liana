@@ -13,24 +13,25 @@ pub struct MavapayClient {
 impl MavapayClient {
     /// Create a new Mavapay client
     pub fn new() -> Self {
-        let api_key = match (option_env!("MAVAPAY_API_KEY"), cfg!(debug_assertions)) {
+        let (api_key, base_url) = match option_env!("MAVAPAY_API_KEY") {
             // staging api key
-            (None, true) => "6361fa8e19e150db46d0dc614b9874fd199c95d80a9",
-            (None, false) => {
-                panic!("Unable to initialize Mavapay Client, API key not set at compile time for release builds")
+            None => {
+                log::info!("[MAVAPAY] Using staging environment");
+                (
+                    "6361fa8e19e150db46d0dc614b9874fd199c95d80a9",
+                    "https://staging.api.mavapay.co/api",
+                )
             }
-            (Some(k), _) => k,
+            // use production endpoint if api key is set
+            Some(k) => {
+                log::info!("[MAVAPAY] Using production environment");
+                (k, "https://api.mavapay.co/api")
+            }
         };
 
         let mut headers = reqwest::header::HeaderMap::new();
-        let base_url = if cfg!(debug_assertions) {
-            "https://staging.api.mavapay.co/api/v1"
-        } else {
-            "https://api.mavapay.co/api/v1"
-        };
-
         headers.append(
-            "key",
+            "X-API-KEY",
             reqwest::header::HeaderValue::from_str(api_key).unwrap(),
         );
 
@@ -55,7 +56,7 @@ impl MavapayClient {
         currency: MavapayCurrency,
     ) -> Result<GetPriceResponse, MavapayError> {
         let response = self
-            .request(Method::GET, "/price")
+            .request(Method::GET, "/v1/price")
             .query(&[("currency", currency)])
             .send()
             .await?
@@ -68,17 +69,15 @@ impl MavapayClient {
         }
     }
 
-    /// Create a quote for currency conversion
     pub async fn create_quote(
         &self,
         request: GetQuoteRequest,
     ) -> Result<GetQuoteResponse, MavapayError> {
         let response = self
-            .request(Method::POST, "/quote")
+            .request(Method::POST, "/v1/quote")
             .json(&request)
             .send()
             .await?;
-
         let response = response.check_success().await?;
         let response: MavapayResponse<GetQuoteResponse> = response.json().await?;
 
@@ -91,9 +90,42 @@ impl MavapayClient {
         Ok(quote)
     }
 
+    pub async fn get_order(&self, order_id: &str) -> Result<GetOrderResponse, MavapayError> {
+        let response = self
+            .request(Method::GET, "/v1/order")
+            .query(&[("id", order_id)])
+            .send()
+            .await?
+            .check_success()
+            .await?;
+
+        match response.json().await? {
+            MavapayResponse::Error { message } => Err(MavapayError::ApiError(message)),
+            MavapayResponse::Success { data } => Ok(data),
+        }
+    }
+
+    #[cfg(debug_assertions)]
+    pub async fn simulate_pay_in(
+        &self,
+        request: &SimulatePayInRequest,
+    ) -> Result<String, MavapayError> {
+        let response = self
+            .request(Method::POST, "/v1/simulation/pay-in")
+            .json(&request)
+            .send()
+            .await?;
+        let response = response.check_success().await?;
+
+        match response.json().await? {
+            MavapayResponse::Error { message } => Err(MavapayError::ApiError(message)),
+            MavapayResponse::Success { data } => Ok(data),
+        }
+    }
+
     pub async fn get_banks(&self, country_code: &str) -> Result<MavapayBanks, MavapayError> {
         let response = self
-            .request(Method::GET, "/bank/bankcode")
+            .request(Method::GET, "/v1/bank/bankcode")
             .query(&[("country", country_code)])
             .send()
             .await?;
@@ -111,7 +143,7 @@ impl MavapayClient {
         bank_code: &str,
     ) -> Result<BankCustomerInquiry, MavapayError> {
         let response = self
-            .request(Method::GET, "/bank/name-enquiry")
+            .request(Method::GET, "/v1/bank/name-enquiry")
             .query(&[("accountNumber", account_number), ("bankCode", bank_code)])
             .send()
             .await?
@@ -124,30 +156,14 @@ impl MavapayClient {
         }
     }
 
-    pub async fn get_wallet(
-        &self,
-        id: &str,
-        currency: Option<&str>,
-    ) -> Result<Vec<MavapayWallet>, MavapayError> {
-        let request = self.request(Method::GET, "/wallet");
-        let request = match currency {
-            Some(c) => request.query([("currency", c), ("walletId", id)].as_slice()),
-            None => request.query([("walletId", id)].as_slice()),
-        };
-
-        let response = request.send().await?.check_success().await?;
-        match response.json().await? {
-            MavapayResponse::Success { data } => Ok(data),
-            MavapayResponse::Error { message } => Err(MavapayError::ApiError(message)),
-        }
-    }
-
     /// Get transaction history
     pub async fn get_transactions(
         &self,
         options: GetTransactions,
     ) -> Result<(GetTransactionPagination, Vec<Transaction>), MavapayError> {
-        let request = self.request(Method::GET, "/transactions").query(&options);
+        let request = self
+            .request(Method::GET, "/v1/transactions")
+            .query(&options);
         let response = request.send().await?.check_success().await?;
 
         // `GET /transactions` has a custom response structure
@@ -157,9 +173,13 @@ impl MavapayClient {
         }
     }
 
-    pub async fn get_transaction(&self, transaction_id: &str) -> Result<Transaction, MavapayError> {
+    pub async fn get_transaction(
+        &self,
+        options: GetTransaction<'_>,
+    ) -> Result<Transaction, MavapayError> {
         let response = self
-            .request(Method::GET, &format!("/transactions/{}", transaction_id))
+            .request(Method::GET, "/v1/transaction")
+            .query(&options)
             .send()
             .await?
             .check_success()

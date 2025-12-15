@@ -39,27 +39,6 @@ impl CoincubeClient {
         let response = response.check_success().await?;
         Ok(response.json().await?)
     }
-
-    /// Check payment link status via coincube-api (proxies to Mavapay)
-    pub async fn check_payment_link_status(
-        &self,
-        order_id: &str,
-    ) -> Result<PaymentLinkStatusResponse, CoincubeError> {
-        let url = format!(
-            "{}/api/v1/mavapay/paymentlinks/{}/status",
-            self.base_url, order_id
-        );
-
-        let response = self.client.get(&url).send().await?;
-        let response = response.check_success().await?;
-
-        Ok(response.json().await?)
-    }
-
-    /// Build the quote display URL
-    pub fn get_quote_display_url(&self, quote_id: &str) -> String {
-        format!("{}/api/v1/mavapay/quotes/{}", self.base_url, quote_id)
-    }
 }
 
 // registration endpoints
