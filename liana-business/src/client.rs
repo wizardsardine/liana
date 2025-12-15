@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::net::TcpListener;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -6,23 +7,27 @@ use std::time::{Duration, Instant};
 
 use crossbeam::channel;
 use miniscript::DescriptorPublicKey;
-use tungstenite::Message as WsMessage;
+use serde_json::json;
+use tungstenite::{accept, Message as WsMessage};
 use uuid::Uuid;
 
 use crate::backend::{Backend, Error, Notification, Org, OrgData, User, Wallet};
-use crate::wss::{OrgJson, Request, Response, UserJson, WalletJson};
+use crate::wss::{ConnectedPayload, OrgJson, Request, Response, UserJson, WalletJson};
 
 /// WSS Backend implementation
 #[derive(Debug)]
 pub struct Client {
-    orgs: Arc<Mutex<BTreeMap<Uuid, Org>>>,
-    wallets: Arc<Mutex<BTreeMap<Uuid, Wallet>>>,
-    users: Arc<Mutex<BTreeMap<Uuid, User>>>,
+    pub(crate) orgs: Arc<Mutex<BTreeMap<Uuid, Org>>>,
+    pub(crate) wallets: Arc<Mutex<BTreeMap<Uuid, Wallet>>>,
+    pub(crate) users: Arc<Mutex<BTreeMap<Uuid, User>>>,
     token: Option<String>,
     request_sender: Option<channel::Sender<Request>>,
     notif_sender: Option<channel::Sender<Notification>>,
     wss_thread_handle: Option<thread::JoinHandle<()>>,
     connected: Arc<AtomicBool>,
+    // DEBUG: Temporary field to store dummy server thread handle (will be removed when server launches)
+    dummy_server_handle: Option<thread::JoinHandle<()>>,
+    dummy_server_shutdown: Option<channel::Sender<()>>,
 }
 
 impl Client {
@@ -36,11 +41,17 @@ impl Client {
             notif_sender: None,
             wss_thread_handle: None,
             connected: Arc::new(AtomicBool::new(false)),
+            dummy_server_handle: None,
+            dummy_server_shutdown: None,
         }
     }
 
     pub fn set_token(&mut self, token: String) {
         self.token = Some(token);
+    }
+
+    pub fn is_connected(&self) -> bool {
+        self.connected.load(Ordering::Relaxed)
     }
 }
 
@@ -477,38 +488,79 @@ macro_rules! check_connection {
 }
 
 impl Backend for Client {
-    fn connect(&mut self, url: String, version: u8) -> channel::Receiver<Notification> {
+    fn connect_ws(&mut self, url: String, version: u8) -> Option<channel::Receiver<Notification>> {
         // Close existing connection if any
         if self.connected.load(Ordering::Relaxed) {
             self.close();
         }
 
-        // Get token - it should have been set before connect
-        // If not set, create a dummy channel and return error
+        // Always create notification channel - needed for auth flow even without WSS connection
+        let (notif, notif_receiver) = channel::unbounded();
+        self.notif_sender = Some(notif.clone());
+
+        // Get token - if no token, return channel but don't attempt WSS connection
+        // The user must auth first, then we'll connect after login success
         let token = match self.token.clone() {
             Some(t) => t,
             None => {
-                let (sender, receiver) = channel::unbounded();
-                let _ = sender.send(Notification::Error(Error::TokenMissing));
-                return receiver;
+                // Return the channel so auth notifications can work
+                return Some(notif_receiver);
             }
         };
 
+        // DEBUG: Spawn dummy server if url == "debug"
+        let mut actual_url = url.clone();
+        if url == "debug" {
+            use crate::backend::create_dummy_server_handler;
+
+            // Auto-assign port by binding to port 0
+            let listener = TcpListener::bind("127.0.0.1:0")
+                .expect("Failed to bind to address for port assignment");
+            let port = listener.local_addr().unwrap().port();
+            drop(listener); // Close the listener, we just needed the port
+
+            // Create handler using Client's data
+            let orgs = Arc::clone(&self.orgs);
+            let wallets = Arc::clone(&self.wallets);
+            let users = Arc::clone(&self.users);
+            let handler = create_dummy_server_handler(orgs, wallets, users);
+
+            // Spawn the DummyServer in a separate thread
+            let server_port = port;
+            let (shutdown_sender, shutdown_receiver) = channel::bounded(1);
+
+            let server_handle = thread::spawn(move || {
+                let mut server = DummyServer::new(server_port);
+                server.start(handler);
+                // Wait for shutdown signal
+                let _ = shutdown_receiver.recv();
+                server.close();
+            });
+
+            // Store the server thread handle and shutdown sender
+            self.dummy_server_handle = Some(server_handle);
+            self.dummy_server_shutdown = Some(shutdown_sender);
+
+            // Give the server time to bind to the port
+            thread::sleep(Duration::from_millis(100));
+
+            // Update URL to point to the dummy server
+            actual_url = format!("ws://127.0.0.1:{}", port);
+        }
+
         let (request_sender, request_receiver) = channel::unbounded();
-        let (notif_sender, notif_receiver) = channel::unbounded();
 
         let orgs = Arc::clone(&self.orgs);
         let wallets = Arc::clone(&self.wallets);
         let users = Arc::clone(&self.users);
 
-        let notif = notif_sender.clone();
         self.request_sender = Some(request_sender.clone());
         self.connected = Arc::new(AtomicBool::new(false));
         let connected = self.connected.clone();
 
         let handle = thread::spawn(move || {
             wss_thread(
-                url,
+                actual_url,
                 token,
                 version,
                 orgs,
@@ -521,18 +573,21 @@ impl Backend for Client {
             );
         });
 
-        self.notif_sender = Some(notif_sender);
         self.wss_thread_handle = Some(handle);
 
-        notif_receiver
+        Some(notif_receiver)
     }
 
     fn auth_request(&mut self, _email: String) {
-        // Skip implementation for now
+        if let Some(sender) = self.notif_sender.as_mut() {
+            sender.send(Notification::AuthCodeSent).unwrap();
+        }
     }
 
     fn auth_code(&mut self, _code: String) {
-        // Skip implementation for now
+        if let Some(sender) = self.notif_sender.as_mut() {
+            sender.send(Notification::LoginSuccess).unwrap();
+        }
     }
 
     fn get_orgs(&self) -> BTreeMap<Uuid, Org> {
@@ -578,6 +633,14 @@ impl Backend for Client {
     }
 
     fn close(&mut self) {
+        // DEBUG: Close dummy server if it exists
+        if let Some(shutdown) = self.dummy_server_shutdown.take() {
+            let _ = shutdown.send(());
+        }
+        if let Some(handle) = self.dummy_server_handle.take() {
+            let _ = handle.join();
+        }
+
         if !self.connected.load(Ordering::Relaxed) {
             return;
         }
@@ -667,59 +730,303 @@ impl Default for Client {
     }
 }
 
+// Helper function to serialize Response to WsMessage for DummyServer
+fn response_to_ws_message(response: &Response, request_id: Option<String>) -> WsMessage {
+    let (msg_type, payload, error) = match response {
+        Response::Connected { version } => (
+            "connected".to_string(),
+            Some(serde_json::to_value(ConnectedPayload { version: *version }).unwrap()),
+            None,
+        ),
+        Response::Pong => ("pong".to_string(), None, None),
+        Response::Org { org } => (
+            "org".to_string(),
+            Some(serde_json::to_value(org).unwrap()),
+            None,
+        ),
+        Response::Wallet { wallet } => (
+            "wallet".to_string(),
+            Some(serde_json::to_value(wallet).unwrap()),
+            None,
+        ),
+        Response::User { user } => (
+            "user".to_string(),
+            Some(serde_json::to_value(user).unwrap()),
+            None,
+        ),
+        Response::Error { error } => {
+            let mut error = error.clone();
+            error.request_id = request_id.clone();
+            ("error".to_string(), None, Some(error))
+        }
+    };
+
+    let protocol_response = json!({
+        "type": msg_type,
+        "request_id": request_id,
+        "payload": payload,
+        "error": error,
+    });
+
+    WsMessage::Text(serde_json::to_string(&protocol_response).unwrap())
+}
+
+/// DummyServer is a WebSocket server that can handle Client connections
+/// and manage Request/Response messages for development/testing
+#[derive(Debug)]
+pub struct DummyServer {
+    port: u16,
+    handle: Option<thread::JoinHandle<()>>,
+    shutdown_sender: Option<channel::Sender<()>>,
+    request_receiver: Option<channel::Receiver<(Request, String)>>, // Request with request_id
+    response_sender: Option<channel::Sender<(Response, Option<String>)>>, // Response with optional request_id
+}
+
+impl DummyServer {
+    pub fn new(port: u16) -> Self {
+        Self {
+            port,
+            handle: None,
+            shutdown_sender: None,
+            request_receiver: None,
+            response_sender: None,
+        }
+    }
+
+    pub fn url(&self) -> String {
+        format!("ws://127.0.0.1:{}", self.port)
+    }
+
+    pub fn start(&mut self, handler: Box<dyn Fn(Request) -> Response + Send + Sync + 'static>) {
+        let port = self.port;
+        let (shutdown_sender, shutdown_receiver) = channel::bounded(1);
+        let (request_sender, request_receiver) = channel::unbounded();
+        let (response_sender, response_receiver) = channel::unbounded();
+
+        self.shutdown_sender = Some(shutdown_sender);
+        self.request_receiver = Some(request_receiver);
+        self.response_sender = Some(response_sender);
+
+        let handle = thread::spawn(move || {
+            let listener = TcpListener::bind(format!("127.0.0.1:{}", port))
+                .expect("Failed to bind to address");
+            listener.set_nonblocking(false).unwrap();
+
+            let shutdown_receiver = shutdown_receiver;
+            let response_receiver = response_receiver;
+
+            // Accept one connection
+            let (stream, _) = match listener.accept() {
+                Ok(conn) => conn,
+                Err(_) => return,
+            };
+
+            let mut ws_stream = match accept(stream) {
+                Ok(ws) => ws,
+                Err(_) => return,
+            };
+
+            // Read connect request in blocking mode first
+            let connect_msg = match ws_stream.read() {
+                Ok(WsMessage::Text(text)) => text,
+                _ => return,
+            };
+
+            // Parse connect request and respond
+            let protocol_request: serde_json::Value = match serde_json::from_str(&connect_msg) {
+                Ok(req) => req,
+                Err(_) => return,
+            };
+
+            let request_id = protocol_request["request_id"]
+                .as_str()
+                .map(|s| s.to_string());
+
+            let msg_type = protocol_request["type"].as_str().unwrap_or("");
+            if msg_type == "connect" {
+                // Respond with connected
+                let connected = Response::Connected { version: 1 };
+                let ws_msg = response_to_ws_message(&connected, request_id);
+                if ws_stream.send(ws_msg).is_err() {
+                    return;
+                }
+            } else {
+                return;
+            }
+
+            // Enable non-blocking reads after initial handshake
+            let tcp_stream = ws_stream.get_ref();
+            tcp_stream.set_nonblocking(true).expect("must not fail");
+
+            // Now handle subsequent messages in non-blocking mode
+            loop {
+                channel::select! {
+                    recv(shutdown_receiver) -> _ => {
+                        break;
+                    }
+                    recv(response_receiver) -> msg => {
+                        if let Ok((response, request_id)) = msg {
+                            let ws_msg = response_to_ws_message(&response, request_id);
+                            if ws_stream.send(ws_msg).is_err() {
+                                break;
+                            }
+                        }
+                    }
+                    default => {
+                        match ws_stream.read() {
+                            Ok(WsMessage::Text(text)) => {
+                                // Parse request
+                                let protocol_request: serde_json::Value = match serde_json::from_str(&text) {
+                                    Ok(req) => req,
+                                    Err(_) => continue,
+                                };
+
+                                let request_id = protocol_request["request_id"]
+                                    .as_str()
+                                    .map(|s| s.to_string());
+
+                                let msg_type = protocol_request["type"]
+                                    .as_str()
+                                    .unwrap_or("");
+
+                                if msg_type == "connect" {
+                                    // Respond with connected
+                                    let connected = Response::Connected { version: 1 };
+                                    let ws_msg = response_to_ws_message(&connected, request_id);
+                                    if ws_stream.send(ws_msg).is_err() {
+                                        break;
+                                    }
+                                } else if msg_type == "ping" {
+                                    // Respond with pong
+                                    let pong = Response::Pong;
+                                    let ws_msg = response_to_ws_message(&pong, request_id);
+                                    if ws_stream.send(ws_msg).is_err() {
+                                        break;
+                                    }
+                                } else if msg_type == "close" {
+                                    let _ = ws_stream.close(None);
+                                    break;
+                                } else {
+                                    // Convert to Request (simplified - extract type and payload)
+                                    // For testing, we'll use a simple mapping for common request types
+                                    // Note: protocol_request was already parsed above
+                                    let request = match msg_type {
+                                        "fetch_org" => {
+                                            let id_str = protocol_request["payload"]["id"]
+                                                .as_str()
+                                                .unwrap_or("");
+                                            Request::FetchOrg {
+                                                id: Uuid::parse_str(id_str).unwrap_or_else(|_| Uuid::new_v4()),
+                                            }
+                                        }
+                                        "fetch_wallet" => {
+                                            let id_str = protocol_request["payload"]["id"]
+                                                .as_str()
+                                                .unwrap_or("");
+                                            Request::FetchWallet {
+                                                id: Uuid::parse_str(id_str).unwrap_or_else(|_| Uuid::new_v4()),
+                                            }
+                                        }
+                                        "fetch_user" => {
+                                            let id_str = protocol_request["payload"]["id"]
+                                                .as_str()
+                                                .unwrap_or("");
+                                            Request::FetchUser {
+                                                id: Uuid::parse_str(id_str).unwrap_or_else(|_| Uuid::new_v4()),
+                                            }
+                                        }
+                                        "create_wallet" => {
+                                            let name = protocol_request["payload"]["name"]
+                                                .as_str()
+                                                .unwrap_or("")
+                                                .to_string();
+                                            let org_id_str = protocol_request["payload"]["org_id"]
+                                                .as_str()
+                                                .unwrap_or("");
+                                            let owner_id_str = protocol_request["payload"]["owner_id"]
+                                                .as_str()
+                                                .unwrap_or("");
+                                            Request::CreateWallet {
+                                                name,
+                                                org_id: Uuid::parse_str(org_id_str).unwrap_or_else(|_| Uuid::new_v4()),
+                                                owner_id: Uuid::parse_str(owner_id_str).unwrap_or_else(|_| Uuid::new_v4()),
+                                            }
+                                        }
+                                        "remove_wallet_from_org" => {
+                                            let wallet_id_str = protocol_request["payload"]["wallet_id"]
+                                                .as_str()
+                                                .unwrap_or("");
+                                            let org_id_str = protocol_request["payload"]["org_id"]
+                                                .as_str()
+                                                .unwrap_or("");
+                                            Request::RemoveWalletFromOrg {
+                                                wallet_id: Uuid::parse_str(wallet_id_str).unwrap_or_else(|_| Uuid::new_v4()),
+                                                org_id: Uuid::parse_str(org_id_str).unwrap_or_else(|_| Uuid::new_v4()),
+                                            }
+                                        }
+                                        _ => {
+                                            // For unknown request types, skip (could log or send error)
+                                            continue;
+                                        }
+                                    };
+
+                                    let _ = request_sender.send((request.clone(), request_id.clone().unwrap_or_default()));
+
+                                    // Get response from handler
+                                    let response = handler(request);
+                                    let ws_msg = response_to_ws_message(&response, request_id);
+                                    if ws_stream.send(ws_msg).is_err() {
+                                        break;
+                                    }
+                                }
+                            }
+                            Ok(WsMessage::Close(_)) => {
+                                break;
+                            }
+                            Err(tungstenite::Error::Io(ref e)) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                                // Non-blocking read would block, continue loop
+                                thread::sleep(Duration::from_millis(10));
+                            }
+                            Err(_) => {
+                                // Other errors, break
+                                break;
+                            }
+                            Ok(_) => {}
+                        }
+                    }
+                }
+            }
+        });
+
+        self.handle = Some(handle);
+    }
+
+    pub fn send_response(&self, response: Response, request_id: Option<String>) {
+        if let Some(sender) = &self.response_sender {
+            let _ = sender.send((response, request_id));
+        }
+    }
+
+    pub fn close(&mut self) {
+        if let Some(sender) = self.shutdown_sender.take() {
+            let _ = sender.send(());
+        }
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
+impl Drop for DummyServer {
+    fn drop(&mut self) {
+        self.close();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::wss::{
-        ConnectedPayload, OrgJson, Response, UserJson, WalletJson, WssConversionError, WssError,
-    };
-    use serde_json::json;
-    use std::net::TcpListener;
-    use std::thread;
-    use std::time::Duration;
-    use tungstenite::{accept, Message as WsMessage};
-
-    // Helper function to serialize Response to WsMessage for DummyServer
-    fn response_to_ws_message(response: &Response, request_id: Option<String>) -> WsMessage {
-        let (msg_type, payload, error) = match response {
-            Response::Connected { version } => (
-                "connected".to_string(),
-                Some(serde_json::to_value(ConnectedPayload { version: *version }).unwrap()),
-                None,
-            ),
-            Response::Pong => ("pong".to_string(), None, None),
-            Response::Org { org } => (
-                "org".to_string(),
-                Some(serde_json::to_value(org).unwrap()),
-                None,
-            ),
-            Response::Wallet { wallet } => (
-                "wallet".to_string(),
-                Some(serde_json::to_value(wallet).unwrap()),
-                None,
-            ),
-            Response::User { user } => (
-                "user".to_string(),
-                Some(serde_json::to_value(user).unwrap()),
-                None,
-            ),
-            Response::Error { error } => {
-                let mut error = error.clone();
-                error.request_id = request_id.clone();
-                ("error".to_string(), None, Some(error))
-            }
-        };
-
-        let protocol_response = json!({
-            "type": msg_type,
-            "request_id": request_id,
-            "payload": payload,
-            "error": error,
-        });
-
-        WsMessage::Text(serde_json::to_string(&protocol_response).unwrap())
-    }
-
+    use crate::wss::{OrgJson, Response, UserJson, WalletJson, WssConversionError, WssError};
     mod parsing_tests {
         use super::*;
 
@@ -1278,257 +1585,6 @@ mod tests {
         }
     }
 
-    /// DummyServer is a test WebSocket server that can handle Client connections
-    /// and manage Request/Response messages for testing
-    pub struct DummyServer {
-        port: u16,
-        handle: Option<thread::JoinHandle<()>>,
-        shutdown_sender: Option<channel::Sender<()>>,
-        request_receiver: Option<channel::Receiver<(Request, String)>>, // Request with request_id
-        response_sender: Option<channel::Sender<(Response, Option<String>)>>, // Response with optional request_id
-    }
-
-    impl DummyServer {
-        pub fn new(port: u16) -> Self {
-            Self {
-                port,
-                handle: None,
-                shutdown_sender: None,
-                request_receiver: None,
-                response_sender: None,
-            }
-        }
-
-        pub fn url(&self) -> String {
-            format!("ws://127.0.0.1:{}", self.port)
-        }
-
-        pub fn start(&mut self, handler: Box<dyn Fn(Request) -> Response + Send + Sync + 'static>) {
-            let port = self.port;
-            let (shutdown_sender, shutdown_receiver) = channel::bounded(1);
-            let (request_sender, request_receiver) = channel::unbounded();
-            let (response_sender, response_receiver) = channel::unbounded();
-
-            self.shutdown_sender = Some(shutdown_sender);
-            self.request_receiver = Some(request_receiver);
-            self.response_sender = Some(response_sender);
-
-            let handle = thread::spawn(move || {
-                let listener = TcpListener::bind(format!("127.0.0.1:{}", port))
-                    .expect("Failed to bind to address");
-                listener.set_nonblocking(false).unwrap();
-
-                let shutdown_receiver = shutdown_receiver;
-                let response_receiver = response_receiver;
-
-                // Accept one connection
-                let (stream, _) = match listener.accept() {
-                    Ok(conn) => conn,
-                    Err(_) => return,
-                };
-
-                let mut ws_stream = match accept(stream) {
-                    Ok(ws) => ws,
-                    Err(_) => return,
-                };
-
-                // Read connect request in blocking mode first
-                let connect_msg = match ws_stream.read() {
-                    Ok(WsMessage::Text(text)) => text,
-                    _ => return,
-                };
-
-                // Parse connect request and respond
-                let protocol_request: serde_json::Value = match serde_json::from_str(&connect_msg) {
-                    Ok(req) => req,
-                    Err(_) => return,
-                };
-
-                let request_id = protocol_request["request_id"]
-                    .as_str()
-                    .map(|s| s.to_string());
-
-                let msg_type = protocol_request["type"].as_str().unwrap_or("");
-                if msg_type == "connect" {
-                    // Respond with connected
-                    let connected = Response::Connected { version: 1 };
-                    let ws_msg = response_to_ws_message(&connected, request_id);
-                    if ws_stream.send(ws_msg).is_err() {
-                        return;
-                    }
-                } else {
-                    return;
-                }
-
-                // Enable non-blocking reads after initial handshake
-                let tcp_stream = ws_stream.get_ref();
-                tcp_stream.set_nonblocking(true).expect("must not fail");
-
-                // Now handle subsequent messages in non-blocking mode
-                loop {
-                    channel::select! {
-                        recv(shutdown_receiver) -> _ => {
-                            break;
-                        }
-                        recv(response_receiver) -> msg => {
-                            if let Ok((response, request_id)) = msg {
-                                let ws_msg = response_to_ws_message(&response, request_id);
-                                if ws_stream.send(ws_msg).is_err() {
-                                    break;
-                                }
-                            }
-                        }
-                        default => {
-                            match ws_stream.read() {
-                                Ok(WsMessage::Text(text)) => {
-                                    // Parse request
-                                    let protocol_request: serde_json::Value = match serde_json::from_str(&text) {
-                                        Ok(req) => req,
-                                        Err(_) => continue,
-                                    };
-
-                                    let request_id = protocol_request["request_id"]
-                                        .as_str()
-                                        .map(|s| s.to_string());
-
-                                    let msg_type = protocol_request["type"]
-                                        .as_str()
-                                        .unwrap_or("");
-
-                                    if msg_type == "connect" {
-                                        // Respond with connected
-                                        let connected = Response::Connected { version: 1 };
-                                        let ws_msg = response_to_ws_message(&connected, request_id);
-                                        if ws_stream.send(ws_msg).is_err() {
-                                            break;
-                                        }
-                                    } else if msg_type == "ping" {
-                                        // Respond with pong
-                                        let pong = Response::Pong;
-                                        let ws_msg = response_to_ws_message(&pong, request_id);
-                                        if ws_stream.send(ws_msg).is_err() {
-                                            break;
-                                        }
-                                    } else if msg_type == "close" {
-                                        let _ = ws_stream.close(None);
-                                        break;
-                                    } else {
-                                        // Convert to Request (simplified - extract type and payload)
-                                        // For testing, we'll use a simple mapping for common request types
-                                        // Note: protocol_request was already parsed above
-                                        let request = match msg_type {
-                                            "fetch_org" => {
-                                                let id_str = protocol_request["payload"]["id"]
-                                                    .as_str()
-                                                    .unwrap_or("");
-                                                Request::FetchOrg {
-                                                    id: Uuid::parse_str(id_str).unwrap_or_else(|_| Uuid::new_v4()),
-                                                }
-                                            }
-                                            "fetch_wallet" => {
-                                                let id_str = protocol_request["payload"]["id"]
-                                                    .as_str()
-                                                    .unwrap_or("");
-                                                Request::FetchWallet {
-                                                    id: Uuid::parse_str(id_str).unwrap_or_else(|_| Uuid::new_v4()),
-                                                }
-                                            }
-                                            "fetch_user" => {
-                                                let id_str = protocol_request["payload"]["id"]
-                                                    .as_str()
-                                                    .unwrap_or("");
-                                                Request::FetchUser {
-                                                    id: Uuid::parse_str(id_str).unwrap_or_else(|_| Uuid::new_v4()),
-                                                }
-                                            }
-                                            "create_wallet" => {
-                                                let name = protocol_request["payload"]["name"]
-                                                    .as_str()
-                                                    .unwrap_or("")
-                                                    .to_string();
-                                                let org_id_str = protocol_request["payload"]["org_id"]
-                                                    .as_str()
-                                                    .unwrap_or("");
-                                                let owner_id_str = protocol_request["payload"]["owner_id"]
-                                                    .as_str()
-                                                    .unwrap_or("");
-                                                Request::CreateWallet {
-                                                    name,
-                                                    org_id: Uuid::parse_str(org_id_str).unwrap_or_else(|_| Uuid::new_v4()),
-                                                    owner_id: Uuid::parse_str(owner_id_str).unwrap_or_else(|_| Uuid::new_v4()),
-                                                }
-                                            }
-                                            "remove_wallet_from_org" => {
-                                                let wallet_id_str = protocol_request["payload"]["wallet_id"]
-                                                    .as_str()
-                                                    .unwrap_or("");
-                                                let org_id_str = protocol_request["payload"]["org_id"]
-                                                    .as_str()
-                                                    .unwrap_or("");
-                                                Request::RemoveWalletFromOrg {
-                                                    wallet_id: Uuid::parse_str(wallet_id_str).unwrap_or_else(|_| Uuid::new_v4()),
-                                                    org_id: Uuid::parse_str(org_id_str).unwrap_or_else(|_| Uuid::new_v4()),
-                                                }
-                                            }
-                                            _ => {
-                                                // For unknown request types, skip (could log or send error)
-                                                continue;
-                                            }
-                                        };
-
-                                        let _ = request_sender.send((request.clone(), request_id.clone().unwrap_or_default()));
-
-                                        // Get response from handler
-                                        let response = handler(request);
-                                        let ws_msg = response_to_ws_message(&response, request_id);
-                                        if ws_stream.send(ws_msg).is_err() {
-                                            break;
-                                        }
-                                    }
-                                }
-                                Ok(WsMessage::Close(_)) => {
-                                    break;
-                                }
-                                Err(tungstenite::Error::Io(ref e)) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                                    // Non-blocking read would block, continue loop
-                                    thread::sleep(Duration::from_millis(10));
-                                }
-                                Err(_) => {
-                                    // Other errors, break
-                                    break;
-                                }
-                                Ok(_) => {}
-                            }
-                        }
-                    }
-                }
-            });
-
-            self.handle = Some(handle);
-        }
-
-        pub fn send_response(&self, response: Response, request_id: Option<String>) {
-            if let Some(sender) = &self.response_sender {
-                let _ = sender.send((response, request_id));
-            }
-        }
-
-        pub fn close(&mut self) {
-            if let Some(sender) = self.shutdown_sender.take() {
-                let _ = sender.send(());
-            }
-            if let Some(handle) = self.handle.take() {
-                let _ = handle.join();
-            }
-        }
-    }
-
-    impl Drop for DummyServer {
-        fn drop(&mut self) {
-            self.close();
-        }
-    }
-
     mod integration_tests {
         use super::*;
         use std::time::Duration;
@@ -1580,7 +1636,7 @@ mod tests {
             let mut client = Client::new();
             client.set_token("test-token".to_string());
             let url = format!("ws://127.0.0.1:{}", port);
-            let receiver = client.connect(url, 1);
+            let receiver = client.connect_ws(url, 1).expect("Should return receiver when token is set");
 
             // Wait for connection notification (give more time for handshake)
             for _ in 0..10 {
@@ -1639,7 +1695,7 @@ mod tests {
             let mut client = Client::new();
             client.set_token("test-token".to_string());
             let url = format!("ws://127.0.0.1:{}", port);
-            let receiver = client.connect(url, 1);
+            let receiver = client.connect_ws(url, 1).expect("Should return receiver when token is set");
 
             // Wait for connection
             thread::sleep(Duration::from_millis(500));
@@ -1695,7 +1751,7 @@ mod tests {
             let mut client = Client::new();
             client.set_token("test-token".to_string());
             let url = format!("ws://127.0.0.1:{}", port);
-            let receiver = client.connect(url, 1);
+            let receiver = client.connect_ws(url, 1).expect("Should return receiver when token is set");
 
             // Wait for connection
             thread::sleep(Duration::from_millis(500));
@@ -1752,7 +1808,7 @@ mod tests {
             let mut client = Client::new();
             client.set_token("test-token".to_string());
             let url = format!("ws://127.0.0.1:{}", port);
-            let receiver = client.connect(url, 1);
+            let receiver = client.connect_ws(url, 1).expect("Should return receiver when token is set");
 
             // Wait for connection
             thread::sleep(Duration::from_millis(500));
@@ -1809,7 +1865,7 @@ mod tests {
             let mut client = Client::new();
             client.set_token("test-token".to_string());
             let url = format!("ws://127.0.0.1:{}", port);
-            let receiver = client.connect(url, 1);
+            let receiver = client.connect_ws(url, 1).expect("Should return receiver when token is set");
 
             // Wait for connection
             thread::sleep(Duration::from_millis(500));
@@ -1852,7 +1908,7 @@ mod tests {
             let mut client = Client::new();
             client.set_token("test-token".to_string());
             let url = format!("ws://127.0.0.1:{}", port);
-            let receiver = client.connect(url, 1);
+            let receiver = client.connect_ws(url, 1).expect("Should return receiver when token is set");
 
             // Wait for connection
             thread::sleep(Duration::from_millis(500));
@@ -1882,19 +1938,34 @@ mod tests {
         fn test_client_connection_without_token() {
             let mut client = Client::new();
             // Don't set token
-            let receiver = client.connect("ws://127.0.0.1:9999".to_string(), 1);
+            let receiver = client.connect_ws("ws://127.0.0.1:9999".to_string(), 1);
 
-            // Should immediately get TokenMissing error
+            // Should return a channel for auth flow, but no WSS connection attempt
+            assert!(receiver.is_some(), "Should return a notification channel");
+            let receiver = receiver.unwrap();
+
+            // No connection attempt, so no notifications expected
             thread::sleep(Duration::from_millis(50));
 
-            let mut token_error = false;
+            // Client should NOT be connected (no WSS attempt was made)
+            assert!(
+                !client.connected.load(Ordering::Relaxed),
+                "Client should not be connected without token"
+            );
+
+            // Auth methods should still work with the channel
+            client.auth_request("test@example.com".to_string());
+
+            thread::sleep(Duration::from_millis(50));
+
+            let mut auth_code_sent = false;
             while let Ok(notif) = receiver.try_recv() {
-                if let Notification::Error(Error::TokenMissing) = notif {
-                    token_error = true
+                if let Notification::AuthCodeSent = notif {
+                    auth_code_sent = true
                 }
             }
 
-            assert!(token_error, "Should have received TokenMissing error");
+            assert!(auth_code_sent, "Auth notifications should work without WSS connection");
         }
 
         #[test]
@@ -1912,7 +1983,7 @@ mod tests {
             let mut client = Client::new();
             client.set_token("test-token".to_string());
             let url = format!("ws://127.0.0.1:{}", port);
-            let receiver = client.connect(url, 1);
+            let receiver = client.connect_ws(url, 1).expect("Should return receiver when token is set");
 
             // Wait for connection
             thread::sleep(Duration::from_millis(500));
@@ -1977,7 +2048,7 @@ mod tests {
             let mut client = Client::new();
             client.set_token("test-token".to_string());
             let url = format!("ws://127.0.0.1:{}", port);
-            let receiver = client.connect(url, 1);
+            let receiver = client.connect_ws(url, 1).expect("Should return receiver when token is set");
 
             // Wait for connection
             thread::sleep(Duration::from_millis(500));
