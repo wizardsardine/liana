@@ -14,6 +14,9 @@ use crate::client::{Client, DummyServer};
 use crate::models::PolicyTemplate;
 use crate::wss::{OrgJson, Request, Response, UserJson, WalletJson, WssError};
 
+/// Global channel for backend communication (used by subscription)
+pub static BACKEND_RECV: Mutex<Option<channel::Receiver<Notification>>> = Mutex::new(None);
+
 #[derive(Debug, Clone)]
 pub enum WalletStatus {
     Created,   // Empty

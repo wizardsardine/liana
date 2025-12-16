@@ -1,22 +1,17 @@
-mod backend;
-mod client;
-mod models;
-mod state;
-mod views;
-mod wss;
+//! Liana Business - Policy Template Builder
+//!
+//! This is a standalone application that wraps the `BusinessInstaller`
+//! component from the `business-installer` crate, which implements the
+//! `Installer` trait from liana-gui.
 
-use crossbeam::channel;
-use iced::{
-    advanced::graphics::futures::backend::native::tokio, Pixels, Settings, Subscription, Task,
+use business_installer::{BusinessInstaller, Message};
+use iced::{Pixels, Settings, Subscription, Task};
+use liana::miniscript::bitcoin::Network;
+use liana_gui::{
+    dir::LianaDirectory,
+    installer::{Installer, UserFlow},
 };
 use liana_ui::theme::Theme;
-use state::{Msg, State};
-use std::{pin::Pin, sync::Mutex, thread, time::Duration};
-
-// Global channel for backend communication
-static BACKEND_RECV: Mutex<Option<channel::Receiver<backend::Notification>>> = Mutex::new(None);
-const BACKEND_URL: &str = "debug";
-const PROTOCOL_VERSION: u8 = 1;
 
 fn main() -> iced::Result {
     let settings = Settings {
@@ -42,100 +37,65 @@ fn main() -> iced::Result {
     .subscription(PolicyBuilder::subscription)
     // HACK: poll_next() will hang forever with tokio executor
     .executor::<futures::executor::ThreadPool>()
-    .run_with(|| PolicyBuilder::new(()))
+    .run_with(PolicyBuilder::new)
 }
 
+/// PolicyBuilPolicyBuilder::newtion wrapper around BusinessInstaller.
+///
+/// It implements the Iced application interface and delegates all operations
+/// to the inner BusinessInstaller through the Installer trait.
 pub struct PolicyBuilder {
-    state: State,
+    installer: Box<BusinessInstaller>,
 }
 
 impl PolicyBuilder {
-    pub fn new(_flags: ()) -> (Self, Task<Msg>) {
-        let mut state = State::new();
-        state.connect_backend(BACKEND_URL.to_string(), PROTOCOL_VERSION);
+    pub fn new() -> (Self, Task<Message>) {
+        // Create default LianaDirectory
+        let datadir =
+            LianaDirectory::new_default().expect("Failed to create default data directory");
 
-        let builder = Self { state };
+        // Use Signet network for business installer
+        let network = Network::Signet;
 
-        (builder, Task::none())
-    }
+        // Create BusinessInstaller via the Installer trait
+        let (installer, task) = BusinessInstaller::new(
+            datadir,
+            network,
+            None,                   // No remote backend for now
+            UserFlow::CreateWallet, // Default user flow
+        );
 
-    pub fn subscription(&self) -> Subscription<Msg> {
-        Subscription::run(BackendSubscription::new)
+        let builder = Self { installer };
+
+        (builder, task)
     }
 
     pub fn title(&self) -> String {
         "Liana Business template builder".to_string()
     }
 
-    pub fn update(&mut self, message: Msg) -> Task<Msg> {
-        self.state.update(message)
+    pub fn update(&mut self, message: Message) -> Task<Message> {
+        self.installer.update(message)
     }
 
-    pub fn view(&self) -> liana_ui::widget::Element<Msg> {
-        self.state.view()
+    pub fn view(&self) -> liana_ui::widget::Element<Message> {
+        self.installer.view()
     }
-}
 
-// Subscription for backend stream
-struct BackendSubscription {
-    receiver: Option<channel::Receiver<backend::Notification>>,
-}
-
-impl BackendSubscription {
-    fn new() -> Self {
-        if let Ok(mut channel_guard) = BACKEND_RECV.lock() {
-            if let Some(receiver) = channel_guard.take() {
-                return Self {
-                    receiver: Some(receiver),
-                };
-            }
-        }
-        Self { receiver: None }
+    pub fn subscription(&self) -> Subscription<Message> {
+        self.installer.subscription()
     }
 }
 
-impl iced::futures::Stream for BackendSubscription {
-    type Item = Msg;
-
-    fn poll_next(
-        self: std::pin::Pin<&mut Self>,
-        _cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Option<Self::Item>> {
-        use std::task::Poll;
-
-        let this = Pin::get_mut(self);
-        loop {
-            // NOTE: If there is a new connection we replace this one
-            if let Some(recv) = BACKEND_RECV.lock().expect("poisoned").take() {
-                this.receiver = Some(recv);
-            }
-
-            if let Some(receiver) = this.receiver.as_mut() {
-                // NOTE: if we send a Poll::Ready(None), iced will drop subscription so
-                // we call (blocking) .recv().
-                if let Ok(m) = receiver.recv() {
-                    return Poll::Ready(Some(Msg::BackendNotif(m)));
-                } else {
-                    this.receiver = None;
-                };
-            }
-            // NOTE: is there is no receiver we just block until there is one
-            // with a delay to avoid spinloop
-            thread::sleep(Duration::from_millis(500));
-        }
+impl Default for PolicyBuilder {
+    fn default() -> Self {
+        Self::new().0
     }
 }
 
-impl Drop for BackendSubscription {
-    fn drop(&mut self) {
-        println!("BackendSubscription dropped");
-    }
-}
-
-// Ensure close() is called when PolicyBuilder is dropped
+// Ensure stop() is called when PolicyBuilder is dropped
 impl Drop for PolicyBuilder {
     fn drop(&mut self) {
-        // Call close() on the backend
-        self.state.close_backend();
+        self.installer.stop();
     }
 }

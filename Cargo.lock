@@ -776,6 +776,28 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1628fb46dfa0b37568d12e5edd512553eccf6a22a78e8bde00bb4aed84d5bdbf"
 
 [[package]]
+name = "business-installer"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "crossbeam",
+ "email_address",
+ "futures",
+ "iced",
+ "liana",
+ "liana-gui",
+ "liana-ui",
+ "miniscript",
+ "rustls 0.23.35",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.17",
+ "tungstenite",
+ "url",
+ "uuid",
+]
+
+[[package]]
 name = "by_address"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3130,21 +3152,12 @@ dependencies = [
 name = "liana-business"
 version = "0.1.0"
 dependencies = [
- "chrono",
- "crossbeam",
- "email_address",
+ "business-installer",
  "futures",
  "iced",
+ "liana",
  "liana-gui",
  "liana-ui",
- "miniscript",
- "rustls 0.23.35",
- "serde",
- "serde_json",
- "thiserror 2.0.17",
- "tungstenite",
- "url",
- "uuid",
 ]
 
 [[package]]
