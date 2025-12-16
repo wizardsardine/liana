@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use coincube_ui::widget::*;
 use iced::Task;
+use rand::seq::SliceRandom;
 
 use crate::app::settings::{update_settings_file, Settings};
 use crate::app::view::ActiveSettingsMessage;
@@ -15,9 +16,8 @@ pub enum BackupWalletState {
     Intro(bool),
     RecoveryPhrase,
     Verification {
-        word_2: String,
-        word_5: String,
-        word_9: String,
+        word_indices: [usize; 3], // Random indices (e.g., [2, 5, 9] but randomized)
+        word_inputs: [String; 3], // User inputs for the three words
         error: Option<String>,
     },
     Completed,
@@ -33,6 +33,14 @@ pub enum ActiveSettingsFlowState {
 pub struct ActiveSettings {
     breez_client: Arc<BreezClient>,
     flow_state: ActiveSettingsFlowState,
+}
+
+/// Generate 3 random unique word indices from 1-12
+fn generate_random_word_indices() -> [usize; 3] {
+    let mut indices: Vec<usize> = (1..=12).collect();
+    let mut rng = rand::thread_rng();
+    indices.shuffle(&mut rng);
+    [indices[0], indices[1], indices[2]]
 }
 
 impl ActiveSettings {
@@ -92,9 +100,8 @@ impl State for ActiveSettings {
                                 BackupWalletState::RecoveryPhrase,
                             ) => ActiveSettingsFlowState::BackupWallet(
                                 BackupWalletState::Verification {
-                                    word_2: String::new(),
-                                    word_5: String::new(),
-                                    word_9: String::new(),
+                                    word_indices: generate_random_word_indices(),
+                                    word_inputs: [String::new(), String::new(), String::new()],
                                     error: None,
                                 },
                             ),
@@ -128,61 +135,27 @@ impl State for ActiveSettings {
                             }
                         };
                     }
-                    view::BackupWalletMessage::Word2Input(input) => {
+                    view::BackupWalletMessage::WordInput { index, input } => {
                         if let ActiveSettingsFlowState::BackupWallet(
                             BackupWalletState::Verification {
-                                word_5,
-                                word_9,
+                                word_indices,
+                                word_inputs,
                                 error,
-                                ..
                             },
                         ) = &self.flow_state
                         {
+                            // Find which position in our array this index corresponds to
+                            let mut new_inputs = word_inputs.clone();
+                            if let Some(pos) =
+                                word_indices.iter().position(|&i| i == index as usize)
+                            {
+                                new_inputs[pos] = input;
+                            }
+
                             self.flow_state = ActiveSettingsFlowState::BackupWallet(
                                 BackupWalletState::Verification {
-                                    word_2: input,
-                                    word_5: word_5.clone(),
-                                    word_9: word_9.clone(),
-                                    error: error.clone(),
-                                },
-                            );
-                        }
-                    }
-                    view::BackupWalletMessage::Word5Input(input) => {
-                        if let ActiveSettingsFlowState::BackupWallet(
-                            BackupWalletState::Verification {
-                                word_2,
-                                word_9,
-                                error,
-                                ..
-                            },
-                        ) = &self.flow_state
-                        {
-                            self.flow_state = ActiveSettingsFlowState::BackupWallet(
-                                BackupWalletState::Verification {
-                                    word_2: word_2.clone(),
-                                    word_5: input,
-                                    word_9: word_9.clone(),
-                                    error: error.clone(),
-                                },
-                            );
-                        }
-                    }
-                    view::BackupWalletMessage::Word9Input(input) => {
-                        if let ActiveSettingsFlowState::BackupWallet(
-                            BackupWalletState::Verification {
-                                word_2,
-                                word_5,
-                                error,
-                                ..
-                            },
-                        ) = &self.flow_state
-                        {
-                            self.flow_state = ActiveSettingsFlowState::BackupWallet(
-                                BackupWalletState::Verification {
-                                    word_2: word_2.clone(),
-                                    word_5: word_5.clone(),
-                                    word_9: input,
+                                    word_indices: *word_indices,
+                                    word_inputs: new_inputs,
                                     error: error.clone(),
                                 },
                             );
@@ -191,9 +164,8 @@ impl State for ActiveSettings {
                     view::BackupWalletMessage::VerifyPhrase => {
                         if let ActiveSettingsFlowState::BackupWallet(
                             BackupWalletState::Verification {
-                                word_2,
-                                word_5,
-                                word_9,
+                                word_indices,
+                                word_inputs,
                                 ..
                             },
                         ) = &self.flow_state
@@ -206,15 +178,14 @@ impl State for ActiveSettings {
                                 .expect("Mutex Lock Poisoned")
                                 .words();
 
-                            // Verify words (index 1, 4, 8 since arrays are 0-indexed)
-                            let correct_word_2 = mnemonic[1];
-                            let correct_word_5 = mnemonic[4];
-                            let correct_word_9 = mnemonic[8];
+                            // Verify each word matches the correct position in the mnemonic
+                            // word_indices are 1-based, mnemonic array is 0-based
+                            let all_correct =
+                                word_indices.iter().enumerate().all(|(i, &word_idx)| {
+                                    word_inputs[i].trim() == mnemonic[word_idx - 1]
+                                });
 
-                            if word_2.trim() == correct_word_2
-                                && word_5.trim() == correct_word_5
-                                && word_9.trim() == correct_word_9
-                            {
+                            if all_correct {
                                 // Verification successful
                                 self.flow_state = ActiveSettingsFlowState::BackupWallet(
                                     BackupWalletState::Completed,
@@ -223,9 +194,8 @@ impl State for ActiveSettings {
                                 // Verification failed
                                 self.flow_state = ActiveSettingsFlowState::BackupWallet(
                                     BackupWalletState::Verification {
-                                        word_2: word_2.clone(),
-                                        word_5: word_5.clone(),
-                                        word_9: word_9.clone(),
+                                        word_indices: *word_indices,
+                                        word_inputs: word_inputs.clone(),
                                         error: Some(
                                             "The words you entered don't match. Please try again."
                                                 .to_string(),
@@ -271,9 +241,11 @@ impl State for ActiveSettings {
                                     tracing::error!("Failed to update settings file: {}", e);
                                 }
                             },
-                            |_| Message::View(view::Message::ActiveSettings(
-                                view::ActiveSettingsMessage::SettingsUpdated
-                            )),
+                            |_| {
+                                Message::View(view::Message::ActiveSettings(
+                                    view::ActiveSettingsMessage::SettingsUpdated,
+                                ))
+                            },
                         );
                     }
                 }
@@ -313,7 +285,7 @@ fn fetch_main_menu_state(breez_client: Arc<BreezClient>) -> (bool, bool) {
             .lock()
             .expect("Mutex Lock Poisoned")
             .fingerprint(&secp);
-        
+
         match CoincubeDirectory::new_default() {
             Ok(dir) => {
                 let network_dir = dir.network_directory(breez_client.network());

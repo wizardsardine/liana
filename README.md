@@ -17,17 +17,17 @@ a primary spending path (always accessible) and recovery paths (available after 
 You may have multiple keys in either path. Recovery paths are enforced onchain by Bitcoin's Script
 capabilities.
 
-**ACTIVE Wallet** - Lightning-enabled spending wallet powered by Breez SDK for instant, low-fee payments.
-
-**BUY/SELL** - Integrated Bitcoin on/off-ramp functionality.
-
-**KEYCHAIN** - Remote keychain-based signers for enhanced flexibility.
-
 Example VAULT configuration:
 
 - Owner's key (can always spend)
 - Any 2 keys from trusted parties (after 1 year)
 - Emergency recovery key (after 1 year and 3 months)
+
+**ACTIVE Wallet** - Lightning-enabled spending wallet powered by Breez SDK for instant, low-fee payments.
+
+**BUY/SELL** - Integrated Bitcoin on/off-ramp functionality.
+
+**KEYCHAIN** - Remote keychain-based signers for enhanced flexibility.
 
 COINCUBE is designed for **trustless inheritance**, **loss protection**, **active spending**, and
 **user-friendly Bitcoin custody**.

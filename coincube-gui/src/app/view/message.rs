@@ -250,9 +250,7 @@ pub enum BackupWalletMessage {
     PreviousStep,
     VerifyPhrase,
     Complete,
-    Word2Input(String),
-    Word5Input(String),
-    Word9Input(String),
+    WordInput { index: u8, input: String },
 }
 
 impl From<FiatMessage> for Message {
