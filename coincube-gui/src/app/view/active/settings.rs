@@ -401,7 +401,7 @@ fn verification_view<'a>(
             .align_y(Alignment::Center)
             .push(Space::with_width(Length::Fill))
             .push(
-                Text::new("To make sure you saved your recovery phrase correctly, please enter words 2, 5, and 9.")
+                Text::new("To make sure you saved your recovery phrase correctly, please enter the correct words.")
                     .size(20)
                     .align_x(iced::alignment::Horizontal::Center)
                     .width(Length::Fixed(700.0))
