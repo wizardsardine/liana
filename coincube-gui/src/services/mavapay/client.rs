@@ -156,27 +156,11 @@ impl MavapayClient {
         }
     }
 
-    /// Get transaction history
+    // get all transactions that match the provided query
     pub async fn get_transactions(
         &self,
-        options: GetTransactions,
-    ) -> Result<(GetTransactionPagination, Vec<Transaction>), MavapayError> {
-        let request = self
-            .request(Method::GET, "/v1/transactions")
-            .query(&options);
-        let response = request.send().await?.check_success().await?;
-
-        // `GET /transactions` has a custom response structure
-        match response.json().await? {
-            GetTransactionResponse::Error { message } => Err(MavapayError::ApiError(message)),
-            GetTransactionResponse::Success { pagination, data } => Ok((pagination, data)),
-        }
-    }
-
-    pub async fn get_transaction(
-        &self,
         options: GetTransaction<'_>,
-    ) -> Result<Transaction, MavapayError> {
+    ) -> Result<Vec<Transaction>, MavapayError> {
         let response = self
             .request(Method::GET, "/v1/transaction")
             .query(&options)

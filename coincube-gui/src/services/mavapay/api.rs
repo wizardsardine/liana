@@ -296,7 +296,6 @@ pub struct GetQuoteRequest {
     pub beneficiary: Option<Beneficiary>,
 }
 
-// TODO: This structure is always changing, with some members being deprecated or undocumented
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GetQuoteResponse {
@@ -311,7 +310,7 @@ pub struct GetQuoteResponse {
     pub amount_in_source_currency: u64,
     pub amount_in_target_currency: u64,
     pub payment_method: MavapayPaymentMethod,
-    pub expiry: String, // TODO: use typed dates
+    pub expiry: String,
     pub is_valid: bool,
     pub invoice: String,
     pub hash: String,
@@ -378,29 +377,6 @@ pub enum TransactionType {
     Deposit,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
-pub struct GetTransactionFilters {
-    pub tx_id: Option<String>,
-    pub account_name: Option<String>,
-    pub status: Option<TransactionStatus>,
-    #[serde(rename = "type")]
-    pub _type: Option<TransactionType>,
-    pub min_amount: Option<u64>,
-    pub max_amount: Option<u64>,
-    pub start_date: Option<String>,
-    pub end_date: Option<String>,
-}
-
-#[derive(Debug, Default, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct GetTransactions {
-    pub page: Option<u64>,
-    pub limit: Option<u64>,
-    #[serde(flatten, skip_serializing_if = "Option::is_none")]
-    pub filters: Option<GetTransactionFilters>,
-}
-
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Transaction {
@@ -416,15 +392,6 @@ pub struct Transaction {
     pub metadata: serde_json::Value,
 }
 
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct GetTransactionPagination {
-    pub count: u64,
-    pub next_page: bool,
-    pub current_page: u64,
-    pub total_pages: u64,
-}
-
 #[derive(Debug, Default, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GetTransaction<'a> {
@@ -434,20 +401,6 @@ pub struct GetTransaction<'a> {
     pub order_id: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub hash: Option<&'a str>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-#[serde(tag = "status")]
-pub enum GetTransactionResponse {
-    Error {
-        message: String,
-    },
-    Success {
-        #[serde(flatten)]
-        pagination: GetTransactionPagination,
-        data: Vec<Transaction>,
-    },
 }
 
 #[cfg(debug_assertions)]

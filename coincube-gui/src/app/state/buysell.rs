@@ -9,7 +9,7 @@ use crate::{
         menu::Menu,
         message::Message,
         state::{self, State},
-        view::{self, buysell::*, BuySellMessage, MavapayMessage, Message as ViewMessage},
+        view::{self, buysell::*, BuySellMessage, Message as ViewMessage},
     },
     daemon::Daemon,
     services::{coincube::*, mavapay::*},
@@ -94,7 +94,7 @@ impl State for BuySellPanel {
             BuySellMessage::ResetWidget => {
                 self.error = None;
 
-                if let Some(country) = &self.detected_country {
+                if self.detected_country.is_some() {
                     if self.login.is_none() {
                         // attempt automatic refresh from os-keyring
                         match keyring::Entry::new("io.coincube.Vault", &self.wallet.name) {
@@ -114,33 +114,23 @@ impl State for BuySellPanel {
                         };
                     }
 
-                    // TODO: check if login token is expired
-
-                    if mavapay_supported(&country.code) {
-                        match self.login {
-                            // send user directly to initialization
-                            Some(_) => {
-                                self.step = BuySellFlowState::Initialization {
-                                    modal: state::vault::receive::Modal::None,
-                                    buy_or_sell_selected: None,
-                                    buy_or_sell: None,
-                                };
-                            }
-                            // send user to login screen, to initialize login credentials
-                            None => {
-                                self.step = BuySellFlowState::Login {
-                                    email: Default::default(),
-                                    password: Default::default(),
-                                }
+                    match self.login.as_ref() {
+                        // send user to login screen, to initialize login credentials
+                        None => {
+                            self.step = BuySellFlowState::Login {
+                                email: Default::default(),
+                                password: Default::default(),
                             }
                         }
-                    } else {
-                        // onramper skips to automatic initialization
-                        self.step = BuySellFlowState::Initialization {
-                            modal: state::vault::receive::Modal::None,
-                            buy_or_sell_selected: None,
-                            buy_or_sell: None,
-                        };
+                        Some(_login) => {
+                            // TODO: check if login token is expired
+
+                            self.step = BuySellFlowState::Initialization {
+                                modal: state::vault::receive::Modal::None,
+                                buy_or_sell_selected: None,
+                                buy_or_sell: None,
+                            };
+                        }
                     }
                 } else {
                     log::warn!("Unable to reset widget, country is unknown");
@@ -243,12 +233,13 @@ impl State for BuySellPanel {
                     )
                 };
 
-                let buy_or_sell = buy_or_sell.as_ref().unwrap_or(&panel::BuyOrSell::Sell);
                 let Some(country) = self.detected_country.as_ref() else {
                     unreachable!(
                         "Unable to start session, country detection|selection was unsuccessful"
                     );
                 };
+
+                let buy_or_sell = buy_or_sell.as_ref().unwrap_or(&panel::BuyOrSell::Sell);
 
                 match mavapay_supported(country.code) {
                     true => {
@@ -274,50 +265,7 @@ impl State for BuySellPanel {
                         };
                     }
                     false => {
-                        log::info!("Starting buysell under Onramper");
-
-                        // start buysell under Onramper
-                        let Some(currency) = crate::services::coincube::get_countries()
-                            .iter()
-                            .find(|c| c.code == country.code)
-                            .map(|c| c.currency.code)
-                        else {
-                            self.error = Some(format!(
-                                "[FATAL] The country iso code ({}) is invalid",
-                                country.code
-                            ));
-                            return Task::none();
-                        };
-
-                        // create onramper widget url and start session
-                        let url = match buy_or_sell {
-                            view::buysell::panel::BuyOrSell::Buy { address } => {
-                                let address = address.address.to_string();
-                                crate::app::buysell::onramper::create_widget_url(
-                                    &currency,
-                                    Some(&address),
-                                    "buy",
-                                    self.network,
-                                )
-                            }
-                            view::buysell::panel::BuyOrSell::Sell => {
-                                crate::app::buysell::onramper::create_widget_url(
-                                    &currency,
-                                    None,
-                                    "sell",
-                                    self.network,
-                                )
-                            }
-                        };
-
-                        return match url {
-                            Ok(url) => Task::done(BuySellMessage::WebviewOpenUrl(url)),
-                            Err(e) => Task::done(BuySellMessage::SessionError(
-                                "Couldn't create Onramper URL",
-                                e.to_string(),
-                            )),
-                        }
-                        .map(|m| Message::View(ViewMessage::BuySell(m)));
+                        log::info!("Starting buysell under Meld for {}", country.name);
                     }
                 }
             }
@@ -497,7 +445,7 @@ impl State for BuySellPanel {
                                                     }
 
                                                     tokio::time::sleep(
-                                                        std::time::Duration::from_secs(30),
+                                                        std::time::Duration::from_secs(10),
                                                     )
                                                     .await
                                                 }
@@ -517,6 +465,7 @@ impl State for BuySellPanel {
                                             buy_or_sell: buy_or_sell.clone(),
                                             beneficiary: beneficiary.clone(),
                                             quote,
+                                            fulfilled_order: None,
                                             abort: abort.abort_on_drop(),
                                         };
 
@@ -583,7 +532,14 @@ impl State for BuySellPanel {
                             }
                         }
                         // checkout form
-                        (MavapayFlowStep::Checkout { quote, .. }, msg) => match msg {
+                        (
+                            MavapayFlowStep::Checkout {
+                                quote,
+                                fulfilled_order,
+                                ..
+                            },
+                            msg,
+                        ) => match msg {
                             MavapayMessage::QuoteFulfilled(order) => {
                                 log::info!(
                                     "[MAVAPAY] Quote({}) has been fulfilled: Order = {:?}",
@@ -591,7 +547,7 @@ impl State for BuySellPanel {
                                     order
                                 );
 
-                                // TODO: Display success UI and reset widget
+                                *fulfilled_order = Some(order);
                             }
 
                             #[cfg(debug_assertions)]
@@ -639,42 +595,6 @@ impl State for BuySellPanel {
                     }
                 } else {
                     log::warn!("Ignoring MavapayMessage: {:?}, BuySell Panel is currently not in Mavapay state", msg);
-                }
-            }
-
-            // webview logic
-            BuySellMessage::WebviewOpenUrl(url) => {
-                // extract the main window's raw_window_handle
-                return iced_wry::IcedWebviewManager::extract_window_id(None).map(move |w| {
-                    Message::View(ViewMessage::BuySell(
-                        BuySellMessage::StartWryWebviewWithUrl(w, url.clone()),
-                    ))
-                });
-            }
-            BuySellMessage::WryMessage(msg) => {
-                if let BuySellFlowState::WebviewRenderer { manager, .. } = &mut self.step {
-                    manager.update(msg)
-                }
-            }
-            BuySellMessage::StartWryWebviewWithUrl(id, url) => {
-                let mut manager = iced_wry::IcedWebviewManager::new();
-                let webview = manager.new_webview(
-                    iced_wry::wry::WebViewAttributes {
-                        url: Some(url),
-                        devtools: cfg!(debug_assertions),
-                        incognito: true,
-                        ..Default::default()
-                    },
-                    id,
-                );
-
-                if let Some(wv) = webview {
-                    self.step = BuySellFlowState::WebviewRenderer {
-                        active: wv,
-                        manager,
-                    }
-                } else {
-                    tracing::error!("Unable to instantiate wry webview")
                 }
             }
 
@@ -1035,23 +955,8 @@ impl State for BuySellPanel {
         }
     }
 
-    fn close(&mut self) -> Task<Message> {
-        if let BuySellFlowState::WebviewRenderer { active, .. } = &self.step {
-            if let Some(strong) = std::sync::Weak::upgrade(&active.webview) {
-                let _ = strong.set_visible(false);
-                let _ = strong.focus_parent();
-            }
-        }
-
-        // BUG: messages returned from close are not handled by the current panel, but rather by the state containing the next panel?
-        Task::none()
-    }
-
     fn subscription(&self) -> iced::Subscription<Message> {
         match &self.step {
-            BuySellFlowState::WebviewRenderer { manager, .. } => manager
-                .subscription(std::time::Duration::from_millis(25))
-                .map(|m| Message::View(ViewMessage::BuySell(BuySellMessage::WryMessage(m)))),
             // periodically re-fetch the price of BTC
             BuySellFlowState::Mavapay(MavapayState {
                 step: MavapayFlowStep::Transaction { .. },

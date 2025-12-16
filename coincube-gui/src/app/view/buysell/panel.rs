@@ -72,11 +72,6 @@ pub enum BuySellFlowState {
     },
     /// Nigeria, Kenya and South Africa, ie Mavapay supported countries
     Mavapay(super::mavapay::MavapayState),
-    /// A webview is currently active, and is rendered instead of a buysell UI
-    WebviewRenderer {
-        active: iced_wry::IcedWebview,
-        manager: iced_wry::IcedWebviewManager,
-    },
 }
 
 impl BuySellFlowState {
@@ -89,7 +84,6 @@ impl BuySellFlowState {
             BuySellFlowState::PasswordReset { .. } => "PasswordReset",
             BuySellFlowState::Initialization { .. } => "Initialization",
             BuySellFlowState::Mavapay(..) => "Mavapay",
-            BuySellFlowState::WebviewRenderer { .. } => "WebviewRenderer",
         }
     }
 }
@@ -147,7 +141,6 @@ impl BuySellPanel {
                         )
                         .push(Space::new().width(Length::Fixed(8.0)))
                         .push(text::h5_regular("BUY/SELL").color(color::GREY_3))
-                        // TODO: Render a small `Start Over` button for resetting the panel state
                         .align_y(Alignment::Center),
                 )
                 // error display
@@ -172,7 +165,6 @@ impl BuySellPanel {
 
                         BuySellFlowState::DetectingLocation(..) => self.geolocation_ux(),
                         BuySellFlowState::Initialization { .. } => self.initialization_ux(),
-                        BuySellFlowState::WebviewRenderer { .. } => self.webview_ux(),
 
                         BuySellFlowState::Mavapay(state) => super::mavapay::ui::form(state),
                     }
@@ -531,55 +523,6 @@ impl BuySellPanel {
         .spacing(5)
         .max_width(500)
         .width(Length::Fill);
-
-        let elem: iced::Element<BuySellMessage, theme::Theme> = col.into();
-        elem.map(|b| ViewMessage::BuySell(b))
-    }
-
-    fn webview_ux<'a>(self: &'a BuySellPanel) -> iced::Element<'a, ViewMessage, theme::Theme> {
-        let BuySellFlowState::WebviewRenderer { active, .. } = &self.step else {
-            unreachable!()
-        };
-
-        let col = iced::widget::column![
-            active.view(Length::Fixed(640.0), Length::Fixed(600.0)),
-            // Network display banner
-            Space::new().height(Length::Fixed(15.0)),
-            {
-                let (network_name, network_color) = match self.network {
-                    coincube_core::miniscript::bitcoin::Network::Bitcoin => {
-                        ("Bitcoin Mainnet", color::GREEN)
-                    }
-                    coincube_core::miniscript::bitcoin::Network::Testnet => {
-                        ("Bitcoin Testnet", color::ORANGE)
-                    }
-                    coincube_core::miniscript::bitcoin::Network::Testnet4 => {
-                        ("Bitcoin Testnet4", color::ORANGE)
-                    }
-                    coincube_core::miniscript::bitcoin::Network::Signet => {
-                        ("Bitcoin Signet", color::BLUE)
-                    }
-                    coincube_core::miniscript::bitcoin::Network::Regtest => {
-                        ("Bitcoin Regtest", color::RED)
-                    }
-                };
-
-                iced::widget::row![
-                    // currently selected bitcoin network display
-                    text("Network: ").size(12).color(color::GREY_3),
-                    text(network_name).size(12).color(network_color),
-                    // render a button that closes the webview
-                    Space::new().width(Length::Fixed(20.0)),
-                    {
-                        button::secondary(Some(arrow_back()), "Start Over")
-                            .on_press(BuySellMessage::ResetWidget)
-                            .width(iced::Length::Fixed(300.0))
-                    }
-                ]
-                .spacing(5)
-                .align_y(Alignment::Center)
-            }
-        ];
 
         let elem: iced::Element<BuySellMessage, theme::Theme> = col.into();
         elem.map(|b| ViewMessage::BuySell(b))
