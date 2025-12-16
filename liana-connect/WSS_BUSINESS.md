@@ -798,3 +798,4 @@ pub trait Backend {
 by an existing authentication client and are out of scope for this protocol
 specification. Methods marked as "Cache only" do not make WSS requests and return
 data from the client's local cache.
+
