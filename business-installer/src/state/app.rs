@@ -1,4 +1,4 @@
-use crate::models::{Key, PolicyTemplate, SpendingPath, Timelock};
+use liana_connect::{Key, PolicyTemplate, SpendingPath, Timelock};
 use std::collections::BTreeMap;
 use uuid::Uuid;
 

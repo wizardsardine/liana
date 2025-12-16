@@ -43,7 +43,7 @@ pub fn keys_view(state: &State) -> Element<'_, Msg> {
         .into()
 }
 
-fn key_card<'a>(key_id: u8, key: &crate::models::Key) -> Element<'a, Msg> {
+fn key_card<'a>(key_id: u8, key: &liana_connect::Key) -> Element<'a, Msg> {
     // Single row with all key information
     let mut key_row = Row::new().spacing(15).align_y(Alignment::Center);
 

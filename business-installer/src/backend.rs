@@ -11,75 +11,14 @@ use thiserror::Error;
 use uuid::Uuid;
 
 use crate::client::{Client, DummyServer};
-use crate::models::PolicyTemplate;
-use crate::wss::{OrgJson, Request, Response, UserJson, WalletJson, WssError};
+use liana_connect::PolicyTemplate;
+use liana_connect::{Request, Response, WssError};
+
+// Re-export domain types from liana-connect for use by other modules
+pub use liana_connect::{Key, KeyType, Org, OrgData, User, UserRole, Wallet, WalletStatus};
 
 /// Global channel for backend communication (used by subscription)
 pub static BACKEND_RECV: Mutex<Option<channel::Receiver<Notification>>> = Mutex::new(None);
-
-#[derive(Debug, Clone)]
-pub enum WalletStatus {
-    Created,   // Empty
-    Drafted,   // Draft by WS manager
-    Validated, // Policy validated by owner, keys metadata not yet completed
-    Finalized, // All key metadata filled, ready for prod
-}
-
-impl WalletStatus {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            WalletStatus::Created => "Created",
-            WalletStatus::Drafted => "Drafted",
-            WalletStatus::Validated => "Validated",
-            WalletStatus::Finalized => "Finalized",
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct Org {
-    pub name: String,
-    pub id: Uuid,
-    pub wallets: BTreeSet<Uuid>,
-    pub users: BTreeSet<Uuid>,
-    pub owners: Vec<Uuid>,
-}
-
-#[allow(unused)]
-#[derive(Debug, Clone)]
-pub struct OrgData {
-    pub name: String,
-    pub id: Uuid,
-    pub wallets: BTreeMap<Uuid, Wallet>,
-    pub users: BTreeSet<Uuid>,
-    pub owners: Vec<Uuid>,
-}
-
-#[derive(Debug, Clone)]
-pub enum UserRole {
-    WSManager,
-    Owner,
-    Participant,
-}
-
-#[derive(Debug, Clone)]
-pub struct User {
-    pub name: String,
-    pub uuid: Uuid,
-    pub email: String,
-    pub orgs: Vec<Uuid>,
-    pub role: UserRole,
-}
-
-#[derive(Debug, Clone)]
-pub struct Wallet {
-    pub alias: String,
-    pub org: Uuid,
-    pub owner: User,
-    pub id: Uuid,
-    pub status: WalletStatus,
-    pub template: Option<PolicyTemplate>,
-}
 
 #[derive(Debug, Clone, Error)]
 pub enum Error {
@@ -174,96 +113,6 @@ impl Stream for BackendStream {
     }
 }
 
-// Helper functions to convert domain objects to JSON
-fn org_to_json(org: &Org) -> OrgJson {
-    OrgJson {
-        name: org.name.clone(),
-        id: org.id.to_string(),
-        wallets: org.wallets.iter().map(|w| w.to_string()).collect(),
-        users: org.users.iter().map(|u| u.to_string()).collect(),
-        owners: org.owners.iter().map(|o| o.to_string()).collect(),
-    }
-}
-
-fn wallet_to_json(wallet: &Wallet) -> WalletJson {
-    use crate::models::KeyType;
-    use crate::wss::{
-        KeyJson, PolicyTemplateJson, SecondaryPathJson, SpendingPathJson, TimelockJson,
-    };
-
-    let template = wallet.template.as_ref().map(|t| {
-        let mut keys_json = BTreeMap::new();
-        for (id, key) in &t.keys {
-            keys_json.insert(
-                id.to_string(),
-                KeyJson {
-                    id: key.id,
-                    alias: key.alias.clone(),
-                    description: key.description.clone(),
-                    email: key.email.clone(),
-                    key_type_str: match key.key_type {
-                        KeyType::Internal => "Internal",
-                        KeyType::External => "External",
-                        KeyType::Cosigner => "Cosigner",
-                        KeyType::SafetyNet => "SafetyNet",
-                    }
-                    .to_string(),
-                    xpub: key.xpub.as_ref().map(|x| x.to_string()),
-                },
-            );
-        }
-
-        let secondary_paths = t
-            .secondary_paths
-            .iter()
-            .map(|(path, timelock)| SecondaryPathJson {
-                path: SpendingPathJson {
-                    is_primary: path.is_primary,
-                    threshold_n: path.threshold_n,
-                    key_ids: path.key_ids.clone(),
-                },
-                timelock: TimelockJson {
-                    blocks: timelock.blocks,
-                },
-            })
-            .collect();
-
-        PolicyTemplateJson {
-            keys: keys_json,
-            primary_path: SpendingPathJson {
-                is_primary: t.primary_path.is_primary,
-                threshold_n: t.primary_path.threshold_n,
-                key_ids: t.primary_path.key_ids.clone(),
-            },
-            secondary_paths,
-        }
-    });
-
-    WalletJson {
-        id: wallet.id.to_string(),
-        alias: wallet.alias.clone(),
-        org: wallet.org.to_string(),
-        owner: wallet.owner.uuid.to_string(),
-        status_str: wallet.status.as_str().to_string(),
-        template,
-    }
-}
-
-fn user_to_json(user: &User) -> UserJson {
-    UserJson {
-        name: user.name.clone(),
-        uuid: user.uuid.to_string(),
-        email: user.email.clone(),
-        orgs: user.orgs.iter().map(|o| o.to_string()).collect(),
-        role_str: match user.role {
-            UserRole::WSManager => "WSManager",
-            UserRole::Owner => "Owner",
-            UserRole::Participant => "Participant",
-        }
-        .to_string(),
-    }
-}
-
 /// Development backend that uses DummyServer and Client for local testing
 /// This is a temporary test feature that will be removed when the server launches.
 /// The dummy server is spawned automatically by Client::connect() when connecting to localhost.
@@ -308,8 +157,6 @@ fn init_test_data(
     wallets: &mut BTreeMap<Uuid, Wallet>,
     users: &mut BTreeMap<Uuid, User>,
 ) {
-    use crate::models::{Key, KeyType};
-
     // Create test user
     let user1 = User {
         name: "Test User".to_string(),
@@ -483,7 +330,7 @@ fn handle_fetch_org(orgs: Arc<Mutex<BTreeMap<Uuid, Org>>>, id: Uuid) -> Response
     let orgs_guard = orgs.lock().unwrap();
     if let Some(org) = orgs_guard.get(&id) {
         Response::Org {
-            org: org_to_json(org),
+            org: org.into(), // Use From<&Org> for OrgJson
         }
     } else {
         Response::Error {
@@ -500,7 +347,7 @@ fn handle_fetch_wallet(wallets: Arc<Mutex<BTreeMap<Uuid, Wallet>>>, id: Uuid) ->
     let wallets_guard = wallets.lock().unwrap();
     if let Some(wallet) = wallets_guard.get(&id) {
         Response::Wallet {
-            wallet: wallet_to_json(wallet),
+            wallet: wallet.into(), // Use From<&Wallet> for WalletJson
         }
     } else {
         Response::Error {
@@ -517,7 +364,7 @@ fn handle_fetch_user(users: Arc<Mutex<BTreeMap<Uuid, User>>>, id: Uuid) -> Respo
     let users_guard = users.lock().unwrap();
     if let Some(user) = users_guard.get(&id) {
         Response::User {
-            user: user_to_json(user),
+            user: user.into(), // Use From<&User> for UserJson
         }
     } else {
         Response::Error {
@@ -554,13 +401,13 @@ fn handle_create_wallet(
         status: WalletStatus::Created,
     };
     Response::Wallet {
-        wallet: wallet_to_json(&wallet),
+        wallet: (&wallet).into(),
     }
 }
 
 fn handle_edit_wallet(wallet: Wallet) -> Response {
     Response::Wallet {
-        wallet: wallet_to_json(&wallet),
+        wallet: (&wallet).into(),
     }
 }
 
@@ -568,7 +415,7 @@ fn handle_remove_wallet_from_org(orgs: Arc<Mutex<BTreeMap<Uuid, Org>>>, org_id: 
     let orgs_guard = orgs.lock().unwrap();
     if let Some(org) = orgs_guard.get(&org_id) {
         Response::Org {
-            org: org_to_json(org),
+            org: org.into(),
         }
     } else {
         Response::Error {
@@ -585,7 +432,7 @@ fn handle_edit_xpub(wallets: Arc<Mutex<BTreeMap<Uuid, Wallet>>>, wallet_id: Uuid
     let wallets_guard = wallets.lock().unwrap();
     if let Some(wallet) = wallets_guard.get(&wallet_id) {
         Response::Wallet {
-            wallet: wallet_to_json(wallet),
+            wallet: wallet.into(),
         }
     } else {
         Response::Error {
@@ -645,7 +492,7 @@ impl Backend for DevBackend {
     fn get_org(&self, id: Uuid) -> Option<OrgData> {
         let org = self.orgs.get(&id).cloned()?;
         let mut wallets = BTreeMap::new();
-        for w in org.wallets {
+        for w in org.wallets.clone() {
             let wallet = self.wallets.get(&w).cloned()?;
             wallets.insert(w, wallet);
         }

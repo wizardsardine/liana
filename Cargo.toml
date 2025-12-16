@@ -7,9 +7,10 @@ members = [
     "liana-gui",
     "liana-ui",
     "liana-business",
-    "business-installer"
+    "business-installer",
+    "liana-connect"
 ]
-default-members = ["liana", "lianad", "liana-gui", "liana-ui", "liana-business", "business-installer"]
+default-members = ["liana", "lianad", "liana-gui", "liana-ui", "liana-business", "business-installer", "liana-connect"]
 
 [workspace.dependencies]
 # Common dependencies

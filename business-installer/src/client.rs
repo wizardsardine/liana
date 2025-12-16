@@ -18,7 +18,7 @@ use tungstenite::{accept, Message as WsMessage};
 use uuid::Uuid;
 
 use crate::backend::{Backend, Error, Notification, Org, OrgData, User, Wallet};
-use crate::wss::{ConnectedPayload, OrgJson, Request, Response, UserJson, WalletJson};
+use liana_connect::{ConnectedPayload, OrgJson, Request, Response, UserJson, WalletJson};
 
 /// Backend URL for WebSocket connection
 pub const BACKEND_URL: &str = "debug";
@@ -1315,7 +1315,7 @@ impl Drop for DummyServer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::wss::{OrgJson, Response, UserJson, WalletJson, WssConversionError, WssError};
+    use liana_connect::{OrgJson, Response, UserJson, WalletJson, WssConversionError, WssError};
     mod parsing_tests {
         use super::*;
 

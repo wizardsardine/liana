@@ -27,7 +27,7 @@ impl KeysViewState {
         }
     }
 
-    pub fn on_key_update_type(&mut self, key_type: crate::models::KeyType) {
+    pub fn on_key_update_type(&mut self, key_type: liana_connect::KeyType) {
         if let Some(modal) = &mut self.edit_key {
             modal.key_type = key_type;
         }
