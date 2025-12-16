@@ -254,3 +254,19 @@ pub fn cube_icon() -> Text<'static> {
 pub fn receipt_icon() -> Text<'static> {
     bootstrap_icon('\u{F50F}')
 }
+
+pub fn lock_icon() -> Text<'static> {
+    bootstrap_icon('\u{F47B}')
+}
+
+pub fn file_earmark() -> Text<'static> {
+    bootstrap_icon('\u{F373}')
+}
+
+pub fn check_circle() -> Text<'static> {
+    bootstrap_icon('\u{F26B}')
+}
+
+pub fn phone() -> Text<'static> {
+    bootstrap_icon('\u{F4E7}')
+}

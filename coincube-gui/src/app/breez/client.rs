@@ -1,4 +1,4 @@
-use breez_sdk_liquid::prelude as breez;
+use breez_sdk_liquid::{bitcoin::Network, prelude as breez};
 use coincube_core::{
     miniscript::bitcoin::{
         bip32::DerivationPath,
@@ -169,6 +169,7 @@ impl breez::Signer for HotSignerAdapter {
 pub struct BreezClient {
     sdk: Arc<breez::LiquidSdk>,
     signer: Arc<Mutex<HotSigner>>,
+    network: Network,
 }
 
 impl std::fmt::Debug for BreezClient {
@@ -176,6 +177,7 @@ impl std::fmt::Debug for BreezClient {
         f.debug_struct("BreezClient")
             .field("sdk", &"<LiquidSdk>")
             .field("signer", &"<HotSigner>")
+            .field("network", &self.network)
             .finish()
     }
 }
@@ -196,7 +198,11 @@ impl BreezClient {
             .await
             .map_err(|e| BreezError::Connection(e.to_string()))?;
 
-        Ok(Self { sdk, signer })
+        Ok(Self {
+            sdk,
+            signer,
+            network: cfg.network,
+        })
     }
 
     pub async fn info(&self) -> Result<breez::GetInfoResponse, BreezError> {
@@ -257,5 +263,13 @@ impl BreezClient {
             })
             .await
             .map_err(|e| BreezError::Sdk(e.to_string()))
+    }
+
+    pub fn active_signer(&self) -> std::sync::Arc<std::sync::Mutex<HotSigner>> {
+        self.signer.clone()
+    }
+
+    pub fn network(&self) -> Network {
+        self.network
     }
 }
