@@ -6,7 +6,7 @@ use iced::{
         widget::tree::{self, Tree},
         Clipboard, Layout, Shell, Widget,
     },
-    event, mouse,
+    mouse,
     time::Instant,
     window, Element, Event, Length, Rectangle, Renderer, Size,
 };
@@ -60,7 +60,7 @@ where
     }
 
     fn layout(
-        &self,
+        &mut self,
         tree: &mut Tree,
         renderer: &Renderer,
         limits: &layout::Limits,
@@ -68,11 +68,11 @@ where
         let state = tree.state.downcast_mut::<CarouselState>();
         let child_nodes: Vec<_> = self
             .children
-            .iter()
+            .iter_mut()
             .enumerate()
             .map(|(i, child)| {
                 child
-                    .as_widget()
+                    .as_widget_mut()
                     .layout(&mut tree.children[i], renderer, limits)
             })
             .collect();
@@ -96,26 +96,26 @@ where
         }
     }
 
-    fn on_event(
+    fn update(
         &mut self,
         tree: &mut Tree,
-        event: Event,
+        event: &Event,
         _layout: Layout<'_>,
         _cursor: mouse::Cursor,
         _renderer: &Renderer,
         _clipboard: &mut dyn Clipboard,
         shell: &mut Shell<'_, Message>,
         _viewport: &Rectangle,
-    ) -> event::Status {
+    ) {
         let state = tree.state.downcast_mut::<CarouselState>();
         if let Event::Window(window::Event::RedrawRequested(now)) = event {
             if now.duration_since(state.last_transition) > self.interval {
-                state.last_transition = now;
+                state.last_transition = *now;
                 state.current = (state.current + 1) % self.children.len();
             }
-            shell.request_redraw(window::RedrawRequest::NextFrame);
+            shell.request_redraw();
         }
-        event::Status::Ignored
+        // event::Status::Ignored
     }
 
     fn draw(

@@ -5,7 +5,6 @@ use iced::advanced::renderer;
 use iced::advanced::widget::{self, Tree, Widget};
 use iced::advanced::{self, Clipboard, Shell};
 use iced::alignment::Alignment;
-use iced::event;
 use iced::mouse;
 use iced::{Color, Element, Event, Length, Point, Rectangle, Size, Vector};
 
@@ -55,28 +54,28 @@ where
     }
 
     fn layout(
-        &self,
+        &mut self,
         tree: &mut widget::Tree,
         renderer: &Renderer,
         limits: &layout::Limits,
     ) -> layout::Node {
         self.base
-            .as_widget()
+            .as_widget_mut()
             .layout(&mut tree.children[0], renderer, limits)
     }
 
-    fn on_event(
+    fn update(
         &mut self,
         state: &mut widget::Tree,
-        event: Event,
+        event: &Event,
         layout: Layout<'_>,
         cursor: mouse::Cursor,
         renderer: &Renderer,
         clipboard: &mut dyn Clipboard,
         shell: &mut Shell<'_, Message>,
         viewport: &Rectangle,
-    ) -> event::Status {
-        self.base.as_widget_mut().on_event(
+    ) {
+        self.base.as_widget_mut().update(
             &mut state.children[0],
             event,
             layout,
@@ -114,6 +113,7 @@ where
         state: &'b mut Tree,
         layout: Layout<'_>,
         _renderer: &Renderer,
+        _viewport: &Rectangle,
         translation: Vector,
     ) -> Option<overlay::Element<'b, Message, Theme, Renderer>> {
         Some(overlay::Element::new(Box::new(Overlay {
@@ -143,14 +143,14 @@ where
     }
 
     fn operate(
-        &self,
+        &mut self,
         state: &mut Tree,
         layout: Layout<'_>,
         renderer: &Renderer,
         operation: &mut dyn widget::Operation,
     ) {
         self.base
-            .as_widget()
+            .as_widget_mut()
             .operate(&mut state.children[0], layout, renderer, operation);
     }
 }
@@ -176,34 +176,35 @@ where
 
         let child = self
             .content
-            .as_widget()
+            .as_widget_mut()
             .layout(self.tree, renderer, &limits)
             .align(Alignment::Center, Alignment::Center, limits.max());
 
         layout::Node::with_children(self.size, vec![child]).move_to(self.position)
     }
 
-    fn on_event(
+    fn update(
         &mut self,
-        event: Event,
+        event: &Event,
         layout: Layout<'_>,
         cursor: mouse::Cursor,
         renderer: &Renderer,
         clipboard: &mut dyn Clipboard,
         shell: &mut Shell<'_, Message>,
-    ) -> event::Status {
+    ) {
         let content_bounds = layout.children().next().unwrap().bounds();
 
         if let Some(message) = self.on_blur.as_ref() {
             if let Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) = &event {
                 if !cursor.is_over(content_bounds) {
                     shell.publish(message.clone());
-                    return event::Status::Captured;
+                    shell.capture_event();
+                    return;
                 }
             }
         }
 
-        self.content.as_widget_mut().on_event(
+        self.content.as_widget_mut().update(
             self.tree,
             event,
             layout.children().next().unwrap(),
@@ -251,7 +252,7 @@ where
         renderer: &Renderer,
         operation: &mut dyn widget::Operation,
     ) {
-        self.content.as_widget().operate(
+        self.content.as_widget_mut().operate(
             self.tree,
             layout.children().next().unwrap(),
             renderer,
@@ -263,27 +264,27 @@ where
         &self,
         layout: Layout<'_>,
         cursor: mouse::Cursor,
-        viewport: &Rectangle,
         renderer: &Renderer,
     ) -> mouse::Interaction {
         self.content.as_widget().mouse_interaction(
             self.tree,
             layout.children().next().unwrap(),
             cursor,
-            viewport,
+            &layout.bounds(),
             renderer,
         )
     }
 
     fn overlay<'c>(
         &'c mut self,
-        layout: Layout<'_>,
+        layout: Layout<'c>,
         renderer: &Renderer,
     ) -> Option<overlay::Element<'c, Message, Theme, Renderer>> {
         self.content.as_widget_mut().overlay(
             self.tree,
             layout.children().next().unwrap(),
             renderer,
+            &layout.bounds(),
             Vector::ZERO,
         )
     }

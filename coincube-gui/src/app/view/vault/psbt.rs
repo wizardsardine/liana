@@ -113,7 +113,7 @@ pub fn psbt_view<'a>(
                     .width(Length::Fill)
             } else {
                 Row::new()
-                    .push(Space::with_width(Length::Fill))
+                    .push(Space::new().width(Length::Fill))
                     .push(
                         button::secondary(None, "Save")
                             .width(Length::Fixed(150.0))
@@ -125,7 +125,7 @@ pub fn psbt_view<'a>(
                     )
                     .width(Length::Fill)
             })
-            .push(Space::with_height(10)),
+            .push(Space::new().height(10)),
     )
 }
 
@@ -144,7 +144,7 @@ pub fn save_action<'a>(warning: Option<&Error>, saved: bool) -> Element<'a, Mess
                 .push(
                     Row::new()
                         .spacing(10)
-                        .push(Space::with_width(Length::Fill))
+                        .push(Space::new().width(Length::Fill))
                         .push(button::secondary(None, "Ignore").on_press(Message::Close))
                         .push(
                             button::primary(None, "Save")
@@ -406,7 +406,7 @@ pub fn spend_overview_view<'a>(
         .push_maybe(if tx.status == SpendStatus::Pending {
             Some(
                 Row::new()
-                    .push(Space::with_width(Length::Fill))
+                    .push(Space::new().width(Length::Fill))
                     .push_maybe(if tx.path_ready().is_none() {
                         Some(
                             button::primary(None, "Sign")
@@ -599,7 +599,7 @@ pub fn path_view<'a>(
                     } else {
                         icon::square_cross_icon().style(theme::text::secondary)
                     })
-                    .push(Space::with_width(Length::Fixed(20.0))),
+                    .push(Space::new().width(Length::Fixed(20.0))),
             )
             .push(
                 p1_regular(format!(
@@ -1016,7 +1016,7 @@ fn change_view(output: &TxOut, network: Network) -> Element<Message> {
         .spacing(5)
         .push(
             Row::new()
-                .push(Space::with_width(Length::Fill))
+                .push(Space::new().width(Length::Fill))
                 .push(amount(&output.value)),
         )
         .push(
@@ -1189,7 +1189,7 @@ pub fn update_spend_view<'a>(
                             .size(P1_SIZE)
                             .padding(10),
                         )
-                        .push(Row::new().push(Space::with_width(Length::Fill)).push(
+                        .push(Row::new().push(Space::new().width(Length::Fill)).push(
                             if updated.valid && !updated.value.is_empty() && !processing {
                                 button::secondary(None, "Update")
                                     .on_press(Message::ImportSpend(ImportSpendMessage::Confirm))

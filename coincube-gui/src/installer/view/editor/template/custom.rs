@@ -45,8 +45,8 @@ pub fn custom_template_description(progress: (usize, usize)) -> Element<'static,
                 .align_x(alignment::Horizontal::Left)
             ).align_x(alignment::Horizontal::Left).width(Length::Fill))
             .push(image::custom_template_description().width(Length::Fill))
-            .push(Row::new().push(Space::with_width(Length::Fill)).push(button::primary(None, "Next").width(Length::Fixed(200.0)).on_press(Message::Next)))
-            .push(Space::with_height(50.0))
+            .push(Row::new().push(Space::new().width(Length::Fill)).push(button::primary(None, "Next").width(Length::Fixed(200.0)).on_press(Message::Next)))
+            .push(Space::new().height(50.0))
             .spacing(20),
         true,
         Some(Message::Previous),
@@ -253,7 +253,7 @@ pub fn custom_template<'a>(
                     Message::DefineDescriptor(message::DefineDescriptor::Path(sn_index + 1, msg))
                 })
             }))
-            .push(Space::with_height(10))
+            .push(Space::new().height(10))
             .push(
                 Row::new()
                     .push(
@@ -261,14 +261,14 @@ pub fn custom_template<'a>(
                             .width(Length::Fixed(200.0))
                             .on_press(Message::DefineDescriptor(message::DefineDescriptor::Reset)),
                     )
-                    .push(Space::with_width(Length::Fill))
+                    .push(Space::new().width(Length::Fill))
                     .push(
                         button::primary(None, "Continue")
                             .width(Length::Fixed(200.0))
                             .on_press_maybe(if valid { Some(Message::Next) } else { None }),
                     ),
             )
-            .push(Space::with_height(100.0))
+            .push(Space::new().height(100.0))
             .spacing(20),
         true,
         Some(Message::Previous),

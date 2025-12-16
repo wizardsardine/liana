@@ -114,17 +114,17 @@ pub fn import_wallet_or_descriptor<'a>(
             if let Some(wallet) = invitation_wallet {
                 Element::<'a, Message>::from(
                     Column::new()
-                        .push(Space::with_height(0))
+                        .push(Space::new().height(0))
                         .push(
                             Row::new()
                                 .spacing(5)
-                                .push(Space::with_width(15))
+                                .push(Space::new().width(15))
                                 .push(text("Accept invitation for wallet:"))
                                 .push(text(wallet).bold()),
                         )
                         .push(
                             Row::new()
-                                .push(Space::with_width(Length::Fill))
+                                .push(Space::new().width(Length::Fill))
                                 .push(
                                     button::secondary(None, "Accept")
                                         .width(Length::Fixed(200.0))
@@ -132,16 +132,16 @@ pub fn import_wallet_or_descriptor<'a>(
                                             message::ImportRemoteWallet::AcceptInvitation,
                                         )),
                                 )
-                                .push(Space::with_width(Length::Fill)),
+                                .push(Space::new().width(Length::Fill)),
                         )
-                        .push(Space::with_width(5))
+                        .push(Space::new().width(5))
                         .spacing(20),
                 )
             } else {
                 Element::<'a, Message>::from(
                     Container::new(
                         Column::new()
-                            .push(Space::with_height(0))
+                            .push(Space::new().height(0))
                             .push(
                                 Column::new()
                                     .push(text("Paste invitation:").bold())
@@ -160,7 +160,7 @@ pub fn import_wallet_or_descriptor<'a>(
                                     .spacing(10),
                             )
                             .push(
-                                Row::new().push(Space::with_width(Length::Fill)).push(
+                                Row::new().push(Space::new().width(Length::Fill)).push(
                                     button::secondary(None, "Next")
                                         .width(Length::Fixed(200.0))
                                         .on_press_maybe(if !invitation.value.is_empty() {
@@ -213,7 +213,7 @@ pub fn import_wallet_or_descriptor<'a>(
             Element::<'a, Message>::from(
                 Container::new(
                     Column::new()
-                        .push(Space::with_height(0))
+                        .push(Space::new().height(0))
                         .push(
                             Column::new()
                                 .push(text("Descriptor:").bold())
@@ -242,7 +242,7 @@ pub fn import_wallet_or_descriptor<'a>(
                                 .spacing(10),
                         )
                         .push(
-                            Row::new().push(Space::with_width(Length::Fill)).push(
+                            Row::new().push(Space::new().width(Length::Fill)).push(
                                 button::secondary(None, "Next")
                                     .width(Length::Fixed(200.0))
                                     .on_press_maybe(
@@ -275,7 +275,7 @@ pub fn import_wallet_or_descriptor<'a>(
             .push(card_wallets)
             .push(card::simple(col_invitation_token).padding(0))
             .push(card::simple(col_descriptor).padding(0))
-            .push(Space::with_height(10)),
+            .push(Space::new().height(10)),
         true,
         Some(Message::Previous),
     )
@@ -293,7 +293,7 @@ pub fn import_descriptor<'a>(
 
     let col_descriptor = Column::new()
         .push(text("Descriptor:").bold())
-        .push(Space::with_height(10))
+        .push(Space::new().height(10))
         .push(
             form::Form::new_trimmed("Descriptor", imported_descriptor, |msg| {
                 Message::DefineDescriptor(message::DefineDescriptor::ImportDescriptor(msg))
@@ -317,7 +317,7 @@ pub fn import_descriptor<'a>(
         Some(
             Row::new()
                 .push(text("or").bold())
-                .push(Space::with_width(Length::Fill)),
+                .push(Space::new().width(Length::Fill)),
         )
     } else {
         None
@@ -327,7 +327,7 @@ pub fn import_descriptor<'a>(
         Some(
             Row::new()
                 .push(button::primary(None, "Import backup").on_press(Message::ImportBackup))
-                .push(Space::with_width(Length::Fill)),
+                .push(Space::new().width(Length::Fill)),
         )
     } else {
         None
@@ -337,7 +337,7 @@ pub fn import_descriptor<'a>(
         Some(
             Row::new()
                 .push(text("Backup successfully imported!").bold())
-                .push(Space::with_width(Length::Fill)),
+                .push(Space::new().width(Length::Fill)),
         )
     } else {
         None
@@ -434,11 +434,9 @@ pub fn signer_xpubs<'a>(
             .push_maybe(if !xpubs.is_empty() {
                 Some(
                     Container::new(
-                        checkbox(
-                            "I have backed up the mnemonic, show the extended public key",
-                            did_backup,
-                        )
-                        .on_toggle(Message::UserActionDone),
+                        checkbox(did_backup)
+                            .label("I have backed up the mnemonic, show the extended public key")
+                            .on_toggle(Message::UserActionDone),
                     )
                     .padding(10),
                 )
@@ -586,7 +584,7 @@ pub fn share_xpubs<'a>(
     signer: Element<'a, Message>,
 ) -> Element<'a, Message> {
     let info = Column::new()
-        .push(Space::with_height(5))
+        .push(Space::new().height(5))
         .push(tooltip::Tooltip::new(
             icon::tooltip_icon(),
             "Switch account if you already use the same hardware in other configurations",
@@ -594,9 +592,9 @@ pub fn share_xpubs<'a>(
         ));
     let title = Row::new()
         .push(text("Import an extended public key by selecting a signing device:").bold())
-        .push(Space::with_width(10))
+        .push(Space::new().width(10))
         .push(info)
-        .push(Space::with_width(Length::Fill));
+        .push(Space::new().width(Length::Fill));
     layout(
         (0, 0),
         email,
@@ -612,7 +610,7 @@ pub fn share_xpubs<'a>(
             .push(Column::with_children(hws).spacing(10))
             .push(Container::new(text("Or create a new random key:").bold()).width(Length::Fill))
             .push(signer)
-            .push(Space::with_height(10))
+            .push(Space::new().height(10))
             .width(Length::Fill),
         true,
         Some(Message::Previous),
@@ -644,7 +642,7 @@ pub fn register_descriptor<'a>(
                                 scrollable(
                                     Column::new()
                                         .push(text(template).small())
-                                        .push(Space::with_height(Length::Fixed(5.0))),
+                                        .push(Space::new().height(Length::Fixed(5.0))),
                                 )
                                 .direction(
                                     scrollable::Direction::Horizontal(
@@ -656,7 +654,7 @@ pub fn register_descriptor<'a>(
                     )
                     .width(Length::Fill),
                 )
-                .push(Space::with_height(5));
+                .push(Space::new().height(5));
 
             for (index, key) in keys.into_iter().enumerate() {
                 col = col
@@ -668,7 +666,7 @@ pub fn register_descriptor<'a>(
                                     scrollable(
                                         Column::new()
                                             .push(text(key.to_owned()).small())
-                                            .push(Space::with_height(Length::Fixed(5.0))),
+                                            .push(Space::new().height(Length::Fixed(5.0))),
                                     )
                                     .direction(
                                         scrollable::Direction::Horizontal(
@@ -680,7 +678,7 @@ pub fn register_descriptor<'a>(
                         )
                         .width(Length::Fill),
                     )
-                    .push(Space::with_height(5));
+                    .push(Space::new().height(5));
             }
 
             col
@@ -692,7 +690,7 @@ pub fn register_descriptor<'a>(
                         scrollable(
                             Column::new()
                                 .push(text(descriptor_str.to_owned()).small())
-                                .push(Space::with_height(Length::Fixed(5.0))),
+                                .push(Space::new().height(Length::Fixed(5.0))),
                         )
                         .direction(scrollable::Direction::Horizontal(
                             scrollable::Scrollbar::new().width(5).scroller_width(5),
@@ -754,10 +752,9 @@ pub fn register_descriptor<'a>(
                     )
                     .width(Length::Fill),
             )
-            .push_maybe(created_desc.then_some(checkbox(
-                "I have registered the descriptor on my device(s)",
-                done,
-            ).on_toggle(Message::UserActionDone)))
+            .push_maybe(created_desc.then_some(checkbox(done)
+                .label("I have registered the descriptor on my device(s)")
+            .on_toggle(Message::UserActionDone)))
             .push(if !created_desc || (done && !processing) {
                 button::secondary(None, "Next")
                     .on_press(Message::Next)
@@ -765,7 +762,7 @@ pub fn register_descriptor<'a>(
             } else {
                 button::secondary(None, "Next").width(Length::Fixed(200.0))
             })
-            .push(Space::with_height(5))
+            .push(Space::new().height(5))
             .spacing(50),
         true,
         if !processing {
@@ -834,7 +831,7 @@ pub fn backup_descriptor<'a>(
                             scrollable(
                                 Column::new()
                                     .push(text(descriptor.to_string()).small())
-                                    .push(Space::with_height(Length::Fixed(5.0))),
+                                    .push(Space::new().height(Length::Fixed(5.0))),
                             )
                             .direction(
                                 scrollable::Direction::Horizontal(
@@ -844,9 +841,9 @@ pub fn backup_descriptor<'a>(
                         )
                         .push(
                             Row::new()
-                                .push(Space::with_width(Length::Fill))
+                                .push(Space::new().width(Length::Fill))
                                 .push(backup_button)
-                                .push(Space::with_width(10))
+                                .push(Space::new().width(10))
                                 .push(
                                     button::secondary(Some(icon::clipboard_icon()), "Copy")
                                         .on_press(Message::Clipboard(descriptor.to_string())),
@@ -862,7 +859,9 @@ pub fn backup_descriptor<'a>(
                     .max_width(1500),
             )
             .push(
-                checkbox("I have backed up my descriptor", done).on_toggle(Message::UserActionDone),
+                checkbox(done)
+                    .label("I have backed up my descriptor")
+                    .on_toggle(Message::UserActionDone),
             )
             .push(if done {
                 button::primary(None, "Next")
@@ -871,7 +870,7 @@ pub fn backup_descriptor<'a>(
             } else {
                 button::secondary(None, "Next").width(Length::Fixed(200.0))
             })
-            .push(Space::with_height(20.0))
+            .push(Space::new().height(20.0))
             .spacing(50),
         true,
         Some(Message::Previous),
@@ -1113,7 +1112,7 @@ pub fn define_bitcoin_node<'a>(
                 }
             })
         } else {
-            Some(Container::new(Space::with_height(Length::Fixed(21.0))))
+            Some(Container::new(Space::new().height(Length::Fixed(21.0))))
         })
         .push(
             Row::new()
@@ -1420,7 +1419,7 @@ pub fn start_internal_bitcoind<'a>(
                         .align_y(Alignment::Center)
                         .push(icon::square_check_icon().style(theme::text::success))
                         .push(text("Download complete").style(theme::text::success)),
-                    DownloadState::Downloading { progress } => Row::new()
+                    DownloadState::Downloading { progress, .. } => Row::new()
                         .spacing(10)
                         .align_y(Alignment::Center)
                         .push(text(format!(
@@ -1463,7 +1462,7 @@ pub fn start_internal_bitcoind<'a>(
                         text("Coincube-managed bitcoind already installed")
                             .style(theme::text::success),
                     )
-            } else if let Some(DownloadState::Downloading { progress }) = download_state {
+            } else if let Some(DownloadState::Downloading { progress, .. }) = download_state {
                 Row::new()
                     .spacing(10)
                     .align_y(Alignment::Center)
@@ -1503,7 +1502,7 @@ pub fn start_internal_bitcoind<'a>(
                             .align_y(Alignment::Center)
                             .push(text("Starting...")),
                     )),
-                    _ => Some(Container::new(Space::with_height(Length::Fixed(25.0)))),
+                    _ => Some(Container::new(Space::new().height(Length::Fixed(25.0)))),
                 }
             })
             .spacing(50)
@@ -1555,7 +1554,7 @@ pub fn install<'a>(
                         .push(text("Installed").style(theme::text::success)),
                 )
             } else {
-                Container::new(Space::with_height(Length::Fixed(25.0)))
+                Container::new(Space::new().height(Length::Fixed(25.0)))
             })
             .spacing(10)
             .width(Length::Fill),
@@ -1820,7 +1819,11 @@ pub fn backup_mnemonic<'a>(
                         )
                     }),
             )
-            .push(checkbox("I have backed up my mnemonic", done).on_toggle(Message::UserActionDone))
+            .push(
+                checkbox(done)
+                    .label("I have backed up my mnemonic")
+                    .on_toggle(Message::UserActionDone),
+            )
             .push(if done {
                 button::secondary(None, "Next")
                     .on_press(Message::Next)
@@ -1828,7 +1831,7 @@ pub fn backup_mnemonic<'a>(
             } else {
                 button::secondary(None, "Next").width(Length::Fixed(200.0))
             })
-            .push(Space::with_height(20.0))
+            .push(Space::new().height(20.0))
             .spacing(50),
         true,
         Some(Message::Previous),
@@ -1900,7 +1903,7 @@ pub fn recover_mnemonic<'a>(
                                 )
                             },
                         ))
-                        .push(Space::with_height(Length::Fixed(50.0)))
+                        .push(Space::new().height(Length::Fixed(50.0)))
                         .push_maybe(
                             error.map(|e| card::invalid(text(e).style(theme::text::error))),
                         ),
@@ -1995,7 +1998,7 @@ pub fn choose_backend(progress: (usize, usize)) -> Element<'static, Message> {
                         .width(Length::FillPortion(1)),
                     ),
             )
-            .push(Space::with_height(20)) // ensures mouse cursor is not already on link when arriving at this step
+            .push(Space::new().height(20)) // ensures mouse cursor is not already on link when arriving at this step
             .push(tooltip::Tooltip::new(
                 button::link(
                     Some(icon::link_icon()),
@@ -2079,7 +2082,7 @@ pub fn connection_step_enter_email<'a>(
             .warning("Email is not valid"),
         )
         .push(
-            Row::new().push(Space::with_width(Length::Fill)).push(
+            Row::new().push(Space::new().width(Length::Fill)).push(
                 button::secondary(None, "Send token")
                     .on_press_maybe(if processing || !email.valid {
                         None
@@ -2220,12 +2223,12 @@ fn layout<'a>(
             .width(Length::Fill)
             .push(
                 Row::new()
-                    .push(Space::with_width(Length::Fill))
+                    .push(Space::new().width(Length::Fill))
                     .push_maybe(email.map(|e| {
                         Container::new(p1_regular(e).style(theme::text::success)).padding(20)
                     })),
             )
-            .push(Space::with_height(Length::Fixed(100.0)))
+            .push(Space::new().height(Length::Fixed(100.0)))
             .push(
                 Row::new()
                     .align_y(Alignment::Center)
@@ -2242,11 +2245,11 @@ fn layout<'a>(
             )
             .push(
                 Row::new()
-                    .push(Space::with_width(Length::FillPortion(2)))
+                    .push(Space::new().width(Length::FillPortion(2)))
                     .push(
                         Container::new(
                             Column::new()
-                                .push(Space::with_height(Length::Fixed(100.0)))
+                                .push(Space::new().height(Length::Fixed(100.0)))
                                 .push(content),
                         )
                         .width(Length::FillPortion(if padding_left {
@@ -2256,7 +2259,7 @@ fn layout<'a>(
                         })),
                     )
                     .push_maybe(if padding_left {
-                        Some(Space::with_width(Length::FillPortion(2)))
+                        Some(Space::new().width(Length::FillPortion(2)))
                     } else {
                         None
                     }),

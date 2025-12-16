@@ -13,6 +13,7 @@ use coincube_core::miniscript::{
     },
     descriptor::{DerivPaths, DescriptorMultiXKey, DescriptorPublicKey, DescriptorXKey, Wildcard},
 };
+use coincube_ui::widget::{ColumnExt, RowExt};
 use iced::{
     alignment::{Horizontal, Vertical},
     clipboard,
@@ -1014,9 +1015,9 @@ impl SelectKeySource {
         }
         if hws.is_empty() {
             col = col.push(row![
-                Space::with_width(Length::Fill),
+                Space::new().width(Length::Fill),
                 p1_regular("- No other sources detected -"),
-                Space::with_width(Length::Fill)
+                Space::new().width(Length::Fill)
             ])
         }
         col.into()
@@ -1350,12 +1351,12 @@ where
     Alias: 'static + Fn(String) -> Message,
 {
     let pick_account = pick_account
-        .map(|pick_account| row![pick_account, Space::with_width(Length::Fill)].spacing(5));
+        .map(|pick_account| row![pick_account, Space::new().width(Length::Fill)].spacing(5));
     let info = "Switch account if you already uses the same hardware in other configurations";
 
     let error = error.clone().map(|e| p1_regular(e).color(color::ORANGE));
 
-    let spacer = replace_message.is_some().then(|| Space::with_width(10));
+    let spacer = replace_message.is_some().then(|| Space::new().width(10));
     let replace_btn = replace_message.map(|m| {
         let mut btn = button::secondary(None, "Replace");
         if alias.valid {
@@ -1366,13 +1367,13 @@ where
 
     let btn_row = if error.is_none() {
         Row::new()
-            .push(Space::with_width(Length::Fill))
+            .push(Space::new().width(Length::Fill))
             .push_maybe(replace_btn)
             .push_maybe(spacer)
             .push(button::primary(None, "Apply").on_press_maybe(apply_msg))
     } else if let Some(retry_msg) = retry_msg {
         row![
-            Space::with_width(Length::Fill),
+            Space::new().width(Length::Fill),
             button::primary(None, "Retry").on_press(retry_msg),
             button::secondary(None, "Apply")
         ]
@@ -1380,7 +1381,7 @@ where
         .align_y(Vertical::Center)
     } else {
         Row::new()
-            .push(Space::with_width(Length::Fill))
+            .push(Space::new().width(Length::Fill))
             .push_maybe(replace_btn)
             .push_maybe(spacer)
             .push(button::primary(None, "Apply"))
@@ -1390,17 +1391,17 @@ where
         .push(header)
         .push(row![
             p1_bold("Key name (alias):"),
-            Space::with_width(Length::Fill)
+            Space::new().width(Length::Fill)
         ])
         .push(row![
             p1_regular("Give this key a friendly name. It will help you identify it later:"),
-            Space::with_width(Length::Fill)
+            Space::new().width(Length::Fill)
         ])
         .push(
             container(form::Form::new("E.g. My Hardware Wallet", alias, alias_msg).padding(10))
                 .width(300),
         )
-        .push(Space::with_height(10))
+        .push(Space::new().height(10))
         .push_maybe(if pick_account.is_some() {
             Some(row![p1_bold("Key path account:"), tooltip(info)].align_y(Vertical::Center))
         } else {

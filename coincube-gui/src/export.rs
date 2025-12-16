@@ -369,12 +369,37 @@ impl Export {
     }
 }
 
+/// Hashable wrapper for export subscription data.
+/// Subscription identity is based on `export_type` discriminant and `path`.
+pub struct ExportSubscriptionData {
+    pub daemon: Option<Arc<dyn Daemon + Sync + Send>>,
+    pub path: PathBuf,
+    pub export_type: ImportExportType,
+}
+
+impl std::hash::Hash for ExportSubscriptionData {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        // Use discriminant for export_type identity and path
+        std::mem::discriminant(&self.export_type).hash(state);
+        self.path.hash(state);
+    }
+}
+
+/// Function pointer for Subscription::run_with
+pub fn make_export_stream(data: &ExportSubscriptionData) -> impl Stream<Item = Progress> {
+    export_subscription(
+        data.daemon.clone(),
+        data.path.clone(),
+        data.export_type.clone(),
+    )
+}
+
 pub fn export_subscription(
     daemon: Option<Arc<dyn Daemon + Sync + Send>>,
     path: PathBuf,
     export_type: ImportExportType,
 ) -> impl Stream<Item = Progress> {
-    iced::stream::channel(100, move |mut output| async move {
+    iced::stream::channel(100, async move |mut output| {
         let mut state = Export::new(daemon, Box::new(path), export_type);
         loop {
             match state.state() {

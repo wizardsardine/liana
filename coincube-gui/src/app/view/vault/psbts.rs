@@ -34,7 +34,7 @@ pub fn import_psbt_view<'a>(
                     .size(P1_SIZE)
                     .padding(10),
                 )
-                .push(Row::new().push(Space::with_width(Length::Fill)).push(
+                .push(Row::new().push(Space::new().width(Length::Fill)).push(
                     if imported.valid && !imported.value.is_empty() && !processing {
                         button::secondary(None, "Import")
                             .on_press(Message::ImportSpend(ImportSpendMessage::Confirm))

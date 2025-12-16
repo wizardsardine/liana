@@ -18,13 +18,13 @@ use crate::{
     theme::{self, Theme},
 };
 
-use crate::widget::{Button, Column, Element, Row, Text};
+use crate::widget::{Button, Column, ColumnExt, Element, Row, RowExt, Text};
 
-pub const MODAL_WIDTH: u16 = 650;
-pub const BTN_W: u16 = 500;
-pub const BTN_H: u16 = 40;
-pub const V_SPACING: u16 = 10;
-pub const H_SPACING: u16 = 5;
+pub const MODAL_WIDTH: u32 = 650;
+pub const BTN_W: u32 = 500;
+pub const BTN_H: u32 = 40;
+pub const V_SPACING: u32 = 10;
+pub const H_SPACING: u32 = 5;
 
 pub fn widget_style(theme: &Theme, status: Status) -> Style {
     theme::button::secondary(theme, status)
@@ -48,7 +48,7 @@ where
     Row::new()
         .push_maybe(back)
         .push_maybe(title)
-        .push(Space::with_width(Length::Fill))
+        .push(Space::new().width(Length::Fill))
         .push_maybe(close)
         .align_y(Vertical::Center)
         .into()
@@ -118,7 +118,7 @@ where
         let col = Column::new()
             .push(row![
                 text::p1_regular(label).color(color::WHITE),
-                Space::with_width(Length::Fill)
+                Space::new().width(Length::Fill)
             ])
             .push(line);
         let row = Row::new()
@@ -170,13 +170,13 @@ where
     .align_x(Horizontal::Left)
     .width(200);
     let row = Row::new()
-        .push_maybe(icon.as_ref().map(|_| Space::with_width(H_SPACING)))
+        .push_maybe(icon.as_ref().map(|_| Space::new().width(H_SPACING)))
         .push_maybe(icon)
-        .push(Space::with_width(H_SPACING))
+        .push(Space::new().width(H_SPACING))
         .push(designation)
         .push_maybe(message)
         .push_maybe(error)
-        .push(Space::with_width(Length::Fill))
+        .push(Space::new().width(Length::Fill))
         .push_maybe(tt)
         .align_y(Vertical::Center)
         .spacing(V_SPACING);
@@ -201,7 +201,7 @@ where
     let error = error.map(|e| {
         row![
             text::p1_regular(e).color(color::ORANGE),
-            Space::with_width(Length::Fill)
+            Space::new().width(Length::Fill)
         ]
     });
 
@@ -210,7 +210,7 @@ where
     let row = Row::new()
         .push_maybe(icon)
         .push(text::p1_regular(label))
-        .push(Space::with_width(Length::Fill))
+        .push(Space::new().width(Length::Fill))
         .push_maybe(tt)
         .spacing(H_SPACING)
         .align_y(Vertical::Center)

@@ -21,7 +21,6 @@ use crate::{
         view::Close,
     },
     backup::Backup,
-    download::{DownloadError, Progress},
     export::ImportExportMessage,
     hw::HardwareWalletMessage,
     installer::{decrypt::Decrypt, descriptor::PathKind},
@@ -163,7 +162,7 @@ pub enum InternalBitcoindMsg {
     Reload,
     DefineConfig,
     Download,
-    DownloadProgressed(Result<Progress, DownloadError>),
+    DownloadProgressed(super::step::DownloadUpdate),
     Install,
     Start,
 }

@@ -318,13 +318,13 @@ impl VaultExportModal {
         if let Some(path) = &self.path {
             match &self.state {
                 ImportExportState::Started | ImportExportState::Progress(_) => {
-                    Some(iced::Subscription::run_with_id(
-                        self.modal_title(),
-                        export::export_subscription(
-                            self.daemon.clone(),
-                            path.to_path_buf(),
-                            self.import_export_type.clone(),
-                        ),
+                    Some(iced::Subscription::run_with(
+                        export::ExportSubscriptionData {
+                            daemon: self.daemon.clone(),
+                            path: path.to_path_buf(),
+                            export_type: self.import_export_type.clone(),
+                        },
+                        export::make_export_stream,
                     ))
                 }
                 _ => None,

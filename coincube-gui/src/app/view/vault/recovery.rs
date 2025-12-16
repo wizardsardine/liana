@@ -43,7 +43,7 @@ pub fn recovery<'a>(
         Column::new()
             .push(Container::new(h3("Recovery")).width(Length::Fill))
             .push(Container::new(text(INFO_TEXT)))
-            .push(Space::with_height(Length::Fixed(20.0)))
+            .push(Space::new().height(Length::Fixed(20.0)))
             .push(
                 Container::new(
                     Column::new()
@@ -63,7 +63,7 @@ pub fn recovery<'a>(
                             })
                             .width(Length::Fill),
                         )
-                        .push_maybe((!no_recovery_paths).then_some(Space::with_height(20)))
+                        .push_maybe((!no_recovery_paths).then_some(Space::new().height(20)))
                         .push(Column::with_children(recovery_paths).spacing(20)),
                 )
                 .style(theme::card::simple)
@@ -74,7 +74,7 @@ pub fn recovery<'a>(
             } else {
                 Some(
                     Row::new()
-                        .push(Space::with_width(Length::Fill))
+                        .push(Space::new().width(Length::Fill))
                         .push(
                             button::primary(None, "Next")
                                 .on_press_maybe(selected_path.map(|_| Message::Next))
@@ -99,7 +99,7 @@ pub fn recovery_path_view<'a>(
 ) -> Element<'a, Message> {
     Row::new()
         .push(
-            checkbox("", selected)
+            checkbox(selected)
                 .on_toggle(move |_| Message::CreateSpend(CreateSpendMessage::SelectPath(index))),
         )
         .push(
