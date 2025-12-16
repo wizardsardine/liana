@@ -85,6 +85,7 @@ pub enum Message {
         Option<Bitcoind>,
     ),
     CubeSaveFailed(String),
+    RetryCubeSave,
     None,
 }
 
