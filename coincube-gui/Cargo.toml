@@ -69,6 +69,7 @@ log = "0.4"
 
 dirs = "6"
 toml = "0.9"
+rand = "0.8"
 
 chrono = "0.4.38"
 uuid = { version = "1.10", features = ["v4", "serde"] }

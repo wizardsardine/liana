@@ -26,11 +26,10 @@ pub fn active_settings_view<'a>(
             recovery_phrase_view(active_signer.lock().expect("Mutex Lock Poisoned").words())
         }
         ActiveSettingsFlowState::BackupWallet(BackupWalletState::Verification {
-            word_2,
-            word_5,
-            word_9,
+            word_indices,
+            word_inputs,
             error,
-        }) => verification_view(word_2, word_5, word_9, error.as_deref()),
+        }) => verification_view(word_indices, word_inputs, error.as_deref()),
         ActiveSettingsFlowState::BackupWallet(BackupWalletState::Completed) => completed_view(),
     }
 }
@@ -140,7 +139,7 @@ fn backup_intro_view(checked: bool) -> Element<'static, Message> {
                 Column::new()
                     .align_x(Alignment::Center)
                     .push(
-                        Text::new("You will be shown 12 words. Write them down and keep them in a safe place.")
+                        Text::new("You will be shown 12 words. Write them down numbered in the same order shown and keep them in a safe place.")
                             .size(20)
                             .align_x(iced::alignment::Horizontal::Center)
                     )
@@ -150,7 +149,7 @@ fn backup_intro_view(checked: bool) -> Element<'static, Message> {
                             .align_x(iced::alignment::Horizontal::Center)
                     )
                     .push(
-                        Text::new("Without them, you will not be able to restore your wallet if you lose your phone.")
+                        Text::new("Without them, you will not be able to restore your wallet if you lose your computer.")
                             .size(20)
                             .align_x(iced::alignment::Horizontal::Center)
                     )
@@ -306,15 +305,59 @@ fn recovery_phrase_view(mnemonic: [&'static str; 12]) -> Element<'static, Messag
         .into()
 }
 
+/// Helper function to create a word input field with a bottom border divider
+fn word_input_field<'a, F, S>(
+    word_num: usize,
+    word_value: &'a str,
+    no_border_style: S,
+    on_input: F,
+) -> Element<'a, Message>
+where
+    F: Fn(String) -> Message + 'a,
+    S: Fn(
+            &coincube_ui::theme::Theme,
+            iced::widget::text_input::Status,
+        ) -> iced::widget::text_input::Style
+        + 'a,
+{
+    use coincube_ui::widget::{Text, TextInput};
+
+    Column::new()
+        .push(
+            Row::new()
+                .spacing(12)
+                .align_y(Alignment::Center)
+                .push(Text::new(format!("{}.", word_num)).size(18))
+                .push(
+                    TextInput::new("", word_value)
+                        .on_input(on_input)
+                        .padding(8)
+                        .width(Length::Fixed(300.0))
+                        .style(no_border_style),
+                ),
+        )
+        .push(
+            Container::new(Space::with_height(Length::Fixed(0.0)))
+                .width(Length::Fixed(340.0))
+                .height(Length::Fixed(1.0))
+                .style(|_theme| container::Style {
+                    background: Some(iced::Background::Color(iced::Color::from_rgb8(
+                        0x80, 0x80, 0x80,
+                    ))),
+                    ..Default::default()
+                }),
+        )
+        .into()
+}
+
 fn verification_view<'a>(
-    word_2: &'a str,
-    word_5: &'a str,
-    word_9: &'a str,
+    word_indices: &'a [usize; 3],
+    word_inputs: &'a [String; 3],
     error: Option<&'a str>,
 ) -> Element<'a, Message> {
-    use coincube_ui::widget::{Container, Row, Text, TextInput};
+    use coincube_ui::widget::{Container, Row, Text};
 
-    let all_filled = !word_2.is_empty() && !word_5.is_empty() && !word_9.is_empty();
+    let all_filled = word_inputs.iter().all(|w| !w.is_empty());
 
     let mut content = Column::new().spacing(20).width(Length::Fill);
 
@@ -412,103 +455,24 @@ fn verification_view<'a>(
         }
     };
 
-    // Input fields with bottom border
-    let input_fields = Column::new()
-        .spacing(40)
-        .align_x(Alignment::Center)
-        .push(
-            Column::new()
-                .push(
-                    Row::new()
-                        .spacing(12)
-                        .align_y(Alignment::Center)
-                        .push(Text::new("2.").size(18))
-                        .push(
-                            TextInput::new("", word_2)
-                                .on_input(|input| {
-                                    Message::ActiveSettings(ActiveSettingsMessage::BackupWallet(
-                                        BackupWalletMessage::Word2Input(input),
-                                    ))
-                                })
-                                .padding(8)
-                                .width(Length::Fixed(300.0))
-                                .style(no_border_style),
-                        ),
-                )
-                .push(
-                    Container::new(Space::with_height(Length::Fixed(0.0)))
-                        .width(Length::Fixed(340.0))
-                        .height(Length::Fixed(1.0))
-                        .style(|_theme| container::Style {
-                            background: Some(iced::Background::Color(iced::Color::from_rgb8(
-                                0x80, 0x80, 0x80,
-                            ))),
-                            ..Default::default()
-                        }),
-                ),
-        )
-        .push(
-            Column::new()
-                .push(
-                    Row::new()
-                        .spacing(12)
-                        .align_y(Alignment::Center)
-                        .push(Text::new("5.").size(18))
-                        .push(
-                            TextInput::new("", word_5)
-                                .on_input(|input| {
-                                    Message::ActiveSettings(ActiveSettingsMessage::BackupWallet(
-                                        BackupWalletMessage::Word5Input(input),
-                                    ))
-                                })
-                                .padding(8)
-                                .width(Length::Fixed(300.0))
-                                .style(no_border_style),
-                        ),
-                )
-                .push(
-                    Container::new(Space::with_height(Length::Fixed(0.0)))
-                        .width(Length::Fixed(340.0))
-                        .height(Length::Fixed(1.0))
-                        .style(|_theme| container::Style {
-                            background: Some(iced::Background::Color(iced::Color::from_rgb8(
-                                0x80, 0x80, 0x80,
-                            ))),
-                            ..Default::default()
-                        }),
-                ),
-        )
-        .push(
-            Column::new()
-                .push(
-                    Row::new()
-                        .spacing(12)
-                        .align_y(Alignment::Center)
-                        .push(Text::new("9.").size(18))
-                        .push(
-                            TextInput::new("", word_9)
-                                .on_input(|input| {
-                                    Message::ActiveSettings(ActiveSettingsMessage::BackupWallet(
-                                        BackupWalletMessage::Word9Input(input),
-                                    ))
-                                })
-                                .padding(8)
-                                .width(Length::Fixed(300.0))
-                                .style(no_border_style),
-                        ),
-                )
-                .push(
-                    Container::new(Space::with_height(Length::Fixed(0.0)))
-                        .width(Length::Fixed(340.0))
-                        .height(Length::Fixed(1.0))
-                        .style(|_theme| container::Style {
-                            background: Some(iced::Background::Color(iced::Color::from_rgb8(
-                                0x80, 0x80, 0x80,
-                            ))),
-                            ..Default::default()
-                        }),
-                ),
-        );
+    // Input fields with bottom border - dynamically generated based on random indices
+    let mut input_fields = Column::new().spacing(40).align_x(Alignment::Center);
+
+    for (i, &word_idx) in word_indices.iter().enumerate() {
+        input_fields = input_fields.push(word_input_field(
+            word_idx,
+            &word_inputs[i],
+            no_border_style,
+            move |input| {
+                Message::ActiveSettings(ActiveSettingsMessage::BackupWallet(
+                    BackupWalletMessage::WordInput {
+                        index: word_idx as u8,
+                        input,
+                    },
+                ))
+            },
+        ));
+    }
 
     content = content.push(
         Row::new()
