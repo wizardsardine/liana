@@ -8,6 +8,7 @@ use crate::app::{message::Message, view, wallet::Wallet};
 use crate::daemon::Daemon;
 
 /// ActiveSend manages the Lightning Network send interface
+#[allow(dead_code)]
 pub struct ActiveSend {
     breez_client: Arc<BreezClient>,
     btc_balance: f64,
@@ -46,7 +47,7 @@ impl State for ActiveSend {
             &self.invoice_input,
             self.error.as_deref(),
         )
-        .map(|msg| view::Message::ActiveSend(msg));
+        .map(view::Message::ActiveSend);
 
         view::dashboard(menu, cache, None, send_view)
     }
@@ -57,8 +58,8 @@ impl State for ActiveSend {
         _cache: &Cache,
         message: Message,
     ) -> Task<Message> {
-        match message {
-            Message::View(view::Message::ActiveSend(msg)) => match msg {
+        if let Message::View(view::Message::ActiveSend(msg)) = message {
+            match msg {
                 view::ActiveSendMessage::InvoiceEdited(value) => {
                     self.invoice_input.value = value;
                     self.invoice_input.valid = !self.invoice_input.value.trim().is_empty();
@@ -74,8 +75,7 @@ impl State for ActiveSend {
                     // TODO: Navigate to transactions view
                     tracing::info!("View transaction history");
                 }
-            },
-            _ => {}
+            }
         }
         Task::none()
     }

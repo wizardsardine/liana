@@ -8,6 +8,7 @@ use crate::app::{message::Message, view, wallet::Wallet};
 use crate::daemon::Daemon;
 
 /// ActiveTransactions is a placeholder panel for the Active Transactions page
+#[allow(dead_code)]
 pub struct ActiveTransactions {
     breez_client: Arc<BreezClient>,
 }

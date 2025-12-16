@@ -12,7 +12,7 @@ pub struct BreezConfig {
 }
 
 impl BreezConfig {
-    pub fn from_env(network: bitcoin::Network, datadir: &PathBuf) -> Result<Self, BreezError> {
+    pub fn from_env(network: bitcoin::Network, datadir: &std::path::Path) -> Result<Self, BreezError> {
         let api_key = std::env::var("BREEZ_API_KEY").map_err(|_| BreezError::MissingApiKey)?;
         Ok(Self {
             api_key,

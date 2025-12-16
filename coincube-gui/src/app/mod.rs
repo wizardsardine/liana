@@ -116,6 +116,7 @@ impl Panels {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn new(
         breez_client: Arc<BreezClient>,
         cache: &Cache,
@@ -366,6 +367,7 @@ pub struct App {
 }
 
 impl App {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         cache: Cache,
         wallet: Arc<Wallet>,

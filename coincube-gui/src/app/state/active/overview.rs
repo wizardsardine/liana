@@ -8,6 +8,7 @@ use crate::app::{message::Message, view, wallet::Wallet};
 use crate::daemon::Daemon;
 
 /// ActiveOverview is a placeholder panel for the Active Overview page
+#[allow(dead_code)]
 pub struct ActiveOverview {
     breez_client: Arc<BreezClient>,
 }

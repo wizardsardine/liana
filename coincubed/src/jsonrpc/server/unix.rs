@@ -209,10 +209,7 @@ pub fn rpcserver_setup(socket_path: &path::Path) -> Result<net::UnixListener, io
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        jsonrpc::rpc::{Params, ReqId},
-        testutils::*,
-    };
+    use crate::jsonrpc::rpc::{Params, ReqId};
 
     use std::{env, fs, process};
 
