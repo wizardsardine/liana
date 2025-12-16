@@ -1,11 +1,12 @@
+use crossbeam::channel;
+
 use crate::{
-    backend::{init_client_with_test_data, Backend},
+    backend::{init_client_with_test_data, Backend, Notification},
     client::Client,
     state::app::AppState,
     views::{
         home_view, keys_view, login_view, modals, org_select_view, paths_view, wallet_select_view,
     },
-    BACKEND_RECV,
 };
 use liana_ui::widget::{modal::Modal, Element};
 pub use message::{Message, Msg};
@@ -45,13 +46,12 @@ impl State {
         }
     }
 
-    /// Initialize backend connection and return the receiver for subscriptions
-    pub fn connect_backend(&mut self, url: String, version: u8) {
+    /// Initialize backend connection and return the receiver for subscriptions.
+    /// The caller is responsible for storing the receiver appropriately.
+    pub fn connect_backend(&mut self, url: String, version: u8) -> Option<channel::Receiver<Notification>> {
         // NOTE: if connect_backend() is called with an ongoing connexion,
         // the ongoing connexion will be dropped & replaced by the new one.
-        // See [`BackendSubscription::poll_next()`]
-        let recv = self.backend.connect_ws(url, version);
-        *BACKEND_RECV.lock().expect("poisoned") = recv;
+        self.backend.connect_ws(url, version)
     }
 
     /// Close the backend connection

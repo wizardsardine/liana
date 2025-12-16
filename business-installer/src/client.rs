@@ -5,20 +5,25 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use bitcoin::Network;
 use crossbeam::channel;
 use futures::executor::block_on;
 use liana_gui::dir::NetworkDirectory;
 use liana_gui::services::connect::client::auth::AuthClient;
 use liana_gui::services::connect::client::cache::{update_connect_cache, Account};
 use liana_gui::services::connect::client::get_service_config;
-use miniscript::{bitcoin, DescriptorPublicKey};
+use miniscript::bitcoin::Network;
+use miniscript::DescriptorPublicKey;
 use serde_json::json;
 use tungstenite::{accept, Message as WsMessage};
 use uuid::Uuid;
 
 use crate::backend::{Backend, Error, Notification, Org, OrgData, User, Wallet};
 use crate::wss::{ConnectedPayload, OrgJson, Request, Response, UserJson, WalletJson};
+
+/// Backend URL for WebSocket connection
+pub const BACKEND_URL: &str = "debug";
+/// Protocol version for WebSocket communication
+pub const PROTOCOL_VERSION: u8 = 1;
 
 /// WSS Backend implementation
 #[derive(Debug)]

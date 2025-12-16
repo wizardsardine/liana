@@ -2,7 +2,6 @@ use super::{app::AppState, message::Msg, views, State, View};
 use crate::{
     backend::{Backend, Error, Notification},
     models::{Key, PolicyTemplate, SpendingPath, Timelock},
-    BACKEND_URL, PROTOCOL_VERSION,
 };
 use iced::Task;
 use uuid::Uuid;
@@ -443,13 +442,13 @@ impl State {
         self.current_view = View::OrgSelect;
         self.views.login.code.processing = false;
 
-        // Set the token and connect the WS
+        // Set the token for the WS connection
         // TODO: In production, the token should come from the auth response
         self.backend.set_token("auth-token".to_string());
 
         // Mark that we're intentionally reconnecting (old channel will close)
+        // NOTE: Reconnection is now handled by BusinessInstaller
         self.app.reconnecting = true;
-        self.connect_backend(BACKEND_URL.to_string(), PROTOCOL_VERSION);
     }
 
     fn on_backend_login_fail(&mut self) {

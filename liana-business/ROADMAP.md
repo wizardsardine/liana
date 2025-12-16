@@ -2,9 +2,9 @@
 
 ## Priority
 
-- [ ] **2. Back**
+- [x] **2. Back**
   - [x] 2.1 Auth Client
-  - [ ] 2.2 Installer Trait Integration
+  - [x] 2.2 Installer Trait Integration
 - [ ] **3.1 Ws Manager Flow**
 - [ ] **1. Front** (needed for completion of WS Manager flow)
   - [ ] 1.1 Key Management Panel
@@ -26,7 +26,7 @@
   - [ ] Ensure all path operations are functional
   - [ ] Polish user experience
 
-## 2. Back
+## 2. Back ✓
 
 ### 2.1 Auth Client
 - [x] Implement auth client
@@ -42,10 +42,10 @@
   expired, use cached token for connection
 
 ### 2.2 Installer Trait Integration
-- [ ] Wrap complete app under the Installer trait of liana-gui
-  - [ ] Implement Installer trait for the application
-  - [ ] Support standalone mode
-  - [ ] Support integration into liana-gui
+- [x] Wrap complete app under the Installer trait of liana-gui
+  - [x] Implement Installer trait for the application (BusinessInstaller in business-installer crate)
+  - [x] Support standalone mode (liana-business wraps BusinessInstaller)
+  - [x] Support integration into liana-gui (via Installer trait interface)
 
 ### 2.3 Auth improvements
 - [ ] Automatically refresh token
