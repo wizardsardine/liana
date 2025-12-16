@@ -785,6 +785,7 @@ dependencies = [
  "futures",
  "iced",
  "liana",
+ "liana-connect",
  "liana-gui",
  "liana-ui",
  "miniscript",
@@ -3158,6 +3159,17 @@ dependencies = [
  "liana",
  "liana-gui",
  "liana-ui",
+]
+
+[[package]]
+name = "liana-connect"
+version = "0.1.0"
+dependencies = [
+ "miniscript",
+ "serde",
+ "serde_json",
+ "tungstenite",
+ "uuid",
 ]
 
 [[package]]

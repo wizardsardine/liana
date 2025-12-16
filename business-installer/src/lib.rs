@@ -7,10 +7,8 @@
 mod backend;
 mod client;
 mod installer;
-mod models;
 mod state;
 mod views;
-mod wss;
 
 // Re-export the main public API
 pub use installer::BusinessInstaller;

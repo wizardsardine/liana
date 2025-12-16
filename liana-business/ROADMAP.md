@@ -5,6 +5,7 @@
 - [x] **2. Back**
   - [x] 2.1 Auth Client
   - [x] 2.2 Installer Trait Integration
+  - [x] 2.3 WSS Protocol Extraction
 - [ ] **3.1 Ws Manager Flow**
 - [ ] **1. Front** (needed for completion of WS Manager flow)
   - [ ] 1.1 Key Management Panel
@@ -31,7 +32,8 @@
 ### 2.1 Auth Client
 - [x] Implement auth client
   - [x] Export required auth types from liana-gui (AuthClient, AuthError,
-  AccessTokenResponse, cache types, http traits, NetworkDirectory, get_service_config)
+  AccessTokenResponse, cache types, http traits, NetworkDirectory,
+get_service_config)
   - [x] Add liana-gui dependency to liana-business Cargo.toml
   - [x] Extend Client struct with auth_client, network, network_dir, email fields
   - [x] Implement auth_request() using AuthClient::sign_in_otp() with async-to-sync
@@ -43,11 +45,21 @@
 
 ### 2.2 Installer Trait Integration
 - [x] Wrap complete app under the Installer trait of liana-gui
-  - [x] Implement Installer trait for the application (BusinessInstaller in business-installer crate)
+  - [x] Implement Installer trait for the application (BusinessInstaller in
+business-installer crate)
   - [x] Support standalone mode (liana-business wraps BusinessInstaller)
   - [x] Support integration into liana-gui (via Installer trait interface)
 
-### 2.3 Auth improvements
+### 2.3 WSS Protocol Extraction
+- [x] Move shared WSS protocol types to liana-connect crate
+  - [x] Create liana-connect/src/protocol.rs with JSON payload types
+  - [x] Create liana-connect/src/models.rs with domain types (Wallet, Org, User,
+Key, etc.)
+  - [x] Move WssError, WssConversionError, ProtocolRequest, ProtocolResponse
+  - [x] Move TryFrom/From conversions between JSON and domain types
+  - [x] Update business-installer to import from liana-connect
+
+### 2.4 Auth improvements
 - [ ] Automatically refresh token
 - [ ] Async instead threading?
 
@@ -78,4 +90,12 @@
 
 ## Changelog
 
+### 2025-12-16
+- 2.2 Installer Trait Integration: Created `business-installer` crate with
+`BusinessInstaller` implementing `Installer` trait from liana-gui
+- 2.3 WSS Protocol Extraction: Moved protocol types and domain models to
+`liana-connect` crate under `ws_business` module
 
+### 2025-12-15
+- 2.1 Auth Client: Implemented authentication using liana-gui's AuthClient with OTP
+sign-in and token caching

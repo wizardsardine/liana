@@ -5,6 +5,6 @@ pub struct EditKeyModalState {
     pub alias: String,
     pub description: String,
     pub email: String,
-    pub key_type: crate::models::KeyType,
+    pub key_type: liana_connect::KeyType,
 }
 

@@ -86,11 +86,11 @@ pub fn edit_key_modal(modal_state: &EditKeyModalState) -> Element<'_, Message> {
     );
 
     // Key type picker
-    let key_types: &[crate::models::KeyType] = &[
-        crate::models::KeyType::Internal,
-        crate::models::KeyType::External,
-        crate::models::KeyType::Cosigner,
-        crate::models::KeyType::SafetyNet,
+    let key_types: &[liana_connect::KeyType] = &[
+        liana_connect::KeyType::Internal,
+        liana_connect::KeyType::External,
+        liana_connect::KeyType::Cosigner,
+        liana_connect::KeyType::SafetyNet,
     ];
     let current_type = modal_state.key_type;
     content = content.push(

@@ -1,9 +1,7 @@
 use super::{app::AppState, message::Msg, views, State, View};
-use crate::{
-    backend::{Backend, Error, Notification},
-    models::{Key, PolicyTemplate, SpendingPath, Timelock},
-};
+use crate::backend::{Backend, Error, Notification};
 use iced::Task;
+use liana_connect::{Key, PolicyTemplate, SpendingPath, Timelock};
 use uuid::Uuid;
 
 // Update routing logic
@@ -168,7 +166,7 @@ impl State {
             alias: String::new(),
             description: String::new(),
             email: String::new(),
-            key_type: crate::models::KeyType::Internal,
+            key_type: liana_connect::KeyType::Internal,
             xpub: None,
         };
         self.app.keys.insert(self.app.next_key_id, key);

@@ -24,7 +24,7 @@ pub enum Msg {
     KeyUpdateAlias(String),
     KeyUpdateDescr(String),
     KeyUpdateEmail(String),
-    KeyUpdateType(crate::models::KeyType),
+    KeyUpdateType(liana_connect::KeyType),
 
     // Template management
     TemplateAddKeyToPrimary(u8),

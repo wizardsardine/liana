@@ -121,8 +121,8 @@ fn render_path_box(
     y: f32,
     color: &str,
     label: &str,
-    _path: &crate::models::SpendingPath,
-    _keys: &std::collections::BTreeMap<u8, crate::models::Key>,
+    _path: &liana_connect::SpendingPath,
+    _keys: &std::collections::BTreeMap<u8, liana_connect::Key>,
 ) {
     let box_y = y;
 

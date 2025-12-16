@@ -95,7 +95,7 @@ fn primary_path_card(state: &State) -> Element<'static, Msg> {
     content = content.push(path_row);
 
     // Available keys to add
-    let available_keys: Vec<(u8, crate::models::Key)> = state
+    let available_keys: Vec<(u8, liana_connect::Key)> = state
         .app
         .keys
         .iter()
@@ -122,8 +122,8 @@ fn primary_path_card(state: &State) -> Element<'static, Msg> {
 fn secondary_path_card(
     state: &State,
     path_index: usize,
-    path: crate::models::SpendingPath,
-    timelock: crate::models::Timelock,
+    path: liana_connect::SpendingPath,
+    timelock: liana_connect::Timelock,
 ) -> Element<'static, Msg> {
     let mut content = Column::new().spacing(10);
 
@@ -188,7 +188,7 @@ fn secondary_path_card(
     content = content.push(path_row);
 
     // Available keys to add
-    let available_keys: Vec<(u8, crate::models::Key)> = state
+    let available_keys: Vec<(u8, liana_connect::Key)> = state
         .app
         .keys
         .iter()

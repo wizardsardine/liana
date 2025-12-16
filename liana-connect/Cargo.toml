@@ -2,10 +2,19 @@
 name = "liana-connect"
 version = "0.1.0"
 authors = ["Edouard Paris <m@edouard.paris>"]
-edition = "2018"
+edition = "2021"
 repository = "https://github.com/wizardsardine/liana"
 license-file = "LICENCE"
 keywords = ["bitcoin", "wallet", "miniscript", "inheritance", "recovery"]
-description = "Liana Connect development kit"
+description = "Liana Connect - WSS protocol types for client and server"
+
+[lib]
+name = "liana_connect"
+path = "src/lib.rs"
 
 [dependencies]
+miniscript = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+tungstenite = { workspace = true }
+uuid = { workspace = true }
