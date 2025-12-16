@@ -11,7 +11,7 @@ resolver = "2"
 
 [features]
 default = []
-buysell = ["dep:iced_wry"]
+buysell = []
 
 [package.metadata.winres]
 LegalCopyright = "Copyright © 2025"
@@ -48,9 +48,6 @@ iced = { version = "0.14.0", default-features = false, features = [
 image = { version = "*", default-features = false, features = ["png"] }
 iced_aw = { version = "0.13.0", features = ["context_menu"] }
 iced_runtime = "0.14.0"
-
-# Webview for embedded browser functionality (wry-based)
-iced_wry = { git = "https://github.com/sokorototo/iced_wry", optional = true }
 
 # Used to verify RFC-compliance of an email
 email_address = "0.2.7"

@@ -21,6 +21,7 @@ pub enum MavapayFlowStep {
         buy_or_sell: BuyOrSell,
         beneficiary: Option<Beneficiary>,
         quote: GetQuoteResponse,
+        fulfilled_order: Option<GetOrderResponse>,
         abort: iced::task::Handle,
     },
 }

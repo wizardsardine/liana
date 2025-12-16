@@ -1,9 +1,9 @@
 use crate::{
     app::view::{
         buysell::{panel::BuyOrSell, MavapayFlowStep, MavapayState},
-        BuySellMessage, MavapayMessage, Message as ViewMessage,
+        BuySellMessage, Message as ViewMessage,
     },
-    services::mavapay::OnchainTransferSpeed,
+    services::mavapay::*,
 };
 
 use iced::{widget::*, Alignment, Length};
@@ -17,7 +17,6 @@ use coincube_ui::{
 pub fn form<'a>(state: &'a MavapayState) -> iced::Element<'a, ViewMessage, theme::Theme> {
     let form = match &state.step {
         MavapayFlowStep::Transaction { .. } => transactions_form,
-        // TODO: Implement checkout UI, and subscription for SSE events
         MavapayFlowStep::Checkout { .. } => checkout_form,
     };
 
@@ -26,32 +25,57 @@ pub fn form<'a>(state: &'a MavapayState) -> iced::Element<'a, ViewMessage, theme
 }
 
 fn checkout_form<'a>(state: &'a MavapayState) -> Column<'a, BuySellMessage> {
-    let MavapayFlowStep::Checkout { buy_or_sell, .. } = &state.step else {
+    let MavapayFlowStep::Checkout {
+        buy_or_sell,
+        fulfilled_order,
+        ..
+    } = &state.step
+    else {
         unreachable!()
     };
 
-    iced::widget::column![
-        text::h4_bold("Checkout"),
-        match buy_or_sell {
-            BuyOrSell::Buy { address: _ } => {
-                // TODO: display BTC amount to be deposited, generated address and bank deposit details.
-                container(text::p1_italic("Display account deposit details here..."))
-            }
-            BuyOrSell::Sell => {
-                // TODO: display bitcoin address or lightning invoice for deposit, and beneficiary input forms
-                container(text::p1_italic(
-                    "Display lightning invoice or bitcoin address for deposit here...",
-                ))
-            }
-            .style(theme::card::simple),
+    match fulfilled_order {
+        None => {
+            iced::widget::column![
+                text::h4_bold("Checkout"),
+                match buy_or_sell {
+                    BuyOrSell::Buy { address: _ } => {
+                        // TODO: display bank deposit details, equivalent BTC amount and the generated address for deposit
+                        container(text::p1_italic("Display account deposit details here..."))
+                    }
+                    BuyOrSell::Sell => {
+                        // TODO: display bitcoin address or lightning invoice for deposit, and beneficiary input forms
+                        container(text::p1_italic(
+                            "Display lightning invoice or bitcoin address for deposit here...",
+                        ))
+                    }
+                    .style(theme::card::simple),
+                }
+            ]
+            .push_maybe(
+                (cfg!(debug_assertions) && option_env!("MAVAPAY_API_KEY").is_none()).then(|| {
+                    button::primary(Some(wrench_icon()), "Simulate Pay-In (Developer Option)")
+                        .on_press_maybe(
+                            fulfilled_order
+                                .is_none()
+                                .then_some(BuySellMessage::Mavapay(MavapayMessage::SimulatePayIn)),
+                        )
+                }),
+            )
         }
-    ]
-    .push_maybe(
-        (cfg!(debug_assertions) && option_env!("MAVAPAY_API_KEY").is_none()).then(|| {
-            button::primary(Some(wrench_icon()), "Simulate Pay-In (Developer Option)")
-                .on_press(BuySellMessage::Mavapay(MavapayMessage::SimulatePayIn))
-        }),
-    )
+        Some(order) => {
+            // TODO: Improve success UI
+            iced::widget::column![
+                match buy_or_sell {
+                    BuyOrSell::Sell => text::p1_italic("Withdrawal Was Successful"),
+                    BuyOrSell::Buy { .. } => text::p1_italic("Purchase Was Successful"),
+                },
+                text::p2_bold(format!("{:?}", order)),
+                button::primary(Some(reload_icon()), "Start Over")
+                    .on_press(BuySellMessage::ResetWidget)
+            ]
+        }
+    }
     .align_x(Alignment::Center)
     .width(600)
 }
@@ -102,7 +126,6 @@ fn transactions_form<'a>(state: &'a MavapayState) -> Column<'a, BuySellMessage> 
                     .align_x(Alignment::Center),
                     container(left_right_icon().size(20).center()).padding(12),
                     iced::widget::column![
-                        // TODO: ensure user has BTC balance to satisfy quote
                         text("Satoshis (BTCSAT)").size(14).color(color::GREY_2),
                         Space::new().height(5),
                         iced_aw::number_input(&(*sat_amount as f64), .., |a| {
@@ -138,6 +161,7 @@ fn transactions_form<'a>(state: &'a MavapayState) -> Column<'a, BuySellMessage> 
                 .align_y(Alignment::Center),
                 Space::new().height(20),
                 match buy_or_sell {
+                    // TODO: ensure user has BTC balance to satisfy quote
                     BuyOrSell::Sell => {
                         // TODO: onchain sell currently unsupported, lightning integration will be required to proceed
                         button::primary(Some(send_icon()), "Send Bitcoin (Currently Unsupported)")

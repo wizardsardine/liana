@@ -20,7 +20,7 @@ To simply run:
 cargo run --release --bin coincube
 
 To run the native with buy/sell feature, simply run:
-env ONRAMPER_API_KEY="..." cargo run --release --features buysell --bin coincube
+env MAVAPAY_API_KEY="..." MELD_API_KEY="..." cargo run --release --features buysell --bin coincube
 
 ## Usage
 

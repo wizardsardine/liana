@@ -8,8 +8,6 @@ use crate::{
     services::fiat::{Currency, PriceSource},
 };
 
-#[cfg(feature = "buysell")]
-use crate::services::mavapay::*;
 use coincube_core::miniscript::bitcoin::{bip32::Fingerprint, Address, OutPoint};
 use coincube_core::spend::SpendCreationError;
 
@@ -180,11 +178,6 @@ pub enum BuySellMessage {
     CreateNewAddress,
     AddressCreated(super::buysell::panel::LabelledAddress),
 
-    // webview logic
-    WebviewOpenUrl(String),
-    WryMessage(iced_wry::IcedWryMessage),
-    StartWryWebviewWithUrl(iced_wry::ExtractedWindowId, String),
-
     // user Registration
     LegalNameChanged(String),
     EmailChanged(String),
@@ -210,30 +203,7 @@ pub enum BuySellMessage {
     ReturnToLogin,
 
     // Mavapay specific messages
-    Mavapay(MavapayMessage),
-}
-
-#[cfg(feature = "buysell")]
-#[derive(Debug, Clone)]
-pub enum MavapayMessage {
-    // transactions
-    FiatAmountChanged(f64),
-    SatAmountChanged(f64),
-    NormalizeAmounts,
-    PaymentMethodChanged(crate::services::mavapay::MavapayPaymentMethod),
-    BankAccountNumberChanged(String),
-    BankAccountNameChanged(String),
-    BankSelected(usize),
-    TransferSpeedChanged(OnchainTransferSpeed),
-    CreateQuote,
-    QuoteCreated(GetQuoteResponse),
-    GetPrice,
-    PriceReceived(GetPriceResponse),
-    GetBanks,
-    BanksReceived(MavapayBanks),
-    // checkout
-    SimulatePayIn,
-    QuoteFulfilled(crate::services::mavapay::GetOrderResponse),
+    Mavapay(crate::services::mavapay::MavapayMessage),
 }
 
 #[derive(Debug, Clone)]
