@@ -5,14 +5,25 @@ use crate::services::http::ResponseExt;
 
 #[derive(Debug, Clone)]
 pub struct CoincubeClient {
-    client: Client,
-    base_url: &'static str,
+    pub client: Client,
+    pub base_url: &'static str,
 }
 
 impl CoincubeClient {
-    pub fn new() -> Self {
+    pub fn new(user_jwt: Option<String>) -> Self {
+        let mut headers = reqwest::header::HeaderMap::new();
+        if let Some(jwt) = user_jwt {
+            headers.append(
+                "Authorization",
+                reqwest::header::HeaderValue::from_str(&format!("Bearer {}", jwt)).unwrap(),
+            );
+        }
+
         Self {
-            client: Client::new(),
+            client: reqwest::ClientBuilder::new()
+                .default_headers(headers)
+                .build()
+                .unwrap(),
             base_url: match cfg!(debug_assertions) {
                 false => "https://api.coincube.io",
                 true => option_env!("COINCUBE_API_URL").unwrap_or("https://dev-api.coincube.io"),

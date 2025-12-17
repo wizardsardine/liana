@@ -61,9 +61,7 @@ pub trait State {
 
 /// redirect to another state with a message menu
 pub fn redirect(menu: Menu) -> Task<Message> {
-    Task::perform(async { menu }, |menu| {
-        Message::View(view::Message::Menu(menu))
-    })
+    Task::done(Message::View(view::Message::Menu(menu)))
 }
 
 /// Returns fiat converter if the wallet setting is enabled and the cached price matches the setting.

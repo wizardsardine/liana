@@ -3,10 +3,10 @@ resolver = "2"
 members = ["fuzz", "coincube-core", "coincubed", "coincube-gui", "coincube-ui"]
 default-members = ["coincube-core", "coincubed", "coincube-gui", "coincube-ui"]
 
-[profile.app-release]
+[profile.minimal]
 inherits = "release"
-opt-level = 3
-strip = "symbols"
-lto = "fat"
+opt-level = "z"
+lto = "thin"
+strip = true
 codegen-units = 1
 panic = "abort"

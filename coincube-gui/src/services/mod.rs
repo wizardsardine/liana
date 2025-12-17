@@ -9,3 +9,5 @@ pub mod keys;
 pub mod coincube;
 #[cfg(feature = "buysell")]
 pub mod mavapay;
+#[cfg(feature = "buysell")]
+pub mod meld;
