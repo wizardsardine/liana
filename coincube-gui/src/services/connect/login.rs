@@ -366,7 +366,7 @@ impl CoincubeLiteLogin {
                                     ConnectionStep::CheckEmail => Column::new()
                                         .spacing(20)
                                         .align_x(Alignment::Center)
-                                        .push_maybe(
+                                        .push(
                                             self.auth_error
                                                 .map(|e| text(e).style(theme::text::warning)),
                                         )
@@ -385,7 +385,7 @@ impl CoincubeLiteLogin {
                                         .align_x(Alignment::Center)
                                         .push(text("An authentication was sent to your email:"))
                                         .push(text(&self.email))
-                                        .push_maybe(
+                                        .push(
                                             self.auth_error
                                                 .map(|e| text(e).style(theme::text::warning)),
                                         )
@@ -429,7 +429,7 @@ impl CoincubeLiteLogin {
             );
         }
 
-        col.push_maybe(if !matches!(self.step, ConnectionStep::CheckingAuthFile) {
+        col.push(if !matches!(self.step, ConnectionStep::CheckingAuthFile) {
             Some(
                 Container::new(
                     button::secondary(Some(icon::previous_icon()), "Go back")

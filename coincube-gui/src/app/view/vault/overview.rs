@@ -87,7 +87,7 @@ pub fn vault_overview_view<'a>(
                         Row::new()
                             .align_y(Alignment::Center)
                             .push(amount_with_size(balance, H1_SIZE))
-                            .push_maybe(fiat_balance.map(|fiat| {
+                            .push(fiat_balance.map(|fiat| {
                                 Row::new()
                                     .align_y(Alignment::Center)
                                     .push(Space::new().width(20))
@@ -109,7 +109,7 @@ pub fn vault_overview_view<'a>(
                     }
                     .wrap(),
                 )
-                .push_maybe(if !sync_status.is_synced() {
+                .push(if !sync_status.is_synced() {
                     Some(
                         Row::new()
                             .push(
@@ -133,7 +133,7 @@ pub fn vault_overview_view<'a>(
                 } else {
                     None
                 })
-                .push_maybe(
+                .push(
                     if unconfirmed_balance.to_sat() != 0 && sync_status.is_synced() {
                         Some(
                             Row::new()
@@ -146,7 +146,7 @@ pub fn vault_overview_view<'a>(
                                         .size(H3_SIZE)
                                         .style(theme::text::secondary),
                                 )
-                                .push_maybe(fiat_unconfirmed.map(|fiat| {
+                                .push(fiat_unconfirmed.map(|fiat| {
                                     Row::new()
                                         .align_y(Alignment::Center)
                                         .push(Space::new().width(10)) // total spacing = 20 including row spacing
@@ -159,8 +159,8 @@ pub fn vault_overview_view<'a>(
                     },
                 ),
         )
-        .push_maybe(show_rescan_warning.then_some(rescan_warning()))
-        .push_maybe(if expiring_coins.is_empty() {
+        .push(show_rescan_warning.then_some(rescan_warning()))
+        .push(if expiring_coins.is_empty() {
             remaining_sequence.map(|sequence| {
                 Container::new(
                     Row::new()
@@ -220,7 +220,7 @@ pub fn vault_overview_view<'a>(
                         col
                     }
                 }))
-                .push_maybe(if !is_last_page && !events.is_empty() {
+                .push(if !is_last_page && !events.is_empty() {
                     Some(
                         Container::new(
                             Button::new(
@@ -347,7 +347,7 @@ pub fn payment_view<'a>(
             )))
             .push(Space::new().height(H3_SIZE))
             .push(Container::new(h3("Transaction")).width(Length::Fill))
-            .push_maybe(if tx.is_batch() {
+            .push(if tx.is_batch() {
                 if let Some(label) = labels_editing.get(&txid) {
                     Some(label::label_editing(vec![txid.clone()], label, H3_SIZE))
                 } else {
@@ -360,7 +360,7 @@ pub fn payment_view<'a>(
             } else {
                 None
             })
-            .push_maybe(tx.fee_amount.map(|fee_amount| {
+            .push(tx.fee_amount.map(|fee_amount| {
                 Row::new()
                     .align_y(Alignment::Center)
                     .push(h3("Miner fee: ").style(theme::text::secondary))
@@ -377,7 +377,7 @@ pub fn payment_view<'a>(
             }))
             .push(card::simple(
                 Column::new()
-                    .push_maybe(tx.time.map(|t| {
+                    .push(tx.time.map(|t| {
                         let date = DateTime::<Utc>::from_timestamp(t as i64, 0)
                             .unwrap()
                             .with_timezone(&Local)

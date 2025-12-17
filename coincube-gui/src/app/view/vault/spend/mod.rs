@@ -58,7 +58,7 @@ pub fn spend_view<'a>(
                     .width(Length::Fill),
             )
             .push(psbt::spend_header(tx, labels_editing))
-            .push_maybe(if spend_warnings.is_empty() || saved {
+            .push(if spend_warnings.is_empty() || saved {
                 None
             } else {
                 Some(spend_warnings.iter().fold(
@@ -198,7 +198,7 @@ pub fn create_spend_tx<'a>(
             } else {
                 "Send"
             }))
-            .push_maybe(if recipients.len() > 1 {
+            .push(if recipients.len() > 1 {
                 Some(
                     form::Form::new("Batch label", batch_label, |s| {
                         Message::CreateSpend(CreateSpendMessage::BatchLabelEdited(s))
@@ -215,7 +215,7 @@ pub fn create_spend_tx<'a>(
                     .push(Column::with_children(recipients).spacing(10))
                     .push(
                         Row::new()
-                            .push_maybe(if duplicate {
+                            .push(if duplicate {
                                 Some(
                                     Container::new(
                                         text("Two payment addresses are the same")
@@ -227,7 +227,7 @@ pub fn create_spend_tx<'a>(
                                 None
                             })
                             .push(Space::new().width(Length::Fill))
-                            .push_maybe(if is_self_send || recovery_timelock.is_some() {
+                            .push(if is_self_send || recovery_timelock.is_some() {
                                 // Recipients cannot be added for self-send (zero recipients) and recovery (exactly one recipient).
                                 None
                             } else {
@@ -280,13 +280,13 @@ pub fn create_spend_tx<'a>(
                         )
                         .width(Length::Fixed(150.0)),
                     )
-                    .push_maybe(fee_amount.map(|fee| {
+                    .push(fee_amount.map(|fee| {
                         Row::new()
                             .spacing(10)
                             .align_y(Alignment::Center)
                             .push(p1_regular("Fee:").style(theme::text::secondary))
                             .push(amount_with_size(fee, P1_SIZE))
-                            .push_maybe(fiat_converter.map(|conv| {
+                            .push(fiat_converter.map(|conv| {
                                 Row::new().spacing(10).align_y(Alignment::Center).push(
                                     conv.convert(*fee)
                                         .to_text()
@@ -399,7 +399,7 @@ pub fn create_spend_tx<'a>(
                         .padding(10)
                         .style(theme::card::warning)
                     }))
-                    .push_maybe(
+                    .push(
                         (!is_first_step).then_some(
                             button::secondary(None, "< Previous")
                                 .width(Length::Fixed(150.0))
@@ -441,7 +441,7 @@ pub fn recipient_view<'a>(
     Container::new(
         Column::new()
             .spacing(10)
-            .push_maybe(
+            .push(
                 // Recipient for recovery cannot be deleted.
                 (!is_recovery).then_some(
                     Row::new().push(Space::new().width(Length::Fill)).push(
@@ -523,7 +523,7 @@ pub fn recipient_view<'a>(
                                 .padding(10)
                                 .into_container()
                             })
-                            .push_maybe(fiat_converter.map(|conv| {
+                            .push(fiat_converter.map(|conv| {
                                 Row::new()
                                     .align_y(Alignment::Center)
                                     .spacing(5)
@@ -578,7 +578,7 @@ pub fn recipient_view<'a>(
                                     .push(Space::new().width(Length::Fixed(10.0)))
                             })),
                     )
-                    .push_maybe(
+                    .push(
                         // The MAX option cannot be edited for recovery recipients.
                         (!is_recovery).then_some(tooltip::Tooltip::new(
                             checkbox(is_max_selected).label("MAX")

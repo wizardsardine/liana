@@ -568,7 +568,7 @@ pub fn cover<'a, T: 'a + Clone, C: Into<Element<'a, T>>>(
     content: C,
 ) -> Element<'a, T> {
     Column::new()
-        .push_maybe(warn.map(|w| notification::warning(w.0.to_string(), w.1.to_string())))
+        .push(warn.map(|w| notification::warning(w.0.to_string(), w.1.to_string())))
         .push(
             Container::new(content)
                 .center_x(iced::Length::Fill)

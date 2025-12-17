@@ -19,7 +19,7 @@ pub fn unconfirmed_outgoing_event<T: Clone + 'static>(
     Container::new(
         button(
             row!(
-                row!(badge::spend(), Column::new().push_maybe(label),)
+                row!(badge::spend(), Column::new().push(label),)
                     .spacing(10)
                     .align_y(Alignment::Center)
                     .width(Length::Fill),
@@ -49,7 +49,7 @@ pub fn confirmed_outgoing_event<T: Clone + 'static>(
             row!(
                 row!(
                     badge::spend(),
-                    Column::new().push_maybe(label).push(
+                    Column::new().push(label).push(
                         text::p2_regular(
                             date.with_timezone(&Local)
                                 .format("%b. %d, %Y - %T")
@@ -83,7 +83,7 @@ pub fn unconfirmed_incoming_event<T: Clone + 'static>(
     Container::new(
         button(
             row!(
-                row!(badge::receive(), Column::new().push_maybe(label))
+                row!(badge::receive(), Column::new().push(label))
                     .spacing(10)
                     .align_y(Alignment::Center)
                     .width(Length::Fill),
@@ -113,7 +113,7 @@ pub fn confirmed_incoming_event<T: Clone + 'static>(
             row!(
                 row!(
                     badge::receive(),
-                    Column::new().push_maybe(label).push(
+                    Column::new().push(label).push(
                         text::p2_regular(
                             date.with_timezone(&Local)
                                 .format("%b. %d, %Y - %T")

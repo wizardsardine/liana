@@ -1,4 +1,3 @@
-use coincube_ui::widget::{ColumnExt as _, RowExt as _};
 use iced::{
     alignment::Horizontal,
     widget::{
@@ -411,7 +410,7 @@ impl Launcher {
                         .spacing(20)
                         .push(image::coincube_logotype().width(Length::Fixed(150.0)))
                         .push(Space::new().width(Length::Fill))
-                        .push_maybe(if let State::Cubes { create_cube, .. } = &self.state {
+                        .push(if let State::Cubes { create_cube, .. } = &self.state {
                             if *create_cube {
                                 Some(
                                     button::secondary(
@@ -455,7 +454,7 @@ impl Launcher {
                                 };
                                 text(c).size(50).bold()
                             })
-                            .push_maybe({
+                            .push({
                                 // Only show error at top if not in create cube form
                                 let in_create_form = matches!(
                                     self.state,
@@ -707,7 +706,7 @@ fn cubes_list_item<'a>(cube: &CubeSettings, i: usize) -> Element<'a, ViewMessage
             .spacing(20)
             .push(
                 Container::new(
-                    Button::new(Column::new().push(p1_bold(&cube.name)).push_maybe(
+                    Button::new(Column::new().push(p1_bold(&cube.name)).push(
                         if let Some(vault_id) = &cube.vault_wallet_id {
                             Some(
                                 p1_regular(format!(
@@ -944,12 +943,12 @@ impl DeleteCubeModal {
                         .width(Length::Fill),
                     ))
                     .push(Row::new().push(text(help_text_1)))
-                    .push_maybe(
+                    .push(
                         help_text_2
                             .map(|t| Row::new().push(p1_regular(t).style(theme::text::secondary))),
                     )
                     .push(Row::new())
-                    .push_maybe(self.wallet_settings.as_ref().and_then(|w| w.remote_backend_auth.as_ref()).map(|a| {
+                    .push(self.wallet_settings.as_ref().and_then(|w| w.remote_backend_auth.as_ref()).map(|a| {
                         checkbox(
                             self.delete_liana_connect,
                         )
@@ -968,7 +967,7 @@ impl DeleteCubeModal {
                             })
                     }))
                     .push(Row::new().push(text(help_text_3)))
-                    .push_maybe(self.warning.as_ref().map(|w| {
+                    .push(self.warning.as_ref().map(|w| {
                         notification::warning(w.to_string(), w.to_string()).width(Length::Fill)
                     }))
                     .push(

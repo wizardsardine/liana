@@ -144,12 +144,12 @@ impl BuySellPanel {
                         .align_y(Alignment::Center),
                 )
                 // error display
-                .push_maybe(self.error.as_ref().map(|err| {
+                .push(self.error.as_ref().map(|err| {
                     Container::new(text(err).size(12).style(theme::text::error).center())
                         .padding(10)
                         .style(theme::card::invalid)
                 }))
-                .push_maybe(
+                .push(
                     self.error
                         .is_some()
                         .then(|| Space::new().height(Length::Fixed(20.0))),
@@ -649,14 +649,14 @@ impl BuySellPanel {
                         })
                         .width(Length::Fill),
                 )
-                .push_maybe({
+                .push({
                     (matches!(buy_or_sell_selected, Some(true))).then(|| {
                         button::secondary(Some(plus_icon()), "Generate New Address")
                             .on_press(ViewMessage::BuySell(BuySellMessage::CreateNewAddress))
                             .width(iced::Length::Fill)
                     })
                 })
-                .push_maybe({
+                .push({
                     (matches!(buy_or_sell_selected, Some(false))).then(|| {
                         button::secondary(Some(globe_icon()), "Continue")
                             .on_press_maybe(
@@ -667,7 +667,7 @@ impl BuySellPanel {
                             .width(iced::Length::Fill)
                     })
                 })
-                .push_maybe({
+                .push({
                     buy_or_sell_selected.is_none().then(|| {
                         button::secondary(Some(escape_icon()), "Log Out")
                             .on_press(ViewMessage::BuySell(BuySellMessage::LogOut))

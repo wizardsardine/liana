@@ -78,7 +78,7 @@ pub fn psbts_view(spend_txs: &[SpendTx]) -> Element<'_, Message> {
                         .on_press(Message::Menu(Menu::CreateSpendTx)),
                 ),
         )
-        .push_maybe(spend_txs.is_empty().then(|| {
+        .push(spend_txs.is_empty().then(|| {
             placeholder(
                 receipt_icon().size(80),
                 "No PSBTs yet",
@@ -134,7 +134,7 @@ fn spend_tx_list_view(i: usize, tx: &SpendTx) -> Element<'_, Message> {
                                     .push(icon::key_icon().style(theme::text::secondary)),
                             )
                         })
-                        .push_maybe(
+                        .push(
                             tx.labels
                                 .get(&tx.psbt.unsigned_tx.compute_txid().to_string())
                                 .map(p1_regular),
@@ -143,12 +143,12 @@ fn spend_tx_list_view(i: usize, tx: &SpendTx) -> Element<'_, Message> {
                         .align_y(Alignment::Center)
                         .width(Length::Fill),
                 )
-                .push_maybe(if tx.is_batch() {
+                .push(if tx.is_batch() {
                     Some(badge::batch())
                 } else {
                     None
                 })
-                .push_maybe(match tx.status {
+                .push(match tx.status {
                     SpendStatus::Deprecated => Some(badge::deprecated().width(120.0)),
                     SpendStatus::Broadcast => Some(badge::unconfirmed().width(120.0)),
                     SpendStatus::Spent => Some(badge::spent().width(120.0)),
@@ -162,7 +162,7 @@ fn spend_tx_list_view(i: usize, tx: &SpendTx) -> Element<'_, Message> {
                         } else {
                             Container::new(p1_regular("Self-transfer"))
                         })
-                        .push_maybe(tx.fee_amount.map(|fee| amount_with_size(&fee, P2_SIZE)))
+                        .push(tx.fee_amount.map(|fee| amount_with_size(&fee, P2_SIZE)))
                         .width(Length::Fixed(140.0)),
                 )
                 .align_y(Alignment::Center)

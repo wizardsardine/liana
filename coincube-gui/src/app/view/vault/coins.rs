@@ -28,7 +28,7 @@ pub fn coins_view<'a>(
 ) -> Element<'a, Message> {
     Column::new()
         .push(Container::new(h3("Coins")).width(Length::Fill))
-        .push_maybe(coins.is_empty().then(|| {
+        .push(coins.is_empty().then(|| {
             placeholder(
                 coins_icon().size(80),
                 "No coins yet",
@@ -143,7 +143,7 @@ fn coin_list_view<'a>(
                 .padding(10)
                 .on_press(Message::Select(index)),
             )
-            .push_maybe(if collapsed {
+            .push(if collapsed {
                 Some(
                     Column::new()
                         .padding(10)
@@ -160,7 +160,7 @@ fn coin_list_view<'a>(
                             })
                             .width(Length::Fill),
                         )
-                        .push_maybe(if coin.spend_info.is_none() {
+                        .push(if coin.spend_info.is_none() {
                             if let Some(b) = coin.block_height {
                                 if blockheight > b as u32 + timelock as u32 {
                                     Some(Container::new(
@@ -261,7 +261,7 @@ fn coin_list_view<'a>(
                                         )
                                         .spacing(5),
                                 )
-                                .push_maybe(coin.block_height.map(|b| {
+                                .push(coin.block_height.map(|b| {
                                     Row::new()
                                         .push(
                                             p2_regular("Block height:")

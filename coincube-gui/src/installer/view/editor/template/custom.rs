@@ -193,7 +193,7 @@ pub fn custom_template<'a>(
                                 message::DefineDescriptor::AddRecoveryPath,
                             )),
                     )
-                    .push_maybe(
+                    .push(
                         safety_net_path.is_none().then_some(tooltip::Tooltip::new(
                             button::secondary(Some(icon::plus_icon()), "Add Safety Net")
                                 .width(Length::Fixed(210.0))
@@ -208,7 +208,7 @@ pub fn custom_template<'a>(
                     )
                     .spacing(10),
             )
-            .push_maybe(safety_net_path.map(|(sn_index, sn_path)| {
+            .push(safety_net_path.map(|(sn_index, sn_path)| {
                 path(
                     color::WHITE,
                     Some("Safety Net:".to_string()),
