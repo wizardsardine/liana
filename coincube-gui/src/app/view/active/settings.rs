@@ -578,6 +578,7 @@ pub enum CapsuleState {
     Success,
 }
 
+#[allow(clippy::too_many_arguments)]
 fn settings_section(
     title: &str,
     subtitle: &str,

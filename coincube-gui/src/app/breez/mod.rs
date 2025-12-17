@@ -58,7 +58,7 @@ pub async fn load_breez_client(
         .ok_or(BreezError::SignerNotFound(active_signer_fingerprint))?;
 
     // Create Breez config
-    let breez_config = BreezConfig::from_env(network, &datadir.to_path_buf())?;
+    let breez_config = BreezConfig::from_env(network, datadir)?;
 
     // Connect to Breez SDK with the signer
     let breez_client =
