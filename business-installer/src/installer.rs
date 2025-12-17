@@ -51,7 +51,10 @@ impl BusinessInstaller {
             state,
         };
 
-        (installer, Task::none())
+        // Focus the email input on initial load
+        let focus_task = liana_ui::widget::text_input::focus("login_email");
+
+        (installer, focus_task)
     }
 }
 

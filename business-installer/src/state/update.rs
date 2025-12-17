@@ -2,6 +2,7 @@ use super::{app::AppState, message::Msg, views, State, View};
 use crate::backend::{Backend, Error, Notification, UserRole, Wallet, WalletStatus};
 use iced::Task;
 use liana_connect::{Key, PolicyTemplate, SpendingPath, Timelock};
+use liana_ui::widget::text_input;
 use uuid::Uuid;
 
 /// Derive the user's role for a specific wallet based on wallet data
@@ -77,10 +78,10 @@ impl State {
             Msg::NavigateToKeys => self.on_navigate_to_keys(),
             Msg::NavigateToOrgSelect => self.on_navigate_to_org_select(),
             Msg::NavigateToWalletSelect => self.on_navigate_to_wallet_select(),
-            Msg::NavigateBack => self.on_navigate_back(),
+            Msg::NavigateBack => return self.on_navigate_back(),
 
             // Backend
-            Msg::BackendNotif(notif) => self.on_backend_notif(notif),
+            Msg::BackendNotif(notif) => return self.on_backend_notif(notif),
             Msg::BackendDisconnected => self.on_backend_disconnected(),
 
             // Warnings
@@ -91,12 +92,12 @@ impl State {
     }
 
     #[rustfmt::skip]
-    fn on_backend_notif(&mut self, response: Notification) {
+    fn on_backend_notif(&mut self, response: Notification) -> Task<Msg> {
         match response {
             Notification::Connected => self.on_backend_connected(),
             Notification::Disconnected => self.on_backend_disconnected(),
             // Notification::Orgs(_) => self.on_backend_orgs(),
-            Notification::AuthCodeSent => self.on_backend_auth_code_sent(),
+            Notification::AuthCodeSent => return self.on_backend_auth_code_sent(),
             Notification::InvalidEmail => self.on_backend_invalid_email(),
             Notification::AuthCodeFail => self.on_backend_auth_code_fail(),
             Notification::LoginSuccess => self.on_backend_login_success(),
@@ -106,6 +107,7 @@ impl State {
             Notification::Wallet(_) => todo!(),
             Notification::User(_) => todo!(),
         }
+        Task::none()
     }
 }
 
@@ -438,27 +440,36 @@ impl State {
         }
     }
 
-    fn on_navigate_back(&mut self) {
+    fn on_navigate_back(&mut self) -> Task<Msg> {
         match self.current_view {
             View::WalletSelect => {
                 self.current_view = View::OrgSelect;
+                Task::none()
             }
             View::WalletEdit => {
                 self.current_view = View::WalletSelect;
+                Task::none()
             }
             View::Xpub => {
                 self.current_view = View::WalletSelect;
+                Task::none()
             }
             View::OrgSelect => {
                 self.current_view = View::Login;
+                // Focus email input when returning to login
+                text_input::focus("login_email")
             }
             View::Login => {
                 if self.views.login.current == views::LoginState::CodeEntry {
                     self.views.login.email.processing = false;
                     self.views.login.current = views::LoginState::EmailEntry;
+                    // Focus email input when going back from code entry
+                    text_input::focus("login_email")
+                } else {
+                    Task::none()
                 }
             }
-            _ => {}
+            _ => Task::none(),
         }
     }
 }
@@ -485,7 +496,7 @@ impl State {
         // TODO: ?
     }
 
-    fn on_backend_auth_code_sent(&mut self) {
+    fn on_backend_auth_code_sent(&mut self) -> Task<Msg> {
         self.views.login.current = views::LoginState::CodeEntry;
         // Clear any previous errors
         self.views.login.code.form.warning = None;
@@ -497,6 +508,8 @@ impl State {
             valid: true,
         };
         self.views.login.email.processing = false;
+        // Focus the code input field
+        text_input::focus("login_code")
     }
 
     fn on_backend_invalid_email(&mut self) {

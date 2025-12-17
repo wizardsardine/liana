@@ -18,6 +18,7 @@ pub fn login_code_view(state: &State) -> Element<'_, Msg> {
     } else {
         form::Form::new_disabled("Token", &state.views.login.code.form)
     }
+    .id("login_code")
     .size(16)
     .padding(10);
     let form = Container::new(form).width(Length::Fill);
