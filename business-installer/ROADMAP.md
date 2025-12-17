@@ -14,7 +14,7 @@
   - [x] 1.4 Filter/Search Bar (WS Manager Only)
   - [x] 1.5 Better Keyboard Navigation in Login
   - [ ] 1.6 Load Wallet Subflow
-  - [ ] 1.7 Logout Feature
+  - [x] 1.7 Logout Feature
 - [ ] **3.2 Owner Flow**
 - [ ] **3.3 Participant Flow**
 - [ ] **4. Local Storage**
@@ -125,13 +125,13 @@ When user arrives at wallet selection, three possible subflows based on status:
 - [ ] Store auth cache to disk before exit (see Section 4)
 - [ ] `exit_maybe()` must return `NextState::LoginLianaBusiness`
 
-### 1.7 Logout Feature
-- [ ] Add logout button/action in UI (accessible from main views)
-- [ ] Clear authentication token from memory
-- [ ] Clear auth cache from disk (`connect.json`)
-- [ ] Close WebSocket connection
-- [ ] Reset application state to initial login view
-- [ ] Handle logout in debug mode (clear dummy token)
+### 1.7 Logout Feature ✓
+- [x] Add logout button/action in UI (accessible from main views)
+- [x] Clear authentication token from memory
+- [x] Clear auth cache from disk (`connect.json`)
+- [x] Close WebSocket connection
+- [x] Reset application state to initial login view
+- [x] Handle logout in debug mode (clear dummy token)
 
 ## 2. Back ✓
 
@@ -297,6 +297,17 @@ Store data in `network_dir` matching liana-gui patterns. Reference:
 ## Bugfixes
 
 ## Changelog
+
+### 2025-12-19
+- 1.7 Logout Feature: Implemented
+  - Added logout button that replaces "Previous" button when user is authenticated
+  - Logout button uses back arrow icon for consistency with navigation
+  - Clears authentication token from memory
+  - Removes auth cache from disk (`connect.json`) using `filter_connect_cache`
+  - Closes WebSocket connection
+  - Resets application state (login state, form values, selected org/wallet)
+  - Navigates to login view and focuses email input
+  - Handles both production and debug modes
 
 ### 2025-12-18
 - 1.4 Filter/Search Bar (WS Manager Only): Implemented

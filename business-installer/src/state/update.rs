@@ -95,6 +95,9 @@ impl State {
             // Warnings
             Msg::WarningShowModal(title, message) => self.on_warning_show_modal(title, message),
             Msg::WarningCloseModal => self.on_warning_close_modal(),
+
+            // Logout
+            Msg::Logout => return self.on_logout(),
         }
         Task::none()
     }
@@ -572,5 +575,36 @@ impl State {
             "Connection Error",
             "Lost connection to the server. Please restart the application.",
         );
+    }
+
+    fn on_logout(&mut self) -> Task<Msg> {
+        // Call backend logout to clear token, close connection, and remove cache
+        self.backend.logout();
+
+        // Reset login state to EmailEntry
+        self.views.login.current = views::LoginState::EmailEntry;
+
+        // Clear email and code form values
+        self.views.login.email.form.value = String::new();
+        self.views.login.email.form.valid = false;
+        self.views.login.email.form.warning = None;
+        self.views.login.email.processing = false;
+        self.views.login.code.form.value = String::new();
+        self.views.login.code.form.valid = false;
+        self.views.login.code.form.warning = None;
+        self.views.login.code.processing = false;
+
+        // Reset application state
+        self.app.selected_org = None;
+        self.app.selected_wallet = None;
+        self.app.current_wallet_template = None;
+        self.app.reconnecting = false;
+        self.app.exit_to_liana_lite = false;
+
+        // Navigate to login view
+        self.current_view = View::Login;
+
+        // Focus email input
+        text_input::focus("login_email")
     }
 }
