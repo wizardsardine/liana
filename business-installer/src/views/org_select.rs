@@ -4,7 +4,7 @@ use crate::{
 };
 use iced::{widget::row, Alignment, Length};
 use liana_connect::models::{UserRole, Wallet, WalletStatus};
-use liana_ui::{component::text, widget::*};
+use liana_ui::{component::{form, text}, widget::*};
 
 use iced::widget::Space;
 use uuid::Uuid;
@@ -83,24 +83,9 @@ pub fn org_select_view(state: &State) -> Element<'_, Msg> {
         .spacing(10)
         .align_x(Alignment::Center)
         .padding(20);
+    
     let orgs = state.backend.get_orgs();
-    if orgs.is_empty() {
-        org_list = org_list.push(no_org_card());
-    } else {
-        for (id, org) in &orgs {
-            // Count only wallets accessible to this user
-            let wallet_count = org
-                .wallets
-                .iter()
-                .filter_map(|wallet_id| state.backend.get_wallet(*wallet_id))
-                .filter(|wallet| is_wallet_accessible(wallet, current_user_email))
-                .count();
-            let card = org_card(org.name.clone(), wallet_count, *id);
-            org_list = org_list.push(card);
-        }
-    }
-    org_list = org_list.push(Space::with_height(50));
-
+    
     // Determine if user is WSManager (not owner/participant of any wallet in any org)
     let is_ws_manager = {
         let email_lower = current_user_email.to_lowercase();
@@ -134,6 +119,56 @@ pub fn org_select_view(state: &State) -> Element<'_, Msg> {
         }
         !is_owner_or_participant && !orgs.is_empty()
     };
+
+    // Add search bar for WS Manager users
+    if is_ws_manager && !orgs.is_empty() {
+        let search_value = form::Value {
+            value: state.views.org_select.search_filter.clone(),
+            warning: None,
+            valid: true,
+        };
+        let search_form = form::Form::new_trimmed("Search organizations...", &search_value, Msg::OrgSelectUpdateSearchFilter)
+            .size(16)
+            .padding(10);
+        let search_container = Container::new(search_form)
+            .width(Length::Fixed(500.0))
+            .align_x(Alignment::Center);
+        org_list = org_list.push(search_container);
+        org_list = org_list.push(Space::with_height(10));
+    }
+
+    // Filter organizations by search text (case-insensitive)
+    let search_filter = state.views.org_select.search_filter.to_lowercase();
+    let filtered_orgs: Vec<_> = orgs
+        .iter()
+        .filter(|(_, org)| {
+            if is_ws_manager && !search_filter.is_empty() {
+                org.name.to_lowercase().contains(&search_filter)
+            } else {
+                true
+            }
+        })
+        .collect();
+
+    if filtered_orgs.is_empty() && !orgs.is_empty() {
+        // Show message when search filter returns no results
+        org_list = org_list.push(text::p1_regular("No organizations found matching your search."));
+    } else if orgs.is_empty() {
+        org_list = org_list.push(no_org_card());
+    } else {
+        for (id, org) in &filtered_orgs {
+            // Count only wallets accessible to this user
+            let wallet_count = org
+                .wallets
+                .iter()
+                .filter_map(|wallet_id| state.backend.get_wallet(*wallet_id))
+                .filter(|wallet| is_wallet_accessible(wallet, current_user_email))
+                .count();
+            let card = org_card(org.name.clone(), wallet_count, **id);
+            org_list = org_list.push(card);
+        }
+    }
+    org_list = org_list.push(Space::with_height(50));
 
     let role_badge = if is_ws_manager {
         Some("WS Manager")

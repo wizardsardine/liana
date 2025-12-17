@@ -10,6 +10,7 @@ pub mod xpub;
 pub use keys::{EditKeyModalState, KeysViewState};
 pub use login::{Login, LoginState};
 pub use modals::ModalsState;
+pub use org_select::OrgSelectState;
 pub use path::{EditPathModalState, PathsViewState};
 pub use wallet_select::WalletSelectState;
 
@@ -20,6 +21,7 @@ pub struct ViewsState {
     pub keys: KeysViewState,
     pub paths: PathsViewState,
     pub login: Login,
+    pub org_select: OrgSelectState,
     pub wallet_select: WalletSelectState,
 }
 
@@ -30,6 +32,7 @@ impl ViewsState {
             keys: KeysViewState::default(),
             paths: PathsViewState::default(),
             login: Login::default(),
+            org_select: OrgSelectState::default(),
             wallet_select: WalletSelectState::default(),
         }
     }

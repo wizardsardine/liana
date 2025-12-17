@@ -17,6 +17,10 @@ pub enum Msg {
 
     // Wallet selection
     WalletSelectToggleHideFinalized(bool),
+    WalletSelectUpdateSearchFilter(String),
+
+    // Organization selection
+    OrgSelectUpdateSearchFilter(String),
 
     // Key management
     KeyAdd,
