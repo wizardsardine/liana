@@ -156,6 +156,36 @@ pub fn create_spend_tx<'a>(
     loading_fee_estimate: Option<usize>,
 ) -> Element<'a, Message> {
     let is_self_send = recipients.is_empty();
+
+    let can_proceed = is_valid
+        && !duplicate
+        && error.is_none()
+        && (is_self_send
+            || recovery_timelock.is_some()
+            || Some(&Amount::from_sat(0)) == amount_left);
+
+    let disabled_hint = if can_proceed {
+        None
+    } else if feerate.value.is_empty() {
+        Some("Please set a feerate.")
+    } else if !feerate.valid {
+        Some("Invalid feerate.")
+    } else if duplicate {
+        Some("Duplicate recipient address.")
+    } else if coins.iter().all(|(_, selected)| !selected) {
+        Some("Please select at least one coin.")
+    } else if !is_self_send && recovery_timelock.is_none() {
+        match amount_left {
+            None => Some("Enter recipient address and amount."),
+            Some(amount) if amount.to_sat() != 0 => Some("Insufficient funds."),
+            _ => None,
+        }
+    } else if error.is_some() {
+        Some("Please correct all the errors.")
+    } else {
+        None
+    };
+
     dashboard(
         menu,
         cache,
@@ -358,6 +388,17 @@ pub fn create_spend_tx<'a>(
                 Row::new()
                     .spacing(20)
                     .align_y(Alignment::Center)
+                    .push(disabled_hint.map(|hint| {
+                        Container::new(
+                            Row::new()
+                                .spacing(5)
+                                .align_y(Alignment::Center)
+                                .push(icon::warning_icon())
+                                .push(text(hint)),
+                        )
+                        .padding(10)
+                        .style(theme::card::warning)
+                    }))
                     .push_maybe(
                         (!is_first_step).then_some(
                             button::secondary(None, "< Previous")
@@ -371,21 +412,13 @@ pub fn create_spend_tx<'a>(
                             .on_press(Message::CreateSpend(CreateSpendMessage::Clear))
                             .width(Length::Fixed(100.0)),
                     )
-                    .push(
-                        if is_valid
-                            && !duplicate
-                            && error.is_none()
-                            && (is_self_send
-                                || recovery_timelock.is_some()
-                                || Some(&Amount::from_sat(0)) == amount_left)
-                        {
-                            button::primary(None, "Next")
-                                .on_press(Message::CreateSpend(CreateSpendMessage::Generate))
-                                .width(Length::Fixed(100.0))
-                        } else {
-                            button::secondary(None, "Next").width(Length::Fixed(100.0))
-                        },
-                    ),
+                    .push(if can_proceed {
+                        button::primary(None, "Next")
+                            .on_press(Message::CreateSpend(CreateSpendMessage::Generate))
+                            .width(Length::Fixed(100.0))
+                    } else {
+                        button::secondary(None, "Next").width(Length::Fixed(100.0))
+                    }),
             )
             .push(Space::new().height(Length::Fixed(20.0)))
             .spacing(20),
