@@ -26,7 +26,6 @@ pub enum MavapayMessage {
     QuoteFulfilled(GetOrderResponse),
 }
 
-
 /// Checks if a country ISO code is in the African region (Mavapay supported)
 #[inline(always)]
 pub fn mavapay_supported(iso_code: &str) -> bool {

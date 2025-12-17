@@ -5,7 +5,7 @@ use coincube_ui::{
     widget::*,
 };
 use iced::{
-    widget::{Column, Container, Row, Space},
+    widget::{Column, Container, Row},
     Alignment, Length,
 };
 
