@@ -11,7 +11,7 @@
   - [x] 1.1 Wallet Selection View
   - [ ] 1.2 Edit Wallet Template Subflow (needed for completion of WS Manager flow)
   - [ ] 1.3 Add Key Information Subflow (needed for completion of WS Manager flow)
-  - [ ] 1.4 Filter/Search Bar (WS Manager Only)
+  - [x] 1.4 Filter/Search Bar (WS Manager Only)
   - [x] 1.5 Better Keyboard Navigation in Login
   - [ ] 1.6 Load Wallet Subflow
   - [ ] 1.7 Logout Feature
@@ -98,14 +98,13 @@ When user arrives at wallet selection, three possible subflows based on status:
 - [ ] Validate xpub format and network compatibility
 - [ ] Save xpub to key via backend
 
-### 1.4 Filter/Search Bar (WS Manager Only)
-- [ ] Add search/filter bar to organization selection page
-  - [ ] Filter organizations by name
-  - [ ] Only visible for WS Manager users
+### 1.4 Filter/Search Bar (WS Manager Only) ✓
+- [x] Add search/filter bar to organization selection page
+  - [x] Filter organizations by name
+  - [x] Only visible for WS Manager users
 - [x] Add filter to wallet selection page
   - [x] "Hide finalized wallets" checkbox (WSManager only)
-  - [ ] Filter wallets by name (text search)
-  - [ ] Filter wallets by status dropdown
+  - [x] Filter wallets by name (text search)
 
 ### 1.5 Better Keyboard Navigation in Login ✓
 - [x] Improve keyboard navigation for login flow
@@ -300,6 +299,15 @@ Store data in `network_dir` matching liana-gui patterns. Reference:
 ## Changelog
 
 ### 2025-12-18
+- 1.4 Filter/Search Bar (WS Manager Only): Implemented
+  - Added search bar to organization selection page (WS Manager only)
+  - Case-insensitive filtering by organization name
+  - Added search bar to wallet selection page (all users)
+  - Case-insensitive filtering by wallet alias/name
+  - Search inputs constrained to 500px width to match card width
+  - Shows "No organizations/wallets found matching your search" when filter returns no results
+  - Added `OrgSelectState` and `WalletSelectState.search_filter` for state management
+  - Added `OrgSelectUpdateSearchFilter` and `WalletSelectUpdateSearchFilter` messages
 - 1.5 Better Keyboard Navigation in Login: Implemented
   - Added `on_submit()`, `on_submit_maybe()`, and `id()` methods to `Form` component in liana-ui
   - Email form: Enter key submits when valid, ID `"login_email"`

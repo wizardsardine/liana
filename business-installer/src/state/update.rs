@@ -46,6 +46,14 @@ impl State {
             Msg::WalletSelectToggleHideFinalized(checked) => {
                 self.views.wallet_select.hide_finalized = checked;
             }
+            Msg::WalletSelectUpdateSearchFilter(filter) => {
+                self.views.wallet_select.search_filter = filter;
+            }
+
+            // Organization selection
+            Msg::OrgSelectUpdateSearchFilter(filter) => {
+                self.views.org_select.search_filter = filter;
+            }
 
             // Keys management
             Msg::KeyCancelModal => self.views.keys.on_key_cancel_modal(),

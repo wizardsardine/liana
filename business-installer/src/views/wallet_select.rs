@@ -6,7 +6,11 @@ use iced::{
     widget::{checkbox, row},
     Alignment, Length,
 };
-use liana_ui::{component::text, theme, widget::*};
+use liana_ui::{
+    component::{form, text},
+    theme,
+    widget::*,
+};
 
 use iced::widget::Space;
 use uuid::Uuid;
@@ -214,6 +218,30 @@ pub fn wallet_select_view(state: &State) -> Element<'_, Msg> {
         wallet_list = wallet_list.push(Space::with_height(10));
     }
 
+    // Add search bar for all users when there are wallets
+    if has_wallets {
+        let search_value = form::Value {
+            value: state.views.wallet_select.search_filter.clone(),
+            warning: None,
+            valid: true,
+        };
+        let search_form = form::Form::new_trimmed(
+            "Search wallets...",
+            &search_value,
+            Msg::WalletSelectUpdateSearchFilter,
+        )
+        .size(16)
+        .padding(10);
+        let search_container = Container::new(search_form)
+            .width(Length::Fixed(500.0))
+            .align_x(Alignment::Center);
+        wallet_list = wallet_list.push(search_container);
+        wallet_list = wallet_list.push(Space::with_height(10));
+    }
+
+    // Filter wallets by search text (case-insensitive)
+    let search_filter = state.views.wallet_select.search_filter.to_lowercase();
+
     if has_wallets {
         if let Some(org_id) = state.app.selected_org {
             if let Some(org) = state.backend.get_org(org_id) {
@@ -225,10 +253,8 @@ pub fn wallet_select_view(state: &State) -> Element<'_, Msg> {
                         let role = derive_user_role(wallet, current_user_email);
 
                         // Participants should NOT see Draft wallets
-                        let is_draft = matches!(
-                            wallet.status,
-                            WalletStatus::Created | WalletStatus::Drafted
-                        );
+                        let is_draft =
+                            matches!(wallet.status, WalletStatus::Created | WalletStatus::Drafted);
                         if is_draft && role == UserRole::Participant {
                             return None; // Skip this wallet for participants
                         }
@@ -241,19 +267,33 @@ pub fn wallet_select_view(state: &State) -> Element<'_, Msg> {
                             return None;
                         }
 
+                        // Filter by search text (case-insensitive)
+                        if !search_filter.is_empty()
+                            && !wallet.alias.to_lowercase().contains(&search_filter)
+                        {
+                            return None;
+                        }
+
                         Some((*id, wallet, role))
                     })
                     .collect();
 
                 // Sort by status: Draft first, Finalized last
-                wallets_to_display.sort_by_key(|(_, wallet, _)| status_sort_priority(&wallet.status));
+                wallets_to_display
+                    .sort_by_key(|(_, wallet, _)| status_sort_priority(&wallet.status));
 
-                // Render sorted wallets
-                for (id, wallet, role) in wallets_to_display {
-                    let key_count = wallet.template.as_ref().map(|t| t.keys.len()).unwrap_or(0);
-                    let card =
-                        wallet_card(wallet.alias.clone(), key_count, &wallet.status, &role, id);
-                    wallet_list = wallet_list.push(card);
+                // Show message when search filter returns no results
+                if wallets_to_display.is_empty() && !search_filter.is_empty() {
+                    wallet_list = wallet_list
+                        .push(text::p1_regular("No wallets found matching your search."));
+                } else {
+                    // Render sorted wallets
+                    for (id, wallet, role) in wallets_to_display {
+                        let key_count = wallet.template.as_ref().map(|t| t.keys.len()).unwrap_or(0);
+                        let card =
+                            wallet_card(wallet.alias.clone(), key_count, &wallet.status, &role, id);
+                        wallet_list = wallet_list.push(card);
+                    }
                 }
             }
         }
