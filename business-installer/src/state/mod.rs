@@ -5,7 +5,8 @@ use crate::{
     client::Client,
     state::app::AppState,
     views::{
-        home_view, keys_view, login_view, modals, org_select_view, paths_view, wallet_select_view,
+        keys_view, login_view, modals, org_select_view, paths_view, template_builder_view,
+        wallet_select_view, xpub_view,
     },
 };
 use liana_ui::widget::{modal::Modal, Element};
@@ -23,6 +24,7 @@ pub enum View {
     OrgSelect,
     WalletSelect,
     WalletEdit,
+    Xpub,
     Paths,
     Keys,
 }
@@ -80,7 +82,8 @@ impl State {
             View::Login => login_view(self),
             View::OrgSelect => org_select_view(self),
             View::WalletSelect => wallet_select_view(self),
-            View::WalletEdit => home_view(self),
+            View::WalletEdit => template_builder_view(self),
+            View::Xpub => xpub_view(self),
             View::Paths => paths_view(self),
             View::Keys => keys_view(self),
         };

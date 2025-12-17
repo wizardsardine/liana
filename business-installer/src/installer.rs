@@ -12,6 +12,7 @@ use crossbeam::channel;
 use iced::{Subscription, Task};
 use liana::miniscript::bitcoin::{self};
 use liana_gui::{
+    app::settings::{AuthConfig, WalletId},
     dir::LianaDirectory,
     installer::{Installer, NextState, UserFlow},
     services::connect::client::backend::BackendClient,
@@ -90,7 +91,39 @@ impl<'a> Installer<'a, Message> for BusinessInstaller {
     }
 
     fn exit_maybe(&mut self, _msg: &Message) -> Option<NextState> {
-        // Not implemented for now as per requirements
+        // Check if we should exit to Liana Lite (user selected a Final wallet)
+        if self.state.app.exit_to_liana_lite {
+            // Reset the flag
+            self.state.app.exit_to_liana_lite = false;
+
+            // Get wallet ID from selected wallet
+            let wallet_id_str = self
+                .state
+                .app
+                .selected_wallet
+                .map(|id| id.to_string())
+                .unwrap_or_default();
+
+            // Get user email from login state
+            let email = self.state.views.login.email.form.value.clone();
+
+            // Create WalletId (using wallet UUID as descriptor checksum placeholder)
+            let directory_wallet_id = WalletId::new(wallet_id_str.clone(), None);
+
+            // Create AuthConfig with user's email and wallet ID
+            let auth_cfg = AuthConfig {
+                email,
+                wallet_id: wallet_id_str,
+                refresh_token: None,
+            };
+
+            return Some(NextState::LoginLianaLite {
+                datadir: self.datadir.clone(),
+                network: self.network,
+                directory_wallet_id,
+                auth_cfg,
+            });
+        }
         None
     }
 }

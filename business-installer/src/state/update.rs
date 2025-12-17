@@ -1,8 +1,27 @@
 use super::{app::AppState, message::Msg, views, State, View};
-use crate::backend::{Backend, Error, Notification};
+use crate::backend::{Backend, Error, Notification, UserRole, Wallet, WalletStatus};
 use iced::Task;
 use liana_connect::{Key, PolicyTemplate, SpendingPath, Timelock};
 use uuid::Uuid;
+
+/// Derive the user's role for a specific wallet based on wallet data
+fn derive_user_role(wallet: &Wallet, current_user_email: &str) -> UserRole {
+    let email_lower = current_user_email.to_lowercase();
+    // Check if user is wallet owner
+    if wallet.owner.email.to_lowercase() == email_lower {
+        return UserRole::Owner;
+    }
+    // Check if user is a participant (has keys with matching email)
+    if let Some(template) = &wallet.template {
+        for key in template.keys.values() {
+            if key.email.to_lowercase() == email_lower {
+                return UserRole::Participant;
+            }
+        }
+    }
+    // Default to WSManager (platform admin)
+    UserRole::WSManager
+}
 
 // Update routing logic
 impl State {
@@ -21,6 +40,11 @@ impl State {
             Msg::OrgSelected(id) => self.on_org_selected(id),
             Msg::OrgWalletSelected(id) => self.on_org_wallet_selected(id),
             Msg::OrgCreateNewWallet => self.on_org_create_new_wallet(),
+
+            // Wallet selection
+            Msg::WalletSelectToggleHideFinalized(checked) => {
+                self.views.wallet_select.hide_finalized = checked;
+            }
 
             // Keys management
             Msg::KeyCancelModal => self.views.keys.on_key_cancel_modal(),
@@ -125,8 +149,43 @@ impl State {
         }
     }
     fn on_org_wallet_selected(&mut self, id: Uuid) {
-        self.app.selected_wallet = Some(id);
+        // Get wallet and check access before loading
+        let (wallet_status, user_role) = {
+            let current_email = &self.views.login.email.form.value;
+            if let Some(org_id) = self.app.selected_org {
+                if let Some(org) = self.backend.get_org(org_id) {
+                    if let Some(wallet) = org.wallets.get(&id) {
+                        let role = derive_user_role(wallet, current_email);
+                        (Some(wallet.status.clone()), Some(role))
+                    } else {
+                        (None, None)
+                    }
+                } else {
+                    (None, None)
+                }
+            } else {
+                (None, None)
+            }
+        };
+
+        // Check access based on role + status
+        if let (Some(status), Some(role)) = (&wallet_status, &user_role) {
+            match (status, role) {
+                // Draft + Participant -> Access Denied
+                (WalletStatus::Created | WalletStatus::Drafted, UserRole::Participant) => {
+                    self.on_warning_show_modal(
+                        "Access Denied",
+                        "Participants cannot access Draft wallets. Please wait for the wallet to be validated.",
+                    );
+                    return;
+                }
+                // All other combinations proceed
+                _ => {}
+            }
+        }
+
         // Load wallet template into AppState
+        self.app.selected_wallet = Some(id);
         if let Some(org_id) = self.app.selected_org {
             if let Some(org) = self.backend.get_org(org_id) {
                 if let Some(wallet) = org.wallets.get(&id) {
@@ -141,7 +200,23 @@ impl State {
                 }
             }
         }
-        self.current_view = View::WalletEdit;
+
+        // Route based on wallet status
+        match wallet_status {
+            Some(WalletStatus::Validated) => {
+                // Validated -> Add Key Information (xpub entry)
+                self.current_view = View::Xpub;
+            }
+            Some(WalletStatus::Finalized) => {
+                // Final -> Signal exit to Liana Lite
+                // exit_maybe() will return NextState::LoginLianaLite
+                self.app.exit_to_liana_lite = true;
+            }
+            _ => {
+                // Draft + (WSManager|Owner) -> Edit Template
+                self.current_view = View::WalletEdit;
+            }
+        }
     }
     fn on_org_create_new_wallet(&mut self) {
         // Create a new blank wallet template
@@ -369,6 +444,9 @@ impl State {
                 self.current_view = View::OrgSelect;
             }
             View::WalletEdit => {
+                self.current_view = View::WalletSelect;
+            }
+            View::Xpub => {
                 self.current_view = View::WalletSelect;
             }
             View::OrgSelect => {

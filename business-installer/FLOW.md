@@ -137,12 +137,28 @@ Views are determined by `State::current_view` and `State::route()`:
 +---------------+------------------+------------------------------------+
 | Login         | Initial view     | Email/OTP authentication           |
 | OrgSelect     | After auth       | Organization picker                |
-| WalletSelect  | After org select | Wallet picker or create new        |
+| WalletSelect  | After org select | Wallet picker with status/role     |
 | WalletEdit    | After wallet     | Template overview (home)           |
 | Paths         | From home        | Configure spending paths           |
 | Keys          | From home        | Manage keys                        |
 +---------------+------------------+------------------------------------+
 ```
+
+### Wallet Selection Details
+
+Each wallet card displays:
+- Wallet alias and key count
+- Status badge (Draft/Validated/Final)
+- User's role for that wallet (Manager/Owner/Participant)
+
+Role is derived from wallet data:
+1. If user email matches `wallet.owner.email` -> Owner
+2. If user email matches any key's email -> Participant
+3. Otherwise -> WSManager
+
+Access control on wallet selection:
+- Draft + Participant -> Access Denied (warning modal)
+- All other combinations -> Proceed to WalletEdit
 
 ### Navigation Flow
 
@@ -156,9 +172,11 @@ Login (CodeEntry)
 OrgSelect
     |
     v [OrgSelected]
-WalletSelect
+WalletSelect (shows status badges + roles)
     |
-    +-------> [OrgWalletSelected] --> WalletEdit
+    +-------> [OrgWalletSelected] --> Access check --> WalletEdit
+    |                                    |
+    |                                    +---> (Draft + Participant) --> Warning Modal
     |
     +-------> [OrgCreateNewWallet] --> WalletEdit
 

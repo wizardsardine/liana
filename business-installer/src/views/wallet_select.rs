@@ -1,24 +1,117 @@
 use crate::{
-    backend::Backend,
+    backend::{Backend, UserRole, Wallet, WalletStatus},
     state::{Msg, State},
 };
-use iced::{widget::row, Alignment, Length};
-use liana_ui::{component::text, widget::*};
+use iced::{
+    widget::{checkbox, row},
+    Alignment, Length,
+};
+use liana_ui::{component::text, theme, widget::*};
 
 use iced::widget::Space;
 use uuid::Uuid;
 
 use super::{layout, menu_entry};
 
-pub fn wallet_card<'a>(alias: String, key_count: usize, id: Uuid) -> Element<'a, Msg> {
+/// Derive the user's role for a specific wallet based on wallet data
+fn derive_user_role(wallet: &Wallet, current_user_email: &str) -> UserRole {
+    let email_lower = current_user_email.to_lowercase();
+    // Check if user is wallet owner
+    if wallet.owner.email.to_lowercase() == email_lower {
+        return UserRole::Owner;
+    }
+    // Check if user is a participant (has keys with matching email)
+    if let Some(template) = &wallet.template {
+        for key in template.keys.values() {
+            if key.email.to_lowercase() == email_lower {
+                return UserRole::Participant;
+            }
+        }
+    }
+    // Default to WSManager (platform admin)
+    UserRole::WSManager
+}
+
+/// Fixed width for status badges to ensure alignment
+const STATUS_BADGE_WIDTH: f32 = 80.0;
+
+/// Render a colored status badge for wallet status
+/// Returns empty space for finalized wallets (no badge needed for final state)
+fn status_badge(status: &WalletStatus) -> Element<'static, Msg> {
+    match status {
+        WalletStatus::Created | WalletStatus::Drafted => Container::new(text::caption("Draft"))
+            .padding([4, 12])
+            .width(STATUS_BADGE_WIDTH)
+            .center_x(STATUS_BADGE_WIDTH)
+            .style(theme::pill::simple)
+            .into(),
+        WalletStatus::Validated => Container::new(text::caption("Validated"))
+            .padding([4, 12])
+            .width(STATUS_BADGE_WIDTH)
+            .center_x(STATUS_BADGE_WIDTH)
+            .style(theme::pill::primary)
+            .into(),
+        WalletStatus::Finalized => Space::with_width(STATUS_BADGE_WIDTH).into(),
+    }
+}
+
+/// Get a display label for the user role
+fn role_label(role: &UserRole) -> &'static str {
+    match role {
+        UserRole::WSManager => "Manager",
+        UserRole::Owner => "Owner",
+        UserRole::Participant => "Participant",
+    }
+}
+
+/// Get sort priority for wallet status (lower = shown first)
+/// Order: Draft (0) -> Validated (1) -> Finalized (2)
+fn status_sort_priority(status: &WalletStatus) -> u8 {
+    match status {
+        WalletStatus::Created | WalletStatus::Drafted => 0,
+        WalletStatus::Validated => 1,
+        WalletStatus::Finalized => 2,
+    }
+}
+
+pub fn wallet_card<'a>(
+    alias: String,
+    key_count: usize,
+    status: &WalletStatus,
+    role: &UserRole,
+    id: Uuid,
+) -> Element<'a, Msg> {
     let keys = match key_count {
         0 => "".to_string(),
         1 => "(1 key)".to_string(),
         c => format!("({c} keys)"),
     };
-    let content = row![text::h3(alias), text::h4_bold(keys)]
-        .spacing(10)
-        .align_y(Alignment::End)
+
+    // Left side: wallet name and key count
+    let left_col = Column::new()
+        .push(text::h3(alias))
+        .push(text::p1_regular(keys))
+        .spacing(4);
+
+    // Right side: status badge and role label
+    // Don't show "Manager" role - it's already in the header for WSManager users
+    let mut right_col = Column::new()
+        .push(status_badge(status))
+        .spacing(4)
+        .width(STATUS_BADGE_WIDTH)
+        .align_x(Alignment::Center);
+
+    // Only show role for Owner and Participant (not WSManager)
+    if !matches!(role, UserRole::WSManager) {
+        right_col = right_col.push(text::p2_regular(role_label(role)));
+    }
+
+    let content = Row::new()
+        .push(left_col)
+        .push(Space::with_width(Length::Fill))
+        .push(right_col)
+        .align_y(Alignment::Center)
+        .width(Length::Fill)
         .into();
 
     let message = Some(Msg::OrgWalletSelected(id));
@@ -62,6 +155,44 @@ pub fn wallet_select_view(state: &State) -> Element<'_, Msg> {
         Space::with_width(Length::Fill),
     ];
 
+    // Get current user email for role derivation
+    let current_user_email = &state.views.login.email.form.value;
+    let hide_finalized = state.views.wallet_select.hide_finalized;
+
+    // Determine if user is WSManager for ALL wallets in this org
+    // (not owner and not participant of any wallet)
+    let is_ws_manager = if let Some(org_id) = state.app.selected_org {
+        if let Some(org) = state.backend.get_org(org_id) {
+            let email_lower = current_user_email.to_lowercase();
+            let mut is_owner_or_participant = false;
+
+            for wallet in org.wallets.values() {
+                // Check if owner
+                if wallet.owner.email.to_lowercase() == email_lower {
+                    is_owner_or_participant = true;
+                    break;
+                }
+                // Check if participant (has matching key)
+                if let Some(template) = &wallet.template {
+                    for key in template.keys.values() {
+                        if key.email.to_lowercase() == email_lower {
+                            is_owner_or_participant = true;
+                            break;
+                        }
+                    }
+                }
+                if is_owner_or_participant {
+                    break;
+                }
+            }
+            !is_owner_or_participant
+        } else {
+            false
+        }
+    } else {
+        false
+    };
+
     let mut wallet_list = Column::new()
         .push(title)
         .push(Space::with_height(30))
@@ -69,12 +200,59 @@ pub fn wallet_select_view(state: &State) -> Element<'_, Msg> {
         .align_x(Alignment::Center)
         .padding(20);
 
+    // Add filter checkbox for WSManager users (centered)
+    if is_ws_manager && has_wallets {
+        let filter_checkbox = Row::new()
+            .push(Space::with_width(Length::Fill))
+            .push(
+                checkbox("Hide finalized wallets", hide_finalized)
+                    .on_toggle(Msg::WalletSelectToggleHideFinalized),
+            )
+            .push(Space::with_width(Length::Fill))
+            .width(Length::Fill);
+        wallet_list = wallet_list.push(filter_checkbox);
+        wallet_list = wallet_list.push(Space::with_height(10));
+    }
+
     if has_wallets {
         if let Some(org_id) = state.app.selected_org {
             if let Some(org) = state.backend.get_org(org_id) {
-                for (id, wallet) in &org.wallets {
+                // Collect wallets with their derived roles, filtering out inaccessible ones
+                let mut wallets_to_display: Vec<_> = org
+                    .wallets
+                    .iter()
+                    .filter_map(|(id, wallet)| {
+                        let role = derive_user_role(wallet, current_user_email);
+
+                        // Participants should NOT see Draft wallets
+                        let is_draft = matches!(
+                            wallet.status,
+                            WalletStatus::Created | WalletStatus::Drafted
+                        );
+                        if is_draft && role == UserRole::Participant {
+                            return None; // Skip this wallet for participants
+                        }
+
+                        // WSManager: optionally hide finalized wallets
+                        if is_ws_manager
+                            && hide_finalized
+                            && matches!(wallet.status, WalletStatus::Finalized)
+                        {
+                            return None;
+                        }
+
+                        Some((*id, wallet, role))
+                    })
+                    .collect();
+
+                // Sort by status: Draft first, Finalized last
+                wallets_to_display.sort_by_key(|(_, wallet, _)| status_sort_priority(&wallet.status));
+
+                // Render sorted wallets
+                for (id, wallet, role) in wallets_to_display {
                     let key_count = wallet.template.as_ref().map(|t| t.keys.len()).unwrap_or(0);
-                    let card = wallet_card(wallet.alias.clone(), key_count, *id);
+                    let card =
+                        wallet_card(wallet.alias.clone(), key_count, &wallet.status, &role, id);
                     wallet_list = wallet_list.push(card);
                 }
             }
@@ -85,9 +263,16 @@ pub fn wallet_select_view(state: &State) -> Element<'_, Msg> {
 
     wallet_list = wallet_list.push(Space::with_height(50));
 
+    let role_badge = if is_ws_manager {
+        Some("WS Manager")
+    } else {
+        None
+    };
+
     layout(
         (4, 4),
         Some(&state.views.login.email.form.value),
+        role_badge,
         "Wallet",
         wallet_list,
         true,

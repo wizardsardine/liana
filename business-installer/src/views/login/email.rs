@@ -1,4 +1,5 @@
 use crate::{
+    client::BACKEND_URL,
     state::{Msg, State},
     views::layout,
 };
@@ -7,6 +8,7 @@ use iced::{
     Length,
 };
 use liana_ui::{
+    color,
     component::{button, form, text},
     widget::*,
 };
@@ -34,6 +36,20 @@ pub fn login_email_view(state: &State) -> Element<'_, Msg> {
         Space::with_width(Length::Fill),
     ];
 
+    // Debug mode hint
+    let debug_hint = if BACKEND_URL == "debug" {
+        Some(
+            Column::new()
+                .push(text::p2_regular("Debug mode - Test emails:").color(color::GREY_2))
+                .push(text::caption("• ws@example.com → Manager").color(color::GREY_2))
+                .push(text::caption("• owner@example.com → Owner").color(color::GREY_2))
+                .push(text::caption("• user@example.com → Participant").color(color::GREY_2))
+                .spacing(4),
+        )
+    } else {
+        None
+    };
+
     let content = Column::new()
         .push(liana_business)
         .push(Space::with_height(20))
@@ -42,8 +58,9 @@ pub fn login_email_view(state: &State) -> Element<'_, Msg> {
         ))
         .push(form)
         .push(btn)
+        .push_maybe(debug_hint)
         .spacing(20)
         .padding(40);
 
-    layout((1, 4), None, "Login", content, true, None)
+    layout((1, 4), None, None, "Login", content, true, None)
 }

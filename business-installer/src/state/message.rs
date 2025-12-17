@@ -15,6 +15,9 @@ pub enum Msg {
     OrgWalletSelected(Uuid),
     OrgCreateNewWallet,
 
+    // Wallet selection
+    WalletSelectToggleHideFinalized(bool),
+
     // Key management
     KeyAdd,
     KeyEdit(u8),

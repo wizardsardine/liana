@@ -15,6 +15,8 @@ pub struct AppState {
     pub current_wallet_template: Option<PolicyTemplate>,
     /// Flag to track intentional reconnection (don't show error on disconnect)
     pub reconnecting: bool,
+    /// Flag to signal exit to Liana Lite login
+    pub exit_to_liana_lite: bool,
 }
 
 impl AppState {
@@ -28,6 +30,7 @@ impl AppState {
             selected_wallet: None,
             current_wallet_template: None,
             reconnecting: false,
+            exit_to_liana_lite: false,
         }
     }
 }
@@ -67,6 +70,7 @@ impl From<PolicyTemplate> for AppState {
             selected_wallet: None,
             current_wallet_template: None,
             reconnecting: false,
+            exit_to_liana_lite: false,
         }
     }
 }
