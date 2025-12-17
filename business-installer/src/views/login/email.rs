@@ -14,15 +14,18 @@ use liana_ui::{
 };
 
 pub fn login_email_view(state: &State) -> Element<'_, Msg> {
+    let can_submit = state.views.login.email.can_send();
     let form = if !state.views.login.email.processing {
         form::Form::new_trimmed(
             "Email",
             &state.views.login.email.form,
             Msg::LoginUpdateEmail,
         )
+        .on_submit_maybe(can_submit.then_some(Msg::LoginSendToken))
     } else {
         form::Form::new_disabled("Email", &state.views.login.email.form)
     }
+    .id("login_email")
     .size(16)
     .padding(10);
     let form = Container::new(form).width(Length::Fill);

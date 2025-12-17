@@ -12,7 +12,7 @@
   - [ ] 1.2 Edit Wallet Template Subflow (needed for completion of WS Manager flow)
   - [ ] 1.3 Add Key Information Subflow (needed for completion of WS Manager flow)
   - [ ] 1.4 Filter/Search Bar (WS Manager Only)
-  - [ ] 1.5 Better Keyboard Navigation in Login
+  - [x] 1.5 Better Keyboard Navigation in Login
   - [ ] 1.6 Load Wallet Subflow
   - [ ] 1.7 Logout Feature
 - [ ] **3.2 Owner Flow**
@@ -107,11 +107,14 @@ When user arrives at wallet selection, three possible subflows based on status:
   - [ ] Filter wallets by name (text search)
   - [ ] Filter wallets by status dropdown
 
-### 1.5 Better Keyboard Navigation in Login
-- [ ] Improve keyboard navigation for login flow
-  - [ ] Tab navigation between input fields
-  - [ ] Enter key to submit forms
-  - [ ] Focus management between steps
+### 1.5 Better Keyboard Navigation in Login ✓
+- [x] Improve keyboard navigation for login flow
+  - [x] Tab navigation between input fields (via form IDs)
+  - [x] Enter key to submit forms (email and code)
+  - [x] Focus management between steps
+  - [x] Auto-focus email input on initial load
+  - [x] Auto-focus code input when code view appears
+  - [x] Focus email input when navigating back from code view
 
 ### 1.6 Load Wallet Subflow
 - [x] Implement `exit_maybe()` returning `NextState::LoginLianaLite`
@@ -295,6 +298,16 @@ Store data in `network_dir` matching liana-gui patterns. Reference:
 ## Bugfixes
 
 ## Changelog
+
+### 2025-12-18
+- 1.5 Better Keyboard Navigation in Login: Implemented
+  - Added `on_submit()`, `on_submit_maybe()`, and `id()` methods to `Form` component in liana-ui
+  - Email form: Enter key submits when valid, ID `"login_email"`
+  - Code form: Enter key submits when 6 digits entered, ID `"login_code"`
+  - Auto-focus email input on initial app load (via `BusinessInstaller::new_internal`)
+  - Auto-focus code input when transitioning to code entry view
+  - Focus email input when navigating back from code to email view
+  - Tab navigation works automatically via Iced focusable widgets
 
 ### 2025-12-17
 - 1.1 Wallet Selection View: Implemented and enhanced
