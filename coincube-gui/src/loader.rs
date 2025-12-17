@@ -129,6 +129,7 @@ pub enum Message {
 }
 
 impl Loader {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         datadir_path: CoincubeDirectory,
         gui_config: GUIConfig,
