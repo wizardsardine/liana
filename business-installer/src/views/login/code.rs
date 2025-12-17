@@ -1,4 +1,5 @@
 use crate::{
+    client::BACKEND_URL,
     state::{message::Msg, State},
     views::layout,
 };
@@ -41,6 +42,13 @@ pub fn login_code_view(state: &State) -> Element<'_, Msg> {
         Space::with_width(Length::Fill),
     ];
 
+    // Debug mode hint
+    let debug_hint = if BACKEND_URL == "debug" {
+        Some(text::p2_regular("Debug mode - Use code: 123456").color(color::GREY_2))
+    } else {
+        None
+    };
+
     let content = Column::new()
         .push(liana_business)
         .push(Space::with_height(20))
@@ -49,6 +57,7 @@ pub fn login_code_view(state: &State) -> Element<'_, Msg> {
             text::p1_regular(&state.views.login.email.form.value).color(color::GREEN)
         ])
         .push(form)
+        .push_maybe(debug_hint)
         .push(btn_row)
         .spacing(20)
         .padding(40);
@@ -56,6 +65,7 @@ pub fn login_code_view(state: &State) -> Element<'_, Msg> {
     layout(
         (2, 4),
         None,
+        None, // No role badge during login
         "Login",
         content,
         true,

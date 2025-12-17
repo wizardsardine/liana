@@ -157,47 +157,232 @@ fn init_test_data(
     wallets: &mut BTreeMap<Uuid, Wallet>,
     users: &mut BTreeMap<Uuid, User>,
 ) {
-    // Create test user
-    let user1 = User {
-        name: "Test User".to_string(),
+    // ==========================================================================
+    // TEST USERS - Login with these emails to test different roles:
+    //
+    // ws@example.com    -> WSManager for all wallets (not owner, no keys)
+    // owner@example.com -> Owner of Draft/Validated/Final, Participant of Shared
+    // user@example.com  -> Participant for all wallets (has keys in all)
+    //
+    // Note: Participants should NOT see Draft wallets (filtered in view)
+    // ==========================================================================
+
+    // Owner user - owns Draft, Validated, Final wallets
+    let owner_user = User {
+        name: "Wallet Owner".to_string(),
         uuid: Uuid::new_v4(),
-        email: "test@example.com".to_string(),
+        email: "owner@example.com".to_string(),
         orgs: Vec::new(),
         role: UserRole::Owner,
     };
-    users.insert(user1.uuid, user1.clone());
+    users.insert(owner_user.uuid, owner_user.clone());
 
-    // Create Org 1: "Acme Corp"
+    // Shared wallet owner - owns the Shared wallet
+    let shared_owner = User {
+        name: "Shared Wallet Owner".to_string(),
+        uuid: Uuid::new_v4(),
+        email: "shared-owner@example.com".to_string(),
+        orgs: Vec::new(),
+        role: UserRole::Owner,
+    };
+    users.insert(shared_owner.uuid, shared_owner.clone());
+
+    // Create Org 1: "Acme Corp" - demonstrates all wallet statuses and roles
     let org1_id = Uuid::new_v4();
     let mut org1_wallets = BTreeSet::new();
 
-    // Wallet 1 for Org 1
+    // -------------------------------------------------------------------------
+    // Wallet 1: DRAFT - Only visible to WSManager and Owner
+    // owner@example.com -> Owner
+    // ws@example.com    -> Manager
+    // user@example.com  -> (should not see this wallet)
+    // -------------------------------------------------------------------------
     let wallet1_id = Uuid::new_v4();
     let mut wallet1_template = PolicyTemplate::new();
     wallet1_template.keys.insert(
         0,
         Key {
             id: 0,
-            alias: "Main Key".to_string(),
-            description: "Primary signing key".to_string(),
-            email: "key1@example.com".to_string(),
+            alias: "Owner Key".to_string(),
+            description: "Key held by wallet owner".to_string(),
+            email: "owner@example.com".to_string(),
             key_type: KeyType::Internal,
             xpub: None,
         },
     );
+    wallet1_template.keys.insert(
+        1,
+        Key {
+            id: 1,
+            alias: "Participant Key".to_string(),
+            description: "Key for participant user".to_string(),
+            email: "user@example.com".to_string(),
+            key_type: KeyType::External,
+            xpub: None,
+        },
+    );
     wallet1_template.primary_path.key_ids.push(0);
-    wallet1_template.primary_path.threshold_n = 1;
+    wallet1_template.primary_path.key_ids.push(1);
+    wallet1_template.primary_path.threshold_n = 2;
 
     let wallet1 = Wallet {
-        alias: "Main Wallet".to_string(),
+        alias: "Draft Wallet".to_string(),
         org: org1_id,
-        owner: user1.clone(),
+        owner: owner_user.clone(),
         id: wallet1_id,
         template: Some(wallet1_template),
-        status: WalletStatus::Created,
+        status: WalletStatus::Drafted,
     };
     org1_wallets.insert(wallet1_id);
     wallets.insert(wallet1_id, wallet1);
+
+    // -------------------------------------------------------------------------
+    // Wallet 2: VALIDATED - Visible to all, participants can add xpubs
+    // owner@example.com -> Owner
+    // ws@example.com    -> Manager
+    // user@example.com  -> Participant
+    // -------------------------------------------------------------------------
+    let wallet2_id = Uuid::new_v4();
+    let mut wallet2_template = PolicyTemplate::new();
+    wallet2_template.keys.insert(
+        0,
+        Key {
+            id: 0,
+            alias: "Owner Key".to_string(),
+            description: "Key held by wallet owner".to_string(),
+            email: "owner@example.com".to_string(),
+            key_type: KeyType::Internal,
+            xpub: None,
+        },
+    );
+    wallet2_template.keys.insert(
+        1,
+        Key {
+            id: 1,
+            alias: "Participant Key".to_string(),
+            description: "Key for participant user".to_string(),
+            email: "user@example.com".to_string(),
+            key_type: KeyType::External,
+            xpub: None,
+        },
+    );
+    wallet2_template.primary_path.key_ids.push(0);
+    wallet2_template.primary_path.key_ids.push(1);
+    wallet2_template.primary_path.threshold_n = 2;
+
+    let wallet2 = Wallet {
+        alias: "Validated Wallet".to_string(),
+        org: org1_id,
+        owner: owner_user.clone(),
+        id: wallet2_id,
+        template: Some(wallet2_template),
+        status: WalletStatus::Validated,
+    };
+    org1_wallets.insert(wallet2_id);
+    wallets.insert(wallet2_id, wallet2);
+
+    // -------------------------------------------------------------------------
+    // Wallet 3: FINALIZED - Ready to load
+    // owner@example.com -> Owner
+    // ws@example.com    -> Manager
+    // user@example.com  -> Participant
+    // -------------------------------------------------------------------------
+    let wallet3_id = Uuid::new_v4();
+    let mut wallet3_template = PolicyTemplate::new();
+    wallet3_template.keys.insert(
+        0,
+        Key {
+            id: 0,
+            alias: "Owner Key".to_string(),
+            description: "Key held by wallet owner".to_string(),
+            email: "owner@example.com".to_string(),
+            key_type: KeyType::Internal,
+            xpub: None,
+        },
+    );
+    wallet3_template.keys.insert(
+        1,
+        Key {
+            id: 1,
+            alias: "Participant Key".to_string(),
+            description: "Key for participant user".to_string(),
+            email: "user@example.com".to_string(),
+            key_type: KeyType::External,
+            xpub: None,
+        },
+    );
+    wallet3_template.primary_path.key_ids.push(0);
+    wallet3_template.primary_path.key_ids.push(1);
+    wallet3_template.primary_path.threshold_n = 2;
+
+    let wallet3 = Wallet {
+        alias: "Final Wallet".to_string(),
+        org: org1_id,
+        owner: owner_user.clone(),
+        id: wallet3_id,
+        template: Some(wallet3_template),
+        status: WalletStatus::Finalized,
+    };
+    org1_wallets.insert(wallet3_id);
+    wallets.insert(wallet3_id, wallet3);
+
+    // -------------------------------------------------------------------------
+    // Wallet 4: SHARED - Owner is different, owner@example.com is participant
+    // shared-owner@example.com -> Owner
+    // owner@example.com        -> Participant (has a key)
+    // ws@example.com           -> Manager
+    // user@example.com         -> Participant
+    // -------------------------------------------------------------------------
+    let wallet4_id = Uuid::new_v4();
+    let mut wallet4_template = PolicyTemplate::new();
+    wallet4_template.keys.insert(
+        0,
+        Key {
+            id: 0,
+            alias: "Shared Owner Key".to_string(),
+            description: "Key held by shared wallet owner".to_string(),
+            email: "shared-owner@example.com".to_string(),
+            key_type: KeyType::Internal,
+            xpub: None,
+        },
+    );
+    wallet4_template.keys.insert(
+        1,
+        Key {
+            id: 1,
+            alias: "Owner as Participant".to_string(),
+            description: "owner@example.com is participant here".to_string(),
+            email: "owner@example.com".to_string(),
+            key_type: KeyType::External,
+            xpub: None,
+        },
+    );
+    wallet4_template.keys.insert(
+        2,
+        Key {
+            id: 2,
+            alias: "User Key".to_string(),
+            description: "Key for user@example.com".to_string(),
+            email: "user@example.com".to_string(),
+            key_type: KeyType::External,
+            xpub: None,
+        },
+    );
+    wallet4_template.primary_path.key_ids.push(0);
+    wallet4_template.primary_path.key_ids.push(1);
+    wallet4_template.primary_path.key_ids.push(2);
+    wallet4_template.primary_path.threshold_n = 2;
+
+    let wallet4 = Wallet {
+        alias: "Shared Wallet".to_string(),
+        org: org1_id,
+        owner: shared_owner.clone(),
+        id: wallet4_id,
+        template: Some(wallet4_template),
+        status: WalletStatus::Finalized,
+    };
+    org1_wallets.insert(wallet4_id);
+    wallets.insert(wallet4_id, wallet4);
 
     let org1 = Org {
         name: "Acme Corp".to_string(),
@@ -208,69 +393,16 @@ fn init_test_data(
     };
     orgs.insert(org1_id, org1);
 
-    // Create Org 2: "Tech Solutions"
+    // Create Org 2: "Empty Org" - no wallets
     let org2_id = Uuid::new_v4();
-    let mut org2_wallets = BTreeSet::new();
-
-    // Wallet 1 for Org 2
-    let wallet2_id = Uuid::new_v4();
-    let mut wallet2_template = PolicyTemplate::new();
-    wallet2_template.keys.insert(
-        0,
-        Key {
-            id: 0,
-            alias: "Admin Key".to_string(),
-            description: "Administrative key".to_string(),
-            email: "admin@example.com".to_string(),
-            key_type: KeyType::Internal,
-            xpub: None,
-        },
-    );
-    wallet2_template.keys.insert(
-        1,
-        Key {
-            id: 1,
-            alias: "Backup Key".to_string(),
-            description: "Backup signing key".to_string(),
-            email: "backup@example.com".to_string(),
-            key_type: KeyType::External,
-            xpub: None,
-        },
-    );
-    wallet2_template.primary_path.key_ids.push(0);
-    wallet2_template.primary_path.key_ids.push(1);
-    wallet2_template.primary_path.threshold_n = 2;
-
-    let wallet2 = Wallet {
-        alias: "Company Wallet".to_string(),
-        org: org2_id,
-        owner: user1.clone(),
-        id: wallet2_id,
-        template: Some(wallet2_template),
-        status: WalletStatus::Created,
-    };
-    org2_wallets.insert(wallet2_id);
-    wallets.insert(wallet2_id, wallet2);
-
     let org2 = Org {
-        name: "Tech Solutions".to_string(),
+        name: "Empty Org".to_string(),
         id: org2_id,
-        wallets: org2_wallets,
-        users: Default::default(),
-        owners: Default::default(),
-    };
-    orgs.insert(org2_id, org2);
-
-    // Create Org 3: "Startup Inc"
-    let org3_id = Uuid::new_v4();
-    let org3 = Org {
-        name: "Startup Inc".to_string(),
-        id: org3_id,
         wallets: BTreeSet::new(),
         users: Default::default(),
         owners: Default::default(),
     };
-    orgs.insert(org3_id, org3);
+    orgs.insert(org2_id, org2);
 }
 
 impl DevBackend {

@@ -1,12 +1,14 @@
-pub mod home;
 pub mod keys;
 pub mod login;
 pub mod modals;
 pub mod org_select;
 pub mod paths;
+pub mod template_builder;
 pub mod wallet_select;
+pub mod xpub;
 
-pub use home::home_view;
+pub use template_builder::template_builder_view;
+pub use xpub::xpub_view;
 pub use keys::keys_view;
 pub use login::login_view;
 pub use org_select::org_select_view;
@@ -27,6 +29,7 @@ use liana_ui::{
 fn layout<'a>(
     progress: (usize, usize),
     email: Option<&'a str>,
+    role_badge: Option<&'static str>, // Show role badge before email (e.g., "Manager" for WSManager)
     title: &'static str,
     content: impl Into<Element<'a, Msg>>,
     padding_left: bool,
@@ -36,9 +39,28 @@ fn layout<'a>(
     if let Some(msg) = previous_message {
         prev_button = prev_button.on_press(msg);
     }
-    let email_row = Row::new().push(Space::with_width(Length::Fill)).push_maybe(
-        email.map(|e| Container::new(text::p1_regular(e).style(theme::text::success)).padding(20)),
-    );
+
+    // Build the top-right row with optional role badge and email
+    let mut email_row = Row::new()
+        .push(Space::with_width(Length::Fill))
+        .spacing(10)
+        .align_y(Alignment::Center);
+
+    // Add role badge if provided (shown before email)
+    if let Some(role) = role_badge {
+        email_row = email_row.push(
+            Container::new(text::caption(role))
+                .padding([4, 12])
+                .style(theme::pill::simple),
+        );
+    }
+
+    // Add email if provided
+    if let Some(e) = email {
+        email_row = email_row.push(
+            Container::new(text::p1_regular(e).style(theme::text::success)).padding(20),
+        );
+    }
     let header = Row::new()
         .align_y(Alignment::Center)
         .push(Container::new(prev_button).center_x(Length::FillPortion(2)))

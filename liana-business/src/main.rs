@@ -9,7 +9,7 @@ use iced::{Pixels, Settings, Subscription, Task};
 use liana::miniscript::bitcoin::Network;
 use liana_gui::{
     dir::LianaDirectory,
-    installer::{Installer, UserFlow},
+    installer::{Installer, NextState, UserFlow},
 };
 use liana_ui::theme::Theme;
 
@@ -75,7 +75,21 @@ impl PolicyBuilder {
     }
 
     pub fn update(&mut self, message: Message) -> Task<Message> {
-        self.installer.update(message)
+        // Process the message first
+        let task = self.installer.update(message.clone());
+
+        // Check if we should exit after processing the message
+        if let Some(next_state) = self.installer.exit_maybe(&message) {
+            match next_state {
+                NextState::LoginLianaLite { .. } => {
+                    // Close the application when transitioning to Liana Lite
+                    return iced::exit();
+                }
+                _ => {}
+            }
+        }
+
+        task
     }
 
     pub fn view(&self) -> liana_ui::widget::Element<Message> {

@@ -7,11 +7,14 @@
   - [x] 2.2 Installer Trait Integration
   - [x] 2.3 WSS Protocol Extraction
 - [ ] **3.1 WS Manager Flow**
-- [ ] **1. Front** (needed for completion of WS Manager flow)
-  - [ ] 1.1 Wallet Selection View
-  - [ ] 1.2 Edit Wallet Template Subflow
-  - [ ] 1.3 Add Key Information Subflow
-  - [ ] 1.4 Load Wallet Subflow
+- [ ] **1. Front**
+  - [x] 1.1 Wallet Selection View
+  - [ ] 1.2 Edit Wallet Template Subflow (needed for completion of WS Manager flow)
+  - [ ] 1.3 Add Key Information Subflow (needed for completion of WS Manager flow)
+  - [ ] 1.4 Filter/Search Bar (WS Manager Only)
+  - [ ] 1.5 Better Keyboard Navigation in Login
+  - [ ] 1.6 Load Wallet Subflow
+  - [ ] 1.7 Logout Feature
 - [ ] **3.2 Owner Flow**
 - [ ] **3.3 Participant Flow**
 - [ ] **4. Local Storage**
@@ -47,19 +50,24 @@ When user arrives at wallet selection, three possible subflows based on status:
 
 1. **Edit Wallet Template** - For Draft wallets, WSManager/Owner only
 2. **Add Key Information** - For Validated wallets, role-filtered key access
-3. **Load Wallet** - For Final wallets, triggers `exit_maybe()` -> `LoginLianaBusiness`
+3. **Load Wallet** - For Final wallets, triggers `exit_maybe()` -> `LoginLianaLite`
 
 ## 1. Front
 
-### 1.1 Wallet Selection View
-- [ ] Display wallet status badge (Draft/Validated/Final) for each wallet
-- [ ] Show user's role for each wallet
-- [ ] Route to appropriate subflow based on role + status:
+### 1.1 Wallet Selection View ✓
+- [x] Display wallet status badge (Draft/Validated/Final) for each wallet
+- [x] Show user's role for each wallet
+- [x] Route to appropriate subflow based on role + status:
   - Draft + (WSManager|Owner) -> Edit Template
   - Draft + Participant -> Access Denied
   - Validated -> Add Key Information
-  - Final -> Load Wallet
-- [ ] Differentiate UI styling per status
+  - Final -> Load Wallet (exit to Liana Lite)
+- [x] Differentiate UI styling per status
+- [x] Sort wallets by status (Draft first, Finalized last)
+- [x] Filter out Draft wallets from Participant view
+- [x] "Hide finalized wallets" checkbox for WSManager
+- [x] Show "WS Manager" badge in header for platform admins
+- [x] Debug mode hints showing test emails/code
 
 ### 1.2 Edit Wallet Template Subflow
 - [ ] Restrict access to WSManager and WalletOwner roles
@@ -90,20 +98,38 @@ When user arrives at wallet selection, three possible subflows based on status:
 - [ ] Validate xpub format and network compatibility
 - [ ] Save xpub to key via backend
 
-### 1.4 Load Wallet Subflow
-- [ ] Implement `exit_maybe()` returning `NextState::LoginLianaBusiness`
-  - Pattern from `liana-gui/src/installer/mod.rs`:
-  ```rust
-  NextState::LoginLianaBusiness {
-      datadir: LianaDirectory,
-      network: Network,
-      directory_wallet_id: settings::WalletId,
-      auth_cfg: settings::AuthConfig,
-  }
-  ```
+### 1.4 Filter/Search Bar (WS Manager Only)
+- [ ] Add search/filter bar to organization selection page
+  - [ ] Filter organizations by name
+  - [ ] Only visible for WS Manager users
+- [x] Add filter to wallet selection page
+  - [x] "Hide finalized wallets" checkbox (WSManager only)
+  - [ ] Filter wallets by name (text search)
+  - [ ] Filter wallets by status dropdown
+
+### 1.5 Better Keyboard Navigation in Login
+- [ ] Improve keyboard navigation for login flow
+  - [ ] Tab navigation between input fields
+  - [ ] Enter key to submit forms
+  - [ ] Focus management between steps
+
+### 1.6 Load Wallet Subflow
+- [x] Implement `exit_maybe()` returning `NextState::LoginLianaLite`
+  - [x] Added `exit_to_liana_lite` flag in AppState
+  - [x] Finalized wallet selection triggers exit
+  - [x] Build `WalletId` and `AuthConfig` for handoff
+- [x] Only available for Final status wallets
 - [ ] Store wallet settings to disk before exit (see Section 4)
 - [ ] Store auth cache to disk before exit (see Section 4)
-- [ ] Only available for Final status wallets
+- [ ] `exit_maybe()` must return `NextState::LoginLianaBusiness`
+
+### 1.7 Logout Feature
+- [ ] Add logout button/action in UI (accessible from main views)
+- [ ] Clear authentication token from memory
+- [ ] Clear auth cache from disk (`connect.json`)
+- [ ] Close WebSocket connection
+- [ ] Reset application state to initial login view
+- [ ] Handle logout in debug mode (clear dummy token)
 
 ## 2. Back ✓
 
@@ -196,13 +222,14 @@ Participant has limited access - can only add xpub for their own keys.
 
 | Status    | Can Edit Template | Can Add Xpubs          | Can Load Wallet |
 |-----------|-------------------|------------------------|-----------------|
-| Draft     | ✗                 | ✗                      | ✗               |
+| Draft     | ✗ (not visible)   | ✗                      | ✗               |
 | Validated | ✗                 | ✓ (own keys only)      | ✗               |
 | Final     | ✗                 | ✗                      | ✓               |
 
 **Implementation tasks:**
-- [ ] Connect and authenticate
-- [ ] View wallet with restricted access (no edit buttons for Draft)
+- [x] Connect and authenticate
+- [x] Draft wallets filtered from wallet selection view
+- [x] Access denied modal if participant attempts Draft wallet access
 - [ ] Add/edit xpub for own keys only in Validated status
   - [ ] Filter key list by `key.email == current_user.email`
   - [ ] Hide keys belonging to other users
@@ -270,13 +297,25 @@ Store data in `network_dir` matching liana-gui patterns. Reference:
 ## Changelog
 
 ### 2025-12-17
-- Updated ROADMAP with detailed implementation plan:
-  - Restructured Section 1 (Front) with role-based subflows
-  - Added wallet status concepts (Draft/Validated/Final)
-  - Added user role concepts (WSManager/Owner/Participant)
-  - Detailed Section 3 (Flows) with permission matrices
-  - Added Section 4 (Local Storage) for persistence requirements
-  - Documented `LoginLianaBusiness` NextState pattern
+- 1.1 Wallet Selection View: Implemented and enhanced
+  - Added `derive_user_role()` to determine user's role per wallet
+  - Added `status_badge()` component with colored pills (Draft/Validated)
+  - Sort wallets by status (Draft first, Finalized last)
+  - "Hide finalized wallets" checkbox for WSManager users
+  - Participants cannot see Draft wallets (filtered in view)
+  - "WS Manager" role badge in header for platform admins
+  - Debug hints showing test emails/code in login views
+  - Added access control in `on_org_wallet_selected()` - denies Draft access to Participants
+- 1.6 Load Wallet Subflow: Implemented `exit_maybe()` -> `NextState::LoginLianaLite`
+  - Added `exit_to_liana_lite` flag to AppState
+  - Selecting Finalized wallet triggers exit to Liana Lite
+  - Builds WalletId and AuthConfig for handoff
+- View restructuring: Renamed `home` view to `template_builder`, added `xpub` view
+- Improved test data: Comprehensive test users for role testing
+  - ws@example.com → WSManager
+  - owner@example.com → Owner
+  - user@example.com → Participant
+- Updated ROADMAP with detailed implementation plan
 
 ### 2025-12-16
 - 2.2 Installer Trait Integration: Created `business-installer` crate with

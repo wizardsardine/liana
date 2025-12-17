@@ -11,7 +11,7 @@ pub mod template_visualization;
 
 pub use template_visualization::template_visualization;
 
-pub fn home_view(state: &State) -> Element<'_, Msg> {
+pub fn template_builder_view(state: &State) -> Element<'_, Msg> {
     // Left panel: Header, Summary, and Buttons
     let mut left_column = Column::new()
         .spacing(20)
@@ -97,3 +97,4 @@ pub fn home_view(state: &State) -> Element<'_, Msg> {
         .height(Length::Fill)
         .into()
 }
+

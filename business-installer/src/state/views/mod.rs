@@ -1,15 +1,17 @@
-pub mod home;
 pub mod keys;
 pub mod login;
 pub mod modals;
 pub mod org_select;
 pub mod path;
+pub mod template_builder;
 pub mod wallet_select;
+pub mod xpub;
 
 pub use keys::{EditKeyModalState, KeysViewState};
 pub use login::{Login, LoginState};
 pub use modals::ModalsState;
 pub use path::{EditPathModalState, PathsViewState};
+pub use wallet_select::WalletSelectState;
 
 /// View-specific states
 #[derive(Debug, Clone)]
@@ -18,6 +20,7 @@ pub struct ViewsState {
     pub keys: KeysViewState,
     pub paths: PathsViewState,
     pub login: Login,
+    pub wallet_select: WalletSelectState,
 }
 
 impl ViewsState {
@@ -27,6 +30,7 @@ impl ViewsState {
             keys: KeysViewState::default(),
             paths: PathsViewState::default(),
             login: Login::default(),
+            wallet_select: WalletSelectState::default(),
         }
     }
 }
