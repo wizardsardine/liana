@@ -35,10 +35,18 @@ fn layout<'a>(
     padding_left: bool,
     previous_message: Option<Msg>,
 ) -> Element<'a, Msg> {
-    let mut prev_button = button::transparent(Some(icon::previous_icon()), "Previous");
-    if let Some(msg) = previous_message {
-        prev_button = prev_button.on_press(msg);
-    }
+    // Build the left button - logout when authenticated, previous otherwise
+    let left_button = if email.is_some() {
+        // User is authenticated - show logout button with back arrow icon
+        button::transparent(Some(icon::previous_icon()), "Logout").on_press(Msg::Logout)
+    } else {
+        // User is not authenticated - show previous button
+        let mut prev_button = button::transparent(Some(icon::previous_icon()), "Previous");
+        if let Some(msg) = previous_message {
+            prev_button = prev_button.on_press(msg);
+        }
+        prev_button
+    };
 
     // Build the top-right row with optional role badge and email
     let mut email_row = Row::new()
@@ -63,7 +71,7 @@ fn layout<'a>(
     }
     let header = Row::new()
         .align_y(Alignment::Center)
-        .push(Container::new(prev_button).center_x(Length::FillPortion(2)))
+        .push(Container::new(left_button).center_x(Length::FillPortion(2)))
         .push(Container::new(text::h3(title)).width(Length::FillPortion(8)))
         .push_maybe(if progress.1 > 0 {
             Some(

@@ -9,6 +9,7 @@ pub enum Msg {
     LoginSendToken,
     LoginResendToken,
     LoginSendAuthCode,
+    Logout,
 
     // Org management
     OrgSelected(Uuid),

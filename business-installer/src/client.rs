@@ -9,7 +9,7 @@ use crossbeam::channel;
 use futures::executor::block_on;
 use liana_gui::dir::NetworkDirectory;
 use liana_gui::services::connect::client::auth::AuthClient;
-use liana_gui::services::connect::client::cache::{update_connect_cache, Account};
+use liana_gui::services::connect::client::cache::{filter_connect_cache, update_connect_cache, Account, ConnectCache};
 use liana_gui::services::connect::client::get_service_config;
 use miniscript::bitcoin::Network;
 use miniscript::DescriptorPublicKey;
@@ -164,6 +164,62 @@ impl Client {
             }
             Err(_) => None,
         }
+    }
+
+    /// Logout: clear token, close connection, and remove auth cache
+    pub fn logout(&mut self) {
+        // Clear token from memory
+        if let Ok(mut token_guard) = self.token.lock() {
+            *token_guard = None;
+        }
+
+        // Clear auth client
+        if let Ok(mut auth_client_guard) = self.auth_client.lock() {
+            *auth_client_guard = None;
+        }
+
+        // Close WebSocket connection
+        self.close();
+
+        // Remove auth cache from disk if network_dir and email are available
+        if let (Some(network_dir), Some(email)) = (self.network_dir.clone(), self.email.clone()) {
+            let network_dir_clone = network_dir.clone();
+            let email_clone = email.clone();
+
+            // Spawn thread to handle async cache removal
+            thread::spawn(move || {
+                let result = block_on(async {
+                    use std::collections::HashSet;
+
+                    // Read current cache to get all account emails
+                    let cache = match ConnectCache::from_file(&network_dir_clone) {
+                        Ok(cache) => cache,
+                        Err(_) => {
+                            // Cache doesn't exist or can't be read, nothing to do
+                            return Ok(());
+                        }
+                    };
+
+                    // Get all emails except the current one
+                    let remaining_emails: HashSet<String> = cache
+                        .accounts
+                        .iter()
+                        .map(|a| a.email.clone())
+                        .filter(|e| e != &email_clone)
+                        .collect();
+
+                    // Update cache to exclude current email
+                    filter_connect_cache(&network_dir_clone, &remaining_emails).await
+                });
+
+                if let Err(e) = result {
+                    eprintln!("Failed to remove auth cache on logout: {:?}", e);
+                }
+            });
+        }
+
+        // Clear email
+        self.email = None;
     }
 }
 
