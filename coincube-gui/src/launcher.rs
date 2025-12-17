@@ -575,7 +575,7 @@ fn create_cube_form<'a>(
         );
 
     // PIN setup section (always required)
-    column = column.push(Space::with_height(Length::Fixed(10.0)));
+    column = column.push(Space::new().height(Length::Fixed(10.0)));
 
     // Enter PIN label with eye button
     let pin_label = p1_regular("Enter PIN:").style(theme::text::secondary);
@@ -619,7 +619,7 @@ fn create_cube_form<'a>(
     }
     column = column.push(pin_inputs_row);
 
-        column = column.push(Space::new().height(Length::Fixed(20.0)));
+    column = column.push(Space::new().height(Length::Fixed(20.0)));
 
     // Confirm PIN label with eye button
     let pin_confirm_label = p1_regular("Confirm PIN:").style(theme::text::secondary);
@@ -663,9 +663,8 @@ fn create_cube_form<'a>(
     }
     column = column.push(pin_confirm_inputs_row);
 
-        // Add extra padding before Create Cube button
-        column = column.push(Space::new().height(Length::Fixed(20.0)));
-    }
+    // Add extra padding before Create Cube button
+    column = column.push(Space::new().height(Length::Fixed(20.0)));
 
     // Show error above the button
     if let Some(err) = error {

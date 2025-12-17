@@ -83,7 +83,7 @@ fn main_menu_view(backed_up: bool, mfa: bool) -> Element<'static, Message> {
         .spacing(20)
         .width(Length::Fill)
         .push(h3("Settings"))
-        .push(Space::with_height(Length::Fixed(20.0)))
+        .push(Space::new().height(Length::Fixed(20.0)))
         .push(backup)
         .push(mfa)
         .into()
@@ -107,33 +107,33 @@ fn backup_intro_view(checked: bool) -> Element<'static, Message> {
                         .on_press(Message::ActiveSettings(ActiveSettingsMessage::BackupWallet(BackupWalletMessage::PreviousStep)))
                         .style(theme::button::transparent)
                 )
-                .push(Space::with_width(Length::Fill))
+                .push(Space::new().width(Length::Fill))
         )
         .push(
             Row::new()
                 .width(Length::Fill)
                 .align_y(Alignment::Center)
-                .push(Space::with_width(Length::Fill))
+                .push(Space::new().width(Length::Fill))
                 .push(
                     Column::new()
                         .width(Length::Shrink)
                         .align_x(Alignment::Center)
                         .push(h3("Backup Phrase"))
                 )
-                .push(Space::with_width(Length::Fill))
+                .push(Space::new().width(Length::Fill))
         )
-        .push(Space::with_height(Length::Fixed(16.0)))
+        .push(Space::new().height(Length::Fixed(16.0)))
         .push(
             Row::new()
                 .width(Length::Fill)
                 .align_y(Alignment::Center)
-                .push(Space::with_width(Length::Fill))
+                .push(Space::new().width(Length::Fill))
                 .push(
                     icon::file_earmark().size(140).color(primary_color)
                 )
-                .push(Space::with_width(Length::Fill))
+                .push(Space::new().width(Length::Fill))
         )
-        .push(Space::with_height(Length::Fixed(16.0)))
+        .push(Space::new().height(Length::Fixed(16.0)))
         .push(
             Container::new(
                 Column::new()
@@ -158,28 +158,25 @@ fn backup_intro_view(checked: bool) -> Element<'static, Message> {
             .width(Length::Fill)
             .align_x(iced::alignment::Horizontal::Center)
         )
-        .push(Space::with_height(Length::Fixed(16.0)))
+        .push(Space::new().height(Length::Fixed(16.0)))
         .push(
             Row::new()
                 .width(Length::Fill)
                 .align_y(Alignment::Center)
-                .push(Space::with_width(Length::Fill))
+                .push(Space::new().width(Length::Fill))
                 .push(
-                    CheckBox::new(
-                        "I UNDERSTAND THAT IF I LOSE THESE WORDS, MY FUNDS CANNOT BE RECOVERED",
-                        checked
-                    )
+                    CheckBox::new(checked).label("I UNDERSTAND THAT IF I LOSE THESE WORDS, MY FUNDS CANNOT BE RECOVERED")
                     .on_toggle(|_| Message::ActiveSettings(ActiveSettingsMessage::BackupWallet(BackupWalletMessage::ToggleBackupIntroCheck)))
                     .style(theme::checkbox::primary).size(20)
                 )
-                .push(Space::with_width(Length::Fill))
+                .push(Space::new().width(Length::Fill))
         )
-        .push(Space::with_height(Length::Fixed(16.0)))
+        .push(Space::new().height(Length::Fixed(16.0)))
         .push(
             Row::new()
                 .width(Length::Fill)
                 .align_y(Alignment::Center)
-                .push(Space::with_width(Length::Fill))
+                .push(Space::new().width(Length::Fill))
                 .push({
                     let btn: Element<'static, Message> = if checked {
                         coincube_ui::component::button::primary(None, "Show My Recovery Phrase")
@@ -195,7 +192,7 @@ fn backup_intro_view(checked: bool) -> Element<'static, Message> {
                     };
                     btn
                 })
-                .push(Space::with_width(Length::Fill))
+                .push(Space::new().width(Length::Fill))
         )
         .into()
 }
@@ -248,26 +245,26 @@ fn recovery_phrase_view(mnemonic: [&'static str; 12]) -> Element<'static, Messag
                         .on_press(Message::ActiveSettings(ActiveSettingsMessage::BackupWallet(BackupWalletMessage::PreviousStep)))
                         .style(theme::button::transparent)
                 )
-                .push(Space::with_width(Length::Fill))
+                .push(Space::new().width(Length::Fill))
         )
         .push(
             Row::new()
                 .width(Length::Fill)
                 .align_y(Alignment::Center)
-                .push(Space::with_width(Length::Fill))
+                .push(Space::new().width(Length::Fill))
                 .push(
                     Column::new()
                         .width(Length::Shrink)
                         .align_x(Alignment::Center)
                         .push(h3("Your Recovery Phrase"))
                 )
-                .push(Space::with_width(Length::Fill))
+                .push(Space::new().width(Length::Fill))
         )
         .push(
             Row::new()
                 .width(Length::Fill)
                 .align_y(Alignment::Center)
-                .push(Space::with_width(Length::Fill))
+                .push(Space::new().width(Length::Fill))
                 .push(
                     Container::new(
                         Text::new("Write these words down in order and keep them offline. Anyone with these words can access your wallet.")
@@ -277,30 +274,30 @@ fn recovery_phrase_view(mnemonic: [&'static str; 12]) -> Element<'static, Messag
                     .width(Length::Fixed(700.0))
                     .align_x(iced::alignment::Horizontal::Center)
                 )
-                .push(Space::with_width(Length::Fill))
+                .push(Space::new().width(Length::Fill))
         )
-        .push(Space::with_height(Length::Fixed(24.0)))
+        .push(Space::new().height(Length::Fixed(24.0)))
         .push(
             Row::new()
                 .width(Length::Fill)
                 .align_y(Alignment::Center)
-                .push(Space::with_width(Length::Fill))
+                .push(Space::new().width(Length::Fill))
                 .push(grid)
-                .push(Space::with_width(Length::Fill))
+                .push(Space::new().width(Length::Fill))
         )
-        .push(Space::with_height(Length::Fixed(24.0)))
+        .push(Space::new().height(Length::Fixed(24.0)))
         .push(
             Row::new()
                 .width(Length::Fill)
                 .align_y(Alignment::Center)
-                .push(Space::with_width(Length::Fill))
+                .push(Space::new().width(Length::Fill))
                 .push(
                     coincube_ui::component::button::primary(None, "I've Written It Down")
                         .on_press(Message::ActiveSettings(ActiveSettingsMessage::BackupWallet(BackupWalletMessage::NextStep)))
                         .padding([8, 16])
                         .width(Length::Fixed(300.0))
                 )
-                .push(Space::with_width(Length::Fill))
+                .push(Space::new().width(Length::Fill))
         )
         .into()
 }
@@ -337,7 +334,7 @@ where
                 ),
         )
         .push(
-            Container::new(Space::with_height(Length::Fixed(0.0)))
+            Container::new(Space::new().height(Length::Fixed(0.0)))
                 .width(Length::Fixed(340.0))
                 .height(Length::Fixed(1.0))
                 .style(|_theme| container::Style {
@@ -376,7 +373,7 @@ fn verification_view<'a>(
                 ))
                 .style(theme::button::transparent),
             )
-            .push(Space::with_width(Length::Fill)),
+            .push(Space::new().width(Length::Fill)),
     );
 
     // Heading
@@ -384,14 +381,14 @@ fn verification_view<'a>(
         Row::new()
             .width(Length::Fill)
             .align_y(Alignment::Center)
-            .push(Space::with_width(Length::Fill))
+            .push(Space::new().width(Length::Fill))
             .push(
                 Column::new()
                     .width(Length::Shrink)
                     .align_x(Alignment::Center)
                     .push(h3("Verify Your Recovery Phrase")),
             )
-            .push(Space::with_width(Length::Fill)),
+            .push(Space::new().width(Length::Fill)),
     );
 
     // Subheading
@@ -399,17 +396,17 @@ fn verification_view<'a>(
         Row::new()
             .width(Length::Fill)
             .align_y(Alignment::Center)
-            .push(Space::with_width(Length::Fill))
+            .push(Space::new().width(Length::Fill))
             .push(
                 Text::new("To make sure you saved your recovery phrase correctly, please enter the correct words.")
                     .size(20)
                     .align_x(iced::alignment::Horizontal::Center)
                     .width(Length::Fixed(700.0))
             )
-            .push(Space::with_width(Length::Fill))
+            .push(Space::new().width(Length::Fill))
     );
 
-    content = content.push(Space::with_height(Length::Fixed(24.0)));
+    content = content.push(Space::new().height(Length::Fixed(24.0)));
 
     // Error message if verification failed
     if let Some(err) = error {
@@ -418,7 +415,7 @@ fn verification_view<'a>(
                 Row::new()
                     .width(Length::Fill)
                     .align_y(Alignment::Center)
-                    .push(Space::with_width(Length::Fill))
+                    .push(Space::new().width(Length::Fill))
                     .push(
                         Container::new(Text::new(err).size(16).style(|_| {
                             iced::widget::text::Style {
@@ -437,9 +434,9 @@ fn verification_view<'a>(
                             ..Default::default()
                         }),
                     )
-                    .push(Space::with_width(Length::Fill)),
+                    .push(Space::new().width(Length::Fill)),
             );
-        content = content.push(Space::with_height(Length::Fixed(16.0)));
+        content = content.push(Space::new().height(Length::Fixed(16.0)));
     }
 
     // Custom text input style with no border
@@ -478,19 +475,19 @@ fn verification_view<'a>(
         Row::new()
             .width(Length::Fill)
             .align_y(Alignment::Center)
-            .push(Space::with_width(Length::Fill))
+            .push(Space::new().width(Length::Fill))
             .push(input_fields)
-            .push(Space::with_width(Length::Fill)),
+            .push(Space::new().width(Length::Fill)),
     );
 
-    content = content.push(Space::with_height(Length::Fixed(24.0)));
+    content = content.push(Space::new().height(Length::Fixed(24.0)));
 
     // Verify button
     content = content.push(
         Row::new()
             .width(Length::Fill)
             .align_y(Alignment::Center)
-            .push(Space::with_width(Length::Fill))
+            .push(Space::new().width(Length::Fill))
             .push(if all_filled {
                 coincube_ui::component::button::primary(None, "Verify")
                     .on_press(Message::ActiveSettings(
@@ -503,7 +500,7 @@ fn verification_view<'a>(
                     .padding([8, 16])
                     .width(Length::Fixed(300.0))
             })
-            .push(Space::with_width(Length::Fill)),
+            .push(Space::new().width(Length::Fill)),
     );
 
     content.into()
@@ -517,57 +514,57 @@ fn completed_view() -> Element<'static, Message> {
     Column::new()
         .spacing(20)
         .width(Length::Fill)
-        .push(Space::with_height(Length::Fixed(20.0)))
+        .push(Space::new().height(Length::Fixed(20.0)))
         .push(
             Row::new()
                 .width(Length::Fill)
                 .align_y(Alignment::Center)
-                .push(Space::with_width(Length::Fill))
+                .push(Space::new().width(Length::Fill))
                 .push(
                     icon::check_circle().size(140).color(primary_color)
                 )
-                .push(Space::with_width(Length::Fill))
+                .push(Space::new().width(Length::Fill))
         )
-        .push(Space::with_height(Length::Fixed(16.0)))
+        .push(Space::new().height(Length::Fixed(16.0)))
         .push(
             Row::new()
                 .width(Length::Fill)
                 .align_y(Alignment::Center)
-                .push(Space::with_width(Length::Fill))
+                .push(Space::new().width(Length::Fill))
                 .push(
                     Column::new()
                         .width(Length::Shrink)
                         .align_x(Alignment::Center)
                         .push(h3("Backup Complete"))
                 )
-                .push(Space::with_width(Length::Fill))
+                .push(Space::new().width(Length::Fill))
         )
         .push(
             Row::new()
                 .width(Length::Fill)
                 .align_y(Alignment::Center)
-                .push(Space::with_width(Length::Fill))
+                .push(Space::new().width(Length::Fill))
                 .push(
                     Text::new("Your recovery phrase has been securely backed up. Keep it safe. It's the only way to restore your wallet.")
                         .size(20)
                         .align_x(iced::alignment::Horizontal::Center)
                         .width(Length::Fixed(700.0))
                 )
-                .push(Space::with_width(Length::Fill))
+                .push(Space::new().width(Length::Fill))
         )
-        .push(Space::with_height(Length::Fixed(24.0)))
+        .push(Space::new().height(Length::Fixed(24.0)))
         .push(
             Row::new()
                 .width(Length::Fill)
                 .align_y(Alignment::Center)
-                .push(Space::with_width(Length::Fill))
+                .push(Space::new().width(Length::Fill))
                 .push(
                     coincube_ui::component::button::primary(None, "Back to Settings")
                         .on_press(Message::ActiveSettings(ActiveSettingsMessage::BackupWallet(BackupWalletMessage::Complete)))
                         .padding([8, 16])
                         .width(Length::Fixed(300.0))
                 )
-                .push(Space::with_width(Length::Fill))
+                .push(Space::new().width(Length::Fill))
         )
         .into()
 }
@@ -639,7 +636,7 @@ fn settings_section(
                         .spacing(2)
                         .align_x(Alignment::Start),
                 )
-                .push(Space::with_width(Length::Fill))
+                .push(Space::new().width(Length::Fill))
                 .push(right_icon)
                 .padding(18)
                 .spacing(20)

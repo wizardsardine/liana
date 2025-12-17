@@ -814,7 +814,7 @@ async fn save_cube_settings(
 async fn find_or_create_cube(
     network_dir: &NetworkDirectory,
     wallet_id: &WalletId,
-    _wallet_alias: &Option<String>,
+    wallet_alias: &Option<String>,
     network: bitcoin::Network,
 ) -> Result<app::settings::CubeSettings, String> {
     match app::settings::Settings::from_file(network_dir) {
