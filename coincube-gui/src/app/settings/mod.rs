@@ -123,6 +123,10 @@ pub struct CubeSettings {
     pub id: String,
     pub name: String,
     pub network: Network,
+    #[serde(default)]
+    pub backed_up: bool,
+    #[serde(default)]
+    pub mfa_done: bool,
     pub created_at: i64,
     /// The Vault wallet for this Cube (optional - may not be set up yet)
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -130,6 +134,8 @@ pub struct CubeSettings {
     /// Optional security PIN (stored as Argon2id hash with salt in PHC format)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub security_pin_hash: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub active_wallet_signer_fingerprint: Option<Fingerprint>,
 }
 
 impl CubeSettings {
@@ -141,11 +147,19 @@ impl CubeSettings {
             created_at: chrono::Utc::now().timestamp(),
             vault_wallet_id: None,
             security_pin_hash: None,
+            active_wallet_signer_fingerprint: None,
+            backed_up: false,
+            mfa_done: false,
         }
     }
 
     pub fn with_vault(mut self, wallet_id: WalletId) -> Self {
         self.vault_wallet_id = Some(wallet_id);
+        self
+    }
+
+    pub fn with_active_signer(mut self, fingerprint: Fingerprint) -> Self {
+        self.active_wallet_signer_fingerprint = Some(fingerprint);
         self
     }
 
@@ -206,6 +220,27 @@ impl CubeSettings {
         Argon2::default()
             .verify_password(pin.as_bytes(), &parsed_hash)
             .is_ok()
+    }
+
+    /// Load Cube settings from file
+    pub fn load_from_file(
+        network_dir: &crate::dir::NetworkDirectory,
+    ) -> Result<Option<Self>, SettingsError> {
+        let path = network_dir.path().join("cube_settings.toml");
+
+        if !path.exists() {
+            return Ok(None);
+        }
+
+        let content = std::fs::read_to_string(&path).map_err(|e| {
+            SettingsError::ReadingFile(format!("Failed to read cube settings: {}", e))
+        })?;
+
+        let cube_settings: CubeSettings = toml::from_str(&content).map_err(|e| {
+            SettingsError::ReadingFile(format!("Failed to parse cube settings: {}", e))
+        })?;
+
+        Ok(Some(cube_settings))
     }
 }
 

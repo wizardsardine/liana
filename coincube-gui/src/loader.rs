@@ -65,6 +65,7 @@ pub struct Loader {
     pub backup: Option<Backup>,
     pub wallet_settings: Option<WalletSettings>,
     pub cube_settings: CubeSettings,
+    pub breez_client: Option<std::sync::Arc<crate::app::breez::BreezClient>>,
     step: Step,
 }
 
@@ -110,6 +111,16 @@ pub enum Message {
         >,
         /* restored_from_backup */ bool,
     ),
+    BreezLoaded {
+        breez: std::sync::Arc<crate::app::breez::BreezClient>,
+        cache: Cache,
+        wallet: Arc<Wallet>,
+        config: app::Config,
+        daemon: Arc<dyn Daemon + Sync + Send>,
+        datadir: CoincubeDirectory,
+        bitcoind: Option<Bitcoind>,
+        restored_from_backup: bool,
+    },
     Started(StartedResult),
     Loaded(Result<(Arc<dyn Daemon + Sync + Send>, GetInfoResult), Error>),
     BitcoindLog(Option<String>),
@@ -126,6 +137,7 @@ impl Loader {
         backup: Option<Backup>,
         wallet_settings: Option<WalletSettings>,
         cube_settings: CubeSettings,
+        breez_client: Option<std::sync::Arc<crate::app::breez::BreezClient>>,
     ) -> (Self, Task<Message>) {
         let task = if let Some(ref wallet) = wallet_settings {
             let socket_path = datadir_path
@@ -150,6 +162,7 @@ impl Loader {
                 wallet_settings,
                 cube_settings,
                 backup,
+                breez_client,
             },
             task,
         )
@@ -345,6 +358,7 @@ impl Loader {
                     self.backup.clone(),
                     self.wallet_settings.clone(),
                     self.cube_settings.clone(),
+                    self.breez_client.clone(),
                 );
                 *self = loader;
                 cmd
@@ -644,6 +658,7 @@ pub enum Error {
     Bitcoind(StartInternalBitcoindError),
     BitcoindLogs(std::io::Error),
     RestoreBackup(RestoreBackupError),
+    Unexpected(String),
 }
 
 impl std::fmt::Display for Error {
@@ -655,6 +670,7 @@ impl std::fmt::Display for Error {
             Self::Bitcoind(e) => write!(f, "Bitcoind error: {}", e),
             Self::BitcoindLogs(e) => write!(f, "Bitcoind logs error: {}", e),
             Self::RestoreBackup(e) => write!(f, "Restore backup: {e}"),
+            Self::Unexpected(e) => write!(f, "Unexpected error: {}", e),
         }
     }
 }

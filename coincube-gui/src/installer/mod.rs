@@ -79,6 +79,9 @@ pub struct Installer {
 
     /// Cube settings when launched from app (for returning to the same cube)
     pub cube_settings: Option<crate::app::settings::CubeSettings>,
+
+    /// Pre-loaded BreezClient when launched from app (avoids re-entering PIN)
+    pub breez_client: Option<std::sync::Arc<crate::app::breez::BreezClient>>,
 }
 
 impl Installer {
@@ -88,12 +91,8 @@ impl Installer {
         if self.current > 0 {
             self.current -= 1;
         } else {
-            // If launched from app, go back to app; otherwise go to launcher
-            return if self.launched_from_app {
-                Task::done(Message::BackToApp(network))
-            } else {
-                Task::done(Message::BackToLauncher(network))
-            };
+            // At first step - return to App (installer only launched from App for Vault setup)
+            return Task::done(Message::BackToApp(network));
         }
         // skip the previous step according to the current context.
         while self
@@ -105,12 +104,8 @@ impl Installer {
             if self.current > 0 {
                 self.current -= 1;
             } else {
-                // If launched from app, go back to app; otherwise go to launcher
-                return if self.launched_from_app {
-                    Task::done(Message::BackToApp(network))
-                } else {
-                    Task::done(Message::BackToLauncher(network))
-                };
+                // At first step - return to App (installer only launched from App for Vault setup)
+                return Task::done(Message::BackToApp(network));
             }
         }
 
@@ -127,6 +122,7 @@ impl Installer {
         user_flow: UserFlow,
         launched_from_app: bool,
         cube_settings: Option<crate::app::settings::CubeSettings>,
+        breez_client: Option<std::sync::Arc<crate::app::breez::BreezClient>>,
     ) -> (Installer, Task<Message>) {
         let signer = Arc::new(Mutex::new(Signer::generate(network).unwrap()));
         let context = Context::new(
@@ -148,6 +144,7 @@ impl Installer {
             hws: HardwareWallets::new(destination_path.clone(), network),
             launched_from_app,
             cube_settings,
+            breez_client,
             steps: match user_flow {
                 UserFlow::CreateWallet => vec![
                     ChooseDescriptorTemplate::default().into(),

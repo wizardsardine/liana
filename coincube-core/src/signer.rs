@@ -5,6 +5,18 @@
 
 use crate::random;
 
+use aes_gcm::{
+    aead::{rand_core::RngCore, Aead, KeyInit, OsRng},
+    Aes256Gcm, Nonce,
+};
+
+use argon2::{
+    password_hash::{PasswordHasher, SaltString},
+    Argon2,
+};
+
+use zeroize::Zeroizing;
+
 use std::{
     convert::TryInto,
     error, fmt, fs,
@@ -23,6 +35,11 @@ use miniscript::bitcoin::{
     secp256k1, sighash,
 };
 
+const NONCE_LEN: usize = 12; // AES-GCM standard nonce
+const SALT_LEN: usize = 16;
+const ENCRYPTED_FILE_MARKER: &[u8] = b"ENCRYPTED_V1"; // 12 bytes
+const ENCRYPTED_FILE_MARKER_LEN: usize = 12;
+
 /// An error related to using a signer.
 #[derive(Debug)]
 pub enum SignerError {
@@ -32,6 +49,9 @@ pub enum SignerError {
     MnemonicStorage(io::Error),
     InsanePsbt,
     IncompletePsbt,
+    Encryption(String),
+    Decryption(String),
+    InvalidPassword,
 }
 
 impl fmt::Display for SignerError {
@@ -46,6 +66,9 @@ impl fmt::Display for SignerError {
                 f,
                 "The PSBT is missing some information necessary for signing."
             ),
+            Self::Encryption(e) => write!(f, "Encryption error: {}", e),
+            Self::Decryption(e) => write!(f, "Decryption error: {}", e),
+            Self::InvalidPassword => write!(f, "Invalid password for encrypted mnemonic"),
         }
     }
 }
@@ -54,8 +77,6 @@ impl error::Error for SignerError {}
 
 pub const MNEMONICS_FOLDER_NAME: &str = "mnemonics";
 
-// TODO: zeroize, mlock, etc.. For now we don't even encrypt the seed on disk so that'd be
-// overkill.
 /// A signer that keeps the key on the laptop. Based on BIP39.
 pub struct HotSigner {
     mnemonic: bip39::Mnemonic,
@@ -126,6 +147,11 @@ impl HotSigner {
         Self::from_mnemonic(network, mnemonic)
     }
 
+    /// Check if a file contains an encrypted mnemonic
+    fn is_encrypted(data: &[u8]) -> bool {
+        data.starts_with(ENCRYPTED_FILE_MARKER)
+    }
+
     fn mnemonics_folder(datadir_root: &path::Path, network: bitcoin::Network) -> path::PathBuf {
         [
             datadir_root,
@@ -136,22 +162,47 @@ impl HotSigner {
         .collect()
     }
 
-    /// Read all the mnemonics from the datadir for the given network.
+    /// Read mnemonics from datadir (with optional password for encrypted files)
+    pub fn from_datadir_with_password(
+        datadir_root: &path::Path,
+        network: bitcoin::Network,
+        password: Option<&str>,
+    ) -> Result<Vec<Self>, SignerError> {
+        let mut signers = Vec::new();
+
+        let mnemonics_folder = Self::mnemonics_folder(datadir_root, network);
+        let mnemonic_paths =
+            fs::read_dir(mnemonics_folder).map_err(SignerError::MnemonicStorage)?;
+
+        for entry in mnemonic_paths {
+            let path = entry.map_err(SignerError::MnemonicStorage)?.path();
+            let data = fs::read(&path).map_err(SignerError::MnemonicStorage)?;
+
+            let mnemonic_str = if Self::is_encrypted(&data) {
+                // Encrypted file
+                let pwd = password.ok_or_else(|| {
+                    SignerError::Decryption("Password required for encrypted mnemonic".to_string())
+                })?;
+                Self::decrypt_mnemonic(&data, pwd)?
+            } else {
+                // Unencrypted file (backward compatibility)
+                String::from_utf8(data).map_err(|e| {
+                    SignerError::MnemonicStorage(io::Error::new(io::ErrorKind::InvalidData, e))
+                })?
+            };
+
+            signers.push(Self::from_str(network, &mnemonic_str)?);
+        }
+
+        Ok(signers)
+    }
+
+    /// Legacy method (backward compatible)
     pub fn from_datadir(
         datadir_root: &path::Path,
         network: bitcoin::Network,
     ) -> Result<Vec<Self>, SignerError> {
-        let mut signers = Vec::new();
-
-        let mnemonic_paths = fs::read_dir(Self::mnemonics_folder(datadir_root, network))
-            .map_err(SignerError::MnemonicStorage)?;
-        for entry in mnemonic_paths {
-            let mnemonic = fs::read_to_string(entry.map_err(SignerError::MnemonicStorage)?.path())
-                .map_err(SignerError::MnemonicStorage)?;
-            signers.push(Self::from_str(network, &mnemonic)?);
-        }
-
-        Ok(signers)
+        Self::from_datadir_with_password(datadir_root, network, None)
     }
 
     /// The BIP39 mnemonics from which the master key of this signer is derived.
@@ -183,10 +234,65 @@ impl HotSigner {
         self.master_xpriv.fingerprint(secp)
     }
 
+    /// Derive the SLIP-0077 master blinding key for Liquid/Elements confidential transactions.
+    /// Returns the 32-byte master blinding key derived from the BIP39 seed.
+    pub fn slip77_master_blinding_key(&self) -> [u8; 32] {
+        use bitcoin::hashes::{sha512, Hash, HashEngine, Hmac, HmacEngine};
+
+        // Get BIP39 seed (without passphrase)
+        let seed = self.mnemonic.to_seed("");
+
+        // SLIP-0077: master_blinding_key = HMAC-SHA512(key="SLIP-0077", msg=seed)[0:32]
+        let mut engine = HmacEngine::<sha512::Hash>::new(b"SLIP-0077");
+        engine.input(&seed);
+        let hmac_result = Hmac::<sha512::Hash>::from_engine(engine);
+
+        // Take first 32 bytes
+        let mut result = [0u8; 32];
+        result.copy_from_slice(&hmac_result.as_byte_array()[..32]);
+        result
+    }
+
     /// Store the mnemonic in a file within the given "data directory".
     /// The file is stored within a "mnemonics" folder, with the filename set to the fingerprint of
     /// the master xpub corresponding to this mnemonic.
-    /// returns the filename
+    /// Store the mnemonic (encrypted if password provided)
+    pub fn store_encrypted(
+        &self,
+        datadir_root: &path::Path,
+        network: bitcoin::Network,
+        secp: &secp256k1::Secp256k1<impl secp256k1::Signing>,
+        descriptor_info: Option<(String, i64)>,
+        password: Option<&str>,
+    ) -> Result<(), SignerError> {
+        let mnemonics_folder = Self::mnemonics_folder(datadir_root, network);
+        if !mnemonics_folder.exists() {
+            create_dir(&mnemonics_folder).map_err(SignerError::MnemonicStorage)?;
+        }
+
+        let filename = MnemonicFileName {
+            fingerprint: self.fingerprint(secp),
+            descriptor_info,
+        };
+        let file_path = mnemonics_folder.join(filename.to_string());
+
+        let data = if let Some(pwd) = password {
+            // Encrypt the mnemonic
+            self.encrypt_mnemonic(pwd)?
+        } else {
+            // Store unencrypted (backward compatibility)
+            self.mnemonic_str().as_bytes().to_vec()
+        };
+
+        let mut mnemonic_file = create_file(&file_path).map_err(SignerError::MnemonicStorage)?;
+        mnemonic_file
+            .write_all(&data)
+            .map_err(SignerError::MnemonicStorage)?;
+
+        Ok(())
+    }
+
+    /// Legacy store method (unencrypted) for backward compatibility
     pub fn store(
         &self,
         datadir_root: &path::Path,
@@ -194,26 +300,124 @@ impl HotSigner {
         secp: &secp256k1::Secp256k1<impl secp256k1::Signing>,
         descriptor_info: Option<(String, i64)>,
     ) -> Result<(), SignerError> {
-        let mnemonics_folder = Self::mnemonics_folder(datadir_root, network);
-        if !mnemonics_folder.exists() {
-            create_dir(&mnemonics_folder).map_err(SignerError::MnemonicStorage)?;
-        }
-
-        // This will fail if a file with this fingerprint exists already.
-        let filename = MnemonicFileName {
-            fingerprint: self.fingerprint(secp),
-            descriptor_info,
-        };
-        let mut mnemonic_file = create_file(&mnemonics_folder.join(filename.to_string()))
-            .map_err(SignerError::MnemonicStorage)?;
-        mnemonic_file
-            .write_all(self.mnemonic_str().as_bytes())
-            .map_err(SignerError::MnemonicStorage)?;
-
-        Ok(())
+        self.store_encrypted(datadir_root, network, secp, descriptor_info, None)
     }
 
-    fn xpriv_at(
+    /// Encrypt the mnemonic using Argon2 + AES-256-GCM
+    fn encrypt_mnemonic(&self, password: &str) -> Result<Vec<u8>, SignerError> {
+        // Generate random salt bytes
+        let mut salt_bytes = [0u8; SALT_LEN];
+        OsRng.fill_bytes(&mut salt_bytes);
+
+        // Create SaltString from the raw bytes for password hashing
+        let salt = SaltString::encode_b64(&salt_bytes)
+            .map_err(|e| SignerError::Encryption(e.to_string()))?;
+
+        // Derive key from password using Argon2
+        let argon2 = Argon2::default();
+        let password_hash = argon2
+            .hash_password(password.as_bytes(), &salt)
+            .map_err(|e| SignerError::Encryption(e.to_string()))?;
+
+        let hash_output = password_hash
+            .hash
+            .ok_or_else(|| SignerError::Encryption("Failed to derive key".to_string()))?;
+
+        // Use Zeroizing to automatically clear key_bytes when dropped
+        // Take the first 32 bytes for AES-256 (hash output is typically longer)
+        let key_bytes = Zeroizing::new({
+            let hash_bytes = hash_output.as_bytes();
+            if hash_bytes.len() < 32 {
+                return Err(SignerError::Encryption(
+                    "Hash output too short for AES-256 key".to_string(),
+                ));
+            }
+            hash_bytes[..32].to_vec()
+        });
+
+        let cipher = Aes256Gcm::new_from_slice(&key_bytes)
+            .map_err(|e| SignerError::Encryption(e.to_string()))?;
+
+        // Generate nonce
+        let mut nonce_bytes = [0u8; NONCE_LEN];
+        OsRng.fill_bytes(&mut nonce_bytes);
+        let nonce = Nonce::from_slice(&nonce_bytes);
+
+        // Encrypt mnemonic - use Zeroizing for the plaintext
+        let plaintext = Zeroizing::new(self.mnemonic_str());
+        let ciphertext = cipher
+            .encrypt(nonce, plaintext.as_bytes())
+            .map_err(|e| SignerError::Encryption(e.to_string()))?;
+
+        // Format: MARKER + SALT + NONCE + CIPHERTEXT
+        let mut result = Vec::new();
+        result.extend_from_slice(ENCRYPTED_FILE_MARKER);
+        result.extend_from_slice(&salt_bytes); // Use raw salt bytes
+        result.extend_from_slice(&nonce_bytes);
+        result.extend_from_slice(&ciphertext);
+
+        Ok(result)
+        // key_bytes and plaintext are automatically zeroized when dropped here
+    }
+
+    /// Decrypt a mnemonic
+    fn decrypt_mnemonic(data: &[u8], password: &str) -> Result<String, SignerError> {
+        // Check marker
+        if !data.starts_with(ENCRYPTED_FILE_MARKER) {
+            return Err(SignerError::Decryption(
+                "Not an encrypted mnemonic file".to_string(),
+            ));
+        }
+
+        let data = &data[ENCRYPTED_FILE_MARKER_LEN..];
+
+        if data.len() < SALT_LEN + NONCE_LEN {
+            return Err(SignerError::Decryption("Invalid file format".to_string()));
+        }
+
+        let salt_bytes = &data[..SALT_LEN];
+        let nonce_bytes = &data[SALT_LEN..SALT_LEN + NONCE_LEN];
+        let ciphertext = &data[SALT_LEN + NONCE_LEN..];
+
+        // Derive key from password
+        let salt = SaltString::encode_b64(salt_bytes)
+            .map_err(|e| SignerError::Decryption(e.to_string()))?;
+
+        let argon2 = Argon2::default();
+        let password_hash = argon2
+            .hash_password(password.as_bytes(), &salt)
+            .map_err(|_| SignerError::InvalidPassword)?;
+
+        let hash_output = password_hash.hash.ok_or(SignerError::InvalidPassword)?;
+
+        // Use Zeroizing to automatically clear key_bytes when dropped
+        // Take the first 32 bytes for AES-256
+        let key_bytes = Zeroizing::new({
+            let hash_bytes = hash_output.as_bytes();
+            if hash_bytes.len() < 32 {
+                return Err(SignerError::InvalidPassword);
+            }
+            hash_bytes[..32].to_vec()
+        });
+
+        let cipher =
+            Aes256Gcm::new_from_slice(&key_bytes).map_err(|_| SignerError::InvalidPassword)?;
+
+        // Decrypt - use Zeroizing for the plaintext bytes
+        let plaintext_bytes = Zeroizing::new(
+            cipher
+                .decrypt(Nonce::from_slice(nonce_bytes), ciphertext)
+                .map_err(|_| SignerError::InvalidPassword)?,
+        );
+
+        let result = String::from_utf8(plaintext_bytes.to_vec())
+            .map_err(|e| SignerError::Decryption(e.to_string()))?;
+
+        Ok(result)
+        // key_bytes and plaintext_bytes are automatically zeroized when dropped here
+    }
+
+    pub fn xpriv_at(
         &self,
         der_path: &bip32::DerivationPath,
         secp: &secp256k1::Secp256k1<impl secp256k1::Signing>,

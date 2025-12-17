@@ -48,6 +48,8 @@ pub enum Message {
     ImportPsbt,
     OpenUrl(String),
     Home(HomeMessage),
+    ActiveSend(ActiveSendMessage),
+    ActiveSettings(ActiveSettingsMessage),
 }
 
 impl Close for Message {
@@ -211,6 +213,30 @@ pub enum FiatMessage {
     Enable(bool),
     SourceEdited(PriceSource),
     CurrencyEdited(Currency),
+}
+
+#[derive(Debug, Clone)]
+pub enum ActiveSendMessage {
+    InvoiceEdited(String),
+    Send,
+    ViewHistory,
+}
+
+#[derive(Debug, Clone)]
+pub enum ActiveSettingsMessage {
+    BackupWallet(BackupWalletMessage),
+    SettingsUpdated,
+}
+
+#[derive(Debug, Clone)]
+pub enum BackupWalletMessage {
+    ToggleBackupIntroCheck,
+    Start,
+    NextStep,
+    PreviousStep,
+    VerifyPhrase,
+    Complete,
+    WordInput { index: u8, input: String },
 }
 
 impl From<FiatMessage> for Message {

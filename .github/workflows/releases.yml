@@ -64,7 +64,7 @@ jobs:
       # For Linux upload binary and libraries in a compressed tarball
       - name: Install Linux dependencies
         if: matrix.os == 'ubuntu-latest'
-        run: sudo apt-get update && sudo apt-get install -y libudev-dev pkg-config
+        run: sudo apt-get update && sudo apt-get install -y libudev-dev pkg-config protobuf-compiler
 
       - uses: taiki-e/upload-rust-binary-action@v1
         if: matrix.os == 'ubuntu-latest'
