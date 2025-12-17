@@ -11,7 +11,7 @@ use crate::app::view;
 pub fn label_editable(
     labelled: Vec<String>,
     label: Option<&String>,
-    size: u16,
+    size: u32,
 ) -> Element<'_, view::Message> {
     if let Some(label) = label {
         if !label.is_empty() {
@@ -45,7 +45,7 @@ pub fn label_editable(
 pub fn label_editing(
     labelled: Vec<String>,
     label: &form::Value<String>,
-    size: u16,
+    size: u32,
 ) -> Element<'_, view::Message> {
     let e: Element<view::LabelMessage> = Container::new(
         row!(

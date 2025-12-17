@@ -99,7 +99,7 @@ fn coin_list_view<'a>(
                                             )
                                             .width(Length::Fill)
                                         } else {
-                                            Container::new(Space::with_width(Length::Fill))
+                                            Container::new(Space::new().width(Length::Fill))
                                                 .width(Length::Fill)
                                         }
                                     } else if let Some(label) = labels.get(&txid) {
@@ -117,11 +117,11 @@ fn coin_list_view<'a>(
                                         )
                                         .width(Length::Fill)
                                     } else {
-                                        Container::new(Space::with_width(Length::Fill))
+                                        Container::new(Space::new().width(Length::Fill))
                                             .width(Length::Fill)
                                     }
                                 } else {
-                                    Container::new(Space::with_width(Length::Fill))
+                                    Container::new(Space::new().width(Length::Fill))
                                         .width(Length::Fill)
                                 })
                                 .push(if coin.spend_info.is_some() {
@@ -306,7 +306,7 @@ fn coin_list_view<'a>(
                                 .spacing(5)
                         } else {
                             Column::new().push(
-                                Row::new().push(Space::with_width(Length::Fill)).push({
+                                Row::new().push(Space::new().width(Length::Fill)).push({
                                     let (icon, label) =
                                         (Some(icon::arrow_repeat()), "Refresh coin");
                                     let refresh_btn = if seq == 0 {

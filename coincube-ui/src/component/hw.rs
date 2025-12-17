@@ -134,9 +134,9 @@ pub fn supported_hardware_wallet_with_account<
     Container::new(
         Row::new()
             .push(key)
-            .push(Space::with_width(Length::Fixed(15.0))) // Fixed spacing instead of Fill
+            .push(Space::new().width(Length::Fixed(15.0))) // Fixed spacing instead of Fill
             .push_maybe(pick_account)
-            .push_maybe(display_account.map(|a| column![Space::with_height(8), a])),
+            .push_maybe(display_account.map(|a| column![Space::new().height(8), a])),
     )
     .align_y(Alignment::Center)
     .padding(10)
@@ -226,10 +226,10 @@ pub fn disabled_hardware_wallet<'a, T: 'a, K: Display, V: Display, F: Display>(
         container(
             Row::new()
                 .push(key)
-                .push(Space::with_width(15))
-                .push(Space::with_width(Length::Fill))
+                .push(Space::new().width(15))
+                .push(Space::new().width(Length::Fill))
                 .push(text::text(label))
-                .push(Space::with_width(Length::Fill))
+                .push(Space::new().width(Length::Fill))
                 .align_y(Vertical::Center),
         )
         .width(Length::Fill)
@@ -319,9 +319,9 @@ pub fn selected_hardware_wallet<'a, T: 'static, K: Display, V: Display, F: Displ
     container(
         Row::new()
             .push(key)
-            .push(Space::with_width(Length::Fill))
-            .push_maybe(account.map(|a| column![Space::with_height(8), text::p1_bold(a)]))
-            .push(Space::with_width(10))
+            .push(Space::new().width(Length::Fill))
+            .push_maybe(account.map(|a| column![Space::new().height(8), text::p1_bold(a)]))
+            .push(Space::new().width(10))
             .push_maybe(warning.map(|w| {
                 tooltip::Tooltip::new(
                     icon::warning_icon(),
@@ -604,7 +604,7 @@ pub fn hot_signer<'a, T: 'a, F: Display>(
                     .push(text::caption("This computer"))
                     .into(),
             ]))
-            .push(Space::with_width(Length::Fixed(20.0)))
+            .push(Space::new().width(Length::Fixed(20.0)))
             .push_maybe(if !can_sign {
                 Some(text::text(
                     "This hot signer is not part of this spending path.",
@@ -612,7 +612,7 @@ pub fn hot_signer<'a, T: 'a, F: Display>(
             } else {
                 None
             })
-            .push(Space::with_width(Length::Fill))
+            .push(Space::new().width(Length::Fill))
             .align_y(Vertical::Center),
     )
     .padding(10)

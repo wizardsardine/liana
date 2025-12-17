@@ -11,7 +11,7 @@ resolver = "2"
 
 [features]
 default = []
-buysell = ["dep:iced_wry"]
+buysell = []
 
 [package.metadata.winres]
 LegalCopyright = "Copyright © 2025"
@@ -19,7 +19,6 @@ LegalCopyright = "Copyright © 2025"
 [[bin]]
 name = "coincube"
 path = "src/main.rs"
-
 
 [dependencies]
 async-trait = "0.1"
@@ -34,7 +33,7 @@ backtrace = "0.3"
 hex = "0.4.3"
 dotenv = "0.15"
 
-iced = { version = "0.13.1", default-features = false, features = [
+iced = { version = "0.14.0", default-features = false, features = [
 	"tokio",
 	"svg",
 	"canvas",
@@ -43,13 +42,13 @@ iced = { version = "0.13.1", default-features = false, features = [
 	"advanced",
 	"wgpu",
 	"tiny-skia",
+	"sipper",
+	"x11",
+	"wayland"
 ] }
 image = { version = "*", default-features = false, features = ["png"] }
-iced_aw = { version = "0.12.2", features = ["context_menu"] }
-iced_runtime = "0.13.1"
-
-# Webview for embedded browser functionality (wry-based)
-iced_wry = { git = "https://github.com/sokorototo/iced_wry", optional = true }
+iced_aw = { version = "0.13.0", features = ["context_menu"] }
+iced_runtime = "0.14.0"
 
 # Used to verify RFC-compliance of an email
 email_address = "0.2.7"

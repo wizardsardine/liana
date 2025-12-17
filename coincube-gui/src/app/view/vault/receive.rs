@@ -27,14 +27,14 @@ use coincube_ui::{
 use crate::{
     app::{
         error::Error,
-        view::{vault::hw, vault::label, vault::warning::warn},
+        view::{placeholder, vault::hw, vault::label, vault::warning::warn},
     },
     hw::HardwareWallet,
 };
 
 use super::super::message::Message;
 
-fn address_card<'a>(
+pub fn address_card<'a>(
     row_index: usize,
     address: &'a bitcoin::Address,
     labels: &'a HashMap<String, String>,
@@ -54,10 +54,10 @@ fn address_card<'a>(
                         Container::new(
                             scrollable(
                                 Column::new()
-                                    .push(Space::with_height(Length::Fixed(10.0)))
+                                    .push(Space::new().height(Length::Fixed(10.0)))
                                     .push(p2_regular(address).small().style(theme::text::secondary))
                                     // Space between the address and the scrollbar
-                                    .push(Space::with_height(Length::Fixed(10.0))),
+                                    .push(Space::new().height(Length::Fixed(10.0))),
                             )
                             .direction(
                                 scrollable::Direction::Horizontal(
@@ -80,7 +80,7 @@ fn address_card<'a>(
                         button::secondary(None, "Verify on hardware device")
                             .on_press(Message::Select(row_index)),
                     )
-                    .push(Space::with_width(Length::Fill))
+                    .push(Space::new().width(Length::Fill))
                     .push(
                         button::secondary(None, "Show QR Code")
                             .on_press(Message::ShowQrCode(row_index)),
@@ -105,6 +105,7 @@ pub fn receive<'a>(
     // Number of start and end address characters to show in collapsed view.
     const NUM_ADDR_CHARS: usize = 16;
     let mut addresses_count = 0; // for counting number of new addresses generated
+
     Column::new()
         .push(
             Row::new()
@@ -120,7 +121,13 @@ pub fn receive<'a>(
                     .on_press(Message::NextReceiveAddress)
                 }),
         )
-        .push(text("Always generate a new address for each deposit."))
+        .push_maybe((prev_addresses.is_empty() && addresses.is_empty()).then(|| {
+            placeholder(
+                icon::receive_icon().size(80),
+                "No addresses yet",
+                "Generate a new address to receive bitcoin. Always generate a new address for each deposit.",
+            )
+        }))
         .push(
             Row::new()
                 .spacing(10)
@@ -195,7 +202,7 @@ pub fn receive<'a>(
                                     Container::new(
                                         scrollable(
                                             Column::new()
-                                                .push(Space::with_height(Length::Fixed(10.0)))
+                                                .push(Space::new().height(Length::Fixed(10.0)))
                                                 .push(
                                                     text(
                                                         prev_labels
@@ -207,7 +214,7 @@ pub fn receive<'a>(
                                                     .style(theme::text::secondary),
                                                 )
                                                 // Space between the label and the scrollbar
-                                                .push(Space::with_height(Length::Fixed(10.0))),
+                                                .push(Space::new().height(Length::Fixed(10.0))),
                                         )
                                         .direction(
                                             scrollable::Direction::Horizontal(
@@ -260,7 +267,7 @@ pub fn receive<'a>(
                 .style(theme::card::simple),
             ),
         )
-        .spacing(20)
+        .spacing(25)
         .into()
 }
 
@@ -351,14 +358,14 @@ pub fn qr_modal<'a>(qr: &'a qr_code::Data, address: &'a String) -> Element<'a, M
     Column::new()
         .push(
             Row::new()
-                .push(Space::with_width(Length::Fill))
+                .push(Space::new().width(Length::Fill))
                 .push(
                     Container::new(QRCode::<coincube_ui::theme::Theme>::new(qr).cell_size(8))
                         .padding(10),
                 )
-                .push(Space::with_width(Length::Fill)),
+                .push(Space::new().width(Length::Fill)),
         )
-        .push(Space::with_height(Length::Fixed(15.0)))
+        .push(Space::new().height(Length::Fixed(15.0)))
         .push(Container::new(text(address).size(15)).center_x(Length::Fill))
         .width(Length::Fill)
         .max_width(400)

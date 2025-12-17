@@ -1,13 +1,13 @@
 use crate::{
-    app::menu::Menu,
-    app::view::FiatAmountConverter,
+    app::{
+        menu::Menu,
+        view::{global_home::TransferDirection, FiatAmountConverter},
+    },
     export::ImportExportMessage,
     node::bitcoind::RpcAuthType,
     services::fiat::{Currency, PriceSource},
 };
 
-#[cfg(feature = "buysell")]
-use crate::services::mavapay::*;
 use coincube_core::miniscript::bitcoin::{bip32::Fingerprint, Address, OutPoint};
 use coincube_core::spend::SpendCreationError;
 
@@ -47,6 +47,7 @@ pub enum Message {
     ExportPsbt,
     ImportPsbt,
     OpenUrl(String),
+    Home(HomeMessage),
     ActiveSend(ActiveSendMessage),
     ActiveSettings(ActiveSettingsMessage),
 }
@@ -161,65 +162,50 @@ pub enum BuySellMessage {
     ResetWidget,
     SelectBuyOrSell(bool), // true = buy, false = sell
     StartSession,
+    LogOut,
+
+    // automatic user login
+    SubmitLogin {
+        skip_email_verification: bool,
+    },
+    LoginSuccess {
+        login: crate::services::coincube::LoginResponse,
+        email_verified: bool,
+    },
+
+    // ip geolocation
+    CountryDetected(Result<crate::services::coincube::Country, String>),
 
     // recipient address generation
     CreateNewAddress,
     AddressCreated(super::buysell::panel::LabelledAddress),
 
-    // Geolocation detection
-    CountryDetected(Result<crate::services::coincube::Country, String>),
-
-    // webview logic
-    WebviewOpenUrl(String),
-    WryMessage(iced_wry::IcedWryMessage),
-    StartWryWebviewWithUrl(iced_wry::ExtractedWindowId, String),
-
-    // Mavapay specific messages
-    Mavapay(MavapayMessage),
-}
-
-#[cfg(feature = "buysell")]
-#[derive(Debug, Clone)]
-pub enum MavapayMessage {
-    LoginSuccess {
-        login: crate::services::coincube::LoginResponse,
-        email_verified: bool,
-    },
-    // User Registration
+    // user Registration
     LegalNameChanged(String),
     EmailChanged(String),
     Password1Changed(String),
     Password2Changed(String),
     SubmitRegistration,
     RegistrationSuccess,
-    // Email Verification
+
+    // email Verification
     SendVerificationEmail,
     CheckEmailVerificationStatus,
     EmailVerificationFailed,
-    // Login to coincube account
+
+    // login to coincube account
     LoginUsernameChanged(String),
     LoginPasswordChanged(String),
-    SubmitLogin {
-        skip_email_verification: bool,
-    },
     CreateNewAccount,
     ResetPassword,
+
     // Password Reset
     SendPasswordResetEmail,
     PasswordResetEmailSent(String),
     ReturnToLogin,
-    // Active Flow
-    AmountChanged(u64),
-    PaymentMethodChanged(crate::services::mavapay::MavapayPaymentMethod),
-    BankAccountNumberChanged(String),
-    BankAccountNameChanged(String),
-    BankSelected(usize),
-    CreateQuote,
-    QuoteCreated(GetQuoteResponse),
-    GetPrice,
-    PriceReceived(GetPriceResponse),
-    GetBanks,
-    BanksReceived(MavapayBanks),
+
+    // Mavapay specific messages
+    Mavapay(crate::services::mavapay::MavapayMessage),
 }
 
 #[derive(Debug, Clone)]
@@ -257,4 +243,14 @@ impl From<FiatMessage> for Message {
     fn from(msg: FiatMessage) -> Self {
         Message::Settings(SettingsMessage::Fiat(msg))
     }
+}
+
+#[derive(Debug, Clone)]
+pub enum HomeMessage {
+    ToggleBalanceMask,
+    SelectTransferDirection(TransferDirection),
+    AmountEdited(String),
+    ConfirmTransfer,
+    NextStep,
+    PreviousStep,
 }

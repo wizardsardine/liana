@@ -48,7 +48,7 @@ pub fn fiat_price<'a>(
                     .spacing(10)
                     .align_y(Alignment::Center)
                     .push(text("Fiat price:").bold())
-                    .push(Space::with_width(Length::Fill))
+                    .push(Space::new().width(Length::Fill))
                     .push(
                         Toggler::new(new_price_setting.is_enabled)
                             .on_toggle(|new_selection| FiatMessage::Enable(new_selection).into())
@@ -61,7 +61,7 @@ pub fn fiat_price<'a>(
                         .spacing(20)
                         .align_y(Alignment::Center)
                         .push(text("Exchange rate source:").bold())
-                        .push(Space::with_width(Length::Fill))
+                        .push(Space::new().width(Length::Fill))
                         .push(
                             pick_list(
                                 &ALL_PRICE_SOURCES[..],
@@ -79,7 +79,7 @@ pub fn fiat_price<'a>(
                         .spacing(20)
                         .align_y(Alignment::Center)
                         .push(text("Currency:").bold())
-                        .push(Space::with_width(Length::Fill))
+                        .push(Space::new().width(Length::Fill))
                         .push(
                             pick_list(
                                 currencies_list,
@@ -100,7 +100,7 @@ pub fn fiat_price<'a>(
                         Row::new()
                             .spacing(20)
                             .align_y(Alignment::Center)
-                            .push(Space::with_width(Length::Fill))
+                            .push(Space::new().width(Length::Fill))
                             .push(text(s))
                     }),
             ),

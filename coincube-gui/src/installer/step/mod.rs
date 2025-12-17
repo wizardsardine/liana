@@ -8,7 +8,9 @@ mod share_xpubs;
 mod wallet_alias;
 
 pub use node::{
-    bitcoind::{DownloadState, InstallState, InternalBitcoindStep, SelectBitcoindTypeStep},
+    bitcoind::{
+        DownloadState, DownloadUpdate, InstallState, InternalBitcoindStep, SelectBitcoindTypeStep,
+    },
     DefineNode,
 };
 
@@ -102,10 +104,13 @@ impl Step for Final {
             .collect();
     }
     fn load(&self) -> Task<Message> {
-        if !self.generating && self.wallet_settings.is_none() {
-            Task::perform(async {}, |_| Message::Install)
-        } else {
+        if self.generating {
             Task::none()
+        } else if self.wallet_settings.is_some() {
+            // If installation is already done, just retry cube save
+            Task::perform(async {}, |_| Message::RetryCubeSave)
+        } else {
+            Task::perform(async {}, |_| Message::Install)
         }
     }
     fn update(&mut self, _hws: &mut HardwareWallets, message: Message) -> Task<Message> {
@@ -162,6 +167,30 @@ impl Step for Final {
                     return Task::perform(async move {}, |_| Message::RedeemNextKey);
                 }
             },
+            Message::RetryCubeSave => {
+                self.warning = None;
+
+                let Some(settings) = self.wallet_settings.clone() else {
+                    self.warning =
+                        Some("Cannot retry cube save: installation not complete".to_string());
+                    return Task::none();
+                };
+                let internal_bitcoind = self.internal_bitcoind.clone();
+
+                self.generating = true;
+
+                return Task::perform(
+                    async move { (settings, internal_bitcoind) },
+                    |(settings, internal_bitcoind)| {
+                        Message::Exit(Box::new(settings), internal_bitcoind)
+                    },
+                );
+            }
+            Message::CubeSaveFailed(err) => {
+                // Cube save failed after installation
+                self.generating = false;
+                self.warning = Some(err);
+            }
             Message::Install => {
                 self.generating = true;
                 self.wallet_settings = None;
@@ -182,7 +211,7 @@ impl Step for Final {
             progress,
             email,
             self.generating,
-            self.wallet_settings.is_some(),
+            self.wallet_settings.is_some() && self.warning.is_none(),
             self.warning.as_ref(),
         )
     }

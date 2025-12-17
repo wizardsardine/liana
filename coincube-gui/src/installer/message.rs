@@ -17,11 +17,10 @@ use super::{
 };
 use crate::{
     app::{
-        settings::{self, ProviderKey},
+        settings::{self, CubeSettings, ProviderKey},
         view::Close,
     },
     backup::Backup,
-    download::{DownloadError, Progress},
     export::ImportExportMessage,
     hw::HardwareWalletMessage,
     installer::{decrypt::Decrypt, descriptor::PathKind},
@@ -79,6 +78,13 @@ pub enum Message {
     SelectKeySource(SelectKeySourceMessage),
     EditKeyAlias(EditKeyAliasMessage),
     Decrypt(Decrypt),
+    CubeSaved(
+        Result<CubeSettings, String>,
+        Box<settings::WalletSettings>,
+        Option<Bitcoind>,
+    ),
+    CubeSaveFailed(String),
+    RetryCubeSave,
     None,
 }
 
@@ -162,7 +168,7 @@ pub enum InternalBitcoindMsg {
     Reload,
     DefineConfig,
     Download,
-    DownloadProgressed(Result<Progress, DownloadError>),
+    DownloadProgressed(super::step::DownloadUpdate),
     Install,
     Start,
 }

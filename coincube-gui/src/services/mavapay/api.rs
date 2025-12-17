@@ -18,10 +18,10 @@ pub enum MavapayError {
 impl std::fmt::Display for MavapayError {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
-            Self::Http(Some(code), msg) => write!(f, "HTTP error [{}]: {}", code, msg),
-            Self::Http(None, msg) => write!(f, "HTTP error: {}", msg),
+            Self::Http(Some(code), msg) => write!(f, "[{}]: {}", code, msg),
+            Self::Http(None, msg) => write!(f, "{}", msg),
             Self::InvalidResponse(msg) => write!(f, "Invalid response: {}", msg),
-            Self::ApiError(msg) => write!(f, "Api Error: {}", msg),
+            Self::ApiError(msg) => write!(f, "Mavapay Error: {}", msg),
             Self::QuoteExpired => write!(f, "Quote has expired"),
             Self::InsufficientFunds => write!(f, "Insufficient funds"),
             Self::InvalidCurrency => write!(f, "Invalid or unsupported currency"),
@@ -35,7 +35,10 @@ impl std::fmt::Display for MavapayError {
 
 impl From<reqwest::Error> for MavapayError {
     fn from(error: reqwest::Error) -> Self {
-        Self::Http(None, error.to_string())
+        let error = error.without_url();
+
+        log::error!("[REQWEST] {:?}", error);
+        Self::Http(error.status().map(|s| s.as_u16()), error.to_string())
     }
 }
 
@@ -133,13 +136,24 @@ impl MavapayUnitCurrency {
     }
 }
 
+impl From<MavapayUnitCurrency> for MavapayCurrency {
+    fn from(value: MavapayUnitCurrency) -> Self {
+        match value {
+            MavapayUnitCurrency::KenyanShillingCent => MavapayCurrency::KenyanShilling,
+            MavapayUnitCurrency::SouthAfricanRandCent => MavapayCurrency::SouthAfricanRand,
+            MavapayUnitCurrency::NigerianNairaKobo => MavapayCurrency::NigerianNaira,
+            MavapayUnitCurrency::BitcoinSatoshi => MavapayCurrency::Bitcoin,
+        }
+    }
+}
+
 impl std::fmt::Display for MavapayUnitCurrency {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            MavapayUnitCurrency::KenyanShillingCent => write!(f, "Kenyan Cent"),
-            MavapayUnitCurrency::SouthAfricanRandCent => write!(f, "South African Cent"),
-            MavapayUnitCurrency::NigerianNairaKobo => write!(f, "Nigerian Kobo"),
-            MavapayUnitCurrency::BitcoinSatoshi => write!(f, "Bitcoin Satoshi"),
+            MavapayUnitCurrency::KenyanShillingCent => write!(f, "Kenyan Cents"),
+            MavapayUnitCurrency::SouthAfricanRandCent => write!(f, "South African Cents"),
+            MavapayUnitCurrency::NigerianNairaKobo => write!(f, "Nigerian Kobos"),
+            MavapayUnitCurrency::BitcoinSatoshi => write!(f, "Bitcoin Satoshis"),
         }
     }
 }
@@ -150,6 +164,7 @@ pub enum MavapayPaymentMethod {
     Lightning,
     BankTransfer,
     Onchain,
+    USDT,
 }
 
 impl std::fmt::Display for MavapayPaymentMethod {
@@ -158,6 +173,7 @@ impl std::fmt::Display for MavapayPaymentMethod {
             MavapayPaymentMethod::Lightning => write!(f, "Bitcoin Lightning"),
             MavapayPaymentMethod::Onchain => write!(f, "Bitcoin Mainnet Transaction"),
             MavapayPaymentMethod::BankTransfer => write!(f, "Bank Transfer"),
+            MavapayPaymentMethod::USDT => write!(f, "USDT Transaction"),
         }
     }
 }
@@ -168,6 +184,7 @@ impl MavapayPaymentMethod {
             MavapayPaymentMethod::Lightning,
             MavapayPaymentMethod::BankTransfer,
             MavapayPaymentMethod::Onchain,
+            MavapayPaymentMethod::USDT,
         ]
     }
 }
@@ -234,6 +251,35 @@ pub struct GetPriceResponse {
     pub btc_price_in_unit_currency: f64,
 }
 
+#[derive(Debug, Serialize, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub enum OnchainTransferSpeed {
+    Slow,
+    Medium,
+    Fast,
+}
+
+impl std::fmt::Display for OnchainTransferSpeed {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            OnchainTransferSpeed::Slow => "Slow",
+            OnchainTransferSpeed::Medium => "Medium",
+            OnchainTransferSpeed::Fast => "Fast",
+        }
+        .fmt(f)
+    }
+}
+
+impl OnchainTransferSpeed {
+    pub fn all() -> &'static [OnchainTransferSpeed] {
+        &[
+            OnchainTransferSpeed::Slow,
+            OnchainTransferSpeed::Medium,
+            OnchainTransferSpeed::Fast,
+        ]
+    }
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GetQuoteRequest {
@@ -242,6 +288,7 @@ pub struct GetQuoteRequest {
     pub target_currency: MavapayUnitCurrency,
     pub payment_method: MavapayPaymentMethod,
     pub payment_currency: MavapayUnitCurrency,
+    pub speed: OnchainTransferSpeed,
     pub autopayout: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub customer_internal_fee: Option<u64>,
@@ -249,11 +296,11 @@ pub struct GetQuoteRequest {
     pub beneficiary: Option<Beneficiary>,
 }
 
-// TODO: This structure is always changing, with some members being deprecated or undocumented
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GetQuoteResponse {
     pub id: String,
+    pub order_id: Option<String>,
     pub exchange_rate: f64,
     pub usd_to_target_currency_rate: f64,
     pub source_currency: MavapayUnitCurrency,
@@ -263,18 +310,18 @@ pub struct GetQuoteResponse {
     pub amount_in_source_currency: u64,
     pub amount_in_target_currency: u64,
     pub payment_method: MavapayPaymentMethod,
-    pub expiry: String, // TODO: use typed dates
+    pub expiry: String,
     pub is_valid: bool,
     pub invoice: String,
     pub hash: String,
     pub total_amount_in_source_currency: u64,
     pub total_amount_in_target_currency: Option<u64>,
     pub customer_internal_fee: u64,
-    pub created_at: String,
-    pub updated_at: String,
+    pub created_at: Option<String>,
+    pub updated_at: Option<String>,
 
+    // undocumented fields
     pub estimated_routing_fee: Option<u64>,
-    pub order_id: Option<String>,
     pub bank_name: Option<String>,
     pub ngn_bank_account_number: Option<String>,
     pub ngn_account_name: Option<String>,
@@ -283,9 +330,9 @@ pub struct GetQuoteResponse {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct MavapayWallet {
-    pub id: String,
-    pub account_id: String,
+pub struct MavapayOrder {
+    pub order_id: String,
+    pub quote_id: String,
     pub currency: MavapayCurrency,
     pub balance: u64,
 }
@@ -300,11 +347,25 @@ pub struct BankCustomerInquiry {
     pub channel_code: String,
 }
 
+#[derive(Debug, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct GetOrderResponse {
+    pub id: String,
+    pub amount: u64,
+    pub status: TransactionStatus,
+    pub currency: MavapayCurrency,
+    pub payment_method: MavapayPaymentMethod,
+
+    pub created_at: Option<String>,
+    pub updated_at: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "UPPERCASE")]
 pub enum TransactionStatus {
     Pending,
     Success,
+    Expired,
     Failed,
     Paid,
 }
@@ -314,29 +375,6 @@ pub enum TransactionStatus {
 pub enum TransactionType {
     Withdrawal,
     Deposit,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct GetTransactionFilters {
-    pub tx_id: Option<String>,
-    pub account_name: Option<String>,
-    pub status: Option<TransactionStatus>,
-    #[serde(rename = "type")]
-    pub _type: Option<TransactionType>,
-    pub min_amount: Option<u64>,
-    pub max_amount: Option<u64>,
-    pub start_date: Option<String>,
-    pub end_date: Option<String>,
-}
-
-#[derive(Debug, Default, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct GetTransactions {
-    pub page: Option<u64>,
-    pub limit: Option<u64>,
-    #[serde(flatten, skip_serializing_if = "Option::is_none")]
-    pub filters: Option<GetTransactionFilters>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -354,25 +392,22 @@ pub struct Transaction {
     pub metadata: serde_json::Value,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Default, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct GetTransactionPagination {
-    pub count: u64,
-    pub next_page: bool,
-    pub current_page: u64,
-    pub total_pages: u64,
+pub struct GetTransaction<'a> {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub order_id: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hash: Option<&'a str>,
 }
 
-#[derive(Debug, Deserialize)]
+#[cfg(debug_assertions)]
+#[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-#[serde(tag = "status")]
-pub enum GetTransactionResponse {
-    Error {
-        message: String,
-    },
-    Success {
-        #[serde(flatten)]
-        pagination: GetTransactionPagination,
-        data: Vec<Transaction>,
-    },
+pub struct SimulatePayInRequest {
+    pub quote_id: String,
+    pub amount: u64,
+    pub currency: MavapayCurrency,
 }

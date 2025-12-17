@@ -384,7 +384,7 @@ impl Loader {
     pub fn subscription(&self) -> Subscription<Message> {
         if self.internal_bitcoind.is_some() {
             let log_path = internal_bitcoind_debug_log_path(&self.datadir_path, self.network);
-            iced::Subscription::run_with_id("bitcoind_log", get_bitcoind_log(log_path))
+            iced::Subscription::run_with(log_path, |log_path| get_bitcoind_log(log_path.clone()))
                 .map(Message::BitcoindLog)
         } else {
             Subscription::none()
@@ -397,7 +397,7 @@ impl Loader {
 }
 
 fn get_bitcoind_log(log_path: PathBuf) -> impl Stream<Item = Option<String>> {
-    channel(5, move |mut output| async move {
+    channel(5, async move |mut output| {
         loop {
             // Reduce the io load.
             tokio::time::sleep(Duration::from_millis(500)).await;
@@ -513,14 +513,14 @@ pub fn view(step: &Step) -> Element<ViewMessage> {
             None,
             Column::new()
                 .width(Length::Fill)
-                .push(ProgressBar::new(0.0..=1.0, 0.0).width(Length::Fill))
+                .push(ProgressBar::new(0.0..=1.0, 0.0).length(Length::Fill))
                 .push(text("Starting daemon...")),
         ),
         Step::Connecting => cover(
             None,
             Column::new()
                 .width(Length::Fill)
-                .push(ProgressBar::new(0.0..=1.0, 0.0).width(Length::Fill))
+                .push(ProgressBar::new(0.0..=1.0, 0.0).length(Length::Fill))
                 .push(text("Connecting to daemon...")),
         ),
         Step::Syncing {
@@ -533,7 +533,7 @@ pub fn view(step: &Step) -> Element<ViewMessage> {
                 .width(Length::Fill)
                 .spacing(5)
                 .push(text(format!("Progress {:.2}%", 100.0 * *progress)))
-                .push(ProgressBar::new(0.0..=1.0, *progress as f32).width(Length::Fill))
+                .push(ProgressBar::new(0.0..=1.0, *progress as f32).length(Length::Fill))
                 .push(text(if *progress > 0.98 {
                     SYNCING_PROGRESS_3
                 } else if *progress > 0.9 {

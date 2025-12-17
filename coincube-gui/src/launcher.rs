@@ -1,6 +1,10 @@
+use coincube_ui::widget::{ColumnExt as _, RowExt as _};
 use iced::{
     alignment::Horizontal,
-    widget::{checkbox, focus_next, focus_previous, pick_list, scrollable, Button, Space},
+    widget::{
+        checkbox, operation::focus_next, operation::focus_previous, pick_list, scrollable, Button,
+        Space,
+    },
     Alignment, Length, Subscription, Task,
 };
 
@@ -414,7 +418,7 @@ impl Launcher {
                     Row::new()
                         .spacing(20)
                         .push(image::coincube_logotype().width(Length::Fixed(150.0)))
-                        .push(Space::with_width(Length::Fill))
+                        .push(Space::new().width(Length::Fill))
                         .push_maybe(if let State::Cubes { create_cube, .. } = &self.state {
                             if *create_cube {
                                 Some(
@@ -519,7 +523,7 @@ impl Launcher {
                     )
                     .center_x(Length::Fill),
                 )
-                .push(Space::with_height(Length::Fixed(100.0))),
+                .push(Space::new().height(Length::Fixed(100.0))),
         ))
         .map(Message::View);
         let content = if self.network != Network::Bitcoin {
@@ -571,7 +575,7 @@ fn create_cube_form<'a>(
         );
 
     // PIN setup section (always required)
-    column = column.push(Space::with_height(Length::Fixed(10.0)));
+    column = column.push(Space::new().height(Length::Fixed(10.0)));
 
     // Enter PIN label with eye button
     let pin_label = p1_regular("Enter PIN:").style(theme::text::secondary);
@@ -615,7 +619,7 @@ fn create_cube_form<'a>(
     }
     column = column.push(pin_inputs_row);
 
-    column = column.push(Space::with_height(Length::Fixed(20.0)));
+    column = column.push(Space::new().height(Length::Fixed(20.0)));
 
     // Confirm PIN label with eye button
     let pin_confirm_label = p1_regular("Confirm PIN:").style(theme::text::secondary);
@@ -660,7 +664,7 @@ fn create_cube_form<'a>(
     column = column.push(pin_confirm_inputs_row);
 
     // Add extra padding before Create Cube button
-    column = column.push(Space::with_height(Length::Fixed(20.0)));
+    column = column.push(Space::new().height(Length::Fixed(20.0)));
 
     // Show error above the button
     if let Some(err) = error {
@@ -948,12 +952,14 @@ impl DeleteCubeModal {
                     .push(Row::new())
                     .push_maybe(self.wallet_settings.as_ref().and_then(|w| w.remote_backend_auth.as_ref()).map(|a| {
                         checkbox(
-                            match self.user_role {
-                                Some(UserRole::Owner) | None => "Also permanently delete the Vault wallet from Liana Connect (for all members).".to_string(),
-                                Some(UserRole::Member) => format!("Also disassociate {} from this Liana Connect wallet.", a.email),
-                            },
                             self.delete_liana_connect,
                         )
+                        .label(
+                                match self.user_role {
+                                    Some(UserRole::Owner) | None => "Also permanently delete the Vault wallet from Liana Connect (for all members).".to_string(),
+                                    Some(UserRole::Member) => format!("Also disassociate {} from this Liana Connect wallet.", a.email),
+                                }
+                            )
                         .on_toggle_maybe(if !self.deleted {
                                 Some(|v| {
                                     ViewMessage::DeleteCube(DeleteCubeMessage::DeleteLianaConnect(v))

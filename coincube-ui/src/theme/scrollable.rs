@@ -1,7 +1,7 @@
 use iced::{
     widget::{
         container,
-        scrollable::{Catalog, Rail, Scroller, Status, Style, StyleFn},
+        scrollable::{AutoScroll, Catalog, Rail, Scroller, Status, Style, StyleFn},
     },
     Border, Color, Shadow,
 };
@@ -25,7 +25,7 @@ pub fn primary(theme: &Theme, status: Status) -> Style {
         background: None,
         border: Border::default(),
         scroller: Scroller {
-            color: theme.colors.general.scrollable,
+            background: iced::Background::Color(theme.colors.general.scrollable),
             border: Border {
                 radius: 8.0.into(),
                 width: 0.0,
@@ -35,7 +35,7 @@ pub fn primary(theme: &Theme, status: Status) -> Style {
     };
 
     match status {
-        Status::Active | Status::Hovered { .. } | Status::Dragged { .. } => Style {
+        Status::Active { .. } | Status::Hovered { .. } | Status::Dragged { .. } => Style {
             container: container::Style {
                 text_color: None,
                 background: None,
@@ -45,10 +45,17 @@ pub fn primary(theme: &Theme, status: Status) -> Style {
                     color: Color::TRANSPARENT,
                 },
                 shadow: Shadow::default(),
+                ..Default::default()
             },
             vertical_rail: rail,
             horizontal_rail: rail,
             gap: None,
+            auto_scroll: AutoScroll {
+                background: iced::Background::Color(theme.colors.general.background),
+                border: Border::default(),
+                shadow: Shadow::default(),
+                icon: theme.colors.text.primary,
+            },
         },
     }
 }

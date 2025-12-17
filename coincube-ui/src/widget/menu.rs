@@ -5,7 +5,7 @@ use iced::widget::scrollable::{self, Scrollable};
 use iced_core::alignment;
 use iced_core::border::{self};
 use iced_core::clipboard::{self, Clipboard};
-use iced_core::event::{self, Event};
+use iced_core::event::Event;
 use iced_core::layout::{self, Layout};
 use iced_core::mouse;
 use iced_core::overlay;
@@ -154,7 +154,7 @@ impl Default for State {
 struct Overlay<'a, 'b, Message, Theme, Renderer>
 where
     Theme: Catalog,
-    Renderer: iced_core::Renderer,
+    Renderer: iced_core::text::Renderer,
 {
     position: Point,
     state: &'a mut Tree,
@@ -250,18 +250,18 @@ where
         })
     }
 
-    fn on_event(
+    fn update(
         &mut self,
-        event: Event,
+        event: &Event,
         layout: Layout<'_>,
         cursor: mouse::Cursor,
         renderer: &Renderer,
         clipboard: &mut dyn Clipboard,
         shell: &mut Shell<'_, Message>,
-    ) -> event::Status {
+    ) {
         let bounds = layout.bounds();
 
-        self.list.on_event(
+        self.list.update(
             self.state, event, layout, cursor, renderer, clipboard, shell, &bounds,
         )
     }
@@ -270,11 +270,11 @@ where
         &self,
         layout: Layout<'_>,
         cursor: mouse::Cursor,
-        viewport: &Rectangle,
         renderer: &Renderer,
     ) -> mouse::Interaction {
+        let bounds = layout.bounds();
         self.list
-            .mouse_interaction(self.state, layout, cursor, viewport, renderer)
+            .mouse_interaction(self.state, layout, cursor, &bounds, renderer)
     }
 
     fn draw(
@@ -335,7 +335,7 @@ where
     }
 
     fn layout(
-        &self,
+        &mut self,
         _tree: &mut Tree,
         renderer: &Renderer,
         limits: &layout::Limits,
@@ -349,7 +349,7 @@ where
         let size = {
             let intrinsic = Size::new(
                 0.0,
-                (f32::from(text_line_height) + self.padding.vertical()) * self.options.len() as f32,
+                (f32::from(text_line_height) + self.padding.y()) * self.options.len() as f32,
             );
 
             limits.resolve(Length::Fill, Length::Shrink, intrinsic)
@@ -358,17 +358,17 @@ where
         layout::Node::new(size)
     }
 
-    fn on_event(
+    fn update(
         &mut self,
         _state: &mut Tree,
-        event: Event,
+        event: &Event,
         layout: Layout<'_>,
         cursor: mouse::Cursor,
         renderer: &Renderer,
         clipboard: &mut dyn Clipboard,
         shell: &mut Shell<'_, Message>,
         _viewport: &Rectangle,
-    ) -> event::Status {
+    ) {
         match event {
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
                 if cursor.is_over(layout.bounds()) {
@@ -393,7 +393,6 @@ where
                             if let Some(msg) = (self.on_select)(content) {
                                 shell.publish(msg);
                             }
-                            return event::Status::Captured;
                         }
                     }
                 }
@@ -403,8 +402,8 @@ where
                 if let Some(cursor_position) = cursor.position_in(layout.bounds()) {
                     let text_size = self.text_size.unwrap_or_else(|| renderer.default_size());
 
-                    let option_height = f32::from(self.text_line_height.to_absolute(text_size))
-                        + self.padding.vertical();
+                    let option_height =
+                        f32::from(self.text_line_height.to_absolute(text_size)) + self.padding.y();
 
                     let new_hovered_option = (cursor_position.y / option_height) as usize;
 
@@ -415,8 +414,8 @@ where
                 if let Some(cursor_position) = cursor.position_in(layout.bounds()) {
                     let text_size = self.text_size.unwrap_or_else(|| renderer.default_size());
 
-                    let option_height = f32::from(self.text_line_height.to_absolute(text_size))
-                        + self.padding.vertical();
+                    let option_height =
+                        f32::from(self.text_line_height.to_absolute(text_size)) + self.padding.y();
 
                     *self.hovered_option = Some((cursor_position.y / option_height) as usize);
 
@@ -441,15 +440,12 @@ where
                             if let Some(msg) = (self.on_select)(content) {
                                 shell.publish(msg);
                             }
-                            return event::Status::Captured;
                         }
                     }
                 }
             }
             _ => {}
         }
-
-        event::Status::Ignored
     }
 
     fn mouse_interaction(
@@ -484,7 +480,7 @@ where
 
         let text_size = self.text_size.unwrap_or_else(|| renderer.default_size());
         let option_height =
-            f32::from(self.text_line_height.to_absolute(text_size)) + self.padding.vertical();
+            f32::from(self.text_line_height.to_absolute(text_size)) + self.padding.y();
 
         let offset = viewport.y - bounds.y;
         let start = (offset / option_height) as usize;
@@ -525,8 +521,8 @@ where
                     size: text_size,
                     line_height: self.text_line_height,
                     font: self.font.unwrap_or_else(|| renderer.default_font()),
-                    horizontal_alignment: alignment::Horizontal::Left,
-                    vertical_alignment: alignment::Vertical::Center,
+                    align_x: text::Alignment::Left,
+                    align_y: alignment::Vertical::Center,
                     shaping: self.text_shaping,
                     wrapping: text::Wrapping::default(),
                 },

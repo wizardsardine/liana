@@ -46,7 +46,7 @@ pub fn transactions_view<'a>(
             .push(
                 Row::new()
                     .push(Container::new(h3("Transactions")))
-                    .push(Space::with_width(Length::Fill))
+                    .push(Space::new().width(Length::Fill))
                     .push(
                         button::secondary(Some(icon::backup_icon()), "Export")
                             .on_press(ImportExportMessage::Open.into()),

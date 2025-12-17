@@ -40,62 +40,69 @@ use crate::{
 // https://github.com/iced-rs/iced/blob/master/examples/download_progress/src/main.rs.
 #[derive(Debug)]
 struct Download {
-    id: usize,
     state: DownloadState,
 }
 
 #[derive(Debug)]
 pub enum DownloadState {
     Idle,
-    Downloading { progress: f32 },
+    Downloading {
+        progress: f32,
+        _handle: iced::task::Handle,
+    },
     Finished(Vec<u8>),
     Errored(download::DownloadError),
 }
 
+#[derive(Debug, Clone)]
+pub enum DownloadUpdate {
+    Progressed(download::Progress),
+    Finished(Result<Vec<u8>, download::DownloadError>),
+}
+
 impl Download {
-    pub fn new(id: usize) -> Self {
+    pub fn new() -> Self {
         Download {
-            id,
             state: DownloadState::Idle,
         }
     }
 
-    pub fn start(&mut self) {
+    pub fn start(&mut self) -> Task<DownloadUpdate> {
         match self.state {
             DownloadState::Idle
             | DownloadState::Finished { .. }
             | DownloadState::Errored { .. } => {
-                self.state = DownloadState::Downloading { progress: 0.0 };
+                let (task, handle) = Task::sip(
+                    download::download(bitcoind::download_url()),
+                    DownloadUpdate::Progressed,
+                    DownloadUpdate::Finished,
+                )
+                .abortable();
+
+                self.state = DownloadState::Downloading {
+                    progress: 0.0,
+                    _handle: handle.abort_on_drop(),
+                };
+
+                task
             }
-            _ => {}
+            DownloadState::Downloading { .. } => Task::none(),
         }
     }
 
-    pub fn progress(&mut self, new_progress: Result<download::Progress, download::DownloadError>) {
-        if let DownloadState::Downloading { progress } = &mut self.state {
-            match new_progress {
-                Ok(download::Progress::Downloading(percentage)) => {
-                    *progress = percentage;
+    pub fn update(&mut self, update: DownloadUpdate) {
+        if let DownloadState::Downloading { progress, .. } = &mut self.state {
+            match update {
+                DownloadUpdate::Progressed(p) => {
+                    *progress = p.percent;
                 }
-                Ok(download::Progress::Finished(bytes)) => {
+                DownloadUpdate::Finished(Ok(bytes)) => {
                     self.state = DownloadState::Finished(bytes);
                 }
-                Err(e) => {
+                DownloadUpdate::Finished(Err(e)) => {
                     self.state = DownloadState::Errored(e);
                 }
             }
-        }
-    }
-
-    pub fn subscription(&self) -> Subscription<Message> {
-        match self.state {
-            DownloadState::Downloading { .. } => download::file(self.id, bitcoind::download_url())
-                .map(|(_, progress)| {
-                    Message::InternalBitcoind(message::InternalBitcoindMsg::DownloadProgressed(
-                        progress,
-                    ))
-                }),
-            _ => Subscription::none(),
         }
     }
 }
@@ -537,7 +544,7 @@ impl Step for InternalBitcoindStep {
             if exe_path.exists() {
                 self.exe_path = Some(exe_path)
             } else if self.exe_download.is_none() {
-                self.exe_download = Some(Download::new(0));
+                self.exe_download = Some(Download::new());
             };
         }
         if self.network != ctx.bitcoin_config.network {
@@ -652,13 +659,17 @@ impl Step for InternalBitcoindStep {
                     if let Some(download) = &mut self.exe_download {
                         if let DownloadState::Idle = download.state {
                             info!("Downloading bitcoind version {}...", &bitcoind::VERSION);
-                            download.start();
+                            return download.start().map(|update| {
+                                Message::InternalBitcoind(
+                                    message::InternalBitcoindMsg::DownloadProgressed(update),
+                                )
+                            });
                         }
                     }
                 }
-                message::InternalBitcoindMsg::DownloadProgressed(progress) => {
+                message::InternalBitcoindMsg::DownloadProgressed(update) => {
                     if let Some(download) = self.exe_download.as_mut() {
-                        download.progress(progress);
+                        download.update(update);
                         if let DownloadState::Finished(_) = &download.state {
                             info!("Download of bitcoind complete.");
                             return Task::perform(async {}, |_| {
@@ -734,9 +745,6 @@ impl Step for InternalBitcoindStep {
     }
 
     fn subscription(&self, _hws: &HardwareWallets) -> Subscription<Message> {
-        if let Some(download) = self.exe_download.as_ref() {
-            return download.subscription();
-        }
         Subscription::none()
     }
 

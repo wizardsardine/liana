@@ -73,7 +73,6 @@ impl State for ActiveSettings {
             Message::View(view::Message::ActiveSettings(ActiveSettingsMessage::BackupWallet(
                 backup_msg,
             ))) => {
-                tracing::info!("Got BackupWallet message: {:?}", backup_msg);
                 match backup_msg {
                     view::BackupWalletMessage::ToggleBackupIntroCheck => {
                         if let ActiveSettingsFlowState::BackupWallet(BackupWalletState::Intro(

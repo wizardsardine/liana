@@ -9,7 +9,7 @@ pub fn active_transactions_view(wallet_name: &str) -> Element<Message> {
         .width(Length::Fill)
         .push(h3("Active - Transactions"))
         .push(text(format!("Wallet: {}", wallet_name)))
-        .push(Space::with_height(Length::Fixed(20.0)))
+        .push(Space::new().height(Length::Fixed(20.0)))
         .push(text("This is a placeholder for the Active Transactions page.").size(15))
         .push(text("Lightning Network transaction history will be displayed here.").size(15))
         .into()
