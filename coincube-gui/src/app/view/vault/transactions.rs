@@ -52,7 +52,7 @@ pub fn transactions_view<'a>(
                             .on_press(ImportExportMessage::Open.into()),
                     ),
             )
-            .push_maybe(txs.is_empty().then(|| {
+            .push(txs.is_empty().then(|| {
                 placeholder(
                     receipt_icon().size(80),
                     "No transactions yet",
@@ -69,7 +69,7 @@ pub fn transactions_view<'a>(
                                 col.push(tx_list_view(i, tx))
                             }),
                     )
-                    .push_maybe(if !is_last_page && !txs.is_empty() {
+                    .push(if !is_last_page && !txs.is_empty() {
                         Some(
                             Container::new(
                                 Button::new(
@@ -117,14 +117,14 @@ fn tx_list_view(i: usize, tx: &HistoryTransaction) -> Element<'_, Message> {
                         })
                         .push(
                             Column::new()
-                                .push_maybe(if let Some(outpoint) = tx.is_single_payment() {
+                                .push(if let Some(outpoint) = tx.is_single_payment() {
                                     tx.labels.get(&outpoint.to_string()).map(p1_regular)
                                 } else {
                                     tx.labels
                                         .get(&tx.tx.compute_txid().to_string())
                                         .map(p1_regular)
                                 })
-                                .push_maybe(tx.time.map(|t| {
+                                .push(tx.time.map(|t| {
                                     Container::new(
                                         text(
                                             DateTime::<Utc>::from_timestamp(t as i64, 0)
@@ -142,12 +142,12 @@ fn tx_list_view(i: usize, tx: &HistoryTransaction) -> Element<'_, Message> {
                         .align_y(Alignment::Center)
                         .width(Length::Fill),
                 )
-                .push_maybe(if tx.time.is_none() {
+                .push(if tx.time.is_none() {
                     Some(badge::unconfirmed())
                 } else {
                     None
                 })
-                .push_maybe(if tx.is_batch() {
+                .push(if tx.is_batch() {
                     Some(badge::batch())
                 } else {
                     None
@@ -209,7 +209,7 @@ pub fn create_rbf_modal<'a>(
             .spacing(10)
             .push(Container::new(h4_bold("Transaction replacement")).width(Length::Fill))
             .push(Row::new().push(text(help_text)))
-            .push_maybe(if descendant_txids.is_empty() {
+            .push(if descendant_txids.is_empty() {
                 None
             } else {
                 Some(
@@ -261,7 +261,7 @@ pub fn create_rbf_modal<'a>(
                     ),
                 )
             })
-            .push_maybe(if !is_cancel {
+            .push(if !is_cancel {
                 Some(
                     Row::new()
                         .push(Container::new(p1_bold("Feerate")).padding(10))
@@ -299,7 +299,7 @@ pub fn create_rbf_modal<'a>(
                             .style(theme::text::success),
                     )
             }))
-            .push_maybe(replacement_txid.map(|id| {
+            .push(replacement_txid.map(|id| {
                 Row::new().push(
                     button::primary(None, "Go to replacement")
                         .width(Length::Fixed(200.0))
@@ -359,7 +359,7 @@ pub fn tx_view<'a>(
                         } else {
                             Container::new(amount_with_size(&tx.outgoing_amount, H1_SIZE))
                         })
-                        .push_maybe(tx.fee_amount.map(|fee_amount| {
+                        .push(tx.fee_amount.map(|fee_amount| {
                             Row::new()
                                 .align_y(Alignment::Center)
                                 .push(h3("Miner fee: ").style(theme::text::secondary))
@@ -378,7 +378,7 @@ pub fn tx_view<'a>(
             )
             // If unconfirmed, give option to use RBF.
             // Check fee amount is some as otherwise we may be missing coins for this transaction.
-            .push_maybe(if tx.time.is_none() && tx.fee_amount.is_some() {
+            .push(if tx.time.is_none() && tx.fee_amount.is_some() {
                 Some(
                     Row::new()
                         .push(
@@ -402,7 +402,7 @@ pub fn tx_view<'a>(
             })
             .push(card::simple(
                 Column::new()
-                    .push_maybe(tx.time.map(|t| {
+                    .push(tx.time.map(|t| {
                         let date = DateTime::<Utc>::from_timestamp(t as i64, 0)
                                         .expect("Correct unix timestamp")
                                         .with_timezone(&Local)
@@ -435,7 +435,7 @@ pub fn tx_view<'a>(
                 Column::new()
                     .spacing(20)
                     // We do not need to display inputs for external incoming transactions
-                    .push_maybe(if tx.is_external() {
+                    .push(if tx.is_external() {
                         None
                     } else {
                         Some(super::psbt::inputs_view(

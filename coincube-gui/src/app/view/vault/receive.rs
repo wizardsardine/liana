@@ -121,7 +121,7 @@ pub fn receive<'a>(
                     .on_press(Message::NextReceiveAddress)
                 }),
         )
-        .push_maybe((prev_addresses.is_empty() && addresses.is_empty()).then(|| {
+        .push((prev_addresses.is_empty() && addresses.is_empty()).then(|| {
             placeholder(
                 icon::receive_icon().size(80),
                 "No addresses yet",
@@ -140,7 +140,7 @@ pub fn receive<'a>(
                     },
                 )),
         )
-        .push_maybe(
+        .push(
             (!prev_addresses.is_empty()).then_some(
                 Container::new(
                     Button::new(
@@ -164,7 +164,7 @@ pub fn receive<'a>(
                 .style(theme::card::simple),
             ),
         )
-        .push_maybe(show_prev_addresses.then_some(Row::new().spacing(10).push(
+        .push(show_prev_addresses.then_some(Row::new().spacing(10).push(
             prev_addresses.iter().enumerate().fold(
                 // prev addresses are already ordered in descending order
                 Column::new().spacing(10).width(Length::Fill),
@@ -246,7 +246,7 @@ pub fn receive<'a>(
                 },
             ),
         )))
-        .push_maybe(
+        .push(
             (!is_last_page && show_prev_addresses).then_some(
                 Container::new(
                     Button::new(
@@ -279,7 +279,7 @@ pub fn verify_address_modal<'a>(
     derivation_index: &ChildNumber,
 ) -> Element<'a, Message> {
     Column::new()
-        .push_maybe(warning.map(|w| warn(Some(w))))
+        .push(warning.map(|w| warn(Some(w))))
         .push(card::simple(
             Column::new()
                 .push(

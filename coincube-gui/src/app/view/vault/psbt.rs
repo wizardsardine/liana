@@ -62,12 +62,12 @@ pub fn psbt_view<'a>(
                     .align_y(Alignment::Center)
                     .spacing(10)
                     .push(Container::new(h3("PSBT")).width(Length::Fill))
-                    .push_maybe(if !tx.sigs.recovery_paths().is_empty() {
+                    .push(if !tx.sigs.recovery_paths().is_empty() {
                         Some(badge::recovery())
                     } else {
                         None
                     })
-                    .push_maybe(match tx.status {
+                    .push(match tx.status {
                         SpendStatus::Deprecated => Some(badge::deprecated()),
                         SpendStatus::Broadcast => Some(badge::unconfirmed()),
                         SpendStatus::Spent => Some(badge::spent()),
@@ -139,7 +139,7 @@ pub fn save_action<'a>(warning: Option<&Error>, saved: bool) -> Element<'a, Mess
         card::simple(
             Column::new()
                 .spacing(10)
-                .push_maybe(warning.map(|w| warn(Some(w))))
+                .push(warning.map(|w| warn(Some(w))))
                 .push(text("Save this transaction"))
                 .push(
                     Row::new()
@@ -175,9 +175,9 @@ pub fn broadcast_action<'a>(
         card::simple(
             Column::new()
                 .spacing(10)
-                .push_maybe(warning.map(|w| warn(Some(w))))
+                .push(warning.map(|w| warn(Some(w))))
                 .push(Container::new(h4_bold("Broadcast the transaction")).width(Length::Fill))
-                .push_maybe(if conflicting_txids.is_empty() {
+                .push(if conflicting_txids.is_empty() {
                     None
                 } else {
                     Some(
@@ -262,7 +262,7 @@ pub fn delete_action<'a>(warning: Option<&Error>, deleted: bool) -> Element<'a, 
         card::simple(
             Column::new()
                 .spacing(10)
-                .push_maybe(warning.map(|w| warn(Some(w))))
+                .push(warning.map(|w| warn(Some(w))))
                 .push(text("Delete this PSBT"))
                 .push(
                     Row::new()
@@ -316,14 +316,14 @@ pub fn spend_header<'a>(
                     Row::new()
                         .align_y(Alignment::Center)
                         .push(h3("Miner fee: ").style(theme::text::secondary))
-                        .push_maybe(if tx.fee_amount.is_none() {
+                        .push(if tx.fee_amount.is_none() {
                             Some(text("Missing information about transaction inputs"))
                         } else {
                             None
                         })
-                        .push_maybe(tx.fee_amount.map(|fee| amount_with_size(&fee, H3_SIZE)))
+                        .push(tx.fee_amount.map(|fee| amount_with_size(&fee, H3_SIZE)))
                         .push(text(" ").size(H3_SIZE))
-                        .push_maybe(tx.min_feerate_vb().map(|rate| {
+                        .push(tx.min_feerate_vb().map(|rate| {
                             text(format!("(~{} sats/vbyte)", &rate))
                                 .size(H4_SIZE)
                                 .style(theme::text::secondary)
@@ -403,11 +403,11 @@ pub fn spend_overview_view<'a>(
             )
             .style(theme::card::simple),
         )
-        .push_maybe(if tx.status == SpendStatus::Pending {
+        .push(if tx.status == SpendStatus::Pending {
             Some(
                 Row::new()
                     .push(Space::new().width(Length::Fill))
-                    .push_maybe(if tx.path_ready().is_none() {
+                    .push(if tx.path_ready().is_none() {
                         Some(
                             button::primary(None, "Sign")
                                 .on_press(Message::Spend(SpendTxMessage::Sign))
@@ -518,7 +518,7 @@ pub fn signatures<'a>(
                             .padding(15)
                             .spacing(10)
                             .push(text("Finalizing this transaction requires:"))
-                            .push_maybe(if tx.sigs.recovery_paths().is_empty() {
+                            .push(if tx.sigs.recovery_paths().is_empty() {
                                 Some(path_view(
                                     desc_info.primary_path(),
                                     tx.sigs.primary_path(),
@@ -615,8 +615,8 @@ pub fn path_view<'a>(
                 ))
                 .style(theme::text::secondary),
             )
-            .push_maybe(row_unsigned)
-            .push_maybe(
+            .push(row_unsigned)
+            .push(
                 (!sigs.signed_pubkeys.is_empty())
                     .then_some(p1_regular(", already signed by ").style(theme::text::secondary)),
             )
@@ -792,7 +792,7 @@ pub fn outputs_view<'a>(
                 .style(theme::card::simple)
             }
         })
-        .push_maybe(
+        .push(
             if change_indexes
                 .as_ref()
                 .map(|indexes| !indexes.is_empty())
@@ -870,7 +870,7 @@ fn input_view<'a>(
                     })
                     .width(Length::Fill),
                 )
-                .push_maybe(coin.map(|c| amount(&c.amount))),
+                .push(coin.map(|c| amount(&c.amount))),
         )
         .push(
             Column::new()
@@ -886,7 +886,7 @@ fn input_view<'a>(
                                 .style(theme::button::transparent_border),
                         ),
                 )
-                .push_maybe(coin.map(|c| {
+                .push(coin.map(|c| {
                     let addr = c.address.to_string();
                     Row::new()
                         .align_y(Alignment::Center)
@@ -907,7 +907,7 @@ fn input_view<'a>(
                                 ),
                         )
                 }))
-                .push_maybe(coin.and_then(|c| {
+                .push(coin.and_then(|c| {
                     labels.get(&c.address.to_string()).map(|label| {
                         Row::new()
                             .align_y(Alignment::Center)
@@ -968,7 +968,7 @@ fn payment_view<'a>(
                 )
                 .push(amount(&output.value)),
         )
-        .push_maybe(addr.map(|addr| {
+        .push(addr.map(|addr| {
             Column::new()
                 .push(
                     Row::new()
@@ -990,7 +990,7 @@ fn payment_view<'a>(
                                 ),
                         ),
                 )
-                .push_maybe(labels.get(&addr).map(|label| {
+                .push(labels.get(&addr).map(|label| {
                     Row::new()
                         .align_y(Alignment::Center)
                         .width(Length::Fill)
@@ -1052,7 +1052,7 @@ pub fn sign_action<'a>(
     recovery_timelock: Option<u16>,
 ) -> Element<'a, Message> {
     Column::new()
-        .push_maybe(warning.map(|w| warn(Some(w))))
+        .push(warning.map(|w| warn(Some(w))))
         .push(card::simple(
             Column::new()
                 .push(
@@ -1078,7 +1078,7 @@ pub fn sign_action<'a>(
                                 col.push(hw_list_view(i, hw, signed, signing, can_sign))
                             },
                         ))
-                        .push_maybe({
+                        .push({
                             signer.map(|fingerprint| {
                                 let can_sign = descriptor
                                     .contains_fingerprint_in_path(fingerprint, recovery_timelock);

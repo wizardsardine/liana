@@ -66,7 +66,7 @@ pub fn import_wallet_or_descriptor<'a>(
         col_wallets = col_wallets.push(
             Button::new(
                 Column::new()
-                    .push_maybe(alias.map(p1_bold))
+                    .push(alias.map(p1_bold))
                     .push(p1_regular(name))
                     .width(Length::Fill),
             )
@@ -271,7 +271,7 @@ pub fn import_wallet_or_descriptor<'a>(
         "Add wallet",
         Column::new()
             .spacing(50)
-            .push_maybe(error.map(|e| card::error("Something wrong happened", e.to_string())))
+            .push(error.map(|e| card::error("Something wrong happened", e.to_string())))
             .push(card_wallets)
             .push(card::simple(col_invitation_token).padding(0))
             .push(card::simple(col_descriptor).padding(0))
@@ -351,10 +351,10 @@ pub fn import_descriptor<'a>(
             .push(
                 Column::new()
                     .spacing(20)
-                    .push_maybe(import_backup)
-                    .push_maybe(backup_imported)
-                    .push_maybe(or)
-                    .push_maybe(descriptor)
+                    .push(import_backup)
+                    .push(backup_imported)
+                    .push(or)
+                    .push(descriptor)
                     .push(text(
                         "If you are using a Bitcoin Core node, \
                 you will need to perform a rescan of \
@@ -373,7 +373,7 @@ pub fn import_descriptor<'a>(
                         .on_press(Message::Next)
                 },
             )
-            .push_maybe(error.map(|e| card::error("Invalid descriptor", e.to_string())))
+            .push(error.map(|e| card::error("Invalid descriptor", e.to_string())))
             .spacing(50),
         true,
         Some(Message::Previous),
@@ -405,12 +405,12 @@ pub fn signer_xpubs<'a>(
                 .style(theme::button::secondary)
                 .width(Length::Fill),
             )
-            .push_maybe(if xpubs.is_empty() {
+            .push(if xpubs.is_empty() {
                 None
             } else {
                 Some(separation().width(Length::Fill))
             })
-            .push_maybe(if xpubs.is_empty() {
+            .push(if xpubs.is_empty() {
                 None
             } else {
                 Some(
@@ -431,7 +431,7 @@ pub fn signer_xpubs<'a>(
                     .padding(15),
                 )
             })
-            .push_maybe(if !xpubs.is_empty() {
+            .push(if !xpubs.is_empty() {
                 Some(
                     Container::new(
                         checkbox(did_backup)
@@ -443,7 +443,7 @@ pub fn signer_xpubs<'a>(
             } else {
                 None
             })
-            .push_maybe(if !xpubs.is_empty() && did_backup {
+            .push(if !xpubs.is_empty() && did_backup {
                 Some(xpubs.iter().fold(Column::new().padding(15), |col, xpub| {
                     col.push(
                         Row::new()
@@ -540,14 +540,14 @@ pub fn hardware_wallet_xpubs<'a>(
     }
     Container::new(
         Column::new()
-            .push_maybe(error.map(|e| card::warning(e.to_string()).width(Length::Fill)))
+            .push(error.map(|e| card::warning(e.to_string()).width(Length::Fill)))
             .push(Container::new(bttn).width(Length::Shrink)) // Wrap button to force shrink
-            .push_maybe(if xpubs.is_none() {
+            .push(if xpubs.is_none() {
                 None
             } else {
                 Some(separation().width(Length::Fill))
             })
-            .push_maybe(xpubs.map(|xpubs| {
+            .push(xpubs.map(|xpubs| {
                 xpubs.iter().fold(Column::new().padding(15), |col, xpub| {
                     col.push(
                         Row::new()
@@ -601,7 +601,7 @@ pub fn share_xpubs<'a>(
         "Share your public keys (Xpubs)",
         Column::new()
             .push(title)
-            .push_maybe(if hws.is_empty() {
+            .push(if hws.is_empty() {
                 Some(p1_regular("No signing device connected").style(theme::text::secondary))
             } else {
                 None
@@ -710,12 +710,12 @@ pub fn register_descriptor<'a>(
         email,
         "Register descriptor",
         Column::new()
-            .push_maybe((!created_desc).then_some(
+            .push((!created_desc).then_some(
                 text("This step is only necessary if you are using a signing device.").bold(),
             ))
             .push(displayed_descriptor)
             .push(text(prompt::REGISTER_DESCRIPTOR_HELP))
-            .push_maybe(error.map(|e| card::error("Failed to register descriptor", e.to_string())))
+            .push(error.map(|e| card::error("Failed to register descriptor", e.to_string())))
             .push(
                 Column::new()
                     .push(
@@ -752,7 +752,7 @@ pub fn register_descriptor<'a>(
                     )
                     .width(Length::Fill),
             )
-            .push_maybe(created_desc.then_some(checkbox(done)
+            .push(created_desc.then_some(checkbox(done)
                 .label("I have registered the descriptor on my device(s)")
             .on_toggle(Message::UserActionDone)))
             .push(if !created_desc || (done && !processing) {
@@ -822,7 +822,7 @@ pub fn backup_descriptor<'a>(
                     ))
                     .max_width(1000),
             )
-            .push_maybe(error.map(|e| card::error("Failed to export backup", e.to_string())))
+            .push(error.map(|e| card::error("Failed to export backup", e.to_string())))
             .push(
                 card::simple(
                     Column::new()
@@ -1084,7 +1084,7 @@ pub fn define_bitcoin_node<'a>(
             ),
         )
         .push(node_view)
-        .push_maybe(if waiting_for_ping_result {
+        .push(if waiting_for_ping_result {
             Some(Container::new(
                 Row::new()
                     .spacing(10)
@@ -1174,7 +1174,7 @@ pub fn define_bitcoind<'a>(
             .size(text::P1_SIZE)
             .padding(10),
         )
-        .push_maybe(if !is_loopback && address.valid {
+        .push(if !is_loopback && address.valid {
             Some(
                 iced::widget::Text::new(
                     "Connection to a remote Bitcoin node \
@@ -1280,7 +1280,7 @@ pub fn define_electrum<'a>(
             .size(text::P1_SIZE)
             .padding(10),
         )
-        .push_maybe(checkbox)
+        .push(checkbox)
         .push(text(electrum::ADDRESS_NOTES))
         .spacing(10);
 
@@ -1412,7 +1412,7 @@ pub fn start_internal_bitcoind<'a>(
         None,
         "Start Bitcoin full node",
         Column::new()
-            .push_maybe(download_state.map(|s| {
+            .push(download_state.map(|s| {
                 match s {
                     DownloadState::Finished(_) => Row::new()
                         .spacing(10)
@@ -1470,7 +1470,7 @@ pub fn start_internal_bitcoind<'a>(
             } else {
                 Row::new().spacing(10).align_y(Alignment::Center)
             }))
-            .push_maybe(if started.is_some() {
+            .push(if started.is_some() {
                 started.map(|res| {
                     if res.is_ok() {
                         Container::new(
@@ -1517,7 +1517,7 @@ pub fn start_internal_bitcoind<'a>(
                         }),
                 ),
             )
-            .push_maybe(error.map(|e| card::invalid(text(e)))),
+            .push(error.map(|e| card::invalid(text(e)))),
         true,
         Some(message::Message::InternalBitcoind(
             message::InternalBitcoindMsg::Previous,
@@ -1542,7 +1542,7 @@ pub fn install<'a>(
         email,
         "Finalize installation",
         Column::new()
-            .push_maybe(warning.map(|e| card::invalid(text(e))))
+            .push(warning.map(|e| card::invalid(text(e))))
             .push(if generating {
                 Container::new(text("Installing..."))
             } else if installed {
@@ -1680,7 +1680,7 @@ pub fn defined_sequence<'a>(
                     .align_y(alignment::Vertical::Center),
                 ),
             })
-            .push_maybe(warning.map(|w| text(w.message()).small().style(theme::text::error)))
+            .push(warning.map(|w| text(w.message()).small().style(theme::text::error)))
             .spacing(15),
     )
     .padding(5)
@@ -1853,7 +1853,7 @@ pub fn recover_mnemonic<'a>(
         "Import Mnemonic",
         Column::new()
             .push(text(prompt::RECOVER_MNEMONIC_HELP))
-            .push_maybe(if recover {
+            .push(if recover {
                 Some(
                     Column::new()
                         .align_x(Alignment::Center)
@@ -1892,7 +1892,7 @@ pub fn recover_mnemonic<'a>(
                                             ))
                                             .width(Length::Fixed(100.0)),
                                         )
-                                        .push_maybe(if *valid {
+                                        .push(if *valid {
                                             Some(
                                                 icon::square_check_icon()
                                                     .style(theme::text::success),
@@ -1904,9 +1904,7 @@ pub fn recover_mnemonic<'a>(
                             },
                         ))
                         .push(Space::new().height(Length::Fixed(50.0)))
-                        .push_maybe(
-                            error.map(|e| card::invalid(text(e).style(theme::text::error))),
-                        ),
+                        .push(error.map(|e| card::invalid(text(e).style(theme::text::error)))),
                 )
             } else {
                 None
@@ -2047,7 +2045,7 @@ pub fn connection_step_enter_email<'a>(
 ) -> Element<'a, Message> {
     Column::new()
         .spacing(20)
-        .push_maybe(if !accounts.is_empty() {
+        .push(if !accounts.is_empty() {
             Some(text("Choose an account you are already using:"))
         } else {
             None
@@ -2066,8 +2064,8 @@ pub fn connection_step_enter_email<'a>(
                 })
                 .wrap(),
         )
-        .push_maybe(connection_error.map(|e| text(e.to_string()).style(theme::text::warning)))
-        .push_maybe(auth_error.map(|e| text(e.to_string()).style(theme::text::warning)))
+        .push(connection_error.map(|e| text(e.to_string()).style(theme::text::warning)))
+        .push(auth_error.map(|e| text(e.to_string()).style(theme::text::warning)))
         .push(if accounts.is_empty() {
             text("Enter an email you want to associate with the wallet:")
         } else {
@@ -2106,8 +2104,8 @@ pub fn connection_step_enter_otp<'a>(
         .spacing(20)
         .push(text(email).style(theme::text::success))
         .push(text("An authentication token has been emailed to you"))
-        .push_maybe(connection_error.map(|e| text(e.to_string()).style(theme::text::warning)))
-        .push_maybe(auth_error.map(|e| text(e.to_string()).style(theme::text::warning)))
+        .push(connection_error.map(|e| text(e.to_string()).style(theme::text::warning)))
+        .push(auth_error.map(|e| text(e.to_string()).style(theme::text::warning)))
         .push(
             form::Form::new_trimmed("Token", otp, |msg| {
                 Message::SelectBackend(message::SelectBackend::OTPEdited(msg))
@@ -2143,8 +2141,8 @@ pub fn connection_step_connected<'a>(
     Column::new()
         .spacing(20)
         .push(text(email).style(theme::text::success))
-        .push_maybe(connection_error.map(|e| text(e.to_string()).style(theme::text::warning)))
-        .push_maybe(auth_error.map(|e| text(e.to_string()).style(theme::text::warning)))
+        .push(connection_error.map(|e| text(e.to_string()).style(theme::text::warning)))
+        .push(auth_error.map(|e| text(e.to_string()).style(theme::text::warning)))
         .push(Container::new(
             Row::new()
                 .spacing(10)
@@ -2224,7 +2222,7 @@ fn layout<'a>(
             .push(
                 Row::new()
                     .push(Space::new().width(Length::Fill))
-                    .push_maybe(email.map(|e| {
+                    .push(email.map(|e| {
                         Container::new(p1_regular(e).style(theme::text::success)).padding(20)
                     })),
             )
@@ -2234,7 +2232,7 @@ fn layout<'a>(
                     .align_y(Alignment::Center)
                     .push(Container::new(prev_button).center_x(Length::FillPortion(2)))
                     .push(Container::new(h3(title)).width(Length::FillPortion(8)))
-                    .push_maybe(if progress.1 > 0 {
+                    .push(if progress.1 > 0 {
                         Some(
                             Container::new(text(format!("{} | {}", progress.0, progress.1)))
                                 .center_x(Length::FillPortion(2)),
@@ -2258,7 +2256,7 @@ fn layout<'a>(
                             10
                         })),
                     )
-                    .push_maybe(if padding_left {
+                    .push(if padding_left {
                         Some(Space::new().width(Length::FillPortion(2)))
                     } else {
                         None

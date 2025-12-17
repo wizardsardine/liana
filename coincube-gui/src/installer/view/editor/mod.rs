@@ -69,7 +69,7 @@ pub fn define_descriptor_advanced_settings<'a>(use_taproot: bool) -> Element<'a,
             .push(Space::new().height(0))
             .push(separation().width(500))
             .push(Row::new().push(col_wallet))
-            .push_maybe(if use_taproot {
+            .push(if use_taproot {
                 Some(
                     p1_regular("Taproot is only supported by Coincube version 5.0 and above")
                         .style(theme::text::secondary),
@@ -94,7 +94,7 @@ pub fn path(
     Container::new(
         Column::new()
             .spacing(10)
-            .push_maybe(title.map(|t| Row::new().push(Space::new().width(10)).push(p1_bold(t))))
+            .push(title.map(|t| Row::new().push(Space::new().width(10)).push(p1_bold(t))))
             .push(defined_sequence(sequence, warning))
             .push(
                 Column::new()
@@ -102,7 +102,7 @@ pub fn path(
                     .align_x(Alignment::Center)
                     .push(Column::with_children(keys).spacing(5)),
             )
-            .push_maybe(if fixed {
+            .push(if fixed {
                 if keys_len == 1 {
                     None
                 } else {
@@ -154,9 +154,9 @@ pub fn uneditable_defined_key<'a>(
                             .push(p1_regular(title).style(theme::text::secondary))
                             .push(p1_bold(alias)),
                     )
-                    .push_maybe(warning.map(|w| p2_regular(w).style(theme::text::error))),
+                    .push(warning.map(|w| p2_regular(w).style(theme::text::error))),
             )
-            .push_maybe(if warning.is_none() {
+            .push(if warning.is_none() {
                 Some(icon::check_icon().style(theme::text::success))
             } else {
                 None
@@ -188,9 +188,9 @@ pub fn defined_key<'a>(
                             .push(p1_regular(format!("{}", title)).style(theme::text::secondary))
                             .push(p1_bold(alias)),
                     )
-                    .push_maybe(warning.map(|w| p2_regular(w).style(theme::text::error))),
+                    .push(warning.map(|w| p2_regular(w).style(theme::text::error))),
             )
-            .push_maybe(if warning.is_none() {
+            .push(if warning.is_none() {
                 Some(icon::check_icon().style(theme::text::success))
             } else {
                 None
@@ -199,7 +199,7 @@ pub fn defined_key<'a>(
                 button::secondary(Some(icon::pencil_icon()), "Edit")
                     .on_press(message::DefineKey::EditAlias),
             )
-            .push_maybe(if fixed {
+            .push(if fixed {
                 None
             } else {
                 Some(
@@ -231,7 +231,7 @@ pub fn undefined_key<'a>(
                     .spacing(5)
                     .push(p1_bold(title)),
             )
-            .push_maybe(if active {
+            .push(if active {
                 Some(
                     button::primary(Some(icon::pencil_icon()), "Set")
                         .on_press(message::DefineKey::Edit),
@@ -239,7 +239,7 @@ pub fn undefined_key<'a>(
             } else {
                 None
             })
-            .push_maybe(if fixed {
+            .push(if fixed {
                 None
             } else {
                 Some(
@@ -338,7 +338,7 @@ pub fn edit_sequence_modal<'a>(sequence: &form::Value<String>) -> Element<'a, Me
                 .push(format_sequence_duration(sequence, false).iter().fold(
                     Row::new().spacing(5).push(text("~ ").bold()),
                     |row, (n, unit)| {
-                        row.push_maybe(if *n > 0 {
+                        row.push(if *n > 0 {
                             Some(
                                 text(format!("{} {}{}", n, unit, if *n > 1 { "s" } else { "" }))
                                     .bold(),

@@ -71,7 +71,7 @@ fn settings_section(
             Row::new()
                 .push(badge::badge(icon))
                 .push(text(title).bold())
-                .push_maybe(tt)
+                .push(tt)
                 .padding(10)
                 .spacing(20)
                 .align_y(Alignment::Center)
@@ -315,7 +315,7 @@ pub fn about_section<'a>(
                 Row::new().push(Space::new().width(Length::Fill)).push(
                     Column::new()
                         .push(text(format!("coincube-gui v{}", crate::VERSION)))
-                        .push_maybe(
+                        .push(
                             coincubed_version
                                 .map(|version| text(format!("coincubed v{}", version))),
                         ),
@@ -361,7 +361,7 @@ pub fn remote_backend_section<'a>(
             )
             .push(
                 Row::new()
-                    .push_maybe(if success {
+                    .push(if success {
                         Some(text("Invitation was sent").style(theme::text::success))
                     } else {
                         None
@@ -640,7 +640,7 @@ pub fn bitcoind<'a>(
                         Row::new()
                             .push(badge::badge(icon::bitcoin_icon()))
                             .push(text("Bitcoin Core").bold())
-                            .push_maybe(if is_configured_node_type {
+                            .push(if is_configured_node_type {
                                 Some(is_running_label(is_running))
                             } else {
                                 None
@@ -719,7 +719,7 @@ pub fn electrum_edit<'a>(
                 .size(P1_SIZE)
                 .padding(5),
             )
-            .push_maybe(checkbox)
+            .push(checkbox)
             .push(text(electrum::ADDRESS_NOTES).size(P2_SIZE))
             .spacing(5),
     );
@@ -830,7 +830,7 @@ pub fn electrum<'a>(
                         Row::new()
                             .push(badge::badge(icon::bitcoin_icon()))
                             .push(text("Electrum").bold())
-                            .push_maybe(if is_configured_node_type {
+                            .push(if is_configured_node_type {
                                 Some(is_running_label(is_running))
                             } else {
                                 None
@@ -897,7 +897,7 @@ pub fn rescan<'a>(
                 Row::new()
                     .push(badge::badge(icon::block_icon()))
                     .push(text("Blockchain rescan").bold().width(Length::Fill))
-                    .push_maybe(if success {
+                    .push(if success {
                         Some(
                             text("Successfully rescanned the blockchain")
                                 .style(theme::text::success),
@@ -950,12 +950,12 @@ pub fn rescan<'a>(
                                 .align_y(Alignment::Center)
                                 .spacing(10),
                         )
-                        .push_maybe(if invalid_date {
+                        .push(if invalid_date {
                             Some(p1_regular("Provided date is invalid").style(theme::text::error))
                         } else {
                             None
                         })
-                        .push_maybe(if past_possible_height {
+                        .push(if past_possible_height {
                             Some(
                                 p1_regular("Provided date earlier than the node prune height")
                                     .style(theme::text::error),
@@ -963,7 +963,7 @@ pub fn rescan<'a>(
                         } else {
                             None
                         })
-                        .push_maybe(if future_date {
+                        .push(if future_date {
                             Some(
                                 p1_regular("Provided date is in the future")
                                     .style(theme::text::error),
@@ -1116,7 +1116,7 @@ pub fn wallet_settings<'a>(
                 Row::new()
                     .align_y(Alignment::Center)
                     .push(Space::new().width(Length::Fill))
-                    .push_maybe(if updated {
+                    .push(if updated {
                         Some(
                             Row::new()
                                 .align_y(Alignment::Center)
@@ -1346,7 +1346,7 @@ pub fn register_wallet_modal<'a>(
     registered: &HashSet<Fingerprint>,
 ) -> Element<'a, Message> {
     Column::new()
-        .push_maybe(warning.map(|w| warn(Some(w))))
+        .push(warning.map(|w| warn(Some(w))))
         .push(card::simple(
             Column::new()
                 .push(

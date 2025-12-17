@@ -8,11 +8,8 @@ use crate::{
 
 use iced::{widget::*, Alignment, Length};
 
+use coincube_ui::component::{button, text};
 use coincube_ui::{color, icon::*, theme, widget::Column};
-use coincube_ui::{
-    component::{button, text},
-    widget::ColumnExt as _,
-};
 
 pub fn form<'a>(state: &'a MavapayState) -> iced::Element<'a, ViewMessage, theme::Theme> {
     let form = match &state.step {
@@ -52,7 +49,7 @@ fn checkout_form<'a>(state: &'a MavapayState) -> Column<'a, BuySellMessage> {
                     .style(theme::card::simple),
                 }
             ]
-            .push_maybe(
+            .push(
                 (cfg!(debug_assertions) && option_env!("MAVAPAY_API_KEY").is_none()).then(|| {
                     button::primary(Some(wrench_icon()), "Simulate Pay-In (Developer Option)")
                         .on_press_maybe(
