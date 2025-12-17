@@ -210,6 +210,9 @@ pub fn rpcserver_setup(socket_path: &path::Path) -> Result<net::UnixListener, io
 mod tests {
     use super::*;
     use crate::jsonrpc::rpc::{Params, ReqId};
+    use crate::testutils::DummyBitcoind;
+    use crate::testutils::DummyCoincube;
+    use crate::testutils::DummyDatabase;
 
     use std::{env, fs, process};
 
