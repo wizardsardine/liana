@@ -1,0 +1,23 @@
+[Unit]
+Description=Liana Business WebSocket Server
+After=network.target
+
+[Service]
+Type=simple
+User=liana
+ExecStart=/usr/local/bin/liana-business-server --host 0.0.0.0 --port 8080
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+# Security settings
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/liana-business-server
+
+[Install]
+WantedBy=multi-user.target
+
