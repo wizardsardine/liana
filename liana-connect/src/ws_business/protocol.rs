@@ -92,6 +92,8 @@ pub struct WalletJson {
     pub alias: String,
     pub org: String,
     pub owner: String,
+    /// Owner's email address for role derivation (avoids needing to fetch user)
+    pub owner_email: String,
     #[serde(rename = "status")]
     pub status_str: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -316,12 +318,11 @@ impl TryFrom<WalletJson> for Wallet {
         let status = WalletStatus::from_str(&json.status_str)
             .ok_or_else(|| format!("Invalid wallet status: {}", json.status_str))?;
 
-        // Note: owner User will need to be fetched separately or provided
-        // For now, we'll create a placeholder - the actual implementation should fetch it
+        // Create owner User with email from WalletJson for role derivation
         let owner = User {
             name: String::new(),
             uuid: owner_id,
-            email: String::new(),
+            email: json.owner_email,
             orgs: Vec::new(),
             role: UserRole::Owner,
         };
@@ -446,6 +447,7 @@ impl From<&Wallet> for WalletJson {
             alias: wallet.alias.clone(),
             org: wallet.org.to_string(),
             owner: wallet.owner.uuid.to_string(),
+            owner_email: wallet.owner.email.clone(),
             status_str: wallet.status.as_str().to_string(),
             template: wallet.template.as_ref().map(|t| t.into()),
         }

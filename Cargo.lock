@@ -782,17 +782,18 @@ dependencies = [
  "chrono",
  "crossbeam",
  "email_address",
- "futures",
  "iced",
  "liana",
  "liana-connect",
  "liana-gui",
  "liana-ui",
  "miniscript",
+ "reqwest",
  "rustls 0.23.35",
  "serde",
  "serde_json",
  "thiserror 2.0.17",
+ "tokio",
  "tungstenite",
  "url",
  "uuid",
@@ -3159,6 +3160,26 @@ dependencies = [
  "liana",
  "liana-gui",
  "liana-ui",
+]
+
+[[package]]
+name = "liana-business-server"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "chrono",
+ "clap",
+ "crossbeam",
+ "env_logger",
+ "liana-connect",
+ "log",
+ "miniscript",
+ "rand 0.8.5",
+ "serde",
+ "serde_json",
+ "sha1",
+ "tungstenite",
+ "uuid",
 ]
 
 [[package]]

@@ -21,6 +21,19 @@ use crate::backend::{Backend, Error, Notification, Org, OrgData, User, Wallet};
 use liana_connect::{ConnectedPayload, OrgJson, Request, Response, UserJson, WalletJson};
 
 /// Backend URL for WebSocket connection
+/// 
+/// Configuration options:
+/// - "debug" - Spawns a local DummyServer for development (no network required)
+/// - "ws://host:port" - Connect to a remote liana-business-server instance
+/// 
+/// Examples:
+///   pub const BACKEND_URL: &str = "debug";                    // Local development
+///   pub const BACKEND_URL: &str = "ws://localhost:8080";      // Local server
+///   pub const BACKEND_URL: &str = "ws://192.168.1.100:8080";  // LAN server
+///   pub const BACKEND_URL: &str = "ws://your-vps.com:8080";   // Remote VPS
+/// 
+/// Note: To use a remote server, you must have liana-business-server running
+/// on the target host. See liana-business-server/README.md for deployment instructions.
 pub const BACKEND_URL: &str = "debug";
 /// Protocol version for WebSocket communication
 pub const PROTOCOL_VERSION: u8 = 1;
