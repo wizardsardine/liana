@@ -1,5 +1,6 @@
 use super::{app::AppState, message::Msg, views, State, View};
-use crate::backend::{Backend, Error, Notification, UserRole, Wallet, WalletStatus};
+use crate::backend::{Backend, Error, Notification, UserRole, Wallet, WalletStatus, BACKEND_RECV};
+use crate::client::{BACKEND_URL, PROTOCOL_VERSION};
 use iced::Task;
 use liana_connect::{Key, PolicyTemplate, SpendingPath, Timelock};
 use liana_ui::widget::text_input;
@@ -713,8 +714,18 @@ impl State {
         self.backend.set_token("auth-token".to_string());
 
         // Mark that we're intentionally reconnecting (old channel will close)
-        // NOTE: Reconnection is now handled by BusinessInstaller
         self.app.reconnecting = true;
+
+        // Connect WebSocket immediately after login success
+        // This will establish the connection now that we have a token
+        let recv = self.backend.connect_ws(BACKEND_URL.to_string(), PROTOCOL_VERSION);
+        
+        // Update the global receiver for the subscription
+        if let Some(receiver) = recv {
+            *BACKEND_RECV.lock().expect("poisoned") = Some(receiver);
+        }
+        // Note: If connection fails, an Error notification will be sent
+        // which will be handled by on_backend_error()
     }
 
     fn on_backend_login_fail(&mut self) {

@@ -308,6 +308,12 @@ Store data in `network_dir` matching liana-gui patterns. Reference:
 ## Changelog
 
 ### 2025-12-18
+- Auth improvements: Connect WebSocket immediately after login success
+  - WebSocket connection now established automatically after successful authentication
+  - Updates global receiver for subscription handling
+  - Ensures real-time updates are available as soon as user is authenticated
+
+### 2025-12-18
 - 1.2 Edit Wallet Template Subflow: Refactored Manage Keys view
   - Refactored keys view to use `layout_with_scrollable_list` helper (matching template_builder pattern)
   - Keys displayed as clickable cards (styled like path cards, no SVG r-shapes)
