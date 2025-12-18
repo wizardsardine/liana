@@ -11,7 +11,7 @@ use thiserror::Error;
 use uuid::Uuid;
 
 use crate::client::{Client, DummyServer};
-use liana_connect::PolicyTemplate;
+use liana_connect::{PolicyTemplate, SpendingPath, Timelock};
 use liana_connect::{Request, Response, WssError};
 
 // Re-export domain types from liana-connect for use by other modules
@@ -199,11 +199,12 @@ fn init_test_data(
     // -------------------------------------------------------------------------
     let wallet1_id = Uuid::new_v4();
     let mut wallet1_template = PolicyTemplate::new();
+    // Keys: Owner, Bob, Alice
     wallet1_template.keys.insert(
         0,
         Key {
             id: 0,
-            alias: "Owner Key".to_string(),
+            alias: "Owner".to_string(),
             description: "Key held by wallet owner".to_string(),
             email: "owner@example.com".to_string(),
             key_type: KeyType::Internal,
@@ -214,16 +215,38 @@ fn init_test_data(
         1,
         Key {
             id: 1,
-            alias: "Participant Key".to_string(),
-            description: "Key for participant user".to_string(),
-            email: "user@example.com".to_string(),
+            alias: "Bob".to_string(),
+            description: "Bob's key".to_string(),
+            email: "bob@example.com".to_string(),
             key_type: KeyType::External,
             xpub: None,
         },
     );
-    wallet1_template.primary_path.key_ids.push(0);
-    wallet1_template.primary_path.key_ids.push(1);
+    wallet1_template.keys.insert(
+        2,
+        Key {
+            id: 2,
+            alias: "Alice".to_string(),
+            description: "Alice's key".to_string(),
+            email: "alice@example.com".to_string(),
+            key_type: KeyType::External,
+            xpub: None,
+        },
+    );
+    // Primary path: All of Owner, Bob (threshold = 2)
+    wallet1_template.primary_path.key_ids.push(0); // Owner
+    wallet1_template.primary_path.key_ids.push(1); // Bob
     wallet1_template.primary_path.threshold_n = 2;
+    // Secondary path 1: 1 of Alice, Bob - After 2 months (8760 blocks)
+    wallet1_template.secondary_paths.push((
+        SpendingPath::new(false, 1, vec![2, 1]), // Alice, Bob
+        Timelock::new(8760),                     // 2 months
+    ));
+    // Secondary path 2: Owner - After 5 months (21900 blocks)
+    wallet1_template.secondary_paths.push((
+        SpendingPath::new(false, 1, vec![0]), // Owner
+        Timelock::new(21900),                 // 5 months
+    ));
 
     let wallet1 = Wallet {
         alias: "Draft Wallet".to_string(),

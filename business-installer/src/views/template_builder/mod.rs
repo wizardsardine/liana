@@ -1,100 +1,72 @@
 use crate::state::{message::Msg, State};
 use iced::{Alignment, Length};
-use liana_ui::{
-    component::{button, card, text},
-    widget::*,
-};
+use liana_connect::models::UserRole;
+use liana_ui::{component::button, icon, widget::*};
 
-use iced::widget::Space;
+use super::layout_with_scrollable_list;
 
 pub mod template_visualization;
 
 pub use template_visualization::template_visualization;
 
 pub fn template_builder_view(state: &State) -> Element<'_, Msg> {
-    // Left panel: Header, Summary, and Buttons
-    let mut left_column = Column::new()
-        .spacing(20)
-        .padding(20.0)
-        .width(Length::Fixed(300.0))
-        .align_x(Alignment::Start);
+    let current_user_email = &state.views.login.email.form.value;
 
-    // Back button
-    left_column = left_column.push(
-        Row::new()
-            .push(
-                button::transparent(Some(liana_ui::icon::arrow_back()), "Back")
-                    .on_press(Msg::NavigateBack),
-            )
-            .push(Space::with_width(Length::Fill)),
-    );
+    // Determine user role from AppState
+    let is_ws_manager = matches!(state.app.current_user_role, Some(UserRole::WSManager));
+    let is_owner = matches!(state.app.current_user_role, Some(UserRole::Owner));
 
-    // Header
-    left_column = left_column.push(text::h2("Liana Business template builder"));
+    // Template visualization as scrollable content
+    let visualization = template_visualization(state);
 
-    // Summary section
-    let keys_count = state.app.keys.len();
-    let secondary_paths_count = state.app.secondary_paths.len();
-    let primary_keys_count = state.app.primary_path.key_ids.len();
+    // Action buttons row (fixed at bottom) - role-based
+    let mut buttons_row = Row::new().spacing(20).align_y(Alignment::Center);
 
-    let summary_card = card::simple(
-        Column::new()
-            .spacing(10)
-            .push(text::h4_regular("Summary"))
-            .push(text::p1_regular(format!("Total Keys: {}", keys_count)))
-            .push(text::p1_regular(format!(
-                "Primary Path: {} key(s)",
-                primary_keys_count
-            )))
-            .push(text::p1_regular(format!(
-                "Secondary Paths: {}",
-                secondary_paths_count
-            ))),
-    );
-
-    left_column = left_column.push(summary_card);
-
-    // Navigation buttons
-    let nav_col = Column::new()
-        .spacing(10)
-        .push(
-            button::primary(Some(liana_ui::icon::key_icon()), "Manage Keys")
-                .on_press(Msg::NavigateToKeys)
-                .width(Length::Fixed(200.0)),
-        )
-        .push(
-            button::primary(Some(liana_ui::icon::recovery_icon()), "Manage Paths")
-                .on_press(Msg::NavigateToPaths)
-                .width(Length::Fixed(200.0)),
+    // WSManager: Show "Manage Keys" button, hide "Validate Template"
+    if is_ws_manager {
+        buttons_row = buttons_row.push(
+            button::secondary(Some(icon::key_icon()), "Manage Keys").on_press(Msg::NavigateToKeys),
         );
+    }
 
-    left_column = left_column.push(nav_col);
+    // Owner: Show both "Manage Keys" and "Validate Template" buttons
+    if is_owner {
+        buttons_row = buttons_row.push(
+            button::secondary(Some(icon::key_icon()), "Manage Keys").on_press(Msg::NavigateToKeys),
+        );
+        let is_valid = state.is_template_valid();
+        let validate_button = if is_valid {
+            button::primary(None, "Validate Template").on_press(Msg::TemplateValidate)
+        } else {
+            button::primary(None, "Validate Template")
+        };
+        buttons_row = buttons_row.push(validate_button);
+    }
 
-    // Validate template button
-    let is_valid = state.is_template_valid();
-    let validate_button = if is_valid {
-        button::primary(None, "Validate Template")
-            .on_press(Msg::TemplateValidate)
-            .width(Length::Fixed(200.0))
-    } else {
-        // Disabled state - use secondary style and no on_press
-        button::secondary(None, "Validate Template").width(Length::Fixed(200.0))
-    };
-    left_column = left_column.push(validate_button);
-
-    // Right panel: Template Visualization
-    let right_panel = template_visualization(state);
-
-    // Create row layout with left and right panels
-    let row = Row::new().spacing(20).push(left_column).push(
-        Container::new(right_panel)
-            .width(Length::Fill)
-            .height(Length::Fill),
-    );
-
-    Container::new(row)
+    let footer_content: Element<'_, Msg> = Container::new(buttons_row)
         .width(Length::Fill)
-        .height(Length::Fill)
-        .into()
-}
+        .center_x(Length::Fill)
+        .padding(20)
+        .into();
 
+    let role_badge = if is_ws_manager {
+        Some("WS Manager")
+    } else {
+        None
+    };
+
+    // Empty header content - the visualization goes directly in the scrollable area
+    let header_content: Element<'_, Msg> = Column::new().into();
+
+    layout_with_scrollable_list(
+        (0, 0), // No progress indicator for template builder
+        Some(current_user_email),
+        role_badge,
+        "Template Builder",
+        header_content,
+        visualization,
+        Some(footer_content),
+        true,
+        Some(Msg::NavigateBack),
+    )
+}

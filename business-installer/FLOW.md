@@ -97,7 +97,8 @@ State::update() (state/update.rs)
 +----------------------------+----------------------------------------+
 | Template Management        | TemplateAddKey*, TemplateDelKey*,      |
 |                            | TemplateAdd/DeletePath, TemplateEdit*, |
-|                            | TemplateSavePath, TemplateValidate     |
+|                            | TemplateToggleKeyInPath, TemplateSave*,|
+|                            | TemplateValidate                       |
 +----------------------------+----------------------------------------+
 | Navigation                 | NavigateTo*, NavigateBack              |
 +----------------------------+----------------------------------------+

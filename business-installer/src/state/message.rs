@@ -45,15 +45,17 @@ pub enum Msg {
         bool,          /* is_primary */
         Option<usize>, /* secondary_path_index */
     ),
+    TemplateNewPathModal, // Open modal to create a new recovery path
+    TemplateToggleKeyInPath(u8), // Toggle key in/out of the currently edited path
     TemplateSavePath,
     TemplateCancelPathModal,
     TemplateUpdateThreshold(String),
     TemplateUpdateTimelock(String),
+    TemplateUpdateTimelockUnit(crate::state::views::path::TimelockUnit),
     TemplateValidate,
 
     // Navigation
     NavigateToHome,
-    NavigateToPaths,
     NavigateToKeys,
     NavigateToOrgSelect,
     NavigateToWalletSelect,

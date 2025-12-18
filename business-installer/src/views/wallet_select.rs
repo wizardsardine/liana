@@ -15,7 +15,7 @@ use liana_ui::{
 use iced::widget::Space;
 use uuid::Uuid;
 
-use super::{layout, menu_entry};
+use super::{layout_with_scrollable_list, menu_entry};
 
 /// Derive the user's role for a specific wallet based on wallet data
 fn derive_user_role(wallet: &Wallet, current_user_email: &str) -> UserRole {
@@ -197,7 +197,8 @@ pub fn wallet_select_view(state: &State) -> Element<'_, Msg> {
         false
     };
 
-    let mut wallet_list = Column::new()
+    // Fixed header content: title, filter checkbox, and search bar
+    let mut header_content = Column::new()
         .push(title)
         .push(Space::with_height(30))
         .spacing(10)
@@ -214,8 +215,8 @@ pub fn wallet_select_view(state: &State) -> Element<'_, Msg> {
             )
             .push(Space::with_width(Length::Fill))
             .width(Length::Fill);
-        wallet_list = wallet_list.push(filter_checkbox);
-        wallet_list = wallet_list.push(Space::with_height(10));
+        header_content = header_content.push(filter_checkbox);
+        header_content = header_content.push(Space::with_height(10));
     }
 
     // Add search bar for all users when there are wallets
@@ -235,9 +236,15 @@ pub fn wallet_select_view(state: &State) -> Element<'_, Msg> {
         let search_container = Container::new(search_form)
             .width(Length::Fixed(500.0))
             .align_x(Alignment::Center);
-        wallet_list = wallet_list.push(search_container);
-        wallet_list = wallet_list.push(Space::with_height(10));
+        header_content = header_content.push(search_container);
+        header_content = header_content.push(Space::with_height(10));
     }
+
+    // Scrollable list content: wallet cards
+    let mut list_content = Column::new()
+        .spacing(10)
+        .align_x(Alignment::Center)
+        .padding([0, 20]);
 
     // Filter wallets by search text (case-insensitive)
     let search_filter = state.views.wallet_select.search_filter.to_lowercase();
@@ -284,7 +291,7 @@ pub fn wallet_select_view(state: &State) -> Element<'_, Msg> {
 
                 // Show message when search filter returns no results
                 if wallets_to_display.is_empty() && !search_filter.is_empty() {
-                    wallet_list = wallet_list
+                    list_content = list_content
                         .push(text::p1_regular("No wallets found matching your search."));
                 } else {
                     // Render sorted wallets
@@ -292,16 +299,16 @@ pub fn wallet_select_view(state: &State) -> Element<'_, Msg> {
                         let key_count = wallet.template.as_ref().map(|t| t.keys.len()).unwrap_or(0);
                         let card =
                             wallet_card(wallet.alias.clone(), key_count, &wallet.status, &role, id);
-                        wallet_list = wallet_list.push(card);
+                        list_content = list_content.push(card);
                     }
                 }
             }
         }
     } else {
-        wallet_list = wallet_list.push(create_wallet_card());
+        list_content = list_content.push(create_wallet_card());
     }
 
-    wallet_list = wallet_list.push(Space::with_height(50));
+    list_content = list_content.push(Space::with_height(50));
 
     let role_badge = if is_ws_manager {
         Some("WS Manager")
@@ -309,12 +316,14 @@ pub fn wallet_select_view(state: &State) -> Element<'_, Msg> {
         None
     };
 
-    layout(
+    layout_with_scrollable_list(
         (4, 4),
         Some(&state.views.login.email.form.value),
         role_badge,
         "Wallet",
-        wallet_list,
+        header_content,
+        list_content,
+        None, // footer_content
         true,
         Some(Msg::NavigateBack),
     )
