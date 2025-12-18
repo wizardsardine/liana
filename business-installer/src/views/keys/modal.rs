@@ -23,22 +23,30 @@ pub fn edit_key_modal(modal_state: &EditKeyModalState) -> Element<'_, Message> {
         .width(Length::Fixed(500.0));
 
     // Header
+    let title = if modal_state.is_new {
+        "New Key"
+    } else {
+        "Edit Key"
+    };
     content = content.push(
         Row::new()
             .spacing(10)
             .align_y(Alignment::Center)
-            .push(text::h3("Edit Key"))
+            .push(text::h3(title))
             .push(Space::with_width(Length::Fill))
             .push(
-                button::transparent(Some(icon::cross_icon()), "").on_press(Message::KeyCancelModal),
+                button::transparent(Some(icon::cross_icon().size(32)), "")
+                    .on_press(Message::KeyCancelModal),
             ),
     );
 
-    // Alias input
+    // Alias input - validate (must not be empty)
+    // No warning if empty, but Save button will be disabled
+    let alias_valid = !modal_state.alias.trim().is_empty();
     let alias_value = form::Value {
         value: modal_state.alias.clone(),
-        warning: None,
-        valid: true,
+        warning: None, // No warning displayed for empty field
+        valid: alias_valid || modal_state.alias.trim().is_empty(), // Don't show red border if empty
     };
     content = content.push(
         Column::new()
@@ -68,11 +76,29 @@ pub fn edit_key_modal(modal_state: &EditKeyModalState) -> Element<'_, Message> {
             )),
     );
 
-    // Email input
+    // Email input - validate (same as login flow)
+    // No warning if empty, but Save button will be disabled
+    // Only show warning if not empty but invalid format
+    let is_empty = modal_state.email.trim().is_empty();
+    let email_valid = if is_empty {
+        false // Empty is invalid (required field)
+    } else {
+        email_address::EmailAddress::parse_with_options(
+            &modal_state.email,
+            email_address::Options::default().with_required_tld(),
+        )
+        .is_ok()
+    };
     let email_value = form::Value {
         value: modal_state.email.clone(),
-        warning: None,
-        valid: true,
+        warning: if is_empty {
+            None // No warning for empty field
+        } else if !email_valid {
+            Some("Invalid email!") // Only show warning if not empty but invalid
+        } else {
+            None
+        },
+        valid: email_valid || is_empty, // Don't show red border if empty
     };
     content = content.push(
         Column::new()
@@ -103,20 +129,27 @@ pub fn edit_key_modal(modal_state: &EditKeyModalState) -> Element<'_, Message> {
             ),
     );
 
-    // Buttons
+    // Buttons - Cancel and Save (aligned right)
+    // Save button is disabled if alias or email is invalid
+    let can_save = alias_valid && email_valid;
+    let save_button = if can_save {
+        button::primary(None, "Save")
+            .on_press(Message::KeySave)
+            .width(Length::Fixed(120.0))
+    } else {
+        button::secondary(None, "Save").width(Length::Fixed(120.0))
+    };
+
     content = content.push(
         Row::new()
             .spacing(10)
+            .push(Space::with_width(Length::Fill))
             .push(
                 button::secondary(None, "Cancel")
                     .on_press(Message::KeyCancelModal)
                     .width(Length::Fixed(120.0)),
             )
-            .push(
-                button::primary(None, "Save")
-                    .on_press(Message::KeySave)
-                    .width(Length::Fixed(120.0)),
-            ),
+            .push(save_button),
     );
 
     card::modal(content).into()

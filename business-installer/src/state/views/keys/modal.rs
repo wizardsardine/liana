@@ -6,5 +6,6 @@ pub struct EditKeyModalState {
     pub description: String,
     pub email: String,
     pub key_type: liana_connect::KeyType,
+    pub is_new: bool,
 }
 

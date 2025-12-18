@@ -36,5 +36,32 @@ impl KeysViewState {
     pub fn on_key_cancel_modal(&mut self) {
         self.edit_key = None;
     }
+
+    /// Check if alias is valid (not empty)
+    pub fn is_alias_valid(&self) -> bool {
+        if let Some(modal) = &self.edit_key {
+            !modal.alias.trim().is_empty()
+        } else {
+            false
+        }
+    }
+
+    /// Check if email is valid (same validation as login)
+    pub fn is_email_valid(&self) -> bool {
+        if let Some(modal) = &self.edit_key {
+            email_address::EmailAddress::parse_with_options(
+                &modal.email,
+                email_address::Options::default().with_required_tld(),
+            )
+            .is_ok()
+        } else {
+            false
+        }
+    }
+
+    /// Check if both alias and email are valid
+    pub fn can_save(&self) -> bool {
+        self.is_alias_valid() && self.is_email_valid()
+    }
 }
 
