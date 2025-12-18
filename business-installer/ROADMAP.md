@@ -9,8 +9,8 @@
 - [ ] **3.1 WS Manager Flow**
 - [ ] **1. Front**
   - [x] 1.1 Wallet Selection View
-  - [ ] 1.2 Edit Wallet Template Subflow (needed for completion of WS Manager flow)
-  - [ ] 1.3 Add Key Information Subflow (needed for completion of WS Manager flow)
+  - [x] 1.2 Edit Wallet Template Subflow (needed for completion of WS Manager flow)
+  - [ ] 1.3 Add Key Information Subflow
   - [x] 1.4 Filter/Search Bar (WS Manager Only)
   - [x] 1.5 Better Keyboard Navigation in Login
   - [ ] 1.6 Load Wallet Subflow
@@ -72,11 +72,11 @@ When user arrives at wallet selection, three possible subflows based on status:
 ### 1.2 Edit Wallet Template Subflow
 - [x] Restrict access to WSManager and WalletOwner roles
 - [x] Restrict to Draft status wallets only
-- [ ] Finalize key management panel
-  - [ ] Complete UI implementation
-  - [ ] Ensure all key operations are functional
-  - [ ] Polish user experience
-- [ ] Finalize path management panel
+- [x] Finalize key management panel
+  - [x] Complete UI implementation
+  - [x] Ensure all key operations are functional
+  - [x] Polish user experience
+- [x] Finalize path management panel
   - [x] Complete UI implementation
     - [x] Clickable path cards in template visualization
     - [x] Edit Path modal with key selection (checkboxes)
@@ -86,7 +86,7 @@ When user arrives at wallet selection, three possible subflows based on status:
   - [x] Ensure all path operations are functional
     - [x] Role-based edit permissions (WSManager can edit, others read-only)
     - [x] Auto-save for WSManager on path changes
-  - [ ] Polish user experience
+  - [x] Polish user experience
 - [x] Add "Validate Template" action for Owner (Draft -> Validated transition)
 
 ### 1.3 Add Key Information Subflow
@@ -306,6 +306,19 @@ Store data in `network_dir` matching liana-gui patterns. Reference:
 ## Bugfixes
 
 ## Changelog
+
+### 2025-12-18
+- 1.2 Edit Wallet Template Subflow: Refactored Manage Keys view
+  - Refactored keys view to use `layout_with_scrollable_list` helper (matching template_builder pattern)
+  - Keys displayed as clickable cards (styled like path cards, no SVG r-shapes)
+  - Clicking a key card opens edit modal
+  - Added "+ Add a key" card at bottom for creating new keys
+  - Removed individual pencil/trash buttons from cards (edit/delete now in modal)
+  - Updated key modal to support both new and edit modes
+  - Added Delete button in modal (only shown when editing existing keys)
+  - Modal title changes based on mode ("New Key" vs "Edit Key")
+  - Updated state handlers to open modal for both add and edit operations
+  - Added navigation handling for Keys view (NavigateBack returns to WalletEdit)
 
 ### 2025-12-18
 - 1.2 Edit Wallet Template Subflow: Implemented role-based access control and validation

@@ -253,17 +253,16 @@ impl State {
 // Key management
 impl State {
     fn on_key_add(&mut self) {
-        // Create an empty key with default values
-        let key = Key {
-            id: self.app.next_key_id,
+        // Open modal for creating a new key
+        let key_id = self.app.next_key_id;
+        self.views.keys.edit_key = Some(views::EditKeyModalState {
+            key_id,
             alias: String::new(),
             description: String::new(),
             email: String::new(),
             key_type: liana_connect::KeyType::Internal,
-            xpub: None,
-        };
-        self.app.keys.insert(self.app.next_key_id, key);
-        self.app.next_key_id = self.app.next_key_id.wrapping_add(1);
+            is_new: true,
+        });
     }
 
     fn on_key_edit(&mut self, key_id: u8) {
@@ -274,6 +273,7 @@ impl State {
                 description: key.description.clone(),
                 email: key.email.clone(),
                 key_type: key.key_type,
+                is_new: false,
             });
         }
     }
@@ -286,17 +286,51 @@ impl State {
         }
         // Then remove the key itself
         self.app.keys.remove(&key_id);
+        // Close modal if it was open for this key
+        if let Some(modal_state) = &self.views.keys.edit_key {
+            if modal_state.key_id == key_id {
+                self.views.keys.edit_key = None;
+            }
+        }
+
+        // Auto-save for WSManager: push changes to server with status = Drafted
+        if matches!(self.app.current_user_role, Some(UserRole::WSManager)) {
+            if let Some(wallet) = self.build_wallet_from_app_state(WalletStatus::Drafted) {
+                self.backend.edit_wallet(wallet);
+            }
+        }
     }
 
     fn on_key_save(&mut self) {
-        // Only handle editing now (adding is done directly in AddKey)
         if let Some(modal_state) = &self.views.keys.edit_key {
-            if let Some(key) = self.app.keys.get_mut(&modal_state.key_id) {
-                key.alias = modal_state.alias.clone();
-                key.description = modal_state.description.clone();
-                key.email = modal_state.email.clone();
-                key.key_type = modal_state.key_type;
-                self.views.keys.edit_key = None;
+            if modal_state.is_new {
+                // Creating a new key
+                let key = Key {
+                    id: modal_state.key_id,
+                    alias: modal_state.alias.clone(),
+                    description: modal_state.description.clone(),
+                    email: modal_state.email.clone(),
+                    key_type: modal_state.key_type,
+                    xpub: None,
+                };
+                self.app.keys.insert(modal_state.key_id, key);
+                self.app.next_key_id = self.app.next_key_id.wrapping_add(1);
+            } else {
+                // Editing existing key
+                if let Some(key) = self.app.keys.get_mut(&modal_state.key_id) {
+                    key.alias = modal_state.alias.clone();
+                    key.description = modal_state.description.clone();
+                    key.email = modal_state.email.clone();
+                    key.key_type = modal_state.key_type;
+                }
+            }
+            self.views.keys.edit_key = None;
+
+            // Auto-save for WSManager: push changes to server with status = Drafted
+            if matches!(self.app.current_user_role, Some(UserRole::WSManager)) {
+                if let Some(wallet) = self.build_wallet_from_app_state(WalletStatus::Drafted) {
+                    self.backend.edit_wallet(wallet);
+                }
             }
         }
     }
@@ -590,6 +624,10 @@ impl State {
                 self.current_view = View::WalletSelect;
                 Task::none()
             }
+            View::Keys => {
+                self.current_view = View::WalletEdit;
+                Task::none()
+            }
             View::Xpub => {
                 self.current_view = View::WalletSelect;
                 Task::none()
@@ -609,7 +647,6 @@ impl State {
                     Task::none()
                 }
             }
-            _ => Task::none(),
         }
     }
 }
