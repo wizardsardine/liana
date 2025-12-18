@@ -70,6 +70,8 @@ impl State {
             Msg::TemplateCancelPathModal => self.views.paths.on_template_cancel_path_modal(),
             Msg::TemplateUpdateThreshold(v) => self.views.paths.on_template_update_threshold(v),
             Msg::TemplateUpdateTimelock(v) => self.views.paths.on_template_update_timelock(v),
+            Msg::TemplateUpdateTimelockUnit(u) => self.views.paths.on_template_update_timelock_unit(u),
+            Msg::TemplateToggleKeyInPath(id) => self.views.paths.on_template_toggle_key_in_path(id),
             Msg::TemplateAddKeyToPrimary(id) => self.on_template_add_key_to_primary(id),
             Msg::TemplateDelKeyFromPrimary(id) => self.on_template_del_key_from_primary(id),
             Msg::TemplateAddKeyToSecondary(i, id) => self.on_template_add_key_to_secondary(i, id),
@@ -77,12 +79,12 @@ impl State {
             Msg::TemplateAddSecondaryPath => self.on_template_add_secondary_path(),
             Msg::TemplateDeleteSecondaryPath(i) => self.on_template_delete_secondary_path(i),
             Msg::TemplateEditPath(primary, i) => self.on_template_edit_path(primary, i),
+            Msg::TemplateNewPathModal => self.on_template_new_path_modal(),
             Msg::TemplateSavePath => self.on_template_save_path(),
             Msg::TemplateValidate => self.on_template_validate(),
 
             // Navigation
             Msg::NavigateToHome => self.on_navigate_to_home(),
-            Msg::NavigateToPaths => self.on_navigate_to_paths(),
             Msg::NavigateToKeys => self.on_navigate_to_keys(),
             Msg::NavigateToOrgSelect => self.on_navigate_to_org_select(),
             Msg::NavigateToWalletSelect => self.on_navigate_to_wallet_select(),
@@ -197,6 +199,9 @@ impl State {
             }
         }
 
+        // Store user role for the selected wallet
+        self.app.current_user_role = user_role;
+
         // Load wallet template into AppState
         self.app.selected_wallet = Some(id);
         if let Some(org_id) = self.app.selected_org {
@@ -299,6 +304,28 @@ impl State {
 
 // Template management
 impl State {
+    /// Build a Wallet from current AppState with the specified status.
+    /// Returns None if wallet cannot be found or built.
+    fn build_wallet_from_app_state(&self, status: WalletStatus) -> Option<Wallet> {
+        let wallet_id = self.app.selected_wallet?;
+        let wallet = self.backend.get_wallet(wallet_id)?;
+
+        // Build template from AppState
+        let template = PolicyTemplate {
+            keys: self.app.keys.clone(),
+            primary_path: self.app.primary_path.clone(),
+            secondary_paths: self.app.secondary_paths.clone(),
+        };
+
+        Some(Wallet {
+            id: wallet.id,
+            alias: wallet.alias.clone(),
+            org: wallet.org,
+            owner: wallet.owner.clone(),
+            status,
+            template: Some(template),
+        })
+    }
     fn on_template_add_key_to_primary(&mut self, key_id: u8) {
         if !self.app.primary_path.contains_key(key_id) {
             self.app.primary_path.key_ids.push(key_id);
@@ -339,73 +366,179 @@ impl State {
         let path = SpendingPath::new(false, 1, Vec::new());
         let timelock = Timelock::new(0);
         self.app.secondary_paths.push((path, timelock));
+        self.app.sort_secondary_paths();
     }
 
     fn on_template_delete_secondary_path(&mut self, path_index: usize) {
         if path_index < self.app.secondary_paths.len() {
             self.app.secondary_paths.remove(path_index);
+            
+            // Auto-save for WSManager: push changes to server with status = Drafted
+            if matches!(self.app.current_user_role, Some(UserRole::WSManager)) {
+                if let Some(wallet) = self.build_wallet_from_app_state(WalletStatus::Drafted) {
+                    self.backend.edit_wallet(wallet);
+                }
+            }
         }
     }
 
     fn on_template_edit_path(&mut self, is_primary: bool, path_index: Option<usize>) {
+        use views::path::TimelockUnit;
+
         if is_primary {
             self.views.paths.edit_path = Some(views::EditPathModalState {
                 is_primary: true,
                 path_index: None,
+                selected_key_ids: self.app.primary_path.key_ids.clone(),
                 threshold: self.app.primary_path.threshold_n.to_string(),
-                timelock: None,
+                timelock_value: None,
+                timelock_unit: TimelockUnit::default(),
             });
         } else if let Some(index) = path_index {
             if let Some((path, timelock)) = self.app.secondary_paths.get(index) {
+                // Determine the best unit for display (largest unit that divides evenly)
+                let blocks = timelock.blocks;
+                let (unit, value) = if blocks >= TimelockUnit::Months.blocks_per_unit()
+                    && blocks % TimelockUnit::Months.blocks_per_unit() == 0
+                {
+                    (TimelockUnit::Months, TimelockUnit::Months.from_blocks(blocks))
+                } else if blocks >= TimelockUnit::Days.blocks_per_unit()
+                    && blocks % TimelockUnit::Days.blocks_per_unit() == 0
+                {
+                    (TimelockUnit::Days, TimelockUnit::Days.from_blocks(blocks))
+                } else {
+                    (TimelockUnit::Hours, TimelockUnit::Hours.from_blocks(blocks))
+                };
+
                 self.views.paths.edit_path = Some(views::EditPathModalState {
                     is_primary: false,
                     path_index: Some(index),
+                    selected_key_ids: path.key_ids.clone(),
                     threshold: path.threshold_n.to_string(),
-                    timelock: Some(timelock.blocks.to_string()),
+                    timelock_value: Some(value.to_string()),
+                    timelock_unit: unit,
                 });
             }
         }
     }
 
+    fn on_template_new_path_modal(&mut self) {
+        use views::path::TimelockUnit;
+
+        // Open modal for creating a new recovery path (all keys deselected)
+        self.views.paths.edit_path = Some(views::EditPathModalState {
+            is_primary: false,
+            path_index: None, // None indicates a new path
+            selected_key_ids: Vec::new(),
+            threshold: String::new(),
+            timelock_value: Some("1".to_string()),
+            timelock_unit: TimelockUnit::Days,
+        });
+    }
+
     fn on_template_save_path(&mut self) {
         if let Some(modal_state) = &self.views.paths.edit_path {
-            // Handle threshold
-            if let Ok(threshold_n) = modal_state.threshold.parse::<u8>() {
-                if modal_state.is_primary {
-                    let m = self.app.primary_path.key_ids.len();
-                    if threshold_n > 0 && (threshold_n as usize) <= m && m > 0 {
+            let selected_keys = modal_state.selected_key_ids.clone();
+            let selected_count = selected_keys.len();
+
+            if modal_state.is_primary {
+                // Apply key changes to primary path
+                self.app.primary_path.key_ids = selected_keys;
+
+                // Handle threshold - parse and validate
+                if let Ok(threshold_n) = modal_state.threshold.parse::<u8>() {
+                    if threshold_n > 0 && (threshold_n as usize) <= selected_count && selected_count > 0 {
                         self.app.primary_path.threshold_n = threshold_n;
+                    } else if selected_count > 0 {
+                        // Default to all keys required if threshold invalid
+                        self.app.primary_path.threshold_n = selected_count as u8;
                     }
-                } else if let Some(path_index) = modal_state.path_index {
-                    if let Some((path, _)) = self.app.secondary_paths.get_mut(path_index) {
-                        let m = path.key_ids.len();
-                        if threshold_n > 0 && (threshold_n as usize) <= m && m > 0 {
+                } else if selected_count > 0 {
+                    // Default to all keys required if parse fails
+                    self.app.primary_path.threshold_n = selected_count as u8;
+                }
+            } else if let Some(path_index) = modal_state.path_index {
+                // Editing existing secondary path
+                if let Some((path, timelock)) = self.app.secondary_paths.get_mut(path_index) {
+                    // Apply key changes to secondary path
+                    path.key_ids = selected_keys;
+
+                    // Handle threshold - parse and validate
+                    if let Ok(threshold_n) = modal_state.threshold.parse::<u8>() {
+                        if threshold_n > 0 && (threshold_n as usize) <= selected_count && selected_count > 0 {
                             path.threshold_n = threshold_n;
+                        } else if selected_count > 0 {
+                            // Default to all keys required if threshold invalid
+                            path.threshold_n = selected_count as u8;
+                        }
+                    } else if selected_count > 0 {
+                        // Default to all keys required if parse fails
+                        path.threshold_n = selected_count as u8;
+                    }
+
+                    // Handle timelock (only for secondary paths)
+                    if let Some(value_str) = &modal_state.timelock_value {
+                        if let Ok(value) = value_str.parse::<u64>() {
+                            timelock.blocks = modal_state.timelock_unit.to_blocks(value);
                         }
                     }
                 }
-            }
-
-            // Handle timelock (only for secondary paths)
-            if let (false, Some(path_index), Some(blocks_str)) = (
-                modal_state.is_primary,
-                modal_state.path_index,
-                &modal_state.timelock,
-            ) {
-                if let Ok(blocks) = blocks_str.parse::<u64>() {
-                    if let Some((_, timelock)) = self.app.secondary_paths.get_mut(path_index) {
-                        timelock.blocks = blocks;
+                // Re-sort paths after timelock change
+                self.app.sort_secondary_paths();
+            } else {
+                // Creating new secondary path (path_index is None)
+                let threshold_n = if let Ok(n) = modal_state.threshold.parse::<u8>() {
+                    if n > 0 && (n as usize) <= selected_count && selected_count > 0 {
+                        n
+                    } else if selected_count > 0 {
+                        selected_count as u8
+                    } else {
+                        1
                     }
-                }
+                } else if selected_count > 0 {
+                    selected_count as u8
+                } else {
+                    1
+                };
+
+                let blocks = if let Some(value_str) = &modal_state.timelock_value {
+                    if let Ok(value) = value_str.parse::<u64>() {
+                        modal_state.timelock_unit.to_blocks(value)
+                    } else {
+                        144 // Default 1 day
+                    }
+                } else {
+                    144 // Default 1 day
+                };
+
+                let new_path = liana_connect::SpendingPath::new(false, threshold_n, selected_keys);
+                let new_timelock = liana_connect::Timelock::new(blocks);
+                self.app.secondary_paths.push((new_path, new_timelock));
+                self.app.sort_secondary_paths();
             }
 
             self.views.paths.edit_path = None;
+            
+            // Auto-save for WSManager: push changes to server with status = Drafted
+            if matches!(self.app.current_user_role, Some(UserRole::WSManager)) {
+                if let Some(wallet) = self.build_wallet_from_app_state(WalletStatus::Drafted) {
+                    self.backend.edit_wallet(wallet);
+                }
+            }
         }
     }
 
     fn on_template_validate(&mut self) {
+        // Only Owner can validate
+        if !matches!(self.app.current_user_role, Some(UserRole::Owner)) {
+            return;
+        }
+        
         if self.is_template_valid() {
-            // TODO: send template to server
+            // Push template to server with status = Validated
+            if let Some(wallet) = self.build_wallet_from_app_state(WalletStatus::Validated) {
+                self.backend.edit_wallet(wallet);
+            }
         }
     }
 }
@@ -429,10 +562,6 @@ impl State {
 impl State {
     fn on_navigate_to_home(&mut self) {
         self.current_view = View::WalletEdit;
-    }
-
-    fn on_navigate_to_paths(&mut self) {
-        self.current_view = View::Paths;
     }
 
     fn on_navigate_to_keys(&mut self) {

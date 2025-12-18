@@ -5,7 +5,7 @@ use crate::{
     client::Client,
     state::app::AppState,
     views::{
-        keys_view, login_view, modals, org_select_view, paths_view, template_builder_view,
+        keys_view, login_view, modals, org_select_view, template_builder_view,
         wallet_select_view, xpub_view,
     },
 };
@@ -25,7 +25,6 @@ pub enum View {
     WalletSelect,
     WalletEdit,
     Xpub,
-    Paths,
     Keys,
 }
 
@@ -84,7 +83,6 @@ impl State {
             View::WalletSelect => wallet_select_view(self),
             View::WalletEdit => template_builder_view(self),
             View::Xpub => xpub_view(self),
-            View::Paths => paths_view(self),
             View::Keys => keys_view(self),
         };
 
@@ -112,6 +110,7 @@ impl State {
     /// Returns true if:
     /// - Primary path has at least one key and valid threshold
     /// - All secondary paths have non-zero timelocks
+    /// - All secondary paths have unique timelocks (no duplicates)
     /// - All secondary paths have valid thresholds
     pub fn is_template_valid(&self) -> bool {
         // Check primary path
@@ -123,9 +122,14 @@ impl State {
         }
 
         // Check all secondary paths
+        let mut seen_timelocks = std::collections::HashSet::new();
         for (path, timelock) in &self.app.secondary_paths {
             // Check timelock is set (non-zero)
             if timelock.is_zero() {
+                return false;
+            }
+            // Check for duplicate timelocks
+            if !seen_timelocks.insert(timelock.blocks) {
                 return false;
             }
             // Check path has at least one key and valid threshold

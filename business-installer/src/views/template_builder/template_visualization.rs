@@ -1,13 +1,101 @@
 use crate::state::{message::Msg, State};
-use iced::Length;
-use liana_ui::widget::*;
-use std::fmt::Write;
+use iced::{
+    widget::{
+        button::{Status, Style},
+        Space,
+    },
+    Alignment, Background, Border, Length,
+};
+use liana_connect::models::UserRole;
+use liana_ui::{color, component::text, icon, theme::Theme, widget::*};
+use std::collections::BTreeMap;
 
-const PATH_SPACING: f32 = 90.0;
-const PATH_BOX_WIDTH: f32 = 400.0;
+/// Custom button style for path cards: dark grey border when not hovered, green when hovered
+fn path_card_button(_theme: &Theme, status: Status) -> Style {
+    bordered_button_style(status, 25.0)
+}
+
+/// Custom button style for delete button: dark grey border when not hovered, green when hovered
+fn delete_button_style(_theme: &Theme, status: Status) -> Style {
+    bordered_button_style(status, 50.0) // Fully round
+}
+
+/// Shared bordered button style with configurable border radius
+fn bordered_button_style(status: Status, radius: f32) -> Style {
+    let grey_border = color::GREY_7;
+    let green_border = color::GREEN;
+
+    match status {
+        Status::Active => Style {
+            background: Some(Background::Color(color::TRANSPARENT)),
+            text_color: color::GREY_2,
+            border: Border {
+                radius: radius.into(),
+                width: 1.0,
+                color: grey_border,
+            },
+            ..Default::default()
+        },
+        Status::Hovered => Style {
+            background: Some(Background::Color(color::TRANSPARENT)),
+            text_color: color::GREEN,
+            border: Border {
+                radius: radius.into(),
+                width: 1.0,
+                color: green_border,
+            },
+            ..Default::default()
+        },
+        Status::Pressed => Style {
+            background: Some(Background::Color(color::TRANSPARENT)),
+            text_color: color::GREEN,
+            border: Border {
+                radius: radius.into(),
+                width: 1.0,
+                color: green_border,
+            },
+            ..Default::default()
+        },
+        Status::Disabled => Style {
+            background: Some(Background::Color(color::TRANSPARENT)),
+            text_color: color::GREY_2,
+            border: Border {
+                radius: radius.into(),
+                width: 1.0,
+                color: grey_border,
+            },
+            ..Default::default()
+        },
+    }
+}
+
+/// Container style for read-only path cards (matches button border style)
+fn path_card_container_style(_theme: &Theme) -> iced::widget::container::Style {
+    use iced::widget::container;
+    container::Style {
+        text_color: Some(color::GREY_2),
+        background: Some(Background::Color(color::TRANSPARENT)),
+        border: Border {
+            radius: 25.0.into(),
+            width: 1.0,
+            color: color::GREY_7,
+        },
+        ..Default::default()
+    }
+}
 
 // Colors for paths
 const PRIMARY_COLOR: &str = "#32cd32"; // Green
+
+// Card width constants
+const PATH_CARD_WIDTH: f32 = 600.0;
+// r_shape icon width that precedes path cards (adds visual offset for "Add recovery" button alignment)
+const R_SHAPE_WIDTH: f32 = 60.0;
+
+// Timelock conversion constants (1 block ≈ 10 minutes)
+const BLOCKS_PER_HOUR: u64 = 6;
+const BLOCKS_PER_DAY: u64 = 144;
+const BLOCKS_PER_MONTH: u64 = 4380;
 
 // Generate color from green to blue gradient based on index and total count
 // Recovery path 1 should be between green and blue (not the same as primary green)
@@ -48,198 +136,255 @@ fn get_secondary_color(index: usize, total_count: usize) -> String {
     format!("#{:02x}{:02x}{:02x}", r, g, b)
 }
 
-pub fn template_visualization(state: &State) -> Element<'static, Msg> {
-    let svg_content = generate_svg(state);
-
-    let svg_handle = iced::widget::svg::Handle::from_memory(svg_content.as_bytes().to_vec());
-    let svg_widget = liana_ui::widget::Svg::new(svg_handle)
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .content_fit(iced::ContentFit::Contain);
-
-    Container::new(svg_widget)
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .padding(20.0)
-        .into()
-}
-
-fn generate_svg(state: &State) -> String {
-    let mut svg = String::new();
-    let primary_path = &state.app.primary_path;
-    let secondary_paths = &state.app.secondary_paths;
-
-    // Calculate total height needed
-    let num_paths = 1 + secondary_paths.len();
-    let total_height = if num_paths == 0 {
-        200.0 // Minimum height
+/// Generate a single "r" shape SVG as an iced Element.
+/// index=0 is primary (green), index>=1 are secondary paths (gradient).
+/// count is the total number of paths (including primary).
+pub fn r_shape(index: usize, count: usize) -> Element<'static, Msg> {
+    let color = if index == 0 {
+        PRIMARY_COLOR.to_string()
     } else {
-        (num_paths as f32) * PATH_SPACING
+        // Secondary paths: index-1 because get_secondary_color expects 0-based for secondaries
+        let secondary_count = count.saturating_sub(1);
+        get_secondary_color(index - 1, secondary_count)
     };
 
-    // Start SVG with viewBox for better scaling
-    write!(
-        svg,
-        r#"<svg width="{}" height="{}" viewBox="0 0 {} {}" xmlns="http://www.w3.org/2000/svg">"#,
-        PATH_BOX_WIDTH, total_height, PATH_BOX_WIDTH, total_height
-    )
-    .unwrap();
+    // SVG dimensions - centered "r" shape
+    let width = 60.0;
+    let height = 60.0;
+    let center_x = 30.0;
+    let center_y = 30.0;
 
-    // Primary path
-    let y_pos = PATH_SPACING / 2.0;
-    render_path_box(
-        &mut svg,
-        y_pos,
-        PRIMARY_COLOR,
-        "Primary path",
-        primary_path,
-        &state.app.keys,
-    );
-
-    // Secondary paths
-    let total_recovery_paths = secondary_paths.len();
-    for (index, (path, _timelock)) in secondary_paths.iter().enumerate() {
-        let y_pos = PATH_SPACING * (index as f32 + 1.5);
-        let color = get_secondary_color(index, total_recovery_paths);
-        let label = if index == 0 {
-            "Secondary path 1".to_string()
-        } else {
-            format!("Secondary path {}", index + 1)
-        };
-
-        render_path_box(&mut svg, y_pos, &color, &label, path, &state.app.keys);
-    }
-
-    // Close SVG
-    svg.push_str("</svg>");
-
-    svg
-}
-
-fn render_path_box(
-    svg: &mut String,
-    y: f32,
-    color: &str,
-    label: &str,
-    _path: &liana_connect::SpendingPath,
-    _keys: &std::collections::BTreeMap<u8, liana_connect::Key>,
-) {
-    let box_y = y;
-
-    // Render the "r" shape on the left
-    let r_shape_x = 30.0;
-    render_r_shape(svg, r_shape_x, box_y, color);
-
-    // Render label text to the right of the "r" shape
-    let text_x = 120.0;
-    let text_y = box_y;
-
-    // Split label to underline "path" part
-    if let Some(path_idx) = label.find("path") {
-        let before_path = &label[..path_idx];
-        let path_part = "path";
-        let after_path = &label[path_idx + 4..];
-
-        // Render text before "path"
-        if !before_path.is_empty() {
-            write!(
-                svg,
-                r#"<text x="{}" y="{}" fill="white" font-family="sans-serif" font-size="16" font-weight="400" dominant-baseline="middle">{}</text>"#,
-                text_x,
-                text_y,
-                escape_xml(before_path)
-            ).unwrap();
-        }
-
-        // Calculate width of text before "path" (approximate: 8 pixels per character for font-size 16)
-        let before_width = before_path.len() as f32 * 8.0;
-        let path_x = text_x + before_width;
-
-        // Render "path" text
-        let path_width = path_part.len() as f32 * 8.0;
-        write!(
-            svg,
-            r#"<text x="{}" y="{}" fill="white" font-family="sans-serif" font-size="16" font-weight="400" dominant-baseline="middle">{}</text>"#,
-            path_x,
-            text_y,
-            escape_xml(path_part)
-        ).unwrap();
-
-        // Render text after "path" (like " 1")
-        if !after_path.is_empty() {
-            let path_total_width = before_width + path_width;
-            write!(
-                svg,
-                r#"<text x="{}" y="{}" fill="white" font-family="sans-serif" font-size="16" font-weight="400" dominant-baseline="middle">{}</text>"#,
-                text_x + path_total_width,
-                text_y,
-                escape_xml(after_path)
-            ).unwrap();
-        }
-    } else {
-        // If no "path" found, just render the whole label
-        write!(
-            svg,
-            r#"<text x="{}" y="{}" fill="white" font-family="sans-serif" font-size="16" font-weight="400" dominant-baseline="middle">{}</text>"#,
-            text_x,
-            text_y,
-            escape_xml(label)
-        ).unwrap();
-    }
-}
-
-fn render_r_shape(svg: &mut String, x: f32, y: f32, color: &str) {
-    // Create a stylized lowercase "r" with just 2 elements: a line and a radius
-    // Element 1: Vertical stem (line)
+    // Create the "r" shape SVG
     let thickness = 10.0;
-    let stem_top = y - 20.0;
-    let stem_bottom = y + 25.0;
+    let stem_top = center_y - 20.0;
+    let stem_bottom = center_y + 25.0;
+    let radius = 25.0;
+    let arc_start_y = center_y + 25.0;
+    let arc_end_x = center_x + 25.0;
+    let arc_end_y = center_y;
 
-    // Element 2: Radius/arc that extends right from middle-top and curves down
-    let radius = 25.0; // Regular radius for the circular arc
-                       //  arc_start_x = 0
-    let arc_start_y = y + 25.0; // Where the arc starts
-    let arc_end_x = x + 25.0;
-    let arc_end_y = y;
-
-    // Element 1: Vertical line (the stem)
-    write!(
-        svg,
-        r#"<line x1="{}" y1="{}" x2="{}" y2="{}" stroke="{}" stroke-width="{}" stroke-linecap="round" />"#,
-        x,
+    let svg_content = format!(
+        r#"<svg width="{}" height="{}" viewBox="0 0 {} {}" xmlns="http://www.w3.org/2000/svg">
+            <line x1="{}" y1="{}" x2="{}" y2="{}" stroke="{}" stroke-width="{}" stroke-linecap="round" />
+            <path d="M {} {} A {} {} 0 0 1 {} {}" stroke="{}" stroke-width="{}" fill="none" stroke-linecap="round" />
+        </svg>"#,
+        width,
+        height,
+        width,
+        height,
+        center_x,
         stem_top,
-        x,
+        center_x,
         stem_bottom,
         color,
-        thickness
-    ).unwrap();
-
-    // Element 2: Single arc with regular radius
-    // The arc extends horizontally from the stem, then curves down
-    // Using SVG arc command for a true circular arc with regular radius
-
-    write!(
-        svg,
-        r#"<path d="M {} {} A {} {} 0 0 1 {} {}" stroke="{}" stroke-width="{}" fill="none" stroke-linecap="round" />"#,
-        // Start point: where arc begins (middle-top of stem)
-        x,
+        thickness,
+        center_x,
         arc_start_y,
-        // Radius X and Y (circular arc, so same radius)
         radius,
         radius,
-        // End point: bottom of the tail
         arc_end_x,
         arc_end_y,
         color,
         thickness
-    ).unwrap();
+    );
+
+    let svg_handle = iced::widget::svg::Handle::from_memory(svg_content.as_bytes().to_vec());
+    let svg_widget = liana_ui::widget::Svg::new(svg_handle)
+        .width(Length::Fixed(R_SHAPE_WIDTH))
+        .height(Length::Fixed(R_SHAPE_WIDTH))
+        .content_fit(iced::ContentFit::Contain);
+
+    Container::new(svg_widget)
+        .width(Length::Fixed(R_SHAPE_WIDTH))
+        .height(Length::Fixed(R_SHAPE_WIDTH))
+        .into()
 }
 
-fn escape_xml(text: &str) -> String {
-    text.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-        .replace('\'', "&apos;")
+/// Convert a timelock (in blocks) to a human-readable format.
+/// Shows "After x hours/days/months" (whichever is most appropriate).
+fn format_timelock_human(timelock: &liana_connect::Timelock) -> String {
+    let blocks = timelock.blocks;
+
+    if blocks == 0 {
+        return "No timelock".to_string();
+    }
+
+    // Determine the most appropriate unit
+    if blocks >= BLOCKS_PER_MONTH {
+        let months = blocks / BLOCKS_PER_MONTH;
+        if months == 1 {
+            "After 1 month".to_string()
+        } else {
+            format!("After {} months", months)
+        }
+    } else if blocks >= BLOCKS_PER_DAY {
+        let days = blocks / BLOCKS_PER_DAY;
+        if days == 1 {
+            "After 1 day".to_string()
+        } else {
+            format!("After {} days", days)
+        }
+    } else {
+        let hours = blocks / BLOCKS_PER_HOUR;
+        if hours <= 1 {
+            "After 1 hour".to_string()
+        } else {
+            format!("After {} hours", hours)
+        }
+    }
 }
 
+/// Create a path card displaying key names and timelock information.
+/// is_primary: true for primary path, false for secondary paths
+/// path_index: None for primary, Some(index) for secondary paths
+/// timelock is None for primary path ("Spendable anytime"), Some for secondary paths.
+/// is_editable: if true, card is clickable; if false, card is read-only
+fn path_card(
+    path: &liana_connect::SpendingPath,
+    keys: &BTreeMap<u8, liana_connect::Key>,
+    timelock: Option<&liana_connect::Timelock>,
+    is_primary: bool,
+    path_index: Option<usize>,
+    is_editable: bool,
+) -> Element<'static, Msg> {
+    // Get key aliases
+    let key_aliases: Vec<String> = path
+        .key_ids
+        .iter()
+        .filter_map(|id| keys.get(id).map(|k| k.alias.clone()))
+        .collect();
+
+    let key_count = key_aliases.len();
+    let threshold = path.threshold_n as usize;
+
+    let keys_text = if key_aliases.is_empty() {
+        "No keys".to_string()
+    } else if key_count == 1 {
+        // Single key: just show the name
+        key_aliases[0].clone()
+    } else {
+        let names = key_aliases.join(", ");
+        if threshold >= key_count {
+            format!("All of {}", names)
+        } else {
+            format!("{} of {}", threshold, names)
+        }
+    };
+
+    // Determine timelock text
+    let timelock_text = match timelock {
+        None => "Spendable anytime".to_string(),
+        Some(tl) => format_timelock_human(tl),
+    };
+
+    let content = Column::new()
+        .spacing(5)
+        .push(text::p1_regular(keys_text))
+        .push(text::p2_regular(timelock_text));
+
+    // Wrap card content - use Fill width so Button controls the final width
+    let card_content = Container::new(content).padding(15).width(Length::Fill);
+
+    // Make clickable only if editable
+    if is_editable {
+        Button::new(card_content)
+            .width(Length::Fixed(PATH_CARD_WIDTH))
+            .on_press(Msg::TemplateEditPath(is_primary, path_index))
+            .style(path_card_button)
+            .into()
+    } else {
+        // Read-only: display with border styling (no click handler)
+        card_content
+            .width(Length::Fixed(PATH_CARD_WIDTH))
+            .style(path_card_container_style)
+            .into()
+    }
+}
+
+pub fn template_visualization(state: &State) -> Element<'static, Msg> {
+    let primary_path = &state.app.primary_path;
+    let secondary_paths = &state.app.secondary_paths;
+    let keys = &state.app.keys;
+
+    // Determine if user can edit (WSManager only)
+    let is_editable = matches!(state.app.current_user_role, Some(UserRole::WSManager));
+
+    // Total count includes primary + all secondary paths
+    let total_count = 1 + secondary_paths.len();
+
+    let mut column = Column::new()
+        .spacing(10)
+        .padding(20.0)
+        .push(Space::with_height(50));
+
+    // Primary path row: [r_shape] [path_card]
+    let primary_row = Row::new()
+        .spacing(15)
+        .align_y(Alignment::Center)
+        .push(r_shape(0, total_count))
+        .push(path_card(primary_path, keys, None, true, None, is_editable));
+
+    column = column.push(primary_row);
+
+    // Secondary path rows (with delete button if editable)
+    for (index, (path, timelock)) in secondary_paths.iter().enumerate() {
+        let mut secondary_row = Row::new()
+            .spacing(15)
+            .align_y(Alignment::Center)
+            .push(r_shape(index + 1, total_count))
+            .push(path_card(
+                path,
+                keys,
+                Some(timelock),
+                false,
+                Some(index),
+                is_editable,
+            ));
+
+        // Only show delete button if editable (WSManager)
+        if is_editable {
+            secondary_row = secondary_row.push(
+                Button::new(
+                    Container::new(icon::trash_icon())
+                        .width(Length::Fixed(20.0))
+                        .height(Length::Fixed(20.0))
+                        .center_x(Length::Fixed(20.0))
+                        .center_y(Length::Fixed(20.0)),
+                )
+                .padding(10)
+                .on_press(Msg::TemplateDeleteSecondaryPath(index))
+                .style(delete_button_style),
+            );
+        }
+
+        column = column.push(secondary_row);
+    }
+
+    // "Add a recovery path" card - only show if editable (WSManager)
+    if is_editable {
+        let add_path_content = Container::new(
+            text::p1_regular("+ Add a recovery path").style(liana_ui::theme::text::secondary),
+        )
+        .padding(15)
+        .width(Length::Fill);
+
+        let add_path_card = Button::new(add_path_content)
+            .width(Length::Fixed(PATH_CARD_WIDTH))
+            .on_press(Msg::TemplateNewPathModal)
+            .style(path_card_button);
+
+        // Spacer aligns with r_shape icons above (R_SHAPE_WIDTH) + row spacing (15)
+        let add_path_row = Row::new()
+            .spacing(15)
+            .align_y(Alignment::Center)
+            .push(Space::with_width(Length::Fixed(R_SHAPE_WIDTH)))
+            .push(add_path_card);
+
+        column = column.push(add_path_row);
+    }
+
+    Container::new(column)
+        .center_x(Length::Shrink)
+        .center_y(Length::Shrink)
+        .into()
+}

@@ -70,17 +70,24 @@ When user arrives at wallet selection, three possible subflows based on status:
 - [x] Debug mode hints showing test emails/code
 
 ### 1.2 Edit Wallet Template Subflow
-- [ ] Restrict access to WSManager and WalletOwner roles
-- [ ] Restrict to Draft status wallets only
+- [x] Restrict access to WSManager and WalletOwner roles
+- [x] Restrict to Draft status wallets only
 - [ ] Finalize key management panel
   - [ ] Complete UI implementation
   - [ ] Ensure all key operations are functional
   - [ ] Polish user experience
 - [ ] Finalize path management panel
-  - [ ] Complete UI implementation
-  - [ ] Ensure all path operations are functional
+  - [x] Complete UI implementation
+    - [x] Clickable path cards in template visualization
+    - [x] Edit Path modal with key selection (checkboxes)
+    - [x] Threshold input with validation
+    - [x] Timelock input with unit dropdown (blocks/hours/days/months)
+    - [x] Create New Path mode
+  - [x] Ensure all path operations are functional
+    - [x] Role-based edit permissions (WSManager can edit, others read-only)
+    - [x] Auto-save for WSManager on path changes
   - [ ] Polish user experience
-- [ ] Add "Validate Template" action for Owner (Draft -> Validated transition)
+- [x] Add "Validate Template" action for Owner (Draft -> Validated transition)
 
 ### 1.3 Add Key Information Subflow
 - [ ] Create xpub entry view (reuse `SelectKeySource` pattern from liana-gui)
@@ -184,10 +191,11 @@ WS Manager is the platform-side administrator with full access.
 | Final     | ✗                 | ✗             | ✓               |
 
 **Implementation tasks:**
-- [ ] Full template editing for Draft wallets
+- [x] Full template editing for Draft wallets
   - [ ] Create/edit/delete keys
-  - [ ] Create/edit/delete spending paths
-  - [ ] Set thresholds and timelocks
+  - [x] Create/edit/delete spending paths
+  - [x] Set thresholds and timelocks
+  - [x] Auto-save changes to server (status = Drafted)
 - [ ] Full key info access for Validated wallets
   - [ ] View all keys regardless of email
   - [ ] Add xpub to any key
@@ -207,11 +215,12 @@ Owner is the consumer-side wallet manager.
 | Final     | ✗                 | ✗            | ✗             | ✓               |
 
 **Implementation tasks:**
-- [ ] Template editing for Draft wallets (same as WS Manager)
-- [ ] Template validation action (Draft -> Validated transition)
-  - [ ] Add "Accept Template" / "Validate" button
+- [x] Template editing for Draft wallets (same as WS Manager)
+  - [x] Role-based UI restrictions (paths read-only for non-WSManager)
+- [x] Template validation action (Draft -> Validated transition)
+  - [x] Add "Validate Template" button (Owner only)
+  - [x] Backend API call to change status (status = Validated)
   - [ ] Confirm dialog before transition
-  - [ ] Backend API call to change status
 - [ ] Key info entry for Validated wallets (any key)
 - [ ] Wallet loading for Final wallets
 - [ ] Testing and have a complete functional flow
@@ -298,7 +307,62 @@ Store data in `network_dir` matching liana-gui patterns. Reference:
 
 ## Changelog
 
-### 2025-12-19
+### 2025-12-18
+- 1.2 Edit Wallet Template Subflow: Implemented role-based access control and validation
+  - Added `current_user_role` tracking in AppState to store user's role per wallet
+  - Implemented role-based UI restrictions:
+    - WSManager: Can edit paths, auto-save changes to server (status = Drafted)
+    - Owner: Can validate templates, paths are read-only (view-only mode)
+    - Path cards are clickable/editable only for WSManager users
+    - Delete buttons and "Add recovery path" only visible for WSManager
+  - Implemented "Validate Template" action for Owner role:
+    - Validate button only visible to Owner users
+    - Pushes template to server with status = Validated on validation
+    - Validation restricted to Owner role only
+  - Auto-save functionality for WSManager:
+    - Automatically saves path changes (add/edit/delete) to server
+    - Changes saved with status = Drafted
+  - Role-based button visibility in template builder:
+    - WSManager: Shows "Manage Keys" button only
+    - Owner: Shows both "Manage Keys" and "Validate Template" buttons
+  - Simplified role detection: Uses `current_user_role` from AppState instead of complex email-based checks
+
+### 2025-12-18
+- 1.2 Edit Wallet Template Subflow: Reworked template visualization and modals
+  - Reworked Edit Path modal with comprehensive key management:
+    - Full key selection UI with checkboxes for all available keys
+    - Toggle keys in/out of the path
+    - Threshold input (only enabled when key count > 1)
+    - Threshold validation with proper error messages
+    - Timelock unit dropdown: blocks, hours, days, months
+    - Timelock validation (minimum 144 blocks for recovery paths)
+    - Supports both "Edit" and "Create New Path" modes
+  - Added TemplateToggleKeyInPath message for key selection in modal
+  - Updated EditPathModalState with selected_key_ids and timelock_unit
+  - Redesigned template_builder view layout:
+    - Clean header with Previous/Logout button, title, and user email/role
+    - Scrollable template visualization in center area
+    - Action buttons (Manage Keys, New Path, Validate) fixed at bottom
+  - Rewrote template_visualization with clickable card-based UI:
+    - Replaced monolithic SVG with individual r-shape icons per path
+    - Each path shown as row: colored r-shape + clickable card
+    - Primary path: "Spendable anytime" with green r-shape
+    - Secondary paths: human-readable timelocks ("After X hours/days/months")
+    - Threshold display: "All of X, Y" or "N of X, Y, Z"
+    - Color gradient from green to blue for paths
+    - Click any path card to open Edit Path modal
+  - Removed separate paths_view (path management now integrated into template_builder)
+  - Fixed Previous/Logout button priority (Previous takes precedence when available)
+
+### 2025-12-18
+- UI improvement: Made only the org/wallet list scrollable in select views, keeping
+  title, search bar, and filters fixed at the top. Added `layout_with_scrollable_list`
+  helper function in views/mod.rs.
+- UI improvement: Refactored template_builder to use `layout_with_scrollable_list` with
+  optional footer support. Footer contains role-based action buttons (Manage Keys,
+  Validate Template). Standardized path card widths and alignment constants.
+
+### 2025-12-17
 - 1.7 Logout Feature: Implemented
   - Added logout button that replaces "Previous" button when user is authenticated
   - Logout button uses back arrow icon for consistency with navigation
@@ -309,7 +373,7 @@ Store data in `network_dir` matching liana-gui patterns. Reference:
   - Navigates to login view and focuses email input
   - Handles both production and debug modes
 
-### 2025-12-18
+### 2025-12-17
 - 1.4 Filter/Search Bar (WS Manager Only): Implemented
   - Added search bar to organization selection page (WS Manager only)
   - Case-insensitive filtering by organization name
@@ -328,7 +392,7 @@ Store data in `network_dir` matching liana-gui patterns. Reference:
   - Focus email input when navigating back from code to email view
   - Tab navigation works automatically via Iced focusable widgets
 
-### 2025-12-17
+### 2025-12-16
 - 1.1 Wallet Selection View: Implemented and enhanced
   - Added `derive_user_role()` to determine user's role per wallet
   - Added `status_badge()` component with colored pills (Draft/Validated)

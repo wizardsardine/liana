@@ -4,12 +4,15 @@ use crate::{
 };
 use iced::{widget::row, Alignment, Length};
 use liana_connect::models::{UserRole, Wallet, WalletStatus};
-use liana_ui::{component::{form, text}, widget::*};
+use liana_ui::{
+    component::{form, text},
+    widget::*,
+};
 
 use iced::widget::Space;
 use uuid::Uuid;
 
-use super::{layout, menu_entry};
+use super::{layout_with_scrollable_list, menu_entry};
 
 /// Derive the user's role for a specific wallet
 fn derive_user_role(wallet: &Wallet, current_user_email: &str) -> UserRole {
@@ -36,10 +39,7 @@ fn is_wallet_accessible(wallet: &Wallet, current_user_email: &str) -> bool {
     let role = derive_user_role(wallet, current_user_email);
     // Participants cannot access Draft wallets
     if matches!(role, UserRole::Participant)
-        && matches!(
-            wallet.status,
-            WalletStatus::Created | WalletStatus::Drafted
-        )
+        && matches!(wallet.status, WalletStatus::Created | WalletStatus::Drafted)
     {
         return false;
     }
@@ -77,15 +77,16 @@ pub fn org_select_view(state: &State) -> Element<'_, Msg> {
         Space::with_width(Length::Fill),
     ];
 
-    let mut org_list = Column::new()
+    // Fixed header content: title and search bar
+    let mut header_content = Column::new()
         .push(title)
         .push(Space::with_height(30))
         .spacing(10)
         .align_x(Alignment::Center)
         .padding(20);
-    
+
     let orgs = state.backend.get_orgs();
-    
+
     // Determine if user is WSManager (not owner/participant of any wallet in any org)
     let is_ws_manager = {
         let email_lower = current_user_email.to_lowercase();
@@ -127,15 +128,25 @@ pub fn org_select_view(state: &State) -> Element<'_, Msg> {
             warning: None,
             valid: true,
         };
-        let search_form = form::Form::new_trimmed("Search organizations...", &search_value, Msg::OrgSelectUpdateSearchFilter)
-            .size(16)
-            .padding(10);
+        let search_form = form::Form::new_trimmed(
+            "Search organizations...",
+            &search_value,
+            Msg::OrgSelectUpdateSearchFilter,
+        )
+        .size(16)
+        .padding(10);
         let search_container = Container::new(search_form)
             .width(Length::Fixed(500.0))
             .align_x(Alignment::Center);
-        org_list = org_list.push(search_container);
-        org_list = org_list.push(Space::with_height(10));
+        header_content = header_content.push(search_container);
+        header_content = header_content.push(Space::with_height(10));
     }
+
+    // Scrollable list content: organization cards
+    let mut list_content = Column::new()
+        .spacing(10)
+        .align_x(Alignment::Center)
+        .padding([0, 20]);
 
     // Filter organizations by search text (case-insensitive)
     let search_filter = state.views.org_select.search_filter.to_lowercase();
@@ -152,9 +163,11 @@ pub fn org_select_view(state: &State) -> Element<'_, Msg> {
 
     if filtered_orgs.is_empty() && !orgs.is_empty() {
         // Show message when search filter returns no results
-        org_list = org_list.push(text::p1_regular("No organizations found matching your search."));
+        list_content = list_content.push(text::p1_regular(
+            "No organizations found matching your search.",
+        ));
     } else if orgs.is_empty() {
-        org_list = org_list.push(no_org_card());
+        list_content = list_content.push(no_org_card());
     } else {
         for (id, org) in &filtered_orgs {
             // Count only wallets accessible to this user
@@ -165,10 +178,10 @@ pub fn org_select_view(state: &State) -> Element<'_, Msg> {
                 .filter(|wallet| is_wallet_accessible(wallet, current_user_email))
                 .count();
             let card = org_card(org.name.clone(), wallet_count, **id);
-            org_list = org_list.push(card);
+            list_content = list_content.push(card);
         }
     }
-    org_list = org_list.push(Space::with_height(50));
+    list_content = list_content.push(Space::with_height(50));
 
     let role_badge = if is_ws_manager {
         Some("WS Manager")
@@ -176,12 +189,14 @@ pub fn org_select_view(state: &State) -> Element<'_, Msg> {
         None
     };
 
-    layout(
+    layout_with_scrollable_list(
         (3, 4),
         Some(current_user_email),
         role_badge,
         "Organization",
-        org_list,
+        header_content,
+        list_content,
+        None, // footer_content
         true,
         None,
     )
