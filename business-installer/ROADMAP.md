@@ -709,6 +709,16 @@ all edge cases, access control rules, and multi-client synchronization.
 ## Changelog
 
 ### 2025-12-19
+- UI: Added breadcrumb navigation to layout headers
+  - Wallet Select shows: `<org_name> > Wallet`
+  - Template Builder shows: `<org_name> > <wallet_name> > Template`
+  - Keys Management shows: `<org_name> > <wallet_name> > Keys`
+  - XPub view shows: `<org_name> > <wallet_name> > Key Information`
+  - Login views show: `Login`
+  - Org Select shows: `Organization`
+  - All segments use same font size (h3), with `>` separators in secondary style
+
+### 2025-12-19
 - 5.4 Client Integration: Removed embedded dummy server, now uses standalone server only
   - Removed `init_client_with_test_data()` and all embedded test data generation
   - Added separate `AUTH_API_URL` (http://127.0.0.1:8099) and `WS_URL` (ws://127.0.0.1:8100) constants
@@ -716,6 +726,8 @@ all edge cases, access control rules, and multi-client synchronization.
   - Replaced `block_on` with `tokio::runtime::Runtime::new().block_on()` for async operations
   - Removed `dummy_server_handle`, `dummy_server_shutdown`, and `backend_url` fields from Client
   - Improved error handling with `Notification::Error` for WebSocket message failures
+
+### 2025-12-19
 - 3.0 Server Update Notifications: Implemented conflict detection for concurrent editing
   - Uses existing `Wallet` notifications from server (no protocol changes required)
   - Frontend (business-installer): Created `ConflictModalState` and `ConflictType` for conflict resolution UI

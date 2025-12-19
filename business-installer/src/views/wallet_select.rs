@@ -316,11 +316,20 @@ pub fn wallet_select_view(state: &State) -> Element<'_, Msg> {
         None
     };
 
+    // Build breadcrumb: org_name > Wallet
+    let org_name = state
+        .app
+        .selected_org
+        .and_then(|org_id| state.backend.get_org(org_id))
+        .map(|org| org.name.clone())
+        .unwrap_or_else(|| "Organization".to_string());
+    let breadcrumb = vec![org_name, "Wallet".to_string()];
+
     layout_with_scrollable_list(
         (4, 4),
         Some(&state.views.login.email.form.value),
         role_badge,
-        "Wallet",
+        &breadcrumb,
         header_content,
         list_content,
         None, // footer_content
