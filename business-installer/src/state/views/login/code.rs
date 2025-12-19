@@ -10,7 +10,7 @@ impl CodeState {
     pub fn new() -> Self {
         Self {
             form: liana_ui::component::form::Value {
-                value: "12345".to_string(),
+                value: String::new(),
                 warning: None,
                 valid: true,
             },

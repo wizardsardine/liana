@@ -20,7 +20,7 @@ use liana_gui::{
 use liana_ui::widget::Element;
 
 use crate::backend::{Notification, BACKEND_RECV};
-use crate::client::{BACKEND_URL, PROTOCOL_VERSION};
+use crate::client::{PROTOCOL_VERSION, WS_URL};
 use crate::state::State;
 
 // Re-export Message type for external use
@@ -40,7 +40,7 @@ impl BusinessInstaller {
     /// Create a new BusinessInstaller with internal initialization
     fn new_internal(datadir: LianaDirectory, network: bitcoin::Network) -> (Self, Task<Message>) {
         let mut state = State::new();
-        let recv = state.connect_backend(BACKEND_URL.to_string(), PROTOCOL_VERSION);
+        let recv = state.connect_backend(WS_URL.to_string(), PROTOCOL_VERSION);
 
         // Store the receiver in the global static for the subscription to use
         *BACKEND_RECV.lock().expect("poisoned") = recv;

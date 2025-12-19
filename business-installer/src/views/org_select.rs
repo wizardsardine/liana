@@ -63,7 +63,7 @@ pub fn org_card<'a>(name: String, count: usize, id: Uuid) -> Element<'a, Msg> {
 }
 
 pub fn no_org_card() -> Element<'static, Msg> {
-    let content = text::h3("Contact WizardSardine to create an account.").into();
+    let content = text::h5_regular("Contact WizardSardine to create an account.").into();
     menu_entry(content, None)
 }
 
