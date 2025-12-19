@@ -2,11 +2,13 @@ use crate::state::{views::login::LoginState, Msg, State};
 use iced::Length;
 use liana_ui::{component::text, widget::*};
 
+pub mod account_select;
 pub mod code;
 pub mod email;
 
 pub fn login_view(state: &State) -> Element<'_, Msg> {
     match state.views.login.current {
+        LoginState::AccountSelect => account_select::account_select_view(state),
         LoginState::EmailEntry => email::login_email_view(state),
         LoginState::CodeEntry => code::login_code_view(state),
         LoginState::Authenticated => {

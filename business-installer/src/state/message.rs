@@ -11,6 +11,10 @@ pub enum Msg {
     LoginSendAuthCode,
     Logout,
 
+    // Account selection (cached token login)
+    AccountSelectConnect(String), // Connect with cached account by email
+    AccountSelectNewEmail,        // Start fresh login with new email
+
     // Org management
     OrgSelected(Uuid),
     OrgWalletSelected(Uuid),

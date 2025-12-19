@@ -39,6 +39,10 @@ impl State {
             Msg::LoginResendToken => self.on_login_resend_token(),
             Msg::LoginSendAuthCode => self.on_login_send_auth_code(),
 
+            // Account selection (cached token login)
+            Msg::AccountSelectConnect(email) => return self.on_account_select_connect(email),
+            Msg::AccountSelectNewEmail => return self.on_account_select_new_email(),
+
             // Org management
             Msg::OrgSelected(id) => self.on_org_selected(id),
             Msg::OrgWalletSelected(id) => self.on_org_wallet_selected(id),
@@ -158,6 +162,47 @@ impl State {
         if !code.is_empty() {
             self.backend.auth_code(code);
         }
+    }
+}
+
+// Account selection (cached token login)
+impl State {
+    /// Connect with a cached account's token
+    fn on_account_select_connect(&mut self, email: String) -> Task<Msg> {
+        // Find token for this email
+        let token = self
+            .views
+            .login
+            .account_select
+            .accounts
+            .iter()
+            .find(|a| a.email == email)
+            .map(|a| a.tokens.access_token.clone());
+
+        if let Some(token) = token {
+            // Set processing state
+            self.views.login.account_select.processing = true;
+            self.views.login.account_select.selected_email = Some(email.clone());
+
+            // Store email for later use (e.g., in exit_maybe)
+            self.views.login.email.form.value = email;
+
+            // Set token and connect
+            self.backend.set_token(token);
+            let recv = self.backend.connect_ws(WS_URL.to_string(), PROTOCOL_VERSION);
+            *BACKEND_RECV.lock().expect("poisoned") = recv;
+        }
+
+        Task::none()
+    }
+
+    /// User wants to login with a new email (start fresh auth flow)
+    fn on_account_select_new_email(&mut self) -> Task<Msg> {
+        self.views.login.current = views::LoginState::EmailEntry;
+        self.views.login.email.form.value.clear();
+        self.views.login.email.form.valid = false;
+        self.views.login.email.form.warning = None;
+        text_input::focus("login_email")
     }
 }
 
@@ -660,7 +705,14 @@ impl State {
 // Backend updates
 impl State {
     fn on_backend_connected(&mut self) {
-        // TODO: ?
+        // Check if this connection came from cached token login (AccountSelect flow)
+        if self.views.login.account_select.processing {
+            // Success! Transition to authenticated state
+            self.views.login.current = views::LoginState::Authenticated;
+            self.views.login.account_select.processing = false;
+            self.views.login.account_select.selected_email = None;
+            self.current_view = View::OrgSelect;
+        }
     }
 
     fn on_backend_orgs(&mut self) {
@@ -726,12 +778,24 @@ impl State {
     }
 
     fn on_backend_error(&mut self, error: Error) {
+        // Check if error occurred during cached token connection
+        if self.views.login.account_select.processing {
+            self.handle_cached_token_connection_failure();
+            return;
+        }
+
         if error.show_warning() {
             self.on_warning_show_modal("Backend error", error.to_string());
         }
     }
 
     fn on_backend_disconnected(&mut self) {
+        // Check if disconnect occurred during cached token connection
+        if self.views.login.account_select.processing {
+            self.handle_cached_token_connection_failure();
+            return;
+        }
+
         // // If we're intentionally reconnecting, don't show error
         // if self.app.reconnecting {
         //     self.app.reconnecting = false;
@@ -745,12 +809,68 @@ impl State {
         );
     }
 
+    /// Handle failure when connecting with a cached token
+    fn handle_cached_token_connection_failure(&mut self) {
+        let failed_email = self
+            .views
+            .login
+            .account_select
+            .selected_email
+            .take()
+            .unwrap_or_default();
+
+        // Reset processing state
+        self.views.login.account_select.processing = false;
+
+        // Clear the failed token from cache
+        if !failed_email.is_empty() {
+            self.backend.clear_invalid_tokens(&[failed_email.clone()]);
+        }
+
+        // Remove the failed account from the current list
+        self.views
+            .login
+            .account_select
+            .accounts
+            .retain(|a| a.email != failed_email);
+
+        // Show warning modal
+        self.on_warning_show_modal(
+            "Connection Failed",
+            format!(
+                "Failed to connect with account {}. The session may have expired.",
+                failed_email
+            ),
+        );
+
+        // Decide next state based on remaining accounts
+        if self.views.login.account_select.accounts.is_empty() {
+            // No valid tokens left, go to EmailEntry
+            self.views.login.current = views::LoginState::EmailEntry;
+        } else {
+            // Still have valid accounts, stay on AccountSelect
+            self.views.login.current = views::LoginState::AccountSelect;
+        }
+    }
+
     fn on_logout(&mut self) -> Task<Msg> {
+        // Get the email of the logged-in account to clear from cache
+        let logged_in_email = self.views.login.email.form.value.clone();
+
         // Call backend logout to clear token, close connection, and remove cache
         self.backend.logout();
 
-        // Reset login state to EmailEntry
-        self.views.login.current = views::LoginState::EmailEntry;
+        // Clear this account from the cache
+        if !logged_in_email.is_empty() {
+            self.backend.clear_invalid_tokens(&[logged_in_email.clone()]);
+
+            // Also remove from account_select list
+            self.views
+                .login
+                .account_select
+                .accounts
+                .retain(|a| a.email != logged_in_email);
+        }
 
         // Clear email and code form values
         self.views.login.email.form.value = String::new();
@@ -762,6 +882,17 @@ impl State {
         self.views.login.code.form.warning = None;
         self.views.login.code.processing = false;
 
+        // Reset account select state
+        self.views.login.account_select.processing = false;
+        self.views.login.account_select.selected_email = None;
+
+        // Decide next login state based on remaining cached accounts
+        if self.views.login.account_select.accounts.is_empty() {
+            self.views.login.current = views::LoginState::EmailEntry;
+        } else {
+            self.views.login.current = views::LoginState::AccountSelect;
+        }
+
         // Reset application state
         self.app.selected_org = None;
         self.app.selected_wallet = None;
@@ -772,8 +903,12 @@ impl State {
         // Navigate to login view
         self.current_view = View::Login;
 
-        // Focus email input
-        text_input::focus("login_email")
+        // Focus email input if going to EmailEntry
+        if self.views.login.current == views::LoginState::EmailEntry {
+            text_input::focus("login_email")
+        } else {
+            Task::none()
+        }
     }
 }
 

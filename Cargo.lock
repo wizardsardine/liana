@@ -3338,6 +3338,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "liana-business-tester"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "crossbeam",
+ "liana-connect",
+ "miniscript",
+ "serde",
+ "serde_json",
+ "tungstenite",
+ "uuid",
+]
+
+[[package]]
 name = "liana-connect"
 version = "0.1.0"
 dependencies = [
