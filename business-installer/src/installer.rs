@@ -20,7 +20,6 @@ use liana_gui::{
 use liana_ui::widget::Element;
 
 use crate::backend::{Notification, BACKEND_RECV};
-use crate::client::{PROTOCOL_VERSION, WS_URL};
 use crate::state::State;
 
 // Re-export Message type for external use
@@ -39,20 +38,46 @@ pub struct BusinessInstaller {
 impl BusinessInstaller {
     /// Create a new BusinessInstaller with internal initialization
     fn new_internal(datadir: LianaDirectory, network: bitcoin::Network) -> (Self, Task<Message>) {
-        let mut state = State::new();
-        let recv = state.connect_backend(WS_URL.to_string(), PROTOCOL_VERSION);
+        use crate::state::views::login::{Login, LoginState};
 
-        // Store the receiver in the global static for the subscription to use
-        *BACKEND_RECV.lock().expect("poisoned") = recv;
+        let mut state = State::new();
+
+        // Set network directory for token caching (same location as liana-gui)
+        let network_dir = datadir.network_directory(network);
+        state.backend.set_network_dir(network_dir);
+        state.backend.set_network(network);
+
+        // Validate cached tokens before showing UI
+        let (valid_accounts, to_remove) = state.backend.validate_all_cached_tokens();
+
+        // Clear invalid tokens from cache
+        if !to_remove.is_empty() {
+            state.backend.clear_invalid_tokens(&to_remove);
+        }
+
+        // Set initial login state based on cached accounts
+        if !valid_accounts.is_empty() {
+            state.views.login = Login::with_cached_accounts(valid_accounts);
+        }
+
+        // Initialize notification channel for auth flow (needed before any auth_request)
+        let recv = state.backend.init_notif_channel();
+        *BACKEND_RECV.lock().expect("poisoned") = Some(recv);
+
+        // Determine initial focus based on login state
+        let focus_task = if state.views.login.current == LoginState::AccountSelect {
+            // No input to focus on account select view
+            Task::none()
+        } else {
+            // Focus the email input on initial load
+            liana_ui::widget::text_input::focus("login_email")
+        };
 
         let installer = Self {
             datadir,
             network,
             state,
         };
-
-        // Focus the email input on initial load
-        let focus_task = liana_ui::widget::text_input::focus("login_email");
 
         (installer, focus_task)
     }

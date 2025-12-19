@@ -3,12 +3,29 @@ pub mod email;
 
 pub use code::CodeState;
 pub use email::EmailState;
+pub use liana_gui::services::connect::client::auth::AccessTokenResponse;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LoginState {
+    AccountSelect,
     EmailEntry,
     CodeEntry,
     Authenticated,
+}
+
+/// A cached account with email and tokens
+#[derive(Debug, Clone)]
+pub struct CachedAccount {
+    pub email: String,
+    pub tokens: AccessTokenResponse,
+}
+
+/// State for the account selection view
+#[derive(Debug, Clone, Default)]
+pub struct AccountSelectState {
+    pub accounts: Vec<CachedAccount>,
+    pub processing: bool,
+    pub selected_email: Option<String>,
 }
 
 /// Login view state
@@ -17,6 +34,7 @@ pub struct Login {
     pub current: LoginState,
     pub email: EmailState,
     pub code: CodeState,
+    pub account_select: AccountSelectState,
 }
 
 impl Login {
@@ -25,6 +43,25 @@ impl Login {
             current: LoginState::EmailEntry,
             email: EmailState::new(),
             code: CodeState::new(),
+            account_select: AccountSelectState::default(),
+        }
+    }
+
+    /// Create a new Login state with cached accounts for account selection
+    pub fn with_cached_accounts(accounts: Vec<CachedAccount>) -> Self {
+        Self {
+            current: if accounts.is_empty() {
+                LoginState::EmailEntry
+            } else {
+                LoginState::AccountSelect
+            },
+            email: EmailState::new(),
+            code: CodeState::new(),
+            account_select: AccountSelectState {
+                accounts,
+                processing: false,
+                selected_email: None,
+            },
         }
     }
 

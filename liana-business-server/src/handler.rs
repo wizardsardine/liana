@@ -122,14 +122,116 @@ fn handle_create_wallet(
 }
 
 fn handle_edit_wallet(state: &ServerState, wallet: Wallet) -> Response {
-    // Update wallet in state
     let mut wallets = state.wallets.lock().unwrap();
+
+    // Check if wallet exists and get current state
+    let existing = match wallets.get(&wallet.id) {
+        Some(w) => w.clone(),
+        None => {
+            return Response::Error {
+                error: WssError {
+                    code: "NOT_FOUND".to_string(),
+                    message: format!("Wallet {} not found", wallet.id),
+                    request_id: None,
+                },
+            };
+        }
+    };
+
+    // Finalized wallets are immutable
+    if existing.status == WalletStatus::Finalized {
+        return Response::Error {
+            error: WssError {
+                code: "ACCESS_DENIED".to_string(),
+                message: "Finalized wallets cannot be modified".to_string(),
+                request_id: None,
+            },
+        };
+    }
+
+    // Validated wallets: template is locked
+    if existing.status == WalletStatus::Validated {
+        // Check if template changed
+        let template_changed = match (&existing.template, &wallet.template) {
+            (Some(old), Some(new)) => {
+                old.keys != new.keys
+                    || old.primary_path != new.primary_path
+                    || old.secondary_paths != new.secondary_paths
+            }
+            (None, Some(_)) | (Some(_), None) => true,
+            (None, None) => false,
+        };
+
+        if template_changed {
+            return Response::Error {
+                error: WssError {
+                    code: "ACCESS_DENIED".to_string(),
+                    message: "Template cannot be modified after validation".to_string(),
+                    request_id: None,
+                },
+            };
+        }
+    }
+
+    // Validate alias
+    if wallet.alias.trim().is_empty() {
+        return Response::Error {
+            error: WssError {
+                code: "VALIDATION_ERROR".to_string(),
+                message: "Wallet alias cannot be empty".to_string(),
+                request_id: None,
+            },
+        };
+    }
+
+    // Validate template constraints
+    if let Some(template) = &wallet.template {
+        // Validate primary path
+        if let Err(e) = validate_spending_path(&template.primary_path) {
+            return Response::Error {
+                error: WssError {
+                    code: "VALIDATION_ERROR".to_string(),
+                    message: format!("Primary path: {}", e),
+                    request_id: None,
+                },
+            };
+        }
+
+        // Validate secondary paths
+        for (i, (path, _timelock)) in template.secondary_paths.iter().enumerate() {
+            if let Err(e) = validate_spending_path(path) {
+                return Response::Error {
+                    error: WssError {
+                        code: "VALIDATION_ERROR".to_string(),
+                        message: format!("Secondary path {}: {}", i + 1, e),
+                        request_id: None,
+                    },
+                };
+            }
+        }
+    }
+
+    // Update wallet in state
     wallets.insert(wallet.id, wallet.clone());
     drop(wallets);
 
     Response::Wallet {
         wallet: (&wallet).into(),
     }
+}
+
+fn validate_spending_path(path: &liana_connect::SpendingPath) -> Result<(), String> {
+    if path.threshold_n == 0 {
+        return Err("threshold must be greater than 0".to_string());
+    }
+    if path.threshold_n as usize > path.key_ids.len() {
+        return Err(format!(
+            "threshold ({}) cannot exceed number of keys ({})",
+            path.threshold_n,
+            path.key_ids.len()
+        ));
+    }
+    Ok(())
 }
 
 fn handle_remove_wallet_from_org(state: &ServerState, org_id: Uuid, wallet_id: Uuid) -> Response {
@@ -161,6 +263,17 @@ fn handle_edit_xpub(
 ) -> Response {
     let mut wallets = state.wallets.lock().unwrap();
     if let Some(wallet) = wallets.get_mut(&wallet_id) {
+        // Finalized wallets are immutable
+        if wallet.status == WalletStatus::Finalized {
+            return Response::Error {
+                error: WssError {
+                    code: "ACCESS_DENIED".to_string(),
+                    message: "Finalized wallets cannot be modified".to_string(),
+                    request_id: None,
+                },
+            };
+        }
+
         // Update the xpub for the specified key
         if let Some(template) = &mut wallet.template {
             if let Some(key) = template.keys.get_mut(&key_id) {

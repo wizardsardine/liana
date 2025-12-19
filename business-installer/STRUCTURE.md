@@ -335,6 +335,65 @@ Key external crates:
 - `tungstenite` - WebSocket client
 - `crossbeam` - Channels for thread communication
 
+## Authentication Flow
+
+On startup, the application checks for cached tokens in `connect.json` (same location as liana-gui).
+If valid cached accounts exist, the user can select one to connect directly without re-authenticating.
+
+```
+App Start
+    │
+    ▼
+Initialize Client with network_dir
+    │
+    ▼
+Load connect.json & validate tokens
+    │
+    ├─── No valid tokens ───▶ EmailEntry view (OTP flow)
+    │                              │
+    │                              ▼
+    │                         User enters email
+    │                              │
+    │                              ▼
+    │                         CodeEntry view
+    │                              │
+    │                              ▼
+    │                         User enters OTP code
+    │                              │
+    │                              ▼
+    │                         Token cached & connected
+    │                              │
+    │                              └───────────────────────┐
+    │                                                      │
+    └─── Valid tokens ───▶ AccountSelect view              │
+                              │                            │
+                              ├─── Click email card ───▶ Set token & connect_ws()
+                              │                            │
+                              │                            ├─── Connected ───▶ OrgSelect
+                              │                            │
+                              │                            └─── Error ───▶ Warning modal
+                              │                                              │
+                              │                                              ▼
+                              │                                        Clear token from cache
+                              │                                              │
+                              │                                              ▼
+                              │                                        Re-validate tokens
+                              │                                              │
+                              │                                    ┌─────────┴─────────┐
+                              │                                    │                   │
+                              │                              Has valid          No valid
+                              │                              tokens             tokens
+                              │                                    │                   │
+                              │                                    ▼                   ▼
+                              │                              AccountSelect      EmailEntry
+                              │
+                              └─── Click "new email" ───▶ EmailEntry view
+```
+
+Token cache location:
+- **Integrated mode** (via liana-gui): `~/.liana/<network>/connect.json`
+- **Standalone mode** (liana-business binary): `~/.liana/signet/connect.json`
+
 ## Debug Mode
 
 When `BACKEND_URL == "debug"`:

@@ -94,6 +94,23 @@ impl Client {
         }
     }
 
+    pub fn set_network_dir(&mut self, network_dir: NetworkDirectory) {
+        self.network_dir = Some(network_dir);
+    }
+
+    pub fn set_network(&mut self, network: Network) {
+        self.network = Some(network);
+    }
+
+    /// Initialize the notification channel for auth flow.
+    /// This is needed before auth_request() can send notifications.
+    /// Returns the receiver for the subscription.
+    pub fn init_notif_channel(&mut self) -> channel::Receiver<Notification> {
+        let (notif, notif_receiver) = channel::unbounded();
+        self.notif_sender = Some(notif);
+        notif_receiver
+    }
+
     pub fn is_connected(&self) -> bool {
         self.connected.load(Ordering::Relaxed)
     }
@@ -185,6 +202,125 @@ impl Client {
             }
             Err(_) => None,
         }
+    }
+
+    /// Validate all cached tokens, returning valid accounts and emails to remove from cache.
+    /// For each account in connect.json:
+    /// - If token is still valid (not expired), add to valid list
+    /// - If token is expired, try to refresh it
+    /// - If refresh succeeds, add refreshed account to valid list
+    /// - If refresh fails, add email to remove list
+    pub fn validate_all_cached_tokens(
+        &self,
+    ) -> (
+        Vec<crate::state::views::login::CachedAccount>,
+        Vec<String>,
+    ) {
+        use crate::state::views::login::CachedAccount;
+
+        let network_dir = match &self.network_dir {
+            Some(nd) => nd.clone(),
+            None => return (vec![], vec![]),
+        };
+
+        let cache = match ConnectCache::from_file(&network_dir) {
+            Ok(c) => c,
+            Err(_) => return (vec![], vec![]),
+        };
+
+        if cache.accounts.is_empty() {
+            return (vec![], vec![]);
+        }
+
+        let network = self.network.unwrap_or(Network::Signet);
+        let mut valid = vec![];
+        let mut to_remove = vec![];
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            for account in cache.accounts {
+                let now = chrono::Utc::now().timestamp();
+
+                if account.tokens.expires_at > now + 60 {
+                    // Token still valid
+                    valid.push(CachedAccount {
+                        email: account.email,
+                        tokens: account.tokens,
+                    });
+                } else {
+                    // Token expired, try to refresh
+                    let config = match get_service_config_blocking(network) {
+                        Ok(cfg) => cfg,
+                        Err(_) => {
+                            to_remove.push(account.email);
+                            continue;
+                        }
+                    };
+
+                    let auth_client = AuthClient::new(
+                        config.auth_api_url,
+                        config.auth_api_public_key,
+                        account.email.clone(),
+                    );
+
+                    match auth_client.refresh_token(&account.tokens.refresh_token).await {
+                        Ok(new_tokens) => {
+                            // Update cache with refreshed tokens
+                            let updated = match update_connect_cache(
+                                &network_dir,
+                                &new_tokens,
+                                &auth_client,
+                                false,
+                            )
+                            .await
+                            {
+                                Ok(t) => t,
+                                Err(_) => new_tokens,
+                            };
+                            valid.push(CachedAccount {
+                                email: account.email,
+                                tokens: updated,
+                            });
+                        }
+                        Err(_) => {
+                            to_remove.push(account.email);
+                        }
+                    }
+                }
+            }
+        });
+
+        (valid, to_remove)
+    }
+
+    /// Remove invalid accounts from the connect cache
+    pub fn clear_invalid_tokens(&self, emails_to_remove: &[String]) {
+        if emails_to_remove.is_empty() {
+            return;
+        }
+
+        let network_dir = match &self.network_dir {
+            Some(nd) => nd.clone(),
+            None => return,
+        };
+
+        // Get current valid accounts and compute emails to keep
+        let valid_emails: std::collections::HashSet<String> = {
+            match ConnectCache::from_file(&network_dir) {
+                Ok(cache) => cache
+                    .accounts
+                    .into_iter()
+                    .map(|a| a.email)
+                    .filter(|e| !emails_to_remove.contains(e))
+                    .collect(),
+                Err(_) => return,
+            }
+        };
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let _ = filter_connect_cache(&network_dir, &valid_emails).await;
+        });
     }
 
     /// Logout: clear token, close connection, and remove auth cache

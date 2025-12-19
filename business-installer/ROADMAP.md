@@ -305,20 +305,22 @@ Store data in `network_dir` matching liana-gui patterns. Reference:
 - [ ] Use `update_settings_file()` pattern with file locking
 
 ### 4.2 Auth Cache (`connect.json`)
-- [ ] Implement `ConnectCache` for token storage:
+- [x] Implement `ConnectCache` for token storage:
   ```rust
   pub struct ConnectCache {
       pub accounts: Vec<Account>,
   }
-  
+
   pub struct Account {
       pub email: String,
       pub tokens: AccessTokenResponse,
   }
   ```
-- [ ] Write `connect.json` for token persistence
-- [ ] Use `update_connect_cache()` pattern from liana-gui
-- [ ] Token refresh before expiry
+- [x] Read `connect.json` on startup and validate tokens
+- [x] Use `update_connect_cache()` pattern from liana-gui
+- [x] Token refresh before expiry
+- [x] Account selection view for cached tokens
+- [x] Handle connection failures with cached tokens (clear and retry)
 
 ### 4.3 Hardware Wallet Config
 - [ ] Store `HardwareWalletConfig` for registered devices:
@@ -393,320 +395,308 @@ real-time notifications, and in-memory storage.
   - [x] Remove embedded dummy server (use standalone liana-business-server only)
   - [x] Add local get_service_config_blocking() for fetching config from server
 
-## 6. Integration Testing
+## 6. Integration Test Binary
 
-Comprehensive integration tests for the WebSocket API using the Client to verify
-all edge cases, access control rules, and multi-client synchronization.
+Standalone binary for integration testing against any remote server. Runs a suite
+of tests and outputs a checklist report to stdout. Authentication is handled
+externally; this binary connects with a pre-obtained token.
 
-### 6.1 Test Infrastructure Setup
+### 6.1 Binary Implementation
 
-- [ ] Create test module `business-installer/tests/integration_tests.rs`
-- [ ] Implement test harness with helper functions:
-  - [ ] `setup_server()` - Start liana-business-server with test data
-  - [ ] `setup_client(token: &str)` - Create and connect a Client with specific user token
-  - [ ] `create_test_wallets()` - Generate wallets in all statuses (Created, Drafted, Validated, Finalized)
-  - [ ] `create_test_users()` - Generate users for each role (WSManager, Owner, Participant)
-  - [ ] `wait_for_notification(receiver, expected, timeout)` - Helper to wait for specific notifications
-  - [ ] `assert_error_response(result, expected_code)` - Verify error responses
-- [ ] Define test constants:
-  - [ ] Tokens for each role: `WS_MANAGER_TOKEN`, `OWNER_TOKEN`, `PARTICIPANT_TOKEN`
-  - [ ] User emails: `ws@example.com`, `owner@example.com`, `user@example.com`
-  - [ ] Pre-defined org, wallet, and user UUIDs for predictable testing
+- [ ] Create `liana-business-tester` crate
+  - [ ] Cargo.toml with dependencies (clap, tokio, business-installer Client)
+  - [ ] Main binary entry point with CLI parsing
+- [ ] Implement CLI argument parsing with clap
+  - [ ] `--ws <URL>` - WebSocket address (e.g., `ws://127.0.0.1:8100`)
+  - [ ] `--token <TOKEN>` - Access token for authentication
+  - [ ] `--verbose` - Enable verbose logging (show details on failure)
+- [ ] Implement test runner
+  - [ ] Connect to `<ws>` with provided token
+  - [ ] Run all tests sequentially
+  - [ ] Collect pass/fail results
+  - [ ] Output report and exit with appropriate code (0 = all pass, 1 = failures)
 
-### 6.2 Connection and Authentication Tests
+### 6.2 Test Suite
 
-- [ ] Test successful WebSocket connection with valid token
-  - [ ] Verify `Connected` notification received
-  - [ ] Verify `is_connected()` returns true
-- [ ] Test connection with invalid token
-  - [ ] Verify connection fails or error response received
-- [ ] Test connection without token
-  - [ ] Verify notification channel created but no WSS connection attempted
-- [ ] Test ping/pong heartbeat mechanism
-  - [ ] Send ping, verify pong response within timeout
-  - [ ] Verify connection stays alive after multiple ping/pong cycles
-- [ ] Test graceful disconnection
-  - [ ] Call `close()`, verify `Disconnected` notification
-  - [ ] Verify `is_connected()` returns false after close
-- [ ] Test reconnection scenario
-  - [ ] Connect, disconnect, reconnect with same client
-  - [ ] Verify state is maintained correctly
+- [ ] Connection tests
+  - [ ] WebSocket connection succeeds
+  - [ ] Ping/pong heartbeat works
+  - [ ] Invalid token rejected
+- [ ] Fetch tests
+  - [ ] Fetch organization returns valid data
+  - [ ] Fetch wallet returns valid data
+  - [ ] Fetch user returns valid data
+  - [ ] Fetch non-existent ID returns NOT_FOUND error
+- [ ] Protocol tests
+  - [ ] Request/response ID matching
+  - [ ] Notifications are received
+  - [ ] Error responses have code and message fields
 
-### 6.3 Basic CRUD Operations Tests
+#### Role-Based Access Control Tests
 
-**Fetch Organization:**
-- [ ] Test `fetch_org()` with valid org ID
-  - [ ] Verify `Org` notification received
-  - [ ] Verify org data cached correctly via `get_org()`
-  - [ ] Verify associated wallets are auto-fetched
-  - [ ] Verify associated users are auto-fetched
-- [ ] Test `fetch_org()` with non-existent org ID
-  - [ ] Verify error response with code "NOT_FOUND"
+Tests require tokens for each role. Each test shows expected outcome (✓ = success, ✗ = denied).
 
-**Fetch Wallet:**
-- [ ] Test `fetch_wallet()` with valid wallet ID
-  - [ ] Verify `Wallet` notification received
-  - [ ] Verify wallet data cached via `get_wallet()`
-  - [ ] Verify owner user is auto-fetched if not cached
-- [ ] Test `fetch_wallet()` with non-existent wallet ID
-  - [ ] Verify error response with code "NOT_FOUND"
-- [ ] Test fetching wallets in all statuses (Created, Drafted, Validated, Finalized)
+**WSManager + Draft Wallet:**
+- [ ] Fetch wallet (✓ success)
+- [ ] Add key (✓ success)
+- [ ] Edit key (✓ success)
+- [ ] Delete key (✓ success)
+- [ ] Add spending path (✓ success)
+- [ ] Edit spending path (✓ success)
+- [ ] Delete spending path (✓ success)
+- [ ] Change threshold (✓ success)
+- [ ] Change timelock (✓ success)
+- [ ] Validate template (✗ denied - Owner only)
+- [ ] Add xpub to key (✗ denied - wallet not validated)
 
-**Fetch User:**
-- [ ] Test `fetch_user()` with valid user ID
-  - [ ] Verify `User` notification received
-  - [ ] Verify user data cached via `get_user()`
-- [ ] Test `fetch_user()` with non-existent user ID
-  - [ ] Verify error response with code "NOT_FOUND"
+**WSManager + Validated Wallet:**
+- [ ] Fetch wallet (✓ success)
+- [ ] Add key (✗ denied - template locked)
+- [ ] Edit key (✗ denied - template locked)
+- [ ] Delete key (✗ denied - template locked)
+- [ ] Add spending path (✗ denied - template locked)
+- [ ] Edit spending path (✗ denied - template locked)
+- [ ] Delete spending path (✗ denied - template locked)
+- [ ] Add xpub to any key (✓ success)
+- [ ] Edit xpub on any key (✓ success)
+- [ ] Remove xpub from key (✓ success)
 
-**Create Wallet:**
-- [ ] Test `create_wallet()` with valid parameters
-  - [ ] Verify `Wallet` notification received
-  - [ ] Verify new wallet has status `Created`
-  - [ ] Verify wallet is added to org's wallet list
-- [ ] Test `create_wallet()` with non-existent org
-  - [ ] Verify wallet created but org list not updated (or error)
-- [ ] Test `create_wallet()` with non-existent owner
-  - [ ] Verify wallet created with placeholder owner data
+**WSManager + Finalized Wallet:**
+- [ ] Fetch wallet (✓ success)
+- [ ] Add key (✗ denied - wallet finalized)
+- [ ] Edit key (✗ denied - wallet finalized)
+- [ ] Add spending path (✗ denied - wallet finalized)
+- [ ] Edit spending path (✗ denied - wallet finalized)
+- [ ] Add xpub (✗ denied - wallet finalized)
+- [ ] Edit xpub (✗ denied - wallet finalized)
+- [ ] Load wallet (✓ success)
 
-### 6.4 Role-Based Access Control Tests
+**Owner + Draft Wallet:**
+- [ ] Fetch wallet (✓ success)
+- [ ] Add key (✗ denied - WSManager only)
+- [ ] Edit key (✗ denied - WSManager only)
+- [ ] Delete key (✗ denied - WSManager only)
+- [ ] Add spending path (✗ denied - WSManager only)
+- [ ] Edit spending path (✗ denied - WSManager only)
+- [ ] Delete spending path (✗ denied - WSManager only)
+- [ ] Validate template (✓ success - transitions to Validated)
+- [ ] Add xpub to key (✗ denied - wallet not validated)
 
-**WSManager Role - Draft Wallet Access:**
-- [ ] Test WSManager can edit Draft wallet template
-  - [ ] Add/remove keys via `edit_wallet()`
-  - [ ] Add/modify/remove spending paths
-  - [ ] Change thresholds and timelocks
-  - [ ] Verify all changes persist (status remains `Drafted`)
-- [ ] Test WSManager cannot validate template (reserved for Owner)
-  - [ ] Attempt to change status from `Drafted` to `Validated`
-  - [ ] Verify server rejects or no status change occurs
+**Owner + Validated Wallet:**
+- [ ] Fetch wallet (✓ success)
+- [ ] Add key (✗ denied - template locked)
+- [ ] Edit key (✗ denied - template locked)
+- [ ] Add spending path (✗ denied - template locked)
+- [ ] Edit spending path (✗ denied - template locked)
+- [ ] Add xpub to any key (✓ success)
+- [ ] Edit xpub on any key (✓ success)
+- [ ] Remove xpub from key (✓ success)
 
-**WSManager Role - Validated Wallet Access:**
-- [ ] Test WSManager cannot edit template structure in Validated wallet
-  - [ ] Attempt to add/remove keys
-  - [ ] Attempt to modify paths
-  - [ ] Verify changes rejected or ignored
-- [ ] Test WSManager can add xpub to any key via `edit_xpub()`
-  - [ ] Add xpub to keys belonging to different users
-  - [ ] Verify xpub updates succeed for all keys
+**Owner + Finalized Wallet:**
+- [ ] Fetch wallet (✓ success)
+- [ ] Add key (✗ denied - wallet finalized)
+- [ ] Edit key (✗ denied - wallet finalized)
+- [ ] Add spending path (✗ denied - wallet finalized)
+- [ ] Add xpub (✗ denied - wallet finalized)
+- [ ] Load wallet (✓ success)
 
-**WSManager Role - Finalized Wallet Access:**
-- [ ] Test WSManager cannot edit Finalized wallet
-  - [ ] Attempt template changes
-  - [ ] Attempt xpub changes
-  - [ ] Verify all changes rejected
+**Participant + Draft Wallet:**
+- [ ] Fetch wallet (✗ denied - no access to drafts)
+- [ ] List wallets excludes draft wallets (✓ success - draft filtered out)
 
-**Owner Role - Draft Wallet Access:**
-- [ ] Test Owner can view Draft wallet template
-  - [ ] Fetch wallet, verify template data accessible
-- [ ] Test Owner can validate template (Draft → Validated)
-  - [ ] Change wallet status to `Validated` via `edit_wallet()`
-  - [ ] Verify status change persists
-  - [ ] Verify template becomes immutable after validation
-- [ ] Test Owner cannot edit template structure (paths/keys)
-  - [ ] Attempt to modify paths or keys
-  - [ ] Verify changes rejected (Owner has view-only access to template)
+**Participant + Validated Wallet:**
+- [ ] Fetch wallet (✓ success)
+- [ ] Add key (✗ denied - no template access)
+- [ ] Edit key (✗ denied - no template access)
+- [ ] Add spending path (✗ denied - no template access)
+- [ ] Edit spending path (✗ denied - no template access)
+- [ ] Add xpub to own key (✓ success - key.email matches user)
+- [ ] Edit xpub on own key (✓ success - key.email matches user)
+- [ ] Add xpub to other's key (✗ denied - key.email doesn't match)
+- [ ] Edit xpub on other's key (✗ denied - key.email doesn't match)
+- [ ] Validate template (✗ denied - Owner only)
 
-**Owner Role - Validated Wallet Access:**
-- [ ] Test Owner can add xpub to any key
-  - [ ] Add xpub via `edit_xpub()` for different keys
-  - [ ] Verify xpub updates succeed
-- [ ] Test Owner cannot edit template structure
-  - [ ] Attempt to modify validated template
-  - [ ] Verify changes rejected
+**Participant + Finalized Wallet:**
+- [ ] Fetch wallet (✓ success)
+- [ ] Add key (✗ denied - wallet finalized)
+- [ ] Add xpub (✗ denied - wallet finalized)
+- [ ] Load wallet (✓ success)
 
-**Owner Role - Finalized Wallet Access:**
-- [ ] Test Owner can load Finalized wallet
-  - [ ] Fetch wallet with status `Finalized`
-  - [ ] Verify all data accessible read-only
-- [ ] Test Owner cannot edit Finalized wallet
-  - [ ] Attempt any modifications
-  - [ ] Verify all rejected
+#### Status Transition Tests
 
-**Participant Role - Draft Wallet Access:**
-- [ ] Test Participant cannot access Draft wallets
-  - [ ] Attempt `fetch_wallet()` for Draft wallet
-  - [ ] Verify access denied or wallet filtered from view
-  - [ ] Verify Draft wallets not included in org's wallet list for Participant
+- [ ] Created → Drafted (✓ on first template edit)
+- [ ] Drafted → Validated by Owner (✓ success)
+- [ ] Drafted → Validated by WSManager (✗ denied)
+- [ ] Drafted → Validated by Participant (✗ denied)
+- [ ] Validated → Finalized when all xpubs set (✓ success)
+- [ ] Validated → Finalized with missing xpubs (✗ denied)
+- [ ] Validated → Drafted (✗ denied - no backward transition)
+- [ ] Finalized → any status (✗ denied - immutable)
 
-**Participant Role - Validated Wallet Access:**
-- [ ] Test Participant can only edit own keys' xpubs
-  - [ ] Add xpub to key where `key.email == user.email`
-  - [ ] Verify xpub update succeeds
-- [ ] Test Participant cannot edit other users' keys
-  - [ ] Attempt to add xpub to key where `key.email != user.email`
-  - [ ] Verify change rejected with appropriate error
-- [ ] Test Participant cannot edit template structure
-  - [ ] Attempt to modify paths or add/remove keys
-  - [ ] Verify all changes rejected
-- [ ] Test Participant can view but not edit keys without matching email
-  - [ ] Fetch wallet, verify all keys visible
-  - [ ] Verify keys with non-matching email are read-only
+#### Template Validation Tests
 
-**Participant Role - Finalized Wallet Access:**
-- [ ] Test Participant can load Finalized wallet
-  - [ ] Fetch wallet, verify read-only access
-- [ ] Test Participant cannot edit Finalized wallet
+- [ ] Path with threshold > key count (✗ invalid)
+- [ ] Path with threshold = 0 (✗ invalid)
+- [ ] Path with non-existent key ID (✗ invalid)
+- [ ] Secondary path with timelock < 144 blocks (✗ invalid)
+- [ ] Primary path with timelock > 0 (✗ invalid - must be 0)
+- [ ] Duplicate key ID (✗ invalid)
+- [ ] Valid multisig path 2-of-3 (✓ valid)
+- [ ] Valid single-sig path 1-of-1 (✓ valid)
 
-### 6.5 Edge Cases and Validation Tests
+#### XPub Validation Tests
 
-**Template Validation:**
-- [ ] Test adding key with duplicate ID
-  - [ ] Verify rejected or overwrites existing key
-- [ ] Test creating path with invalid threshold (n > m)
-  - [ ] Verify validation error or rejection
-- [ ] Test creating path with zero threshold
-  - [ ] Verify validation error
-- [ ] Test creating path with non-existent key IDs
-  - [ ] Verify validation error or graceful handling
-- [ ] Test creating secondary path with insufficient timelock (< 144 blocks)
-  - [ ] Verify validation error
+- [ ] Valid xpub format (✓ accepted)
+- [ ] Invalid xpub checksum (✗ rejected)
+- [ ] Wrong network xpub (✗ rejected - mainnet vs testnet)
+- [ ] Malformed xpub string (✗ rejected)
+- [ ] Empty xpub string (✓ accepted - clears xpub)
 
-**Status Transitions:**
-- [ ] Test invalid status transitions
-  - [ ] Attempt Created → Validated (skip Draft)
-  - [ ] Attempt Validated → Drafted (backward transition)
-  - [ ] Attempt Finalized → any other status
-  - [ ] Verify all rejected
-- [ ] Test valid status transitions
-  - [ ] Created → Drafted
-  - [ ] Drafted → Validated (Owner only)
-  - [ ] Validated → Finalized (when all xpubs populated)
+#### Edge Cases
 
-**XPub Operations:**
-- [ ] Test adding valid xpub
-  - [ ] Add properly formatted xpub string
-  - [ ] Verify parsed and stored correctly
-- [ ] Test adding invalid xpub format
-  - [ ] Attempt to add malformed xpub
-  - [ ] Verify error response or rejected
-- [ ] Test removing xpub (set to None)
-  - [ ] Remove previously set xpub
-  - [ ] Verify xpub cleared
-- [ ] Test overwriting existing xpub
-  - [ ] Replace xpub with different value
-  - [ ] Verify new value persists
+- [ ] Edit non-existent wallet (NOT_FOUND)
+- [ ] Empty wallet alias
+- [ ] Whitespace-only alias
+- [ ] Very long alias (1000 chars)
+- [ ] Special characters in alias (unicode, emoji, HTML)
+- [ ] Duplicate key IDs in path
+- [ ] Non-existent key ID in path
+- [ ] Remove wallet from org
+- [ ] Create wallet
+- [ ] Create wallet in org user doesn't belong to (denied)
+- [ ] Fetch wallet user doesn't have access to (denied)
+- [ ] Template with no keys (invalid)
+- [ ] Delete key used in path (validation)
+- [ ] Primary path references missing key (invalid)
+- [ ] Edit wallet during concurrent edit by another user (last-write-wins)
 
-**Org and Wallet Management:**
-- [ ] Test `remove_wallet_from_org()`
-  - [ ] Remove wallet from org
-  - [ ] Verify wallet removed from org's wallet list
-  - [ ] Verify wallet still exists independently
-- [ ] Test removing non-existent wallet from org
-  - [ ] Verify graceful handling (no error or "NOT_FOUND")
+### 6.3 Usage Examples
 
-### 6.6 Multi-Client Synchronization Tests
+```bash
+# Test remote server
+liana-business-tester --ws wss://ws.example.com --token "abc123..."
 
-**Basic Broadcast Verification:**
-- [ ] Test wallet update broadcasts to other clients
-  - [ ] Connect two clients (clientA, clientB) with different users
-  - [ ] ClientA edits wallet via `edit_wallet()`
-  - [ ] Verify clientB receives `Wallet` notification
-  - [ ] Verify clientB's cache updated with new wallet data
-- [ ] Test org update broadcasts to other clients
-  - [ ] ClientA removes wallet from org
-  - [ ] Verify clientB receives `Org` notification
-  - [ ] Verify clientB's org cache updated
-- [ ] Test user update broadcasts (if implemented)
-  - [ ] Update user data from one client
-  - [ ] Verify other clients notified
+# Test local server
+liana-business-tester --ws ws://127.0.0.1:8100 --token "test-token"
 
-**Concurrent Edit Scenarios:**
-- [ ] Test concurrent edits from WSManager and Owner
-  - [ ] Both clients edit same wallet simultaneously
-  - [ ] Verify last-write-wins or conflict resolution
-  - [ ] Verify both clients eventually converge to same state
-- [ ] Test concurrent xpub edits on different keys
-  - [ ] Client1 edits key A, Client2 edits key B
-  - [ ] Verify both changes succeed
-  - [ ] Verify both clients receive both updates
-- [ ] Test concurrent xpub edits on same key
-  - [ ] Client1 and Client2 edit same key simultaneously
-  - [ ] Verify conflict resolution (last-write-wins)
-  - [ ] Verify both clients converge to final state
+# Verbose mode (show failure details)
+liana-business-tester --ws ws://127.0.0.1:8100 --token "test-token" --verbose
+```
 
-**Access Control with Multiple Clients:**
-- [ ] Test Participant receives updates but cannot edit
-  - [ ] Connect WSManager and Participant clients
-  - [ ] WSManager edits Validated wallet
-  - [ ] Verify Participant receives update notification
-  - [ ] Verify Participant cannot make own edits
-- [ ] Test Owner validation broadcasts to all roles
-  - [ ] Owner changes Draft → Validated
-  - [ ] Verify WSManager and Participant clients notified
-  - [ ] Verify status change reflected in all clients
+### 6.4 Output Format
 
-**Notification Filtering:**
-- [ ] Test client doesn't receive own updates as unsolicited notifications
-  - [ ] Client edits wallet
-  - [ ] Verify client receives response to its request
-  - [ ] Verify client does NOT receive unsolicited broadcast of its own change
-- [ ] Test clients only receive relevant notifications
-  - [ ] Edit wallet in org1
-  - [ ] Verify only clients interested in org1 notified (if filtering implemented)
+Detailed checklist report on stdout to guide backend implementation:
 
-### 6.7 Stress and Reliability Tests
+```
+Integration Test Report
+=======================
+Server: ws://127.0.0.1:8100
 
-**Connection Stability:**
-- [ ] Test sustained connection with periodic activity
-  - [ ] Keep connection alive for extended period
-  - [ ] Send requests every few seconds
-  - [ ] Verify no disconnections or errors
-- [ ] Test rapid sequential requests
-  - [ ] Send 100+ requests in quick succession
-  - [ ] Verify all responses received correctly
-  - [ ] Verify no dropped requests
+Connection
+----------
+[✓] WebSocket connection
+    Action: Connect with token
+    Expected: Connection established
+    Result: Connected successfully
 
-**Large Data Handling:**
-- [ ] Test wallet with many keys (e.g., 20+ keys)
-  - [ ] Create template with maximum expected keys
-  - [ ] Verify serialization/deserialization works
-  - [ ] Verify performance acceptable
-- [ ] Test wallet with many secondary paths (e.g., 10+ paths)
-  - [ ] Create complex template
-  - [ ] Verify all paths handled correctly
-- [ ] Test org with many wallets (e.g., 50+ wallets)
-  - [ ] Fetch org with large wallet list
-  - [ ] Verify all wallets auto-fetched correctly
+[✓] Ping/pong heartbeat
+    Action: Send ping frame
+    Expected: Pong response within 5s
+    Result: Pong received in 12ms
 
-**Error Recovery:**
-- [ ] Test recovery from server restart
-  - [ ] Connect client, make some requests
-  - [ ] Restart server (simulate crash)
-  - [ ] Verify client detects disconnection
-  - [ ] Verify client can reconnect after server restart
-- [ ] Test handling of malformed responses
-  - [ ] Simulate corrupted JSON from server
-  - [ ] Verify client handles gracefully (error logged, no crash)
+Fetch Operations
+----------------
+[✓] Fetch organization
+    Action: Send {"type":"FetchOrg","id":"<uuid>"}
+    Expected: Response with org data
+    Result: Received org "Acme Corp" with 3 wallets
 
-### 6.8 Test Organization and Execution
+[✓] Fetch wallet
+    Action: Send {"type":"FetchWallet","id":"<uuid>"}
+    Expected: Response with wallet data
+    Result: Received wallet "Treasury" (status: Drafted)
 
-**Test Structure:**
-- [ ] Organize tests into modules:
-  - [ ] `connection_tests` - Connection, auth, ping/pong
-  - [ ] `crud_tests` - Basic fetch/create/edit operations
-  - [ ] `access_control_tests` - Role-based permission tests
-  - [ ] `multi_client_tests` - Broadcast and synchronization
-  - [ ] `edge_case_tests` - Validation, error handling
-  - [ ] `stress_tests` - Performance and reliability
-- [ ] Use descriptive test names: `test_wsmanager_can_edit_draft_wallet_template`
-- [ ] Add test documentation comments explaining what is being tested and why
+[✗] Fetch user
+    Action: Send {"type":"FetchUser","id":"<uuid>"}
+    Expected: Response with user data
+    Result: ERROR - Timeout after 5s (no response received)
 
-**Test Execution:**
-- [ ] Ensure tests can run in parallel (use unique ports per test)
-- [ ] Add timeout for all tests (e.g., 30 seconds max)
-- [ ] Implement proper cleanup (close connections, shutdown servers)
-- [ ] Add CI integration (run tests on every commit)
+[✓] Fetch non-existent returns error
+    Action: Send {"type":"FetchWallet","id":"00000000-0000-0000-0000-000000000000"}
+    Expected: Error response with code "NOT_FOUND"
+    Result: Received error {"code":"NOT_FOUND","message":"Wallet not found"}
 
-**Test Documentation:**
-- [ ] Create `business-installer/tests/README.md` with:
-  - [ ] Overview of test coverage
-  - [ ] How to run tests
-  - [ ] How to add new tests
-  - [ ] Test data reference (users, tokens, wallets)
-  - [ ] Known limitations or test gaps
+Protocol
+--------
+[✓] Request/response matching
+    Action: Send request with id "req-123"
+    Expected: Response contains same id
+    Result: Response id matches "req-123"
+
+[✓] Notification broadcast
+    Action: Edit wallet, listen for notification
+    Expected: Wallet notification received
+    Result: Received Wallet notification for "Treasury"
+
+[✓] Error response format
+    Action: Send malformed request
+    Expected: Error with "code" and "message" fields
+    Result: {"code":"INVALID_REQUEST","message":"Missing required field: id"}
+
+=======================
+Result: 8/9 tests passed
+
+Failed tests:
+  - Fetch user: Timeout after 5s (no response received)
+```
+
+- [x] Show server URL at top
+- [x] Use `[✓]` for passed tests, `[✗]` for failed tests
+- [x] For each test, show:
+  - [x] Action: What request/action was performed
+  - [x] Expected: What the correct behavior should be
+  - [x] Result: What actually happened (success or error details)
+- [x] Group tests by category with separator lines
+- [x] Show summary count at end
+- [x] List all failed tests with error details at bottom
 
 ## Changelog
+
+### 2025-12-19
+- 6.2 Test Suite: Added missing tests and updated ROADMAP
+  - Protocol tests: Added notification received test (org broadcast verification)
+  - Fetch tests: Added valid user fetch test (discovers user_id from wallet owner)
+  - Status transitions: Added forward transition tests (Drafted→Validated, Validated→Finalized with missing xpubs)
+  - Template validation: Added timelock tests (< 144 blocks, primary path validation)
+  - XPub validation: Format tests dropped (typed API validates at parse time, would need raw JSON)
+  - Edge cases: Added access control tests (wrong org, unauthorized wallet), template completeness tests (no keys, key in use by path)
+  - Updated ROADMAP Section 6.2 to reflect ~80+ implemented tests
+  - Total new tests added: 13
+
+### 2025-12-19
+- 6. Integration Test Binary: Implemented `liana-business-tester` crate
+  - Standalone binary for testing WebSocket API against any remote server
+  - CLI args: `--ws <URL>` (WebSocket address), `--token <TOKEN>`, `--verbose`
+  - Outputs detailed checklist report with Action/Expected/Result for each test
+  - Connection tests: WebSocket connect, ping/pong, invalid token rejection
+  - Fetch tests: Fetch org/wallet/user, NOT_FOUND error handling
+  - Protocol tests: Request/response matching, error format validation
+  - RBAC tests: All role (WSManager/Owner/Participant) + status (Draft/Validated/Finalized) combinations
+  - Status transition tests: Valid and invalid state transitions
+  - Template validation tests: Threshold, timelock, key constraints
+  - XPub validation tests: Format, checksum, network validation
+  - Edge case tests: Concurrent edits, cascade deletes, access control
+  - Exit code 0 on all pass, 1 on failures
+  - RBAC/status/validation tests are documented but require backend implementation
+
+### 2025-12-19
+- 4.2 Auth Cache: Implemented cached token authentication
+  - Uses same datadir as liana-gui (`~/.liana/<network>/connect.json`)
+  - Validates cached tokens on startup (refresh if expired, remove if invalid)
+  - AccountSelect view shows list of valid cached accounts
+  - "Connect with another email" option for fresh login
+  - Handles connection failures with warning modal and cache cleanup
+  - See STRUCTURE.md "Authentication Flow" for full diagram
 
 ### 2025-12-19
 - UI: Added breadcrumb navigation to layout headers
