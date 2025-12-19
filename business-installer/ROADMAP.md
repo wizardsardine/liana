@@ -6,7 +6,7 @@
   - [x] 2.1 Auth Client
   - [x] 2.2 Installer Trait Integration
   - [x] 2.3 WSS Protocol Extraction
-- [ ] **3.0 Server Update Notifications** (NEXT MAIN PRIORITY)
+- [x] **3.0 Server Update Notifications**
 - [ ] **3.1 WS Manager Flow**
 - [ ] **1. Front**
   - [x] 1.1 Wallet Selection View
@@ -179,51 +179,31 @@ Key, etc.)
 
 ## 3. Flows
 
-### 3.0 Server Update Notifications
+### 3.0 Server Update Notifications ✓
 
-#### Backend (Dummy Server)
-- [ ] Implement notification sending when server state is updated
-  - [ ] Send `WalletUpdated` notification when wallet is modified
-  - [ ] Send `KeyUpdated` notification when key is modified
-  - [ ] Send `KeyDeleted` notification when key is deleted
-  - [ ] Send `PathUpdated` notification when path is modified
-  - [ ] Send `PathDeleted` notification when path is deleted
-- [ ] Define notification payload structure in `liana-connect` protocol
-- [ ] Update dummy server to broadcast notifications to all connected clients
+Uses existing `Wallet` notifications from server - no protocol changes required.
+Conflict detection done by comparing new wallet state with current modal state.
+
+#### Backend (Server)
+- [x] Server already broadcasts `Wallet` notifications when wallet is modified
+- [x] No protocol changes needed - reuses existing notification infrastructure
 
 #### Frontend (Notification Handling)
-- [ ] Add notification handlers in backend update logic
-- [ ] Most notifications require no action (state already updated via existing subscription)
-- [ ] Implement edge case reconciliation for open modals
+- [x] On `Wallet` notification, check if any modal is affected
+- [x] Compare new wallet state with modal state to detect conflicts
+- [x] Show conflict modal if changes detected
 
-#### Edge Case: Key Modal Open During Server Update
-- [ ] Detect when the key being edited was modified or deleted on server
-  - [ ] Track the key ID being edited in modal state
-  - [ ] On `KeyDeleted` notification: check if it matches the open modal
-  - [ ] On `KeyUpdated` notification: check if it matches the open modal
-- [ ] If key deleted: close modal, show info message to user
-- [ ] If key modified: prompt user to reload or discard local changes
-  - [ ] Option 1: "Reload" - fetch latest key data from server, update modal
-  - [ ] Option 2: "Keep my changes" - continue editing with local changes
-  - [ ] Show warning that server version differs
+#### Conflict Detection: Key Modal
+- [x] Detect when key being edited was modified or deleted
+- [x] If key deleted: show info modal ("Key was deleted")
+- [x] If key modified: show choice modal ("Reload" / "Keep my changes")
 
-#### Edge Case: Path Modal Open During Server Update
-- [ ] Detect when the path being edited was modified or deleted
-  - [ ] Track the path being edited in modal state (primary vs recovery index)
-  - [ ] On `PathDeleted` notification: check if it matches the open modal
-  - [ ] On `PathUpdated` notification: check if it matches the open modal
-- [ ] Detect when keys used in the path were removed
-  - [ ] On `KeyDeleted` notification: check if key is in currently edited path
-  - [ ] Track which keys are selected in the path modal
-- [ ] If path deleted: close modal, show info message to user
-- [ ] If path modified: prompt user to reload or discard local changes
-  - [ ] Option 1: "Reload" - fetch latest path data, update modal
-  - [ ] Option 2: "Keep my changes" - continue editing with local changes
-  - [ ] Show warning that server version differs
-- [ ] If key(s) removed from path: update selected keys in modal, show warning
-  - [ ] Automatically uncheck deleted keys from selection
-  - [ ] Display warning: "Key X was removed by another user"
-  - [ ] Validate threshold is still valid after key removal
+#### Conflict Detection: Path Modal
+- [x] Detect when path being edited was modified or deleted
+- [x] If path deleted: show info modal ("Path was deleted")
+- [x] If path modified: show choice modal ("Reload" / "Keep my changes")
+- [x] Detect when keys in current path were removed
+- [x] If key removed: show info modal ("Key X was removed")
 
 ### 3.1 WS Manager Flow
 
@@ -727,6 +707,18 @@ all edge cases, access control rules, and multi-client synchronization.
   - [ ] Known limitations or test gaps
 
 ## Changelog
+
+### 2025-12-19
+- 3.0 Server Update Notifications: Implemented conflict detection for concurrent editing
+  - Uses existing `Wallet` notifications from server (no protocol changes required)
+  - Frontend (business-installer): Created `ConflictModalState` and `ConflictType` for conflict resolution UI
+  - Frontend (business-installer): Implemented `check_modal_conflicts()` to detect changes by comparing wallet state
+  - Frontend (business-installer): Conflict detection for Key Modal - detects when key is modified/deleted during edit
+  - Frontend (business-installer): Conflict detection for Path Modal - detects when path is modified/deleted during edit
+  - Frontend (business-installer): Key deletion detection in Path Modal - detects when keys in path are removed
+  - Frontend (business-installer): Created conflict resolution modal with "Reload" / "Keep my changes" options
+  - Frontend (business-installer): Info-only modal for deletion conflicts (can't keep local changes)
+  - Frontend (business-installer): Modal rendering priority: warning > conflict > underlying
 
 ### 2025-12-18
 - 5. Standalone Server Binary: Implemented complete standalone server

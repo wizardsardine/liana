@@ -68,6 +68,11 @@ pub enum Msg {
     // Warnings
     WarningShowModal(String, String), // title, message
     WarningCloseModal,
+
+    // Conflict resolution
+    ConflictReload,    // User chose to reload from server
+    ConflictKeepLocal, // User chose to keep local changes
+    ConflictDismiss,   // Dismiss info-only conflict (e.g., key deleted)
 }
 
 /// Type alias for Msg (used in views)
