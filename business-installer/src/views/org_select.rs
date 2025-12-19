@@ -2,14 +2,16 @@ use crate::{
     backend::Backend,
     state::{Msg, State},
 };
-use iced::{widget::row, Alignment, Length};
+use iced::{
+    widget::{row, Space},
+    Alignment, Length,
+};
 use liana_connect::models::{UserRole, Wallet, WalletStatus};
 use liana_ui::{
     component::{form, text},
     widget::*,
 };
 
-use iced::widget::Space;
 use uuid::Uuid;
 
 use super::{layout_with_scrollable_list, menu_entry};

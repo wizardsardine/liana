@@ -31,6 +31,7 @@ impl WalletStatus {
         }
     }
 
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Option<Self> {
         match s {
             "Created" => Some(WalletStatus::Created),
@@ -54,6 +55,7 @@ pub enum UserRole {
 }
 
 impl UserRole {
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Option<Self> {
         match s {
             "WSManager" => Some(UserRole::WSManager),
@@ -101,6 +103,7 @@ impl KeyType {
         }
     }
 
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Option<Self> {
         match s {
             "Internal" => Some(KeyType::Internal),
@@ -314,4 +317,3 @@ pub struct Wallet {
     pub status: WalletStatus,
     pub template: Option<PolicyTemplate>,
 }
-

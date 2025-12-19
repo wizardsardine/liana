@@ -1,14 +1,13 @@
-use crossbeam::channel;
-
 use crate::{
     backend::{init_client, Backend, Notification},
     client::Client,
     state::app::AppState,
     views::{
-        keys_view, login_view, modals, org_select_view, template_builder_view,
-        wallet_select_view, xpub_view,
+        keys_view, login_view, modals, org_select_view, template_builder_view, wallet_select_view,
+        xpub_view,
     },
 };
+use crossbeam::channel;
 use liana_ui::widget::{modal::Modal, Element};
 pub use message::{Message, Msg};
 
@@ -49,7 +48,11 @@ impl State {
 
     /// Initialize backend connection and return the receiver for subscriptions.
     /// The caller is responsible for storing the receiver appropriately.
-    pub fn connect_backend(&mut self, url: String, version: u8) -> Option<channel::Receiver<Notification>> {
+    pub fn connect_backend(
+        &mut self,
+        url: String,
+        version: u8,
+    ) -> Option<channel::Receiver<Notification>> {
         // NOTE: if connect_backend() is called with an ongoing connexion,
         // the ongoing connexion will be dropped & replaced by the new one.
         self.backend.connect_ws(url, version)

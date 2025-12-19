@@ -22,7 +22,11 @@ pub struct Server {
 
 impl Server {
     /// Create a new server
-    pub fn new(host: &str, auth_port: u16, ws_port: u16) -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn new(
+        host: &str,
+        auth_port: u16,
+        ws_port: u16,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
         Ok(Self {
             host: host.to_string(),
             auth_port,
@@ -97,16 +101,22 @@ impl Server {
 
         // Server URL for config endpoint (points to auth port)
         // Use 127.0.0.1 instead of 0.0.0.0 for client connections
-        let client_host = if self.host == "0.0.0.0" { "127.0.0.1" } else { &self.host };
+        let client_host = if self.host == "0.0.0.0" {
+            "127.0.0.1"
+        } else {
+            &self.host
+        };
         let server_url = format!("http://{}:{}", client_host, self.auth_port);
 
         // Channel for broadcast notifications
+        #[allow(clippy::type_complexity)]
         let (broadcast_sender, broadcast_receiver): (
             Sender<(ClientId, Notification)>,
             Receiver<(ClientId, Notification)>,
         ) = channel::unbounded();
 
         // Connection registry
+        #[allow(clippy::type_complexity)]
         let connections: Arc<Mutex<HashMap<ClientId, Sender<(Response, Option<String>)>>>> =
             Arc::new(Mutex::new(HashMap::new()));
 
@@ -340,6 +350,7 @@ fn perform_websocket_handshake(
 }
 
 /// Handle a WebSocket connection (after handshake)
+#[allow(clippy::type_complexity)]
 fn handle_websocket_connection(
     ws_stream: tungstenite::WebSocket<TcpStream>,
     state: ServerState,
@@ -383,6 +394,7 @@ fn handle_websocket_connection(
 }
 
 /// Handle broadcast notifications to all connected clients
+#[allow(clippy::type_complexity)]
 fn handle_broadcasts(
     receiver: Receiver<(ClientId, Notification)>,
     connections: Arc<Mutex<HashMap<ClientId, Sender<(Response, Option<String>)>>>>,
@@ -403,36 +415,24 @@ fn handle_broadcasts(
                 let response = match &notification {
                     Notification::Org(org_id) => {
                         let orgs = state.orgs.lock().unwrap();
-                        if let Some(org) = orgs.get(org_id) {
-                            Some(Response::Org { org: org.into() })
-                        } else {
-                            None
-                        }
+                        orgs.get(org_id)
+                            .map(|org| Response::Org { org: org.into() })
                     }
                     Notification::Wallet(wallet_id) => {
                         let wallets = state.wallets.lock().unwrap();
-                        if let Some(wallet) = wallets.get(wallet_id) {
-                            Some(Response::Wallet {
-                                wallet: wallet.into(),
-                            })
-                        } else {
-                            None
-                        }
-                    }
-                    Notification::User(user_id) => {
-                        let users = state.users.lock().unwrap();
-                        if let Some(user) = users.get(user_id) {
-                            Some(Response::User { user: user.into() })
-                        } else {
-                            None
-                        }
+                        wallets.get(wallet_id).map(|wallet| Response::Wallet {
+                            wallet: wallet.into(),
+                        })
                     }
                 };
 
                 if let Some(response) = response {
                     // Send to all clients except the originating one
                     let conns = connections.lock().unwrap();
-                    log::info!("[BROADCAST] Sending to {} connected clients (excluding originator)", conns.len() - 1);
+                    log::info!(
+                        "[BROADCAST] Sending to {} connected clients (excluding originator)",
+                        conns.len() - 1
+                    );
                     for (client_id, sender) in conns.iter() {
                         if *client_id != originating_client {
                             log::info!("[BROADCAST] Sending to client {}", client_id);

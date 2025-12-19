@@ -1,13 +1,7 @@
-//! Business Installer implementation
-//!
-//! This module exposes `BusinessInstaller` which implements the `Installer` trait
-//! from liana-gui, allowing it to be used as an installer component in liana-gui
-//! in the future.
-
-use std::pin::Pin;
-use std::thread;
-use std::time::Duration;
-
+use crate::{
+    backend::{Notification, BACKEND_RECV},
+    state::State,
+};
 use crossbeam::channel;
 use iced::{Subscription, Task};
 use liana::miniscript::bitcoin::{self};
@@ -18,11 +12,8 @@ use liana_gui::{
     services::connect::client::backend::BackendClient,
 };
 use liana_ui::widget::Element;
+use std::{pin::Pin, thread, time::Duration};
 
-use crate::backend::{Notification, BACKEND_RECV};
-use crate::state::State;
-
-// Re-export Message type for external use
 pub use crate::state::Msg as Message;
 
 /// BusinessInstaller implements the Installer trait from liana-gui.

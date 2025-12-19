@@ -1,7 +1,9 @@
 use super::{app::AppState, message::Msg, views, State, View};
-use crate::backend::{Backend, Error, Notification, UserRole, Wallet, WalletStatus, BACKEND_RECV};
-use crate::client::{PROTOCOL_VERSION, WS_URL};
-use crate::state::views::modals::{ConflictModalState, ConflictType};
+use crate::{
+    backend::{Backend, Error, Notification, UserRole, Wallet, WalletStatus, BACKEND_RECV},
+    client::{PROTOCOL_VERSION, WS_URL},
+    state::views::modals::{ConflictModalState, ConflictType},
+};
 use iced::Task;
 use liana_connect::{Key, PolicyTemplate, SpendingPath, Timelock};
 use liana_ui::widget::text_input;
@@ -189,7 +191,9 @@ impl State {
 
             // Set token and connect
             self.backend.set_token(token);
-            let recv = self.backend.connect_ws(WS_URL.to_string(), PROTOCOL_VERSION);
+            let recv = self
+                .backend
+                .connect_ws(WS_URL.to_string(), PROTOCOL_VERSION);
             *BACKEND_RECV.lock().expect("poisoned") = recv;
         }
 
@@ -236,17 +240,14 @@ impl State {
 
         // Check access based on role + status
         if let (Some(status), Some(role)) = (&wallet_status, &user_role) {
-            match (status, role) {
-                // Draft + Participant -> Access Denied
-                (WalletStatus::Created | WalletStatus::Drafted, UserRole::Participant) => {
-                    self.on_warning_show_modal(
-                        "Access Denied",
-                        "Participants cannot access Draft wallets. Please wait for the wallet to be validated.",
-                    );
-                    return;
-                }
-                // All other combinations proceed
-                _ => {}
+            if let (WalletStatus::Created | WalletStatus::Drafted, UserRole::Participant) =
+                (status, role)
+            {
+                self.on_warning_show_modal(
+                    "Access Denied",
+                    "Participants cannot access Draft wallets. Please wait for the wallet to be validated.",
+                );
+                return;
             }
         }
 
@@ -345,7 +346,10 @@ impl State {
         }
 
         // Auto-save for WSManager/Owner: push changes to server with status = Drafted
-        if matches!(self.app.current_user_role, Some(UserRole::WSManager) | Some(UserRole::Owner)) {
+        if matches!(
+            self.app.current_user_role,
+            Some(UserRole::WSManager) | Some(UserRole::Owner)
+        ) {
             if let Some(wallet) = self.build_wallet_from_app_state(WalletStatus::Drafted) {
                 self.backend.edit_wallet(wallet);
             }
@@ -378,7 +382,10 @@ impl State {
             self.views.keys.edit_key = None;
 
             // Auto-save for WSManager/Owner: push changes to server with status = Drafted
-            if matches!(self.app.current_user_role, Some(UserRole::WSManager) | Some(UserRole::Owner)) {
+            if matches!(
+                self.app.current_user_role,
+                Some(UserRole::WSManager) | Some(UserRole::Owner)
+            ) {
                 if let Some(wallet) = self.build_wallet_from_app_state(WalletStatus::Drafted) {
                     self.backend.edit_wallet(wallet);
                 }
@@ -459,7 +466,10 @@ impl State {
             self.app.secondary_paths.remove(path_index);
 
             // Auto-save for WSManager/Owner: push changes to server with status = Drafted
-            if matches!(self.app.current_user_role, Some(UserRole::WSManager) | Some(UserRole::Owner)) {
+            if matches!(
+                self.app.current_user_role,
+                Some(UserRole::WSManager) | Some(UserRole::Owner)
+            ) {
                 if let Some(wallet) = self.build_wallet_from_app_state(WalletStatus::Drafted) {
                     self.backend.edit_wallet(wallet);
                 }
@@ -486,7 +496,10 @@ impl State {
                 let (unit, value) = if blocks >= TimelockUnit::Months.blocks_per_unit()
                     && blocks % TimelockUnit::Months.blocks_per_unit() == 0
                 {
-                    (TimelockUnit::Months, TimelockUnit::Months.from_blocks(blocks))
+                    (
+                        TimelockUnit::Months,
+                        TimelockUnit::Months.from_blocks(blocks),
+                    )
                 } else if blocks >= TimelockUnit::Days.blocks_per_unit()
                     && blocks % TimelockUnit::Days.blocks_per_unit() == 0
                 {
@@ -532,7 +545,10 @@ impl State {
 
                 // Handle threshold - parse and validate
                 if let Ok(threshold_n) = modal_state.threshold.parse::<u8>() {
-                    if threshold_n > 0 && (threshold_n as usize) <= selected_count && selected_count > 0 {
+                    if threshold_n > 0
+                        && (threshold_n as usize) <= selected_count
+                        && selected_count > 0
+                    {
                         self.app.primary_path.threshold_n = threshold_n;
                     } else if selected_count > 0 {
                         // Default to all keys required if threshold invalid
@@ -550,7 +566,10 @@ impl State {
 
                     // Handle threshold - parse and validate
                     if let Ok(threshold_n) = modal_state.threshold.parse::<u8>() {
-                        if threshold_n > 0 && (threshold_n as usize) <= selected_count && selected_count > 0 {
+                        if threshold_n > 0
+                            && (threshold_n as usize) <= selected_count
+                            && selected_count > 0
+                        {
                             path.threshold_n = threshold_n;
                         } else if selected_count > 0 {
                             // Default to all keys required if threshold invalid
@@ -605,7 +624,10 @@ impl State {
             self.views.paths.edit_path = None;
 
             // Auto-save for WSManager/Owner: push changes to server with status = Drafted
-            if matches!(self.app.current_user_role, Some(UserRole::WSManager) | Some(UserRole::Owner)) {
+            if matches!(
+                self.app.current_user_role,
+                Some(UserRole::WSManager) | Some(UserRole::Owner)
+            ) {
                 if let Some(wallet) = self.build_wallet_from_app_state(WalletStatus::Drafted) {
                     self.backend.edit_wallet(wallet);
                 }
@@ -618,7 +640,7 @@ impl State {
         if !matches!(self.app.current_user_role, Some(UserRole::Owner)) {
             return;
         }
-        
+
         if self.is_template_valid() {
             // Push template to server with status = Validated
             if let Some(wallet) = self.build_wallet_from_app_state(WalletStatus::Validated) {
@@ -715,10 +737,6 @@ impl State {
         }
     }
 
-    fn on_backend_orgs(&mut self) {
-        // TODO: ?
-    }
-
     fn on_backend_auth_code_sent(&mut self) -> Task<Msg> {
         self.views.login.current = views::LoginState::CodeEntry;
         // Clear any previous errors
@@ -761,8 +779,10 @@ impl State {
 
         // Connect WebSocket immediately after login success
         // This will establish the connection now that we have a token
-        let recv = self.backend.connect_ws(WS_URL.to_string(), PROTOCOL_VERSION);
-        
+        let recv = self
+            .backend
+            .connect_ws(WS_URL.to_string(), PROTOCOL_VERSION);
+
         // Update the global receiver for the subscription
         if let Some(receiver) = recv {
             *BACKEND_RECV.lock().expect("poisoned") = Some(receiver);
@@ -862,7 +882,8 @@ impl State {
 
         // Clear this account from the cache
         if !logged_in_email.is_empty() {
-            self.backend.clear_invalid_tokens(&[logged_in_email.clone()]);
+            self.backend
+                .clear_invalid_tokens(&[logged_in_email.clone()]);
 
             // Also remove from account_select list
             self.views
@@ -954,7 +975,7 @@ impl State {
                     // Key was deleted
                     self.views.keys.edit_key = None;
                     self.views.modals.conflict = Some(ConflictModalState {
-                        conflict_type: ConflictType::KeyDeleted { key_id, wallet_id },
+                        conflict_type: ConflictType::KeyDeleted,
                         title: "Key Deleted".to_string(),
                         message: "The key you were editing was deleted by another user."
                             .to_string(),
@@ -1012,12 +1033,9 @@ impl State {
                         }
                     }
 
-                    let (first_key_id, first_key_alias) = deleted_keys[0].clone();
+                    let (_first_key_id, first_key_alias) = deleted_keys[0].clone();
                     self.views.modals.conflict = Some(ConflictModalState {
-                        conflict_type: ConflictType::KeyInPathDeleted {
-                            key_id: first_key_id,
-                            key_alias: first_key_alias.clone(),
-                        },
+                        conflict_type: ConflictType::KeyInPathDeleted,
                         title: "Key Removed".to_string(),
                         message: format!(
                             "\"{}\" was deleted by another user and has been removed from your path selection.",
@@ -1030,21 +1048,23 @@ impl State {
                 // Check if the path being edited was modified or deleted
                 if modal.is_primary {
                     // Check if primary path was modified
-                    if let Some(local_primary) = self.app.keys.is_empty().then_some(()).or_else(|| {
-                        // Compare modal's selected keys with server's primary path
-                        let modal_keys: std::collections::HashSet<u8> =
-                            modal.selected_key_ids.iter().copied().collect();
-                        let server_keys: std::collections::HashSet<u8> =
-                            template.primary_path.key_ids.iter().copied().collect();
-                        let modal_threshold = modal.threshold.parse::<u8>().unwrap_or(0);
-                        if modal_keys != server_keys
-                            || modal_threshold != template.primary_path.threshold_n
-                        {
-                            Some(())
-                        } else {
-                            None
-                        }
-                    }) {
+                    if let Some(_local_primary) =
+                        self.app.keys.is_empty().then_some(()).or_else(|| {
+                            // Compare modal's selected keys with server's primary path
+                            let modal_keys: std::collections::HashSet<u8> =
+                                modal.selected_key_ids.iter().copied().collect();
+                            let server_keys: std::collections::HashSet<u8> =
+                                template.primary_path.key_ids.iter().copied().collect();
+                            let modal_threshold = modal.threshold.parse::<u8>().unwrap_or(0);
+                            if modal_keys != server_keys
+                                || modal_threshold != template.primary_path.threshold_n
+                            {
+                                Some(())
+                            } else {
+                                None
+                            }
+                        })
+                    {
                         self.views.modals.conflict = Some(ConflictModalState {
                             conflict_type: ConflictType::PathModified {
                                 is_primary: true,
@@ -1054,18 +1074,13 @@ impl State {
                             title: "Path Modified".to_string(),
                             message: "The primary path was modified by another user. Would you like to reload the server version or keep your changes?".to_string(),
                         });
-                        return;
                     }
                 } else if let Some(path_index) = modal.path_index {
                     if path_index >= template.secondary_paths.len() {
                         // Path was deleted
                         self.views.paths.edit_path = None;
                         self.views.modals.conflict = Some(ConflictModalState {
-                            conflict_type: ConflictType::PathDeleted {
-                                is_primary: false,
-                                path_index,
-                                wallet_id,
-                            },
+                            conflict_type: ConflictType::PathDeleted,
                             title: "Path Deleted".to_string(),
                             message: "The path you were editing was deleted by another user."
                                 .to_string(),

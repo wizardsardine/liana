@@ -3,8 +3,10 @@ use crate::{
     state::{message::Msg, State},
     views::layout,
 };
-use iced::widget::row;
-use iced::{widget::Space, Length};
+use iced::{
+    widget::{row, Space},
+    Length,
+};
 use liana_ui::{
     color,
     component::{button, form, text},

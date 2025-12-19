@@ -79,14 +79,8 @@ impl PolicyBuilder {
         let task = self.installer.update(message.clone());
 
         // Check if we should exit after processing the message
-        if let Some(next_state) = self.installer.exit_maybe(&message) {
-            match next_state {
-                NextState::LoginLianaLite { .. } => {
-                    // Close the application when transitioning to Liana Lite
-                    return iced::exit();
-                }
-                _ => {}
-            }
+        if let Some(NextState::LoginLianaLite { .. }) = self.installer.exit_maybe(&message) {
+            return iced::exit();
         }
 
         task

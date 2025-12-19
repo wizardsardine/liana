@@ -20,6 +20,7 @@ impl TimelockUnit {
     }
 
     /// Convert blocks to this unit (returns the value)
+    #[allow(clippy::wrong_self_convention)]
     pub fn from_blocks(self, blocks: u64) -> u64 {
         blocks / self.blocks_per_unit()
     }
@@ -59,4 +60,3 @@ pub struct EditPathModalState {
     pub timelock_value: Option<String>, // None for primary paths, Some for secondary
     pub timelock_unit: TimelockUnit,    // Unit for timelock display
 }
-

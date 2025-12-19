@@ -2,7 +2,7 @@
 
 use crate::auth::AuthManager;
 use serde::{Deserialize, Serialize};
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::Write;
 use std::net::TcpStream;
 use std::sync::Arc;
 
@@ -19,6 +19,7 @@ pub struct ServiceConfig {
 pub struct SignInOtpRequest {
     pub email: String,
     #[serde(default)]
+    #[allow(unused)]
     pub create_user: bool,
 }
 
@@ -28,10 +29,12 @@ pub struct VerifyOtpRequest {
     pub email: String,
     pub token: String,
     #[serde(rename = "type")]
+    #[allow(unused)]
     pub kind: String,
 }
 
 /// Refresh token request body
+#[allow(unused)]
 #[derive(Debug, Deserialize)]
 pub struct RefreshTokenRequest {
     pub refresh_token: String,
@@ -47,66 +50,6 @@ pub struct AccessTokenResponse {
 
 /// The dummy API key (any key is accepted)
 pub const DUMMY_API_KEY: &str = "dummy-api-key";
-
-/// Parse an HTTP request from a TCP stream
-/// Returns (method, path, headers, body) or None if not a valid HTTP request
-pub fn parse_http_request(
-    stream: &mut TcpStream,
-) -> Option<(String, String, Vec<(String, String)>, Vec<u8>)> {
-    let mut reader = BufReader::new(stream.try_clone().ok()?);
-
-    // Read request line
-    let mut request_line = String::new();
-    reader.read_line(&mut request_line).ok()?;
-
-    let parts: Vec<&str> = request_line.trim().split_whitespace().collect();
-    if parts.len() < 2 {
-        return None;
-    }
-
-    let method = parts[0].to_string();
-    let path = parts[1].to_string();
-
-    // Read headers
-    let mut headers = Vec::new();
-    let mut content_length = 0usize;
-
-    loop {
-        let mut line = String::new();
-        reader.read_line(&mut line).ok()?;
-        let line = line.trim();
-
-        if line.is_empty() {
-            break;
-        }
-
-        if let Some((name, value)) = line.split_once(':') {
-            let name = name.trim().to_lowercase();
-            let value = value.trim().to_string();
-
-            if name == "content-length" {
-                content_length = value.parse().unwrap_or(0);
-            }
-
-            headers.push((name, value));
-        }
-    }
-
-    // Read body if present
-    let mut body = vec![0u8; content_length];
-    if content_length > 0 {
-        reader.read_exact(&mut body).ok()?;
-    }
-
-    Some((method, path, headers, body))
-}
-
-/// Check if request is a WebSocket upgrade
-pub fn is_websocket_upgrade(headers: &[(String, String)]) -> bool {
-    headers
-        .iter()
-        .any(|(name, value)| name == "upgrade" && value.to_lowercase() == "websocket")
-}
 
 /// Send an HTTP response
 pub fn send_response(stream: &mut TcpStream, status: u16, status_text: &str, body: &str) {
@@ -206,11 +149,7 @@ pub fn handle_http_request(
                         let body = serde_json::to_string(&response).unwrap();
                         send_response(stream, 200, "OK", &body);
                     } else {
-                        log::warn!(
-                            "Invalid OTP code '{}' for email: {}",
-                            req.token,
-                            req.email
-                        );
+                        log::warn!("Invalid OTP code '{}' for email: {}", req.token, req.email);
                         send_response(
                             stream,
                             401,
