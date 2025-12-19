@@ -1,6 +1,7 @@
 use super::{app::AppState, message::Msg, views, State, View};
 use crate::backend::{Backend, Error, Notification, UserRole, Wallet, WalletStatus, BACKEND_RECV};
 use crate::client::{BACKEND_URL, PROTOCOL_VERSION};
+use crate::state::views::modals::{ConflictModalState, ConflictType};
 use iced::Task;
 use liana_connect::{Key, PolicyTemplate, SpendingPath, Timelock};
 use liana_ui::widget::text_input;
@@ -99,6 +100,11 @@ impl State {
             Msg::WarningShowModal(title, message) => self.on_warning_show_modal(title, message),
             Msg::WarningCloseModal => self.on_warning_close_modal(),
 
+            // Conflict resolution
+            Msg::ConflictReload => return self.on_conflict_reload(),
+            Msg::ConflictKeepLocal => self.on_conflict_keep_local(),
+            Msg::ConflictDismiss => self.on_conflict_dismiss(),
+
             // Logout
             Msg::Logout => return self.on_logout(),
         }
@@ -110,16 +116,15 @@ impl State {
         match response {
             Notification::Connected => self.on_backend_connected(),
             Notification::Disconnected => self.on_backend_disconnected(),
-            // Notification::Orgs(_) => self.on_backend_orgs(),
             Notification::AuthCodeSent => return self.on_backend_auth_code_sent(),
             Notification::InvalidEmail => self.on_backend_invalid_email(),
             Notification::AuthCodeFail => self.on_backend_auth_code_fail(),
             Notification::LoginSuccess => self.on_backend_login_success(),
             Notification::LoginFail => self.on_backend_login_fail(),
             Notification::Error(error) => self.on_backend_error(error),
-            Notification::Org(_) => todo!(),
-            Notification::Wallet(_) => todo!(),
-            Notification::User(_) => todo!(),
+            Notification::Org(_) => { /* Cache already updated, no action needed */ }
+            Notification::Wallet(wallet_id) => return self.on_backend_wallet(wallet_id),
+            Notification::User(_) => { /* Cache already updated, no action needed */ }
         }
         Task::none()
     }
@@ -662,18 +667,6 @@ impl State {
         // TODO: ?
     }
 
-    fn on_backend_org(&mut self) {
-        // TODO: ?
-    }
-
-    fn on_backend_wallet(&mut self) {
-        // TODO: ?
-    }
-
-    fn on_backend_user(&mut self) {
-        // TODO: ?
-    }
-
     fn on_backend_auth_code_sent(&mut self) -> Task<Msg> {
         self.views.login.current = views::LoginState::CodeEntry;
         // Clear any previous errors
@@ -783,5 +776,291 @@ impl State {
 
         // Focus email input
         text_input::focus("login_email")
+    }
+}
+
+// Wallet notifications and conflict resolution
+impl State {
+    /// Handle wallet notification - check for modal conflicts and refresh state
+    fn on_backend_wallet(&mut self, wallet_id: Uuid) -> Task<Msg> {
+        // Only relevant if this is the currently selected wallet
+        if self.app.selected_wallet != Some(wallet_id) {
+            return Task::none();
+        }
+
+        // Get the updated wallet from cache
+        let Some(wallet) = self.backend.get_wallet(wallet_id) else {
+            return Task::none();
+        };
+
+        // Check for conflicts with open modals before updating state
+        self.check_modal_conflicts(&wallet, wallet_id);
+
+        // If no conflict modal was shown, refresh local state
+        if self.views.modals.conflict.is_none() {
+            self.load_wallet_into_app_state(&wallet);
+        }
+
+        Task::none()
+    }
+
+    /// Check for conflicts between open modals and the new wallet state
+    fn check_modal_conflicts(&mut self, wallet: &Wallet, wallet_id: Uuid) {
+        let new_template = wallet.template.as_ref();
+
+        // Check if key modal is open
+        if let Some(modal) = &self.views.keys.edit_key {
+            if !modal.is_new {
+                let key_id = modal.key_id;
+                // Check if the key still exists in the new wallet
+                let key_exists = new_template
+                    .map(|t| t.keys.contains_key(&key_id))
+                    .unwrap_or(false);
+
+                if !key_exists {
+                    // Key was deleted
+                    self.views.keys.edit_key = None;
+                    self.views.modals.conflict = Some(ConflictModalState {
+                        conflict_type: ConflictType::KeyDeleted { key_id, wallet_id },
+                        title: "Key Deleted".to_string(),
+                        message: "The key you were editing was deleted by another user."
+                            .to_string(),
+                    });
+                    return;
+                }
+
+                // Check if the key was modified
+                if let Some(template) = new_template {
+                    if let Some(server_key) = template.keys.get(&key_id) {
+                        if let Some(local_key) = self.app.keys.get(&key_id) {
+                            if server_key != local_key {
+                                // Key was modified
+                                self.views.modals.conflict = Some(ConflictModalState {
+                                    conflict_type: ConflictType::KeyModified { key_id, wallet_id },
+                                    title: "Key Modified".to_string(),
+                                    message: "This key was modified by another user. Would you like to reload the server version or keep your changes?".to_string(),
+                                });
+                                return;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Check if path modal is open
+        if let Some(modal) = &mut self.views.paths.edit_path {
+            // Check for deleted keys in the path being edited
+            if let Some(template) = new_template {
+                let mut deleted_keys = Vec::new();
+                for &key_id in &modal.selected_key_ids {
+                    if !template.keys.contains_key(&key_id) {
+                        let key_alias = self
+                            .app
+                            .keys
+                            .get(&key_id)
+                            .map(|k| k.alias.clone())
+                            .unwrap_or_else(|| format!("Key {}", key_id));
+                        deleted_keys.push((key_id, key_alias));
+                    }
+                }
+
+                // Remove deleted keys from selection and show warning
+                if !deleted_keys.is_empty() {
+                    for (key_id, _) in &deleted_keys {
+                        modal.selected_key_ids.retain(|&id| id != *key_id);
+                    }
+
+                    // Validate threshold after key removal
+                    let selected_count = modal.selected_key_ids.len();
+                    if let Ok(threshold) = modal.threshold.parse::<u8>() {
+                        if (threshold as usize) > selected_count && selected_count > 0 {
+                            modal.threshold = selected_count.to_string();
+                        }
+                    }
+
+                    let (first_key_id, first_key_alias) = deleted_keys[0].clone();
+                    self.views.modals.conflict = Some(ConflictModalState {
+                        conflict_type: ConflictType::KeyInPathDeleted {
+                            key_id: first_key_id,
+                            key_alias: first_key_alias.clone(),
+                        },
+                        title: "Key Removed".to_string(),
+                        message: format!(
+                            "\"{}\" was deleted by another user and has been removed from your path selection.",
+                            first_key_alias
+                        ),
+                    });
+                    return;
+                }
+
+                // Check if the path being edited was modified or deleted
+                if modal.is_primary {
+                    // Check if primary path was modified
+                    if let Some(local_primary) = self.app.keys.is_empty().then_some(()).or_else(|| {
+                        // Compare modal's selected keys with server's primary path
+                        let modal_keys: std::collections::HashSet<u8> =
+                            modal.selected_key_ids.iter().copied().collect();
+                        let server_keys: std::collections::HashSet<u8> =
+                            template.primary_path.key_ids.iter().copied().collect();
+                        let modal_threshold = modal.threshold.parse::<u8>().unwrap_or(0);
+                        if modal_keys != server_keys
+                            || modal_threshold != template.primary_path.threshold_n
+                        {
+                            Some(())
+                        } else {
+                            None
+                        }
+                    }) {
+                        self.views.modals.conflict = Some(ConflictModalState {
+                            conflict_type: ConflictType::PathModified {
+                                is_primary: true,
+                                path_index: None,
+                                wallet_id,
+                            },
+                            title: "Path Modified".to_string(),
+                            message: "The primary path was modified by another user. Would you like to reload the server version or keep your changes?".to_string(),
+                        });
+                        return;
+                    }
+                } else if let Some(path_index) = modal.path_index {
+                    if path_index >= template.secondary_paths.len() {
+                        // Path was deleted
+                        self.views.paths.edit_path = None;
+                        self.views.modals.conflict = Some(ConflictModalState {
+                            conflict_type: ConflictType::PathDeleted {
+                                is_primary: false,
+                                path_index,
+                                wallet_id,
+                            },
+                            title: "Path Deleted".to_string(),
+                            message: "The path you were editing was deleted by another user."
+                                .to_string(),
+                        });
+                        return;
+                    }
+
+                    // Check if secondary path was modified
+                    let (server_path, server_timelock) = &template.secondary_paths[path_index];
+                    let modal_keys: std::collections::HashSet<u8> =
+                        modal.selected_key_ids.iter().copied().collect();
+                    let server_keys: std::collections::HashSet<u8> =
+                        server_path.key_ids.iter().copied().collect();
+                    let modal_threshold = modal.threshold.parse::<u8>().unwrap_or(0);
+                    let modal_timelock = modal
+                        .timelock_value
+                        .as_ref()
+                        .and_then(|v| v.parse::<u64>().ok())
+                        .unwrap_or(0);
+
+                    if modal_keys != server_keys
+                        || modal_threshold != server_path.threshold_n
+                        || modal_timelock != server_timelock.blocks
+                    {
+                        self.views.modals.conflict = Some(ConflictModalState {
+                            conflict_type: ConflictType::PathModified {
+                                is_primary: false,
+                                path_index: Some(path_index),
+                                wallet_id,
+                            },
+                            title: "Path Modified".to_string(),
+                            message: "This recovery path was modified by another user. Would you like to reload the server version or keep your changes?".to_string(),
+                        });
+                        return;
+                    }
+                }
+            }
+        }
+    }
+
+    /// Load wallet data into AppState
+    fn load_wallet_into_app_state(&mut self, wallet: &Wallet) {
+        if let Some(template) = &wallet.template {
+            self.app.keys = template.keys.clone();
+            self.app.primary_path = template.primary_path.clone();
+            self.app.secondary_paths = template.secondary_paths.clone();
+            self.app.next_key_id = template.keys.keys().copied().max().unwrap_or(0) + 1;
+        } else {
+            self.app.keys.clear();
+            self.app.primary_path = SpendingPath {
+                is_primary: true,
+                threshold_n: 0,
+                key_ids: vec![],
+            };
+            self.app.secondary_paths.clear();
+            self.app.next_key_id = 0;
+        }
+    }
+
+    /// Handle conflict reload - user chose to reload from server
+    fn on_conflict_reload(&mut self) -> Task<Msg> {
+        if let Some(conflict) = self.views.modals.conflict.take() {
+            match conflict.conflict_type {
+                ConflictType::KeyModified { key_id, wallet_id } => {
+                    // Refresh from cache (already updated) and update modal
+                    if let Some(wallet) = self.backend.get_wallet(wallet_id) {
+                        if let Some(template) = &wallet.template {
+                            if let Some(key) = template.keys.get(&key_id) {
+                                // Update the modal with server data
+                                if let Some(modal) = &mut self.views.keys.edit_key {
+                                    modal.alias = key.alias.clone();
+                                    modal.description = key.description.clone();
+                                    modal.email = key.email.clone();
+                                    modal.key_type = key.key_type;
+                                }
+                                // Also update local AppState
+                                self.app.keys.insert(key_id, key.clone());
+                            }
+                        }
+                    }
+                }
+                ConflictType::PathModified {
+                    is_primary,
+                    path_index,
+                    wallet_id,
+                } => {
+                    // Refresh from cache and update modal
+                    if let Some(wallet) = self.backend.get_wallet(wallet_id) {
+                        if let Some(template) = &wallet.template {
+                            if is_primary {
+                                // Update modal with primary path data
+                                if let Some(modal) = &mut self.views.paths.edit_path {
+                                    modal.selected_key_ids = template.primary_path.key_ids.clone();
+                                    modal.threshold = template.primary_path.threshold_n.to_string();
+                                }
+                                self.app.primary_path = template.primary_path.clone();
+                            } else if let Some(idx) = path_index {
+                                if let Some((path, timelock)) = template.secondary_paths.get(idx) {
+                                    if let Some(modal) = &mut self.views.paths.edit_path {
+                                        modal.selected_key_ids = path.key_ids.clone();
+                                        modal.threshold = path.threshold_n.to_string();
+                                        modal.timelock_value = Some(timelock.blocks.to_string());
+                                    }
+                                    if idx < self.app.secondary_paths.len() {
+                                        self.app.secondary_paths[idx] =
+                                            (path.clone(), timelock.clone());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                _ => {
+                    // For delete conflicts, just dismiss (they're info-only)
+                }
+            }
+        }
+        Task::none()
+    }
+
+    /// Handle conflict keep local - user chose to keep local changes
+    fn on_conflict_keep_local(&mut self) {
+        // Just close the conflict modal, keep local changes
+        self.views.modals.conflict = None;
+    }
+
+    /// Handle conflict dismiss - dismiss info-only conflict (deletion notice)
+    fn on_conflict_dismiss(&mut self) {
+        self.views.modals.conflict = None;
     }
 }
