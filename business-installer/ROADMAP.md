@@ -389,9 +389,9 @@ real-time notifications, and in-memory storage.
 
 ### 5.4 Client Integration
 - [x] Update client to support remote server
-  - [x] Document BACKEND_URL configuration options
-  - [x] Keep debug mode for local development
-  - [x] Add examples for different deployment scenarios
+  - [x] Separate AUTH_API_URL and WS_URL constants for REST and WebSocket endpoints
+  - [x] Remove embedded dummy server (use standalone liana-business-server only)
+  - [x] Add local get_service_config_blocking() for fetching config from server
 
 ## 6. Integration Testing
 
@@ -709,6 +709,13 @@ all edge cases, access control rules, and multi-client synchronization.
 ## Changelog
 
 ### 2025-12-19
+- 5.4 Client Integration: Removed embedded dummy server, now uses standalone server only
+  - Removed `init_client_with_test_data()` and all embedded test data generation
+  - Added separate `AUTH_API_URL` (http://127.0.0.1:8099) and `WS_URL` (ws://127.0.0.1:8100) constants
+  - Added `get_service_config_blocking()` to fetch auth config from local server's `/v1/desktop` endpoint
+  - Replaced `block_on` with `tokio::runtime::Runtime::new().block_on()` for async operations
+  - Removed `dummy_server_handle`, `dummy_server_shutdown`, and `backend_url` fields from Client
+  - Improved error handling with `Notification::Error` for WebSocket message failures
 - 3.0 Server Update Notifications: Implemented conflict detection for concurrent editing
   - Uses existing `Wallet` notifications from server (no protocol changes required)
   - Frontend (business-installer): Created `ConflictModalState` and `ConflictType` for conflict resolution UI

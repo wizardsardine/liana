@@ -6,13 +6,15 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crossbeam::channel;
-use futures::executor::block_on;
 use liana_gui::dir::NetworkDirectory;
 use liana_gui::services::connect::client::auth::AuthClient;
-use liana_gui::services::connect::client::cache::{filter_connect_cache, update_connect_cache, Account, ConnectCache};
-use liana_gui::services::connect::client::get_service_config;
+use liana_gui::services::connect::client::cache::{
+    filter_connect_cache, update_connect_cache, Account, ConnectCache,
+};
+use liana_gui::services::connect::client::ServiceConfig;
 use miniscript::bitcoin::Network;
 use miniscript::DescriptorPublicKey;
+use reqwest;
 use serde_json::json;
 use tungstenite::{accept, Message as WsMessage};
 use uuid::Uuid;
@@ -20,23 +22,35 @@ use uuid::Uuid;
 use crate::backend::{Backend, Error, Notification, Org, OrgData, User, Wallet};
 use liana_connect::{ConnectedPayload, OrgJson, Request, Response, UserJson, WalletJson};
 
-/// Backend URL for WebSocket connection
-/// 
-/// Configuration options:
-/// - "debug" - Spawns a local DummyServer for development (no network required)
-/// - "ws://host:port" - Connect to a remote liana-business-server instance
-/// 
-/// Examples:
-///   pub const BACKEND_URL: &str = "debug";                    // Local development
-///   pub const BACKEND_URL: &str = "ws://localhost:8080";      // Local server
-///   pub const BACKEND_URL: &str = "ws://192.168.1.100:8080";  // LAN server
-///   pub const BACKEND_URL: &str = "ws://your-vps.com:8080";   // Remote VPS
-/// 
-/// Note: To use a remote server, you must have liana-business-server running
-/// on the target host. See liana-business-server/README.md for deployment instructions.
-pub const BACKEND_URL: &str = "debug";
+/// HTTP URL for liana-business-server REST API (auth endpoints)
+pub const AUTH_API_URL: &str = "http://127.0.0.1:8099";
+
+/// WebSocket URL for liana-business-server
+pub const WS_URL: &str = "ws://127.0.0.1:8100";
+
 /// Protocol version for WebSocket communication
 pub const PROTOCOL_VERSION: u8 = 1;
+
+/// Get service configuration for the local business server (blocking)
+/// This replaces the production get_service_config that fetches from Liana servers
+fn get_service_config_blocking(_network: Network) -> Result<ServiceConfig, reqwest::Error> {
+    // Fetch config from our local server's /v1/desktop endpoint
+    let client = reqwest::blocking::Client::new();
+    let url = format!("{}/v1/desktop", AUTH_API_URL);
+    println!("[get_service_config] Fetching from: {}", url);
+
+    let response = client.get(&url).send()?;
+    println!("[get_service_config] Response status: {}", response.status());
+
+    let res: ServiceConfig = response.json()?;
+    println!("[get_service_config] Parsed config OK");
+
+    Ok(ServiceConfig {
+        auth_api_url: res.auth_api_url,
+        auth_api_public_key: res.auth_api_public_key,
+        backend_api_url: AUTH_API_URL.to_string(),
+    })
+}
 
 /// WSS Backend implementation
 #[derive(Debug)]
@@ -49,15 +63,11 @@ pub struct Client {
     notif_sender: Option<channel::Sender<Notification>>,
     wss_thread_handle: Option<thread::JoinHandle<()>>,
     connected: Arc<AtomicBool>,
-    // DEBUG: Temporary field to store dummy server thread handle (will be removed when server launches)
-    dummy_server_handle: Option<thread::JoinHandle<()>>,
-    dummy_server_shutdown: Option<channel::Sender<()>>,
     // Auth client integration
     auth_client: Arc<Mutex<Option<AuthClient>>>,
     network: Option<Network>,
     network_dir: Option<NetworkDirectory>,
     email: Option<String>,
-    backend_url: Option<String>, // Store backend URL to check for debug mode
 }
 
 impl Client {
@@ -71,13 +81,10 @@ impl Client {
             notif_sender: None,
             wss_thread_handle: None,
             connected: Arc::new(AtomicBool::new(false)),
-            dummy_server_handle: None,
-            dummy_server_shutdown: None,
             auth_client: Arc::new(Mutex::new(None)),
             network: None,
             network_dir: None,
             email: None,
-            backend_url: None,
         }
     }
 
@@ -103,7 +110,8 @@ impl Client {
         let auth_client = self.auth_client.clone();
         let token = self.token.clone();
 
-        let result = block_on(async {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let result = rt.block_on(async {
             // Try to get cached account
             match Account::from_cache(&network_dir, &email) {
                 Ok(Some(account)) => {
@@ -126,7 +134,7 @@ impl Client {
                             Some(client)
                         } else {
                             // Create auth client on the fly using stored network
-                            let config = match get_service_config(network).await {
+                            let config = match get_service_config_blocking(network) {
                                 Ok(cfg) => cfg,
                                 Err(_) => return Err(()),
                             };
@@ -201,7 +209,8 @@ impl Client {
 
             // Spawn thread to handle async cache removal
             thread::spawn(move || {
-                let result = block_on(async {
+                let rt = tokio::runtime::Runtime::new().unwrap();
+                let result = rt.block_on(async {
                     use std::collections::HashSet;
 
                     // Read current cache to get all account emails
@@ -414,6 +423,8 @@ fn wss_thread(
                         let msg = WsMessage::Text(text);
                         if let Err(e) = handle_wss_message(msg, &orgs, &wallets, &users, &request_sender, &sent_requests3, &last_ping, &notif_sender) {
                             eprintln!("Error handling WSS message: {}", e);
+                            // Send error notification to show warning modal
+                            let _ = notif_sender.send(Notification::Error(Error::WsMessageHandling(e)));
                         }
                     }
                     // TODO: we should log errors here
@@ -447,8 +458,10 @@ fn handle_wss_message(
     last_ping_time: &Arc<Mutex<Option<Instant>>>,
     n_sender: &channel::Sender<Notification>,
 ) -> Result<(), String> {
+    println!("[CLIENT] Received WSS message");
     let (response, request_id) = Response::from_ws_message(msg)
         .map_err(|e| format!("Failed to convert WSS message: {}", e))?;
+    println!("[CLIENT] Parsed response: {:?}, request_id: {:?}", response, request_id);
 
     // Handle error responses first - they're always valid and we remove from cache
     if let Response::Error { error } = &response {
@@ -675,20 +688,18 @@ impl Backend for Client {
             self.close();
         }
 
-        self.backend_url = Some(url.clone());
-
         // Always create notification channel - needed for auth flow even without WSS connection
         let (notif, notif_receiver) = channel::unbounded();
         self.notif_sender = Some(notif.clone());
 
-        // Get token from cache, if any
+        // Get token from cache or stored value
         let mut token = {
             let token_guard = self.token.lock().unwrap();
             token_guard.clone()
         };
 
         // If no token, try to get it from cache
-        if token.is_none() && url != "debug" {
+        if token.is_none() {
             token = self.try_get_cached_token();
         }
 
@@ -700,46 +711,6 @@ impl Backend for Client {
                 return Some(notif_receiver);
             }
         };
-
-        // DEBUG: Spawn dummy server if url == "debug"
-        let mut actual_url = url.clone();
-        if url == "debug" {
-            use crate::backend::create_dummy_server_handler;
-
-            // Auto-assign port by binding to port 0
-            let listener = TcpListener::bind("127.0.0.1:0")
-                .expect("Failed to bind to address for port assignment");
-            let port = listener.local_addr().unwrap().port();
-            drop(listener); // Close the listener, we just needed the port
-
-            // Create handler using Client's data
-            let orgs = Arc::clone(&self.orgs);
-            let wallets = Arc::clone(&self.wallets);
-            let users = Arc::clone(&self.users);
-            let handler = create_dummy_server_handler(orgs, wallets, users);
-
-            // Spawn the DummyServer in a separate thread
-            let server_port = port;
-            let (shutdown_sender, shutdown_receiver) = channel::bounded(1);
-
-            let server_handle = thread::spawn(move || {
-                let mut server = DummyServer::new(server_port);
-                server.start(handler);
-                // Wait for shutdown signal
-                let _ = shutdown_receiver.recv();
-                server.close();
-            });
-
-            // Store the server thread handle and shutdown sender
-            self.dummy_server_handle = Some(server_handle);
-            self.dummy_server_shutdown = Some(shutdown_sender);
-
-            // Give the server time to bind to the port
-            thread::sleep(Duration::from_millis(100));
-
-            // Update URL to point to the dummy server
-            actual_url = format!("ws://127.0.0.1:{}", port);
-        }
 
         let (request_sender, request_receiver) = channel::unbounded();
 
@@ -753,7 +724,7 @@ impl Backend for Client {
 
         let handle = thread::spawn(move || {
             wss_thread(
-                actual_url,
+                url,
                 token,
                 version,
                 orgs,
@@ -781,28 +752,24 @@ impl Backend for Client {
         // Store email for later use
         self.email = Some(email.clone());
 
-        // Check if we're in debug mode
-        if let Some(ref url) = self.backend_url {
-            if url == "debug" {
-                // Mock auth: immediately send AuthCodeSent
-                if let Some(sender) = self.notif_sender.as_mut() {
-                    let _ = sender.send(Notification::AuthCodeSent);
-                }
-                return;
-            }
-        }
-
         let notif_sender = self.notif_sender.clone();
         let network = self.network.unwrap_or(Network::Signet); // Default to signet if not set
         let email_clone = email.clone();
         let auth_client_2 = self.auth_client.clone();
 
         thread::spawn(move || {
-            let result = block_on(async {
+            println!("[auth_request] Starting auth request for email: {}", email_clone);
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            let result = rt.block_on(async {
                 // Get service config
-                let config = match get_service_config(network).await {
-                    Ok(cfg) => cfg,
-                    Err(_e) => {
+                println!("[auth_request] Fetching service config...");
+                let config = match get_service_config_blocking(network) {
+                    Ok(cfg) => {
+                        println!("[auth_request] Got config: auth_api_url={}", cfg.auth_api_url);
+                        cfg
+                    }
+                    Err(e) => {
+                        println!("[auth_request] Failed to get config: {:?}", e);
                         if let Some(sender) = notif_sender.as_ref() {
                             let _ = sender.send(Notification::AuthCodeFail);
                         }
@@ -811,15 +778,21 @@ impl Backend for Client {
                 };
 
                 // Create auth client
+                println!("[auth_request] Creating auth client with:");
+                println!("[auth_request]   auth_api_url: {}", config.auth_api_url);
+                println!("[auth_request]   email: '{}' (len={})", email_clone, email_clone.len());
+                println!("[auth_request]   email bytes: {:?}", email_clone.as_bytes());
                 let auth_client = AuthClient::new(
-                    config.auth_api_url,
-                    config.auth_api_public_key,
+                    config.auth_api_url.clone(),
+                    config.auth_api_public_key.clone(),
                     email_clone.clone(),
                 );
 
                 // Send OTP
+                println!("[auth_request] Sending OTP request...");
                 match auth_client.sign_in_otp().await {
                     Ok(()) => {
+                        println!("[auth_request] OTP sent successfully");
                         // Store auth client
                         if let Ok(mut client_guard) = auth_client_2.lock() {
                             *client_guard = Some(auth_client);
@@ -827,9 +800,11 @@ impl Backend for Client {
                         Ok(())
                     }
                     Err(e) => {
+                        println!("[auth_request] OTP request failed: {:?}", e);
                         if let Some(sender) = notif_sender.as_ref() {
                             // Check if it's an invalid email error
                             if let Some(status) = e.http_status {
+                                println!("[auth_request] HTTP status: {}", status);
                                 if status == 400 || status == 422 {
                                     let _ = sender.send(Notification::InvalidEmail);
                                 } else {
@@ -860,25 +835,6 @@ impl Backend for Client {
             self.notif_sender = Some(notif);
         }
 
-        // Check if we're in debug mode
-        if let Some(ref url) = self.backend_url {
-            if url == "debug" {
-                // Mock auth: accept dummy token "123456"
-                if code.trim() == "123456" {
-                    *self.token.lock().expect("poisoned") = Some("123456".to_string());
-                    if let Some(sender) = self.notif_sender.as_mut() {
-                        let _ = sender.send(Notification::LoginSuccess);
-                    }
-                } else {
-                    // Invalid code in debug mode
-                    if let Some(sender) = self.notif_sender.as_mut() {
-                        let _ = sender.send(Notification::LoginFail);
-                    }
-                }
-                return;
-            }
-        }
-
         let notif_sender = self.notif_sender.clone();
         let auth_client_shared = Arc::clone(&self.auth_client);
         let network_dir = self.network_dir.clone();
@@ -886,7 +842,8 @@ impl Backend for Client {
         let token_shared = Arc::clone(&self.token);
 
         thread::spawn(move || {
-            let result = block_on(async {
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            let result = rt.block_on(async {
                 // Get auth client
                 let auth_client = {
                     let client_guard = auth_client_shared.lock().unwrap();
@@ -991,14 +948,6 @@ impl Backend for Client {
     }
 
     fn close(&mut self) {
-        // DEBUG: Close dummy server if it exists
-        if let Some(shutdown) = self.dummy_server_shutdown.take() {
-            let _ = shutdown.send(());
-        }
-        if let Some(handle) = self.dummy_server_handle.take() {
-            let _ = handle.join();
-        }
-
         if !self.connected.load(Ordering::Relaxed) {
             return;
         }
@@ -1534,6 +1483,7 @@ mod tests {
                     "alias": "Main Wallet",
                     "org": "550e8400-e29b-41d4-a716-446655440010",
                     "owner": "550e8400-e29b-41d4-a716-446655440030",
+                    "owner_email": "owner@example.com",
                     "status": "Created",
                     "template": {
                         "keys": {
@@ -1605,6 +1555,7 @@ mod tests {
                     "alias": "Simple Wallet",
                     "org": "550e8400-e29b-41d4-a716-446655440010",
                     "owner": "550e8400-e29b-41d4-a716-446655440030",
+                    "owner_email": "owner@example.com",
                     "status": "Drafted"
                 }
             }"#;
@@ -1856,6 +1807,7 @@ mod tests {
                     "alias": "Test Wallet",
                     "org": "550e8400-e29b-41d4-a716-446655440010",
                     "owner": "550e8400-e29b-41d4-a716-446655440030",
+                    "owner_email": "test@example.com",
                     "status": "InvalidStatus"
                 }
             }"#;
@@ -1904,6 +1856,7 @@ mod tests {
                     "alias": "Test Wallet",
                     "org": "550e8400-e29b-41d4-a716-446655440010",
                     "owner": "550e8400-e29b-41d4-a716-446655440030",
+                    "owner_email": "test@example.com",
                     "status": "Created",
                     "template": {
                         "keys": {
@@ -1963,6 +1916,7 @@ mod tests {
                 alias: "Test Wallet".to_string(),
                 org: "550e8400-e29b-41d4-a716-446655440010".to_string(),
                 owner: "550e8400-e29b-41d4-a716-446655440030".to_string(),
+                owner_email: "test@example.com".to_string(),
                 status_str: "Created".to_string(),
                 template: None,
             }

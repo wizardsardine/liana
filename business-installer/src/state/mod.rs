@@ -1,7 +1,7 @@
 use crossbeam::channel;
 
 use crate::{
-    backend::{init_client_with_test_data, Backend, Notification},
+    backend::{init_client, Backend, Notification},
     client::Client,
     state::app::AppState,
     views::{
@@ -42,7 +42,7 @@ impl State {
         Self {
             app: AppState::new(),
             views: views::ViewsState::new(),
-            backend: init_client_with_test_data(),
+            backend: init_client(),
             current_view: View::Login,
         }
     }

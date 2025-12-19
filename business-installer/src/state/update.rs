@@ -1,6 +1,6 @@
 use super::{app::AppState, message::Msg, views, State, View};
 use crate::backend::{Backend, Error, Notification, UserRole, Wallet, WalletStatus, BACKEND_RECV};
-use crate::client::{BACKEND_URL, PROTOCOL_VERSION};
+use crate::client::{PROTOCOL_VERSION, WS_URL};
 use crate::state::views::modals::{ConflictModalState, ConflictType};
 use iced::Task;
 use liana_connect::{Key, PolicyTemplate, SpendingPath, Timelock};
@@ -299,8 +299,8 @@ impl State {
             }
         }
 
-        // Auto-save for WSManager: push changes to server with status = Drafted
-        if matches!(self.app.current_user_role, Some(UserRole::WSManager)) {
+        // Auto-save for WSManager/Owner: push changes to server with status = Drafted
+        if matches!(self.app.current_user_role, Some(UserRole::WSManager) | Some(UserRole::Owner)) {
             if let Some(wallet) = self.build_wallet_from_app_state(WalletStatus::Drafted) {
                 self.backend.edit_wallet(wallet);
             }
@@ -332,8 +332,8 @@ impl State {
             }
             self.views.keys.edit_key = None;
 
-            // Auto-save for WSManager: push changes to server with status = Drafted
-            if matches!(self.app.current_user_role, Some(UserRole::WSManager)) {
+            // Auto-save for WSManager/Owner: push changes to server with status = Drafted
+            if matches!(self.app.current_user_role, Some(UserRole::WSManager) | Some(UserRole::Owner)) {
                 if let Some(wallet) = self.build_wallet_from_app_state(WalletStatus::Drafted) {
                     self.backend.edit_wallet(wallet);
                 }
@@ -412,9 +412,9 @@ impl State {
     fn on_template_delete_secondary_path(&mut self, path_index: usize) {
         if path_index < self.app.secondary_paths.len() {
             self.app.secondary_paths.remove(path_index);
-            
-            // Auto-save for WSManager: push changes to server with status = Drafted
-            if matches!(self.app.current_user_role, Some(UserRole::WSManager)) {
+
+            // Auto-save for WSManager/Owner: push changes to server with status = Drafted
+            if matches!(self.app.current_user_role, Some(UserRole::WSManager) | Some(UserRole::Owner)) {
                 if let Some(wallet) = self.build_wallet_from_app_state(WalletStatus::Drafted) {
                     self.backend.edit_wallet(wallet);
                 }
@@ -558,9 +558,9 @@ impl State {
             }
 
             self.views.paths.edit_path = None;
-            
-            // Auto-save for WSManager: push changes to server with status = Drafted
-            if matches!(self.app.current_user_role, Some(UserRole::WSManager)) {
+
+            // Auto-save for WSManager/Owner: push changes to server with status = Drafted
+            if matches!(self.app.current_user_role, Some(UserRole::WSManager) | Some(UserRole::Owner)) {
                 if let Some(wallet) = self.build_wallet_from_app_state(WalletStatus::Drafted) {
                     self.backend.edit_wallet(wallet);
                 }
@@ -702,16 +702,14 @@ impl State {
         self.current_view = View::OrgSelect;
         self.views.login.code.processing = false;
 
-        // Set the token for the WS connection
-        // TODO: In production, the token should come from the auth response
-        self.backend.set_token("auth-token".to_string());
+        // Token was already set by auth_code() after successful verify
 
         // Mark that we're intentionally reconnecting (old channel will close)
         self.app.reconnecting = true;
 
         // Connect WebSocket immediately after login success
         // This will establish the connection now that we have a token
-        let recv = self.backend.connect_ws(BACKEND_URL.to_string(), PROTOCOL_VERSION);
+        let recv = self.backend.connect_ws(WS_URL.to_string(), PROTOCOL_VERSION);
         
         // Update the global receiver for the subscription
         if let Some(receiver) = recv {
@@ -947,15 +945,17 @@ impl State {
                     let server_keys: std::collections::HashSet<u8> =
                         server_path.key_ids.iter().copied().collect();
                     let modal_threshold = modal.threshold.parse::<u8>().unwrap_or(0);
-                    let modal_timelock = modal
+                    // Convert modal timelock from display units to blocks for comparison
+                    let modal_timelock_blocks = modal
                         .timelock_value
                         .as_ref()
                         .and_then(|v| v.parse::<u64>().ok())
+                        .map(|v| modal.timelock_unit.to_blocks(v))
                         .unwrap_or(0);
 
                     if modal_keys != server_keys
                         || modal_threshold != server_path.threshold_n
-                        || modal_timelock != server_timelock.blocks
+                        || modal_timelock_blocks != server_timelock.blocks
                     {
                         self.views.modals.conflict = Some(ConflictModalState {
                             conflict_type: ConflictType::PathModified {

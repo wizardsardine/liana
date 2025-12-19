@@ -1,5 +1,5 @@
 use crate::{
-    client::BACKEND_URL,
+    client::AUTH_API_URL,
     state::{Msg, State},
     views::layout,
 };
@@ -40,7 +40,7 @@ pub fn login_email_view(state: &State) -> Element<'_, Msg> {
     ];
 
     // Debug mode hint
-    let debug_hint = if BACKEND_URL == "debug" {
+    let debug_hint = if AUTH_API_URL == "debug" {
         Some(
             Column::new()
                 .push(text::p2_regular("Debug mode - Test emails:").color(color::GREY_2))
