@@ -193,7 +193,7 @@ pub fn org_select_view(state: &State) -> Element<'_, Msg> {
         (3, 4),
         Some(current_user_email),
         role_badge,
-        "Organization",
+        &["Organization".to_string()],
         header_content,
         list_content,
         None, // footer_content

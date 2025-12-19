@@ -67,7 +67,7 @@ pub fn login_code_view(state: &State) -> Element<'_, Msg> {
         (2, 4),
         None,
         None, // No role badge during login
-        "Login",
+        &["Login".to_string()],
         content,
         true,
         Some(Msg::NavigateBack),

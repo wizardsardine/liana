@@ -65,5 +65,13 @@ pub fn login_email_view(state: &State) -> Element<'_, Msg> {
         .spacing(20)
         .padding(40);
 
-    layout((1, 4), None, None, "Login", content, true, None)
+    layout(
+        (1, 4),
+        None,
+        None,
+        &["Login".to_string()],
+        content,
+        true,
+        None,
+    )
 }

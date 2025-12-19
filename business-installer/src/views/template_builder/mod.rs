@@ -1,4 +1,7 @@
-use crate::state::{message::Msg, State};
+use crate::{
+    backend::Backend,
+    state::{message::Msg, State},
+};
 use iced::{Alignment, Length};
 use liana_connect::models::UserRole;
 use liana_ui::{component::button, icon, widget::*};
@@ -55,6 +58,21 @@ pub fn template_builder_view(state: &State) -> Element<'_, Msg> {
         None
     };
 
+    // Build breadcrumb: org_name > wallet_name > Template
+    let org_name = state
+        .app
+        .selected_org
+        .and_then(|org_id| state.backend.get_org(org_id))
+        .map(|org| org.name.clone())
+        .unwrap_or_else(|| "Organization".to_string());
+    let wallet_name = state
+        .app
+        .selected_wallet
+        .and_then(|wallet_id| state.backend.get_wallet(wallet_id))
+        .map(|wallet| wallet.alias.clone())
+        .unwrap_or_else(|| "Wallet".to_string());
+    let breadcrumb = vec![org_name, wallet_name, "Template".to_string()];
+
     // Empty header content - the visualization goes directly in the scrollable area
     let header_content: Element<'_, Msg> = Column::new().into();
 
@@ -62,7 +80,7 @@ pub fn template_builder_view(state: &State) -> Element<'_, Msg> {
         (0, 0), // No progress indicator for template builder
         Some(current_user_email),
         role_badge,
-        "Template Builder",
+        &breadcrumb,
         header_content,
         visualization,
         Some(footer_content),

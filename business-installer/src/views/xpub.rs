@@ -8,13 +8,20 @@ use liana_ui::{component::text, widget::*};
 use super::layout;
 
 pub fn xpub_view(state: &State) -> Element<'_, Msg> {
-    // Get wallet name if available
+    // Build breadcrumb: org_name > wallet_name > Key Information
+    let org_name = state
+        .app
+        .selected_org
+        .and_then(|org_id| state.backend.get_org(org_id))
+        .map(|org| org.name.clone())
+        .unwrap_or_else(|| "Organization".to_string());
     let wallet_name = state
         .app
         .selected_wallet
         .and_then(|id| state.backend.get_wallet(id))
         .map(|w| w.alias.clone())
         .unwrap_or_else(|| "Wallet".to_string());
+    let breadcrumb = vec![org_name, wallet_name.clone(), "Key Information".to_string()];
 
     let content = Column::new()
         .spacing(30)
@@ -36,7 +43,7 @@ pub fn xpub_view(state: &State) -> Element<'_, Msg> {
         (0, 0), // No progress indicator for this view
         Some(&state.views.login.email.form.value),
         None, // No role badge needed here
-        "Key Information",
+        &breadcrumb,
         content,
         true,
         Some(Msg::NavigateBack),

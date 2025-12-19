@@ -1,6 +1,9 @@
 pub mod modal;
 
-use crate::state::{Msg, State};
+use crate::{
+    backend::Backend,
+    state::{Msg, State},
+};
 use iced::{
     widget::{
         button::{Status, Style},
@@ -149,11 +152,26 @@ pub fn keys_view(state: &State) -> Element<'_, Msg> {
         None
     };
 
+    // Build breadcrumb: org_name > wallet_name > Keys
+    let org_name = state
+        .app
+        .selected_org
+        .and_then(|org_id| state.backend.get_org(org_id))
+        .map(|org| org.name.clone())
+        .unwrap_or_else(|| "Organization".to_string());
+    let wallet_name = state
+        .app
+        .selected_wallet
+        .and_then(|wallet_id| state.backend.get_wallet(wallet_id))
+        .map(|wallet| wallet.alias.clone())
+        .unwrap_or_else(|| "Wallet".to_string());
+    let breadcrumb = vec![org_name, wallet_name, "Keys".to_string()];
+
     layout_with_scrollable_list(
         (0, 0), // No progress indicator
         Some(current_user_email),
         role_badge,
-        "Manage Keys",
+        &breadcrumb,
         header_content,
         keys_list,
         None, // No footer needed

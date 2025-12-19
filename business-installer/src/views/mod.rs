@@ -27,11 +27,28 @@ use liana_ui::{
 
 const EMAIL_HEADER_SPACER: u16 = 30;
 
-fn layout<'a>(
+/// Create a breadcrumb element from path segments.
+/// Renders as "Segment1 > Segment2 > Segment3" with styled separators.
+/// All segments have the same font size (h3), with `>` separators in secondary style.
+fn breadcrumb_header<'a>(segments: &[String]) -> Element<'a, Msg> {
+    let mut row = Row::new().spacing(8).align_y(Alignment::Center);
+
+    for (i, segment) in segments.iter().enumerate() {
+        if i > 0 {
+            // Add separator
+            row = row.push(text::h3(">").style(theme::text::secondary));
+        }
+        row = row.push(text::h3(segment));
+    }
+
+    row.into()
+}
+
+pub fn layout<'a>(
     progress: (usize, usize),
     email: Option<&'a str>,
     role_badge: Option<&'static str>, // Show role badge before email (e.g., "Manager" for WSManager)
-    title: &'static str,
+    breadcrumb: &[String],
     content: impl Into<Element<'a, Msg>>,
     padding_left: bool,
     previous_message: Option<Msg>,
@@ -70,7 +87,7 @@ fn layout<'a>(
     let header = Row::new()
         .align_y(Alignment::Center)
         .push(Container::new(left_button).center_x(Length::FillPortion(2)))
-        .push(Container::new(text::h3(title)).width(Length::FillPortion(8)))
+        .push(Container::new(breadcrumb_header(breadcrumb)).width(Length::FillPortion(8)))
         .push_maybe(if progress.1 > 0 {
             Some(
                 Container::new(text::text(format!("{} | {}", progress.0, progress.1)))
@@ -112,11 +129,11 @@ fn layout<'a>(
 /// Layout variant with fixed header content and a scrollable list section.
 /// The header_content stays fixed at top, only the list_content scrolls.
 /// An optional footer_content can be placed below the scrollable area.
-fn layout_with_scrollable_list<'a>(
+pub fn layout_with_scrollable_list<'a>(
     progress: (usize, usize),
     email: Option<&'a str>,
     role_badge: Option<&'static str>,
-    title: &'static str,
+    breadcrumb: &[String],
     header_content: impl Into<Element<'a, Msg>>,
     list_content: impl Into<Element<'a, Msg>>,
     footer_content: Option<Element<'a, Msg>>,
@@ -154,7 +171,7 @@ fn layout_with_scrollable_list<'a>(
     let header = Row::new()
         .align_y(Alignment::Center)
         .push(Container::new(left_button).center_x(Length::FillPortion(2)))
-        .push(Container::new(text::h3(title)).width(Length::FillPortion(8)))
+        .push(Container::new(breadcrumb_header(breadcrumb)).width(Length::FillPortion(8)))
         .push_maybe(if progress.1 > 0 {
             Some(
                 Container::new(text::text(format!("{} | {}", progress.0, progress.1)))

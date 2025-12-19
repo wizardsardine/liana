@@ -54,16 +54,38 @@ Use the `layout()` helper in `views/mod.rs` for consistent page structure:
 
 ```rust
 pub fn my_view(state: &State) -> Element<'_, Message> {
+    // Build breadcrumb path
+    let breadcrumb = vec![
+        "Organization".to_string(),
+        "Wallet".to_string(),
+        "Current View".to_string(),
+    ];
+
     layout(
         (current_step, total_steps),  // Progress indicator (0, 0) to hide
         Some("user@email.com"),       // Email display (None to hide)
-        "Page Title",                 // Header title
+        None,                         // Role badge (Some("WS Manager") to show)
+        &breadcrumb,                  // Breadcrumb path segments
         content,                      // Main content Element
         true,                         // padding_left: center content
         Some(Message::NavigateBack),  // Previous button action (None to disable)
     )
 }
 ```
+
+### Breadcrumb Navigation
+
+The header displays a breadcrumb path showing the navigation hierarchy:
+- All segments use the same font size (h3 style)
+- Segments are separated by `>` in secondary/muted style
+- Example: `Acme Corp > My Wallet > Template`
+
+Common patterns:
+- Login: `["Login"]`
+- Org Select: `["Organization"]`
+- Wallet Select: `[org_name, "Wallet"]`
+- Template Builder: `[org_name, wallet_name, "Template"]`
+- Keys Management: `[org_name, wallet_name, "Keys"]`
 
 ### Layout Structure
 
@@ -72,7 +94,7 @@ pub fn my_view(state: &State) -> Element<'_, Message> {
 |                                    [user@email.com]      |
 +----------------------------------------------------------+
 |                                                          |
-| [< Previous]        Page Title              [1 | 3]      |
+| [< Previous]   Org > Wallet > Current View     [1 | 3]   |
 |                                                          |
 +----------------------------------------------------------+
 |                                                          |
