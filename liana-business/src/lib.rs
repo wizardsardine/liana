@@ -5,5 +5,4 @@
 //! installer within the liana-gui application.
 
 // Re-export the main public API from business-installer
-pub use business_installer::BusinessInstaller;
-pub use business_installer::Message;
+pub use business_installer::{BusinessInstaller, Message};

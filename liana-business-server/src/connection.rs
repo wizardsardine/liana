@@ -19,7 +19,6 @@ pub type ClientId = Uuid;
 pub enum Notification {
     Org(Uuid),
     Wallet(Uuid),
-    User(Uuid),
 }
 
 /// Manages a single client connection
@@ -38,7 +37,8 @@ impl ClientConnection {
         broadcast_sender: Sender<(ClientId, Notification)>,
     ) -> Result<Self, String> {
         let id = Uuid::new_v4();
-        let mut ws_stream = accept(stream).map_err(|e| format!("Failed to accept WebSocket: {}", e))?;
+        let mut ws_stream =
+            accept(stream).map_err(|e| format!("Failed to accept WebSocket: {}", e))?;
 
         log::info!("New client connection: {}", id);
 
@@ -69,12 +69,16 @@ impl ClientConnection {
                 error: WssError {
                     code: "INVALID_TOKEN".to_string(),
                     message: "Invalid authentication token".to_string(),
-                    request_id: protocol_request["request_id"].as_str().map(|s| s.to_string()),
+                    request_id: protocol_request["request_id"]
+                        .as_str()
+                        .map(|s| s.to_string()),
                 },
             };
             let ws_msg = response_to_ws_message(
                 &error_response,
-                protocol_request["request_id"].as_str().map(|s| s.to_string()),
+                protocol_request["request_id"]
+                    .as_str()
+                    .map(|s| s.to_string()),
             );
             let _ = ws_stream.send(ws_msg);
             return Err("Invalid token".to_string());
@@ -186,12 +190,16 @@ impl ClientConnection {
                 error: WssError {
                     code: "INVALID_TOKEN".to_string(),
                     message: "Invalid authentication token".to_string(),
-                    request_id: protocol_request["request_id"].as_str().map(|s| s.to_string()),
+                    request_id: protocol_request["request_id"]
+                        .as_str()
+                        .map(|s| s.to_string()),
                 },
             };
             let ws_msg = response_to_ws_message(
                 &error_response,
-                protocol_request["request_id"].as_str().map(|s| s.to_string()),
+                protocol_request["request_id"]
+                    .as_str()
+                    .map(|s| s.to_string()),
             );
             let _ = ws_stream.send(ws_msg);
             return Err("Invalid token".to_string());
@@ -371,13 +379,19 @@ fn handle_client_messages(
                         log::info!("[REQ] Processing request type: {:?}", request);
                         let notification = match &request {
                             Request::EditWallet { wallet } => {
-                                log::info!("[REQ] EditWallet -> broadcasting Wallet({})", wallet.id);
+                                log::info!(
+                                    "[REQ] EditWallet -> broadcasting Wallet({})",
+                                    wallet.id
+                                );
                                 Some(Notification::Wallet(wallet.id))
                             }
                             Request::CreateWallet { .. } => {
                                 // Extract wallet ID from response
                                 if let Response::Wallet { wallet } = &response {
-                                    log::info!("[REQ] CreateWallet -> broadcasting Wallet({})", wallet.id);
+                                    log::info!(
+                                        "[REQ] CreateWallet -> broadcasting Wallet({})",
+                                        wallet.id
+                                    );
                                     Some(Notification::Wallet(Uuid::parse_str(&wallet.id).unwrap()))
                                 } else {
                                     None
@@ -388,7 +402,10 @@ fn handle_client_messages(
                                 Some(Notification::Wallet(*wallet_id))
                             }
                             Request::RemoveWalletFromOrg { org_id, .. } => {
-                                log::info!("[REQ] RemoveWalletFromOrg -> broadcasting Org({})", org_id);
+                                log::info!(
+                                    "[REQ] RemoveWalletFromOrg -> broadcasting Org({})",
+                                    org_id
+                                );
                                 Some(Notification::Org(*org_id))
                             }
                             _ => {
@@ -531,8 +548,9 @@ fn parse_request(msg_type: &str, payload: &serde_json::Value) -> Result<Request,
             })
         }
         "edit_wallet" => {
-            let wallet_json: liana_connect::WalletJson = serde_json::from_value(payload["wallet"].clone())
-                .map_err(|e| format!("Invalid wallet: {}", e))?;
+            let wallet_json: liana_connect::WalletJson =
+                serde_json::from_value(payload["wallet"].clone())
+                    .map_err(|e| format!("Invalid wallet: {}", e))?;
             let wallet: Wallet = wallet_json
                 .try_into()
                 .map_err(|e| format!("Failed to convert wallet: {}", e))?;
@@ -544,15 +562,11 @@ fn parse_request(msg_type: &str, payload: &serde_json::Value) -> Result<Request,
                 .ok_or("Missing 'wallet_id' field")?
                 .parse()
                 .map_err(|e| format!("Invalid wallet UUID: {}", e))?;
-            let key_id = payload["key_id"]
-                .as_u64()
-                .ok_or("Missing 'key_id' field")? as u8;
+            let key_id = payload["key_id"].as_u64().ok_or("Missing 'key_id' field")? as u8;
             let xpub: Option<DescriptorPublicKey> = if payload["xpub"].is_null() {
                 None
             } else {
-                let xpub_str = payload["xpub"]
-                    .as_str()
-                    .ok_or("Invalid 'xpub' field")?;
+                let xpub_str = payload["xpub"].as_str().ok_or("Invalid 'xpub' field")?;
                 Some(
                     xpub_str
                         .parse()

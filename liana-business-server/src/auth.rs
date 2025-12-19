@@ -6,7 +6,6 @@ use std::collections::HashMap;
 #[derive(Debug, Clone)]
 pub struct TestUser {
     pub email: String,
-    pub name: String,
     pub role: UserRole,
     pub otp_code: String,
 }
@@ -26,7 +25,11 @@ impl AuthManager {
         let test_users = vec![
             ("ws@example.com", "WS Manager", UserRole::WSManager),
             ("owner@example.com", "Wallet Owner", UserRole::Owner),
-            ("user@example.com", "Participant User", UserRole::Participant),
+            (
+                "user@example.com",
+                "Participant User",
+                UserRole::Participant,
+            ),
             (
                 "shared-owner@example.com",
                 "Shared Wallet Owner",
@@ -36,13 +39,12 @@ impl AuthManager {
             ("alice@example.com", "Alice", UserRole::Participant),
         ];
 
-        for (email, name, role) in test_users {
+        for (email, _name, role) in test_users {
             let otp_code = format!("{:06}", rng.gen_range(100000..999999));
             users.insert(
                 email.to_string(),
                 TestUser {
                     email: email.to_string(),
-                    name: name.to_string(),
                     role,
                     otp_code,
                 },

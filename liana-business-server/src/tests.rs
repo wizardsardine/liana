@@ -1,6 +1,5 @@
 #[cfg(test)]
-mod tests {
-    use liana_connect::{Request, Response};
+mod testss {
     use serde_json::json;
     use std::net::TcpStream;
     use std::thread;
@@ -10,7 +9,7 @@ mod tests {
 
     fn start_test_server(port: u16) -> thread::JoinHandle<()> {
         thread::spawn(move || {
-            let mut server = crate::server::Server::new("127.0.0.1", port).unwrap();
+            let mut server = crate::server::Server::new("127.0.0.1", 0, port).unwrap();
             // Server will run indefinitely
             let _ = server.run();
         })
@@ -148,9 +147,7 @@ mod tests {
             }
         });
 
-        client1
-            .send(Message::Text(fetch_org_msg.to_string()))
-            .ok();
+        client1.send(Message::Text(fetch_org_msg.to_string())).ok();
         let _ = client1.read(); // Read response
 
         // Both clients should still be connected
@@ -230,4 +227,3 @@ mod tests {
         socket.close(None).ok();
     }
 }
-

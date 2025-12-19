@@ -2,8 +2,7 @@ pub mod conflict;
 pub mod warning;
 
 use crate::state::State;
-use liana_ui::widget::modal::Modal;
-use liana_ui::widget::Element;
+use liana_ui::widget::{modal::Modal, Element};
 
 use crate::state::Msg;
 

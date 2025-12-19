@@ -15,7 +15,7 @@ pub enum ConflictType {
     /// Key was modified by another user while modal was open
     KeyModified { key_id: u8, wallet_id: Uuid },
     /// Key was deleted by another user while modal was open
-    KeyDeleted { key_id: u8, wallet_id: Uuid },
+    KeyDeleted,
     /// Path was modified by another user while modal was open
     PathModified {
         is_primary: bool,
@@ -23,13 +23,9 @@ pub enum ConflictType {
         wallet_id: Uuid,
     },
     /// Path was deleted by another user while modal was open
-    PathDeleted {
-        is_primary: bool,
-        path_index: usize,
-        wallet_id: Uuid,
-    },
+    PathDeleted,
     /// Key used in currently edited path was deleted
-    KeyInPathDeleted { key_id: u8, key_alias: String },
+    KeyInPathDeleted,
 }
 
 impl ConflictModalState {

@@ -129,6 +129,7 @@ pub fn layout<'a>(
 /// Layout variant with fixed header content and a scrollable list section.
 /// The header_content stays fixed at top, only the list_content scrolls.
 /// An optional footer_content can be placed below the scrollable area.
+#[allow(clippy::too_many_arguments)]
 pub fn layout_with_scrollable_list<'a>(
     progress: (usize, usize),
     email: Option<&'a str>,
@@ -217,7 +218,11 @@ pub fn layout_with_scrollable_list<'a>(
         Row::new()
             .push(Space::with_width(Length::FillPortion(2)))
             .push(
-                Container::new(content).width(Length::FillPortion(if padding_left { 8 } else { 10 })),
+                Container::new(content).width(Length::FillPortion(if padding_left {
+                    8
+                } else {
+                    10
+                })),
             )
             .push_maybe(if padding_left {
                 Some(Space::with_width(Length::FillPortion(2)))

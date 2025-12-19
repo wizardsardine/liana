@@ -1,20 +1,24 @@
-use std::collections::BTreeMap;
-use std::net::TcpListener;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
-use std::thread;
-use std::time::{Duration, Instant};
+use std::{
+    collections::BTreeMap,
+    net::TcpListener,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    },
+    thread,
+    time::{Duration, Instant},
+};
 
 use crossbeam::channel;
-use liana_gui::dir::NetworkDirectory;
-use liana_gui::services::connect::client::auth::AuthClient;
-use liana_gui::services::connect::client::cache::{
-    filter_connect_cache, update_connect_cache, Account, ConnectCache,
+use liana_gui::{
+    dir::NetworkDirectory,
+    services::connect::client::{
+        auth::AuthClient,
+        cache::{filter_connect_cache, update_connect_cache, Account, ConnectCache},
+        ServiceConfig,
+    },
 };
-use liana_gui::services::connect::client::ServiceConfig;
-use miniscript::bitcoin::Network;
-use miniscript::DescriptorPublicKey;
-use reqwest;
+use miniscript::{bitcoin::Network, DescriptorPublicKey};
 use serde_json::json;
 use tungstenite::{accept, Message as WsMessage};
 use uuid::Uuid;
@@ -40,7 +44,10 @@ fn get_service_config_blocking(_network: Network) -> Result<ServiceConfig, reqwe
     println!("[get_service_config] Fetching from: {}", url);
 
     let response = client.get(&url).send()?;
-    println!("[get_service_config] Response status: {}", response.status());
+    println!(
+        "[get_service_config] Response status: {}",
+        response.status()
+    );
 
     let res: ServiceConfig = response.json()?;
     println!("[get_service_config] Parsed config OK");
@@ -212,10 +219,7 @@ impl Client {
     /// - If refresh fails, add email to remove list
     pub fn validate_all_cached_tokens(
         &self,
-    ) -> (
-        Vec<crate::state::views::login::CachedAccount>,
-        Vec<String>,
-    ) {
+    ) -> (Vec<crate::state::views::login::CachedAccount>, Vec<String>) {
         use crate::state::views::login::CachedAccount;
 
         let network_dir = match &self.network_dir {
@@ -263,7 +267,10 @@ impl Client {
                         account.email.clone(),
                     );
 
-                    match auth_client.refresh_token(&account.tokens.refresh_token).await {
+                    match auth_client
+                        .refresh_token(&account.tokens.refresh_token)
+                        .await
+                    {
                         Ok(new_tokens) => {
                             // Update cache with refreshed tokens
                             let updated = match update_connect_cache(
@@ -597,7 +604,10 @@ fn handle_wss_message(
     println!("[CLIENT] Received WSS message");
     let (response, request_id) = Response::from_ws_message(msg)
         .map_err(|e| format!("Failed to convert WSS message: {}", e))?;
-    println!("[CLIENT] Parsed response: {:?}, request_id: {:?}", response, request_id);
+    println!(
+        "[CLIENT] Parsed response: {:?}, request_id: {:?}",
+        response, request_id
+    );
 
     // Handle error responses first - they're always valid and we remove from cache
     if let Response::Error { error } = &response {
@@ -894,14 +904,20 @@ impl Backend for Client {
         let auth_client_2 = self.auth_client.clone();
 
         thread::spawn(move || {
-            println!("[auth_request] Starting auth request for email: {}", email_clone);
+            println!(
+                "[auth_request] Starting auth request for email: {}",
+                email_clone
+            );
             let rt = tokio::runtime::Runtime::new().unwrap();
             let result = rt.block_on(async {
                 // Get service config
                 println!("[auth_request] Fetching service config...");
                 let config = match get_service_config_blocking(network) {
                     Ok(cfg) => {
-                        println!("[auth_request] Got config: auth_api_url={}", cfg.auth_api_url);
+                        println!(
+                            "[auth_request] Got config: auth_api_url={}",
+                            cfg.auth_api_url
+                        );
                         cfg
                     }
                     Err(e) => {
@@ -916,7 +932,11 @@ impl Backend for Client {
                 // Create auth client
                 println!("[auth_request] Creating auth client with:");
                 println!("[auth_request]   auth_api_url: {}", config.auth_api_url);
-                println!("[auth_request]   email: '{}' (len={})", email_clone, email_clone.len());
+                println!(
+                    "[auth_request]   email: '{}' (len={})",
+                    email_clone,
+                    email_clone.len()
+                );
                 println!("[auth_request]   email bytes: {:?}", email_clone.as_bytes());
                 let auth_client = AuthClient::new(
                     config.auth_api_url.clone(),

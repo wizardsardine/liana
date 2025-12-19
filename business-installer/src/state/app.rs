@@ -1,5 +1,4 @@
-use liana_connect::{Key, KeyType, PolicyTemplate, SpendingPath, Timelock};
-use liana_connect::models::UserRole;
+use liana_connect::{models::UserRole, Key, KeyType, PolicyTemplate, SpendingPath, Timelock};
 use std::collections::BTreeMap;
 use uuid::Uuid;
 
@@ -25,7 +24,8 @@ pub struct AppState {
 impl AppState {
     /// Sort secondary paths by timelock (ascending order)
     pub fn sort_secondary_paths(&mut self) {
-        self.secondary_paths.sort_by(|a, b| a.1.blocks.cmp(&b.1.blocks));
+        self.secondary_paths
+            .sort_by(|a, b| a.1.blocks.cmp(&b.1.blocks));
     }
 
     pub fn new() -> Self {

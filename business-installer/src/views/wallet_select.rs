@@ -3,7 +3,7 @@ use crate::{
     state::{Msg, State},
 };
 use iced::{
-    widget::{checkbox, row},
+    widget::{checkbox, row, Space},
     Alignment, Length,
 };
 use liana_ui::{
@@ -12,7 +12,6 @@ use liana_ui::{
     widget::*,
 };
 
-use iced::widget::Space;
 use uuid::Uuid;
 
 use super::{layout_with_scrollable_list, menu_entry};
