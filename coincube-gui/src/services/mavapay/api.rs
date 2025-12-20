@@ -134,6 +134,15 @@ impl MavapayUnitCurrency {
             MavapayUnitCurrency::BitcoinSatoshi => "Satoshi",
         }
     }
+
+    pub fn symbol(&self) -> &'static str {
+        match self {
+            MavapayUnitCurrency::KenyanShillingCent => "KSh",
+            MavapayUnitCurrency::SouthAfricanRandCent => "R",
+            MavapayUnitCurrency::NigerianNairaKobo => "₦",
+            MavapayUnitCurrency::BitcoinSatoshi => "₿",
+        }
+    }
 }
 
 impl From<MavapayUnitCurrency> for MavapayCurrency {

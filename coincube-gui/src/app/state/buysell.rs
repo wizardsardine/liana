@@ -153,6 +153,11 @@ impl State for BuySellPanel {
                 )));
             }
 
+            // Forward clipboard action to parent message handler
+            BuySellMessage::Clipboard(text) => {
+                return Task::done(Message::View(ViewMessage::Clipboard(text)));
+            }
+
             // initialization flow: for creating a new address and setting panel mode (buy or sell)
             BuySellMessage::SelectBuyOrSell(bs) => {
                 if let BuySellFlowState::Initialization {

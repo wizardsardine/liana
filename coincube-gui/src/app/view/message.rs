@@ -204,6 +204,9 @@ pub enum BuySellMessage {
 
     // Mavapay specific messages
     Mavapay(crate::services::mavapay::MavapayMessage),
+
+    // Clipboard action (forwarded to parent Message::Clipboard)
+    Clipboard(String),
 }
 
 #[derive(Debug, Clone)]
