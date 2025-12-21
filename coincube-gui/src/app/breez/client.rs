@@ -11,6 +11,8 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+use iced::futures::{SinkExt, Stream};
+
 use super::{BreezConfig, BreezError};
 
 /// Wrapper around HotSigner that implements Breez SDK's Signer trait
@@ -265,11 +267,84 @@ impl BreezClient {
             .map_err(|e| BreezError::Sdk(e.to_string()))
     }
 
+    pub async fn list_payments(
+        &self,
+        limit: Option<u32>,
+    ) -> Result<Vec<breez::Payment>, BreezError> {
+        self.sdk
+            .list_payments(&breez::ListPaymentsRequest {
+                filters: None,
+                states: None,
+                from_timestamp: None,
+                to_timestamp: None,
+                offset: None,
+                limit,
+                details: None,
+                sort_ascending: Some(false), // Most recent first
+            })
+            .await
+            .map_err(|e| BreezError::Sdk(e.to_string()))
+    }
+
     pub fn active_signer(&self) -> std::sync::Arc<std::sync::Mutex<HotSigner>> {
         self.signer.clone()
     }
 
     pub fn network(&self) -> Network {
         self.network
+    }
+
+    pub fn subscription(&self) -> iced::Subscription<breez::SdkEvent> {
+        iced::Subscription::run_with(
+            BreezSubscriptionState {
+                client: self.clone(),
+            },
+            make_breez_stream,
+        )
+    }
+}
+
+struct BreezSubscriptionState {
+    client: BreezClient,
+}
+
+impl std::hash::Hash for BreezSubscriptionState {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.client.network.hash(state);
+    }
+}
+
+fn make_breez_stream(state: &BreezSubscriptionState) -> impl Stream<Item = breez::SdkEvent> {
+    let client = state.client.clone();
+    iced::stream::channel(
+        100,
+        move |mut output: iced::futures::channel::mpsc::Sender<breez::SdkEvent>| async move {
+            let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
+            let listener = BreezEventListener { sender };
+
+            if let Ok(id) = client.sdk.add_event_listener(Box::new(listener)).await {
+                loop {
+                    if let Some(event) = receiver.recv().await {
+                        let _ = output.send(event).await;
+                    } else {
+                        break;
+                    }
+                }
+
+                let _ = client.sdk.remove_event_listener(id).await;
+            }
+
+            std::future::pending().await
+        },
+    )
+}
+
+struct BreezEventListener {
+    sender: tokio::sync::mpsc::UnboundedSender<breez::SdkEvent>,
+}
+
+impl breez::EventListener for BreezEventListener {
+    fn on_event(&self, e: breez::SdkEvent) {
+        let _ = self.sender.send(e);
     }
 }
