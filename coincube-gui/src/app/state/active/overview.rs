@@ -7,11 +7,11 @@ use coincube_ui::widget::*;
 use iced::Task;
 
 use crate::app::menu::{ActiveSubMenu, Menu};
-use crate::app::state::active::send::format_time_ago;
 use crate::app::state::{redirect, State};
 use crate::app::{breez::BreezClient, cache::Cache};
 use crate::app::{message::Message, view, wallet::Wallet};
 use crate::daemon::Daemon;
+use crate::utils::format_time_ago;
 
 /// ActiveOverview
 pub struct ActiveOverview {
@@ -31,36 +31,48 @@ impl ActiveOverview {
         }
     }
 
-    fn load_data(&self) -> Task<Message> {
+    fn load_balance(&self) -> Task<Message> {
         let breez_client = self.breez_client.clone();
+
         Task::perform(
             async move {
-                let info = breez_client.info().await.ok();
+                let info = breez_client.info().await;
+                let payments = breez_client.list_payments(Some(2)).await;
+
                 let balance = info
                     .as_ref()
-                    .map(|i| {
+                    .map(|info| {
                         Amount::from_sat(
-                            i.wallet_info.balance_sat + i.wallet_info.pending_receive_sat
-                                - i.wallet_info.pending_send_sat,
+                            (info.wallet_info.balance_sat + info.wallet_info.pending_receive_sat)
+                                .saturating_sub(info.wallet_info.pending_send_sat),
                         )
                     })
-                    .unwrap_or(Amount::from_sat(0));
+                    .unwrap_or(Amount::ZERO);
 
-                let payments = breez_client
-                    .list_payments(Some(2))
-                    .await
-                    .ok()
-                    .unwrap_or(Vec::new());
+                let error = match (&info, &payments) {
+                    (Err(_), Err(_)) => Some("Couldn't fetch balance or transactions".to_string()),
+                    (Err(_), _) => Some("Couldn't fetch account balance".to_string()),
+                    (_, Err(_)) => Some("Couldn't fetch recent transactions".to_string()),
+                    _ => None,
+                };
 
-                (balance, payments)
+                let payments = payments.unwrap_or_default();
+
+                (balance, payments, error)
             },
-            |(balance, recent_payment)| {
-                Message::View(view::Message::ActiveOverview(
-                    view::ActiveOverviewMessage::DataLoaded {
-                        balance,
-                        recent_payment,
-                    },
-                ))
+            |(balance, recent_payment, error)| {
+                if let Some(err) = error {
+                    Message::View(view::Message::ActiveOverview(
+                        view::ActiveOverviewMessage::Error(err),
+                    ))
+                } else {
+                    Message::View(view::Message::ActiveOverview(
+                        view::ActiveOverviewMessage::DataLoaded {
+                            balance,
+                            recent_payment,
+                        },
+                    ))
+                }
             },
         )
     }
@@ -112,28 +124,24 @@ impl State for ActiveOverview {
                             .map(|payment| {
                                 let amount = Amount::from_sat(payment.amount_sat);
                                 let status = payment.status;
-                                let mut description = String::from("Zap!");
                                 let time_ago = format_time_ago(payment.timestamp);
                                 let fiat_amount = fiat_converter
                                     .as_ref()
                                     .map(|c: &view::FiatAmountConverter| c.convert(amount));
 
-                                let d = match &payment.details {
+                                let desc = match &payment.details {
                                     PaymentDetails::Lightning { description, .. }
                                     | PaymentDetails::Liquid { description, .. }
                                     | PaymentDetails::Bitcoin { description, .. } => description,
                                 };
 
-                                if !d.is_empty() {
-                                    description = format!("{} ({})", description, d);
-                                }
                                 let is_incoming = matches!(
                                     payment.payment_type,
                                     breez_sdk_liquid::prelude::PaymentType::Receive
                                 );
                                 let sign = if is_incoming { "+" } else { "-" };
                                 view::active::RecentTransaction {
-                                    description,
+                                    description: desc.to_owned(),
                                     time_ago,
                                     amount,
                                     fiat_amount,
@@ -154,10 +162,13 @@ impl State for ActiveOverview {
                         | SdkEvent::PaymentSucceeded { .. }
                         | SdkEvent::PaymentFailed { .. }
                         | SdkEvent::PaymentWaitingConfirmation { .. } => {
-                            return self.load_data();
+                            return self.load_balance();
                         }
                         _ => {}
                     }
+                }
+                view::ActiveOverviewMessage::Error(err) => {
+                    self.error = Some(err);
                 }
             }
         }
@@ -177,6 +188,6 @@ impl State for ActiveOverview {
         _daemon: Arc<dyn Daemon + Sync + Send>,
         _wallet: Arc<Wallet>,
     ) -> Task<Message> {
-        self.load_data()
+        self.load_balance()
     }
 }

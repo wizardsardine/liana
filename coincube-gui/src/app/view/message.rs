@@ -226,6 +226,7 @@ pub enum ActiveOverviewMessage {
         recent_payment: Vec<breez_sdk_liquid::prelude::Payment>,
     },
     BreezEvent(breez_sdk_liquid::prelude::SdkEvent),
+    Error(String),
 }
 
 #[derive(Debug, Clone)]
@@ -238,6 +239,7 @@ pub enum ActiveSendMessage {
         recent_payment: Vec<breez_sdk_liquid::prelude::Payment>,
     },
     BreezEvent(breez_sdk_liquid::prelude::SdkEvent),
+    Error(String),
 }
 
 #[derive(Debug, Clone)]

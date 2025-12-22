@@ -41,3 +41,29 @@ pub fn default_derivation_path(network: Network) -> DerivationPath {
     })
     .unwrap()
 }
+
+pub fn format_time_ago(timestamp: u32) -> String {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as u32;
+
+    let diff = now.saturating_sub(timestamp);
+
+    if diff < 60 {
+        "just now".to_string()
+    } else if diff < 3600 {
+        let minutes = diff / 60;
+        format!(
+            "{} minute{} ago",
+            minutes,
+            if minutes == 1 { "" } else { "s" }
+        )
+    } else if diff < 86400 {
+        let hours = diff / 3600;
+        format!("{} hour{} ago", hours, if hours == 1 { "" } else { "s" })
+    } else {
+        let days = diff / 86400;
+        format!("{} day{} ago", days, if days == 1 { "" } else { "s" })
+    }
+}

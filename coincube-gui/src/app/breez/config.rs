@@ -30,13 +30,17 @@ impl BreezConfig {
                 "https://blockstream.info/liquid/api",
                 "https://blockstream.info/api",
             ),
-            bitcoin::Network::Testnet | bitcoin::Network::Testnet4 | bitcoin::Network::Regtest => {
-                ("http://localhost:4003/api", "http://localhost:4002/api")
-            }
+            bitcoin::Network::Testnet => (
+                "https://blockstream.info/liquidtestnet/api",
+                "https://blockstream.info/testnet/api",
+            ),
             bitcoin::Network::Signet => (
                 "https://blockstream.info/liquidtestnet/api",
                 "https://blockstream.info/signet/api",
             ),
+            bitcoin::Network::Regtest | bitcoin::Network::Testnet4 => {
+                ("http://localhost:4003/api", "http://localhost:4002/api")
+            }
         };
 
         breez::Config {

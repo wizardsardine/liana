@@ -11,6 +11,7 @@ use crate::app::state::{redirect, State};
 use crate::app::{breez::BreezClient, cache::Cache};
 use crate::app::{message::Message, view, wallet::Wallet};
 use crate::daemon::Daemon;
+use crate::utils::format_time_ago;
 
 /// ActiveSend manages the Lightning Network send interface
 pub struct ActiveSend {
@@ -32,36 +33,48 @@ impl ActiveSend {
         }
     }
 
-    fn load_data(&self) -> Task<Message> {
+    fn load_balance(&self) -> Task<Message> {
         let breez_client = self.breez_client.clone();
+
         Task::perform(
             async move {
-                let info = breez_client.info().await.ok();
+                let info = breez_client.info().await;
+                let payments = breez_client.list_payments(Some(2)).await;
+
                 let balance = info
                     .as_ref()
-                    .map(|i| {
+                    .map(|info| {
                         Amount::from_sat(
-                            i.wallet_info.balance_sat + i.wallet_info.pending_receive_sat
-                                - i.wallet_info.pending_send_sat,
+                            (info.wallet_info.balance_sat + info.wallet_info.pending_receive_sat)
+                                .saturating_sub(info.wallet_info.pending_send_sat),
                         )
                     })
-                    .unwrap_or(Amount::from_sat(0));
+                    .unwrap_or(Amount::ZERO);
 
-                let payments = breez_client
-                    .list_payments(Some(2))
-                    .await
-                    .ok()
-                    .unwrap_or(Vec::new());
+                let error = match (&info, &payments) {
+                    (Err(_), Err(_)) => Some("Couldn't fetch balance or transactions".to_string()),
+                    (Err(_), _) => Some("Couldn't fetch account balance".to_string()),
+                    (_, Err(_)) => Some("Couldn't fetch recent transactions".to_string()),
+                    _ => None,
+                };
 
-                (balance, payments)
+                let payments = payments.unwrap_or_default();
+
+                (balance, payments, error)
             },
-            |(balance, recent_payment)| {
-                Message::View(view::Message::ActiveSend(
-                    view::ActiveSendMessage::DataLoaded {
-                        balance,
-                        recent_payment,
-                    },
-                ))
+            |(balance, recent_payment, error)| {
+                if let Some(err) = error {
+                    Message::View(view::Message::ActiveSend(view::ActiveSendMessage::Error(
+                        err,
+                    )))
+                } else {
+                    Message::View(view::Message::ActiveSend(
+                        view::ActiveSendMessage::DataLoaded {
+                            balance,
+                            recent_payment,
+                        },
+                    ))
+                }
             },
         )
     }
@@ -98,33 +111,6 @@ impl State for ActiveSend {
                 }
                 view::ActiveSendMessage::Send => {
                     tracing::info!("Send payment to: {}", self.input.value);
-                    self.input = form::Value::default();
-                    let breez = self.breez_client.clone();
-                    let breez_clone = self.breez_client.clone();
-                    let balance_fetch = Task::perform(async move { breez.info().await }, |info| {
-                        log::info!("Get Info from SDK: {:?}", info.unwrap());
-                        Message::Tick
-                    });
-                    let invoice_gen = Task::perform(
-                        async move {
-                            breez_clone
-                                .receive_invoice(Some(8898), Some("Vanshul here".to_string()))
-                                .await
-                        },
-                        |res| {
-                            match res {
-                                Ok(response) => {
-                                    log::info!("Received response from the SDK: {:?}", response)
-                                }
-                                Err(err) => {
-                                    log::error!("Error while generating invoice: {:?}", err)
-                                }
-                            }
-                            Message::Tick
-                        },
-                    );
-
-                    return Task::batch(vec![balance_fetch, invoice_gen]);
                 }
                 view::ActiveSendMessage::History => {
                     return redirect(Menu::Active(ActiveSubMenu::Transactions(None)));
@@ -143,28 +129,24 @@ impl State for ActiveSend {
                             .map(|payment| {
                                 let amount = Amount::from_sat(payment.amount_sat);
                                 let status = payment.status;
-                                let mut description = String::from("Zap!");
                                 let time_ago = format_time_ago(payment.timestamp);
                                 let fiat_amount = fiat_converter
                                     .as_ref()
                                     .map(|c: &view::FiatAmountConverter| c.convert(amount));
 
-                                let d = match &payment.details {
+                                let desc = match &payment.details {
                                     PaymentDetails::Lightning { description, .. }
                                     | PaymentDetails::Liquid { description, .. }
                                     | PaymentDetails::Bitcoin { description, .. } => description,
                                 };
 
-                                if !d.is_empty() {
-                                    description = format!("{} ({})", description, d);
-                                }
                                 let is_incoming = matches!(
                                     payment.payment_type,
                                     breez_sdk_liquid::prelude::PaymentType::Receive
                                 );
                                 let sign = if is_incoming { "+" } else { "-" };
                                 view::active::RecentTransaction {
-                                    description,
+                                    description: desc.to_owned(),
                                     time_ago,
                                     amount,
                                     fiat_amount,
@@ -185,10 +167,13 @@ impl State for ActiveSend {
                         | SdkEvent::PaymentSucceeded { .. }
                         | SdkEvent::PaymentFailed { .. }
                         | SdkEvent::PaymentWaitingConfirmation { .. } => {
-                            return self.load_data();
+                            return self.load_balance();
                         }
                         _ => {}
                     }
+                }
+                view::ActiveSendMessage::Error(err) => {
+                    self.error = Some(err);
                 }
             }
         }
@@ -208,32 +193,6 @@ impl State for ActiveSend {
         _daemon: Arc<dyn Daemon + Sync + Send>,
         _wallet: Arc<Wallet>,
     ) -> Task<Message> {
-        self.load_data()
-    }
-}
-
-pub(crate) fn format_time_ago(timestamp: u32) -> String {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs() as u32;
-
-    let diff = now.saturating_sub(timestamp);
-
-    if diff < 60 {
-        "just now".to_string()
-    } else if diff < 3600 {
-        let minutes = diff / 60;
-        format!(
-            "{} minute{} ago",
-            minutes,
-            if minutes == 1 { "" } else { "s" }
-        )
-    } else if diff < 86400 {
-        let hours = diff / 3600;
-        format!("{} hour{} ago", hours, if hours == 1 { "" } else { "s" })
-    } else {
-        let days = diff / 86400;
-        format!("{} day{} ago", days, if days == 1 { "" } else { "s" })
+        self.load_balance()
     }
 }
