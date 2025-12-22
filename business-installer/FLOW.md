@@ -10,6 +10,7 @@ State (state/mod.rs)
 +-- app: AppState        # Domain data (keys, paths, wallet template)
 +-- views: ViewsState    # UI-specific state per view
 +-- backend: Client      # WebSocket communication
++-- hw: HardwareWallets  # Hardware wallet manager
 +-- current_view: View   # Routing state
 ```
 
@@ -42,6 +43,7 @@ pub struct ViewsState {
     pub modals: ModalsState,      // Warning modals
     pub keys: KeysViewState,      // Key edit modal state
     pub paths: PathsViewState,    // Path edit modal state
+    pub xpub: XpubViewState,      // Xpub entry modal state
     pub login: Login,             // Login form state (email, code, auth status)
 }
 ```
@@ -95,6 +97,12 @@ State::update() (state/update.rs)
 | Key Management             | KeyAdd, KeyEdit, KeyDelete, KeySave,   |
 |                            | KeyCancelModal, KeyUpdate*             |
 +----------------------------+----------------------------------------+
+| Xpub Management            | XpubSelectKey, XpubUpdateInput,        |
+|                            | XpubSelectSource, XpubSelectDevice,    |
+|                            | XpubFetchFromDevice, XpubLoadFromFile, |
+|                            | XpubFileLoaded, XpubUpdateAccount,     |
+|                            | XpubSave, XpubClear, XpubCancelModal   |
++----------------------------+----------------------------------------+
 | Template Management        | TemplateAddKey*, TemplateDelKey*,      |
 |                            | TemplateAdd/DeletePath, TemplateEdit*, |
 |                            | TemplateToggleKeyInPath, TemplateSave*,|
@@ -103,6 +111,8 @@ State::update() (state/update.rs)
 | Navigation                 | NavigateTo*, NavigateBack              |
 +----------------------------+----------------------------------------+
 | Backend                    | BackendNotif, BackendDisconnected      |
++----------------------------+----------------------------------------+
+| Hardware Wallet            | HardwareWalletMsg                      |
 +----------------------------+----------------------------------------+
 | Warnings                   | WarningShowModal, WarningCloseModal    |
 +----------------------------+----------------------------------------+
@@ -142,6 +152,7 @@ Views are determined by `State::current_view` and `State::route()`:
 | WalletEdit    | After wallet     | Template overview (home)           |
 | Paths         | From home        | Configure spending paths           |
 | Keys          | From home        | Manage keys                        |
+| Xpub          | From wallet sel  | Add xpub to keys (Validated only)  |
 +---------------+------------------+------------------------------------+
 ```
 
@@ -175,7 +186,13 @@ OrgSelect
     v [OrgSelected]
 WalletSelect (shows status badges + roles)
     |
-    +-------> [OrgWalletSelected] --> Access check --> WalletEdit
+    +-------> [OrgWalletSelected] --> Access check --> Route by status
+    |                                    |
+    |                                    +---> Draft --> WalletEdit
+    |                                    |
+    |                                    +---> Validated --> Xpub
+    |                                    |
+    |                                    +---> Final --> exit_maybe() -> LoginLianaLite
     |                                    |
     |                                    +---> (Draft + Participant) --> Warning Modal
     |
@@ -183,6 +200,18 @@ WalletSelect (shows status badges + roles)
 
 WalletEdit <--> Paths [NavigateToPaths / NavigateToHome]
 WalletEdit <--> Keys  [NavigateToKeys / NavigateToHome]
+
+Xpub View:
+    Opens XpubEntryModal on key card click
+        +---> [XpubSelectKey] --> Modal with SelectKeySource-style UX:
+                |
+                +---> Hardware Wallet section (prominently displayed)
+                |       - Device list with status indicators
+                |       - Account selection dropdown
+                |       - Fetch from device button
+                |
+                +---> "Other options" collapsible section
+                        - Import extended public key file
 ```
 
 ## Adding New Features

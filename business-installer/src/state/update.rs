@@ -102,6 +102,24 @@ impl State {
             Msg::BackendNotif(notif) => return self.on_backend_notif(notif),
             Msg::BackendDisconnected => self.on_backend_disconnected(),
 
+            // Hardware Wallets
+            Msg::HardwareWallets(msg) => return self.on_hw_message(msg),
+
+            // Xpub management
+            Msg::XpubSelectKey(key_id) => self.on_xpub_select_key(key_id),
+            Msg::XpubUpdateInput(input) => self.on_xpub_update_input(input),
+            Msg::XpubSelectSource(source) => self.on_xpub_select_source(source),
+            Msg::XpubSelectDevice(fingerprint) => self.on_xpub_select_device(fingerprint),
+            Msg::XpubFetchFromDevice(fingerprint, account) => return self.on_xpub_fetch_from_device(fingerprint, account),
+            Msg::XpubLoadFromFile => return self.on_xpub_load_from_file(),
+            Msg::XpubFileLoaded(result) => self.on_xpub_file_loaded(result),
+            Msg::XpubPaste => return self.on_xpub_paste(),
+            Msg::XpubUpdateAccount(account) => self.on_xpub_update_account(account),
+            Msg::XpubSave => return self.on_xpub_save(),
+            Msg::XpubClear => return self.on_xpub_clear(),
+            Msg::XpubCancelModal => self.on_xpub_cancel_modal(),
+            Msg::XpubToggleOptions => self.on_xpub_toggle_options(),
+
             // Warnings
             Msg::WarningShowModal(title, message) => self.on_warning_show_modal(title, message),
             Msg::WarningCloseModal => self.on_warning_close_modal(),
@@ -147,7 +165,6 @@ impl State {
         }
     }
     fn on_login_send_token(&mut self) {
-        println!("State::on_login_send_token()");
         let email = self.views.login.email.form.value.clone();
         if self.views.login.email.form.valid && !email.is_empty() {
             self.views.login.email.processing = true;
@@ -955,6 +972,12 @@ impl State {
             self.load_wallet_into_app_state(&wallet);
         }
 
+        // Close xpub modal if open (edit was successful and wallet updated)
+        // The modal should be closed after successful save/clear operations
+        if self.views.xpub.modal.is_some() {
+            self.views.xpub.close_modal();
+        }
+
         Task::none()
     }
 
@@ -1212,5 +1235,365 @@ impl State {
     /// Handle conflict dismiss - dismiss info-only conflict (deletion notice)
     fn on_conflict_dismiss(&mut self) {
         self.views.modals.conflict = None;
+    }
+}
+
+// Hardware wallet handlers
+impl State {
+    /// Handle hardware wallet messages
+    fn on_hw_message(&mut self, msg: liana_gui::hw::HardwareWalletMessage) -> Task<Msg> {
+        // Update the hardware wallet state
+        match self.hw.update(msg) {
+            Ok(task) => {
+                // Update modal state after list updates
+                if let Some(modal) = self.views.xpub.modal_mut() {
+                    // Build list of (fingerprint, device_name) for supported devices
+                    modal.hw_devices = self
+                        .hw
+                        .list
+                        .iter()
+                        .filter_map(|hw| match hw {
+                            liana_gui::hw::HardwareWallet::Supported {
+                                fingerprint,
+                                kind,
+                                version,
+                                ..
+                            } => {
+                                let name = if let Some(v) = version {
+                                    format!("{} {}", kind, v)
+                                } else {
+                                    kind.to_string()
+                                };
+                                Some((*fingerprint, name))
+                            }
+                            _ => None,
+                        })
+                        .collect();
+                }
+
+                // Map resulting task back to our message type
+                task.map(Msg::HardwareWallets)
+            }
+            Err(e) => {
+                // Show error in warning modal
+                Task::done(Msg::WarningShowModal(
+                    "Hardware Wallet Error".to_string(),
+                    e.to_string(),
+                ))
+            }
+        }
+    }
+}
+
+// Xpub management handlers
+impl State {
+    /// Open xpub entry modal for a key
+    fn on_xpub_select_key(&mut self, key_id: u8) {
+        if let Some(key) = self.app.keys.get(&key_id) {
+            self.views
+                .xpub
+                .open_modal(key_id, key.alias.clone(), key.xpub.clone());
+        }
+    }
+
+    /// Update xpub input text
+    fn on_xpub_update_input(&mut self, input: String) {
+        if let Some(modal) = self.views.xpub.modal_mut() {
+            modal.update_input(input);
+        }
+    }
+
+    /// Switch xpub source tab
+    fn on_xpub_select_source(&mut self, source: views::XpubSource) {
+        if let Some(modal) = self.views.xpub.modal_mut() {
+            modal.select_source(source);
+        }
+    }
+
+    /// Select hardware wallet device
+    fn on_xpub_select_device(&mut self, fingerprint: miniscript::bitcoin::bip32::Fingerprint) {
+        if let Some(modal) = self.views.xpub.modal_mut() {
+            modal.select_device(fingerprint);
+        }
+    }
+
+    /// Fetch xpub from hardware wallet device
+    fn on_xpub_fetch_from_device(
+        &mut self,
+        fingerprint: miniscript::bitcoin::bip32::Fingerprint,
+        account: miniscript::bitcoin::bip32::ChildNumber,
+    ) -> Task<Msg> {
+        // Set processing state
+        if let Some(modal) = self.views.xpub.modal_mut() {
+            modal.set_processing(true);
+            modal.clear_error();
+        }
+
+        // Find the device with matching fingerprint in the hardware wallet list
+        let hw = self
+            .hw
+            .list
+            .iter()
+            .find(|hw| hw.fingerprint() == Some(fingerprint))
+            .cloned();
+
+        match hw {
+            Some(liana_gui::hw::HardwareWallet::Supported { device, .. }) => {
+                // Build derivation path: m/48'/network'/account'/2'
+                use miniscript::bitcoin::bip32::{ChildNumber, DerivationPath};
+                use miniscript::descriptor::{DescriptorPublicKey, DescriptorXKey, Wildcard};
+
+                // Get network from HW subscription (it's already set correctly)
+                // TODO: Get actual network from wallet or backend config
+                let network = liana::miniscript::bitcoin::Network::Bitcoin;
+                let network_idx = if network == liana::miniscript::bitcoin::Network::Bitcoin {
+                    ChildNumber::Hardened { index: 0 }
+                } else {
+                    ChildNumber::Hardened { index: 1 }
+                };
+
+                let derivation_path = DerivationPath::from(vec![
+                    ChildNumber::Hardened { index: 48 },
+                    network_idx,
+                    account,
+                    ChildNumber::Hardened { index: 2 },
+                ]);
+
+                let device_clone = device.clone();
+                let fp = fingerprint;
+
+                // Fetch xpub by spawning a thread with Tokio runtime
+                // This avoids "no reactor running" panic with Iced's ThreadPool executor
+                let (tx, rx) = std::sync::mpsc::channel();
+                std::thread::spawn(move || {
+                    let rt = tokio::runtime::Runtime::new().unwrap();
+                    let result = rt.block_on(async {
+                        // Get xpub from device
+                        match device_clone.get_extended_pubkey(&derivation_path).await {
+                            Ok(xkey) => {
+                                // Convert to DescriptorPublicKey
+                                Ok(DescriptorPublicKey::XPub(DescriptorXKey {
+                                    origin: Some((fp, derivation_path.clone())),
+                                    derivation_path: DerivationPath::master(),
+                                    wildcard: Wildcard::None,
+                                    xkey,
+                                }))
+                            }
+                            Err(e) => Err(e),
+                        }
+                    });
+                    let _ = tx.send(result);
+                });
+
+                // Poll the channel for the result
+                Task::perform(
+                    async move {
+                        // Block until result is available
+                        rx.recv().unwrap_or_else(|_| {
+                            Err(async_hwi::Error::Device(
+                                "Failed to receive result from hardware wallet thread".to_string(),
+                            ))
+                        })
+                    },
+                    |result| {
+                        match result {
+                            Ok(xpub) => {
+                                // Success - populate input with xpub string
+                                Msg::XpubFileLoaded(Ok(xpub.to_string()))
+                            }
+                            Err(e) => {
+                                // Error - show error message
+                                Msg::XpubFileLoaded(Err(format!(
+                                    "Failed to fetch from device: {}",
+                                    e
+                                )))
+                            }
+                        }
+                    },
+                )
+            }
+            Some(liana_gui::hw::HardwareWallet::Locked { .. }) => {
+                if let Some(modal) = self.views.xpub.modal_mut() {
+                    modal.set_error("Device is locked. Please unlock it first.".to_string());
+                }
+                Task::none()
+            }
+            Some(liana_gui::hw::HardwareWallet::Unsupported { .. }) => {
+                if let Some(modal) = self.views.xpub.modal_mut() {
+                    modal.set_error("Device is not supported".to_string());
+                }
+                Task::none()
+            }
+            None => {
+                // Device not found
+                if let Some(modal) = self.views.xpub.modal_mut() {
+                    modal.set_error("Hardware wallet not found".to_string());
+                }
+                Task::none()
+            }
+        }
+    }
+
+    /// Trigger file picker for xpub
+    fn on_xpub_load_from_file(&mut self) -> Task<Msg> {
+        // Use async file dialog by spawning a thread with Tokio runtime
+        // This avoids "no reactor running" panic with Iced's ThreadPool executor
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            let result = rt.block_on(async {
+                let file_handle = rfd::AsyncFileDialog::new()
+                    .set_title("Select xpub file")
+                    .add_filter("Text files", &["txt"])
+                    .add_filter("All files", &["*"])
+                    .pick_file()
+                    .await;
+
+                if let Some(handle) = file_handle {
+                    // Read the file content
+                    match tokio::fs::read_to_string(handle.path()).await {
+                        Ok(content) => {
+                            // Get the first non-empty line as xpub
+                            let xpub = content
+                                .lines()
+                                .find(|line| !line.trim().is_empty())
+                                .unwrap_or("")
+                                .trim()
+                                .to_string();
+                            Ok(xpub)
+                        }
+                        Err(e) => Err(format!("Failed to read file: {}", e)),
+                    }
+                } else {
+                    // User cancelled - return empty error to do nothing
+                    Err(String::new())
+                }
+            });
+            let _ = tx.send(result);
+        });
+
+        // Poll the channel for the result
+        Task::perform(
+            async move {
+                // Block until result is available
+                rx.recv().unwrap_or_else(|_| {
+                    Err("Failed to receive result from file dialog thread".to_string())
+                })
+            },
+            |result| {
+                // Only send message if there was an actual error (non-empty)
+                match result {
+                    Ok(xpub) => Msg::XpubFileLoaded(Ok(xpub)),
+                    Err(e) if !e.is_empty() => Msg::XpubFileLoaded(Err(e)),
+                    Err(_) => Msg::XpubFileLoaded(Err(String::new())), // User cancelled
+                }
+            },
+        )
+    }
+
+    /// Handle file loaded result
+    fn on_xpub_file_loaded(&mut self, result: Result<String, String>) {
+        if let Some(modal) = self.views.xpub.modal_mut() {
+            match result {
+                Ok(content) => {
+                    modal.update_input(content);
+                }
+                Err(error) if !error.is_empty() => {
+                    // Only show error if it's not empty (empty means user cancelled)
+                    modal.set_error(format!("Failed to load file: {}", error));
+                }
+                Err(_) => {
+                    // User cancelled - do nothing
+                }
+            }
+        }
+    }
+
+    /// Handle paste xpub from clipboard
+    fn on_xpub_paste(&mut self) -> Task<Msg> {
+        use iced::clipboard;
+
+        clipboard::read().map(|contents| {
+            if let Some(text) = contents {
+                // Get the first non-empty line as xpub
+                let xpub = text
+                    .lines()
+                    .find(|line| !line.trim().is_empty())
+                    .unwrap_or("")
+                    .trim()
+                    .to_string();
+                Msg::XpubUpdateInput(xpub)
+            } else {
+                Msg::XpubFileLoaded(Err("Clipboard is empty".to_string()))
+            }
+        })
+    }
+
+    /// Update derivation account for HW wallet
+    fn on_xpub_update_account(&mut self, account: miniscript::bitcoin::bip32::ChildNumber) {
+        if let Some(modal) = self.views.xpub.modal_mut() {
+            modal.update_account(account);
+        }
+    }
+
+    /// Save xpub to backend
+    fn on_xpub_save(&mut self) -> Task<Msg> {
+        // Validate and save xpub
+        if let Some(modal) = &mut self.views.xpub.modal {
+            match modal.validate() {
+                Ok(xpub) => {
+                    let key_id = modal.key_id;
+
+                    // Update local state
+                    if let Some(key) = self.app.keys.get_mut(&key_id) {
+                        key.xpub = Some(xpub.clone());
+                    }
+
+                    // Send to backend
+                    if let Some(wallet_id) = self.app.selected_wallet {
+                        self.backend.edit_xpub(wallet_id, Some(xpub), key_id);
+                    }
+
+                    // Close modal on success (will be closed when backend notification arrives)
+                    self.views.xpub.close_modal();
+                }
+                Err(error) => {
+                    modal.set_error(error);
+                }
+            }
+        }
+        Task::none()
+    }
+
+    /// Clear xpub (set to null)
+    fn on_xpub_clear(&mut self) -> Task<Msg> {
+        if let Some(modal) = &self.views.xpub.modal {
+            let key_id = modal.key_id;
+
+            // Update local state
+            if let Some(key) = self.app.keys.get_mut(&key_id) {
+                key.xpub = None;
+            }
+
+            // Send to backend (None means clear/delete the xpub)
+            if let Some(wallet_id) = self.app.selected_wallet {
+                self.backend.edit_xpub(wallet_id, None, key_id);
+            }
+
+            // Close modal (will be closed when backend notification arrives)
+            self.views.xpub.close_modal();
+        }
+        Task::none()
+    }
+
+    /// Close xpub modal
+    fn on_xpub_cancel_modal(&mut self) {
+        self.views.xpub.close_modal();
+    }
+
+    fn on_xpub_toggle_options(&mut self) {
+        if let Some(modal) = self.views.xpub.modal_mut() {
+            modal.options_collapsed = !modal.options_collapsed;
+        }
     }
 }

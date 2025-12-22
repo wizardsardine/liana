@@ -1,7 +1,10 @@
 use iced::Task;
 use std::{
     collections::HashMap,
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    },
 };
 
 use crate::{
@@ -386,10 +389,12 @@ struct State {
 }
 
 fn refresh(mut state: State) -> impl Stream<Item = HardwareWalletMessage> {
+    println!("refresh");
     iced::stream::channel(100, move |mut output| async move {
         loop {
+            println!("loop");
             let api = if let Some(api) = &mut state.api {
-                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                std::thread::sleep(std::time::Duration::from_secs(2));
                 if let Err(e) = api.refresh_devices() {
                     let _ = output
                         .send(HardwareWalletMessage::Error(e.to_string()))
@@ -414,27 +419,29 @@ fn refresh(mut state: State) -> impl Stream<Item = HardwareWalletMessage> {
 
             let mut hws: Vec<HardwareWallet> = Vec::new();
             let mut still: Vec<String> = Vec::new();
-            match specter::SpecterSimulator::try_connect().await {
-                Ok(device) => {
-                    let id = "specter-simulator".to_string();
-                    if state.connected_supported_hws.contains(&id) {
-                        still.push(id);
-                    } else {
-                        match HardwareWallet::new(id, Arc::new(device), Some(&state.keys_aliases))
-                            .await
-                        {
-                            Ok(hw) => hws.push(hw),
-                            Err(e) => {
-                                debug!("{}", e);
-                            }
-                        }
-                    }
-                }
-                Err(HWIError::DeviceNotFound) => {}
-                Err(e) => {
-                    debug!("{}", e);
-                }
-            }
+
+            // TEMPORARILY DISABLED: SpecterSimulator causes Tokio issues
+            // match specter::SpecterSimulator::try_connect().await {
+            //     Ok(device) => {
+            //         let id = "specter-simulator".to_string();
+            //         if state.connected_supported_hws.contains(&id) {
+            //             still.push(id);
+            //         } else {
+            //             match HardwareWallet::new(id, Arc::new(device), Some(&state.keys_aliases))
+            //                 .await
+            //             {
+            //                 Ok(hw) => hws.push(hw),
+            //                 Err(e) => {
+            //                     debug!("{}", e);
+            //                 }
+            //             }
+            //         }
+            //     }
+            //     Err(HWIError::DeviceNotFound) => {}
+            //     Err(e) => {
+            //         debug!("{}", e);
+            //     }
+            // }
 
             match specter::SerialTransport::enumerate_potential_ports() {
                 Ok(ports) => {
@@ -448,13 +455,9 @@ fn refresh(mut state: State) -> impl Stream<Item = HardwareWalletMessage> {
                                     warn!("{}", e);
                                 }
                                 Ok(device) => {
-                                    if tokio::time::timeout(
-                                        std::time::Duration::from_millis(500),
-                                        device.fingerprint(),
-                                    )
-                                    .await
-                                    .is_ok()
-                                    {
+                                    // TEMPORARILY REMOVED: tokio::time::timeout requires Tokio reactor
+                                    // Just try to get fingerprint without timeout to avoid Tokio panic
+                                    if device.fingerprint().await.is_ok() {
                                         match HardwareWallet::new(
                                             id,
                                             Arc::new(device),
@@ -512,70 +515,73 @@ fn refresh(mut state: State) -> impl Stream<Item = HardwareWalletMessage> {
                 Err(e) => warn!("Error while listing jade devices: {}", e),
             }
 
-            match ledger::LedgerSimulator::try_connect().await {
-                Ok(device) => {
-                    let id = "ledger-simulator".to_string();
-                    if state.connected_supported_hws.contains(&id) {
-                        still.push(id);
-                    } else {
-                        match handle_ledger_device(
-                            id,
-                            device,
-                            state.wallet.as_ref().map(|w| w.as_ref()),
-                            &state.keys_aliases,
-                        )
-                        .await
-                        {
-                            Ok(hw) => {
-                                hws.push(hw);
-                            }
-                            Err(e) => {
-                                warn!("{:?}", e);
-                            }
-                        }
-                    }
-                }
-                Err(HWIError::DeviceNotFound) => {}
-                Err(e) => {
-                    debug!("{}", e);
-                }
-            }
+            // TEMPORARILY DISABLED: LedgerSimulator causes Tokio issues
+            // match ledger::LedgerSimulator::try_connect().await {
+            //     Ok(device) => {
+            //         let id = "ledger-simulator".to_string();
+            //         if state.connected_supported_hws.contains(&id) {
+            //             still.push(id);
+            //         } else {
+            //             match handle_ledger_device(
+            //                 id,
+            //                 device,
+            //                 state.wallet.as_ref().map(|w| w.as_ref()),
+            //                 &state.keys_aliases,
+            //             )
+            //             .await
+            //             {
+            //                 Ok(hw) => {
+            //                     hws.push(hw);
+            //                 }
+            //                 Err(e) => {
+            //                     warn!("{:?}", e);
+            //                 }
+            //             }
+            //         }
+            //     }
+            //     Err(HWIError::DeviceNotFound) => {}
+            //     Err(e) => {
+            //         debug!("{}", e);
+            //     }
+            // }
 
             for device_info in api.device_list() {
-                if async_hwi::bitbox::is_bitbox02(device_info) {
-                    let id = format!(
-                        "bitbox-{:?}-{}-{}",
-                        device_info.path(),
-                        device_info.vendor_id(),
-                        device_info.product_id()
-                    );
-                    if state.connected_supported_hws.contains(&id) {
-                        still.push(id);
-                        continue;
-                    }
-                    if let Ok(device) = device_info.open_device(api) {
-                        if let Ok(device) = PairingBitbox02::connect(
-                            device,
-                            Some(Box::new(settings::global::PersistedBitboxNoiseConfig::new(
-                                &state.datadir_path,
-                            ))),
-                        )
-                        .await
-                        {
-                            hws.push(HardwareWallet::Locked {
-                                id,
-                                kind: DeviceKind::BitBox02,
-                                pairing_code: device.pairing_code().map(|s| s.replace('\n', " ")),
-                                device: Arc::new(Mutex::new(Some(LockedDevice::BitBox02(
-                                    Box::new(device),
-                                )))),
-                            });
-                        }
-                    }
-                }
+                // TEMPORARILY DISABLED: BitBox02 causes Tokio issues
+                // if async_hwi::bitbox::is_bitbox02(device_info) {
+                //     let id = format!(
+                //         "bitbox-{:?}-{}-{}",
+                //         device_info.path(),
+                //         device_info.vendor_id(),
+                //         device_info.product_id()
+                //     );
+                //     if state.connected_supported_hws.contains(&id) {
+                //         still.push(id);
+                //         continue;
+                //     }
+                //     if let Ok(device) = device_info.open_device(api) {
+                //         if let Ok(device) = PairingBitbox02::connect(
+                //             device,
+                //             Some(Box::new(settings::global::PersistedBitboxNoiseConfig::new(
+                //                 &state.datadir_path,
+                //             ))),
+                //         )
+                //         .await
+                //         {
+                //             hws.push(HardwareWallet::Locked {
+                //                 id,
+                //                 kind: DeviceKind::BitBox02,
+                //                 pairing_code: device.pairing_code().map(|s| s.replace('\n', " ")),
+                //                 device: Arc::new(Mutex::new(Some(LockedDevice::BitBox02(
+                //                     Box::new(device),
+                //                 )))),
+                //             });
+                //         }
+                //     }
+                // }
                 if device_info.vendor_id() == coldcard::api::COINKITE_VID
                     && device_info.product_id() == coldcard::api::CKCC_PID
                 {
+                    println!("coldcard");
                     let id = format!(
                         "coldcard-{:?}-{}-{}",
                         device_info.path(),
@@ -584,6 +590,7 @@ fn refresh(mut state: State) -> impl Stream<Item = HardwareWalletMessage> {
                     );
                     if state.connected_supported_hws.contains(&id) {
                         still.push(id);
+                        println!("continue");
                         continue;
                     }
                     if let Some(sn) = device_info.serial_number() {

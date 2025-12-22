@@ -123,6 +123,46 @@ menu_entry(
 - Styled as bordered card
 - Centers content vertically and horizontally
 
+## Status Badges
+
+### Xpub Population Status
+
+For displaying whether a key has xpub information:
+
+```rust
+fn xpub_status_badge(has_xpub: bool) -> Element<'static, Msg> {
+    if has_xpub {
+        Container::new(text::caption("✓ Populated"))
+            .padding([4, 12])
+            .style(liana_ui::theme::pill::success)
+    } else {
+        Container::new(text::caption("⚠ Missing"))
+            .padding([4, 12])
+            .style(liana_ui::theme::pill::warning)
+    }
+}
+```
+
+Success (green) for populated xpubs, warning (yellow) for missing xpubs.
+
+### Wallet Status Badges
+
+For displaying wallet status (Draft/Validated/Final):
+
+```rust
+// Draft: Yellow warning pill
+Container::new(text::caption("Draft"))
+    .style(liana_ui::theme::pill::warning)
+
+// Validated: Blue info pill
+Container::new(text::caption("Validated"))
+    .style(liana_ui::theme::pill::info)
+
+// Final: Green success pill
+Container::new(text::caption("Final"))
+    .style(liana_ui::theme::pill::success)
+```
+
 ## Modal Pattern
 
 ### Modal State Structure
@@ -174,6 +214,14 @@ pub fn render_modals(state: &State) -> Option<Element<'_, Message>> {
     if let Some(warning) = &state.views.modals.warning {
         return Some(warning_modal(warning));
     }
+    // Conflict modal
+    if let Some(conflict) = &state.views.modals.conflict {
+        return Some(conflict_modal(conflict));
+    }
+    // Xpub modal
+    if let Some(_) = &state.views.xpub.modal {
+        return Some(xpub::render_modal(state)?);
+    }
     // Key edit modal
     if let Some(edit_key) = &state.views.keys.edit_key {
         return Some(key_modal(edit_key, &state.app.keys));
@@ -212,6 +260,90 @@ Set the modal state to `None`:
 ```rust
 fn on_key_cancel_modal(&mut self) {
     self.views.keys.edit_key = None;
+}
+```
+
+### SelectKeySource-Style Modal Pattern (Xpub Entry)
+
+The xpub entry modal uses the SelectKeySource UX pattern from liana-gui, which prominently displays hardware wallets with a collapsible "Other options" section:
+
+```rust
+// State structure
+pub struct XpubEntryModalState {
+    pub key_id: u8,
+    pub xpub_source: XpubSource,  // Current source type
+    pub xpub_input: String,
+    pub hw_devices: Vec<...>,      // Hardware wallet list
+    pub validation_error: Option<String>,
+    pub processing: bool,
+    pub options_collapsed: bool,   // Whether "Other options" is collapsed
+    // ... other fields
+}
+
+pub enum XpubSource {
+    HardwareWallet,
+    LoadFromFile,
+}
+```
+
+Rendering pattern:
+
+```rust
+fn xpub_modal(state: &State, modal_state: &XpubEntryModalState) -> Element<'_, Msg> {
+    let mut content = Column::new().spacing(15);
+
+    // Header with close button
+    content = content.push(header_with_close_button());
+
+    // Hardware wallet section (always visible)
+    content = content.push(render_hw_section(state, modal_state));
+
+    // "Other options" collapsible section
+    content = content.push(render_other_options(modal_state));
+
+    // Validation error display
+    if let Some(error) = &modal_state.validation_error {
+        content = content.push(error_text(error));
+    }
+
+    // Footer with Save/Clear/Cancel buttons
+    content = content.push(render_footer_buttons(modal_state));
+
+    card::modal(content).into()
+}
+
+fn render_other_options(modal_state: &XpubEntryModalState) -> Element<'_, Msg> {
+    let mut content = Column::new().spacing(10);
+
+    // Collapsible header
+    let header_text = if modal_state.options_collapsed {
+        "Other options ▼"
+    } else {
+        "Other options ▲"
+    };
+    content = content.push(
+        button::transparent(None, header_text)
+            .on_press(Msg::XpubToggleOptions)
+    );
+
+    // Show file loading when expanded
+    if !modal_state.options_collapsed {
+        content = content.push(
+            button::secondary(Some(icon::import_icon()), "Import extended public key file")
+                .on_press(Msg::XpubLoadFromFile)
+        );
+    }
+
+    content.into()
+}
+```
+
+Collapsible section pattern:
+```rust
+Msg::XpubToggleOptions => {
+    if let Some(modal) = &mut self.views.xpub.modal {
+        modal.options_collapsed = !modal.options_collapsed;
+    }
 }
 ```
 
@@ -376,5 +508,40 @@ Called from `State::update()`:
 ```rust
 Msg::KeyCancelModal => self.views.keys.on_key_cancel_modal(),
 Msg::KeyUpdateAlias(v) => self.views.keys.on_key_update_alias(v),
+```
+
+## Role-Based View Filtering
+
+Filter content based on user role (WSManager, Owner, Participant):
+
+```rust
+// Get current user role
+let user_role = &state.app.current_user_role;
+
+// Filter keys for Participants
+let filtered_keys: Vec<(u8, &Key)> = state.app.keys.iter()
+    .filter(|(_id, key)| {
+        match user_role.as_ref() {
+            Some(UserRole::Participant) => {
+                // Participants only see their own keys
+                key.email.to_lowercase() == current_user_email.to_lowercase()
+            }
+            Some(UserRole::WSManager) | Some(UserRole::Owner) | None => {
+                // WSManager and Owner see all keys
+                true
+            }
+        }
+    })
+    .map(|(id, key)| (*id, key))
+    .collect();
+```
+
+Role badge display:
+```rust
+let role_badge = if matches!(user_role, Some(UserRole::WSManager)) {
+    Some("WS Manager")
+} else {
+    None
+};
 ```
 
