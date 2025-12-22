@@ -7,9 +7,10 @@ use liana_ui::widget::{modal::Modal, Element};
 use crate::state::Msg;
 
 pub fn render_modals(state: &State) -> Option<Element<'_, Msg>> {
-    // First, get the underlying modal (key or path modal)
+    // First, get the underlying modal (key, path, or xpub modal)
     let underlying_modal = crate::views::keys::modal::render_modal(state)
-        .or_else(|| crate::views::paths::modal::render_modal(state));
+        .or_else(|| crate::views::paths::modal::render_modal(state))
+        .or_else(|| crate::views::xpub::render_modal(state));
 
     // Priority order: Warning modal > Conflict modal > Underlying modal
 

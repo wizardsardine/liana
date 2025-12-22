@@ -31,7 +31,7 @@ impl BusinessInstaller {
     fn new_internal(datadir: LianaDirectory, network: bitcoin::Network) -> (Self, Task<Message>) {
         use crate::state::views::login::{Login, LoginState};
 
-        let mut state = State::new();
+        let mut state = State::new(datadir.clone(), network);
 
         // Set network directory for token caching (same location as liana-gui)
         let network_dir = datadir.network_directory(network);
@@ -90,7 +90,14 @@ impl<'a> Installer<'a, Message> for BusinessInstaller {
     }
 
     fn subscription(&self) -> Subscription<Message> {
-        Subscription::run(BackendSubscription::new)
+        let mut subs = vec![Subscription::run(BackendSubscription::new)];
+
+        // Only refresh hardware wallets when xpub modal is open
+        if self.state.views.xpub.modal.is_some() {
+            subs.push(self.state.hw.refresh().map(hw_message_to_app_message));
+        }
+
+        Subscription::batch(subs)
     }
 
     fn view(&self) -> Element<Message> {
@@ -199,7 +206,7 @@ impl iced::futures::Stream for BackendSubscription {
 
 impl Drop for BackendSubscription {
     fn drop(&mut self) {
-        println!("BackendSubscription dropped");
+        // Backend subscription dropped
     }
 }
 
@@ -207,4 +214,9 @@ impl Drop for BusinessInstaller {
     fn drop(&mut self) {
         self.state.close_backend();
     }
+}
+
+/// Map hardware wallet messages to application messages
+fn hw_message_to_app_message(msg: liana_gui::hw::HardwareWalletMessage) -> Message {
+    Message::HardwareWallets(msg)
 }

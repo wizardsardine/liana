@@ -69,6 +69,27 @@ pub enum Msg {
     BackendNotif(crate::backend::Notification),
     BackendDisconnected,
 
+    // Hardware Wallets
+    HardwareWallets(liana_gui::hw::HardwareWalletMessage),
+
+    // Xpub management
+    XpubSelectKey(u8),                     // Open modal for key
+    XpubUpdateInput(String),               // Update xpub text input
+    XpubSelectSource(crate::state::views::XpubSource), // Switch source tab
+    XpubSelectDevice(miniscript::bitcoin::bip32::Fingerprint), // Select HW device
+    XpubFetchFromDevice(
+        miniscript::bitcoin::bip32::Fingerprint,
+        miniscript::bitcoin::bip32::ChildNumber,
+    ), // Fetch xpub from HW device
+    XpubLoadFromFile,                      // Trigger file picker
+    XpubFileLoaded(Result<String, String>), // File content loaded
+    XpubPaste,                             // Paste xpub from clipboard
+    XpubUpdateAccount(miniscript::bitcoin::bip32::ChildNumber), // Change derivation account
+    XpubSave,                              // Save xpub to backend
+    XpubClear,                             // Clear xpub (send null to backend)
+    XpubCancelModal,                       // Close modal
+    XpubToggleOptions,                     // Toggle "Other options" section
+
     // Warnings
     WarningShowModal(String, String), // title, message
     WarningCloseModal,

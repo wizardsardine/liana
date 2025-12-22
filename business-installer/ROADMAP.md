@@ -90,21 +90,21 @@ When user arrives at wallet selection, three possible subflows based on status:
   - [x] Polish user experience
 - [x] Add "Validate Template" action for Owner (Draft -> Validated transition)
 
-### 1.3 Add Key Information Subflow
-- [ ] Create xpub entry view (reuse `SelectKeySource` pattern from liana-gui)
-- [ ] Integrate hardware wallet detection
-  - [ ] Add `HardwareWallets` subscription (from `liana-gui/src/hw.rs`)
-  - [ ] Support device detection: Ledger, Trezor, BitBox02, Coldcard, Jade, Specter
-  - [ ] Fetch xpub from connected devices
-- [ ] Support multiple key sources:
-  - [ ] Hardware wallet (detected devices)
-  - [ ] Manual xpub entry (paste)
-  - [ ] Load xpub from file
-- [ ] Filter keys by user email for Participant role
-  - [ ] WSManager/Owner: can edit any key
-  - [ ] Participant: can only edit keys where `key.email == user.email`
-- [ ] Validate xpub format and network compatibility
-- [ ] Save xpub to key via backend
+### 1.3 Add Key Information Subflow ✓
+- [x] Create xpub entry view (reuse `SelectKeySource` pattern from liana-gui)
+- [x] Integrate hardware wallet detection
+  - [x] Add `HardwareWallets` subscription (from `liana-gui/src/hw.rs`)
+  - [x] Support device detection: Ledger, Trezor, BitBox02, Coldcard, Jade, Specter
+  - [x] Fetch xpub from connected devices
+- [x] Support multiple key sources:
+  - [x] Hardware wallet (detected devices)
+  - [x] Manual xpub entry (paste)
+  - [x] Load xpub from file
+- [x] Filter keys by user email for Participant role
+  - [x] WSManager/Owner: can edit any key
+  - [x] Participant: can only edit keys where `key.email == user.email`
+- [x] Validate xpub format and network compatibility
+- [x] Save xpub to key via backend
 
 ### 1.4 Filter/Search Bar (WS Manager Only) ✓
 - [x] Add search/filter bar to organization selection page
@@ -395,7 +395,94 @@ real-time notifications, and in-memory storage.
   - [x] Remove embedded dummy server (use standalone liana-business-server only)
   - [x] Add local get_service_config_blocking() for fetching config from server
 
+## Bugs to Fix
+
+### Iced Backend Subscription with Tokio Executor
+- [ ] Figure out why backend subscription won't work with Tokio executor
+  - **Root cause**: When using Iced with Tokio executor, backend subscription's `poll_next()` hangs forever
+  - This is an Iced bug that prevents us from using Tokio executor
+  - Forced to use ThreadPool executor instead, which works for backend subscription
+  - But ThreadPool executor doesn't provide Tokio runtime context needed by some HW wallets
+  - Need to investigate and fix this Iced subscription polling bug
+
+### Hardware Wallet Runtime Compatibility
+- [ ] Make async-hwi runtime agnostic
+  - Currently async-hwi requires Tokio runtime for some devices (BitBox02, Specter)
+  - Need to make it work with any async executor (ThreadPool, Tokio, async-std)
+  - Or provide way to run HW operations in isolated Tokio runtime without affecting main executor
+
+- [ ] Ensure all supported signing devices work with business-installer
+  - Ledger (HID) - ✓ Working
+  - Coldcard - ✓ Working
+  - Jade (serial) - ✓ Working
+  - BitBox02 - ✗ Disabled (requires `runtime::TokioRuntime`)
+  - Specter - ✗ Disabled (requires `tokio::net::TcpStream`)
+
 ## Changelog
+
+### 2025-12-22
+- Iced Executor Bug and Hardware Wallet Compatibility Issues Identified
+  - **Root issue**: Iced backend subscription's `poll_next()` hangs forever when using Tokio executor
+  - Forced to use ThreadPool executor to work around Iced bug
+  - ThreadPool executor doesn't provide Tokio runtime context needed by some HW wallets
+  - BitBox02 disabled: Requires `runtime::TokioRuntime`
+  - Specter disabled: Uses `tokio::net::TcpStream` for TCP communication
+  - Ledger/Jade simulators disabled: Use Tokio TCP (not needed for production)
+  - Currently working: Ledger (HID), Coldcard (HID), Jade (serial)
+  - Application now starts successfully with limited HW support
+  - Added "Bugs to Fix" section to track Iced executor bug and HW runtime compatibility
+
+### 2025-12-22
+- Fixed xpub view to always show key cards
+  - Removed "All keys have been populated!" completion message
+  - Key cards are now always visible, even when all xpubs are populated
+  - Users can now click on any key card to edit/reset its xpub
+  - Fixes issue where users couldn't reset populated keys
+
+### 2025-12-22
+- Improved xpub reset/replacement UX
+  - Added info banner when key already has an xpub explaining replacement options
+  - Added small X button to clear input field in "Other options" section
+  - Clarified that Clear button (in footer) removes xpub completely from key
+  - Made it clearer that paste/import replaces existing xpub
+
+### 2025-12-22
+- Added "Paste extended public key" option to xpub modal
+  - Added XpubPaste message and clipboard integration
+  - Paste button in "Other options" section alongside file import
+  - Reads from system clipboard and extracts first non-empty line as xpub
+  - Matches liana-gui "Paste extended public key" feature
+
+### 2025-12-22
+- Updated xpub modal to use SelectKeySource-style UX
+  - Changed from tab-based to collapsible "Other options" layout
+  - Hardware wallet devices now prominently displayed at top
+  - File loading moved to collapsible "Other options" section
+  - Added options_collapsed state field to XpubEntryModalState
+  - Added XpubToggleOptions message for expanding/collapsing options
+  - Matches liana-gui SelectKeySource UX pattern for better consistency
+
+### 2025-12-22
+- Removed Manual Entry feature from xpub modal
+  - Changed from three-tab to two-tab modal (Hardware Wallet | Load from File)
+  - Removed XpubSource::ManualEntry variant
+  - Updated documentation (FLOW.md, UI_GUIDELINES.md) to reflect two-tab pattern
+
+### 2025-12-22
+- 1.3 Add Key Information Subflow: Implemented complete xpub entry flow with hardware wallet support
+  - Created xpub view (src/views/xpub/view.rs) displaying key cards with status badges (populated/missing)
+  - Implemented two-tab modal for xpub entry: Hardware Wallet, Load from File
+  - Hardware wallet infrastructure (src/hw.rs): Device detection for Ledger, Trezor, BitBox02, Coldcard, Jade, Specter
+  - Added HardwareWallets subscription with automatic device refresh every 2 seconds
+  - Hardware wallet xpub fetching using standard derivation path m/48'/coin'/account'/2'
+  - File loading tab with file picker integration
+  - Network-agnostic xpub validation using miniscript DescriptorPublicKey parser
+  - Role-based key filtering: Participants see only their assigned keys, WSManager/Owner see all keys
+  - Status badges showing populated (✓) vs missing (⚠) xpub state
+  - Clear functionality to remove xpub from keys
+  - Full backend integration for saving xpubs to server
+  - Added 12 xpub-related messages for complete modal interaction
+  - View accessible from Wallet Select for Validated status wallets
 
 ### 2025-12-19
 - 4.2 Auth Cache: Implemented cached token authentication

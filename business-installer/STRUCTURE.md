@@ -48,6 +48,7 @@ src/
 +-- installer.rs        # BusinessInstaller struct, implements Installer trait
 +-- backend.rs          # Backend trait & DevBackend (test implementation)
 +-- client.rs           # WSS Client, DummyServer for testing
++-- hw.rs               # Hardware wallet infrastructure (device detection, xpub fetching)
 |
 +-- state/
 |   +-- mod.rs          # State struct, View enum, routing logic
@@ -60,7 +61,9 @@ src/
 |       +-- login/      # Login states (email, code)
 |       +-- keys/       # KeysViewState, EditKeyModalState
 |       +-- path/       # PathsViewState, EditPathModalState
-|       +-- modals/     # WarningModalState
+|       +-- xpub/       # XpubViewState, XpubEntryModalState
+|           +-- mod.rs  # Xpub state, validation logic
+|       +-- modals/     # WarningModalState, ConflictModalState
 |       +-- org_select.rs
 |       +-- wallet_select.rs
 |
@@ -70,6 +73,10 @@ src/
     +-- login/          # Email + code entry views
     +-- keys/           # Key management views
     +-- paths/          # Path configuration views
+    +-- xpub/           # Xpub entry view and modal
+        +-- mod.rs      # Module exports
+        +-- view.rs     # Key card list view
+        +-- modal.rs    # Three-tab entry modal
     +-- modals/         # Modal rendering
     +-- org_select.rs   # Organization selection
     +-- wallet_select.rs# Wallet selection
@@ -102,6 +109,9 @@ Implements `liana_gui::installer::Installer` trait:
 
 Uses a `BackendSubscription` (implements `iced::futures::Stream`) to receive notifications from the
 WebSocket backend and convert them to `Message::BackendNotif`.
+
+Also subscribes to hardware wallet detection via `HardwareWallets::refresh()` subscription, converting
+hardware wallet events to `Message::HardwareWalletMsg`.
 
 ### `backend.rs`
 
@@ -176,6 +186,7 @@ enum View {
     WalletEdit,   // Main home view (template overview)
     Paths,        // Configure spending paths
     Keys,         // Manage keys
+    Xpub,         // Add xpub information (Validated wallets only)
 }
 ```
 
@@ -261,6 +272,34 @@ Message handler implementations. Organized by category:
 - Navigation handlers
 - Backend notification handlers
 - Warning handlers
+- Xpub handlers
+- Hardware wallet handlers
+
+### `hw.rs`
+
+Hardware wallet infrastructure for device detection and xpub fetching:
+
+```
++------------------+     +-------------------+
+| HardwareWallets  |     |  HardwareWallet   |
++------------------+     +-------------------+
+| list: Vec<HW>    |---->| Supported         |
+| network: Network |     | Locked            |
+| refresh()        |     | Unsupported       |
++------------------+     +-------------------+
+```
+
+Features:
+- Device detection: Ledger, Trezor, BitBox02, Coldcard, Jade, Specter
+- Periodic refresh subscription (2 second interval)
+- Device state management (Locked, Supported, Unsupported)
+- Xpub fetching using path `m/48'/coin'/account'/2'`
+- Network-aware device validation
+
+Hardware wallet states:
+- `Supported` - Ready to use, fingerprint available
+- `Locked` - Needs user unlock/pairing
+- `Unsupported` - Wrong version, wrong network, or app not open
 
 ### `state/views/`
 
@@ -270,15 +309,49 @@ View-specific state containers:
 ViewsState
 +-- modals: ModalsState
 |   +-- warning: Option<WarningModalState>
+|   +-- conflict: Option<ConflictModalState>
 +-- keys: KeysViewState
 |   +-- edit_key: Option<EditKeyModalState>
 +-- paths: PathsViewState
 |   +-- edit_path: Option<EditPathModalState>
++-- xpub: XpubViewState
+|   +-- modal: Option<XpubEntryModalState>
 +-- login: Login
     +-- current: LoginState (EmailEntry|CodeEntry|Authenticated)
     +-- email: EmailState
     +-- code: CodeState
 ```
+
+#### `state/views/xpub/mod.rs`
+
+Xpub entry modal state:
+
+```rust
+pub struct XpubEntryModalState {
+    pub key_id: u8,
+    pub key_alias: String,
+    pub current_xpub: Option<DescriptorPublicKey>,
+    pub xpub_input: String,
+    pub xpub_source: XpubSource,          // Hardware/Manual/File
+    pub validation_error: Option<String>,
+    pub processing: bool,
+
+    // Hardware wallet fields
+    pub hw_devices: Vec<(Fingerprint, String)>,
+    pub selected_device: Option<Fingerprint>,
+    pub selected_account: ChildNumber,
+}
+
+pub enum XpubSource {
+    HardwareWallet,
+    ManualEntry,
+    LoadFromFile,
+}
+```
+
+Methods:
+- `validate()` - Network-agnostic xpub format validation using miniscript
+- `has_changes()` - Detects unsaved modifications
 
 ### `views/`
 
@@ -289,6 +362,8 @@ UI rendering functions. Each module exports a main view function:
 - `home_view(state)` - Template overview
 - `paths_view(state)` - Path configuration
 - `keys_view(state)` - Key management
+- `xpub_view(state)` - Xpub entry (Validated wallets)
+- `xpub::render_modal(state)` - Three-tab xpub entry modal
 - `modals::render_modals(state)` - Modal overlay
 
 Common helpers in `views/mod.rs`:

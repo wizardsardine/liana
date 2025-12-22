@@ -41,16 +41,10 @@ fn get_service_config_blocking(_network: Network) -> Result<ServiceConfig, reqwe
     // Fetch config from our local server's /v1/desktop endpoint
     let client = reqwest::blocking::Client::new();
     let url = format!("{}/v1/desktop", AUTH_API_URL);
-    println!("[get_service_config] Fetching from: {}", url);
 
     let response = client.get(&url).send()?;
-    println!(
-        "[get_service_config] Response status: {}",
-        response.status()
-    );
 
     let res: ServiceConfig = response.json()?;
-    println!("[get_service_config] Parsed config OK");
 
     Ok(ServiceConfig {
         auth_api_url: res.auth_api_url,
@@ -377,9 +371,7 @@ impl Client {
                     filter_connect_cache(&network_dir_clone, &remaining_emails).await
                 });
 
-                if let Err(e) = result {
-                    eprintln!("Failed to remove auth cache on logout: {:?}", e);
-                }
+                let _ = result;
             });
         }
 
@@ -410,9 +402,8 @@ fn wss_thread(
 
     let (mut ws_stream, _) = match tungstenite::connect(&url) {
         Ok(stream) => stream,
-        Err(e) => {
+        Err(_) => {
             let _ = notif_sender.send(Notification::Error(Error::WsConnection));
-            eprintln!("Failed to connect to WSS: {}", e);
             return;
         }
     };
@@ -541,12 +532,11 @@ fn wss_thread(
                             requests.insert(request_id.clone(), request.clone());
                         }
                         let ws_msg = request.to_ws_message(&token, &request_id);
-                        if let Err(e) = ws_stream.send(ws_msg) {
+                        if ws_stream.send(ws_msg).is_err() {
                             // Remove from cache on send failure
                             let mut requests = sent_requests2.lock().unwrap();
                             requests.remove(&request_id);
                             let _ = notif_sender.send(Notification::Error(Error::WsConnection));
-                            eprintln!("Failed to send request: {}", e);
                             break;
                         }
                     }
@@ -565,7 +555,6 @@ fn wss_thread(
                         // Pass the message directly to the handler
                         let msg = WsMessage::Text(text);
                         if let Err(e) = handle_wss_message(msg, &orgs, &wallets, &users, &request_sender, &sent_requests3, &last_ping, &notif_sender) {
-                            eprintln!("Error handling WSS message: {}", e);
                             // Send error notification to show warning modal
                             let _ = notif_sender.send(Notification::Error(Error::WsMessageHandling(e)));
                         }
@@ -601,13 +590,8 @@ fn handle_wss_message(
     last_ping_time: &Arc<Mutex<Option<Instant>>>,
     n_sender: &channel::Sender<Notification>,
 ) -> Result<(), String> {
-    println!("[CLIENT] Received WSS message");
     let (response, request_id) = Response::from_ws_message(msg)
         .map_err(|e| format!("Failed to convert WSS message: {}", e))?;
-    println!(
-        "[CLIENT] Parsed response: {:?}, request_id: {:?}",
-        response, request_id
-    );
 
     // Handle error responses first - they're always valid and we remove from cache
     if let Response::Error { error } = &response {
@@ -904,24 +888,12 @@ impl Backend for Client {
         let auth_client_2 = self.auth_client.clone();
 
         thread::spawn(move || {
-            println!(
-                "[auth_request] Starting auth request for email: {}",
-                email_clone
-            );
             let rt = tokio::runtime::Runtime::new().unwrap();
             let result = rt.block_on(async {
                 // Get service config
-                println!("[auth_request] Fetching service config...");
                 let config = match get_service_config_blocking(network) {
-                    Ok(cfg) => {
-                        println!(
-                            "[auth_request] Got config: auth_api_url={}",
-                            cfg.auth_api_url
-                        );
-                        cfg
-                    }
-                    Err(e) => {
-                        println!("[auth_request] Failed to get config: {:?}", e);
+                    Ok(cfg) => cfg,
+                    Err(_) => {
                         if let Some(sender) = notif_sender.as_ref() {
                             let _ = sender.send(Notification::AuthCodeFail);
                         }
@@ -930,14 +902,6 @@ impl Backend for Client {
                 };
 
                 // Create auth client
-                println!("[auth_request] Creating auth client with:");
-                println!("[auth_request]   auth_api_url: {}", config.auth_api_url);
-                println!(
-                    "[auth_request]   email: '{}' (len={})",
-                    email_clone,
-                    email_clone.len()
-                );
-                println!("[auth_request]   email bytes: {:?}", email_clone.as_bytes());
                 let auth_client = AuthClient::new(
                     config.auth_api_url.clone(),
                     config.auth_api_public_key.clone(),
@@ -945,10 +909,8 @@ impl Backend for Client {
                 );
 
                 // Send OTP
-                println!("[auth_request] Sending OTP request...");
                 match auth_client.sign_in_otp().await {
                     Ok(()) => {
-                        println!("[auth_request] OTP sent successfully");
                         // Store auth client
                         if let Ok(mut client_guard) = auth_client_2.lock() {
                             *client_guard = Some(auth_client);
@@ -956,11 +918,9 @@ impl Backend for Client {
                         Ok(())
                     }
                     Err(e) => {
-                        println!("[auth_request] OTP request failed: {:?}", e);
                         if let Some(sender) = notif_sender.as_ref() {
                             // Check if it's an invalid email error
                             if let Some(status) = e.http_status {
-                                println!("[auth_request] HTTP status: {}", status);
                                 if status == 400 || status == 422 {
                                     let _ = sender.send(Notification::InvalidEmail);
                                 } else {

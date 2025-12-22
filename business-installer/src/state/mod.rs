@@ -34,15 +34,17 @@ pub struct State {
     pub views: views::ViewsState,
     pub backend: Client,
     pub current_view: View,
+    pub hw: liana_gui::hw::HardwareWallets,
 }
 
 impl State {
-    pub fn new() -> Self {
+    pub fn new(datadir: liana_gui::dir::LianaDirectory, network: liana::miniscript::bitcoin::Network) -> Self {
         Self {
             app: AppState::new(),
             views: views::ViewsState::new(),
             backend: init_client(),
             current_view: View::Login,
+            hw: liana_gui::hw::HardwareWallets::new(datadir, network),
         }
     }
 
@@ -61,6 +63,11 @@ impl State {
     /// Close the backend connection
     pub fn close_backend(&mut self) {
         self.backend.close();
+    }
+
+    /// Update the network for hardware wallet detection
+    pub fn set_hw_network(&mut self, network: liana::miniscript::bitcoin::Network) {
+        self.hw.set_network(network);
     }
 
     /// Determine which view should be displayed based on current state
@@ -100,6 +107,8 @@ impl State {
                 Message::KeyCancelModal
             } else if self.views.paths.edit_path.is_some() {
                 Message::TemplateCancelPathModal
+            } else if self.views.xpub.modal.is_some() {
+                Message::XpubCancelModal
             } else {
                 Message::WarningCloseModal
             };
@@ -147,8 +156,4 @@ impl State {
 
 // NOTE: implementation of State::update() is in src/state/update.rs
 
-impl Default for State {
-    fn default() -> Self {
-        Self::new()
-    }
-}
+// Default removed - State requires explicit initialization with datadir and network
