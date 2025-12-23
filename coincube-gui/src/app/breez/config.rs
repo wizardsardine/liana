@@ -30,7 +30,7 @@ impl BreezConfig {
                 "https://blockstream.info/liquid/api",
                 "https://blockstream.info/api",
             ),
-            bitcoin::Network::Testnet | bitcoin::Network::Testnet4 | bitcoin::Network::Regtest => (
+            bitcoin::Network::Testnet => (
                 "https://blockstream.info/liquidtestnet/api",
                 "https://blockstream.info/testnet/api",
             ),
@@ -38,6 +38,9 @@ impl BreezConfig {
                 "https://blockstream.info/liquidtestnet/api",
                 "https://blockstream.info/signet/api",
             ),
+            bitcoin::Network::Regtest | bitcoin::Network::Testnet4 => {
+                ("http://localhost:4003/api", "http://localhost:4002/api")
+            }
         };
 
         breez::Config {
@@ -56,7 +59,7 @@ impl BreezConfig {
                     breez::LiquidNetwork::Testnet
                 }
                 bitcoin::Network::Testnet4 => breez::LiquidNetwork::Testnet,
-                bitcoin::Network::Regtest => breez::LiquidNetwork::Testnet,
+                bitcoin::Network::Regtest => breez::LiquidNetwork::Regtest,
             },
             payment_timeout_sec: 60,
             sync_service_url: None,         // Use default

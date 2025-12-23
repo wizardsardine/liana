@@ -52,8 +52,14 @@ use std::sync::OnceLock;
 use self::state::SettingsState;
 
 static DUMMY_DAEMON: OnceLock<Arc<dyn Daemon + Sync + Send>> = OnceLock::new();
+static DUMMY_WALLET: OnceLock<Arc<Wallet>> = OnceLock::new();
 fn dummy_daemon() -> Arc<dyn Daemon + Sync + Send> {
     DUMMY_DAEMON.get_or_init(|| Arc::new(DummyDaemon)).clone()
+}
+fn dummy_wallet() -> Arc<Wallet> {
+    DUMMY_WALLET
+        .get_or_init(|| Arc::new(Wallet::dummy()))
+        .clone()
 }
 
 struct Panels {
@@ -641,6 +647,8 @@ impl App {
             } else {
                 Task::none()
             }
+        } else if let Some(panel) = self.panels.current_mut() {
+            panel.reload(dummy_daemon(), dummy_wallet())
         } else {
             Task::none()
         }
