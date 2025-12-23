@@ -3,7 +3,7 @@ use crate::{
         buysell::{panel::BuyOrSell, MavapayFlowStep, MavapayState},
         BuySellMessage, Message as ViewMessage,
     },
-    services::mavapay::*,
+    services::{coincube::Country, mavapay::*},
 };
 
 use iced::{widget::*, Alignment, Length};
@@ -13,18 +13,25 @@ use coincube_ui::{color, icon::*, theme, widget::Column};
 
 struct CheckoutDetails {
     reference: String,
+    reference_label: &'static str,
     total_fiat: f64,
     btc_amount: f64,
-    currency_symbol: String,
+    currency_symbol: &'static str,
 }
 
 impl CheckoutDetails {
-    fn from_quote(quote: &GetQuoteResponse, sats: u64) -> Self {
+    fn from_quote(quote: &GetQuoteResponse, sats: u64, country: &Country) -> Self {
+        let (reference, reference_label) = match &quote.order_id {
+            Some(order_id) => (order_id.clone(), "Order Ref"),
+            None => (quote.id.clone(), "Quote Ref"),
+        };
+
         Self {
-            reference: quote.order_id.clone().unwrap_or_else(|| quote.id.clone()),
+            reference,
+            reference_label,
             total_fiat: quote.total_amount_in_source_currency as f64 / 100.0,
             btc_amount: sats as f64 / 100_000_000.0,
-            currency_symbol: quote.source_currency.symbol().to_string(),
+            currency_symbol: country.currency.symbol,
         }
     }
 }
@@ -45,13 +52,14 @@ fn checkout_form<'a>(state: &'a MavapayState) -> Column<'a, BuySellMessage> {
         fulfilled_order,
         quote,
         sat_amount,
+        country,
         ..
     } = &state.step
     else {
         unreachable!()
     };
 
-    let details = CheckoutDetails::from_quote(quote, *sat_amount);
+    let details = CheckoutDetails::from_quote(quote, *sat_amount, country);
 
     match fulfilled_order {
         None => {
@@ -105,7 +113,7 @@ fn checkout_form<'a>(state: &'a MavapayState) -> Column<'a, BuySellMessage> {
             )
         }
         Some(order) => {
-            let details = CheckoutDetails::from_quote(quote, *sat_amount);
+            let details = CheckoutDetails::from_quote(quote, *sat_amount, country);
             order_success_view(buy_or_sell, order, &details)
         }
     }
@@ -271,6 +279,7 @@ fn summary_card<'a>(
 ) -> iced::widget::Container<'a, BuySellMessage, theme::Theme> {
     let CheckoutDetails {
         reference,
+        reference_label,
         total_fiat,
         btc_amount,
         currency_symbol,
@@ -292,7 +301,8 @@ fn summary_card<'a>(
                 Space::new().width(10),
                 iced::widget::column![
                     text::p1_bold("Order Created Successfully"),
-                    text::p2_medium(format!("Order Ref: {}", reference)).color(color::GREY_2)
+                    text::p2_medium(format!("{}: {}", reference_label, reference))
+                        .color(color::GREY_2)
                 ]
             ]
             .align_y(Alignment::Center),
@@ -422,7 +432,7 @@ fn notes_card<'a>() -> iced::widget::Container<'a, BuySellMessage, theme::Theme>
             note_item("Execution time will depend on market liquidity"),
             note_item("You will receive real-time updates on trade execution progress"),
             note_item("Final Bitcoin price may vary based on actual execution prices"),
-            note_item("Our commisision (1-2%) will be deducted from the final Bitcoin amount"),
+            note_item("Our commission (1-2%) will be deducted from the final Bitcoin amount"),
         ]
         .width(Length::Fill)
         .padding(15),
@@ -500,7 +510,7 @@ fn order_success_view<'a>(
                 iced::widget::column![
                     text::p1_bold("Order Details"),
                     Space::new().height(15),
-                    detail_row("Order ID", order.id.clone(), None),
+                    detail_row(details.reference_label, order.id.clone(), None),
                     Space::new().height(15),
                     iced::widget::row![
                         iced::widget::column![
