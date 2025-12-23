@@ -1,9 +1,16 @@
 use breez_sdk_liquid::prelude::{Payment, PaymentType};
-use coincube_ui::{component::{button, text::*}, icon, theme, widget::*};
-use iced::{widget::{Column, Container, Row, Space}, Alignment, Length};
+use coincube_ui::{
+    component::{button, text::*},
+    icon, theme,
+    widget::*,
+};
+use iced::{
+    widget::{Column, Container, Row, Space},
+    Alignment, Length,
+};
 
-use crate::app::view::message::Message;
 use crate::app::menu::Menu;
+use crate::app::view::message::Message;
 
 pub fn active_transactions_view(
     payments: &[Payment],
@@ -11,10 +18,7 @@ pub fn active_transactions_view(
     balance_usd: f64,
     _loading: bool,
 ) -> Element<Message> {
-    let mut content = Column::new()
-        .spacing(30)
-        .width(Length::Fill)
-        .padding(40);
+    let mut content = Column::new().spacing(30).width(Length::Fill).padding(40);
 
     if payments.is_empty() {
         // Empty state
@@ -53,21 +57,20 @@ pub fn active_transactions_view(
     } else {
         // Show balance
         let balance_btc = balance_sat as f64 / 100_000_000.0;
-        content = content
-            .push(
-                Column::new()
-                    .spacing(8)
-                    .push(
-                        text(format!("{:.8} sats", balance_btc))
-                            .size(32)
-                            .style(theme::text::warning),
-                    )
-                    .push(
-                        text(format!("~ $ {:.2}", balance_usd))
-                            .size(18)
-                            .style(theme::text::secondary),
-                    ),
-            );
+        content = content.push(
+            Column::new()
+                .spacing(8)
+                .push(
+                    text(format!("{:.8} sats", balance_btc))
+                        .size(32)
+                        .style(theme::text::warning),
+                )
+                .push(
+                    text(format!("~ $ {:.2}", balance_usd))
+                        .size(18)
+                        .style(theme::text::secondary),
+                ),
+        );
 
         // Transaction list
         for payment in payments {
@@ -81,10 +84,10 @@ pub fn active_transactions_view(
 fn transaction_row(payment: &Payment) -> Element<Message> {
     let is_receive = matches!(payment.payment_type, PaymentType::Receive);
     let sign = if is_receive { "+" } else { "-" };
-    let amount_color = if is_receive { 
-        theme::text::success 
-    } else { 
-        theme::text::secondary 
+    let amount_color = if is_receive {
+        theme::text::success
+    } else {
+        theme::text::secondary
     };
 
     // Format timestamp
@@ -144,7 +147,11 @@ fn format_time_ago(timestamp: u64) -> String {
         format!("{} seconds ago", elapsed)
     } else if elapsed < 3600 {
         let minutes = elapsed / 60;
-        format!("{} minute{} ago", minutes, if minutes == 1 { "" } else { "s" })
+        format!(
+            "{} minute{} ago",
+            minutes,
+            if minutes == 1 { "" } else { "s" }
+        )
     } else if elapsed < 86400 {
         let hours = elapsed / 3600;
         format!("{} hour{} ago", hours, if hours == 1 { "" } else { "s" })

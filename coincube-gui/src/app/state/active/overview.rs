@@ -1,89 +1,186 @@
+use std::convert::TryInto;
 use std::sync::Arc;
 
-use breez_sdk_liquid::prelude::{GetInfoResponse, Payment};
+use breez_sdk_liquid::model::PaymentDetails;
+use coincube_core::miniscript::bitcoin::Amount;
 use coincube_ui::widget::*;
 use iced::Task;
 
-use crate::app::{breez::BreezClient, cache::Cache, menu::Menu, state::State};
+use crate::app::menu::{ActiveSubMenu, Menu};
+use crate::app::state::{redirect, State};
+use crate::app::{breez::BreezClient, cache::Cache};
 use crate::app::{message::Message, view, wallet::Wallet};
 use crate::daemon::Daemon;
+use crate::utils::format_time_ago;
 
+/// ActiveOverview
 pub struct ActiveOverview {
     breez_client: Arc<BreezClient>,
-    info: Option<GetInfoResponse>,
-    recent_payment: Option<Payment>,
-    loading: bool,
+    btc_balance: Amount,
+    recent_transaction: Vec<view::active::RecentTransaction>,
+    error: Option<String>,
 }
 
 impl ActiveOverview {
     pub fn new(breez_client: Arc<BreezClient>) -> Self {
         Self {
             breez_client,
-            info: None,
-            recent_payment: None,
-            loading: false,
+            btc_balance: Amount::from_sat(0),
+            recent_transaction: Vec::new(),
+            error: None,
         }
+    }
+
+    fn load_balance(&self) -> Task<Message> {
+        let breez_client = self.breez_client.clone();
+
+        Task::perform(
+            async move {
+                let info = breez_client.info().await;
+                let payments = breez_client.list_payments(Some(2)).await;
+
+                let balance = info
+                    .as_ref()
+                    .map(|info| {
+                        Amount::from_sat(
+                            (info.wallet_info.balance_sat + info.wallet_info.pending_receive_sat)
+                                .saturating_sub(info.wallet_info.pending_send_sat),
+                        )
+                    })
+                    .unwrap_or(Amount::ZERO);
+
+                let error = match (&info, &payments) {
+                    (Err(_), Err(_)) => Some("Couldn't fetch balance or transactions".to_string()),
+                    (Err(_), _) => Some("Couldn't fetch account balance".to_string()),
+                    (_, Err(_)) => Some("Couldn't fetch recent transactions".to_string()),
+                    _ => None,
+                };
+
+                let payments = payments.unwrap_or_default();
+
+                (balance, payments, error)
+            },
+            |(balance, recent_payment, error)| {
+                if let Some(err) = error {
+                    Message::View(view::Message::ActiveOverview(
+                        view::ActiveOverviewMessage::Error(err),
+                    ))
+                } else {
+                    Message::View(view::Message::ActiveOverview(
+                        view::ActiveOverviewMessage::DataLoaded {
+                            balance,
+                            recent_payment,
+                        },
+                    ))
+                }
+            },
+        )
     }
 }
 
 impl State for ActiveOverview {
     fn view<'a>(&'a self, menu: &'a Menu, cache: &'a Cache) -> Element<'a, view::Message> {
-        let balance_sat = self.info.as_ref().map(|i| i.wallet_info.balance_sat).unwrap_or(0);
-        let balance_btc = balance_sat as f64 / 100_000_000.0;
-        // Mock USD conversion (in production, use real exchange rate)
-        let balance_usd = balance_btc * 100_000.0;
-        
-        tracing::info!(
-            "ActiveOverview::view() - balance_sat={}, has_info={}, has_payment={}, loading={}",
-            balance_sat,
-            self.info.is_some(),
-            self.recent_payment.is_some(),
-            self.loading
-        );
+        let fiat_converter = cache.fiat_price.as_ref().and_then(|p| p.try_into().ok());
 
-        view::dashboard(
-            menu,
-            cache,
-            None,
-            view::active::active_overview_view(
-                balance_btc,
-                balance_usd,
-                self.recent_payment.as_ref(),
-                self.loading,
-            ),
+        let send_view = view::active::active_overview_view(
+            self.btc_balance,
+            fiat_converter,
+            &self.recent_transaction,
+            self.error.as_deref(),
         )
+        .map(view::Message::ActiveOverview);
+
+        view::dashboard(menu, cache, None, send_view)
     }
 
     fn update(
         &mut self,
-        _daemon: Arc<dyn Daemon + Sync + Send>,
-        _cache: &Cache,
+        _daemon: Option<Arc<dyn Daemon + Sync + Send>>,
+        cache: &Cache,
         message: Message,
     ) -> Task<Message> {
-        match message {
-            Message::BreezInfo(Ok(info)) => {
-                tracing::info!("ActiveOverview received BreezInfo: balance_sat={}", info.wallet_info.balance_sat);
-                self.info = Some(info);
-                Task::none()
+        if let Message::View(view::Message::ActiveOverview(msg)) = message {
+            match msg {
+                view::ActiveOverviewMessage::Send => {
+                    return redirect(Menu::Active(ActiveSubMenu::Send));
+                }
+                view::ActiveOverviewMessage::Receive => {
+                    return redirect(Menu::Active(ActiveSubMenu::Receive));
+                }
+                view::ActiveOverviewMessage::History => {
+                    return redirect(Menu::Active(ActiveSubMenu::Transactions(None)));
+                }
+                view::ActiveOverviewMessage::DataLoaded {
+                    balance,
+                    recent_payment,
+                } => {
+                    self.btc_balance = balance;
+
+                    if recent_payment.len() > 0 {
+                        let fiat_converter: Option<view::FiatAmountConverter> =
+                            cache.fiat_price.as_ref().and_then(|p| p.try_into().ok());
+                        let txns = recent_payment
+                            .into_iter()
+                            .map(|payment| {
+                                let amount = Amount::from_sat(payment.amount_sat);
+                                let status = payment.status;
+                                let time_ago = format_time_ago(payment.timestamp);
+                                let fiat_amount = fiat_converter
+                                    .as_ref()
+                                    .map(|c: &view::FiatAmountConverter| c.convert(amount));
+
+                                let desc = match &payment.details {
+                                    PaymentDetails::Lightning { description, .. }
+                                    | PaymentDetails::Liquid { description, .. }
+                                    | PaymentDetails::Bitcoin { description, .. } => description,
+                                };
+
+                                let is_incoming = matches!(
+                                    payment.payment_type,
+                                    breez_sdk_liquid::prelude::PaymentType::Receive
+                                );
+                                let sign = if is_incoming { "+" } else { "-" };
+                                view::active::RecentTransaction {
+                                    description: desc.to_owned(),
+                                    time_ago,
+                                    amount,
+                                    fiat_amount,
+                                    is_incoming,
+                                    sign,
+                                    status,
+                                }
+                            })
+                            .collect();
+                        self.recent_transaction = txns;
+                    }
+                }
+                view::ActiveOverviewMessage::BreezEvent(event) => {
+                    use breez_sdk_liquid::prelude::SdkEvent;
+                    log::info!("Received Breez Event: {:?}", event);
+                    match event {
+                        SdkEvent::PaymentPending { .. }
+                        | SdkEvent::PaymentSucceeded { .. }
+                        | SdkEvent::PaymentFailed { .. }
+                        | SdkEvent::PaymentWaitingConfirmation { .. } => {
+                            return self.load_balance();
+                        }
+                        _ => {}
+                    }
+                }
+                view::ActiveOverviewMessage::Error(err) => {
+                    self.error = Some(err);
+                }
             }
-            Message::BreezInfo(Err(e)) => {
-                tracing::error!("ActiveOverview BreezInfo error: {:?}", e);
-                Task::none()
-            }
-            Message::PaymentsLoaded(Ok(payments)) => {
-                tracing::info!("ActiveOverview received PaymentsLoaded: {} payments", payments.len());
-                self.loading = false;
-                // Get the most recent payment
-                self.recent_payment = payments.into_iter().next();
-                Task::none()
-            }
-            Message::PaymentsLoaded(Err(e)) => {
-                tracing::error!("ActiveOverview PaymentsLoaded error: {:?}", e);
-                self.loading = false;
-                Task::none()
-            }
-            _ => Task::none(),
         }
+        Task::none()
+    }
+
+    fn subscription(&self) -> iced::Subscription<Message> {
+        self.breez_client.subscription().map(|e| {
+            Message::View(view::Message::ActiveOverview(
+                view::ActiveOverviewMessage::BreezEvent(e),
+            ))
+        })
     }
 
     fn reload(
@@ -91,26 +188,6 @@ impl State for ActiveOverview {
         _daemon: Option<Arc<dyn Daemon + Sync + Send>>,
         _wallet: Option<Arc<Wallet>>,
     ) -> Task<Message> {
-        tracing::info!("ActiveOverview::reload() called");
-        self.loading = true;
-        let client1 = self.breez_client.clone();
-        let client2 = self.breez_client.clone();
-
-        Task::batch([
-            // Fetch wallet info for balance
-            Task::perform(
-                async move {
-                    client1.info().await
-                },
-                Message::BreezInfo,
-            ),
-            // Fetch recent payment
-            Task::perform(
-                async move {
-                    client2.list_payments().await.map_err(|e| e.into())
-                },
-                Message::PaymentsLoaded,
-            ),
-        ])
+        self.load_balance()
     }
 }

@@ -4,9 +4,9 @@ use coincube_ui::{
     widget::*,
 };
 use iced::{
-    widget::{text::Wrapping, Column, Container, QRCode, Row, qr_code},
+    widget::{qr_code, text::Wrapping, Column, Container, QRCode, Row},
     Alignment, Length,
-};  
+};
 
 use crate::app::view::{ActiveReceiveMessage, ReceiveMethod};
 
@@ -25,7 +25,7 @@ pub fn active_receive_view<'a>(
         .padding(40);
 
     content = content.push(method_toggle(receive_method));
-    
+
     // Show input fields only for Lightning
     if *receive_method == ReceiveMethod::Lightning {
         content = content.push(input_fields(amount_input, description_input));
@@ -49,19 +49,20 @@ pub fn active_receive_view<'a>(
         );
     } else if let (Some(addr), Some(qr)) = (address, qr_data) {
         // Lightning invoices contain more data, so use smaller cell size
-        let cell_size = if *receive_method == ReceiveMethod::Lightning { 4 } else { 8 };
-        
+        let cell_size = if *receive_method == ReceiveMethod::Lightning {
+            4
+        } else {
+            8
+        };
+
         content = content.push(
             Column::new()
                 .spacing(30)
                 .align_x(Alignment::Center)
                 .push(
-                    Container::new(
-                        QRCode::<theme::Theme>::new(qr)
-                            .cell_size(cell_size),
-                    )
-                    .padding(30)
-                    .style(theme::card::simple),
+                    Container::new(QRCode::<theme::Theme>::new(qr).cell_size(cell_size))
+                        .padding(30)
+                        .style(theme::card::simple),
                 )
                 .push(
                     Container::new(
@@ -76,7 +77,7 @@ pub fn active_receive_view<'a>(
                 )
                 .push(action_buttons(receive_method)),
         );
-        
+
         // Add generate new address button for on-chain
         if *receive_method == ReceiveMethod::OnChain {
             content = content.push(
@@ -98,15 +99,10 @@ pub fn active_receive_view<'a>(
 
 fn method_toggle(current_method: &ReceiveMethod) -> Element<ActiveReceiveMessage> {
     let lightning_button = Container::new(
-        button::transparent(
-            Some(icon::lightning_icon()),
-            "Lightning",
-        )
-        .on_press(ActiveReceiveMessage::ToggleMethod(
-            ReceiveMethod::Lightning,
-        ))
-        .width(Length::Fixed(200.0))
-        .padding(15),
+        button::transparent(Some(icon::lightning_icon()), "Lightning")
+            .on_press(ActiveReceiveMessage::ToggleMethod(ReceiveMethod::Lightning))
+            .width(Length::Fixed(200.0))
+            .padding(15),
     )
     .style(if *current_method == ReceiveMethod::Lightning {
         theme::container::border_orange
@@ -115,15 +111,10 @@ fn method_toggle(current_method: &ReceiveMethod) -> Element<ActiveReceiveMessage
     });
 
     let onchain_button = Container::new(
-        button::transparent(
-            Some(icon::bitcoin_icon()),
-            "On-chain",
-        )
-        .on_press(ActiveReceiveMessage::ToggleMethod(
-            ReceiveMethod::OnChain,
-        ))
-        .width(Length::Fixed(200.0))
-        .padding(15),
+        button::transparent(Some(icon::bitcoin_icon()), "On-chain")
+            .on_press(ActiveReceiveMessage::ToggleMethod(ReceiveMethod::OnChain))
+            .width(Length::Fixed(200.0))
+            .padding(15),
     )
     .style(if *current_method == ReceiveMethod::OnChain {
         theme::container::border_orange
@@ -193,13 +184,10 @@ fn generate_button<'a>() -> Element<'a, ActiveReceiveMessage> {
 }
 
 fn action_buttons(_receive_method: &ReceiveMethod) -> Element<ActiveReceiveMessage> {
-    let copy_button = button::primary(
-        Some(icon::clipboard_icon()),
-        "Copy",
-    )
-    .on_press(ActiveReceiveMessage::Copy)
-    .width(Length::Fixed(150.0))
-    .padding(15);
+    let copy_button = button::primary(Some(icon::clipboard_icon()), "Copy")
+        .on_press(ActiveReceiveMessage::Copy)
+        .width(Length::Fixed(150.0))
+        .padding(15);
 
     Row::new().spacing(15).push(copy_button).into()
 }

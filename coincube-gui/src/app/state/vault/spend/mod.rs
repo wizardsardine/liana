@@ -134,10 +134,11 @@ impl State for CreateSpendPanel {
 
     fn update(
         &mut self,
-        daemon: Arc<dyn Daemon + Sync + Send>,
+        daemon: Option<Arc<dyn Daemon + Sync + Send>>,
         cache: &Cache,
         message: Message,
     ) -> Task<Message> {
+        let daemon = daemon.expect("Daemon required for vault spend panel");
         if matches!(message, Message::View(view::Message::Close)) {
             return redirect(Menu::PSBTs);
         }

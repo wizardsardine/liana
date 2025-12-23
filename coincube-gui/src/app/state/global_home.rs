@@ -120,10 +120,11 @@ impl State for GlobalHome {
 
     fn update(
         &mut self,
-        daemon: Arc<dyn Daemon + Sync + Send>,
+        daemon: Option<Arc<dyn Daemon + Sync + Send>>,
         _cache: &Cache,
         message: Message,
     ) -> Task<Message> {
+        let daemon = daemon.expect("Daemon required for global home panel");
         match message {
             Message::View(view::Message::Home(msg)) => match msg {
                 HomeMessage::ToggleBalanceMask => {

@@ -48,8 +48,9 @@ pub enum Message {
     ImportPsbt,
     OpenUrl(String),
     Home(HomeMessage),
-    ActiveSend(ActiveSendMessage),
+    ActiveOverview(ActiveOverviewMessage),
     ActiveReceive(ActiveReceiveMessage),
+    ActiveSend(ActiveSendMessage),
     ActiveSettings(ActiveSettingsMessage),
 }
 
@@ -217,10 +218,29 @@ pub enum FiatMessage {
 }
 
 #[derive(Debug, Clone)]
+pub enum ActiveOverviewMessage {
+    Send,
+    Receive,
+    History,
+    DataLoaded {
+        balance: coincube_core::miniscript::bitcoin::Amount,
+        recent_payment: Vec<breez_sdk_liquid::prelude::Payment>,
+    },
+    BreezEvent(breez_sdk_liquid::prelude::SdkEvent),
+    Error(String),
+}
+
+#[derive(Debug, Clone)]
 pub enum ActiveSendMessage {
     InvoiceEdited(String),
     Send,
-    ViewHistory,
+    History,
+    DataLoaded {
+        balance: coincube_core::miniscript::bitcoin::Amount,
+        recent_payment: Vec<breez_sdk_liquid::prelude::Payment>,
+    },
+    BreezEvent(breez_sdk_liquid::prelude::SdkEvent),
+    Error(String),
 }
 
 #[derive(Debug, Clone)]

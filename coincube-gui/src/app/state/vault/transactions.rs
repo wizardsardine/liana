@@ -110,10 +110,11 @@ impl State for VaultTransactionsPanel {
 
     fn update(
         &mut self,
-        daemon: Arc<dyn Daemon + Sync + Send>,
+        daemon: Option<Arc<dyn Daemon + Sync + Send>>,
         _cache: &Cache,
         message: Message,
     ) -> Task<Message> {
+        let daemon = daemon.expect("Daemon required for vault transactions panel");
         match message {
             Message::HistoryTransactions(res) => match res {
                 Err(e) => self.warning = Some(e),

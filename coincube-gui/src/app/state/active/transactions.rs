@@ -30,11 +30,11 @@ impl ActiveTransactions {
     pub fn preselect(&mut self, _tx: crate::daemon::model::HistoryTransaction) {
         // Placeholder: In the future, this will preselect a transaction
     }
-    
+
     fn calculate_balance(&self) -> u64 {
         use breez_sdk_liquid::prelude::PaymentType;
         let mut balance: i64 = 0;
-        
+
         for payment in &self.payments {
             match payment.payment_type {
                 PaymentType::Receive => {
@@ -45,7 +45,7 @@ impl ActiveTransactions {
                 }
             }
         }
-        
+
         balance.max(0) as u64
     }
 }
@@ -67,7 +67,7 @@ impl State for ActiveTransactions {
 
     fn update(
         &mut self,
-        _daemon: Arc<dyn Daemon + Sync + Send>,
+        _daemon: Option<Arc<dyn Daemon + Sync + Send>>,
         _cache: &Cache,
         message: Message,
     ) -> Task<Message> {
@@ -96,11 +96,9 @@ impl State for ActiveTransactions {
     ) -> Task<Message> {
         self.loading = true;
         let client = self.breez_client.clone();
-        
+
         Task::perform(
-            async move {
-                client.list_payments().await
-            },
+            async move { client.list_payments(None).await },
             Message::PaymentsLoaded,
         )
     }

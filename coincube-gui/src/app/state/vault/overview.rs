@@ -122,10 +122,11 @@ impl State for VaultOverview {
 
     fn update(
         &mut self,
-        daemon: Arc<dyn Daemon + Sync + Send>,
+        daemon: Option<Arc<dyn Daemon + Sync + Send>>,
         cache: &Cache,
         message: Message,
     ) -> Task<Message> {
+        let daemon = daemon.expect("Daemon required for vault overview panel");
         match message {
             Message::Tick => {
                 // we reload the page only when the user is not exploring the history
@@ -135,7 +136,7 @@ impl State for VaultOverview {
                     && self.selected_event.is_none()
                     && Instant::now() > self.last_reload + HOME_RELOAD_MAX_TTL
                 {
-                    return self.reload(Some(daemon), Some(self.wallet.clone()));
+                    return self.reload(Some(daemon.clone()), Some(self.wallet.clone()));
                 }
             }
             Message::Coins(res) => match res {
@@ -207,7 +208,7 @@ impl State for VaultOverview {
                 );
                 // If this is the current panel, reload it if wallet is no longer syncing.
                 if is_current && wallet_was_syncing && self.sync_status.is_synced() {
-                    return self.reload(Some(daemon), Some(self.wallet.clone()));
+                    return self.reload(Some(daemon.clone()), Some(self.wallet.clone()));
                 }
             }
             Message::Payment(res) => match res {
@@ -328,7 +329,7 @@ impl State for VaultOverview {
     ) -> Task<Message> {
         let daemon = daemon.expect("Vault panels require daemon");
         let wallet = wallet.expect("Vault panels require wallet");
-        
+
         // If the wallet is syncing, we expect it to finish soon and so better to wait for
         // updated data before reloading. Besides, if the wallet is syncing, the DB may be
         // locked if the poller is running and we wouldn't be able to reload data until

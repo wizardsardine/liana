@@ -63,10 +63,11 @@ impl State for PsbtsPanel {
 
     fn update(
         &mut self,
-        daemon: Arc<dyn Daemon + Sync + Send>,
+        daemon: Option<Arc<dyn Daemon + Sync + Send>>,
         cache: &Cache,
         message: Message,
     ) -> Task<Message> {
+        let daemon = daemon.expect("Daemon required for vault psbts panel");
         match message {
             Message::View(view::Message::Reload) | Message::View(view::Message::Close) => {
                 return self.reload(Some(daemon), Some(self.wallet.clone()));

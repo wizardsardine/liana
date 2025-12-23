@@ -1,11 +1,11 @@
 use std::sync::Arc;
 
 use coincube_ui::widget::*;
-use iced::{clipboard, Task, widget::qr_code};
+use iced::{clipboard, widget::qr_code, Task};
 
+use crate::app::view::{ActiveReceiveMessage, ReceiveMethod};
 use crate::app::{breez::BreezClient, cache::Cache, menu::Menu, state::State};
 use crate::app::{message::Message, view, wallet::Wallet};
-use crate::app::view::{ActiveReceiveMessage, ReceiveMethod};
 use crate::daemon::Daemon;
 
 pub struct ActiveReceive {
@@ -46,18 +46,16 @@ impl ActiveReceive {
             .receive_invoice(amount_sat, description)
             .await
             .map_err(|e| format!("Failed to generate Lightning invoice: {}", e))?;
-        
+
         Ok(response.destination)
     }
 
-    async fn generate_onchain_address(
-        client: Arc<BreezClient>,
-    ) -> Result<String, String> {
+    async fn generate_onchain_address(client: Arc<BreezClient>) -> Result<String, String> {
         let response = client
             .receive_onchain(None)
             .await
             .map_err(|e| format!("Failed to generate Bitcoin address: {}", e))?;
-        
+
         Ok(response.destination)
     }
 }
@@ -79,7 +77,7 @@ impl State for ActiveReceive {
 
     fn update(
         &mut self,
-        _daemon: Arc<dyn Daemon + Sync + Send>,
+        _daemon: Option<Arc<dyn Daemon + Sync + Send>>,
         _cache: &Cache,
         message: Message,
     ) -> Task<Message> {
@@ -96,8 +94,12 @@ impl State for ActiveReceive {
                     if let Some(address) = self.current_address() {
                         let address_copy = address.to_string();
                         self.toast = Some(match self.receive_method {
-                            ReceiveMethod::Lightning => "Copied Lightning Address to clipboard".to_string(),
-                            ReceiveMethod::OnChain => "Copied Bitcoin Address to clipboard".to_string(),
+                            ReceiveMethod::Lightning => {
+                                "Copied Lightning Address to clipboard".to_string()
+                            }
+                            ReceiveMethod::OnChain => {
+                                "Copied Bitcoin Address to clipboard".to_string()
+                            }
                         });
                         return clipboard::write(address_copy);
                     }
@@ -144,18 +146,16 @@ impl State for ActiveReceive {
                                 }
                             }
                         }
-                        Err(_) => {
-                            match method {
-                                ReceiveMethod::Lightning => {
-                                    self.lightning_address = None;
-                                    self.lightning_qr_data = None;
-                                }
-                                ReceiveMethod::OnChain => {
-                                    self.onchain_address = None;
-                                    self.onchain_qr_data = None;
-                                }
+                        Err(_) => match method {
+                            ReceiveMethod::Lightning => {
+                                self.lightning_address = None;
+                                self.lightning_qr_data = None;
                             }
-                        }
+                            ReceiveMethod::OnChain => {
+                                self.onchain_address = None;
+                                self.onchain_qr_data = None;
+                            }
+                        },
                     }
                     return Task::none();
                 }
@@ -189,23 +189,22 @@ impl ActiveReceive {
         }
     }
 
-
     fn generate_lightning(&mut self) -> Task<Message> {
         self.loading = true;
         let client = self.breez_client.clone();
-        
+
         let amount_sat = self.parse_amount();
         let description = if self.description_input.is_empty() {
             None
         } else {
             Some(self.description_input.clone())
         };
-        
+
         Task::perform(
             Self::generate_lightning_address(client, amount_sat, description),
             |result| {
                 Message::View(view::Message::ActiveReceive(
-                    ActiveReceiveMessage::AddressGenerated(ReceiveMethod::Lightning, result)
+                    ActiveReceiveMessage::AddressGenerated(ReceiveMethod::Lightning, result),
                 ))
             },
         )
@@ -214,17 +213,14 @@ impl ActiveReceive {
     fn generate_onchain(&mut self) -> Task<Message> {
         self.loading = true;
         let client = self.breez_client.clone();
-        
-        Task::perform(
-            Self::generate_onchain_address(client),
-            |result| {
-                Message::View(view::Message::ActiveReceive(
-                    ActiveReceiveMessage::AddressGenerated(ReceiveMethod::OnChain, result)
-                ))
-            },
-        )
+
+        Task::perform(Self::generate_onchain_address(client), |result| {
+            Message::View(view::Message::ActiveReceive(
+                ActiveReceiveMessage::AddressGenerated(ReceiveMethod::OnChain, result),
+            ))
+        })
     }
-    
+
     fn parse_amount(&self) -> Option<u64> {
         if self.amount_input.is_empty() {
             None
