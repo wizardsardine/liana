@@ -4,9 +4,12 @@
 
 set -ex
 
+# Tell Cargo to look in /tmp for its configuration
+export CARGO_HOME="/tmp/.cargo"
 # Instruct cargo to use our vendored sources
-mkdir -p .cargo
-cat <<EOF >.cargo/config.toml
+mkdir -p $CARGO_HOME
+
+cat <<EOF >"$CARGO_HOME/config.toml"
 [source.vendored_sources]
 directory = "/vendor"
 
@@ -23,10 +26,6 @@ git = "https://github.com/wizardsardine/bdk"
 branch = "release/1.0.0-alpha.13"
 replace-with = "vendored_sources"
 EOF
-
-ls -la .cargo/config.toml
-
-export CARGO_HOME="/liana/.cargo"
 
 # We need to set RUSTC_BOOTSTRAP=1 as a workaround to be able to use unstable
 # features in the GUI dependencies

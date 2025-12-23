@@ -198,7 +198,7 @@
             pkgs.gnutar
             pkgs.dpkg
             pkgs.rcodesign
-          ];
+          ] ++ [ toolchain ];
         };
 
       in {

@@ -50,7 +50,7 @@ fi
 # across time.
 time_machine() {
     guix time-machine --url=https://git.savannah.gnu.org/git/guix.git \
-        --commit=1c4a00820a1ba6265d2d96f4f7804d0807d69dcc \
+        --commit=001cd00bcd123cd1eab6ebd1b85afd7b0aa994fa \
         --cores="$JOBS" \
         --keep-failed \
         --fallback \
@@ -71,6 +71,8 @@ if ! [ -d "$PROJECT_VENDOR_DIR" ]; then
 fi
 
 cp "$PROJECT_ROOT/Cargo.lock" "$BUILD_ROOT/Cargo.lock"
+
+echo "Starting the time machine"
 
 # Bootstrap a reproducible environment as specified by the manifest in an isolated
 # container, and build the project.
