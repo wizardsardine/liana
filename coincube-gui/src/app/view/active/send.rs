@@ -180,7 +180,7 @@ pub fn active_send_view<'a>(
                     form::Form::new(
                         "e.g. satoshi@nakamoto.com",
                         input,
-                        ActiveSendMessage::InvoiceEdited,
+                        ActiveSendMessage::InputEdited,
                     )
                     .size(16)
                     .padding(15),

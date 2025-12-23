@@ -2,6 +2,7 @@ use std::convert::TryInto;
 use std::sync::Arc;
 
 use breez_sdk_liquid::model::PaymentDetails;
+use breez_sdk_liquid::prelude::SdkEvent;
 use coincube_core::miniscript::bitcoin::Amount;
 use coincube_ui::{component::form, widget::*};
 use iced::Task;
@@ -104,10 +105,20 @@ impl State for ActiveSend {
     ) -> Task<Message> {
         if let Message::View(view::Message::ActiveSend(msg)) = message {
             match msg {
-                view::ActiveSendMessage::InvoiceEdited(value) => {
-                    self.input.value = value;
-                    self.input.valid = !self.input.value.trim().is_empty();
+                view::ActiveSendMessage::InputEdited(value) => {
+                    self.input.value = value.clone();
                     self.error = None;
+                    let breez = self.breez_client.clone();
+                    // TODO: Add some kind of debouncing mechanism here, so that we don't call breez
+                    // API again and again
+                    return Task::perform(
+                        async move { breez.validate_input(value).await },
+                        |output| {
+                            Message::View(view::Message::ActiveSend(
+                                view::ActiveSendMessage::InputValidated(output),
+                            ))
+                        },
+                    );
                 }
                 view::ActiveSendMessage::Send => {
                     tracing::info!("Send payment to: {}", self.input.value);
@@ -160,7 +171,6 @@ impl State for ActiveSend {
                     }
                 }
                 view::ActiveSendMessage::BreezEvent(event) => {
-                    use breez_sdk_liquid::prelude::SdkEvent;
                     log::info!("Received Breez Event: {:?}", event);
                     match event {
                         SdkEvent::PaymentPending { .. }
@@ -174,6 +184,9 @@ impl State for ActiveSend {
                 }
                 view::ActiveSendMessage::Error(err) => {
                     self.error = Some(err);
+                }
+                view::ActiveSendMessage::InputValidated(is_valid) => {
+                    self.input.valid = is_valid;
                 }
             }
         }

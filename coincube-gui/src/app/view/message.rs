@@ -232,7 +232,8 @@ pub enum ActiveOverviewMessage {
 
 #[derive(Debug, Clone)]
 pub enum ActiveSendMessage {
-    InvoiceEdited(String),
+    InputEdited(String),
+    InputValidated(bool),
     Send,
     History,
     DataLoaded {

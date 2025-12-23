@@ -312,6 +312,10 @@ impl BreezClient {
             .map_err(|e| BreezError::Sdk(e.to_string()))
     }
 
+    pub async fn validate_input(&self, input: String) -> bool {
+        self.sdk.parse(&input).await.is_ok()
+    }
+
     pub fn active_signer(&self) -> std::sync::Arc<std::sync::Mutex<HotSigner>> {
         self.signer.clone()
     }
