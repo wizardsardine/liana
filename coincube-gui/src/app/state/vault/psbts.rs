@@ -69,7 +69,7 @@ impl State for PsbtsPanel {
     ) -> Task<Message> {
         match message {
             Message::View(view::Message::Reload) | Message::View(view::Message::Close) => {
-                return self.reload(daemon, self.wallet.clone());
+                return self.reload(Some(daemon), Some(self.wallet.clone()));
             }
             Message::SpendTxs(res) => match res {
                 Err(e) => self.warning = Some(e),
@@ -157,9 +157,11 @@ impl State for PsbtsPanel {
 
     fn reload(
         &mut self,
-        daemon: Arc<dyn Daemon + Sync + Send>,
-        wallet: Arc<Wallet>,
+        daemon: Option<Arc<dyn Daemon + Sync + Send>>,
+        wallet: Option<Arc<Wallet>>,
     ) -> Task<Message> {
+        let daemon = daemon.expect("Vault panels require daemon");
+        let wallet = wallet.expect("Vault panels require wallet");
         self.wallet = wallet;
         self.selected_tx = None;
         self.modal = None;

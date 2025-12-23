@@ -87,9 +87,10 @@ impl State for GeneralSettingsState {
     }
     fn reload(
         &mut self,
-        _daemon: Arc<dyn Daemon + Sync + Send>,
-        wallet: Arc<Wallet>,
+        _daemon: Option<Arc<dyn Daemon + Sync + Send>>,
+        wallet: Option<Arc<Wallet>>,
     ) -> iced::Task<Message> {
+        let wallet = wallet.expect("Vault panels require wallet");
         self.new_price_setting = wallet_price_setting_or_default(&wallet);
         self.wallet = wallet;
         if self.new_price_setting.is_enabled {

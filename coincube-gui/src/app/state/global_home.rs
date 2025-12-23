@@ -221,10 +221,10 @@ impl State for GlobalHome {
 
     fn reload(
         &mut self,
-        _daemon: Arc<dyn Daemon + Sync + Send>,
-        wallet: Arc<Wallet>,
+        _daemon: Option<Arc<dyn Daemon + Sync + Send>>,
+        wallet: Option<Arc<Wallet>>,
     ) -> Task<Message> {
-        self.wallet = Some(wallet);
+        self.wallet = wallet;
         Task::none()
     }
 }

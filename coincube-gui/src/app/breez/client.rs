@@ -239,6 +239,32 @@ impl BreezClient {
             .map_err(|e| BreezError::Sdk(e.to_string()))
     }
 
+    pub async fn receive_onchain(
+        &self,
+        amount_sat: Option<u64>,
+    ) -> Result<breez::ReceivePaymentResponse, BreezError> {
+        let prepare = self
+            .sdk
+            .prepare_receive_payment(&breez::PrepareReceiveRequest {
+                payment_method: breez::PaymentMethod::BitcoinAddress,
+                amount: amount_sat.map(|sat| breez::ReceiveAmount::Bitcoin {
+                    payer_amount_sat: sat,
+                }),
+            })
+            .await
+            .map_err(|e| BreezError::Sdk(e.to_string()))?;
+
+        self.sdk
+            .receive_payment(&breez::ReceivePaymentRequest {
+                prepare_response: prepare,
+                description: None,
+                payer_note: None,
+                use_description_hash: Some(false),
+            })
+            .await
+            .map_err(|e| BreezError::Sdk(e.to_string()))
+    }
+
     pub async fn pay_invoice(
         &self,
         invoice: String,
@@ -271,5 +297,21 @@ impl BreezClient {
 
     pub fn network(&self) -> Network {
         self.network
+    }
+
+    pub async fn list_payments(&self) -> Result<Vec<breez::Payment>, BreezError> {
+        self.sdk
+            .list_payments(&breez::ListPaymentsRequest {
+                filters: None,
+                from_timestamp: None,
+                to_timestamp: None,
+                offset: None,
+                limit: None,
+                details: None,
+                sort_ascending: None,
+                states: None,
+            })
+            .await
+            .map_err(|e| BreezError::Sdk(e.to_string()))
     }
 }

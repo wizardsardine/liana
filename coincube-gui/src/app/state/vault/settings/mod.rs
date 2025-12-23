@@ -71,7 +71,7 @@ impl State for SettingsState {
                 let wallet = self.wallet.clone();
                 self.setting
                     .as_mut()
-                    .map(|s| s.reload(daemon, wallet))
+                    .map(|s| s.reload(Some(daemon), Some(wallet)))
                     .unwrap_or_else(Task::none)
             }
             Message::View(view::Message::Settings(view::SettingsMessage::EditBitcoindSettings)) => {
@@ -87,7 +87,7 @@ impl State for SettingsState {
                 let wallet = self.wallet.clone();
                 self.setting
                     .as_mut()
-                    .map(|s| s.reload(daemon, wallet))
+                    .map(|s| s.reload(Some(daemon), Some(wallet)))
                     .unwrap_or_else(Task::none)
             }
             Message::View(view::Message::Settings(
@@ -107,7 +107,7 @@ impl State for SettingsState {
                 let wallet = self.wallet.clone();
                 self.setting
                     .as_mut()
-                    .map(|s| s.reload(daemon, wallet))
+                    .map(|s| s.reload(Some(daemon), Some(wallet)))
                     .unwrap_or_else(Task::none)
             }
             Message::View(view::Message::Settings(view::SettingsMessage::EditWalletSettings)) => {
@@ -122,7 +122,7 @@ impl State for SettingsState {
                 let wallet = self.wallet.clone();
                 self.setting
                     .as_mut()
-                    .map(|s| s.reload(daemon, wallet))
+                    .map(|s| s.reload(Some(daemon), Some(wallet)))
                     .unwrap_or_else(Task::none)
             }
             Message::WalletUpdated(Ok(wallet)) => {
@@ -162,9 +162,10 @@ impl State for SettingsState {
 
     fn reload(
         &mut self,
-        _daemon: Arc<dyn Daemon + Sync + Send>,
-        wallet: Arc<Wallet>,
+        _daemon: Option<Arc<dyn Daemon + Sync + Send>>,
+        wallet: Option<Arc<Wallet>>,
     ) -> Task<Message> {
+        let wallet = wallet.expect("Vault panels require wallet");
         self.setting = None;
         self.wallet = wallet;
         Task::none()
@@ -375,9 +376,10 @@ impl State for AboutSettingsState {
 
     fn reload(
         &mut self,
-        daemon: Arc<dyn Daemon + Sync + Send>,
-        _wallet: Arc<Wallet>,
+        daemon: Option<Arc<dyn Daemon + Sync + Send>>,
+        _wallet: Option<Arc<Wallet>>,
     ) -> Task<Message> {
+        let daemon = daemon.expect("Vault panels require daemon");
         Task::perform(
             async move { daemon.get_info().await.map_err(|e| e.into()) },
             Message::Info,

@@ -49,6 +49,7 @@ pub enum Message {
     OpenUrl(String),
     Home(HomeMessage),
     ActiveSend(ActiveSendMessage),
+    ActiveReceive(ActiveReceiveMessage),
     ActiveSettings(ActiveSettingsMessage),
 }
 
@@ -220,6 +221,22 @@ pub enum ActiveSendMessage {
     InvoiceEdited(String),
     Send,
     ViewHistory,
+}
+
+#[derive(Debug, Clone)]
+pub enum ActiveReceiveMessage {
+    ToggleMethod(ReceiveMethod),
+    Copy,
+    GenerateAddress,
+    AddressGenerated(ReceiveMethod, Result<String, String>),
+    AmountInput(String),
+    DescriptionInput(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ReceiveMethod {
+    Lightning,
+    OnChain,
 }
 
 #[derive(Debug, Clone)]

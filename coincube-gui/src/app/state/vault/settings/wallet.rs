@@ -297,9 +297,11 @@ impl State for WalletSettingsState {
 
     fn reload(
         &mut self,
-        daemon: Arc<dyn Daemon + Sync + Send>,
-        wallet: Arc<Wallet>,
+        daemon: Option<Arc<dyn Daemon + Sync + Send>>,
+        wallet: Option<Arc<Wallet>>,
     ) -> Task<Message> {
+        let daemon = daemon.expect("Vault panels require daemon");
+        let wallet = wallet.expect("Vault panels require wallet");
         self.descriptor = wallet.main_descriptor.clone();
         self.keys_aliases = Self::keys_aliases(&wallet);
         self.wallet = wallet;

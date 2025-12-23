@@ -397,7 +397,7 @@ impl App {
             restored_from_backup,
         );
         let cmd = if let Some(vault_overview) = panels.vault_overview.as_mut() {
-            vault_overview.reload(daemon.clone(), wallet.clone())
+            vault_overview.reload(Some(daemon.clone()), Some(wallet.clone()))
         } else {
             tracing::warn!("vault_overview not present in App::new despite vault being configured");
             Task::none()
@@ -634,13 +634,12 @@ impl App {
             }
         };
 
-        self.panels.current = menu;
-        if let (Some(daemon), Some(wallet)) = (&self.daemon, &self.wallet) {
-            if let Some(panel) = self.panels.current_mut() {
-                panel.reload(daemon.clone(), wallet.clone())
-            } else {
-                Task::none()
-            }
+        self.panels.current = menu.clone();
+        
+        // Call reload with optional daemon/wallet
+        // Active panels don't need them (use BreezClient), Vault panels do
+        if let Some(panel) = self.panels.current_mut() {
+            panel.reload(self.daemon.clone(), self.wallet.clone())
         } else {
             Task::none()
         }

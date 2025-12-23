@@ -82,8 +82,8 @@ impl State for ActiveSend {
 
     fn reload(
         &mut self,
-        _daemon: Arc<dyn Daemon + Sync + Send>,
-        _wallet: Arc<Wallet>,
+        _daemon: Option<Arc<dyn Daemon + Sync + Send>>,
+        _wallet: Option<Arc<Wallet>>,
     ) -> Task<Message> {
         // Active wallet doesn't use Vault wallet - reload from BreezClient instead
         // TODO: Reload balance and recent transactions from Breez SDK
