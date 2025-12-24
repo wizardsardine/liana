@@ -2,8 +2,9 @@ use miniscript::{bitcoin::bip32::ChildNumber, DescriptorPublicKey};
 use std::str::FromStr;
 
 /// Source for xpub entry
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum XpubSource {
+    #[default]
     HardwareWallet,
     LoadFromFile,
 }
@@ -21,12 +22,6 @@ impl XpubSource {
             XpubSource::HardwareWallet => "Hardware Wallet",
             XpubSource::LoadFromFile => "Load from File",
         }
-    }
-}
-
-impl Default for XpubSource {
-    fn default() -> Self {
-        XpubSource::HardwareWallet
     }
 }
 

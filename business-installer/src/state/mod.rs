@@ -1,5 +1,5 @@
 use crate::{
-    backend::{init_client, Backend, Notification},
+    backend::Backend,
     client::Client,
     state::app::AppState,
     views::{
@@ -8,8 +8,10 @@ use crate::{
     },
 };
 use crossbeam::channel;
+use liana_gui::{dir::LianaDirectory, hw::HardwareWallets};
 use liana_ui::widget::{modal::Modal, Element};
 pub use message::{Message, Msg};
+use miniscript::bitcoin::Network;
 
 pub mod app;
 pub mod message;
@@ -34,18 +36,28 @@ pub struct State {
     pub views: views::ViewsState,
     pub backend: Client,
     pub current_view: View,
-    pub hw: liana_gui::hw::HardwareWallets,
+    pub notif_sender: channel::Sender<Message>,
+    pub notif_receiver: channel::Receiver<Message>,
+    pub hw: Option<HardwareWallets>,
 }
 
 impl State {
-    pub fn new(datadir: liana_gui::dir::LianaDirectory, network: liana::miniscript::bitcoin::Network) -> Self {
+    pub fn new() -> Self {
+        let (notif_sender, notif_receiver) = channel::unbounded();
         Self {
             app: AppState::new(),
             views: views::ViewsState::new(),
-            backend: init_client(),
+            backend: Client::new(notif_sender.clone()),
             current_view: View::Login,
-            hw: liana_gui::hw::HardwareWallets::new(datadir, network),
+            notif_sender,
+            notif_receiver,
+            hw: None,
         }
+    }
+
+    /// Initialize hardware wallet support
+    pub fn init_hw(&mut self, datadir: LianaDirectory, network: Network) {
+        self.hw = Some(HardwareWallets::new(datadir, network));
     }
 
     /// Initialize backend connection and return the receiver for subscriptions.
@@ -54,20 +66,14 @@ impl State {
         &mut self,
         url: String,
         version: u8,
-    ) -> Option<channel::Receiver<Notification>> {
-        // NOTE: if connect_backend() is called with an ongoing connexion,
-        // the ongoing connexion will be dropped & replaced by the new one.
-        self.backend.connect_ws(url, version)
+        notif_sender: channel::Sender<Message>,
+    ) {
+        self.backend.connect_ws(url, version, notif_sender);
     }
 
     /// Close the backend connection
     pub fn close_backend(&mut self) {
         self.backend.close();
-    }
-
-    /// Update the network for hardware wallet detection
-    pub fn set_hw_network(&mut self, network: liana::miniscript::bitcoin::Network) {
-        self.hw.set_network(network);
     }
 
     /// Determine which view should be displayed based on current state

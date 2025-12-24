@@ -1,4 +1,3 @@
-use crate::client::Client;
 use crossbeam::channel;
 use iced::futures::Stream;
 use liana_connect::WssError;
@@ -7,14 +6,13 @@ use miniscript::DescriptorPublicKey;
 use std::{
     collections::BTreeMap,
     pin::Pin,
-    sync::{mpsc, Mutex},
+    sync::mpsc,
     task::{Context, Poll},
 };
 use thiserror::Error;
 use uuid::Uuid;
 
-/// Global channel for backend communication (used by subscription)
-pub static BACKEND_RECV: Mutex<Option<channel::Receiver<Notification>>> = Mutex::new(None);
+use crate::Message;
 
 #[derive(Debug, Clone, Error)]
 pub enum Error {
@@ -53,6 +51,12 @@ pub enum Notification {
     Error(Error),
 }
 
+impl From<Notification> for crate::Message {
+    fn from(value: Notification) -> Self {
+        crate::Message::BackendNotif(value)
+    }
+}
+
 #[allow(unused)]
 #[rustfmt::skip]
 pub trait Backend {
@@ -70,7 +74,7 @@ pub trait Backend {
     fn get_wallet(&self, id: Uuid) -> Option<Wallet>;
 
     // Connection (WSS)
-    fn connect_ws(&mut self, url: String, version: u8) -> Option<channel::Receiver<Notification>>; // -> Response::Connected
+    fn connect_ws(&mut self, url: String, version: u8, notif_sender: channel::Sender<Message>) ; // -> Response::Connected
     fn ping(&mut self); // -> Response::Pong
     fn close(&mut self);    // Connection closed
 
@@ -107,9 +111,4 @@ impl Stream for BackendStream {
             Err(mpsc::TryRecvError::Disconnected) => Poll::Ready(None),
         }
     }
-}
-
-/// Initialize a Client (no test data - all data comes from server)
-pub fn init_client() -> Client {
-    Client::new()
 }

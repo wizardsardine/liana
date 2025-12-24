@@ -1,14 +1,11 @@
 use iced::Task;
 use std::{
     collections::HashMap,
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc, Mutex,
-    },
+    sync::{Arc, Mutex},
 };
 
 use crate::{
-    app::{settings, wallet::Wallet},
+    app::wallet::Wallet,
     dir::LianaDirectory,
 };
 use async_hwi::{
@@ -385,6 +382,7 @@ struct State {
     wallet: Option<Arc<Wallet>>,
     connected_supported_hws: Vec<String>,
     api: Option<ledger::HidApi>,
+    #[allow(dead_code)]
     datadir_path: LianaDirectory,
 }
 

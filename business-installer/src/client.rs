@@ -23,7 +23,10 @@ use serde_json::json;
 use tungstenite::{accept, Message as WsMessage};
 use uuid::Uuid;
 
-use crate::backend::{Backend, Error, Notification, Org, OrgData, User, Wallet};
+use crate::{
+    backend::{Backend, Error, Notification, Org, OrgData, User, Wallet},
+    Message,
+};
 use liana_connect::{ConnectedPayload, OrgJson, Request, Response, UserJson, WalletJson};
 
 /// HTTP URL for liana-business-server REST API (auth endpoints)
@@ -61,7 +64,7 @@ pub struct Client {
     pub(crate) users: Arc<Mutex<BTreeMap<Uuid, User>>>,
     token: Arc<Mutex<Option<String>>>,
     request_sender: Option<channel::Sender<Request>>,
-    notif_sender: Option<channel::Sender<Notification>>,
+    notif_sender: channel::Sender<Message>,
     wss_thread_handle: Option<thread::JoinHandle<()>>,
     connected: Arc<AtomicBool>,
     // Auth client integration
@@ -72,14 +75,14 @@ pub struct Client {
 }
 
 impl Client {
-    pub fn new() -> Self {
+    pub fn new(notif_sender: channel::Sender<Message>) -> Self {
         Self {
             orgs: Arc::new(Mutex::new(BTreeMap::new())),
             wallets: Arc::new(Mutex::new(BTreeMap::new())),
             users: Arc::new(Mutex::new(BTreeMap::new())),
             token: Arc::new(Mutex::new(None)),
             request_sender: None,
-            notif_sender: None,
+            notif_sender,
             wss_thread_handle: None,
             connected: Arc::new(AtomicBool::new(false)),
             auth_client: Arc::new(Mutex::new(None)),
@@ -101,15 +104,6 @@ impl Client {
 
     pub fn set_network(&mut self, network: Network) {
         self.network = Some(network);
-    }
-
-    /// Initialize the notification channel for auth flow.
-    /// This is needed before auth_request() can send notifications.
-    /// Returns the receiver for the subscription.
-    pub fn init_notif_channel(&mut self) -> channel::Receiver<Notification> {
-        let (notif, notif_receiver) = channel::unbounded();
-        self.notif_sender = Some(notif);
-        notif_receiver
     }
 
     pub fn is_connected(&self) -> bool {
@@ -391,7 +385,7 @@ fn wss_thread(
     users: Arc<Mutex<BTreeMap<Uuid, User>>>,
     request_receiver: channel::Receiver<Request>,
     request_sender: channel::Sender<Request>,
-    notif_sender: channel::Sender<Notification>,
+    notif_sender: channel::Sender<Message>,
     connected: Arc<AtomicBool>,
 ) {
     let url = if url.starts_with("ws://") || url.starts_with("wss://") {
@@ -403,7 +397,7 @@ fn wss_thread(
     let (mut ws_stream, _) = match tungstenite::connect(&url) {
         Ok(stream) => stream,
         Err(_) => {
-            let _ = notif_sender.send(Notification::Error(Error::WsConnection));
+            let _ = notif_sender.send(Notification::Error(Error::WsConnection).into());
             return;
         }
     };
@@ -414,7 +408,7 @@ fn wss_thread(
     let msg = connect_request.to_ws_message(&token, &request_id);
 
     if ws_stream.send(msg).is_err() {
-        let _ = notif_sender.send(Notification::Error(Error::WsConnection));
+        let _ = notif_sender.send(Notification::Error(Error::WsConnection).into());
         return;
     }
 
@@ -425,13 +419,13 @@ fn wss_thread(
             .map_err(|e| format!("Failed to convert WSS message: {}", e))
         {
             connected.store(true, Ordering::Relaxed);
-            let _ = notif_sender.send(Notification::Connected);
+            let _ = notif_sender.send(Notification::Connected.into());
         } else {
-            let _ = notif_sender.send(Notification::Error(Error::WsConnection));
+            let _ = notif_sender.send(Notification::Error(Error::WsConnection).into());
             return;
         }
     } else {
-        let _ = notif_sender.send(Notification::Error(Error::WsConnection));
+        let _ = notif_sender.send(Notification::Error(Error::WsConnection).into());
         return;
     }
 
@@ -506,7 +500,7 @@ fn wss_thread(
             };
             if should_disconnect {
                 connected3.store(false, Ordering::Relaxed);
-                let _ = notif_sender_for_timeout.send(Notification::Disconnected);
+                let _ = notif_sender_for_timeout.send(Notification::Disconnected.into());
                 break;
             }
         }
@@ -536,7 +530,8 @@ fn wss_thread(
                             // Remove from cache on send failure
                             let mut requests = sent_requests2.lock().unwrap();
                             requests.remove(&request_id);
-                            let _ = notif_sender.send(Notification::Error(Error::WsConnection));
+                            let _ = notif_sender.send(Notification::Error(Error::WsConnection).into());
+                            eprintln!("Failed to send request");
                             break;
                         }
                     }
@@ -556,19 +551,19 @@ fn wss_thread(
                         let msg = WsMessage::Text(text);
                         if let Err(e) = handle_wss_message(msg, &orgs, &wallets, &users, &request_sender, &sent_requests3, &last_ping, &notif_sender) {
                             // Send error notification to show warning modal
-                            let _ = notif_sender.send(Notification::Error(Error::WsMessageHandling(e)));
+                            let _ = notif_sender.send(Notification::Error(Error::WsMessageHandling(e)).into());
                         }
                     }
                     // TODO: we should log errors here
                     Ok(WsMessage::Close(_)) => {
-                        let _ = notif_sender.send(Notification::Disconnected);
+                        let _ = notif_sender.send(Notification::Disconnected.into());
                         break;
                     }
                     Err(tungstenite::Error::Io(ref e)) if e.kind() == std::io::ErrorKind::WouldBlock => {
                         // Non-blocking read would block, continue loop
                     }
                     Err(_) => {
-                        let _ = notif_sender.send(Notification::Disconnected);
+                        let _ = notif_sender.send(Notification::Disconnected.into());
                         break;
                     }
                     // TODO: we should log these messages at trace level
@@ -588,7 +583,7 @@ fn handle_wss_message(
     request_sender: &channel::Sender<Request>,
     sent_requests: &Arc<Mutex<BTreeMap<String, Request>>>,
     last_ping_time: &Arc<Mutex<Option<Instant>>>,
-    n_sender: &channel::Sender<Notification>,
+    n_sender: &channel::Sender<Message>,
 ) -> Result<(), String> {
     let (response, request_id) = Response::from_ws_message(msg)
         .map_err(|e| format!("Failed to convert WSS message: {}", e))?;
@@ -691,9 +686,9 @@ fn matches_response_type(response: &Response, expected: ExpectedResponseType) ->
 
 fn handle_connected(
     _version: u8,
-    notification_sender: &channel::Sender<Notification>,
+    notification_sender: &channel::Sender<Message>,
 ) -> Result<(), String> {
-    let _ = notification_sender.send(Notification::Connected);
+    let _ = notification_sender.send(Notification::Connected.into());
     Ok(())
 }
 
@@ -712,7 +707,7 @@ fn handle_org(
     wallets: &Arc<Mutex<BTreeMap<Uuid, Wallet>>>,
     users: &Arc<Mutex<BTreeMap<Uuid, User>>>,
     request_sender: &channel::Sender<Request>,
-    notification_sender: &channel::Sender<Notification>,
+    notification_sender: &channel::Sender<Message>,
 ) -> Result<(), String> {
     let org = Org::try_from(org_json)?;
     let org_id = org.id;
@@ -746,7 +741,7 @@ fn handle_org(
     }
 
     // Send response
-    let _ = notification_sender.send(Notification::Org(org_id));
+    let _ = notification_sender.send(Notification::Org(org_id).into());
     Ok(())
 }
 
@@ -755,7 +750,7 @@ fn handle_wallet(
     wallets: &Arc<Mutex<BTreeMap<Uuid, Wallet>>>,
     users: &Arc<Mutex<BTreeMap<Uuid, User>>>,
     request_sender: &channel::Sender<Request>,
-    notification_sender: &channel::Sender<Notification>,
+    notification_sender: &channel::Sender<Message>,
 ) -> Result<(), String> {
     let wallet = Wallet::try_from(wallet_json)?;
     let wallet_id = wallet.id;
@@ -777,14 +772,14 @@ fn handle_wallet(
     }
 
     // Send response
-    let _ = notification_sender.send(Notification::Wallet(wallet_id));
+    let _ = notification_sender.send(Notification::Wallet(wallet_id).into());
     Ok(())
 }
 
 fn handle_user(
     user_json: UserJson,
     users: &Arc<Mutex<BTreeMap<Uuid, User>>>,
-    notification_sender: &channel::Sender<Notification>,
+    notification_sender: &channel::Sender<Message>,
 ) -> Result<(), String> {
     let user = User::try_from(user_json)?;
     let user_id = user.uuid;
@@ -796,31 +791,27 @@ fn handle_user(
     }
 
     // Send response
-    let _ = notification_sender.send(Notification::User(user_id));
+    let _ = notification_sender.send(Notification::User(user_id).into());
     Ok(())
 }
 
 macro_rules! check_connection {
     ($s: ident) => {
         if !$s.connected.load(Ordering::Relaxed) {
-            if let Some(sender) = $s.notif_sender.as_mut() {
-                let _ = sender.send(Notification::Disconnected);
-            }
+            let _ = $s.notif_sender.send(Notification::Disconnected.into());
             return;
         }
     };
 }
 
 impl Backend for Client {
-    fn connect_ws(&mut self, url: String, version: u8) -> Option<channel::Receiver<Notification>> {
+    fn connect_ws(&mut self, url: String, version: u8, notif_sender: channel::Sender<Message>) {
         // Close existing connection if any
         if self.connected.load(Ordering::Relaxed) {
             self.close();
         }
 
-        // Always create notification channel - needed for auth flow even without WSS connection
-        let (notif, notif_receiver) = channel::unbounded();
-        self.notif_sender = Some(notif.clone());
+        self.notif_sender = notif_sender.clone();
 
         // Get token from cache or stored value
         let mut token = {
@@ -837,8 +828,7 @@ impl Backend for Client {
         let token = match token {
             Some(t) => t,
             None => {
-                // Return the channel so auth notifications can work
-                return Some(notif_receiver);
+                return;
             }
         };
 
@@ -852,6 +842,7 @@ impl Backend for Client {
         self.connected = Arc::new(AtomicBool::new(false));
         let connected = self.connected.clone();
 
+        let notif_sender = notif_sender.clone();
         let handle = thread::spawn(move || {
             wss_thread(
                 url,
@@ -862,23 +853,15 @@ impl Backend for Client {
                 users,
                 request_receiver,
                 request_sender,
-                notif,
+                notif_sender,
                 connected,
             );
         });
 
         self.wss_thread_handle = Some(handle);
-
-        Some(notif_receiver)
     }
 
     fn auth_request(&mut self, email: String) {
-        // Ensure notification channel exists
-        if self.notif_sender.is_none() {
-            let (notif, _) = channel::unbounded();
-            self.notif_sender = Some(notif);
-        }
-
         // Store email for later use
         self.email = Some(email.clone());
 
@@ -894,9 +877,7 @@ impl Backend for Client {
                 let config = match get_service_config_blocking(network) {
                     Ok(cfg) => cfg,
                     Err(_) => {
-                        if let Some(sender) = notif_sender.as_ref() {
-                            let _ = sender.send(Notification::AuthCodeFail);
-                        }
+                        let _ = notif_sender.send(Notification::AuthCodeFail.into());
                         return Err(());
                     }
                 };
@@ -918,17 +899,15 @@ impl Backend for Client {
                         Ok(())
                     }
                     Err(e) => {
-                        if let Some(sender) = notif_sender.as_ref() {
-                            // Check if it's an invalid email error
-                            if let Some(status) = e.http_status {
-                                if status == 400 || status == 422 {
-                                    let _ = sender.send(Notification::InvalidEmail);
-                                } else {
-                                    let _ = sender.send(Notification::AuthCodeFail);
-                                }
+                        // Check if it's an invalid email error
+                        if let Some(status) = e.http_status {
+                            if status == 400 || status == 422 {
+                                let _ = notif_sender.send(Notification::InvalidEmail.into());
                             } else {
-                                let _ = sender.send(Notification::AuthCodeFail);
+                                let _ = notif_sender.send(Notification::AuthCodeFail.into());
                             }
+                        } else {
+                            let _ = notif_sender.send(Notification::AuthCodeFail.into());
                         }
                         Err(())
                     }
@@ -937,20 +916,12 @@ impl Backend for Client {
 
             // Send success notification
             if result.is_ok() {
-                if let Some(sender) = notif_sender.as_ref() {
-                    let _ = sender.send(Notification::AuthCodeSent);
-                }
+                let _ = notif_sender.send(Notification::AuthCodeSent.into());
             }
         });
     }
 
     fn auth_code(&mut self, code: String) {
-        // Ensure notification channel exists
-        if self.notif_sender.is_none() {
-            let (notif, _) = channel::unbounded();
-            self.notif_sender = Some(notif);
-        }
-
         let notif_sender = self.notif_sender.clone();
         let auth_client_shared = Arc::clone(&self.auth_client);
         let network_dir = self.network_dir.clone();
@@ -969,9 +940,7 @@ impl Backend for Client {
                 let auth_client = match auth_client {
                     Some(client) => client,
                     None => {
-                        if let Some(sender) = notif_sender.as_ref() {
-                            let _ = sender.send(Notification::LoginFail);
-                        }
+                        let _ = notif_sender.send(Notification::LoginFail.into());
                         return Err(());
                     }
                 };
@@ -980,9 +949,7 @@ impl Backend for Client {
                 let tokens = match auth_client.verify_otp(code.trim()).await {
                     Ok(tokens) => tokens,
                     Err(_) => {
-                        if let Some(sender) = notif_sender.as_ref() {
-                            let _ = sender.send(Notification::LoginFail);
-                        }
+                        let _ = notif_sender.send(Notification::LoginFail.into());
                         return Err(());
                     }
                 };
@@ -1010,9 +977,7 @@ impl Backend for Client {
 
             match result {
                 Ok(_) => {
-                    if let Some(sender) = notif_sender.as_ref() {
-                        let _ = sender.send(Notification::LoginSuccess);
-                    }
+                    let _ = notif_sender.send(Notification::LoginSuccess.into());
                 }
                 Err(_) => {
                     // Error already handled above
@@ -1144,12 +1109,6 @@ impl Backend for Client {
         if let Some(sender) = &self.request_sender {
             let _ = sender.send(Request::FetchUser { id });
         }
-    }
-}
-
-impl Default for Client {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -2061,19 +2020,19 @@ mod tests {
             // Give server time to start and bind to port (server thread needs time to spawn and bind)
             thread::sleep(Duration::from_millis(300));
 
-            let mut client = Client::new();
+            let (sender, _receiver) = channel::unbounded();
+            let mut client = Client::new(sender);
             client.set_token("test-token".to_string());
             let url = format!("ws://127.0.0.1:{}", port);
-            let receiver = client
-                .connect_ws(url, 1)
-                .expect("Should return receiver when token is set");
+            let (sender, receiver) = channel::unbounded();
+            client.connect_ws(url, 1, sender);
 
             // Wait for connection notification (give more time for handshake)
             for _ in 0..10 {
                 thread::sleep(Duration::from_millis(100));
                 let mut connected = false;
                 while let Ok(notif) = receiver.try_recv() {
-                    if let Notification::Connected = notif {
+                    if let Message::BackendNotif(Notification::Connected) = notif {
                         connected = true
                     }
                 }
@@ -2085,7 +2044,7 @@ mod tests {
             // Check for Connected notification one more time
             let mut connected_notified = false;
             while let Ok(notif) = receiver.try_recv() {
-                if let Notification::Connected = notif {
+                if let Message::BackendNotif(Notification::Connected) = notif {
                     connected_notified = true
                 }
             }
@@ -2122,17 +2081,17 @@ mod tests {
 
             thread::sleep(Duration::from_millis(200));
 
-            let mut client = Client::new();
+            let (sender, _receiver) = channel::unbounded();
+            let mut client = Client::new(sender);
             client.set_token("test-token".to_string());
             let url = format!("ws://127.0.0.1:{}", port);
-            let receiver = client
-                .connect_ws(url, 1)
-                .expect("Should return receiver when token is set");
+            let (sender, receiver) = channel::unbounded();
+            client.connect_ws(url, 1, sender);
 
             // Wait for connection
             thread::sleep(Duration::from_millis(500));
             while let Ok(notif) = receiver.try_recv() {
-                if matches!(notif, Notification::Connected) {
+                if let Message::BackendNotif(Notification::Connected) = notif {
                     break;
                 }
             }
@@ -2152,7 +2111,9 @@ mod tests {
             let mut org_notified = false;
             while let Ok(notif) = receiver.try_recv() {
                 match notif {
-                    Notification::Org(id) if id == org_id => org_notified = true,
+                    Message::BackendNotif(Notification::Org(id)) if id == org_id => {
+                        org_notified = true
+                    }
                     _ => {}
                 }
             }
@@ -2180,17 +2141,17 @@ mod tests {
 
             thread::sleep(Duration::from_millis(200));
 
-            let mut client = Client::new();
+            let (sender, _receiver) = channel::unbounded();
+            let mut client = Client::new(sender);
             client.set_token("test-token".to_string());
             let url = format!("ws://127.0.0.1:{}", port);
-            let receiver = client
-                .connect_ws(url, 1)
-                .expect("Should return receiver when token is set");
+            let (sender, receiver) = channel::unbounded();
+            client.connect_ws(url, 1, sender);
 
             // Wait for connection
             thread::sleep(Duration::from_millis(500));
             while let Ok(notif) = receiver.try_recv() {
-                if matches!(notif, Notification::Connected) {
+                if let Message::BackendNotif(Notification::Connected) = notif {
                     break;
                 }
             }
@@ -2211,7 +2172,9 @@ mod tests {
             let mut wallet_notified = false;
             while let Ok(notif) = receiver.try_recv() {
                 match notif {
-                    Notification::Wallet(id) if id == wallet_id => wallet_notified = true,
+                    Message::BackendNotif(Notification::Wallet(id)) if id == wallet_id => {
+                        wallet_notified = true
+                    }
                     _ => {}
                 }
             }
@@ -2239,17 +2202,17 @@ mod tests {
 
             thread::sleep(Duration::from_millis(200));
 
-            let mut client = Client::new();
+            let (sender, _receiver) = channel::unbounded();
+            let mut client = Client::new(sender);
             client.set_token("test-token".to_string());
             let url = format!("ws://127.0.0.1:{}", port);
-            let receiver = client
-                .connect_ws(url, 1)
-                .expect("Should return receiver when token is set");
+            let (sender, receiver) = channel::unbounded();
+            client.connect_ws(url, 1, sender);
 
             // Wait for connection
             thread::sleep(Duration::from_millis(500));
             while let Ok(notif) = receiver.try_recv() {
-                if matches!(notif, Notification::Connected) {
+                if let Message::BackendNotif(Notification::Connected) = notif {
                     break;
                 }
             }
@@ -2270,7 +2233,9 @@ mod tests {
             let mut user_notified = false;
             while let Ok(notif) = receiver.try_recv() {
                 match notif {
-                    Notification::User(id) if id == user_id => user_notified = true,
+                    Message::BackendNotif(Notification::User(id)) if id == user_id => {
+                        user_notified = true
+                    }
                     _ => {}
                 }
             }
@@ -2298,17 +2263,17 @@ mod tests {
 
             thread::sleep(Duration::from_millis(200));
 
-            let mut client = Client::new();
+            let (sender, _receiver) = channel::unbounded();
+            let mut client = Client::new(sender);
             client.set_token("test-token".to_string());
             let url = format!("ws://127.0.0.1:{}", port);
-            let receiver = client
-                .connect_ws(url, 1)
-                .expect("Should return receiver when token is set");
+            let (sender, receiver) = channel::unbounded();
+            client.connect_ws(url, 1, sender);
 
             // Wait for connection
             thread::sleep(Duration::from_millis(500));
             while let Ok(notif) = receiver.try_recv() {
-                if matches!(notif, Notification::Connected) {
+                if let Message::BackendNotif(Notification::Connected) = notif {
                     break;
                 }
             }
@@ -2343,17 +2308,17 @@ mod tests {
 
             thread::sleep(Duration::from_millis(200));
 
-            let mut client = Client::new();
+            let (sender, _receiver) = channel::unbounded();
+            let mut client = Client::new(sender);
             client.set_token("test-token".to_string());
             let url = format!("ws://127.0.0.1:{}", port);
-            let receiver = client
-                .connect_ws(url, 1)
-                .expect("Should return receiver when token is set");
+            let (sender, receiver) = channel::unbounded();
+            client.connect_ws(url, 1, sender);
 
             // Wait for connection
             thread::sleep(Duration::from_millis(500));
             while let Ok(notif) = receiver.try_recv() {
-                if matches!(notif, Notification::Connected) {
+                if let Message::BackendNotif(Notification::Connected) = notif {
                     break;
                 }
             }
@@ -2376,13 +2341,11 @@ mod tests {
 
         #[test]
         fn test_client_connection_without_token() {
-            let mut client = Client::new();
+            let (sender, _receiver) = channel::unbounded();
+            let mut client = Client::new(sender);
+            let (sender, receiver) = channel::unbounded();
             // Don't set token
-            let receiver = client.connect_ws("ws://127.0.0.1:9999".to_string(), 1);
-
-            // Should return a channel for auth flow, but no WSS connection attempt
-            assert!(receiver.is_some(), "Should return a notification channel");
-            let receiver = receiver.unwrap();
+            client.connect_ws("ws://127.0.0.1:9999".to_string(), 1, sender);
 
             // No connection attempt, so no notifications expected
             thread::sleep(Duration::from_millis(50));
@@ -2400,7 +2363,7 @@ mod tests {
 
             let mut auth_code_sent = false;
             while let Ok(notif) = receiver.try_recv() {
-                if let Notification::AuthCodeSent = notif {
+                if let Message::BackendNotif(Notification::AuthCodeSent) = notif {
                     auth_code_sent = true
                 }
             }
@@ -2423,17 +2386,17 @@ mod tests {
 
             thread::sleep(Duration::from_millis(200));
 
-            let mut client = Client::new();
+            let (sender, _receiver) = channel::unbounded();
+            let mut client = Client::new(sender);
             client.set_token("test-token".to_string());
             let url = format!("ws://127.0.0.1:{}", port);
-            let receiver = client
-                .connect_ws(url, 1)
-                .expect("Should return receiver when token is set");
+            let (sender, receiver) = channel::unbounded();
+            client.connect_ws(url, 1, sender);
 
             // Wait for connection
             thread::sleep(Duration::from_millis(500));
             while let Ok(notif) = receiver.try_recv() {
-                if matches!(notif, Notification::Connected) {
+                if let Message::BackendNotif(Notification::Connected) = notif {
                     break;
                 }
             }
@@ -2490,17 +2453,17 @@ mod tests {
 
             thread::sleep(Duration::from_millis(200));
 
-            let mut client = Client::new();
+            let (sender, _receiver) = channel::unbounded();
+            let mut client = Client::new(sender);
             client.set_token("test-token".to_string());
             let url = format!("ws://127.0.0.1:{}", port);
-            let receiver = client
-                .connect_ws(url, 1)
-                .expect("Should return receiver when token is set");
+            let (sender, receiver) = channel::unbounded();
+            client.connect_ws(url, 1, sender);
 
             // Wait for connection
             thread::sleep(Duration::from_millis(500));
             while let Ok(notif) = receiver.try_recv() {
-                if matches!(notif, Notification::Connected) {
+                if let Message::BackendNotif(Notification::Connected) = notif {
                     break;
                 }
             }

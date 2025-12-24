@@ -1,8 +1,5 @@
-use crate::{
-    backend::{Notification, BACKEND_RECV},
-    state::State,
-};
-use crossbeam::channel;
+use crate::state::State;
+use crossbeam::channel::{self};
 use iced::{Subscription, Task};
 use liana::miniscript::bitcoin::{self};
 use liana_gui::{
@@ -12,7 +9,7 @@ use liana_gui::{
     services::connect::client::backend::BackendClient,
 };
 use liana_ui::widget::Element;
-use std::{pin::Pin, thread, time::Duration};
+use std::pin::Pin;
 
 pub use crate::state::Msg as Message;
 
@@ -27,11 +24,10 @@ pub struct BusinessInstaller {
 }
 
 impl BusinessInstaller {
-    /// Create a new BusinessInstaller with internal initialization
-    fn new_internal(datadir: LianaDirectory, network: bitcoin::Network) -> (Self, Task<Message>) {
+    fn new(datadir: LianaDirectory, network: bitcoin::Network) -> (Self, Task<Message>) {
         use crate::state::views::login::{Login, LoginState};
 
-        let mut state = State::new(datadir.clone(), network);
+        let mut state = State::new();
 
         // Set network directory for token caching (same location as liana-gui)
         let network_dir = datadir.network_directory(network);
@@ -50,10 +46,6 @@ impl BusinessInstaller {
         if !valid_accounts.is_empty() {
             state.views.login = Login::with_cached_accounts(valid_accounts);
         }
-
-        // Initialize notification channel for auth flow (needed before any auth_request)
-        let recv = state.backend.init_notif_channel();
-        *BACKEND_RECV.lock().expect("poisoned") = Some(recv);
 
         // Determine initial focus based on login state
         let focus_task = if state.views.login.current == LoginState::AccountSelect {
@@ -81,8 +73,11 @@ impl<'a> Installer<'a, Message> for BusinessInstaller {
         _remote_backend: Option<BackendClient>,
         _user_flow: UserFlow,
     ) -> (Box<Self>, Task<Message>) {
-        let (installer, task) = BusinessInstaller::new_internal(destination_path, network);
-        (Box::new(installer), task)
+        let (installer, task) = BusinessInstaller::new(destination_path, network);
+        let listener = Task::stream(NotifListener {
+            receiver: installer.state.notif_receiver.clone(),
+        });
+        (Box::new(installer), Task::batch([listener, task]))
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
@@ -90,14 +85,7 @@ impl<'a> Installer<'a, Message> for BusinessInstaller {
     }
 
     fn subscription(&self) -> Subscription<Message> {
-        let mut subs = vec![Subscription::run(BackendSubscription::new)];
-
-        // Only refresh hardware wallets when xpub modal is open
-        if self.state.views.xpub.modal.is_some() {
-            subs.push(self.state.hw.refresh().map(hw_message_to_app_message));
-        }
-
-        Subscription::batch(subs)
+        Subscription::none()
     }
 
     fn view(&self) -> Element<Message> {
@@ -154,25 +142,11 @@ impl<'a> Installer<'a, Message> for BusinessInstaller {
     }
 }
 
-// Subscription for backend stream
-struct BackendSubscription {
-    receiver: Option<channel::Receiver<Notification>>,
+struct NotifListener {
+    receiver: channel::Receiver<Message>,
 }
 
-impl BackendSubscription {
-    fn new() -> Self {
-        if let Ok(mut channel_guard) = BACKEND_RECV.lock() {
-            if let Some(receiver) = channel_guard.take() {
-                return Self {
-                    receiver: Some(receiver),
-                };
-            }
-        }
-        Self { receiver: None }
-    }
-}
-
-impl iced::futures::Stream for BackendSubscription {
+impl iced::futures::Stream for NotifListener {
     type Item = Message;
 
     fn poll_next(
@@ -181,32 +155,14 @@ impl iced::futures::Stream for BackendSubscription {
     ) -> std::task::Poll<Option<Self::Item>> {
         use std::task::Poll;
 
-        let this = Pin::get_mut(self);
-        loop {
-            // NOTE: If there is a new connection we replace this one
-            if let Some(recv) = BACKEND_RECV.lock().expect("poisoned").take() {
-                this.receiver = Some(recv);
-            }
-
-            if let Some(receiver) = this.receiver.as_mut() {
-                // NOTE: if we send a Poll::Ready(None), iced will drop subscription so
-                // we call (blocking) .recv().
-                if let Ok(m) = receiver.recv() {
-                    return Poll::Ready(Some(Message::BackendNotif(m)));
-                } else {
-                    this.receiver = None;
-                };
-            }
-            // NOTE: if there is no receiver we just block until there is one
-            // with a delay to avoid spinloop
-            thread::sleep(Duration::from_millis(500));
-        }
+        let msg = self.receiver.recv().expect("poisoined");
+        Poll::Ready(Some(msg))
     }
 }
 
-impl Drop for BackendSubscription {
+impl Drop for NotifListener {
     fn drop(&mut self) {
-        // Backend subscription dropped
+        println!("NotifListener dropped");
     }
 }
 
@@ -217,6 +173,7 @@ impl Drop for BusinessInstaller {
 }
 
 /// Map hardware wallet messages to application messages
+#[allow(dead_code)]
 fn hw_message_to_app_message(msg: liana_gui::hw::HardwareWalletMessage) -> Message {
     Message::HardwareWallets(msg)
 }
