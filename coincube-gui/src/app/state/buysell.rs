@@ -153,6 +153,11 @@ impl State for BuySellPanel {
                 )));
             }
 
+            // Forward clipboard action to parent message handler
+            BuySellMessage::Clipboard(text) => {
+                return Task::done(Message::View(ViewMessage::Clipboard(text)));
+            }
+
             // initialization flow: for creating a new address and setting panel mode (buy or sell)
             BuySellMessage::SelectBuyOrSell(bs) => {
                 if let BuySellFlowState::Initialization {
@@ -461,11 +466,12 @@ impl State for BuySellPanel {
 
                                         // switch to checkout
                                         mavapay.step = MavapayFlowStep::Checkout {
-                                            sat_amount: sat_amount.clone(),
+                                            sat_amount: *sat_amount,
                                             buy_or_sell: buy_or_sell.clone(),
                                             beneficiary: beneficiary.clone(),
                                             quote,
                                             fulfilled_order: None,
+                                            country: country.clone(),
                                             abort: abort.abort_on_drop(),
                                         };
 

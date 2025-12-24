@@ -22,6 +22,7 @@ pub enum MavapayFlowStep {
         beneficiary: Option<Beneficiary>,
         quote: GetQuoteResponse,
         fulfilled_order: Option<GetOrderResponse>,
+        country: Country,
         abort: iced::task::Handle,
     },
 }
