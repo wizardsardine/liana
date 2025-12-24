@@ -1,6 +1,6 @@
 use super::{app::AppState, message::Msg, views, State, View};
 use crate::{
-    backend::{Backend, Error, Notification, UserRole, Wallet, WalletStatus, BACKEND_RECV},
+    backend::{Backend, Error, Notification, UserRole, Wallet, WalletStatus},
     client::{PROTOCOL_VERSION, WS_URL},
     state::views::modals::{ConflictModalState, ConflictType},
 };
@@ -208,10 +208,11 @@ impl State {
 
             // Set token and connect
             self.backend.set_token(token);
-            let recv = self
-                .backend
-                .connect_ws(WS_URL.to_string(), PROTOCOL_VERSION);
-            *BACKEND_RECV.lock().expect("poisoned") = recv;
+            self.backend.connect_ws(
+                WS_URL.to_string(),
+                PROTOCOL_VERSION,
+                self.notif_sender.clone(),
+            );
         }
 
         Task::none()
@@ -796,16 +797,11 @@ impl State {
 
         // Connect WebSocket immediately after login success
         // This will establish the connection now that we have a token
-        let recv = self
-            .backend
-            .connect_ws(WS_URL.to_string(), PROTOCOL_VERSION);
-
-        // Update the global receiver for the subscription
-        if let Some(receiver) = recv {
-            *BACKEND_RECV.lock().expect("poisoned") = Some(receiver);
-        }
-        // Note: If connection fails, an Error notification will be sent
-        // which will be handled by on_backend_error()
+        self.backend.connect_ws(
+            WS_URL.to_string(),
+            PROTOCOL_VERSION,
+            self.notif_sender.clone(),
+        );
     }
 
     fn on_backend_login_fail(&mut self) {
@@ -1242,14 +1238,17 @@ impl State {
 impl State {
     /// Handle hardware wallet messages
     fn on_hw_message(&mut self, msg: liana_gui::hw::HardwareWalletMessage) -> Task<Msg> {
+        let Some(hw) = self.hw.as_mut() else {
+            return Task::none();
+        };
+
         // Update the hardware wallet state
-        match self.hw.update(msg) {
+        match hw.update(msg) {
             Ok(task) => {
                 // Update modal state after list updates
                 if let Some(modal) = self.views.xpub.modal_mut() {
                     // Build list of (fingerprint, device_name) for supported devices
-                    modal.hw_devices = self
-                        .hw
+                    modal.hw_devices = hw
                         .list
                         .iter()
                         .filter_map(|hw| match hw {
@@ -1330,14 +1329,14 @@ impl State {
         }
 
         // Find the device with matching fingerprint in the hardware wallet list
-        let hw = self
-            .hw
-            .list
-            .iter()
-            .find(|hw| hw.fingerprint() == Some(fingerprint))
-            .cloned();
+        let device = self.hw.as_ref().and_then(|hw| {
+            hw.list
+                .iter()
+                .find(|hw| hw.fingerprint() == Some(fingerprint))
+                .cloned()
+        });
 
-        match hw {
+        match device {
             Some(liana_gui::hw::HardwareWallet::Supported { device, .. }) => {
                 // Build derivation path: m/48'/network'/account'/2'
                 use miniscript::bitcoin::bip32::{ChildNumber, DerivationPath};

@@ -1,4 +1,4 @@
-use crate::state::{views::XpubSource, Msg, State};
+use crate::state::{Msg, State};
 use iced::{
     widget::{pick_list, Space},
     Alignment, Length,
@@ -104,9 +104,9 @@ fn render_hw_section<'a>(
     let mut content = Column::new().spacing(15).padding(10);
 
     // Device list
-    let hw_devices = &state.hw.list;
+    let hw_devices = state.hw.as_ref().map(|hw| &hw.list);
 
-    if hw_devices.is_empty() {
+    if hw_devices.map_or(true, |list| list.is_empty()) {
         // No devices detected
         content = content
             .push(Space::with_height(20))
@@ -121,11 +121,11 @@ fn render_hw_section<'a>(
                     .width(Length::Fill),
             )
             .push(Space::with_height(20));
-    } else {
+    } else if let Some(devices) = hw_devices {
         // Show device list
         content = content.push(text::p1_bold("Detected Devices:"));
 
-        for device in hw_devices {
+        for device in devices {
             let device_widget = render_hw_device(device, modal_state);
             content = content.push(device_widget);
         }
