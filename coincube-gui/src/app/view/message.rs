@@ -207,6 +207,8 @@ pub enum BuySellMessage {
 
     // Clipboard action (forwarded to parent Message::Clipboard)
     Clipboard(String),
+
+    ViewHistory,
 }
 
 #[derive(Debug, Clone)]

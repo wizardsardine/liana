@@ -669,9 +669,15 @@ impl BuySellPanel {
                 })
                 .push({
                     buy_or_sell_selected.is_none().then(|| {
-                        button::secondary(Some(escape_icon()), "Log Out")
-                            .on_press(ViewMessage::BuySell(BuySellMessage::LogOut))
-                            .width(iced::Length::Fill)
+                        iced::widget::row![
+                            button::secondary(Some(history_icon()), "View Order History")
+                                .on_press(ViewMessage::BuySell(BuySellMessage::ViewHistory))
+                                .width(iced::Length::Fill),
+                            button::secondary(Some(escape_icon()), "Log Out")
+                                .on_press(ViewMessage::BuySell(BuySellMessage::LogOut))
+                                .width(iced::Length::Fill)
+                        ]
+                        .spacing(10)
                     })
                 }),
         }
