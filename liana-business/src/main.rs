@@ -12,8 +12,30 @@ use liana_gui::{
     installer::{Installer, NextState, UserFlow},
 };
 use liana_ui::theme::Theme;
+use tracing_subscriber::{filter::Targets, prelude::*};
 
 fn main() -> iced::Result {
+    // Initialize tracing: async_hwi at TRACE, noisy crates silenced, rest at INFO
+    tracing_subscriber::registry()
+        .with(
+            tracing_subscriber::fmt::layer()
+                .pretty()
+                .with_file(false)
+                .with_filter(
+                    Targets::new()
+                        .with_target("async_hwi", tracing::Level::INFO)
+                        .with_target("business_installer", tracing::Level::DEBUG)
+                        // Silence noisy GPU/window crates
+                        .with_target("wgpu_core", tracing::Level::ERROR)
+                        .with_target("wgpu_hal", tracing::Level::ERROR)
+                        .with_target("iced_wgpu", tracing::Level::ERROR)
+                        .with_target("iced_winit", tracing::Level::ERROR)
+                        .with_target("winit", tracing::Level::ERROR)
+                        .with_target("naga", tracing::Level::ERROR)
+                        .with_default(tracing::Level::INFO),
+                ),
+        )
+        .init();
     let settings = Settings {
         default_font: liana_ui::font::REGULAR,
         default_text_size: Pixels(16.0),
@@ -101,9 +123,5 @@ impl Default for PolicyBuilder {
     }
 }
 
-// Ensure stop() is called when PolicyBuilder is dropped
-impl Drop for PolicyBuilder {
-    fn drop(&mut self) {
-        self.installer.stop();
-    }
-}
+// NOTE: No Drop impl needed here - BusinessInstaller already has its own Drop
+// implementation that handles cleanup (stop_hw, close_backend)

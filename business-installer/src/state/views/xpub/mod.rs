@@ -44,8 +44,6 @@ pub struct XpubEntryModalState {
     pub processing: bool,
 
     // Hardware wallet state
-    /// List of detected hardware wallet devices (fingerprint, device_name)
-    pub hw_devices: Vec<(miniscript::bitcoin::bip32::Fingerprint, String)>,
     /// Selected hardware wallet device
     pub selected_device: Option<miniscript::bitcoin::bip32::Fingerprint>,
     /// Selected account index for derivation
@@ -76,11 +74,10 @@ impl XpubEntryModalState {
             xpub_source: XpubSource::default(),
             validation_error: None,
             processing: false,
-            hw_devices: Vec::new(),
             selected_device: None,
             selected_account: ChildNumber::from_hardened_idx(0)
                 .expect("hardcoded valid account index"),
-            options_collapsed: true,  // Start with options collapsed
+            options_collapsed: true, // Start with options collapsed
         }
     }
 

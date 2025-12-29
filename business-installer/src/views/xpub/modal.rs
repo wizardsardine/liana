@@ -1,9 +1,9 @@
 use crate::state::{Msg, State};
+use async_hwi::service::{SigningDevice, UnsupportedReason};
 use iced::{
     widget::{pick_list, Space},
     Alignment, Length,
 };
-use liana_gui::hw::HardwareWallet;
 use liana_ui::{
     component::{button, card, hw, text},
     icon,
@@ -101,12 +101,11 @@ fn render_hw_section<'a>(
     state: &'a State,
     modal_state: &'a crate::state::views::XpubEntryModalState,
 ) -> Element<'a, Msg> {
-    let mut content = Column::new().spacing(15).padding(10);
+    let mut content = Column::new().spacing(10).padding(10);
 
-    // Device list
-    let hw_devices = state.hw.as_ref().map(|hw| &hw.list);
+    let devices = state.hw.list();
 
-    if hw_devices.map_or(true, |list| list.is_empty()) {
+    if devices.is_empty() {
         // No devices detected
         content = content
             .push(Space::with_height(20))
@@ -121,12 +120,13 @@ fn render_hw_section<'a>(
                     .width(Length::Fill),
             )
             .push(Space::with_height(20));
-    } else if let Some(devices) = hw_devices {
-        // Show device list
+    } else {
+        // Show device list - extract data to avoid lifetime issues with local BTreeMap
         content = content.push(text::p1_bold("Detected Devices:"));
 
-        for device in devices {
-            let device_widget = render_hw_device(device, modal_state);
+        let device_data: Vec<_> = devices.values().map(extract_device_data).collect();
+        for data in device_data {
+            let device_widget = render_device_card(data, modal_state);
             content = content.push(device_widget);
         }
     }
@@ -154,142 +154,106 @@ fn render_hw_section<'a>(
     content.into()
 }
 
-/// Render a hardware wallet device in the list
-fn render_hw_device<'a>(
-    device: &'a HardwareWallet,
-    modal_state: &'a crate::state::views::XpubEntryModalState,
-) -> Element<'a, Msg> {
-    match device {
-        HardwareWallet::Locked {
-            kind, pairing_code, ..
-        } => {
-            // Show locked device
-            let device_name = format!("{}", kind);
-            Container::new(
-                Column::new()
-                    .spacing(5)
-                    .push(
-                        Row::new()
-                            .spacing(10)
-                            .push(icon::usb_icon().size(20))
-                            .push(text::p1_bold(device_name))
-                            .push(text::p2_regular("(Locked)")),
-                    )
-                    .push_maybe(
-                        pairing_code
-                            .as_ref()
-                            .map(|code| text::p2_regular(format!("Pairing code: {}", code))),
-                    ),
-            )
-            .padding(10)
-            .style(theme::card::simple)
-            .width(Length::Fill)
-            .into()
-        }
-        HardwareWallet::Supported {
-            kind,
-            fingerprint,
-            version,
-            ..
-        } => {
-            // Show supported device - clickable to fetch xpub
-            let device_name = if let Some(v) = version {
-                format!("{} {}", kind, v)
-            } else {
-                format!("{}", kind)
-            };
+/// Extracted device data for rendering (avoids lifetime issues with local BTreeMap)
+struct DeviceRenderData {
+    kind: async_hwi::DeviceKind,
+    fingerprint: Option<miniscript::bitcoin::bip32::Fingerprint>,
+    state: DeviceState,
+}
 
-            let is_selected = modal_state.selected_device.as_ref() == Some(fingerprint);
+enum DeviceState {
+    Supported,
+    Locked { pairing_code: Option<String> },
+    Unsupported { version: Option<async_hwi::Version>, reason: UnsupportedReason },
+}
 
-            let device_content = hw::supported_hardware_wallet(
-                kind,
-                version.as_ref(),
-                fingerprint,
-                Some(device_name),
-            );
+/// Render a device card based on its state (Supported, Locked, or Unsupported)
+fn render_device_card(
+    data: DeviceRenderData,
+    modal_state: &crate::state::views::XpubEntryModalState,
+) -> Element<'_, Msg> {
+    let kind = data.kind;
 
-            // Add "Fetch" button if not processing
-            let mut row = Row::new()
-                .spacing(10)
-                .align_y(Alignment::Center)
-                .push(device_content);
+    match data.state {
+        DeviceState::Supported => {
+            let fp = data.fingerprint.expect("supported device has fingerprint");
+
+            // Build the device card content using liana-ui hw component
+            let card_content =
+                if modal_state.processing && modal_state.selected_device == Some(fp) {
+                    hw::processing_hardware_wallet(&kind, None::<&str>, fp, None::<&str>)
+                } else {
+                    hw::supported_hardware_wallet(&kind, None::<&str>, fp, None::<&str>)
+                };
+
+            // Wrap in a button for supported devices (clickable to fetch)
+            let mut bttn = Button::new(card_content)
+                .style(theme::button::secondary)
+                .width(Length::Fill);
 
             if !modal_state.processing {
-                let fetch_btn = if is_selected {
-                    button::primary(None, "Selected")
-                        .on_press(Msg::XpubFetchFromDevice(
-                            *fingerprint,
-                            modal_state.selected_account,
-                        ))
-                        .width(Length::Fixed(120.0))
-                } else {
-                    button::secondary(None, "Fetch")
-                        .on_press(Msg::XpubFetchFromDevice(
-                            *fingerprint,
-                            modal_state.selected_account,
-                        ))
-                        .width(Length::Fixed(120.0))
-                };
-                row = row.push(Space::with_width(Length::Fill));
-                row = row.push(fetch_btn);
+                bttn = bttn.on_press(Msg::XpubFetchFromDevice(fp, modal_state.selected_account));
             }
 
-            Container::new(row)
-                .padding(10)
-                .style(theme::card::simple)
+            bttn.into()
+        }
+        DeviceState::Locked { pairing_code } => {
+            // Locked device - show as locked, not clickable
+            // Pass owned Option<String> to avoid lifetime issues
+            let card_content = hw::locked_hardware_wallet(&kind, pairing_code);
+
+            Button::new(card_content)
+                .style(theme::button::secondary)
                 .width(Length::Fill)
                 .into()
         }
-        HardwareWallet::Unsupported {
-            kind,
-            version,
-            reason,
-            ..
-        } => {
-            // Show unsupported device with reason
-            let device_name = if let Some(v) = version {
-                format!("{} {}", kind, v)
-            } else {
-                format!("{}", kind)
-            };
-
-            let reason_text = match reason {
-                liana_gui::hw::UnsupportedReason::Version {
+        DeviceState::Unsupported { version, reason } => {
+            // Unsupported device - show appropriate message based on reason
+            let card_content: Container<'_, Msg> = match &reason {
+                UnsupportedReason::NotPartOfWallet(fg) => {
+                    hw::unrelated_hardware_wallet(&kind, version.as_ref(), fg)
+                }
+                UnsupportedReason::WrongNetwork => {
+                    hw::wrong_network_hardware_wallet(&kind, version.as_ref())
+                }
+                UnsupportedReason::Version {
                     minimal_supported_version,
-                } => {
-                    format!(
-                        "Unsupported version. Required: {}",
-                        minimal_supported_version
-                    )
-                }
-                liana_gui::hw::UnsupportedReason::Method(m) => {
-                    format!("Unsupported method: {}", m)
-                }
-                liana_gui::hw::UnsupportedReason::WrongNetwork => "Wrong network".to_string(),
-                liana_gui::hw::UnsupportedReason::AppIsNotOpen => {
-                    "Bitcoin app not open".to_string()
-                }
-                liana_gui::hw::UnsupportedReason::NotPartOfWallet(fp) => {
-                    format!("Not part of this wallet (fingerprint: {})", fp)
-                }
+                } => hw::unsupported_version_hardware_wallet(
+                    &kind,
+                    version.as_ref(),
+                    minimal_supported_version,
+                ),
+                _ => hw::unsupported_hardware_wallet(&kind, version.as_ref()),
             };
 
-            Container::new(
-                Column::new()
-                    .spacing(5)
-                    .push(
-                        Row::new()
-                            .spacing(10)
-                            .push(icon::usb_icon().size(20))
-                            .push(text::p1_bold(device_name)),
-                    )
-                    .push(text::p2_regular(reason_text).style(theme::text::warning)),
-            )
-            .padding(10)
-            .style(theme::card::simple)
-            .width(Length::Fill)
-            .into()
+            Button::new(card_content)
+                .style(theme::button::secondary)
+                .width(Length::Fill)
+                .into()
         }
+    }
+}
+
+/// Extract render data from a SigningDevice (copies needed data to avoid lifetime issues)
+fn extract_device_data(device: &SigningDevice<Msg>) -> DeviceRenderData {
+    let kind = device.kind().clone();
+    let fingerprint = device.fingerprint();
+
+    let state = match device {
+        SigningDevice::Supported(_) => DeviceState::Supported,
+        SigningDevice::Locked { pairing_code, .. } => DeviceState::Locked {
+            pairing_code: pairing_code.clone(),
+        },
+        SigningDevice::Unsupported { version, reason, .. } => DeviceState::Unsupported {
+            version: version.clone(),
+            reason: reason.clone(),
+        },
+    };
+
+    DeviceRenderData {
+        kind,
+        fingerprint,
+        state,
     }
 }
 

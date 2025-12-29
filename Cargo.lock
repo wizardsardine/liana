@@ -333,14 +333,15 @@ dependencies = [
 [[package]]
 name = "async-hwi"
 version = "0.0.29"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "724d232316bc0d9ce24eb3b3a6c600f487bd877513bd0e73ec02f8c890af3275"
+source = "git+https://github.com/pythcoiner/async-hwi?rev=993ffb5#993ffb522ce0bdf5bd459c0353b43d04a5511eb1"
 dependencies = [
  "async-trait",
  "bitbox-api",
  "bitcoin",
  "coldcard",
+ "crossbeam",
  "futures",
+ "hex",
  "hidapi",
  "ledger-apdu",
  "ledger-transport-hidapi",
@@ -353,6 +354,7 @@ dependencies = [
  "serialport",
  "tokio",
  "tokio-serial",
+ "tracing",
 ]
 
 [[package]]
@@ -3326,6 +3328,8 @@ dependencies = [
  "liana",
  "liana-gui",
  "liana-ui",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

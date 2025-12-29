@@ -26,7 +26,7 @@ tungstenite = { workspace = true, features = ["rustls-tls-webpki-roots"] }
 url = { workspace = true }
 rustls = { workspace = true }
 chrono = { workspace = true }
-async-hwi = { workspace = true, default-features = false, features = ["ledger", "jade", "coldcard"] }
+async-hwi = { workspace = true, features = ["service", "ledger", "jade", "coldcard", "bitbox", "specter"] }
 tracing = { workspace = true }
 log = { workspace = true }
 rfd = { workspace = true }
