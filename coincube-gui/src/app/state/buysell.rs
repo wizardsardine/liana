@@ -274,6 +274,35 @@ impl State for BuySellPanel {
                     }
                 }
             }
+            BuySellMessage::ViewHistory => {
+                let Some(country) = self.detected_country.as_ref() else {
+                    unreachable!(
+                        "Unable to view history, country detection|selection was unsuccessful"
+                    );
+                };
+
+                match mavapay_supported(country.code) {
+                    true => {
+                        log::info!("Starting history view under Mavapay");
+
+                        let mut mavapay =
+                            MavapayState::new(panel::BuyOrSell::Sell, country.clone());
+                        mavapay.step = MavapayFlowStep::History {
+                            orders: None,
+                            loading: true,
+                            error: None,
+                        };
+                        self.step = BuySellFlowState::Mavapay(mavapay);
+
+                        return Task::done(Message::View(view::Message::BuySell(
+                            BuySellMessage::Mavapay(MavapayMessage::FetchOrders),
+                        )));
+                    }
+                    false => {
+                        log::info!("Starting history view under Meld for {}", country.name);
+                    }
+                }
+            }
             BuySellMessage::SessionError(description, error) => {
                 self.error = Some(format!("{} ({})", description, error));
 
@@ -592,6 +621,68 @@ impl State for BuySellPanel {
                                 );
                             }
 
+                            msg => log::warn!(
+                                "Current {:?} has ignored message: {:?}",
+                                &mavapay.step,
+                                msg
+                            ),
+                        },
+                        (
+                            MavapayFlowStep::History {
+                                orders,
+                                loading,
+                                error,
+                            },
+                            msg,
+                        ) => match msg {
+                            MavapayMessage::FetchOrders => {
+                                *loading = true;
+                                *error = None;
+                                let client = mavapay.client.clone();
+
+                                return Task::perform(
+                                    async move { client.get_orders().await },
+                                    |result| match result {
+                                        Ok(orders) => BuySellMessage::Mavapay(
+                                            MavapayMessage::OrdersReceived(orders),
+                                        ),
+                                        Err(e) => BuySellMessage::Mavapay(
+                                            MavapayMessage::OrdersFetchFailed(e.to_string()),
+                                        ),
+                                    },
+                                )
+                                .map(|b| Message::View(ViewMessage::BuySell(b)));
+                            }
+                            MavapayMessage::OrdersReceived(received_orders) => {
+                                log::info!("[MAVAPAY] Received {} orders", received_orders.len());
+                                *orders = Some(received_orders);
+                                *loading = false;
+                            }
+                            MavapayMessage::OrdersFetchFailed(err) => {
+                                log::error!("[MAVAPAY] Failed to fetch orders: {}", err);
+                                *loading = false;
+                                *error = Some(err);
+                            }
+                            MavapayMessage::SelectOrder(order) => {
+                                mavapay.step = MavapayFlowStep::OrderDetail { order };
+                            }
+                            msg => log::warn!(
+                                "Current {:?} has ignored message: {:?}",
+                                &mavapay.step,
+                                msg
+                            ),
+                        },
+                        (MavapayFlowStep::OrderDetail { .. }, msg) => match msg {
+                            MavapayMessage::BackToHistory => {
+                                mavapay.step = MavapayFlowStep::History {
+                                    orders: None,
+                                    loading: true,
+                                    error: None,
+                                };
+                                return Task::done(Message::View(ViewMessage::BuySell(
+                                    BuySellMessage::Mavapay(MavapayMessage::FetchOrders),
+                                )));
+                            }
                             msg => log::warn!(
                                 "Current {:?} has ignored message: {:?}",
                                 &mavapay.step,

@@ -25,6 +25,14 @@ pub enum MavapayFlowStep {
         country: Country,
         abort: iced::task::Handle,
     },
+    History {
+        orders: Option<Vec<GetOrderResponse>>,
+        loading: bool,
+        error: Option<String>,
+    },
+    OrderDetail {
+        order: GetOrderResponse,
+    },
 }
 
 pub struct MavapayState {

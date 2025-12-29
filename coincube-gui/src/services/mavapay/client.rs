@@ -105,6 +105,20 @@ impl MavapayClient {
         }
     }
 
+    pub async fn get_orders(&self) -> Result<Vec<GetOrderResponse>, MavapayError> {
+        let response = self
+            .request(Method::GET, "/v1/order/all")
+            .send()
+            .await?
+            .check_success()
+            .await?;
+
+        match response.json().await? {
+            MavapayResponse::Error { message } => Err(MavapayError::ApiError(message)),
+            MavapayResponse::Success { data } => Ok(data),
+        }
+    }
+
     #[cfg(debug_assertions)]
     pub async fn simulate_pay_in(
         &self,
