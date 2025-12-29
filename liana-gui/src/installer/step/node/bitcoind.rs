@@ -379,7 +379,7 @@ impl DefineBitcoind {
                 .timeout(std::time::Duration::from_secs(3))
                 .build(),
         );
-        client.send_request(client.build_request("echo", &[]))?;
+        client.send_request(client.build_request("echo", None))?;
         Ok(())
     }
 

@@ -8,3 +8,60 @@ members = [
     "liana-ui",
 ]
 default-members = ["liana", "lianad", "liana-gui", "liana-ui"]
+
+[workspace.dependencies]
+# Common dependencies
+miniscript = "12.0"
+serde = "1.0"
+log = "0.4"
+toml = "0.5"
+serde_json = "1.0"
+backtrace = "0.3"
+iced = { version = "0.13.1", default-features = false }
+iced_aw = "0.12.2"
+iced_runtime = "0.13.2"
+iced_core = "0.13.2"
+chrono = "0.4.38"
+dirs = "5.0"
+jsonrpc = { version = "0.17", default-features = false }
+
+# Pinned to this version because they keep breaking their MSRV in point releases...
+# FIXME: this is unfortunate, we don't receive the updates (sometimes critical) from SQLite.
+rusqlite = "0.30"
+
+# We use a branch of the v1.0.0-alpha.13 tag, which corresponds to the bdk_electrum v0.15 crate,
+# in order to bump the electrum_client dependency to v0.21. This allows to use the "use-rustls-ring"
+# feature and avoid the default aws-ls-rs provider from rustls, which would break the reproducible build
+# (see https://github.com/aws/aws-lc-rs/issues/409).
+bdk_electrum = { git = "https://github.com/wizardsardine/bdk", branch = "release/1.0.0-alpha.13", default-features = false }
+
+# Other dependencies
+bdk_coin_select = "0.4"
+getrandom = "0.3.1"
+bip39 = "2.0"
+rdrand = "0.8"
+fern = "0.6"
+bip329 = { version = "0.3.0", default-features = false }
+async-trait = "0.1"
+async-hwi = "0.0.29"
+hex = "0.4.3"
+email_address = "0.2.7"
+tokio = "1.21.0"
+async-fd-lock = "0.2.0"
+tracing = "0.1.37"
+tracing-subscriber = "0.3.16"
+libc = "0.2"
+base64 = "0.21"
+bitcoin_hashes = "0.12"
+reqwest = { version = "0.11", default-features = false }
+rust-ini = "0.19.0"
+rfd = "0.15.1"
+fs2 = "0.4.3"
+open = "5.3"
+encrypted_backup = { version = "=0.0.2", package = "bitcoin-encrypted-backup", default-features = false, features = ["miniscript_12_0", "rand"] }
+zip = { version = "0.6", default-features = false }
+tar = { version = "0.4", default-features = false }
+flate2 = { version = "1.0", default-features = false }
+winresource = "0.1.24"
+unicode-segmentation = "1.0"
+bitcoin = "0.32"
