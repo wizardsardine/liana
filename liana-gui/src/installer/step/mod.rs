@@ -32,6 +32,7 @@ use liana_ui::widget::*;
 
 use crate::{
     app::settings::{ProviderKey, WalletSettings},
+    backup::Backup,
     hw::HardwareWallets,
     installer::{context::Context, message::Message, view},
     node::bitcoind::Bitcoind,
@@ -72,6 +73,7 @@ pub struct Final {
     warning: Option<String>,
     wallet_settings: Option<WalletSettings>,
     key_redemptions: HashMap<ProviderKey, Option<Result<(), services::keys::Error>>>,
+    backup: Option<Backup>,
 }
 
 impl Final {
@@ -82,6 +84,7 @@ impl Final {
             warning: None,
             wallet_settings: None,
             key_redemptions: HashMap::new(),
+            backup: None,
         }
     }
 }
@@ -95,6 +98,7 @@ impl Default for Final {
 impl Step for Final {
     fn load_context(&mut self, ctx: &Context) {
         self.internal_bitcoind.clone_from(&ctx.internal_bitcoind);
+        self.backup.clone_from(&ctx.backup);
         self.key_redemptions = ctx
             .keys
             .values()

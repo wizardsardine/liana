@@ -14,7 +14,7 @@ use liana_ui::{
     widget::{Column, Element},
 };
 use lianad::config::{BitcoinBackend, BitcoindConfig, BitcoindRpcAuth, Config};
-use std::{collections::HashMap, ops::Deref};
+use std::{collections::HashMap, fmt::Debug, ops::Deref};
 use tokio::runtime::Handle;
 use tracing::{error, info, warn};
 
@@ -25,13 +25,17 @@ use std::sync::{Arc, Mutex};
 use crate::{
     app::{
         config as gui_config,
-        settings::{update_settings_file, AuthConfig, SettingsError, WalletId, WalletSettings},
+        settings::{
+            self, update_settings_file, AuthConfig, SettingsError, WalletId, WalletSettings,
+        },
         wallet::wallet_name,
     },
+    backup::Backup,
     daemon::{Daemon, DaemonError},
     delete,
     dir::LianaDirectory,
     hw::{HardwareWalletConfig, HardwareWalletMessage, HardwareWallets},
+    node::bitcoind::Bitcoind,
     services::{
         self,
         connect::client::{
@@ -52,7 +56,7 @@ use step::{
     BackupDescriptor, BackupMnemonic, ChooseBackend, ChooseDescriptorTemplate, DefineDescriptor,
     DefineNode, DescriptorTemplateDescription, Final, ImportDescriptor, ImportRemoteWallet,
     InternalBitcoindStep, RecoverMnemonic, RegisterDescriptor, RemoteBackendLogin,
-    SelectBitcoindTypeStep, ShareXpubs, Step, WalletAlias,
+    SelectBitcoindTypeStep, ShareXpubs, WalletAlias,
 };
 
 #[derive(Debug, Clone)]
@@ -62,20 +66,69 @@ pub enum UserFlow {
     ShareXpubs,
 }
 
-pub struct Installer {
-    pub network: bitcoin::Network,
-    pub datadir: LianaDirectory,
+#[derive(Debug, Clone)]
+#[allow(clippy::large_enum_variant)]
+pub enum NextState {
+    LoginLianaLite {
+        datadir: LianaDirectory,
+        network: Network,
+        directory_wallet_id: settings::WalletId,
+        auth_cfg: settings::AuthConfig,
+    },
+    Loader {
+        datadir: LianaDirectory,
+        network: bitcoin::Network,
+        internal_bitcoind: Option<Bitcoind>,
+        backup: Option<Backup>,
+        wallet_settings: WalletSettings,
+    },
+    Launcher {
+        network: Network,
+        datadir: LianaDirectory,
+    },
+}
+
+/// Trait defining the interface for installer implementations.
+pub trait Installer<'a, Message>
+where
+    Message: Clone + Send + 'static,
+{
+    fn new(
+        destination_path: LianaDirectory,
+        network: bitcoin::Network,
+        remote_backend: Option<BackendClient>,
+        user_flow: UserFlow,
+    ) -> (Box<Self>, Task<Message>);
+
+    fn update(&mut self, message: Message) -> Task<Message>;
+
+    fn subscription(&self) -> Subscription<Message>;
+
+    fn view(&self) -> Element<Message>;
+
+    fn stop(&mut self);
+
+    fn datadir(&self) -> &LianaDirectory;
+
+    fn network(&self) -> bitcoin::Network;
+
+    fn exit_maybe(&mut self, msg: &Message) -> Option<NextState>;
+}
+
+pub struct LianaInstaller {
+    network: bitcoin::Network,
+    datadir: LianaDirectory,
 
     current: usize,
-    steps: Vec<Box<dyn Step>>,
+    steps: Vec<Box<dyn step::Step>>,
     hws: HardwareWallets,
     signer: Arc<Mutex<Signer>>,
 
     /// Context is data passed through each step.
-    pub context: Context,
+    context: Context,
 }
 
-impl Installer {
+impl LianaInstaller {
     fn previous(&mut self) -> Task<Message> {
         self.hws.reset_watch_list();
         let network = self.network;
@@ -102,82 +155,6 @@ impl Installer {
             step.revert(&mut self.context)
         }
         Task::none()
-    }
-
-    pub fn new(
-        destination_path: LianaDirectory,
-        network: bitcoin::Network,
-        remote_backend: Option<BackendClient>,
-        user_flow: UserFlow,
-    ) -> (Installer, Task<Message>) {
-        let signer = Arc::new(Mutex::new(Signer::generate(network).unwrap()));
-        let context = Context::new(
-            network,
-            destination_path.clone(),
-            remote_backend.map(RemoteBackend::WithoutWallet).unwrap_or(
-                if matches!(network, Network::Bitcoin | Network::Signet) {
-                    RemoteBackend::Undefined
-                } else {
-                    // The step for choosing the backend will be skipped.
-                    RemoteBackend::None
-                },
-            ),
-        );
-        let mut installer = Installer {
-            network,
-            datadir: destination_path.clone(),
-            current: 0,
-            hws: HardwareWallets::new(destination_path.clone(), network),
-            steps: match user_flow {
-                UserFlow::CreateWallet => vec![
-                    ChooseDescriptorTemplate::default().into(),
-                    DescriptorTemplateDescription::default().into(),
-                    DefineDescriptor::new(network, signer.clone()).into(),
-                    BackupMnemonic::new(signer.clone()).into(),
-                    BackupDescriptor::default().into(),
-                    RegisterDescriptor::new_create_wallet().into(),
-                    ChooseBackend::new(network).into(),
-                    RemoteBackendLogin::new(network, destination_path.network_directory(network))
-                        .into(),
-                    SelectBitcoindTypeStep::new().into(),
-                    InternalBitcoindStep::new(&context.liana_directory).into(),
-                    DefineNode::default().into(),
-                    WalletAlias::default().into(),
-                    Final::new().into(),
-                ],
-                UserFlow::ShareXpubs => vec![ShareXpubs::new(network, signer.clone()).into()],
-                UserFlow::AddWallet => vec![
-                    ChooseBackend::new(network).into(),
-                    RemoteBackendLogin::new(network, destination_path.network_directory(network))
-                        .into(),
-                    ImportRemoteWallet::new(network).into(),
-                    ImportDescriptor::new(network).into(),
-                    RecoverMnemonic::default().into(),
-                    RegisterDescriptor::new_import_wallet().into(),
-                    SelectBitcoindTypeStep::new().into(),
-                    InternalBitcoindStep::new(&context.liana_directory).into(),
-                    DefineNode::default().into(),
-                    WalletAlias::default().into(),
-                    Final::new().into(),
-                ],
-            },
-            context,
-            signer,
-        };
-        // skip the step according to the current context.
-        installer.skip_steps();
-
-        let current_step = installer
-            .steps
-            .get_mut(installer.current)
-            .expect("There is always a step");
-        current_step.load_context(&installer.context);
-        let command = current_step.load();
-        (installer, command)
-    }
-
-    pub fn destination_path(&self) -> LianaDirectory {
-        self.context.liana_directory.clone()
     }
 
     pub fn subscription(&self) -> Subscription<Message> {
@@ -240,7 +217,7 @@ impl Installer {
         Task::none()
     }
 
-    pub fn update(&mut self, message: Message) -> Task<Message> {
+    fn update_internal(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::HardwareWallets(msg) => {
                 let update = matches!(&msg, &HardwareWalletMessage::List(_));
@@ -383,6 +360,132 @@ impl Installer {
             Column::with_children(vec![network_banner(self.network).into(), content]).into()
         } else {
             content
+        }
+    }
+}
+
+impl<'a> Installer<'a, Message> for LianaInstaller {
+    fn new(
+        destination_path: LianaDirectory,
+        network: bitcoin::Network,
+        remote_backend: Option<BackendClient>,
+        user_flow: UserFlow,
+    ) -> (Box<LianaInstaller>, Task<Message>) {
+        let signer = Arc::new(Mutex::new(Signer::generate(network).unwrap()));
+        let context = Context::new(
+            network,
+            destination_path.clone(),
+            remote_backend.map(RemoteBackend::WithoutWallet).unwrap_or(
+                if matches!(network, Network::Bitcoin | Network::Signet) {
+                    RemoteBackend::Undefined
+                } else {
+                    // The step for choosing the backend will be skipped.
+                    RemoteBackend::None
+                },
+            ),
+        );
+        let mut installer = LianaInstaller {
+            network,
+            datadir: destination_path.clone(),
+            current: 0,
+            hws: HardwareWallets::new(destination_path.clone(), network),
+            steps: match user_flow {
+                UserFlow::CreateWallet => vec![
+                    ChooseDescriptorTemplate::default().into(),
+                    DescriptorTemplateDescription::default().into(),
+                    DefineDescriptor::new(network, signer.clone()).into(),
+                    BackupMnemonic::new(signer.clone()).into(),
+                    BackupDescriptor::default().into(),
+                    RegisterDescriptor::new_create_wallet().into(),
+                    ChooseBackend::new(network).into(),
+                    RemoteBackendLogin::new(network, destination_path.network_directory(network))
+                        .into(),
+                    SelectBitcoindTypeStep::new().into(),
+                    InternalBitcoindStep::new(&context.liana_directory).into(),
+                    DefineNode::default().into(),
+                    WalletAlias::default().into(),
+                    Final::new().into(),
+                ],
+                UserFlow::ShareXpubs => vec![ShareXpubs::new(network, signer.clone()).into()],
+                UserFlow::AddWallet => vec![
+                    ChooseBackend::new(network).into(),
+                    RemoteBackendLogin::new(network, destination_path.network_directory(network))
+                        .into(),
+                    ImportRemoteWallet::new(network).into(),
+                    ImportDescriptor::new(network).into(),
+                    RecoverMnemonic::default().into(),
+                    RegisterDescriptor::new_import_wallet().into(),
+                    SelectBitcoindTypeStep::new().into(),
+                    InternalBitcoindStep::new(&context.liana_directory).into(),
+                    DefineNode::default().into(),
+                    WalletAlias::default().into(),
+                    Final::new().into(),
+                ],
+            },
+            context,
+            signer,
+        };
+        // skip the step according to the current context.
+        installer.skip_steps();
+
+        let current_step = installer
+            .steps
+            .get_mut(installer.current)
+            .expect("There is always a step");
+        current_step.load_context(&installer.context);
+        let command = current_step.load();
+        (Box::new(installer), command)
+    }
+    fn update(&mut self, message: Message) -> Task<Message> {
+        self.update_internal(message)
+    }
+
+    fn subscription(&self) -> Subscription<Message> {
+        <LianaInstaller>::subscription(self)
+    }
+
+    fn view(&self) -> Element<Message> {
+        <LianaInstaller>::view(self)
+    }
+
+    fn stop(&mut self) {
+        <LianaInstaller>::stop(self)
+    }
+
+    fn datadir(&self) -> &LianaDirectory {
+        &self.datadir
+    }
+
+    fn network(&self) -> bitcoin::Network {
+        self.network
+    }
+
+    fn exit_maybe(&mut self, msg: &Message) -> Option<NextState> {
+        if let Message::Exit(settings, internal_bitcoind) = msg {
+            let wallet_id = settings.wallet_id();
+            if let Some(auth_cfg) = &settings.remote_backend_auth {
+                Some(NextState::LoginLianaLite {
+                    datadir: self.datadir.clone(),
+                    network: self.network,
+                    directory_wallet_id: wallet_id,
+                    auth_cfg: auth_cfg.clone(),
+                })
+            } else {
+                Some(NextState::Loader {
+                    datadir: self.datadir.clone(),
+                    network: self.network,
+                    internal_bitcoind: internal_bitcoind.clone(),
+                    backup: self.context.backup.take(),
+                    wallet_settings: (**settings).clone(),
+                })
+            }
+        } else if let Message::BackToLauncher(network) = msg {
+            Some(NextState::Launcher {
+                network: *network,
+                datadir: self.datadir.clone(),
+            })
+        } else {
+            None
         }
     }
 }
