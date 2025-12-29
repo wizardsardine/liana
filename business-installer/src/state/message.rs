@@ -70,7 +70,7 @@ pub enum Msg {
     BackendDisconnected,
 
     // Hardware Wallets
-    HardwareWallets(liana_gui::hw::HardwareWalletMessage),
+    HardwareWallets(async_hwi::service::SigningDeviceMsg),
 
     // Xpub management
     XpubSelectKey(u8),                     // Open modal for key
@@ -102,3 +102,10 @@ pub enum Msg {
 
 /// Type alias for Msg (used in views)
 pub type Message = Msg;
+
+/// Required by HwiService<Message> to send notifications through the shared channel
+impl From<async_hwi::service::SigningDeviceMsg> for Msg {
+    fn from(msg: async_hwi::service::SigningDeviceMsg) -> Self {
+        Msg::HardwareWallets(msg)
+    }
+}

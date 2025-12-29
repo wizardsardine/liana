@@ -10,6 +10,7 @@ use liana_gui::{
 };
 use liana_ui::widget::Element;
 use std::pin::Pin;
+use tracing::debug;
 
 pub use crate::state::Msg as Message;
 
@@ -27,7 +28,7 @@ impl BusinessInstaller {
     fn new(datadir: LianaDirectory, network: bitcoin::Network) -> (Self, Task<Message>) {
         use crate::state::views::login::{Login, LoginState};
 
-        let mut state = State::new();
+        let mut state = State::new(network);
 
         // Set network directory for token caching (same location as liana-gui)
         let network_dir = datadir.network_directory(network);
@@ -93,6 +94,7 @@ impl<'a> Installer<'a, Message> for BusinessInstaller {
     }
 
     fn stop(&mut self) {
+        self.state.stop_hw();
         self.state.close_backend();
     }
 
@@ -162,18 +164,14 @@ impl iced::futures::Stream for NotifListener {
 
 impl Drop for NotifListener {
     fn drop(&mut self) {
-        println!("NotifListener dropped");
+        debug!("NotifListener dropped");
     }
 }
 
 impl Drop for BusinessInstaller {
     fn drop(&mut self) {
+        self.state.stop_hw();
         self.state.close_backend();
     }
 }
 
-/// Map hardware wallet messages to application messages
-#[allow(dead_code)]
-fn hw_message_to_app_message(msg: liana_gui::hw::HardwareWalletMessage) -> Message {
-    Message::HardwareWallets(msg)
-}

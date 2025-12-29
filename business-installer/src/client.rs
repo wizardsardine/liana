@@ -21,6 +21,7 @@ use liana_gui::{
 use miniscript::{bitcoin::Network, DescriptorPublicKey};
 use serde_json::json;
 use tungstenite::{accept, Message as WsMessage};
+use tracing::error;
 use uuid::Uuid;
 
 use crate::{
@@ -531,7 +532,7 @@ fn wss_thread(
                             let mut requests = sent_requests2.lock().unwrap();
                             requests.remove(&request_id);
                             let _ = notif_sender.send(Notification::Error(Error::WsConnection).into());
-                            eprintln!("Failed to send request");
+                            error!("Failed to send WebSocket request");
                             break;
                         }
                     }

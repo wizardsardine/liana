@@ -7,8 +7,8 @@ use crate::{
         xpub_view,
     },
 };
+use async_hwi::service::HwiService;
 use crossbeam::channel;
-use liana_gui::{dir::LianaDirectory, hw::HardwareWallets};
 use liana_ui::widget::{modal::Modal, Element};
 pub use message::{Message, Msg};
 use miniscript::bitcoin::Network;
@@ -30,7 +30,6 @@ pub enum View {
 }
 
 /// Main application state
-#[derive(Debug)]
 pub struct State {
     pub app: AppState,
     pub views: views::ViewsState,
@@ -38,11 +37,13 @@ pub struct State {
     pub current_view: View,
     pub notif_sender: channel::Sender<Message>,
     pub notif_receiver: channel::Receiver<Message>,
-    pub hw: Option<HardwareWallets>,
+    pub hw: HwiService<Message>,
+    /// Track if HW listener is running (to make stop_hw idempotent)
+    hw_running: bool,
 }
 
 impl State {
-    pub fn new() -> Self {
+    pub fn new(network: Network) -> Self {
         let (notif_sender, notif_receiver) = channel::unbounded();
         Self {
             app: AppState::new(),
@@ -51,17 +52,29 @@ impl State {
             current_view: View::Login,
             notif_sender,
             notif_receiver,
-            hw: None,
+            hw: HwiService::new(network, None),
+            hw_running: false,
         }
     }
 
-    /// Initialize hardware wallet support
-    pub fn init_hw(&mut self, datadir: LianaDirectory, network: Network) {
-        self.hw = Some(HardwareWallets::new(datadir, network));
+    /// Start hardware wallet listening (call when modal opens)
+    pub fn start_hw(&mut self) {
+        if !self.hw_running {
+            self.hw.start(self.notif_sender.clone());
+            self.hw_running = true;
+        }
     }
 
-    /// Initialize backend connection and return the receiver for subscriptions.
-    /// The caller is responsible for storing the receiver appropriately.
+    /// Stop hardware wallet listening (call when modal closes)
+    /// This is idempotent - safe to call multiple times
+    pub fn stop_hw(&mut self) {
+        if self.hw_running {
+            self.hw.stop();
+            self.hw_running = false;
+        }
+    }
+
+    /// Initialize backend connection
     pub fn connect_backend(
         &mut self,
         url: String,

@@ -7,6 +7,7 @@ use crate::{
 use iced::Task;
 use liana_connect::{Key, PolicyTemplate, SpendingPath, Timelock};
 use liana_ui::widget::text_input;
+use tracing::debug;
 use uuid::Uuid;
 
 /// Derive the user's role for a specific wallet based on wallet data
@@ -32,7 +33,7 @@ fn derive_user_role(wallet: &Wallet, current_user_email: &str) -> UserRole {
 impl State {
     #[rustfmt::skip]
     pub fn update(&mut self, message: Msg) -> Task<Msg> {
-        println!("{message:?}");
+        debug!(?message, "received message");
         match message {
             // Login/Auth
             Msg::LoginUpdateEmail(email) => self.views.login.on_update_email(email),
@@ -972,6 +973,7 @@ impl State {
         // The modal should be closed after successful save/clear operations
         if self.views.xpub.modal.is_some() {
             self.views.xpub.close_modal();
+            self.stop_hw();
         }
 
         Task::none()
@@ -1236,51 +1238,41 @@ impl State {
 
 // Hardware wallet handlers
 impl State {
-    /// Handle hardware wallet messages
-    fn on_hw_message(&mut self, msg: liana_gui::hw::HardwareWalletMessage) -> Task<Msg> {
-        let Some(hw) = self.hw.as_mut() else {
-            return Task::none();
-        };
+    /// Handle hardware wallet messages from async-hwi service
+    fn on_hw_message(&mut self, msg: async_hwi::service::SigningDeviceMsg) -> Task<Msg> {
+        use async_hwi::service::SigningDeviceMsg;
+        use miniscript::bitcoin::bip32::DerivationPath;
+        use miniscript::descriptor::{DescriptorPublicKey, DescriptorXKey, Wildcard};
 
-        // Update the hardware wallet state
-        match hw.update(msg) {
-            Ok(task) => {
-                // Update modal state after list updates
+        match msg {
+            SigningDeviceMsg::Update => {
+                // Device list changed - UI will redraw automatically with new state.hw content
+            }
+            SigningDeviceMsg::XPub(fingerprint, path, xpub) => {
+                // xpub fetch completed - populate input
                 if let Some(modal) = self.views.xpub.modal_mut() {
-                    // Build list of (fingerprint, device_name) for supported devices
-                    modal.hw_devices = hw
-                        .list
-                        .iter()
-                        .filter_map(|hw| match hw {
-                            liana_gui::hw::HardwareWallet::Supported {
-                                fingerprint,
-                                kind,
-                                version,
-                                ..
-                            } => {
-                                let name = if let Some(v) = version {
-                                    format!("{} {}", kind, v)
-                                } else {
-                                    kind.to_string()
-                                };
-                                Some((*fingerprint, name))
-                            }
-                            _ => None,
-                        })
-                        .collect();
+                    modal.set_processing(false);
+                    // Convert xpub to DescriptorPublicKey and populate input
+                    let desc_xpub = DescriptorPublicKey::XPub(DescriptorXKey {
+                        origin: Some((fingerprint, path)),
+                        derivation_path: DerivationPath::master(),
+                        wildcard: Wildcard::None,
+                        xkey: xpub,
+                    });
+                    modal.update_input(desc_xpub.to_string());
                 }
-
-                // Map resulting task back to our message type
-                task.map(Msg::HardwareWallets)
             }
-            Err(e) => {
-                // Show error in warning modal
-                Task::done(Msg::WarningShowModal(
-                    "Hardware Wallet Error".to_string(),
-                    e.to_string(),
-                ))
+            SigningDeviceMsg::Error(e) => {
+                // Show error in modal
+                if let Some(modal) = self.views.xpub.modal_mut() {
+                    modal.set_processing(false);
+                    modal.set_error(e);
+                }
             }
+            // Ignore other messages (Version, WalletRegistered, etc.)
+            _ => {}
         }
+        Task::none()
     }
 }
 
@@ -1292,6 +1284,8 @@ impl State {
             self.views
                 .xpub
                 .open_modal(key_id, key.alias.clone(), key.xpub.clone());
+            // Start hardware wallet listening when modal opens
+            self.start_hw();
         }
     }
 
@@ -1322,30 +1316,28 @@ impl State {
         fingerprint: miniscript::bitcoin::bip32::Fingerprint,
         account: miniscript::bitcoin::bip32::ChildNumber,
     ) -> Task<Msg> {
+        use async_hwi::service::SigningDevice;
+        #[allow(unused_imports)]
+        use miniscript::bitcoin::bip32::{ChildNumber, DerivationPath};
+
         // Set processing state
         if let Some(modal) = self.views.xpub.modal_mut() {
             modal.set_processing(true);
             modal.clear_error();
         }
 
-        // Find the device with matching fingerprint in the hardware wallet list
-        let device = self.hw.as_ref().and_then(|hw| {
-            hw.list
-                .iter()
-                .find(|hw| hw.fingerprint() == Some(fingerprint))
-                .cloned()
+        // Find supported device with matching fingerprint
+        let devices = self.hw.list();
+        let device = devices.values().find(|dev| {
+            dev.is_supported() && dev.fingerprint() == Some(fingerprint)
         });
 
         match device {
-            Some(liana_gui::hw::HardwareWallet::Supported { device, .. }) => {
+            Some(SigningDevice::Supported(supported)) => {
                 // Build derivation path: m/48'/network'/account'/2'
-                use miniscript::bitcoin::bip32::{ChildNumber, DerivationPath};
-                use miniscript::descriptor::{DescriptorPublicKey, DescriptorXKey, Wildcard};
-
-                // Get network from HW subscription (it's already set correctly)
                 // TODO: Get actual network from wallet or backend config
-                let network = liana::miniscript::bitcoin::Network::Bitcoin;
-                let network_idx = if network == liana::miniscript::bitcoin::Network::Bitcoin {
+                let network = miniscript::bitcoin::Network::Bitcoin;
+                let network_idx = if network == miniscript::bitcoin::Network::Bitcoin {
                     ChildNumber::Hardened { index: 0 }
                 } else {
                     ChildNumber::Hardened { index: 1 }
@@ -1358,79 +1350,30 @@ impl State {
                     ChildNumber::Hardened { index: 2 },
                 ]);
 
-                let device_clone = device.clone();
-                let fp = fingerprint;
-
-                // Fetch xpub by spawning a thread with Tokio runtime
-                // This avoids "no reactor running" panic with Iced's ThreadPool executor
-                let (tx, rx) = std::sync::mpsc::channel();
-                std::thread::spawn(move || {
-                    let rt = tokio::runtime::Runtime::new().unwrap();
-                    let result = rt.block_on(async {
-                        // Get xpub from device
-                        match device_clone.get_extended_pubkey(&derivation_path).await {
-                            Ok(xkey) => {
-                                // Convert to DescriptorPublicKey
-                                Ok(DescriptorPublicKey::XPub(DescriptorXKey {
-                                    origin: Some((fp, derivation_path.clone())),
-                                    derivation_path: DerivationPath::master(),
-                                    wildcard: Wildcard::None,
-                                    xkey,
-                                }))
-                            }
-                            Err(e) => Err(e),
-                        }
-                    });
-                    let _ = tx.send(result);
-                });
-
-                // Poll the channel for the result
-                Task::perform(
-                    async move {
-                        // Block until result is available
-                        rx.recv().unwrap_or_else(|_| {
-                            Err(async_hwi::Error::Device(
-                                "Failed to receive result from hardware wallet thread".to_string(),
-                            ))
-                        })
-                    },
-                    |result| {
-                        match result {
-                            Ok(xpub) => {
-                                // Success - populate input with xpub string
-                                Msg::XpubFileLoaded(Ok(xpub.to_string()))
-                            }
-                            Err(e) => {
-                                // Error - show error message
-                                Msg::XpubFileLoaded(Err(format!(
-                                    "Failed to fetch from device: {}",
-                                    e
-                                )))
-                            }
-                        }
-                    },
-                )
+                // Non-blocking! Result comes via SigningDeviceMsg::XPub
+                supported.get_extended_pubkey(&derivation_path);
             }
-            Some(liana_gui::hw::HardwareWallet::Locked { .. }) => {
+            Some(SigningDevice::Locked { .. }) => {
                 if let Some(modal) = self.views.xpub.modal_mut() {
+                    modal.set_processing(false);
                     modal.set_error("Device is locked. Please unlock it first.".to_string());
                 }
-                Task::none()
             }
-            Some(liana_gui::hw::HardwareWallet::Unsupported { .. }) => {
+            Some(SigningDevice::Unsupported { .. }) => {
                 if let Some(modal) = self.views.xpub.modal_mut() {
+                    modal.set_processing(false);
                     modal.set_error("Device is not supported".to_string());
                 }
-                Task::none()
             }
             None => {
                 // Device not found
                 if let Some(modal) = self.views.xpub.modal_mut() {
+                    modal.set_processing(false);
                     modal.set_error("Hardware wallet not found".to_string());
                 }
-                Task::none()
             }
         }
+        Task::none()
     }
 
     /// Trigger file picker for xpub
@@ -1553,8 +1496,9 @@ impl State {
                         self.backend.edit_xpub(wallet_id, Some(xpub), key_id);
                     }
 
-                    // Close modal on success (will be closed when backend notification arrives)
+                    // Close modal on success and stop HW listening
                     self.views.xpub.close_modal();
+                    self.stop_hw();
                 }
                 Err(error) => {
                     modal.set_error(error);
@@ -1579,8 +1523,9 @@ impl State {
                 self.backend.edit_xpub(wallet_id, None, key_id);
             }
 
-            // Close modal (will be closed when backend notification arrives)
+            // Close modal and stop HW listening
             self.views.xpub.close_modal();
+            self.stop_hw();
         }
         Task::none()
     }
@@ -1588,6 +1533,7 @@ impl State {
     /// Close xpub modal
     fn on_xpub_cancel_modal(&mut self) {
         self.views.xpub.close_modal();
+        self.stop_hw();
     }
 
     fn on_xpub_toggle_options(&mut self) {
