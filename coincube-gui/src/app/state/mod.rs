@@ -40,7 +40,7 @@ pub trait State {
     fn view<'a>(&'a self, menu: &'a Menu, cache: &'a Cache) -> Element<'a, view::Message>;
     fn update(
         &mut self,
-        _daemon: Arc<dyn Daemon + Sync + Send>,
+        _daemon: Option<Arc<dyn Daemon + Sync + Send>>,
         _cache: &Cache,
         _message: Message,
     ) -> Task<Message> {
@@ -56,8 +56,8 @@ pub trait State {
     fn interrupt(&mut self) {}
     fn reload(
         &mut self,
-        _daemon: Arc<dyn Daemon + Sync + Send>,
-        _wallet: Arc<Wallet>,
+        _daemon: Option<Arc<dyn Daemon + Sync + Send>>,
+        _wallet: Option<Arc<Wallet>>,
     ) -> Task<Message> {
         Task::none()
     }

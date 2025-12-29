@@ -938,8 +938,8 @@ impl State for BuySellPanel {
 
     fn reload(
         &mut self,
-        _daemon: Arc<dyn Daemon + Sync + Send>,
-        _wallet: Arc<crate::app::wallet::Wallet>,
+        _daemon: Option<Arc<dyn Daemon + Sync + Send>>,
+        _wallet: Option<Arc<crate::app::wallet::Wallet>>,
     ) -> Task<Message> {
         match self.detected_country {
             Some(_) => Task::none(),

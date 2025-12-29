@@ -149,15 +149,16 @@ impl State for WalletSettingsState {
 
     fn update(
         &mut self,
-        daemon: Arc<dyn Daemon + Sync + Send>,
+        daemon: Option<Arc<dyn Daemon + Sync + Send>>,
         cache: &Cache,
         message: Message,
     ) -> Task<Message> {
+        let daemon = daemon.expect("Daemon required for vault wallet settings");
         match message {
             Message::WalletUpdated(res) => {
                 self.processing = false;
                 if let Modal::RegisterWallet(modal) = &mut self.modal {
-                    modal.update(daemon, cache, Message::WalletUpdated(res))
+                    modal.update(Some(daemon.clone()), cache, Message::WalletUpdated(res))
                 } else {
                     match res {
                         Ok(wallet) => {
@@ -289,7 +290,7 @@ impl State for WalletSettingsState {
                 Task::none()
             }
             _ => match &mut self.modal {
-                Modal::RegisterWallet(m) => m.update(daemon, cache, message),
+                Modal::RegisterWallet(m) => m.update(Some(daemon.clone()), cache, message),
                 _ => Task::none(),
             },
         }
@@ -297,9 +298,11 @@ impl State for WalletSettingsState {
 
     fn reload(
         &mut self,
-        daemon: Arc<dyn Daemon + Sync + Send>,
-        wallet: Arc<Wallet>,
+        daemon: Option<Arc<dyn Daemon + Sync + Send>>,
+        wallet: Option<Arc<Wallet>>,
     ) -> Task<Message> {
+        let daemon = daemon.expect("Vault panels require daemon");
+        let wallet = wallet.expect("Vault panels require wallet");
         self.descriptor = wallet.main_descriptor.clone();
         self.keys_aliases = Self::keys_aliases(&wallet);
         self.wallet = wallet;
@@ -361,10 +364,11 @@ impl RegisterWalletModal {
 
     fn update(
         &mut self,
-        daemon: Arc<dyn Daemon + Sync + Send>,
+        daemon: Option<Arc<dyn Daemon + Sync + Send>>,
         cache: &Cache,
         message: Message,
     ) -> Task<Message> {
+        let daemon = daemon.expect("Daemon required for register wallet modal");
         match message {
             Message::View(view::Message::Reload) => {
                 self.chosen_hw = None;

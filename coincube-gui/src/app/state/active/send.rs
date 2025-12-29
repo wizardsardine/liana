@@ -98,7 +98,7 @@ impl State for ActiveSend {
 
     fn update(
         &mut self,
-        _daemon: Arc<dyn Daemon + Sync + Send>,
+        _daemon: Option<Arc<dyn Daemon + Sync + Send>>,
         cache: &Cache,
         message: Message,
     ) -> Task<Message> {
@@ -190,8 +190,8 @@ impl State for ActiveSend {
 
     fn reload(
         &mut self,
-        _daemon: Arc<dyn Daemon + Sync + Send>,
-        _wallet: Arc<Wallet>,
+        _daemon: Option<Arc<dyn Daemon + Sync + Send>>,
+        _wallet: Option<Arc<Wallet>>,
     ) -> Task<Message> {
         self.load_balance()
     }

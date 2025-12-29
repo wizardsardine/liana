@@ -42,25 +42,12 @@ use crate::{
         settings::WalletId,
         wallet::Wallet,
     },
-    daemon::{dummy::DummyDaemon, embedded::EmbeddedDaemon, Daemon, DaemonBackend},
+    daemon::{embedded::EmbeddedDaemon, Daemon, DaemonBackend},
     dir::CoincubeDirectory,
     node::{bitcoind::Bitcoind, NodeType},
 };
 
-use std::sync::OnceLock;
-
 use self::state::SettingsState;
-
-static DUMMY_DAEMON: OnceLock<Arc<dyn Daemon + Sync + Send>> = OnceLock::new();
-static DUMMY_WALLET: OnceLock<Arc<Wallet>> = OnceLock::new();
-fn dummy_daemon() -> Arc<dyn Daemon + Sync + Send> {
-    DUMMY_DAEMON.get_or_init(|| Arc::new(DummyDaemon)).clone()
-}
-fn dummy_wallet() -> Arc<Wallet> {
-    DUMMY_WALLET
-        .get_or_init(|| Arc::new(Wallet::dummy()))
-        .clone()
-}
 
 struct Panels {
     current: Menu,
@@ -403,7 +390,7 @@ impl App {
             restored_from_backup,
         );
         let cmd = if let Some(vault_overview) = panels.vault_overview.as_mut() {
-            vault_overview.reload(daemon.clone(), wallet.clone())
+            vault_overview.reload(Some(daemon.clone()), Some(wallet.clone()))
         } else {
             tracing::warn!("vault_overview not present in App::new despite vault being configured");
             Task::none()
@@ -565,7 +552,7 @@ impl App {
                                 self.panels.current = menu.clone();
                                 if let Some(panel) = self.panels.current_mut() {
                                     return panel.update(
-                                        daemon.clone(),
+                                        Some(daemon.clone()),
                                         &self.cache,
                                         Message::View(view::Message::Settings(match setting {
                                             menu::SettingsOption::Node => {
@@ -640,15 +627,12 @@ impl App {
             }
         };
 
-        self.panels.current = menu;
-        if let (Some(daemon), Some(wallet)) = (&self.daemon, &self.wallet) {
-            if let Some(panel) = self.panels.current_mut() {
-                panel.reload(daemon.clone(), wallet.clone())
-            } else {
-                Task::none()
-            }
-        } else if let Some(panel) = self.panels.current_mut() {
-            panel.reload(dummy_daemon(), dummy_wallet())
+        self.panels.current = menu.clone();
+
+        // Call reload with optional daemon/wallet
+        // Active panels don't need them (use BreezClient), Vault panels do
+        if let Some(panel) = self.panels.current_mut() {
+            panel.reload(self.daemon.clone(), self.wallet.clone())
         } else {
             Task::none()
         }
@@ -734,7 +718,7 @@ impl App {
         let tick = std::time::Instant::now();
         let mut tasks = if let Some(daemon) = &self.daemon {
             if let Some(panel) = self.panels.current_mut() {
-                vec![panel.update(daemon.clone(), &self.cache, Message::Tick)]
+                vec![panel.update(Some(daemon.clone()), &self.cache, Message::Tick)]
             } else {
                 vec![]
             }
@@ -848,14 +832,14 @@ impl App {
 
                     let commands = [
                         vault_overview.update(
-                            daemon.clone(),
+                            Some(daemon.clone()),
                             &cache,
                             Message::UpdatePanelCache(
                                 current == &Menu::Vault(crate::app::menu::VaultSubMenu::Overview),
                             ),
                         ),
                         settings.update(
-                            daemon.clone(),
+                            Some(daemon.clone()),
                             &cache,
                             Message::UpdatePanelCache(is_settings_current),
                         ),
@@ -898,7 +882,11 @@ impl App {
                 if let (Some(daemon), Some(panel)) =
                     (self.daemon.clone(), self.panels.current_mut())
                 {
-                    return panel.update(daemon, &self.cache, Message::WalletUpdated(Ok(wallet)));
+                    return panel.update(
+                        Some(daemon),
+                        &self.cache,
+                        Message::WalletUpdated(Ok(wallet)),
+                    );
                 }
             }
             Message::View(view::Message::Menu(menu)) => {
@@ -935,9 +923,9 @@ impl App {
                 if let (Some(daemon), Some(panel)) =
                     (self.daemon.clone(), self.panels.current_mut())
                 {
-                    return panel.update(daemon, &self.cache, msg);
+                    return panel.update(Some(daemon), &self.cache, msg);
                 } else if let Some(panel) = self.panels.current_mut() {
-                    return panel.update(dummy_daemon(), &self.cache, msg);
+                    return panel.update(None, &self.cache, msg);
                 }
             }
         };

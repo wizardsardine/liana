@@ -61,17 +61,18 @@ impl SettingsState {
 impl State for SettingsState {
     fn update(
         &mut self,
-        daemon: Arc<dyn Daemon + Sync + Send>,
+        daemon: Option<Arc<dyn Daemon + Sync + Send>>,
         cache: &Cache,
         message: Message,
     ) -> Task<Message> {
+        let daemon = daemon.expect("Daemon required for vault settings");
         match &message {
             Message::View(view::Message::Settings(view::SettingsMessage::GeneralSection)) => {
                 self.setting = Some(general::GeneralSettingsState::new(self.wallet.clone()).into());
                 let wallet = self.wallet.clone();
                 self.setting
                     .as_mut()
-                    .map(|s| s.reload(daemon, wallet))
+                    .map(|s| s.reload(Some(daemon), Some(wallet)))
                     .unwrap_or_else(Task::none)
             }
             Message::View(view::Message::Settings(view::SettingsMessage::EditBitcoindSettings)) => {
@@ -87,7 +88,7 @@ impl State for SettingsState {
                 let wallet = self.wallet.clone();
                 self.setting
                     .as_mut()
-                    .map(|s| s.reload(daemon, wallet))
+                    .map(|s| s.reload(Some(daemon), Some(wallet)))
                     .unwrap_or_else(Task::none)
             }
             Message::View(view::Message::Settings(
@@ -107,7 +108,7 @@ impl State for SettingsState {
                 let wallet = self.wallet.clone();
                 self.setting
                     .as_mut()
-                    .map(|s| s.reload(daemon, wallet))
+                    .map(|s| s.reload(Some(daemon), Some(wallet)))
                     .unwrap_or_else(Task::none)
             }
             Message::View(view::Message::Settings(view::SettingsMessage::EditWalletSettings)) => {
@@ -122,20 +123,20 @@ impl State for SettingsState {
                 let wallet = self.wallet.clone();
                 self.setting
                     .as_mut()
-                    .map(|s| s.reload(daemon, wallet))
+                    .map(|s| s.reload(Some(daemon), Some(wallet)))
                     .unwrap_or_else(Task::none)
             }
             Message::WalletUpdated(Ok(wallet)) => {
                 self.wallet = wallet.clone();
                 self.setting
                     .as_mut()
-                    .map(|s| s.update(daemon, cache, message))
+                    .map(|s| s.update(Some(daemon), cache, message))
                     .unwrap_or_else(Task::none)
             }
             _ => self
                 .setting
                 .as_mut()
-                .map(|s| s.update(daemon, cache, message))
+                .map(|s| s.update(Some(daemon), cache, message))
                 .unwrap_or_else(Task::none),
         }
     }
@@ -162,9 +163,10 @@ impl State for SettingsState {
 
     fn reload(
         &mut self,
-        _daemon: Arc<dyn Daemon + Sync + Send>,
-        wallet: Arc<Wallet>,
+        _daemon: Option<Arc<dyn Daemon + Sync + Send>>,
+        wallet: Option<Arc<Wallet>>,
     ) -> Task<Message> {
+        let wallet = wallet.expect("Vault panels require wallet");
         self.setting = None;
         self.wallet = wallet;
         Task::none()
@@ -228,10 +230,11 @@ impl State for ImportExportSettingsState {
 
     fn update(
         &mut self,
-        daemon: Arc<dyn Daemon + Sync + Send>,
+        daemon: Option<Arc<dyn Daemon + Sync + Send>>,
         cache: &Cache,
         message: Message,
     ) -> Task<Message> {
+        let daemon = daemon.expect("Daemon required for vault import/export settings");
         match message {
             Message::View(view::Message::ImportExport(ImportExportMessage::Close)) => {
                 self.modal = None;
@@ -245,7 +248,7 @@ impl State for ImportExportSettingsState {
                             self.wallet.clone(),
                             None,
                             aliases.into_iter().map(|(fg, ks)| (fg, ks.name)).collect(),
-                            daemon,
+                            daemon.clone(),
                         ),
                         Message::WalletUpdated,
                     );
@@ -300,9 +303,9 @@ impl State for ImportExportSettingsState {
                     let network = cache.network;
                     let config = self.config.clone();
                     let wallet = self.wallet.clone();
-                    let daemon = daemon.clone();
+                    let daemon_clone = daemon.clone();
                     let modal = VaultExportModal::new(
-                        Some(daemon),
+                        Some(daemon_clone),
                         ImportExportType::ExportProcessBackup(datadir, network, config, wallet),
                     );
                     launch!(self, modal, true);
@@ -311,7 +314,7 @@ impl State for ImportExportSettingsState {
             Message::View(view::Message::Settings(view::SettingsMessage::ImportWallet)) => {
                 if self.modal.is_none() {
                     let modal = VaultExportModal::new(
-                        Some(daemon),
+                        Some(daemon.clone()),
                         ImportExportType::ImportBackup {
                             network_dir: cache.datadir_path.network_directory(cache.network),
                             wallet: self.wallet.clone(),
@@ -353,10 +356,11 @@ impl State for AboutSettingsState {
 
     fn update(
         &mut self,
-        daemon: Arc<dyn Daemon + Sync + Send>,
+        daemon: Option<Arc<dyn Daemon + Sync + Send>>,
         _cache: &Cache,
         message: Message,
     ) -> Task<Message> {
+        let daemon = daemon.expect("Daemon required for vault about settings");
         if let Message::Info(res) = message {
             match res {
                 Ok(info) => {
@@ -375,9 +379,10 @@ impl State for AboutSettingsState {
 
     fn reload(
         &mut self,
-        daemon: Arc<dyn Daemon + Sync + Send>,
-        _wallet: Arc<Wallet>,
+        daemon: Option<Arc<dyn Daemon + Sync + Send>>,
+        _wallet: Option<Arc<Wallet>>,
     ) -> Task<Message> {
+        let daemon = daemon.expect("Vault panels require daemon");
         Task::perform(
             async move { daemon.get_info().await.map_err(|e| e.into()) },
             Message::Info,
@@ -424,10 +429,11 @@ impl State for BackendSettingsState {
 
     fn update(
         &mut self,
-        daemon: Arc<dyn Daemon + Sync + Send>,
+        daemon: Option<Arc<dyn Daemon + Sync + Send>>,
         _cache: &Cache,
         message: Message,
     ) -> Task<Message> {
+        let daemon = daemon.expect("Daemon required for vault backend settings");
         match message {
             Message::View(view::Message::Settings(
                 view::SettingsMessage::RemoteBackendSettings(message),

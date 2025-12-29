@@ -153,14 +153,15 @@ impl State for VaultReceivePanel {
 
     fn update(
         &mut self,
-        daemon: Arc<dyn Daemon + Sync + Send>,
+        daemon: Option<Arc<dyn Daemon + Sync + Send>>,
         cache: &Cache,
         message: Message,
     ) -> Task<Message> {
+        let daemon = daemon.expect("Daemon required for vault receive panel");
         match message {
             Message::View(view::Message::Label(_, _)) | Message::LabelsUpdated(_) => {
                 match self.labels_edited.update(
-                    daemon,
+                    daemon.clone(),
                     message,
                     std::iter::once(&mut self.addresses)
                         .chain(std::iter::once(&mut self.prev_addresses))
@@ -306,9 +307,11 @@ impl State for VaultReceivePanel {
 
     fn reload(
         &mut self,
-        daemon: Arc<dyn Daemon + Sync + Send>,
-        wallet: Arc<Wallet>,
+        daemon: Option<Arc<dyn Daemon + Sync + Send>>,
+        wallet: Option<Arc<Wallet>>,
     ) -> Task<Message> {
+        let daemon = daemon.expect("Vault panels require daemon");
+        let wallet = wallet.expect("Vault panels require wallet");
         let data_dir = self.data_dir.clone();
         *self = Self::new(data_dir, wallet);
         Task::perform(

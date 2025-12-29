@@ -134,10 +134,11 @@ impl State for CreateSpendPanel {
 
     fn update(
         &mut self,
-        daemon: Arc<dyn Daemon + Sync + Send>,
+        daemon: Option<Arc<dyn Daemon + Sync + Send>>,
         cache: &Cache,
         message: Message,
     ) -> Task<Message> {
+        let daemon = daemon.expect("Daemon required for vault spend panel");
         if matches!(message, Message::View(view::Message::Close)) {
             return redirect(Menu::PSBTs);
         }
@@ -181,9 +182,11 @@ impl State for CreateSpendPanel {
 
     fn reload(
         &mut self,
-        daemon: Arc<dyn Daemon + Sync + Send>,
-        wallet: Arc<Wallet>,
+        daemon: Option<Arc<dyn Daemon + Sync + Send>>,
+        wallet: Option<Arc<Wallet>>,
     ) -> Task<Message> {
+        let daemon = daemon.expect("Vault panels require daemon");
+        let wallet = wallet.expect("Vault panels require wallet");
         for step in self.steps.iter_mut() {
             step.reload_wallet(wallet.clone());
         }

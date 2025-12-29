@@ -110,10 +110,11 @@ impl State for CoinsPanel {
 
     fn update(
         &mut self,
-        daemon: Arc<dyn Daemon + Sync + Send>,
+        daemon: Option<Arc<dyn Daemon + Sync + Send>>,
         _cache: &Cache,
         message: Message,
     ) -> Task<Message> {
+        let daemon = daemon.expect("Daemon required for vault coins panel");
         match message {
             Message::Coins(res) => match res {
                 Err(e) => self.warning = Some(e),
@@ -155,9 +156,10 @@ impl State for CoinsPanel {
 
     fn reload(
         &mut self,
-        daemon: Arc<dyn Daemon + Sync + Send>,
-        _wallet: Arc<Wallet>,
+        daemon: Option<Arc<dyn Daemon + Sync + Send>>,
+        _wallet: Option<Arc<Wallet>>,
     ) -> Task<Message> {
+        let daemon = daemon.expect("Vault panels require daemon");
         let daemon1 = daemon.clone();
         let daemon2 = daemon.clone();
         Task::batch(vec![

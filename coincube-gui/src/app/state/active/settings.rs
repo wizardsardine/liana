@@ -65,7 +65,7 @@ impl State for ActiveSettings {
 
     fn update(
         &mut self,
-        _daemon: Arc<dyn Daemon + Sync + Send>,
+        _daemon: Option<Arc<dyn Daemon + Sync + Send>>,
         _cache: &Cache,
         message: Message,
     ) -> Task<Message> {
@@ -263,8 +263,8 @@ impl State for ActiveSettings {
 
     fn reload(
         &mut self,
-        _daemon: Arc<dyn Daemon + Sync + Send>,
-        _wallet: Arc<Wallet>,
+        _daemon: Option<Arc<dyn Daemon + Sync + Send>>,
+        _wallet: Option<Arc<Wallet>>,
     ) -> Task<Message> {
         // Active wallet doesn't use Vault wallet - uses BreezClient instead
         Task::none()

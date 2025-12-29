@@ -48,8 +48,9 @@ pub enum Message {
     ImportPsbt,
     OpenUrl(String),
     Home(HomeMessage),
-    ActiveSend(ActiveSendMessage),
     ActiveOverview(ActiveOverviewMessage),
+    ActiveReceive(ActiveReceiveMessage),
+    ActiveSend(ActiveSendMessage),
     ActiveSettings(ActiveSettingsMessage),
 }
 
@@ -240,6 +241,22 @@ pub enum ActiveSendMessage {
     },
     BreezEvent(breez_sdk_liquid::prelude::SdkEvent),
     Error(String),
+}
+
+#[derive(Debug, Clone)]
+pub enum ActiveReceiveMessage {
+    ToggleMethod(ReceiveMethod),
+    Copy,
+    GenerateAddress,
+    AddressGenerated(ReceiveMethod, Result<String, String>),
+    AmountInput(String),
+    DescriptionInput(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ReceiveMethod {
+    Lightning,
+    OnChain,
 }
 
 #[derive(Debug, Clone)]

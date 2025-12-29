@@ -110,10 +110,11 @@ impl State for VaultTransactionsPanel {
 
     fn update(
         &mut self,
-        daemon: Arc<dyn Daemon + Sync + Send>,
+        daemon: Option<Arc<dyn Daemon + Sync + Send>>,
         _cache: &Cache,
         message: Message,
     ) -> Task<Message> {
+        let daemon = daemon.expect("Daemon required for vault transactions panel");
         match message {
             Message::HistoryTransactions(res) => match res {
                 Err(e) => self.warning = Some(e),
@@ -157,7 +158,7 @@ impl State for VaultTransactionsPanel {
                 }
             },
             Message::View(view::Message::Reload) | Message::View(view::Message::Close) => {
-                return self.reload(daemon, self.wallet.clone());
+                return self.reload(Some(daemon), Some(self.wallet.clone()));
             }
             Message::View(view::Message::Select(i)) => {
                 self.selected_tx = self.txs.get(i).cloned();
@@ -306,9 +307,10 @@ impl State for VaultTransactionsPanel {
 
     fn reload(
         &mut self,
-        daemon: Arc<dyn Daemon + Sync + Send>,
-        _wallet: Arc<Wallet>,
+        daemon: Option<Arc<dyn Daemon + Sync + Send>>,
+        _wallet: Option<Arc<Wallet>>,
     ) -> Task<Message> {
+        let daemon = daemon.expect("Vault panels require daemon");
         self.selected_tx = None;
         let now: u32 = now().as_secs().try_into().unwrap();
         Task::batch(vec![Task::perform(

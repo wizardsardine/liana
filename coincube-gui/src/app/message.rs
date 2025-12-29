@@ -10,6 +10,7 @@ use coincubed::config::Config as DaemonConfig;
 
 use crate::{
     app::{
+        breez::BreezError,
         cache::{DaemonCache, FiatPrice},
         error::Error,
         view,
@@ -70,6 +71,8 @@ pub enum Message {
     BroadcastModal(Result<HashSet<Txid>, Error>),
     RbfModal(Box<HistoryTransaction>, bool, Result<HashSet<Txid>, Error>),
     Export(ImportExportMessage),
+    PaymentsLoaded(Result<Vec<breez_sdk_liquid::prelude::Payment>, BreezError>),
+    BreezInfo(Result<breez_sdk_liquid::prelude::GetInfoResponse, BreezError>),
 }
 
 impl From<ImportExportMessage> for Message {

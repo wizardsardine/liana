@@ -91,10 +91,11 @@ impl BitcoindSettingsState {
 impl State for BitcoindSettingsState {
     fn update(
         &mut self,
-        daemon: Arc<dyn Daemon + Sync + Send>,
+        daemon: Option<Arc<dyn Daemon + Sync + Send>>,
         cache: &Cache,
         message: Message,
     ) -> Task<Message> {
+        let daemon = daemon.expect("Daemon required for vault bitcoind settings");
         match message {
             Message::DaemonConfigLoaded(res) => match res {
                 Ok(()) => {
