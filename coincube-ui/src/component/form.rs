@@ -102,6 +102,30 @@ where
         }
     }
 
+    /// Creates a new [`Form`] that restricts input values to valid numeric amounts (for fiat)
+    /// before applying the `on_change` function.
+    /// It expects:
+    /// - a placeholder
+    /// - the current value
+    /// - a function that produces a message when the [`Form`] changes
+    pub fn new_amount_numeric<F>(placeholder: &str, value: &'a Value<String>, on_change: F) -> Self
+    where
+        F: 'static + Fn(String) -> Message,
+    {
+        Self {
+            input: text_input::TextInput::new(placeholder, &value.value).on_input(move |s| {
+                // Allow empty or valid f64 numbers with optional decimal point
+                if s.is_empty() || s.parse::<f64>().is_ok() || s.ends_with('.') || s == "0." {
+                    on_change(s)
+                } else {
+                    on_change(value.value.clone())
+                }
+            }),
+            warning: value.warning,
+            valid: value.valid,
+        }
+    }
+
     /// Sets the [`Form`] with a warning message
     pub fn warning(mut self, warning: &'a str) -> Self {
         self.warning = Some(warning);

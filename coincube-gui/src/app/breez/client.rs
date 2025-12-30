@@ -1,4 +1,6 @@
-use breez_sdk_liquid::{bitcoin::Network, prelude as breez};
+use breez_sdk_liquid::{
+    bitcoin::Network, model::LightningPaymentLimitsResponse, prelude as breez, InputType,
+};
 use coincube_core::{
     miniscript::bitcoin::{
         bip32::DerivationPath,
@@ -57,8 +59,8 @@ impl breez::Signer for HotSignerAdapter {
                     err: format!("Invalid message hash: {}", e),
                 })?;
 
-        let sig = self.secp.sign_ecdsa(&msg_hash, &privkey.inner);
-        Ok(sig.serialize_compact().to_vec())
+        let sig = self.secp.sign_ecdsa_low_r(&msg_hash, &privkey.inner);
+        Ok(sig.serialize_der().to_vec())
     }
 
     fn sign_ecdsa_recoverable(&self, msg: Vec<u8>) -> Result<Vec<u8>, breez::SignerError> {
@@ -293,6 +295,26 @@ impl BreezClient {
             .map_err(|e| BreezError::Sdk(e.to_string()))
     }
 
+    pub async fn prepare_send_payment(
+        &self,
+        request: &breez::PrepareSendRequest,
+    ) -> Result<breez::PrepareSendResponse, BreezError> {
+        self.sdk
+            .prepare_send_payment(request)
+            .await
+            .map_err(|e| BreezError::Sdk(e.to_string()))
+    }
+
+    pub async fn send_payment(
+        &self,
+        request: &breez::SendPaymentRequest,
+    ) -> Result<breez::SendPaymentResponse, BreezError> {
+        self.sdk
+            .send_payment(request)
+            .await
+            .map_err(|e| BreezError::Sdk(e.to_string()))
+    }
+
     pub async fn list_payments(
         &self,
         limit: Option<u32>,
@@ -312,8 +334,17 @@ impl BreezClient {
             .map_err(|e| BreezError::Sdk(e.to_string()))
     }
 
-    pub async fn validate_input(&self, input: String) -> bool {
-        self.sdk.parse(&input).await.is_ok()
+    pub async fn validate_input(&self, input: String) -> Option<InputType> {
+        self.sdk.parse(&input).await.ok()
+    }
+
+    pub async fn fetch_lightning_limits(
+        &self,
+    ) -> Result<LightningPaymentLimitsResponse, BreezError> {
+        self.sdk
+            .fetch_lightning_limits()
+            .await
+            .map_err(|e| BreezError::Sdk(e.to_string()))
     }
 
     pub fn active_signer(&self) -> std::sync::Arc<std::sync::Mutex<HotSigner>> {

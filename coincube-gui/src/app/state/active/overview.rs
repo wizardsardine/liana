@@ -130,9 +130,24 @@ impl State for ActiveOverview {
                                     .map(|c: &view::FiatAmountConverter| c.convert(amount));
 
                                 let desc = match &payment.details {
-                                    PaymentDetails::Lightning { description, .. }
-                                    | PaymentDetails::Liquid { description, .. }
-                                    | PaymentDetails::Bitcoin { description, .. } => description,
+                                    PaymentDetails::Lightning {
+                                        payer_note,
+                                        description,
+                                        ..
+                                    } => payer_note
+                                        .as_ref()
+                                        .filter(|s| !s.is_empty())
+                                        .unwrap_or(description),
+                                    PaymentDetails::Liquid {
+                                        payer_note,
+                                        description,
+                                        ..
+                                    } => payer_note
+                                        .as_ref()
+                                        .filter(|s| !s.is_empty())
+                                        .unwrap_or(description),
+
+                                    PaymentDetails::Bitcoin { description, .. } => description,
                                 };
 
                                 let is_incoming = matches!(
