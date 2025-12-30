@@ -214,8 +214,8 @@ WS Manager is the platform-side administrator with full access.
 | Status    | Can Edit Template | Can Add Xpubs | Can Load Wallet |
 |-----------|-------------------|---------------|-----------------|
 | Draft     | ✓ (any key/path)  | ✗             | ✗               |
-| Validated | ✗                 | ✓ (any key)   | ✗               |
-| Final     | ✗                 | ✗             | ✓               |
+| Validated | ✗                 | ✗             | ✗               |
+| Final     | ✗                 | ✗             | ✗               |
 
 **Implementation tasks:**
 - [x] Full template editing for Draft wallets
@@ -237,8 +237,8 @@ Owner is the consumer-side wallet manager.
 
 | Status    | Can Edit Template | Can Validate | Can Add Xpubs | Can Load Wallet |
 |-----------|-------------------|--------------|---------------|-----------------|
-| Draft     | ✓ (any key/path)  | ✓            | ✗             | ✗               |
-| Validated | ✗                 | ✗            | ✓ (any key)   | ✗               |
+| Draft     | ✗                 | ✓            | ✗             | ✗               |
+| Validated | ✗                 | ✗            | ✓ (own key)   | ✗               |
 | Final     | ✗                 | ✗            | ✗             | ✓               |
 
 **Implementation tasks:**
@@ -419,6 +419,17 @@ real-time notifications, and in-memory storage.
   - Specter - ✗ Disabled (requires `tokio::net::TcpStream`)
 
 ## Changelog
+
+### 2025-12-30
+- Xpub modal: Implemented two-step device selection pattern (matching liana-gui installer)
+  - Step 1 (Select): Device list, clicking a device opens Details step
+  - Step 2 (Details): Account picker, processing state, error handling with Retry
+  - Added ModalStep enum (Select, Details) to XpubEntryModalState
+  - Added XpubDeviceBack message to return from Details to Select
+  - Added XpubRetry message to retry fetch after error
+  - Account picker change now triggers re-fetch from device
+  - Separated fetch_error from validation_error for Details step
+  - Updated FLOW.md with new message categories and navigation flow
 
 ### 2025-12-22
 - Iced Executor Bug and Hardware Wallet Compatibility Issues Identified

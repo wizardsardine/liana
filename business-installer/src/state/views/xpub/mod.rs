@@ -1,4 +1,7 @@
-use miniscript::{bitcoin::bip32::ChildNumber, DescriptorPublicKey};
+use miniscript::{
+    bitcoin::{bip32::ChildNumber, Network},
+    DescriptorPublicKey,
+};
 use std::str::FromStr;
 
 /// Source for xpub entry
@@ -11,10 +14,7 @@ pub enum XpubSource {
 
 impl XpubSource {
     pub fn all() -> Vec<Self> {
-        vec![
-            XpubSource::HardwareWallet,
-            XpubSource::LoadFromFile,
-        ]
+        vec![XpubSource::HardwareWallet, XpubSource::LoadFromFile]
     }
 
     pub fn as_str(&self) -> &'static str {
@@ -23,6 +23,14 @@ impl XpubSource {
             XpubSource::LoadFromFile => "Load from File",
         }
     }
+}
+
+/// Modal step - Select device or Details (account selection + alias)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ModalStep {
+    #[default]
+    Select,
+    Details,
 }
 
 /// State for the Xpub Entry modal
@@ -51,6 +59,14 @@ pub struct XpubEntryModalState {
 
     /// Whether the "Other options" section is collapsed
     pub options_collapsed: bool,
+
+    /// Current modal step (Select device or Details)
+    pub step: ModalStep,
+    /// Error during fetch (shown in details view)
+    pub fetch_error: Option<String>,
+
+    /// Network for validation (mainnet vs testnet)
+    pub network: Network,
 }
 
 impl XpubEntryModalState {
@@ -59,6 +75,7 @@ impl XpubEntryModalState {
         key_id: u8,
         key_alias: String,
         current_xpub: Option<DescriptorPublicKey>,
+        network: Network,
     ) -> Self {
         // Pre-fill input with current xpub if available
         let xpub_input = current_xpub
@@ -78,6 +95,9 @@ impl XpubEntryModalState {
             selected_account: ChildNumber::from_hardened_idx(0)
                 .expect("hardcoded valid account index"),
             options_collapsed: true, // Start with options collapsed
+            step: ModalStep::default(),
+            fetch_error: None,
+            network,
         }
     }
 
@@ -93,10 +113,21 @@ impl XpubEntryModalState {
         self.validation_error = None;
     }
 
-    /// Select a hardware wallet device
+    /// Select a hardware wallet device and transition to Details step
     pub fn select_device(&mut self, fingerprint: miniscript::bitcoin::bip32::Fingerprint) {
         self.selected_device = Some(fingerprint);
         self.validation_error = None;
+        self.fetch_error = None;
+        self.step = ModalStep::Details;
+        self.processing = true;
+    }
+
+    /// Go back to Select step
+    pub fn go_back(&mut self) {
+        self.step = ModalStep::Select;
+        self.selected_device = None;
+        self.fetch_error = None;
+        self.processing = false;
     }
 
     /// Update the derivation account
@@ -115,14 +146,25 @@ impl XpubEntryModalState {
         self.processing = false;
     }
 
+    /// Set fetch error (shown in details view)
+    pub fn set_fetch_error(&mut self, error: String) {
+        self.fetch_error = Some(error);
+        self.processing = false;
+    }
+
+    /// Clear fetch error
+    pub fn clear_fetch_error(&mut self) {
+        self.fetch_error = None;
+    }
+
     /// Clear validation error
     pub fn clear_error(&mut self) {
         self.validation_error = None;
     }
 
-    /// Validate and return the parsed xpub if valid
+    /// Validate and return the parsed xpub if valid (includes network check)
     pub fn validate(&self) -> Result<DescriptorPublicKey, String> {
-        validate_xpub_format(&self.xpub_input)
+        validate_xpub(&self.xpub_input, self.network)
     }
 
     /// Check if the modal has unsaved changes
@@ -160,8 +202,14 @@ impl XpubViewState {
         key_id: u8,
         key_alias: String,
         current_xpub: Option<DescriptorPublicKey>,
+        network: Network,
     ) {
-        self.modal = Some(XpubEntryModalState::new(key_id, key_alias, current_xpub));
+        self.modal = Some(XpubEntryModalState::new(
+            key_id,
+            key_alias,
+            current_xpub,
+            network,
+        ));
     }
 
     /// Close the xpub entry modal
@@ -188,9 +236,47 @@ pub fn validate_xpub_format(xpub_str: &str) -> Result<DescriptorPublicKey, Strin
     }
 
     // Try to parse as DescriptorPublicKey
-    DescriptorPublicKey::from_str(trimmed).map_err(|e| {
-        format!("Invalid extended public key format: {}", e)
-    })
+    DescriptorPublicKey::from_str(trimmed)
+        .map_err(|e| format!("Invalid extended public key format: {}", e))
+}
+
+/// Check if a descriptor public key matches the expected network
+///
+/// Returns true if the key's network matches the expected network.
+/// For mainnet, expects Bitcoin network. For testnet/signet/regtest, expects Testnet network.
+pub fn check_key_network(key: &DescriptorPublicKey, network: Network) -> bool {
+    match key {
+        DescriptorPublicKey::XPub(key) => {
+            if network == Network::Bitcoin {
+                key.xkey.network == Network::Bitcoin.into()
+            } else {
+                key.xkey.network == Network::Testnet.into()
+            }
+        }
+        DescriptorPublicKey::MultiXPub(key) => {
+            if network == Network::Bitcoin {
+                key.xkey.network == Network::Bitcoin.into()
+            } else {
+                key.xkey.network == Network::Testnet.into()
+            }
+        }
+        // Single keys don't have network information
+        _ => true,
+    }
+}
+
+/// Validate xpub format and network compatibility
+///
+/// Validates both the format of the xpub string and that it matches the expected network.
+pub fn validate_xpub(xpub_str: &str, network: Network) -> Result<DescriptorPublicKey, String> {
+    let key = validate_xpub_format(xpub_str)?;
+
+    if !check_key_network(&key, network) {
+        let expected = network.to_string();
+        return Err(format!("Extended public key is not valid for {}", expected));
+    }
+
+    Ok(key)
 }
 
 #[cfg(test)]
@@ -222,7 +308,7 @@ mod tests {
 
     #[test]
     fn test_modal_state_new() {
-        let state = XpubEntryModalState::new(1, "Test Key".to_string(), None);
+        let state = XpubEntryModalState::new(1, "Test Key".to_string(), None, Network::Bitcoin);
         assert_eq!(state.key_id, 1);
         assert_eq!(state.key_alias, "Test Key");
         assert_eq!(state.xpub_input, "");
@@ -232,7 +318,7 @@ mod tests {
 
     #[test]
     fn test_modal_state_update_input() {
-        let mut state = XpubEntryModalState::new(1, "Test".to_string(), None);
+        let mut state = XpubEntryModalState::new(1, "Test".to_string(), None, Network::Bitcoin);
         state.set_error("Previous error".to_string());
 
         state.update_input("new input".to_string());
@@ -242,7 +328,7 @@ mod tests {
 
     #[test]
     fn test_has_changes() {
-        let mut state = XpubEntryModalState::new(1, "Test".to_string(), None);
+        let mut state = XpubEntryModalState::new(1, "Test".to_string(), None, Network::Bitcoin);
 
         // No changes initially
         assert!(!state.has_changes());
@@ -250,5 +336,41 @@ mod tests {
         // Adding input counts as change
         state.update_input("something".to_string());
         assert!(state.has_changes());
+    }
+
+    #[test]
+    fn test_check_key_network_mainnet() {
+        // Mainnet xpub
+        let mainnet_xpub = "[abcdef01/48'/0'/0'/2']xpub6CUGRUonZSQ4TWtTMmzXdrXDtypWKiKrhko4egpiMZbpiaQL2jkwSB1icqYh2cfDfVxdx4df189oLKnC5fSwqPfgyP3hooxujYzAu3fDVmz";
+        let key = DescriptorPublicKey::from_str(mainnet_xpub).unwrap();
+
+        // Should pass for mainnet
+        assert!(check_key_network(&key, Network::Bitcoin));
+        // Should fail for testnet/signet
+        assert!(!check_key_network(&key, Network::Testnet));
+        assert!(!check_key_network(&key, Network::Signet));
+    }
+
+    #[test]
+    fn test_check_key_network_testnet() {
+        // Testnet tpub (valid format)
+        let testnet_xpub = "[abcdef01/48'/1'/0'/2']tpubDC8msFGeGuwnKG9Upg7DM2b4DaRqg3CUZa5g8v2SRQ6K4NSkxUgd7HsL2XVWbVm39yBA4LAxysQAm397zwQSQoQgewGiYZqrA9DsP4zbQ1M";
+        let key = DescriptorPublicKey::from_str(testnet_xpub).unwrap();
+
+        // Should fail for mainnet
+        assert!(!check_key_network(&key, Network::Bitcoin));
+        // Should pass for testnet/signet
+        assert!(check_key_network(&key, Network::Testnet));
+        assert!(check_key_network(&key, Network::Signet));
+    }
+
+    #[test]
+    fn test_validate_xpub_network() {
+        let mainnet_xpub = "[abcdef01/48'/0'/0'/2']xpub6CUGRUonZSQ4TWtTMmzXdrXDtypWKiKrhko4egpiMZbpiaQL2jkwSB1icqYh2cfDfVxdx4df189oLKnC5fSwqPfgyP3hooxujYzAu3fDVmz";
+
+        // Should pass for mainnet
+        assert!(validate_xpub(mainnet_xpub, Network::Bitcoin).is_ok());
+        // Should fail for signet (non-mainnet)
+        assert!(validate_xpub(mainnet_xpub, Network::Signet).is_err());
     }
 }

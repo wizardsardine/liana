@@ -6,38 +6,32 @@ use liana_ui::{
     widget::*,
 };
 
-pub fn render_warning_modal(modal_state: &WarningModalState) -> Element<'_, Msg> {
-    let mut content = Column::new()
+pub fn warning_modal_view(modal_state: &WarningModalState) -> Element<'_, Msg> {
+    let header = Row::new()
+        .spacing(10)
+        .align_y(Alignment::Center)
+        .push(text::h3(&modal_state.title))
+        .push(Space::with_width(Length::Fill))
+        .push(button::transparent(Some(icon::cross_icon()), "").on_press(Msg::WarningCloseModal));
+
+    let message = text::p1_regular(&modal_state.message);
+
+    let footer = Row::new()
+        .spacing(10)
+        .push(Space::with_width(Length::Fill))
+        .push(
+            button::primary(None, "OK")
+                .on_press(Msg::WarningCloseModal)
+                .width(Length::Fixed(120.0)),
+        );
+
+    let content = Column::new()
+        .push(header)
+        .push(message)
+        .push(footer)
         .spacing(15)
         .padding(20.0)
         .width(Length::Fixed(500.0));
-
-    // Header
-    content = content.push(
-        Row::new()
-            .spacing(10)
-            .align_y(Alignment::Center)
-            .push(text::h3(&modal_state.title))
-            .push(Space::with_width(Length::Fill))
-            .push(
-                button::transparent(Some(icon::cross_icon()), "").on_press(Msg::WarningCloseModal),
-            ),
-    );
-
-    // Message
-    content = content.push(text::p1_regular(&modal_state.message));
-
-    // OK button
-    content = content.push(
-        Row::new()
-            .spacing(10)
-            .push(Space::with_width(Length::Fill))
-            .push(
-                button::primary(None, "OK")
-                    .on_press(Msg::WarningCloseModal)
-                    .width(Length::Fixed(120.0)),
-            ),
-    );
 
     card::modal(content).into()
 }

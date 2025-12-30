@@ -76,15 +76,17 @@ pub enum Msg {
     XpubSelectKey(u8),                     // Open modal for key
     XpubUpdateInput(String),               // Update xpub text input
     XpubSelectSource(crate::state::views::XpubSource), // Switch source tab
-    XpubSelectDevice(miniscript::bitcoin::bip32::Fingerprint), // Select HW device
+    XpubSelectDevice(miniscript::bitcoin::bip32::Fingerprint), // Select HW device (opens details step)
+    XpubDeviceBack,                        // Go back from details to device selection
     XpubFetchFromDevice(
         miniscript::bitcoin::bip32::Fingerprint,
         miniscript::bitcoin::bip32::ChildNumber,
     ), // Fetch xpub from HW device
+    XpubRetry,                             // Retry fetch after error
     XpubLoadFromFile,                      // Trigger file picker
     XpubFileLoaded(Result<String, String>), // File content loaded
     XpubPaste,                             // Paste xpub from clipboard
-    XpubUpdateAccount(miniscript::bitcoin::bip32::ChildNumber), // Change derivation account
+    XpubUpdateAccount(miniscript::bitcoin::bip32::ChildNumber), // Change account (triggers re-fetch)
     XpubSave,                              // Save xpub to backend
     XpubClear,                             // Clear xpub (send null to backend)
     XpubCancelModal,                       // Close modal

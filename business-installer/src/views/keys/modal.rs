@@ -9,36 +9,29 @@ use liana_ui::{
     widget::*,
 };
 
-pub fn render_modal(state: &State) -> Option<Element<'_, Message>> {
+pub fn key_modal_view(state: &State) -> Option<Element<'_, Message>> {
     if let Some(modal_state) = &state.views.keys.edit_key {
-        return Some(edit_key_modal(modal_state));
+        return Some(edit_key_modal_view(modal_state));
     }
     None
 }
 
-pub fn edit_key_modal(modal_state: &EditKeyModalState) -> Element<'_, Message> {
-    let mut content = Column::new()
-        .spacing(15)
-        .padding(20.0)
-        .width(Length::Fixed(500.0));
-
+pub fn edit_key_modal_view(modal_state: &EditKeyModalState) -> Element<'_, Message> {
     // Header
     let title = if modal_state.is_new {
         "New Key"
     } else {
         "Edit Key"
     };
-    content = content.push(
-        Row::new()
-            .spacing(10)
-            .align_y(Alignment::Center)
-            .push(text::h3(title))
-            .push(Space::with_width(Length::Fill))
-            .push(
-                button::transparent(Some(icon::cross_icon().size(32)), "")
-                    .on_press(Message::KeyCancelModal),
-            ),
-    );
+    let header = Row::new()
+        .spacing(10)
+        .align_y(Alignment::Center)
+        .push(text::h3(title))
+        .push(Space::with_width(Length::Fill))
+        .push(
+            button::transparent(Some(icon::cross_icon().size(32)), "")
+                .on_press(Message::KeyCancelModal),
+        );
 
     // Alias input - validate (must not be empty)
     // No warning if empty, but Save button will be disabled
@@ -48,16 +41,14 @@ pub fn edit_key_modal(modal_state: &EditKeyModalState) -> Element<'_, Message> {
         warning: None, // No warning displayed for empty field
         valid: alias_valid || modal_state.alias.trim().is_empty(), // Don't show red border if empty
     };
-    content = content.push(
-        Column::new()
-            .spacing(5)
-            .push(text::p1_regular("Alias"))
-            .push(form::Form::new(
-                "Enter key alias",
-                &alias_value,
-                Message::KeyUpdateAlias,
-            )),
-    );
+    let alias_input = Column::new()
+        .spacing(5)
+        .push(text::p1_regular("Alias"))
+        .push(form::Form::new(
+            "Enter key alias",
+            &alias_value,
+            Message::KeyUpdateAlias,
+        ));
 
     // Description input
     let desc_value = form::Value {
@@ -65,16 +56,14 @@ pub fn edit_key_modal(modal_state: &EditKeyModalState) -> Element<'_, Message> {
         warning: None,
         valid: true,
     };
-    content = content.push(
-        Column::new()
-            .spacing(5)
-            .push(text::p1_regular("Description"))
-            .push(form::Form::new(
-                "Enter description",
-                &desc_value,
-                Message::KeyUpdateDescr,
-            )),
-    );
+    let description_input = Column::new()
+        .spacing(5)
+        .push(text::p1_regular("Description"))
+        .push(form::Form::new(
+            "Enter description",
+            &desc_value,
+            Message::KeyUpdateDescr,
+        ));
 
     // Email input - validate (same as login flow)
     // No warning if empty, but Save button will be disabled
@@ -100,16 +89,14 @@ pub fn edit_key_modal(modal_state: &EditKeyModalState) -> Element<'_, Message> {
         },
         valid: email_valid || is_empty, // Don't show red border if empty
     };
-    content = content.push(
-        Column::new()
-            .spacing(5)
-            .push(text::p1_regular("Email"))
-            .push(form::Form::new(
-                "Enter email",
-                &email_value,
-                Message::KeyUpdateEmail,
-            )),
-    );
+    let email_input = Column::new()
+        .spacing(5)
+        .push(text::p1_regular("Email"))
+        .push(form::Form::new(
+            "Enter email",
+            &email_value,
+            Message::KeyUpdateEmail,
+        ));
 
     // Key type picker
     let key_types: &[liana_connect::KeyType] = &[
@@ -118,18 +105,15 @@ pub fn edit_key_modal(modal_state: &EditKeyModalState) -> Element<'_, Message> {
         liana_connect::KeyType::Cosigner,
         liana_connect::KeyType::SafetyNet,
     ];
-    let current_type = modal_state.key_type;
-    content = content.push(
-        Column::new()
-            .spacing(5)
-            .push(text::p1_regular("Key Type"))
-            .push(
-                pick_list(key_types, Some(current_type), Message::KeyUpdateType)
-                    .width(Length::Fill),
-            ),
-    );
+    let key_type_picker = Column::new()
+        .spacing(5)
+        .push(text::p1_regular("Key Type"))
+        .push(
+            pick_list(key_types, Some(modal_state.key_type), Message::KeyUpdateType)
+                .width(Length::Fill),
+        );
 
-    // Buttons - Cancel and Save (aligned right)
+    // Footer - Cancel and Save buttons (aligned right)
     // Save button is disabled if alias or email is invalid
     let can_save = alias_valid && email_valid;
     let save_button = if can_save {
@@ -139,18 +123,26 @@ pub fn edit_key_modal(modal_state: &EditKeyModalState) -> Element<'_, Message> {
     } else {
         button::secondary(None, "Save").width(Length::Fixed(120.0))
     };
+    let footer = Row::new()
+        .spacing(10)
+        .push(Space::with_width(Length::Fill))
+        .push(
+            button::secondary(None, "Cancel")
+                .on_press(Message::KeyCancelModal)
+                .width(Length::Fixed(120.0)),
+        )
+        .push(save_button);
 
-    content = content.push(
-        Row::new()
-            .spacing(10)
-            .push(Space::with_width(Length::Fill))
-            .push(
-                button::secondary(None, "Cancel")
-                    .on_press(Message::KeyCancelModal)
-                    .width(Length::Fixed(120.0)),
-            )
-            .push(save_button),
-    );
+    let content = Column::new()
+        .push(header)
+        .push(alias_input)
+        .push(description_input)
+        .push(email_input)
+        .push(key_type_picker)
+        .push(footer)
+        .spacing(15)
+        .padding(20.0)
+        .width(Length::Fixed(500.0));
 
     card::modal(content).into()
 }

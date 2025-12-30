@@ -40,6 +40,8 @@ pub struct State {
     pub hw: HwiService<Message>,
     /// Track if HW listener is running (to make stop_hw idempotent)
     hw_running: bool,
+    /// Bitcoin network (mainnet, testnet, signet, regtest)
+    pub network: Network,
 }
 
 impl State {
@@ -54,6 +56,7 @@ impl State {
             notif_receiver,
             hw: HwiService::new(network, None),
             hw_running: false,
+            network,
         }
     }
 
@@ -116,8 +119,8 @@ impl State {
         };
 
         // Overlay modals if any are open
-        // render_modals() already handles stacking (warning on top of other modals)
-        if let Some(modal) = modals::render_modals(self) {
+        // modals_view() already handles stacking (warning on top of other modals)
+        if let Some(modal) = modals::modals_view(self) {
             // Determine which cancel message to use based on which modal is open
             // Warning modal has priority - if it's open, close it first
             let cancel_msg = if self.views.modals.warning.is_some() {

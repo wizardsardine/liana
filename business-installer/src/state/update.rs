@@ -110,12 +110,14 @@ impl State {
             Msg::XpubSelectKey(key_id) => self.on_xpub_select_key(key_id),
             Msg::XpubUpdateInput(input) => self.on_xpub_update_input(input),
             Msg::XpubSelectSource(source) => self.on_xpub_select_source(source),
-            Msg::XpubSelectDevice(fingerprint) => self.on_xpub_select_device(fingerprint),
+            Msg::XpubSelectDevice(fingerprint) => return self.on_xpub_select_device(fingerprint),
+            Msg::XpubDeviceBack => self.on_xpub_device_back(),
             Msg::XpubFetchFromDevice(fingerprint, account) => return self.on_xpub_fetch_from_device(fingerprint, account),
+            Msg::XpubRetry => return self.on_xpub_retry(),
             Msg::XpubLoadFromFile => return self.on_xpub_load_from_file(),
             Msg::XpubFileLoaded(result) => self.on_xpub_file_loaded(result),
             Msg::XpubPaste => return self.on_xpub_paste(),
-            Msg::XpubUpdateAccount(account) => self.on_xpub_update_account(account),
+            Msg::XpubUpdateAccount(account) => return self.on_xpub_update_account(account),
             Msg::XpubSave => return self.on_xpub_save(),
             Msg::XpubClear => return self.on_xpub_clear(),
             Msg::XpubCancelModal => self.on_xpub_cancel_modal(),
@@ -1263,10 +1265,10 @@ impl State {
                 }
             }
             SigningDeviceMsg::Error(e) => {
-                // Show error in modal
+                // Show error in modal (use fetch_error for Details step)
                 if let Some(modal) = self.views.xpub.modal_mut() {
                     modal.set_processing(false);
-                    modal.set_error(e);
+                    modal.set_fetch_error(e);
                 }
             }
             // Ignore other messages (Version, WalletRegistered, etc.)
@@ -1283,7 +1285,7 @@ impl State {
         if let Some(key) = self.app.keys.get(&key_id) {
             self.views
                 .xpub
-                .open_modal(key_id, key.alias.clone(), key.xpub.clone());
+                .open_modal(key_id, key.alias.clone(), key.xpub.clone(), self.network);
             // Start hardware wallet listening when modal opens
             self.start_hw();
         }
@@ -1303,11 +1305,39 @@ impl State {
         }
     }
 
-    /// Select hardware wallet device
-    fn on_xpub_select_device(&mut self, fingerprint: miniscript::bitcoin::bip32::Fingerprint) {
+    /// Select hardware wallet device - transitions to Details step and triggers fetch
+    fn on_xpub_select_device(
+        &mut self,
+        fingerprint: miniscript::bitcoin::bip32::Fingerprint,
+    ) -> Task<Msg> {
+        let account = if let Some(modal) = self.views.xpub.modal_mut() {
+            modal.select_device(fingerprint); // This sets step to Details and processing=true
+            modal.selected_account
+        } else {
+            return Task::none();
+        };
+        // Trigger the initial fetch with default account
+        Task::done(Msg::XpubFetchFromDevice(fingerprint, account))
+    }
+
+    /// Go back from Details to Select step
+    fn on_xpub_device_back(&mut self) {
         if let Some(modal) = self.views.xpub.modal_mut() {
-            modal.select_device(fingerprint);
+            modal.go_back();
         }
+    }
+
+    /// Retry fetch after error
+    fn on_xpub_retry(&mut self) -> Task<Msg> {
+        if let Some(modal) = self.views.xpub.modal_mut() {
+            if let Some(fp) = modal.selected_device {
+                modal.clear_fetch_error();
+                modal.set_processing(true);
+                let account = modal.selected_account;
+                return Task::done(Msg::XpubFetchFromDevice(fp, account));
+            }
+        }
+        Task::none()
     }
 
     /// Fetch xpub from hardware wallet device
@@ -1323,7 +1353,7 @@ impl State {
         // Set processing state
         if let Some(modal) = self.views.xpub.modal_mut() {
             modal.set_processing(true);
-            modal.clear_error();
+            modal.clear_fetch_error();
         }
 
         // Find supported device with matching fingerprint
@@ -1335,9 +1365,8 @@ impl State {
         match device {
             Some(SigningDevice::Supported(supported)) => {
                 // Build derivation path: m/48'/network'/account'/2'
-                // TODO: Get actual network from wallet or backend config
-                let network = miniscript::bitcoin::Network::Bitcoin;
-                let network_idx = if network == miniscript::bitcoin::Network::Bitcoin {
+                // network' is 0' for mainnet, 1' for testnet/signet/regtest
+                let network_idx = if self.network == miniscript::bitcoin::Network::Bitcoin {
                     ChildNumber::Hardened { index: 0 }
                 } else {
                     ChildNumber::Hardened { index: 1 }
@@ -1356,20 +1385,20 @@ impl State {
             Some(SigningDevice::Locked { .. }) => {
                 if let Some(modal) = self.views.xpub.modal_mut() {
                     modal.set_processing(false);
-                    modal.set_error("Device is locked. Please unlock it first.".to_string());
+                    modal.set_fetch_error("Device is locked. Please unlock it first.".to_string());
                 }
             }
             Some(SigningDevice::Unsupported { .. }) => {
                 if let Some(modal) = self.views.xpub.modal_mut() {
                     modal.set_processing(false);
-                    modal.set_error("Device is not supported".to_string());
+                    modal.set_fetch_error("Device is not supported".to_string());
                 }
             }
             None => {
                 // Device not found
                 if let Some(modal) = self.views.xpub.modal_mut() {
                     modal.set_processing(false);
-                    modal.set_error("Hardware wallet not found".to_string());
+                    modal.set_fetch_error("Hardware wallet not found".to_string());
                 }
             }
         }
@@ -1471,11 +1500,23 @@ impl State {
         })
     }
 
-    /// Update derivation account for HW wallet
-    fn on_xpub_update_account(&mut self, account: miniscript::bitcoin::bip32::ChildNumber) {
+    /// Update derivation account for HW wallet - triggers re-fetch if in Details step
+    fn on_xpub_update_account(
+        &mut self,
+        account: miniscript::bitcoin::bip32::ChildNumber,
+    ) -> Task<Msg> {
         if let Some(modal) = self.views.xpub.modal_mut() {
             modal.update_account(account);
+            // If in Details step with a selected device, trigger re-fetch
+            if modal.step == crate::state::views::ModalStep::Details {
+                if let Some(fp) = modal.selected_device {
+                    modal.clear_fetch_error();
+                    modal.set_processing(true);
+                    return Task::done(Msg::XpubFetchFromDevice(fp, account));
+                }
+            }
         }
+        Task::none()
     }
 
     /// Save xpub to backend

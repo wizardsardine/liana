@@ -86,47 +86,41 @@ fn bordered_button_style(status: Status, radius: f32) -> Style {
 
 /// Create a key card displaying key information.
 fn key_card(key_id: u8, key: &liana_connect::Key) -> Element<'static, Msg> {
-    let mut content = Column::new().spacing(5);
+    const BADGE_WIDTH: f32 = 100.0;
 
-    // First row: |<icon>|<Key_name>|<email>|<spacer>|<key_type_badge>
-    let mut header_row = Row::new()
+    // Email (optional)
+    let email = (!key.email.is_empty()).then(|| text::p2_regular(&key.email));
+
+    // Key type badge
+    let badge = Container::new(
+        Container::new(text::caption(key.key_type.as_str()))
+            .padding([4, 12])
+            .style(liana_ui::theme::pill::simple)
+            .width(Length::Fill)
+            .center_x(Length::Fill),
+    )
+    .width(Length::Fixed(BADGE_WIDTH));
+
+    // Header row: |<icon>|<Key_name>|<email>|<spacer>|<key_type_badge>
+    let header_row = Row::new()
         .spacing(10)
         .align_y(Alignment::Center)
         .push(icon::key_icon())
-        .push(text::p1_regular(&key.alias));
+        .push(text::p1_regular(&key.alias))
+        .push_maybe(email)
+        .push(Space::with_width(Length::Fill))
+        .push(badge);
 
-    // Email (if present)
-    if !key.email.is_empty() {
-        header_row = header_row.push(text::p2_regular(&key.email));
-    }
+    // Description (optional)
+    let description = (!key.description.is_empty()).then(|| text::p2_regular(&key.description));
 
-    // Spacer to push badge to the right
-    header_row = header_row.push(Space::with_width(Length::Fill));
+    let content = Column::new()
+        .spacing(5)
+        .push(header_row)
+        .push_maybe(description);
 
-    // Key type badge with fixed width
-    const BADGE_WIDTH: f32 = 100.0; // Fixed width for all key type variants
-    header_row = header_row.push(
-        Container::new(
-            Container::new(text::caption(key.key_type.as_str()))
-                .padding([4, 12])
-                .style(liana_ui::theme::pill::simple)
-                .width(Length::Fill)
-                .center_x(Length::Fill),
-        )
-        .width(Length::Fixed(BADGE_WIDTH)),
-    );
-
-    content = content.push(header_row);
-
-    // Description (if present)
-    if !key.description.is_empty() {
-        content = content.push(text::p2_regular(&key.description));
-    }
-
-    // Wrap card content - use Fill width so Button controls the final width
     let card_content = Container::new(content).padding(15).width(Length::Fill);
 
-    // Make card clickable
     Button::new(card_content)
         .width(Length::Fixed(KEY_CARD_WIDTH))
         .on_press(Msg::KeyEdit(key_id))
@@ -181,23 +175,13 @@ pub fn keys_view(state: &State) -> Element<'_, Msg> {
 }
 
 fn keys_visualization(state: &State) -> Element<'static, Msg> {
-    let keys = &state.app.keys;
-
-    let mut column = Column::new()
-        .spacing(10)
-        .padding(20.0)
-        .push(Space::with_height(50));
-
-    // List all keys as clickable cards with delete buttons
-    for (key_id, key) in keys.iter() {
-        let mut key_row = Row::new()
-            .spacing(15)
-            .align_y(Alignment::Center)
-            .push(key_card(*key_id, key));
-
-        // Delete button on the right
-        key_row = key_row.push(
-            Button::new(
+    // Build key rows with delete buttons
+    let key_rows: Vec<Element<'static, Msg>> = state
+        .app
+        .keys
+        .iter()
+        .map(|(key_id, key)| {
+            let delete_button = Button::new(
                 Container::new(icon::trash_icon())
                     .width(Length::Fixed(20.0))
                     .height(Length::Fixed(20.0))
@@ -206,13 +190,18 @@ fn keys_visualization(state: &State) -> Element<'static, Msg> {
             )
             .padding(10)
             .on_press(Msg::KeyDelete(*key_id))
-            .style(delete_button_style),
-        );
+            .style(delete_button_style);
 
-        column = column.push(key_row);
-    }
+            Row::new()
+                .spacing(15)
+                .align_y(Alignment::Center)
+                .push(key_card(*key_id, key))
+                .push(delete_button)
+                .into()
+        })
+        .collect();
 
-    // "Add a key" card at the bottom
+    // "Add a key" card
     let add_key_content = Container::new(
         text::p1_regular("+ Add a key").style(liana_ui::theme::text::secondary),
     )
@@ -224,6 +213,15 @@ fn keys_visualization(state: &State) -> Element<'static, Msg> {
         .on_press(Msg::KeyAdd)
         .style(key_card_button);
 
+    // Build the column with all elements
+    let mut column = Column::new()
+        .spacing(10)
+        .padding(20.0)
+        .push(Space::with_height(50));
+
+    for row in key_rows {
+        column = column.push(row);
+    }
     column = column.push(add_key_card);
 
     Container::new(column)

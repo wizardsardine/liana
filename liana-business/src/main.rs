@@ -77,7 +77,7 @@ impl PolicyBuilder {
             LianaDirectory::new_default().expect("Failed to create default data directory");
 
         // Use Signet network for business installer
-        let network = Network::Signet;
+        let network = Network::Bitcoin;
 
         // Create BusinessInstaller via the Installer trait
         let (installer, task) = BusinessInstaller::new(
