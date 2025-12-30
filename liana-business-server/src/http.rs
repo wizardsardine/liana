@@ -77,7 +77,7 @@ pub fn handle_http_request(
     stream: &mut TcpStream,
     method: &str,
     path: &str,
-    _headers: &[(String, String)],
+    headers: &[(String, String)],
     body: &[u8],
     server_url: &str,
     auth: &Arc<AuthManager>,
@@ -93,10 +93,17 @@ pub fn handle_http_request(
     // Route request
     match (method, path) {
         ("GET", "/v1/desktop") => {
+            // Use Host header if available, otherwise fall back to server_url
+            let effective_url = headers
+                .iter()
+                .find(|(k, _)| k.eq_ignore_ascii_case("host"))
+                .map(|(_, v)| format!("http://{}", v))
+                .unwrap_or_else(|| server_url.to_string());
+
             let config = ServiceConfig {
-                auth_api_url: server_url.to_string(),
+                auth_api_url: effective_url.clone(),
                 auth_api_public_key: DUMMY_API_KEY.to_string(),
-                backend_api_url: server_url.to_string(),
+                backend_api_url: effective_url,
             };
             let body = serde_json::to_string(&config).unwrap();
             send_response(stream, 200, "OK", &body);

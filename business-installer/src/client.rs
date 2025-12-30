@@ -20,8 +20,8 @@ use liana_gui::{
 };
 use miniscript::{bitcoin::Network, DescriptorPublicKey};
 use serde_json::json;
-use tungstenite::{accept, Message as WsMessage};
 use tracing::error;
+use tungstenite::{accept, Message as WsMessage};
 use uuid::Uuid;
 
 use crate::{
@@ -31,10 +31,12 @@ use crate::{
 use liana_connect::{ConnectedPayload, OrgJson, Request, Response, UserJson, WalletJson};
 
 /// HTTP URL for liana-business-server REST API (auth endpoints)
-pub const AUTH_API_URL: &str = "http://127.0.0.1:8099";
+// pub const AUTH_API_URL: &str = "http://127.0.0.1:8099";
+pub const AUTH_API_URL: &str = "http://54.37.41.47:8099";
 
 /// WebSocket URL for liana-business-server
-pub const WS_URL: &str = "ws://127.0.0.1:8100";
+// pub const WS_URL: &str = "ws://127.0.0.1:8100";
+pub const WS_URL: &str = "ws://54.37.41.47:8100";
 
 /// Protocol version for WebSocket communication
 pub const PROTOCOL_VERSION: u8 = 1;
@@ -42,13 +44,24 @@ pub const PROTOCOL_VERSION: u8 = 1;
 /// Get service configuration for the local business server (blocking)
 /// This replaces the production get_service_config that fetches from Liana servers
 fn get_service_config_blocking(_network: Network) -> Result<ServiceConfig, reqwest::Error> {
+    use tracing::debug;
+
     // Fetch config from our local server's /v1/desktop endpoint
     let client = reqwest::blocking::Client::new();
     let url = format!("{}/v1/desktop", AUTH_API_URL);
 
+    debug!("get_service_config_blocking: fetching from {}", url);
     let response = client.get(&url).send()?;
+    debug!(
+        "get_service_config_blocking: response status={}",
+        response.status()
+    );
 
     let res: ServiceConfig = response.json()?;
+    debug!(
+        "get_service_config_blocking: parsed config auth_api_url={}",
+        res.auth_api_url
+    );
 
     Ok(ServiceConfig {
         auth_api_url: res.auth_api_url,
@@ -863,6 +876,8 @@ impl Backend for Client {
     }
 
     fn auth_request(&mut self, email: String) {
+        use tracing::debug;
+
         // Store email for later use
         self.email = Some(email.clone());
 
@@ -871,19 +886,33 @@ impl Backend for Client {
         let email_clone = email.clone();
         let auth_client_2 = self.auth_client.clone();
 
+        debug!("auth_request: starting for email={}", email);
+
         thread::spawn(move || {
             let rt = tokio::runtime::Runtime::new().unwrap();
             let result = rt.block_on(async {
                 // Get service config
+                debug!("auth_request: fetching service config for network={:?}", network);
                 let config = match get_service_config_blocking(network) {
-                    Ok(cfg) => cfg,
-                    Err(_) => {
+                    Ok(cfg) => {
+                        debug!(
+                            "auth_request: got config auth_api_url={} backend_api_url={}",
+                            cfg.auth_api_url, cfg.backend_api_url
+                        );
+                        cfg
+                    }
+                    Err(e) => {
+                        debug!("auth_request: failed to get service config: {:?}", e);
                         let _ = notif_sender.send(Notification::AuthCodeFail.into());
                         return Err(());
                     }
                 };
 
                 // Create auth client
+                debug!(
+                    "auth_request: creating AuthClient with url={} email={}",
+                    config.auth_api_url, email_clone
+                );
                 let auth_client = AuthClient::new(
                     config.auth_api_url.clone(),
                     config.auth_api_public_key.clone(),
@@ -891,8 +920,10 @@ impl Backend for Client {
                 );
 
                 // Send OTP
+                debug!("auth_request: sending OTP request");
                 match auth_client.sign_in_otp().await {
                     Ok(()) => {
+                        debug!("auth_request: OTP sent successfully");
                         // Store auth client
                         if let Ok(mut client_guard) = auth_client_2.lock() {
                             *client_guard = Some(auth_client);
@@ -900,6 +931,10 @@ impl Backend for Client {
                         Ok(())
                     }
                     Err(e) => {
+                        debug!(
+                            "auth_request: OTP request failed: http_status={:?} error={}",
+                            e.http_status, e.error
+                        );
                         // Check if it's an invalid email error
                         if let Some(status) = e.http_status {
                             if status == 400 || status == 422 {
@@ -917,6 +952,7 @@ impl Backend for Client {
 
             // Send success notification
             if result.is_ok() {
+                debug!("auth_request: sending AuthCodeSent notification");
                 let _ = notif_sender.send(Notification::AuthCodeSent.into());
             }
         });
