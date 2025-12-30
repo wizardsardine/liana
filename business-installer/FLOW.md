@@ -99,7 +99,8 @@ State::update() (state/update.rs)
 +----------------------------+----------------------------------------+
 | Xpub Management            | XpubSelectKey, XpubUpdateInput,        |
 |                            | XpubSelectSource, XpubSelectDevice,    |
-|                            | XpubFetchFromDevice, XpubLoadFromFile, |
+|                            | XpubDeviceBack, XpubFetchFromDevice,   |
+|                            | XpubRetry, XpubLoadFromFile,           |
 |                            | XpubFileLoaded, XpubUpdateAccount,     |
 |                            | XpubSave, XpubClear, XpubCancelModal   |
 +----------------------------+----------------------------------------+
@@ -203,15 +204,24 @@ WalletEdit <--> Keys  [NavigateToKeys / NavigateToHome]
 
 Xpub View:
     Opens XpubEntryModal on key card click
-        +---> [XpubSelectKey] --> Modal with SelectKeySource-style UX:
+        +---> [XpubSelectKey] --> Modal with two-step SelectKeySource-style UX:
                 |
+                Step 1: SELECT (device selection)
                 +---> Hardware Wallet section (prominently displayed)
                 |       - Device list with status indicators
-                |       - Account selection dropdown
-                |       - Fetch from device button
+                |       - Click device card to open Details step
                 |
                 +---> "Other options" collapsible section
                         - Import extended public key file
+                        - Paste extended public key
+                |
+                Step 2: DETAILS (account selection + fetch)
+                +---> [XpubSelectDevice] --> Opens Details step:
+                        - Back button to return to Select
+                        - Device card (shows processing state)
+                        - Account picker (changing triggers re-fetch)
+                        - Error display with Retry button
+                        - Save button (enabled when valid xpub)
 ```
 
 ## Adding New Features

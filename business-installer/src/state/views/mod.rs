@@ -13,7 +13,7 @@ pub use modals::ModalsState;
 pub use org_select::OrgSelectState;
 pub use path::{EditPathModalState, PathsViewState};
 pub use wallet_select::WalletSelectState;
-pub use xpub::{XpubEntryModalState, XpubSource, XpubViewState};
+pub use xpub::{ModalStep, XpubEntryModalState, XpubSource, XpubViewState};
 
 /// View-specific states
 #[derive(Debug, Clone)]

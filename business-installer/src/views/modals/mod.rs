@@ -6,22 +6,22 @@ use liana_ui::widget::{modal::Modal, Element};
 
 use crate::state::Msg;
 
-pub fn render_modals(state: &State) -> Option<Element<'_, Msg>> {
+pub fn modals_view(state: &State) -> Option<Element<'_, Msg>> {
     // First, get the underlying modal (key, path, or xpub modal)
-    let underlying_modal = crate::views::keys::modal::render_modal(state)
-        .or_else(|| crate::views::paths::modal::render_modal(state))
-        .or_else(|| crate::views::xpub::render_modal(state));
+    let underlying_modal = crate::views::keys::modal::key_modal_view(state)
+        .or_else(|| crate::views::paths::modal::path_modal_view(state))
+        .or_else(|| crate::views::xpub::xpub_modal_view(state));
 
     // Priority order: Warning modal > Conflict modal > Underlying modal
 
     // If there's a warning modal, it should be on top
     if let Some(warning_modal_state) = &state.views.modals.warning {
-        let warning_modal = warning::render_warning_modal(warning_modal_state);
+        let warning_modal = warning::warning_modal_view(warning_modal_state);
 
         // Stack on top of any underlying modals
         if let Some(conflict_modal_state) = &state.views.modals.conflict {
             // Warning on top of conflict on top of underlying
-            let conflict_modal = conflict::render_conflict_modal(conflict_modal_state);
+            let conflict_modal = conflict::conflict_modal_view(conflict_modal_state);
             if let Some(underlying) = underlying_modal {
                 let stacked: Element<'_, Msg> = Modal::new(underlying, conflict_modal)
                     .on_blur(Some(Msg::ConflictDismiss))
@@ -53,7 +53,7 @@ pub fn render_modals(state: &State) -> Option<Element<'_, Msg>> {
 
     // If there's a conflict modal, it should be stacked on top of underlying
     if let Some(conflict_modal_state) = &state.views.modals.conflict {
-        let conflict_modal = conflict::render_conflict_modal(conflict_modal_state);
+        let conflict_modal = conflict::conflict_modal_view(conflict_modal_state);
 
         if let Some(underlying) = underlying_modal {
             return Some(

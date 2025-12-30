@@ -6,58 +6,51 @@ use liana_ui::{
     widget::*,
 };
 
-pub fn render_conflict_modal(modal_state: &ConflictModalState) -> Element<'_, Msg> {
-    let mut content = Column::new()
+pub fn conflict_modal_view(modal_state: &ConflictModalState) -> Element<'_, Msg> {
+    let header = Row::new()
+        .spacing(10)
+        .align_y(Alignment::Center)
+        .push(text::h3(&modal_state.title))
+        .push(Space::with_width(Length::Fill))
+        .push(button::transparent(Some(icon::cross_icon()), "").on_press(Msg::ConflictDismiss));
+
+    let message = text::p1_regular(&modal_state.message);
+
+    // Buttons - different based on whether this is a choice or info-only
+    let footer = if modal_state.is_choice() {
+        // Two-button choice: "Keep my changes" and "Reload"
+        Row::new()
+            .spacing(10)
+            .push(Space::with_width(Length::Fill))
+            .push(
+                button::secondary(None, "Keep my changes")
+                    .on_press(Msg::ConflictKeepLocal)
+                    .width(Length::Fixed(160.0)),
+            )
+            .push(
+                button::primary(None, "Reload")
+                    .on_press(Msg::ConflictReload)
+                    .width(Length::Fixed(120.0)),
+            )
+    } else {
+        // Single dismiss button for info-only conflicts
+        Row::new()
+            .spacing(10)
+            .push(Space::with_width(Length::Fill))
+            .push(
+                button::primary(None, "OK")
+                    .on_press(Msg::ConflictDismiss)
+                    .width(Length::Fixed(120.0)),
+            )
+    };
+
+    let content = Column::new()
+        .push(header)
+        .push(message)
+        .push(footer)
         .spacing(15)
         .padding(20.0)
         .width(Length::Fixed(500.0));
-
-    // Header
-    content = content.push(
-        Row::new()
-            .spacing(10)
-            .align_y(Alignment::Center)
-            .push(text::h3(&modal_state.title))
-            .push(Space::with_width(Length::Fill))
-            .push(
-                button::transparent(Some(icon::cross_icon()), "").on_press(Msg::ConflictDismiss),
-            ),
-    );
-
-    // Message
-    content = content.push(text::p1_regular(&modal_state.message));
-
-    // Buttons - different based on whether this is a choice or info-only
-    if modal_state.is_choice() {
-        // Two-button choice: "Keep my changes" and "Reload"
-        content = content.push(
-            Row::new()
-                .spacing(10)
-                .push(Space::with_width(Length::Fill))
-                .push(
-                    button::secondary(None, "Keep my changes")
-                        .on_press(Msg::ConflictKeepLocal)
-                        .width(Length::Fixed(160.0)),
-                )
-                .push(
-                    button::primary(None, "Reload")
-                        .on_press(Msg::ConflictReload)
-                        .width(Length::Fixed(120.0)),
-                ),
-        );
-    } else {
-        // Single dismiss button for info-only conflicts
-        content = content.push(
-            Row::new()
-                .spacing(10)
-                .push(Space::with_width(Length::Fill))
-                .push(
-                    button::primary(None, "OK")
-                        .on_press(Msg::ConflictDismiss)
-                        .width(Length::Fixed(120.0)),
-                ),
-        );
-    }
 
     card::modal(content).into()
 }
