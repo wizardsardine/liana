@@ -16,7 +16,7 @@ use liana_ui::{component::text, font, image, theme};
 use liana_gui::{
     app::settings::global::{GlobalSettings, WindowConfig},
     dir::LianaDirectory,
-    gui::{Config, GUI},
+    gui::{Config, LianaGUI},
     node::bitcoind::delete_all_bitcoind_locks_for_process,
     VERSION,
 };
@@ -137,13 +137,13 @@ fn main() -> Result<(), Box<dyn Error>> {
         };
     }
 
-    if let Err(e) = iced::application(GUI::title, GUI::update, GUI::view)
+    if let Err(e) = iced::application(LianaGUI::title, LianaGUI::update, LianaGUI::view)
         .theme(|_| theme::Theme::default())
-        .scale_factor(GUI::scale_factor)
-        .subscription(GUI::subscription)
+        .scale_factor(LianaGUI::scale_factor)
+        .subscription(LianaGUI::subscription)
         .settings(settings)
         .window(window_settings)
-        .run_with(move || GUI::new((config, log_level)))
+        .run_with(move || LianaGUI::new((config, log_level)))
     {
         log::error!("{}", e);
         Err(format!("Failed to launch UI: {}", e).into())

@@ -1,4 +1,4 @@
-use std::{collections::HashMap, sync::Arc, time::Instant};
+use std::{collections::HashMap, marker::PhantomData, sync::Arc, time::Instant};
 
 use iced::{Subscription, Task};
 use tracing::{error, info};
@@ -29,19 +29,29 @@ use crate::{
     },
 };
 
-pub enum State {
+pub enum State<I, M>
+where
+    M: Clone + Send + 'static,
+    I: for<'a> Installer<'a, M>,
+{
     Launcher(Box<Launcher>),
-    Installer(Box<Installer>),
+    Installer(I),
     Loader(Box<Loader>),
     Login(Box<login::LianaLiteLogin>),
     App(App),
+    #[doc(hidden)]
+    _Phantom(PhantomData<M>),
 }
 
-impl State {
+impl<I, M> State<I, M>
+where
+    M: Clone + Send + 'static,
+    I: for<'a> Installer<'a, M>,
+{
     pub fn new(
         directory: LianaDirectory,
         network: Option<bitcoin::Network>,
-    ) -> (Self, Task<Message>) {
+    ) -> (Self, Task<Message<M>>) {
         let (launcher, command) = Launcher::new(directory, network);
         (
             State::Launcher(Box::new(launcher)),
@@ -51,22 +61,38 @@ impl State {
 }
 
 #[derive(Debug)]
-pub enum Message {
+pub enum Message<M>
+where
+    M: Clone + Send + 'static,
+{
     Launch(Box<launcher::Message>),
-    Install(Box<installer::Message>),
+    Install(Box<M>),
     Load(Box<loader::Message>),
     Run(Box<app::Message>),
     Login(Box<login::Message>),
 }
 
-pub struct Tab {
+pub struct Tab<I, M>
+where
+    M: Clone + Send + 'static,
+    I: for<'a> Installer<'a, M>,
+{
     pub id: usize,
-    pub state: State,
+    pub state: State<I, M>,
+    _phantom: PhantomData<M>,
 }
 
-impl Tab {
-    pub fn new(id: usize, state: State) -> Self {
-        Tab { id, state }
+impl<I, M> Tab<I, M>
+where
+    M: Clone + Send + 'static,
+    I: for<'a> Installer<'a, M>,
+{
+    pub fn new(id: usize, state: State<I, M>) -> Self {
+        Tab {
+            id,
+            state,
+            _phantom: PhantomData,
+        }
     }
 
     pub fn cache(&self) -> Option<&Cache> {
@@ -92,10 +118,11 @@ impl Tab {
             State::Launcher(_) => "Launcher",
             State::Login(_) => "Login",
             State::App(a) => a.title(),
+            State::_Phantom(_) => unreachable!(),
         }
     }
 
-    pub fn on_tick(&mut self) -> Task<Message> {
+    pub fn on_tick(&mut self) -> Task<Message<M>> {
         // currently the Tick is only used by the app
         if let State::App(app) = &mut self.state {
             app.on_tick().map(|msg| Message::Run(Box::new(msg)))
@@ -104,7 +131,7 @@ impl Tab {
         }
     }
 
-    pub fn update(&mut self, message: Message) -> Task<Message> {
+    pub fn update(&mut self, message: Message<M>) -> Task<Message<M>> {
         match (&mut self.state, message) {
             (State::Launcher(l), Message::Launch(msg)) => match *msg {
                 launcher::Message::Install(datadir, network, init) => {
@@ -121,7 +148,7 @@ impl Tab {
                         }
                     }
                     let (install, command) = Installer::new(datadir, network, None, init);
-                    self.state = State::Installer(Box::new(install));
+                    self.state = State::Installer(*install);
                     command.map(|msg| Message::Install(Box::new(msg)))
                 }
                 launcher::Message::Run(datadir_path, cfg, network, settings) => {
@@ -147,13 +174,13 @@ impl Tab {
                     command.map(|msg| Message::Launch(Box::new(msg)))
                 }
                 login::Message::Install(remote_backend) => {
-                    let (install, command) = Installer::new(
+                    let (install, command) = I::new(
                         l.datadir.clone(),
                         l.network,
                         remote_backend,
                         installer::UserFlow::CreateWallet,
                     );
-                    self.state = State::Installer(Box::new(install));
+                    self.state = State::Installer(*install);
                     command.map(|msg| Message::Install(Box::new(msg)))
                 }
                 login::Message::Run(Ok((backend_client, wallet, coins))) => {
@@ -186,41 +213,55 @@ impl Tab {
                 _ => l.update(*msg).map(|msg| Message::Login(Box::new(msg))),
             },
             (State::Installer(i), Message::Install(msg)) => {
-                if let installer::Message::Exit(settings, internal_bitcoind) = *msg {
-                    let wallet_id = settings.wallet_id();
-                    if let Some(auth_cfg) = settings.remote_backend_auth {
-                        let (login, command) = login::LianaLiteLogin::new(
-                            i.datadir.clone(),
-                            i.network,
-                            wallet_id,
+                if let Some(next_state) = i.exit_maybe(&msg) {
+                    return match next_state {
+                        installer::NextState::LoginLianaLite {
+                            datadir,
+                            network,
+                            directory_wallet_id,
                             auth_cfg,
-                        );
-                        self.state = State::Login(Box::new(login));
-                        command.map(|msg| Message::Login(Box::new(msg)))
-                    } else {
-                        let cfg = app::Config::from_file(
-                            &i.datadir
-                                .network_directory(i.network)
-                                .path()
-                                .join(app::config::DEFAULT_FILE_NAME),
-                        )
-                        .expect("A gui configuration file must be present");
-
-                        let (loader, command) = Loader::new(
-                            i.datadir.clone(),
-                            cfg,
-                            i.network,
+                        } => {
+                            let (login, command) = login::LianaLiteLogin::new(
+                                datadir,
+                                network,
+                                directory_wallet_id,
+                                auth_cfg,
+                            );
+                            self.state = State::Login(Box::new(login));
+                            command.map(|msg| Message::Login(Box::new(msg)))
+                        }
+                        installer::NextState::Loader {
+                            datadir: datadir_path,
+                            network,
                             internal_bitcoind,
-                            i.context.backup.take(),
-                            *settings,
-                        );
-                        self.state = State::Loader(Box::new(loader));
-                        command.map(|msg| Message::Load(Box::new(msg)))
-                    }
-                } else if let installer::Message::BackToLauncher(network) = *msg {
-                    let (launcher, command) = Launcher::new(i.destination_path(), Some(network));
-                    self.state = State::Launcher(Box::new(launcher));
-                    command.map(|msg| Message::Launch(Box::new(msg)))
+                            backup,
+                            wallet_settings,
+                        } => {
+                            let cfg = app::Config::from_file(
+                                &datadir_path
+                                    .network_directory(network)
+                                    .path()
+                                    .join(app::config::DEFAULT_FILE_NAME),
+                            )
+                            .expect("A gui configuration file must be present");
+
+                            let (loader, command) = Loader::new(
+                                datadir_path,
+                                cfg,
+                                network,
+                                internal_bitcoind,
+                                backup,
+                                wallet_settings,
+                            );
+                            self.state = State::Loader(Box::new(loader));
+                            command.map(|msg| Message::Load(Box::new(msg)))
+                        }
+                        installer::NextState::Launcher { network, datadir } => {
+                            let (launcher, command) = Launcher::new(datadir, Some(network));
+                            self.state = State::Launcher(Box::new(launcher));
+                            command.map(|msg| Message::Launch(Box::new(msg)))
+                        }
+                    };
                 } else {
                     i.update(*msg).map(|msg| Message::Install(Box::new(msg)))
                 }
@@ -308,23 +349,25 @@ impl Tab {
         }
     }
 
-    pub fn subscription(&self) -> Subscription<Message> {
+    pub fn subscription(&self) -> Subscription<Message<M>> {
         Subscription::batch(vec![match &self.state {
             State::Installer(v) => v.subscription().map(|msg| Message::Install(Box::new(msg))),
             State::Loader(v) => v.subscription().map(|msg| Message::Load(Box::new(msg))),
             State::App(v) => v.subscription().map(|msg| Message::Run(Box::new(msg))),
             State::Launcher(v) => v.subscription().map(|msg| Message::Launch(Box::new(msg))),
             State::Login(_) => Subscription::none(),
+            State::_Phantom(_) => unreachable!(),
         }])
     }
 
-    pub fn view(&self) -> Element<Message> {
+    pub fn view(&self) -> Element<Message<M>> {
         match &self.state {
             State::Installer(v) => v.view().map(|msg| Message::Install(Box::new(msg))),
             State::App(v) => v.view().map(|msg| Message::Run(Box::new(msg))),
             State::Launcher(v) => v.view().map(|msg| Message::Launch(Box::new(msg))),
             State::Loader(v) => v.view().map(|msg| Message::Load(Box::new(msg))),
             State::Login(v) => v.view().map(|msg| Message::Login(Box::new(msg))),
+            State::_Phantom(_) => unreachable!(),
         }
     }
 
@@ -335,6 +378,7 @@ impl Tab {
             State::Installer(s) => s.stop(),
             State::App(s) => s.stop(),
             State::Login(_) => {}
+            State::_Phantom(_) => unreachable!(),
         }
     }
 }
