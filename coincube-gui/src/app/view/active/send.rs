@@ -18,7 +18,6 @@ use crate::app::{
     view::{self, vault::fiat::FiatAmount, ActiveSendMessage, FiatAmountConverter, Message},
 };
 
-/// Main view function for ActiveSend - handles all flow states
 pub fn active_send_with_flow<'a>(
     flow_state: &'a ActiveSendFlowState,
     btc_balance: Amount,
@@ -52,8 +51,8 @@ pub fn active_send_with_flow<'a>(
 
             // Show modal if needed
             match modal {
-                Modal::Step1 => {
-                    let modal_content = step1_modal(
+                Modal::AmountInput => {
+                    let modal_content = amount_input_model(
                         amount_input,
                         comment,
                         fiat_converter.is_some(),
@@ -63,22 +62,24 @@ pub fn active_send_with_flow<'a>(
                     )
                     .map(Message::ActiveSend);
                     coincube_ui::widget::modal::Modal::new(content, modal_content)
-                        .on_blur(Some(Message::ActiveSend(ActiveSendMessage::SendPopupClose)))
+                        .on_blur(Some(Message::ActiveSend(ActiveSendMessage::PopupMessage(
+                            view::SendPopupMessage::Close,
+                        ))))
                         .into()
                 }
-                Modal::Step2Fiat {
+                Modal::FiatInput {
                     fiat_input,
                     currencies,
                     selected_currency,
                     converters,
                 } => {
                     let modal_content =
-                        step2_fiat_modal(fiat_input, currencies, selected_currency, converters)
+                        fiat_input_model(fiat_input, currencies, selected_currency, converters)
                             .map(Message::ActiveSend);
                     coincube_ui::widget::modal::Modal::new(content, modal_content)
-                        .on_blur(Some(Message::ActiveSend(
-                            ActiveSendMessage::SendPopupFiatClose,
-                        )))
+                        .on_blur(Some(Message::ActiveSend(ActiveSendMessage::PopupMessage(
+                            view::SendPopupMessage::FiatClose,
+                        ))))
                         .into()
                 }
                 Modal::None => content,
@@ -97,12 +98,11 @@ pub fn active_send_with_flow<'a>(
             view::dashboard(menu, cache, None, content)
         }
         ActiveSendFlowState::Sent => {
-            let content = sent_page(amount, fiat_converter.as_ref()).map(Message::ActiveSend);
+            let content = sent_page(amount).map(Message::ActiveSend);
             view::dashboard(menu, cache, None, content)
         }
     };
 
-    // Global error display overlay - visible across all states
     if let Some(err) = error {
         Column::new()
             .push(
@@ -138,7 +138,6 @@ pub fn active_send_view<'a>(
         .align_x(Alignment::Center)
         .padding(40);
 
-    // Balance Display Section
     let mut balance_section = Column::new().spacing(10).align_x(Alignment::Center).push(
         Row::new()
             .spacing(10)
@@ -152,7 +151,6 @@ pub fn active_send_view<'a>(
             .push(text("BTC").size(32).color(color::ORANGE)),
     );
 
-    // Add fiat equivalent if converter is available
     if let Some(converter) = &fiat_converter {
         let fiat_amount = converter.convert(btc_balance);
         balance_section = balance_section.push(fiat_amount.to_text().size(18).color(color::GREY_3));
@@ -160,8 +158,7 @@ pub fn active_send_view<'a>(
 
     content = content.push(balance_section);
 
-    // Recent Transaction (if exists)
-    if recent_transaction.len() > 0 {
+    if !recent_transaction.is_empty() {
         for tx in recent_transaction {
             let row = Row::new()
                 .spacing(15)
@@ -266,7 +263,6 @@ pub fn active_send_view<'a>(
                 .align_x(Alignment::Center),
         );
 
-    // Add spacing before input section
     content = content.push(iced::widget::Space::new().height(Length::Fixed(20.0)));
 
     // Input Section
@@ -328,7 +324,6 @@ pub fn active_send_view<'a>(
     content.into()
 }
 
-/// Recent transaction display data
 pub struct RecentTransaction {
     pub description: String,
     pub time_ago: String,
@@ -339,7 +334,7 @@ pub struct RecentTransaction {
     pub status: PaymentState,
 }
 
-pub fn step1_modal<'a>(
+pub fn amount_input_model<'a>(
     amount: &'a form::Value<String>,
     comment: String,
     has_fiat_converter: bool,
@@ -353,25 +348,23 @@ pub fn step1_modal<'a>(
         .width(Length::Fixed(500.0))
         .align_x(Alignment::Center);
 
-    // Balance display on top right (only value and BTC in orange)
     let header = Row::new()
         .push(iced::widget::Space::new().width(Length::Fill))
         .push(text("BALANCE: ").size(16))
         .push(
             text(format!("{} BTC", btc_balance.to_btc()))
                 .size(16)
-                .color(iced::Color::from_rgb(1.0, 0.647, 0.0)),
+                .color(color::ORANGE),
         )
         .width(Length::Fill)
         .align_y(Alignment::Center);
 
     content = content.push(header);
 
-    // Description field (read-only display box)
     if let Some(desc) = description {
         content = content.push(
             Container::new(text(desc).size(16))
-                .padding([10, 20]) // [vertical, horizontal] padding
+                .padding([10, 20])
                 .width(Length::Fill)
                 .style(
                     |_theme: &coincube_ui::theme::Theme| iced::widget::container::Style {
@@ -389,7 +382,6 @@ pub fn step1_modal<'a>(
         );
     }
 
-    // Amount input with label and convert icon on the right
     let mut amount_label_section = Column::new().spacing(2);
 
     let amount_row = Row::new()
@@ -401,7 +393,9 @@ pub fn step1_modal<'a>(
     let amount_row = if has_fiat_converter {
         amount_row.push(
             button::transparent(None, "⇄")
-                .on_press(ActiveSendMessage::SendPopupFiatConvert)
+                .on_press(ActiveSendMessage::PopupMessage(
+                    view::SendPopupMessage::FiatConvert,
+                ))
                 .width(Length::Shrink),
         )
     } else {
@@ -410,17 +404,15 @@ pub fn step1_modal<'a>(
 
     amount_label_section = amount_label_section.push(amount_row);
 
-    // Create a sub-column for amount input and helper text with tight spacing
     let mut amount_input_section = Column::new().spacing(5);
 
     amount_input_section = amount_input_section.push(
         form::Form::new_amount_btc("Enter amount", &amount, |v| {
-            ActiveSendMessage::SendPopupAmountEdited(v)
+            ActiveSendMessage::PopupMessage(view::SendPopupMessage::AmountEdited(v))
         })
         .padding(10),
     );
 
-    // Limits text (close to textbox, left aligned)
     if let Some((min_sat, max_sat)) = limits {
         let min_btc = Amount::from_sat(min_sat).to_btc();
         let max_btc = Amount::from_sat(max_sat).to_btc();
@@ -436,26 +428,25 @@ pub fn step1_modal<'a>(
     amount_label_section = amount_label_section.push(amount_input_section);
     content = content.push(amount_label_section);
 
-    // Add some extra spacing before comment section
     content = content.push(iced::widget::Space::new().height(Length::Fixed(5.0)));
 
-    // Comment input with label (close spacing)
     let mut comment_section = Column::new().spacing(5);
     comment_section = comment_section.push(text("Comment").size(16));
     comment_section = comment_section.push(
         iced::widget::text_input("Comment (Optional)", &comment)
-            .on_input(|v| ActiveSendMessage::SendPopupCommentEdited(v))
+            .on_input(|v| ActiveSendMessage::PopupMessage(view::SendPopupMessage::CommentEdited(v)))
             .padding(10),
     );
 
     content = content.push(comment_section);
 
-    // Next button - disabled if amount is invalid or empty
     let next_button = button::primary(None, "Next").width(Length::Fill);
     let next_button = if !amount.valid || amount.value.is_empty() {
-        next_button // Don't add on_press - button will be visually disabled
+        next_button
     } else {
-        next_button.on_press(ActiveSendMessage::SendPopupDone)
+        next_button.on_press(ActiveSendMessage::PopupMessage(
+            view::SendPopupMessage::Done,
+        ))
     };
 
     content = content.push(next_button);
@@ -466,7 +457,7 @@ pub fn step1_modal<'a>(
         .into()
 }
 
-pub fn step2_fiat_modal<'a>(
+pub fn fiat_input_model<'a>(
     fiat_input: &'a form::Value<String>,
     currencies: &'a [crate::services::fiat::Currency; 4],
     selected_currency: &'a crate::services::fiat::Currency,
@@ -481,13 +472,14 @@ pub fn step2_fiat_modal<'a>(
         .width(Length::Fixed(500.0))
         .align_x(Alignment::Center);
 
-    // Header row: Title on left (bold) and Close button on right
     let header = Row::new()
         .push(text("Select Fiat Currency:").size(20).bold())
         .push(iced::widget::Space::new().width(Length::Fill))
         .push(
             button::transparent(Some(cross_icon()), "")
-                .on_press(ActiveSendMessage::SendPopupFiatClose)
+                .on_press(ActiveSendMessage::PopupMessage(
+                    view::SendPopupMessage::FiatClose,
+                ))
                 .width(Length::Shrink),
         )
         .width(Length::Fill)
@@ -495,7 +487,6 @@ pub fn step2_fiat_modal<'a>(
 
     content = content.push(header);
 
-    // Currency selection capsules - 4 in a row, centered
     let mut currency_row = Row::new().spacing(10).align_y(Alignment::Center);
 
     for currency in currencies.iter() {
@@ -503,7 +494,9 @@ pub fn step2_fiat_modal<'a>(
         let currency_str = &currency.to_static_str();
 
         let capsule = button::primary(None, currency_str)
-            .on_press(ActiveSendMessage::SendPopupFiatCurrencySelected(*currency))
+            .on_press(ActiveSendMessage::PopupMessage(
+                view::SendPopupMessage::FiatCurrencySelected(*currency),
+            ))
             .width(Length::Shrink)
             .style(move |_theme, status| {
                 let bg_color = if is_selected {
@@ -549,22 +542,19 @@ pub fn step2_fiat_modal<'a>(
             .align_x(Alignment::Center),
     );
 
-    // Amount label
     content = content.push(
         text(format!("Amount in {}", selected_currency))
             .size(16)
             .width(Length::Fill),
     );
 
-    // Fiat input with proper numeric validation
     content = content.push(
         form::Form::new_amount_numeric(&format!("{} amount", selected_currency), fiat_input, |v| {
-            ActiveSendMessage::SendPopupFiatInputEdited(v)
+            ActiveSendMessage::PopupMessage(view::SendPopupMessage::FiatInputEdited(v))
         })
         .padding(10),
     );
 
-    // BTC conversion display with real conversion rates
     let (btc_amount_str, rate_str) = if let Some(converter) = converters.get(selected_currency) {
         let btc_amount = if !fiat_input.value.is_empty() {
             if let Ok(fiat_amount) = FiatAmount::from_str_in(&fiat_input.value, *selected_currency)
@@ -610,12 +600,13 @@ pub fn step2_fiat_modal<'a>(
 
     content = content.push(iced::widget::Space::new().height(Length::Fixed(5.0)));
 
-    // Done button - disabled if fiat amount is invalid or empty
     let done_button = button::primary(None, "Done").width(Length::Fill);
     let done_button = if !fiat_input.valid || fiat_input.value.is_empty() {
         done_button
     } else {
-        done_button.on_press(ActiveSendMessage::SendPopupFiatDone)
+        done_button.on_press(ActiveSendMessage::PopupMessage(
+            view::SendPopupMessage::FiatDone,
+        ))
     };
 
     content = content.push(done_button);
@@ -634,15 +625,15 @@ pub fn final_check_page<'a>(
     prepare_response: Option<&'a breez_sdk_liquid::prelude::PrepareSendResponse>,
     is_sending: bool,
 ) -> Element<'a, ActiveSendMessage> {
-    // Previous button at top left - full width, outside the centered content
     let header = Row::new()
         .push(
-            button::transparent(Some(icon::previous_icon()), "Previous")
-                .on_press(ActiveSendMessage::SendPopupClose),
+            button::transparent(Some(icon::previous_icon()), "Previous").on_press(
+                ActiveSendMessage::PopupMessage(view::SendPopupMessage::Close),
+            ),
         )
         .push(Space::new().width(Length::Fill))
         .width(Length::Fill)
-        .padding([0, 40]) // Match the content padding
+        .padding([0, 40])
         .align_y(Alignment::Center);
 
     let mut content = Column::new()
@@ -652,7 +643,6 @@ pub fn final_check_page<'a>(
         .max_width(600)
         .align_x(Alignment::Center);
 
-    // Description in center, bold, medium-big text
     if let Some(desc) = description {
         content = content.push(
             Container::new(text(desc).size(22).bold())
@@ -663,7 +653,6 @@ pub fn final_check_page<'a>(
 
     content = content.push(Space::new().height(Length::Fixed(2.0)));
 
-    // Calculate fees and total from prepare_response
     let (fees_sat, total_sat) = if let Some(prepare) = prepare_response {
         let fees = prepare.fees_sat.unwrap_or(0);
         let total = amount.to_sat() + fees;
@@ -675,7 +664,6 @@ pub fn final_check_page<'a>(
     let fees_amount = Amount::from_sat(fees_sat);
     let total_amount = Amount::from_sat(total_sat);
 
-    // Amount in big text with orange color
     content = content.push(
         Container::new(
             text(format!("{:.8} BTC", amount.to_btc()))
@@ -687,7 +675,6 @@ pub fn final_check_page<'a>(
         .align_x(Alignment::Center),
     );
 
-    // Fiat equivalent if converter is available
     if let Some(converter) = fiat_converter {
         let fiat_amount = converter.convert(amount);
         content = content.push(
@@ -699,10 +686,8 @@ pub fn final_check_page<'a>(
 
     content = content.push(Space::new().height(Length::Fixed(10.0)));
 
-    // Gray box with transaction details
     let mut details_box = Column::new().spacing(15).width(Length::Fill).padding(20);
 
-    // Amount row
     details_box = details_box.push(
         Row::new()
             .push(text("Amount:").size(16))
@@ -712,7 +697,6 @@ pub fn final_check_page<'a>(
             .align_y(Alignment::Center),
     );
 
-    // Horizontal separator
     details_box = details_box.push(
         Container::new(Space::new().height(Length::Fixed(1.0)))
             .width(Length::Fill)
@@ -724,7 +708,6 @@ pub fn final_check_page<'a>(
             ),
     );
 
-    // Fees row
     details_box = details_box.push(
         Row::new()
             .push(text("Fees:").size(16))
@@ -738,7 +721,6 @@ pub fn final_check_page<'a>(
             .align_y(Alignment::Center),
     );
 
-    // Horizontal separator
     details_box = details_box.push(
         Container::new(Space::new().height(Length::Fixed(1.0)))
             .width(Length::Fill)
@@ -750,7 +732,6 @@ pub fn final_check_page<'a>(
             ),
     );
 
-    // Total row (highlighted)
     details_box = details_box.push(
         Row::new()
             .push(text("Total:").size(18).bold())
@@ -765,7 +746,6 @@ pub fn final_check_page<'a>(
             .align_y(Alignment::Center),
     );
 
-    // Comment if present
     if !comment.is_empty() {
         details_box = details_box.push(
             Container::new(Space::new().height(Length::Fixed(1.0)))
@@ -788,7 +768,6 @@ pub fn final_check_page<'a>(
         );
     }
 
-    // Wrap details in a styled container
     content = content.push(Container::new(details_box).width(Length::Fill).style(
         |_theme: &coincube_ui::theme::Theme| iced::widget::container::Style {
             background: Some(iced::Background::Color(iced::Color::from_rgb(
@@ -804,7 +783,6 @@ pub fn final_check_page<'a>(
 
     content = content.push(Space::new().height(Length::Fixed(30.0)));
 
-    // Send button - disable if already sending
     let send_button = button::primary(None, "Send").width(Length::Fill);
     content = content.push(if is_sending {
         send_button
@@ -812,7 +790,6 @@ pub fn final_check_page<'a>(
         send_button.on_press(ActiveSendMessage::ConfirmSend)
     });
 
-    // Wrap header and content in a main column
     Column::new()
         .push(header)
         .push(
@@ -824,11 +801,8 @@ pub fn final_check_page<'a>(
         .into()
 }
 
-pub fn sent_page<'a>(
-    amount: Amount,
-    fiat_converter: Option<&FiatAmountConverter>,
-) -> Element<'a, ActiveSendMessage> {
-    use coincube_ui::widget::{Column, Row, Text};
+pub fn sent_page<'a>(amount: Amount) -> Element<'a, ActiveSendMessage> {
+    use coincube_ui::widget::{Column, Row};
     Column::new()
         .spacing(20)
         .width(Length::Fill)

@@ -10,6 +10,7 @@ use iced::Task;
 
 use crate::app::menu::{ActiveSubMenu, Menu};
 use crate::app::state::{redirect, State};
+use crate::app::view::SendPopupMessage;
 use crate::app::{breez::BreezClient, cache::Cache};
 use crate::app::{message::Message, view, wallet::Wallet};
 use crate::daemon::Daemon;
@@ -17,12 +18,11 @@ use crate::utils::format_time_ago;
 
 #[derive(Debug)]
 pub enum Modal {
-    Step1,
-    Step2Fiat {
+    AmountInput,
+    FiatInput {
         fiat_input: form::Value<String>,
         currencies: [crate::services::fiat::Currency; 4],
         selected_currency: crate::services::fiat::Currency,
-        // Store conversion rates for all 4 currencies
         converters:
             std::collections::HashMap<crate::services::fiat::Currency, view::FiatAmountConverter>,
     },
@@ -51,7 +51,7 @@ pub struct ActiveSend {
     comment: Option<String>,
     error: Option<String>,
     prepare_response: Option<breez_sdk_liquid::prelude::PrepareSendResponse>,
-    is_sending: bool, // Track if payment is in progress
+    is_sending: bool,
 }
 
 impl ActiveSend {
@@ -265,7 +265,7 @@ impl State for ActiveSend {
                         Some(description)
                     };
                     self.flow_state = ActiveSendFlowState::Main {
-                        modal: Modal::Step1,
+                        modal: Modal::AmountInput,
                     };
                 }
                 view::ActiveSendMessage::History => {
@@ -366,9 +366,9 @@ impl State for ActiveSend {
                         self.input_type = Some(input_type);
                     }
                 }
-                view::ActiveSendMessage::SendPopupAmountEdited(v) => {
+                view::ActiveSendMessage::PopupMessage(SendPopupMessage::AmountEdited(v)) => {
                     if let ActiveSendFlowState::Main {
-                        modal: Modal::Step1,
+                        modal: Modal::AmountInput,
                     } = &mut self.flow_state
                     {
                         self.amount_input.value = v.clone();
@@ -411,17 +411,17 @@ impl State for ActiveSend {
                         }
                     }
                 }
-                view::ActiveSendMessage::SendPopupCommentEdited(comment) => {
+                view::ActiveSendMessage::PopupMessage(SendPopupMessage::CommentEdited(comment)) => {
                     if let ActiveSendFlowState::Main {
-                        modal: Modal::Step1,
+                        modal: Modal::AmountInput,
                     } = &mut self.flow_state
                     {
                         self.comment = Some(comment);
                     }
                 }
-                view::ActiveSendMessage::SendPopupFiatConvert => {
+                view::ActiveSendMessage::PopupMessage(SendPopupMessage::FiatConvert) => {
                     if let ActiveSendFlowState::Main { modal } = &self.flow_state {
-                        if let Modal::Step1 = modal {
+                        if let Modal::AmountInput = modal {
                             // Determine default currencies
                             use crate::services::fiat::Currency;
                             let fiat_currency = cache
@@ -443,9 +443,9 @@ impl State for ActiveSend {
                                 [fiat_currency, Currency::USD, Currency::EUR, Currency::GBP]
                             };
 
-                            // Transition to Step 2 - Fiat conversion with empty converters initially
+                            // Transition to Fiat Input with empty converters initially
                             self.flow_state = ActiveSendFlowState::Main {
-                                modal: Modal::Step2Fiat {
+                                modal: Modal::FiatInput {
                                     fiat_input: form::Value::default(),
                                     currencies,
                                     selected_currency: fiat_currency,
@@ -453,7 +453,6 @@ impl State for ActiveSend {
                                 },
                             };
 
-                            // Fetch prices for all 4 currencies
                             let price_source = cache
                                 .fiat_price
                                 .as_ref()
@@ -476,7 +475,6 @@ impl State for ActiveSend {
 
                                     let mut converters = std::collections::HashMap::new();
 
-                                    // Execute all tasks concurrently
                                     for task in tasks {
                                         let (currency, price) = task.await;
                                         if let Ok(converter) =
@@ -490,8 +488,8 @@ impl State for ActiveSend {
                                 },
                                 |converters| {
                                     Message::View(view::Message::ActiveSend(
-                                        view::ActiveSendMessage::SendPopupFiatPricesLoaded(
-                                            converters,
+                                        view::ActiveSendMessage::PopupMessage(
+                                            SendPopupMessage::FiatPricesLoaded(converters),
                                         ),
                                     ))
                                 },
@@ -499,10 +497,12 @@ impl State for ActiveSend {
                         }
                     }
                 }
-                view::ActiveSendMessage::SendPopupFiatInputEdited(fiat_input) => {
+                view::ActiveSendMessage::PopupMessage(SendPopupMessage::FiatInputEdited(
+                    fiat_input,
+                )) => {
                     if let ActiveSendFlowState::Main {
                         modal:
-                            Modal::Step2Fiat {
+                            Modal::FiatInput {
                                 fiat_input: current_input,
                                 selected_currency,
                                 converters,
@@ -559,10 +559,12 @@ impl State for ActiveSend {
                         }
                     }
                 }
-                view::ActiveSendMessage::SendPopupFiatCurrencySelected(currency) => {
+                view::ActiveSendMessage::PopupMessage(SendPopupMessage::FiatCurrencySelected(
+                    currency,
+                )) => {
                     if let ActiveSendFlowState::Main {
                         modal:
-                            Modal::Step2Fiat {
+                            Modal::FiatInput {
                                 selected_currency, ..
                             },
                     } = &mut self.flow_state
@@ -570,10 +572,12 @@ impl State for ActiveSend {
                         *selected_currency = currency;
                     }
                 }
-                view::ActiveSendMessage::SendPopupFiatPricesLoaded(converters) => {
+                view::ActiveSendMessage::PopupMessage(SendPopupMessage::FiatPricesLoaded(
+                    converters,
+                )) => {
                     if let ActiveSendFlowState::Main {
                         modal:
-                            Modal::Step2Fiat {
+                            Modal::FiatInput {
                                 converters: modal_converters,
                                 ..
                             },
@@ -582,9 +586,9 @@ impl State for ActiveSend {
                         *modal_converters = converters;
                     }
                 }
-                view::ActiveSendMessage::SendPopupFiatDone => {
+                view::ActiveSendMessage::PopupMessage(SendPopupMessage::FiatDone) => {
                     if let ActiveSendFlowState::Main { modal } = &self.flow_state {
-                        if let Modal::Step2Fiat {
+                        if let Modal::FiatInput {
                             fiat_input,
                             selected_currency,
                             converters,
@@ -633,17 +637,15 @@ impl State for ActiveSend {
                                 }
                             }
 
-                            // Go back to Step1
                             self.flow_state = ActiveSendFlowState::Main {
-                                modal: Modal::Step1,
+                                modal: Modal::AmountInput,
                             };
                         }
                     }
                 }
-                view::ActiveSendMessage::SendPopupDone => {
+                view::ActiveSendMessage::PopupMessage(SendPopupMessage::Done) => {
                     if let ActiveSendFlowState::Main { modal } = &self.flow_state {
-                        if let Modal::Step1 = modal {
-                            // Prepare the send request
+                        if let Modal::AmountInput = modal {
                             if let Some(input_type) = &self.input_type {
                                 let destination = match input_type {
                                     InputType::Bolt11 { invoice } => invoice.bolt11.clone(),
@@ -657,8 +659,6 @@ impl State for ActiveSend {
                                         return Task::none();
                                     }
                                 };
-
-                                log::error!("DESTINATION: {}", destination.clone());
 
                                 let breez_client = self.breez_client.clone();
                                 let amount_sat = self.amount.to_sat();
@@ -698,7 +698,7 @@ impl State for ActiveSend {
                     self.prepare_response = Some(prepare_response);
                     self.flow_state = ActiveSendFlowState::FinalCheck;
                 }
-                view::ActiveSendMessage::SendPopupClose => {
+                view::ActiveSendMessage::PopupMessage(SendPopupMessage::Close) => {
                     self.flow_state = ActiveSendFlowState::Main { modal: Modal::None };
                     self.amount = Amount::ZERO;
                     self.limits = None;
@@ -710,15 +710,12 @@ impl State for ActiveSend {
                 }
                 view::ActiveSendMessage::ConfirmSend => {
                     if let ActiveSendFlowState::FinalCheck = &self.flow_state {
-                        // Prevent double-clicking
                         if self.is_sending {
                             return Task::none();
                         }
 
-                        // Set sending flag
                         self.is_sending = true;
 
-                        // Send the payment using the prepare_response
                         if let Some(prepare_response) = self.prepare_response.clone() {
                             let breez_client = self.breez_client.clone();
                             let comment = self.comment.clone();
@@ -754,14 +751,11 @@ impl State for ActiveSend {
                     }
                 }
                 view::ActiveSendMessage::SendComplete => {
-                    // Payment sent successfully - transition to sent page
                     self.flow_state = ActiveSendFlowState::Sent;
-                    // Reset prepare response and sending flag
                     self.prepare_response = None;
                     self.is_sending = false;
                 }
                 view::ActiveSendMessage::BackToHome => {
-                    // Go back to main send page
                     self.input = form::Value::default();
                     self.amount = Amount::ZERO;
                     self.amount_input = form::Value::default();
@@ -776,9 +770,9 @@ impl State for ActiveSend {
                 view::ActiveSendMessage::LimitsUpdated { min_sat, max_sat } => {
                     self.limits = Some((min_sat, max_sat));
                 }
-                view::ActiveSendMessage::SendPopupFiatClose => {
+                view::ActiveSendMessage::PopupMessage(SendPopupMessage::FiatClose) => {
                     self.flow_state = ActiveSendFlowState::Main {
-                        modal: Modal::Step1,
+                        modal: Modal::AmountInput,
                     }
                 }
             }

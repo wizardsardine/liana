@@ -245,21 +245,7 @@ pub enum ActiveSendMessage {
     Error(String),
     ClearError,
     // Send flow popup messages
-    SendPopupAmountEdited(String),
-    SendPopupCommentEdited(String),
-    SendPopupFiatConvert,
-    SendPopupFiatInputEdited(String),
-    SendPopupFiatCurrencySelected(crate::services::fiat::Currency),
-    SendPopupFiatPricesLoaded(
-        std::collections::HashMap<
-            crate::services::fiat::Currency,
-            crate::app::view::FiatAmountConverter,
-        >,
-    ),
-    SendPopupFiatDone,
-    SendPopupFiatClose,
-    SendPopupDone,
-    SendPopupClose,
+    PopupMessage(SendPopupMessage),
     PrepareResponseReceived(breez_sdk_liquid::prelude::PrepareSendResponse),
     ConfirmSend,
     SendComplete,
@@ -268,6 +254,25 @@ pub enum ActiveSendMessage {
         min_sat: u64,
         max_sat: u64,
     },
+}
+
+#[derive(Debug, Clone)]
+pub enum SendPopupMessage {
+    AmountEdited(String),
+    CommentEdited(String),
+    FiatConvert,
+    FiatInputEdited(String),
+    FiatCurrencySelected(crate::services::fiat::Currency),
+    FiatPricesLoaded(
+        std::collections::HashMap<
+            crate::services::fiat::Currency,
+            crate::app::view::FiatAmountConverter,
+        >,
+    ),
+    FiatDone,
+    FiatClose,
+    Done,
+    Close,
 }
 
 #[derive(Debug, Clone)]
