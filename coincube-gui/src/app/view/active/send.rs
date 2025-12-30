@@ -1,4 +1,4 @@
-use breez_sdk_liquid::model::PaymentState;
+use breez_sdk_liquid::{model::PaymentState, InputType};
 use coincube_core::miniscript::bitcoin::Amount;
 use coincube_ui::{
     color,
@@ -35,6 +35,7 @@ pub fn active_send_with_flow<'a>(
     is_sending: bool,
     menu: &'a Menu,
     cache: &'a Cache,
+    input_type: &'a Option<InputType>,
 ) -> Element<'a, Message> {
     let base_content = match flow_state {
         ActiveSendFlowState::Main { modal } => {
@@ -43,6 +44,7 @@ pub fn active_send_with_flow<'a>(
                 fiat_converter.clone(),
                 recent_transaction,
                 input,
+                input_type,
             )
             .map(Message::ActiveSend);
 
@@ -128,6 +130,7 @@ pub fn active_send_view<'a>(
     fiat_converter: Option<FiatAmountConverter>,
     recent_transaction: &Vec<RecentTransaction>,
     input: &'a form::Value<String>,
+    input_type: &'a Option<InputType>,
 ) -> Element<'a, ActiveSendMessage> {
     let mut content = Column::new()
         .spacing(10)
@@ -303,11 +306,14 @@ pub fn active_send_view<'a>(
                                 .align_x(Alignment::Center)
                                 .align_y(Alignment::Center),
                         )
-                        .on_press_maybe(if input.valid && !input.value.trim().is_empty() {
-                            Some(ActiveSendMessage::Send)
-                        } else {
-                            None
-                        })
+                        .on_press_maybe(
+                            if input.valid && !input.value.trim().is_empty() && input_type.is_some()
+                            {
+                                Some(ActiveSendMessage::Send)
+                            } else {
+                                None
+                            },
+                        )
                         .width(Length::Fixed(50.0))
                         .height(Length::Fixed(50.0))
                         .style(theme::button::primary),
@@ -845,9 +851,9 @@ pub fn sent_page<'a>(
                     Column::new()
                         .width(Length::Shrink)
                         .align_x(Alignment::Center)
-                        .push(h3("Transaction complete!"))
+                        .push(h3("Transaction complete!")),
                 )
-                .push(Space::new().width(Length::Fill))
+                .push(Space::new().width(Length::Fill)),
         )
         .push(
             Row::new()
@@ -864,7 +870,7 @@ pub fn sent_page<'a>(
                                 .font(iced::Font {
                                     style: iced::font::Style::Italic,
                                     ..Default::default()
-                                })
+                                }),
                         )
                         .push(
                             text("has been sent successfully.")
@@ -872,10 +878,10 @@ pub fn sent_page<'a>(
                                 .font(iced::Font {
                                     style: iced::font::Style::Italic,
                                     ..Default::default()
-                                })
-                        )
+                                }),
+                        ),
                 )
-                .push(Space::new().width(Length::Fill))
+                .push(Space::new().width(Length::Fill)),
         )
         .push(Space::new().height(Length::Fixed(20.0)))
         .push(
@@ -884,9 +890,11 @@ pub fn sent_page<'a>(
                 .align_y(Alignment::Center)
                 .push(Space::new().width(Length::Fill))
                 .push(
-                    button::primary(None, "Back").width(Length::Fixed(150.0)).on_press(ActiveSendMessage::BackToHome)
+                    button::primary(None, "Back")
+                        .width(Length::Fixed(150.0))
+                        .on_press(ActiveSendMessage::BackToHome),
                 )
-                .push(Space::new().width(Length::Fill))
+                .push(Space::new().width(Length::Fill)),
         )
         .into()
 }

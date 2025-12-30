@@ -268,7 +268,6 @@ pub enum ActiveSendMessage {
         min_sat: u64,
         max_sat: u64,
     },
-    None,
 }
 
 #[derive(Debug, Clone)]

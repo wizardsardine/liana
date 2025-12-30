@@ -142,6 +142,7 @@ impl State for ActiveSend {
             self.is_sending,
             menu,
             cache,
+            &self.input_type,
         )
     }
 
@@ -344,7 +345,7 @@ impl State for ActiveSend {
                 view::ActiveSendMessage::Error(err) => {
                     self.error = Some(err);
                     self.is_sending = false; // Reset sending flag on error
-                    // Auto-dismiss error after 5 seconds
+                                             // Auto-dismiss error after 5 seconds
                     return Task::perform(
                         async {
                             tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
@@ -775,7 +776,6 @@ impl State for ActiveSend {
                 view::ActiveSendMessage::LimitsUpdated { min_sat, max_sat } => {
                     self.limits = Some((min_sat, max_sat));
                 }
-                view::ActiveSendMessage::None => {}
                 view::ActiveSendMessage::SendPopupFiatClose => {
                     self.flow_state = ActiveSendFlowState::Main {
                         modal: Modal::Step1,
