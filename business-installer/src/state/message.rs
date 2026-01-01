@@ -56,6 +56,8 @@ pub enum Msg {
     TemplateUpdateThreshold(String),
     TemplateUpdateTimelock(String),
     TemplateUpdateTimelockUnit(crate::state::views::path::TimelockUnit),
+    TemplateLock,   // WSManager locks template (Draft → Locked)
+    TemplateUnlock, // WSManager unlocks template (Locked → Draft)
     TemplateValidate,
 
     // Navigation

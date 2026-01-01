@@ -36,12 +36,15 @@ fn derive_user_role(wallet: &Wallet, current_user_email: &str) -> UserRole {
 }
 
 /// Check if a wallet is accessible to the current user
-/// Participants cannot access Draft (Created/Drafted) wallets
+/// Participants cannot access Draft (Created/Drafted/Locked) wallets
 fn is_wallet_accessible(wallet: &Wallet, current_user_email: &str) -> bool {
     let role = derive_user_role(wallet, current_user_email);
-    // Participants cannot access Draft wallets
+    // Participants cannot access Draft or Locked wallets
     if matches!(role, UserRole::Participant)
-        && matches!(wallet.status, WalletStatus::Created | WalletStatus::Drafted)
+        && matches!(
+            wallet.status,
+            WalletStatus::Created | WalletStatus::Drafted | WalletStatus::Locked
+        )
     {
         return false;
     }

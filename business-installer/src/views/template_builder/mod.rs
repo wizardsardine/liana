@@ -3,7 +3,7 @@ use crate::{
     state::{message::Msg, State},
 };
 use iced::{Alignment, Length};
-use liana_connect::models::UserRole;
+use liana_connect::models::{UserRole, WalletStatus};
 use liana_ui::{component::button, icon, widget::*};
 
 use super::layout_with_scrollable_list;
@@ -19,30 +19,50 @@ pub fn template_builder_view(state: &State) -> Element<'_, Msg> {
     let is_ws_manager = matches!(state.app.current_user_role, Some(UserRole::WSManager));
     let is_owner = matches!(state.app.current_user_role, Some(UserRole::Owner));
 
+    // Get current wallet status
+    let wallet_status = state
+        .app
+        .selected_wallet
+        .and_then(|id| state.backend.get_wallet(id))
+        .map(|w| w.status.clone());
+
+    let is_draft = matches!(
+        wallet_status,
+        Some(WalletStatus::Created) | Some(WalletStatus::Drafted)
+    );
+    let is_locked = matches!(wallet_status, Some(WalletStatus::Locked));
+
     // Template visualization as scrollable content
     let visualization = template_visualization(state);
 
-    // Action buttons row (fixed at bottom) - role-based
+    // Action buttons row (fixed at bottom) - role-based and status-based
     let mut buttons_row = Row::new().spacing(20).align_y(Alignment::Center);
 
-    // WSManager: Show "Manage Keys" button, hide "Validate Template"
-    if is_ws_manager {
-        buttons_row = buttons_row.push(
-            button::secondary(Some(icon::key_icon()), "Manage Keys").on_press(Msg::NavigateToKeys),
-        );
-    }
-
-    // Owner: Show both "Manage Keys" and "Validate Template" buttons
-    if is_owner {
+    // WSManager on Draft: "Manage Keys" + "Lock Template" (if valid)
+    if is_ws_manager && is_draft {
         buttons_row = buttons_row.push(
             button::secondary(Some(icon::key_icon()), "Manage Keys").on_press(Msg::NavigateToKeys),
         );
         let is_valid = state.is_template_valid();
-        let validate_button = if is_valid {
-            button::primary(None, "Validate Template").on_press(Msg::TemplateValidate)
+        let lock_button = if is_valid {
+            button::primary(None, "Lock Template").on_press(Msg::TemplateLock)
         } else {
-            button::primary(None, "Validate Template")
+            button::primary(None, "Lock Template")
         };
+        buttons_row = buttons_row.push(lock_button);
+    }
+
+    // WSManager on Locked: "Unlock" button
+    if is_ws_manager && is_locked {
+        buttons_row = buttons_row.push(
+            button::secondary(None, "Unlock").on_press(Msg::TemplateUnlock),
+        );
+    }
+
+    // Owner on Locked: "Validate Template" button
+    if is_owner && is_locked {
+        let validate_button =
+            button::primary(None, "Validate Template").on_press(Msg::TemplateValidate);
         buttons_row = buttons_row.push(validate_button);
     }
 

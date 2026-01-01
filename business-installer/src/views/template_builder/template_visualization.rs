@@ -1,4 +1,5 @@
 use crate::{
+    backend::Backend,
     state::{message::Msg, State},
     views::format_last_edit_info,
 };
@@ -9,7 +10,7 @@ use iced::{
     },
     Alignment, Background, Border, Length,
 };
-use liana_connect::models::UserRole;
+use liana_connect::models::{UserRole, WalletStatus};
 use liana_ui::{color, component::text, icon, theme::Theme, widget::*};
 use std::collections::BTreeMap;
 
@@ -315,8 +316,20 @@ pub fn template_visualization(state: &State) -> Element<'static, Msg> {
     let keys = &state.app.keys;
     let current_user_email_lower = state.views.login.email.form.value.to_lowercase();
 
-    // Determine if user can edit (WSManager only)
-    let is_editable = matches!(state.app.current_user_role, Some(UserRole::WSManager));
+    // Get current wallet status
+    let wallet_status = state
+        .app
+        .selected_wallet
+        .and_then(|id| state.backend.get_wallet(id))
+        .map(|w| w.status.clone());
+
+    // Determine if user can edit: WSManager only, and only when status is Draft
+    let is_draft = matches!(
+        wallet_status,
+        Some(WalletStatus::Created) | Some(WalletStatus::Drafted)
+    );
+    let is_editable =
+        matches!(state.app.current_user_role, Some(UserRole::WSManager)) && is_draft;
 
     // Total count includes primary + all secondary paths
     let total_count = 1 + secondary_paths.len();

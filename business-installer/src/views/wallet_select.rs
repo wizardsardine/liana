@@ -48,6 +48,12 @@ fn status_badge(status: &WalletStatus) -> Element<'static, Msg> {
             .center_x(STATUS_BADGE_WIDTH)
             .style(theme::pill::simple)
             .into(),
+        WalletStatus::Locked => Container::new(text::caption("Locked"))
+            .padding([4, 12])
+            .width(STATUS_BADGE_WIDTH)
+            .center_x(STATUS_BADGE_WIDTH)
+            .style(theme::pill::simple)
+            .into(),
         WalletStatus::Validated => Container::new(text::caption("Validated"))
             .padding([4, 12])
             .width(STATUS_BADGE_WIDTH)
@@ -68,12 +74,13 @@ fn role_label(role: &UserRole) -> &'static str {
 }
 
 /// Get sort priority for wallet status (lower = shown first)
-/// Order: Draft (0) -> Validated (1) -> Finalized (2)
+/// Order: Draft (0) -> Locked (1) -> Validated (2) -> Finalized (3)
 fn status_sort_priority(status: &WalletStatus) -> u8 {
     match status {
         WalletStatus::Created | WalletStatus::Drafted => 0,
-        WalletStatus::Validated => 1,
-        WalletStatus::Finalized => 2,
+        WalletStatus::Locked => 1,
+        WalletStatus::Validated => 2,
+        WalletStatus::Finalized => 3,
     }
 }
 
@@ -263,10 +270,12 @@ pub fn wallet_select_view(state: &State) -> Element<'_, Msg> {
                     .filter_map(|(id, wallet)| {
                         let role = derive_user_role(wallet, current_user_email);
 
-                        // Participants should NOT see Draft wallets
-                        let is_draft =
-                            matches!(wallet.status, WalletStatus::Created | WalletStatus::Drafted);
-                        if is_draft && role == UserRole::Participant {
+                        // Participants should NOT see Draft or Locked wallets
+                        let is_draft_or_locked = matches!(
+                            wallet.status,
+                            WalletStatus::Created | WalletStatus::Drafted | WalletStatus::Locked
+                        );
+                        if is_draft_or_locked && role == UserRole::Participant {
                             return None; // Skip this wallet for participants
                         }
 

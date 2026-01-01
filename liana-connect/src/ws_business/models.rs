@@ -17,6 +17,7 @@ use uuid::Uuid;
 pub enum WalletStatus {
     Created,   // Empty
     Drafted,   // Draft by WS manager
+    Locked,    // Locked by WS manager, ready for owner validation
     Validated, // Policy validated by owner, keys metadata not yet completed
     Finalized, // All key metadata filled, ready for prod
 }
@@ -26,6 +27,7 @@ impl WalletStatus {
         match self {
             WalletStatus::Created => "Created",
             WalletStatus::Drafted => "Drafted",
+            WalletStatus::Locked => "Locked",
             WalletStatus::Validated => "Validated",
             WalletStatus::Finalized => "Finalized",
         }
@@ -36,6 +38,7 @@ impl WalletStatus {
         match s {
             "Created" => Some(WalletStatus::Created),
             "Drafted" => Some(WalletStatus::Drafted),
+            "Locked" => Some(WalletStatus::Locked),
             "Validated" => Some(WalletStatus::Validated),
             "Finalized" => Some(WalletStatus::Finalized),
             _ => None,

@@ -527,6 +527,7 @@ user modifies the wallet).
 **Note:** The `status` field can be one of the following values:
 - `"Created"`: Empty wallet
 - `"Drafted"`: Draft by WS manager
+- `"Locked"`: Locked by WS manager, ready for owner validation
 - `"Validated"`: Policy validated by owner, keys metadata not yet completed
 - `"Finalized"`: All key metadata filled, ready for production
 

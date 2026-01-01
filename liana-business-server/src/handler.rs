@@ -157,21 +157,15 @@ fn handle_edit_wallet(state: &ServerState, mut wallet: Wallet, editor_id: Uuid) 
         }
     };
 
-    // Finalized wallets are immutable
-    if existing.status == WalletStatus::Finalized {
-        return Response::Error {
-            error: WssError {
-                code: "ACCESS_DENIED".to_string(),
-                message: "Finalized wallets cannot be modified".to_string(),
-                request_id: None,
-            },
-        };
-    }
+    // Get editor's role for permission checks
+    let editor_role = {
+        let users = state.users.lock().unwrap();
+        users.get(&editor_id).map(|u| u.role.clone())
+    };
 
-    // Validated wallets: template is locked
-    if existing.status == WalletStatus::Validated {
-        // Check if template changed
-        let template_changed = match (&existing.template, &wallet.template) {
+    // Helper: check if template changed
+    let template_changed = || -> bool {
+        match (&existing.template, &wallet.template) {
             (Some(old), Some(new)) => {
                 old.keys != new.keys
                     || old.primary_path != new.primary_path
@@ -179,13 +173,111 @@ fn handle_edit_wallet(state: &ServerState, mut wallet: Wallet, editor_id: Uuid) 
             }
             (None, Some(_)) | (Some(_), None) => true,
             (None, None) => false,
-        };
+        }
+    };
 
-        if template_changed {
+    // Role-based permission checks based on current wallet status
+    match existing.status {
+        WalletStatus::Created | WalletStatus::Drafted => {
+            // Only WSManager can edit or lock
+            if editor_role != Some(UserRole::WSManager) {
+                return Response::Error {
+                    error: WssError {
+                        code: "ACCESS_DENIED".to_string(),
+                        message: "Only WSManager can edit draft wallets".to_string(),
+                        request_id: None,
+                    },
+                };
+            }
+            // WSManager can: edit template, change status to Locked (or keep as Drafted)
+            if wallet.status != WalletStatus::Created
+                && wallet.status != WalletStatus::Drafted
+                && wallet.status != WalletStatus::Locked
+            {
+                return Response::Error {
+                    error: WssError {
+                        code: "ACCESS_DENIED".to_string(),
+                        message: "Invalid status transition from draft".to_string(),
+                        request_id: None,
+                    },
+                };
+            }
+        }
+        WalletStatus::Locked => {
+            // WSManager can: unlock (→Drafted) without template changes
+            // Owner can: validate (→Validated) without template changes
+            match editor_role {
+                Some(UserRole::WSManager) => {
+                    // WSManager can only unlock (change status to Drafted)
+                    if wallet.status != WalletStatus::Drafted {
+                        return Response::Error {
+                            error: WssError {
+                                code: "ACCESS_DENIED".to_string(),
+                                message: "WSManager can only unlock (revert to Draft) a locked wallet".to_string(),
+                                request_id: None,
+                            },
+                        };
+                    }
+                    if template_changed() {
+                        return Response::Error {
+                            error: WssError {
+                                code: "ACCESS_DENIED".to_string(),
+                                message: "Template cannot be modified when unlocking".to_string(),
+                                request_id: None,
+                            },
+                        };
+                    }
+                }
+                Some(UserRole::Owner) => {
+                    // Owner can only validate (change status to Validated)
+                    if wallet.status != WalletStatus::Validated {
+                        return Response::Error {
+                            error: WssError {
+                                code: "ACCESS_DENIED".to_string(),
+                                message: "Owner can only validate a locked wallet".to_string(),
+                                request_id: None,
+                            },
+                        };
+                    }
+                    if template_changed() {
+                        return Response::Error {
+                            error: WssError {
+                                code: "ACCESS_DENIED".to_string(),
+                                message: "Template cannot be modified during validation".to_string(),
+                                request_id: None,
+                            },
+                        };
+                    }
+                }
+                _ => {
+                    return Response::Error {
+                        error: WssError {
+                            code: "ACCESS_DENIED".to_string(),
+                            message: "Only WSManager or Owner can modify a locked wallet".to_string(),
+                            request_id: None,
+                        },
+                    };
+                }
+            }
+        }
+        WalletStatus::Validated => {
+            // Template is locked, only xpub edits allowed (via edit_xpub endpoint)
+            if template_changed() {
+                return Response::Error {
+                    error: WssError {
+                        code: "ACCESS_DENIED".to_string(),
+                        message: "Template cannot be modified after validation".to_string(),
+                        request_id: None,
+                    },
+                };
+            }
+        }
+        WalletStatus::Finalized => {
+            // Finalized wallets are immutable
             return Response::Error {
                 error: WssError {
                     code: "ACCESS_DENIED".to_string(),
-                    message: "Template cannot be modified after validation".to_string(),
+                    message: "Finalized wallets cannot be modified".to_string(),
                     request_id: None,
                 },
             };
@@ -288,7 +380,16 @@ fn handle_edit_xpub(
     let timestamp = now_timestamp();
     let mut wallets = state.wallets.lock().unwrap();
     if let Some(wallet) = wallets.get_mut(&wallet_id) {
-        // Finalized wallets are immutable
+        // Locked and Finalized wallets cannot have xpub edits
+        if wallet.status == WalletStatus::Locked {
+            return Response::Error {
+                error: WssError {
+                    code: "ACCESS_DENIED".to_string(),
+                    message: "Locked wallets cannot be modified".to_string(),
+                    request_id: None,
+                },
+            };
+        }
         if wallet.status == WalletStatus::Finalized {
             return Response::Error {
                 error: WssError {

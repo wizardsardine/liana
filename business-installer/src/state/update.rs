@@ -90,6 +90,8 @@ impl State {
             Msg::TemplateEditPath(primary, i) => self.on_template_edit_path(primary, i),
             Msg::TemplateNewPathModal => self.on_template_new_path_modal(),
             Msg::TemplateSavePath => self.on_template_save_path(),
+            Msg::TemplateLock => self.on_template_lock(),
+            Msg::TemplateUnlock => self.on_template_unlock(),
             Msg::TemplateValidate => self.on_template_validate(),
 
             // Navigation
@@ -263,12 +265,14 @@ impl State {
 
         // Check access based on role + status
         if let (Some(status), Some(role)) = (&wallet_status, &user_role) {
-            if let (WalletStatus::Created | WalletStatus::Drafted, UserRole::Participant) =
-                (status, role)
+            if let (
+                WalletStatus::Created | WalletStatus::Drafted | WalletStatus::Locked,
+                UserRole::Participant,
+            ) = (status, role)
             {
                 self.on_warning_show_modal(
                     "Access Denied",
-                    "Participants cannot access Draft wallets. Please wait for the wallet to be validated.",
+                    "Participants cannot access Draft or Locked wallets. Please wait for the wallet to be validated.",
                 );
                 return;
             }
@@ -305,8 +309,14 @@ impl State {
                 // exit_maybe() will return NextState::LoginLianaLite
                 self.app.exit_to_liana_lite = true;
             }
-            _ => {
-                // Draft + (WSManager|Owner) -> Edit Template
+            Some(WalletStatus::Created)
+            | Some(WalletStatus::Drafted)
+            | Some(WalletStatus::Locked) => {
+                // Draft/Locked + (WSManager|Owner) -> Edit Template
+                self.current_view = View::WalletEdit;
+            }
+            None => {
+                // Fallback -> Edit Template
                 self.current_view = View::WalletEdit;
             }
         }
@@ -368,11 +378,8 @@ impl State {
             }
         }
 
-        // Auto-save for WSManager/Owner: push changes to server with status = Drafted
-        if matches!(
-            self.app.current_user_role,
-            Some(UserRole::WSManager) | Some(UserRole::Owner)
-        ) {
+        // Auto-save for WSManager only: push changes to server with status = Drafted
+        if matches!(self.app.current_user_role, Some(UserRole::WSManager)) {
             if let Some(wallet) = self.build_wallet_from_app_state(WalletStatus::Drafted) {
                 self.backend.edit_wallet(wallet);
             }
@@ -411,11 +418,8 @@ impl State {
             }
             self.views.keys.edit_key = None;
 
-            // Auto-save for WSManager/Owner: push changes to server with status = Drafted
-            if matches!(
-                self.app.current_user_role,
-                Some(UserRole::WSManager) | Some(UserRole::Owner)
-            ) {
+            // Auto-save for WSManager only: push changes to server with status = Drafted
+            if matches!(self.app.current_user_role, Some(UserRole::WSManager)) {
                 if let Some(wallet) = self.build_wallet_from_app_state(WalletStatus::Drafted) {
                     self.backend.edit_wallet(wallet);
                 }
@@ -497,11 +501,8 @@ impl State {
         if path_index < self.app.secondary_paths.len() {
             self.app.secondary_paths.remove(path_index);
 
-            // Auto-save for WSManager/Owner: push changes to server with status = Drafted
-            if matches!(
-                self.app.current_user_role,
-                Some(UserRole::WSManager) | Some(UserRole::Owner)
-            ) {
+            // Auto-save for WSManager only: push changes to server with status = Drafted
+            if matches!(self.app.current_user_role, Some(UserRole::WSManager)) {
                 if let Some(wallet) = self.build_wallet_from_app_state(WalletStatus::Drafted) {
                     self.backend.edit_wallet(wallet);
                 }
@@ -655,15 +656,38 @@ impl State {
 
             self.views.paths.edit_path = None;
 
-            // Auto-save for WSManager/Owner: push changes to server with status = Drafted
-            if matches!(
-                self.app.current_user_role,
-                Some(UserRole::WSManager) | Some(UserRole::Owner)
-            ) {
+            // Auto-save for WSManager only: push changes to server with status = Drafted
+            if matches!(self.app.current_user_role, Some(UserRole::WSManager)) {
                 if let Some(wallet) = self.build_wallet_from_app_state(WalletStatus::Drafted) {
                     self.backend.edit_wallet(wallet);
                 }
             }
+        }
+    }
+
+    fn on_template_lock(&mut self) {
+        // Only WSManager can lock
+        if !matches!(self.app.current_user_role, Some(UserRole::WSManager)) {
+            return;
+        }
+
+        if self.is_template_valid() {
+            // Push template to server with status = Locked
+            if let Some(wallet) = self.build_wallet_from_app_state(WalletStatus::Locked) {
+                self.backend.edit_wallet(wallet);
+            }
+        }
+    }
+
+    fn on_template_unlock(&mut self) {
+        // Only WSManager can unlock
+        if !matches!(self.app.current_user_role, Some(UserRole::WSManager)) {
+            return;
+        }
+
+        // Push template to server with status = Drafted (unlocking)
+        if let Some(wallet) = self.build_wallet_from_app_state(WalletStatus::Drafted) {
+            self.backend.edit_wallet(wallet);
         }
     }
 
@@ -673,11 +697,20 @@ impl State {
             return;
         }
 
-        if self.is_template_valid() {
-            // Push template to server with status = Validated
-            if let Some(wallet) = self.build_wallet_from_app_state(WalletStatus::Validated) {
-                self.backend.edit_wallet(wallet);
-            }
+        // Owner can only validate Locked wallets
+        let wallet_status = self
+            .app
+            .selected_wallet
+            .and_then(|id| self.backend.get_wallet(id))
+            .map(|w| w.status.clone());
+
+        if !matches!(wallet_status, Some(WalletStatus::Locked)) {
+            return;
+        }
+
+        // Push template to server with status = Validated
+        if let Some(wallet) = self.build_wallet_from_app_state(WalletStatus::Validated) {
+            self.backend.edit_wallet(wallet);
         }
     }
 }
