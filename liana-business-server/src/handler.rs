@@ -282,7 +282,7 @@ fn handle_edit_xpub(
     state: &ServerState,
     wallet_id: Uuid,
     key_id: u8,
-    xpub: Option<miniscript::DescriptorPublicKey>,
+    xpub_json: Option<liana_connect::XpubJson>,
     editor_id: Uuid,
 ) -> Response {
     let timestamp = now_timestamp();
@@ -299,10 +299,42 @@ fn handle_edit_xpub(
             };
         }
 
+        // Parse xpub from JSON if provided
+        let xpub: Option<miniscript::DescriptorPublicKey> = match &xpub_json {
+            Some(json) => match json.value.parse() {
+                Ok(xpub) => Some(xpub),
+                Err(e) => {
+                    return Response::Error {
+                        error: WssError {
+                            code: "INVALID_XPUB".to_string(),
+                            message: format!("Invalid xpub format: {}", e),
+                            request_id: None,
+                        },
+                    };
+                }
+            },
+            None => None,
+        };
+
         // Update the xpub for the specified key
         if let Some(template) = &mut wallet.template {
             if let Some(key) = template.keys.get_mut(&key_id) {
                 key.xpub = xpub;
+                // Store xpub source info for audit
+                if let Some(ref json) = xpub_json {
+                    key.xpub_source = Some(json.source.clone());
+                    key.xpub_device_kind = json.device_kind.clone();
+                    key.xpub_device_fingerprint = json.device_fingerprint.clone();
+                    key.xpub_device_version = json.device_version.clone();
+                    key.xpub_file_name = json.file_name.clone();
+                } else {
+                    // Clear source info when xpub is cleared
+                    key.xpub_source = None;
+                    key.xpub_device_kind = None;
+                    key.xpub_device_fingerprint = None;
+                    key.xpub_device_version = None;
+                    key.xpub_file_name = None;
+                }
                 key.last_edited = Some(timestamp);
                 key.last_editor = Some(editor_id);
             }

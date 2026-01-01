@@ -33,6 +33,21 @@ pub enum ModalStep {
     Details,
 }
 
+/// Actual source of the xpub for audit (not the UI tab selection)
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum XpubInputSource {
+    /// Fetched from a hardware wallet device
+    Device {
+        kind: String,
+        fingerprint: String,
+        version: Option<String>,
+    },
+    /// Loaded from a file
+    File { name: String },
+    /// Pasted manually
+    Pasted,
+}
+
 /// State for the Xpub Entry modal
 #[derive(Debug, Clone)]
 pub struct XpubEntryModalState {
@@ -67,6 +82,9 @@ pub struct XpubEntryModalState {
 
     /// Network for validation (mainnet vs testnet)
     pub network: Network,
+
+    /// Actual source of the current xpub input (for audit)
+    pub input_source: Option<XpubInputSource>,
 }
 
 impl XpubEntryModalState {
@@ -98,6 +116,7 @@ impl XpubEntryModalState {
             step: ModalStep::default(),
             fetch_error: None,
             network,
+            input_source: None,
         }
     }
 

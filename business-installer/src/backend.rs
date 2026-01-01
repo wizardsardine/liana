@@ -1,8 +1,7 @@
 use crossbeam::channel;
 use iced::futures::Stream;
 use liana_connect::WssError;
-pub use liana_connect::{Org, OrgData, User, UserRole, Wallet, WalletStatus};
-use miniscript::DescriptorPublicKey;
+pub use liana_connect::{Org, OrgData, User, UserRole, Wallet, WalletStatus, XpubJson};
 use std::{
     collections::BTreeMap,
     pin::Pin,
@@ -89,7 +88,7 @@ pub trait Backend {
     fn edit_xpub(
         &mut self,
         wallet_id: Uuid,
-        xpub: Option<DescriptorPublicKey>,
+        xpub: Option<XpubJson>,
         key_id: u8);                                                     // -> Response::Wallet
 
     fn fetch_user(&mut self, id: Uuid);         // -> Response::User

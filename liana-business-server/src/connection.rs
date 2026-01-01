@@ -1,6 +1,5 @@
 use crossbeam::channel::{self, Receiver, Sender};
 use liana_connect::{ConnectedPayload, Request, Response, Wallet, WssError};
-use miniscript::DescriptorPublicKey;
 use serde_json::json;
 use std::net::TcpStream;
 use std::sync::Arc;
@@ -573,13 +572,11 @@ fn parse_request(msg_type: &str, payload: &serde_json::Value) -> Result<Request,
                 .parse()
                 .map_err(|e| format!("Invalid wallet UUID: {}", e))?;
             let key_id = payload["key_id"].as_u64().ok_or("Missing 'key_id' field")? as u8;
-            let xpub: Option<DescriptorPublicKey> = if payload["xpub"].is_null() {
+            let xpub: Option<liana_connect::XpubJson> = if payload["xpub"].is_null() {
                 None
             } else {
-                let xpub_str = payload["xpub"].as_str().ok_or("Invalid 'xpub' field")?;
                 Some(
-                    xpub_str
-                        .parse()
+                    serde_json::from_value(payload["xpub"].clone())
                         .map_err(|e| format!("Invalid xpub: {}", e))?,
                 )
             };

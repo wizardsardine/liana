@@ -18,7 +18,7 @@ use liana_gui::{
         ServiceConfig,
     },
 };
-use miniscript::{bitcoin::Network, DescriptorPublicKey};
+use miniscript::bitcoin::Network;
 use serde_json::json;
 use tracing::error;
 use tungstenite::{accept, Message as WsMessage};
@@ -28,7 +28,7 @@ use crate::{
     backend::{Backend, Error, Notification, Org, OrgData, User, Wallet},
     Message,
 };
-use liana_connect::{ConnectedPayload, OrgJson, Request, Response, UserJson, WalletJson};
+use liana_connect::{ConnectedPayload, OrgJson, Request, Response, UserJson, WalletJson, XpubJson};
 
 /// HTTP URL for liana-business-server REST API (auth endpoints)
 // pub const AUTH_API_URL: &str = "http://127.0.0.1:8099";
@@ -906,7 +906,10 @@ impl Backend for Client {
             let rt = tokio::runtime::Runtime::new().unwrap();
             let result = rt.block_on(async {
                 // Get service config
-                debug!("auth_request: fetching service config for network={:?}", network);
+                debug!(
+                    "auth_request: fetching service config for network={:?}",
+                    network
+                );
                 let config = match get_service_config_blocking(network) {
                     Ok(cfg) => {
                         debug!(
@@ -1142,7 +1145,7 @@ impl Backend for Client {
         }
     }
 
-    fn edit_xpub(&mut self, wallet_id: Uuid, xpub: Option<DescriptorPublicKey>, key_id: u8) {
+    fn edit_xpub(&mut self, wallet_id: Uuid, xpub: Option<XpubJson>, key_id: u8) {
         check_connection!(self);
 
         if let Some(sender) = &self.request_sender {

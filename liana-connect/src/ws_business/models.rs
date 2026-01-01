@@ -137,6 +137,16 @@ pub struct Key {
     pub email: String,
     pub key_type: KeyType,
     pub xpub: Option<DescriptorPublicKey>,
+    /// Source of the xpub: "device", "file", or "pasted"
+    pub xpub_source: Option<String>,
+    /// Device kind if xpub was fetched from a device
+    pub xpub_device_kind: Option<String>,
+    /// Device fingerprint if xpub was fetched from a device
+    pub xpub_device_fingerprint: Option<String>,
+    /// Device version if xpub was fetched from a device
+    pub xpub_device_version: Option<String>,
+    /// File name if xpub was loaded from a file
+    pub xpub_file_name: Option<String>,
     pub last_edited: Option<u64>,
     pub last_editor: Option<Uuid>,
 }

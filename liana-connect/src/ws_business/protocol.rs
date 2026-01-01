@@ -63,8 +63,30 @@ pub struct FetchWalletPayload {
 pub struct EditXpubPayload {
     pub wallet_id: String,
     pub key_id: u8,
+    /// Xpub data with source info (None to clear)
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub xpub: Option<String>,
+    pub xpub: Option<XpubJson>,
+}
+
+/// Xpub data bundled with source information for audit
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct XpubJson {
+    /// The extended public key string
+    pub value: String,
+    /// Source type: "device", "file", or "pasted"
+    pub source: String,
+    /// Device kind (e.g., "Ledger", "Trezor") - only for source="device"
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub device_kind: Option<String>,
+    /// Device fingerprint - only for source="device"
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub device_fingerprint: Option<String>,
+    /// Device firmware version - only for source="device"
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub device_version: Option<String>,
+    /// File name - only for source="file"
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub file_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -126,6 +148,16 @@ pub struct KeyJson {
     pub key_type_str: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub xpub: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub xpub_source: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub xpub_device_kind: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub xpub_device_fingerprint: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub xpub_device_version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub xpub_file_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_edited: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -406,6 +438,11 @@ impl TryFrom<KeyJson> for Key {
             email: json.email,
             key_type,
             xpub,
+            xpub_source: json.xpub_source,
+            xpub_device_kind: json.xpub_device_kind,
+            xpub_device_fingerprint: json.xpub_device_fingerprint,
+            xpub_device_version: json.xpub_device_version,
+            xpub_file_name: json.xpub_file_name,
             last_edited: json.last_edited,
             last_editor,
         })
@@ -509,6 +546,11 @@ impl From<&Key> for KeyJson {
             email: key.email.clone(),
             key_type_str: key.key_type.as_str().to_string(),
             xpub: key.xpub.as_ref().map(|x| x.to_string()),
+            xpub_source: key.xpub_source.clone(),
+            xpub_device_kind: key.xpub_device_kind.clone(),
+            xpub_device_fingerprint: key.xpub_device_fingerprint.clone(),
+            xpub_device_version: key.xpub_device_version.clone(),
+            xpub_file_name: key.xpub_file_name.clone(),
             last_edited: key.last_edited,
             last_editor: key.last_editor.map(|u| u.to_string()),
         }
@@ -567,7 +609,8 @@ pub enum Request {
     EditXpub {
         wallet_id: Uuid,
         key_id: u8,
-        xpub: Option<DescriptorPublicKey>,
+        /// Xpub with source info (None to clear)
+        xpub: Option<XpubJson>,
     },
     FetchUser {
         id: Uuid,
@@ -648,7 +691,7 @@ impl Request {
                 serde_json::to_value(EditXpubPayload {
                     wallet_id: wallet_id.to_string(),
                     key_id: *key_id,
-                    xpub: xpub.as_ref().map(|x| x.to_string()),
+                    xpub: xpub.clone(),
                 })
                 .expect("serialization must not fail"),
             ),

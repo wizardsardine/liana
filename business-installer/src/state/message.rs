@@ -84,8 +84,9 @@ pub enum Msg {
     ), // Fetch xpub from HW device
     XpubRetry,                             // Retry fetch after error
     XpubLoadFromFile,                      // Trigger file picker
-    XpubFileLoaded(Result<String, String>), // File content loaded
-    XpubPaste,                             // Paste xpub from clipboard
+    XpubFileLoaded(Result<(String, String), String>), // (content, filename) or error
+    XpubPaste,                             // Trigger paste from clipboard
+    XpubPasted(String),                    // Xpub pasted (with source tracking)
     XpubUpdateAccount(miniscript::bitcoin::bip32::ChildNumber), // Change account (triggers re-fetch)
     XpubSave,                              // Save xpub to backend
     XpubClear,                             // Clear xpub (send null to backend)

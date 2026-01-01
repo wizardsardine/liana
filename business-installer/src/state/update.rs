@@ -117,6 +117,7 @@ impl State {
             Msg::XpubLoadFromFile => return self.on_xpub_load_from_file(),
             Msg::XpubFileLoaded(result) => self.on_xpub_file_loaded(result),
             Msg::XpubPaste => return self.on_xpub_paste(),
+            Msg::XpubPasted(xpub) => self.on_xpub_pasted(xpub),
             Msg::XpubUpdateAccount(account) => return self.on_xpub_update_account(account),
             Msg::XpubSave => return self.on_xpub_save(),
             Msg::XpubClear => return self.on_xpub_clear(),
@@ -389,6 +390,11 @@ impl State {
                     email: modal_state.email.clone(),
                     key_type: modal_state.key_type,
                     xpub: None,
+                    xpub_source: None,
+                    xpub_device_kind: None,
+                    xpub_device_fingerprint: None,
+                    xpub_device_version: None,
+                    xpub_file_name: None,
                     last_edited: None,
                     last_editor: None,
                 };
@@ -1268,8 +1274,27 @@ impl State {
             SigningDeviceMsg::Update => {
                 // Device list changed - UI will redraw automatically with new state.hw content
             }
-            SigningDeviceMsg::XPub(fingerprint, path, xpub) => {
+            SigningDeviceMsg::XPub(_id, fingerprint, path, xpub) => {
                 // xpub fetch completed - populate input
+                // Look up device info for audit
+                let device_info = self.hw.list().values().find_map(|dev| {
+                    if dev.fingerprint() == Some(fingerprint) {
+                        let kind = format!("{:?}", dev.kind());
+                        let version = match dev {
+                            async_hwi::service::SigningDevice::Supported(s) => {
+                                s.version().map(|v| v.to_string())
+                            }
+                            async_hwi::service::SigningDevice::Unsupported { version, .. } => {
+                                version.clone().map(|v| v.to_string())
+                            }
+                            _ => None,
+                        };
+                        Some((kind, version))
+                    } else {
+                        None
+                    }
+                });
+
                 if let Some(modal) = self.views.xpub.modal_mut() {
                     modal.set_processing(false);
                     // Convert xpub to DescriptorPublicKey and populate input
@@ -1280,9 +1305,18 @@ impl State {
                         xkey: xpub,
                     });
                     modal.update_input(desc_xpub.to_string());
+                    // Set source for audit
+                    modal.input_source = Some(views::XpubInputSource::Device {
+                        kind: device_info
+                            .as_ref()
+                            .map(|(k, _): &(String, Option<String>)| k.clone())
+                            .unwrap_or_else(|| "Unknown".to_string()),
+                        fingerprint: fingerprint.to_string(),
+                        version: device_info.and_then(|(_, v)| v),
+                    });
                 }
             }
-            SigningDeviceMsg::Error(e) => {
+            SigningDeviceMsg::Error(_id, e) => {
                 // Show error in modal (use fetch_error for Details step)
                 if let Some(modal) = self.views.xpub.modal_mut() {
                     modal.set_processing(false);
@@ -1376,9 +1410,9 @@ impl State {
 
         // Find supported device with matching fingerprint
         let devices = self.hw.list();
-        let device = devices.values().find(|dev| {
-            dev.is_supported() && dev.fingerprint() == Some(fingerprint)
-        });
+        let device = devices
+            .values()
+            .find(|dev| dev.is_supported() && dev.fingerprint() == Some(fingerprint));
 
         match device {
             Some(SigningDevice::Supported(supported)) => {
@@ -1398,7 +1432,7 @@ impl State {
                 ]);
 
                 // Non-blocking! Result comes via SigningDeviceMsg::XPub
-                supported.get_extended_pubkey(&derivation_path);
+                supported.get_extended_pubkey((), &derivation_path);
             }
             Some(SigningDevice::Locked { .. }) => {
                 if let Some(modal) = self.views.xpub.modal_mut() {
@@ -1439,6 +1473,7 @@ impl State {
                     .await;
 
                 if let Some(handle) = file_handle {
+                    let filename = handle.file_name();
                     // Read the file content
                     match tokio::fs::read_to_string(handle.path()).await {
                         Ok(content) => {
@@ -1449,7 +1484,7 @@ impl State {
                                 .unwrap_or("")
                                 .trim()
                                 .to_string();
-                            Ok(xpub)
+                            Ok((xpub, filename))
                         }
                         Err(e) => Err(format!("Failed to read file: {}", e)),
                     }
@@ -1472,7 +1507,7 @@ impl State {
             |result| {
                 // Only send message if there was an actual error (non-empty)
                 match result {
-                    Ok(xpub) => Msg::XpubFileLoaded(Ok(xpub)),
+                    Ok((xpub, filename)) => Msg::XpubFileLoaded(Ok((xpub, filename))),
                     Err(e) if !e.is_empty() => Msg::XpubFileLoaded(Err(e)),
                     Err(_) => Msg::XpubFileLoaded(Err(String::new())), // User cancelled
                 }
@@ -1481,11 +1516,12 @@ impl State {
     }
 
     /// Handle file loaded result
-    fn on_xpub_file_loaded(&mut self, result: Result<String, String>) {
+    fn on_xpub_file_loaded(&mut self, result: Result<(String, String), String>) {
         if let Some(modal) = self.views.xpub.modal_mut() {
             match result {
-                Ok(content) => {
+                Ok((content, filename)) => {
                     modal.update_input(content);
+                    modal.input_source = Some(views::XpubInputSource::File { name: filename });
                 }
                 Err(error) if !error.is_empty() => {
                     // Only show error if it's not empty (empty means user cancelled)
@@ -1511,11 +1547,19 @@ impl State {
                     .unwrap_or("")
                     .trim()
                     .to_string();
-                Msg::XpubUpdateInput(xpub)
+                Msg::XpubPasted(xpub)
             } else {
                 Msg::XpubFileLoaded(Err("Clipboard is empty".to_string()))
             }
         })
+    }
+
+    /// Handle pasted xpub (sets source to Pasted)
+    fn on_xpub_pasted(&mut self, xpub: String) {
+        if let Some(modal) = self.views.xpub.modal_mut() {
+            modal.update_input(xpub);
+            modal.input_source = Some(views::XpubInputSource::Pasted);
+        }
     }
 
     /// Update derivation account for HW wallet - triggers re-fetch if in Details step
@@ -1539,20 +1583,54 @@ impl State {
 
     /// Save xpub to backend
     fn on_xpub_save(&mut self) -> Task<Msg> {
+        use crate::backend::XpubJson;
+
         // Validate and save xpub
         if let Some(modal) = &mut self.views.xpub.modal {
             match modal.validate() {
                 Ok(xpub) => {
                     let key_id = modal.key_id;
 
+                    // Build XpubJson with source info
+                    let xpub_json = {
+                        let (source, device_kind, device_fingerprint, device_version, file_name) =
+                            match &modal.input_source {
+                                Some(views::XpubInputSource::Device {
+                                    kind,
+                                    fingerprint,
+                                    version,
+                                }) => (
+                                    "device".to_string(),
+                                    Some(kind.clone()),
+                                    Some(fingerprint.clone()),
+                                    version.clone(),
+                                    None,
+                                ),
+                                Some(views::XpubInputSource::File { name }) => {
+                                    ("file".to_string(), None, None, None, Some(name.clone()))
+                                }
+                                Some(views::XpubInputSource::Pasted) | None => {
+                                    ("pasted".to_string(), None, None, None, None)
+                                }
+                            };
+                        XpubJson {
+                            value: xpub.to_string(),
+                            source,
+                            device_kind,
+                            device_fingerprint,
+                            device_version,
+                            file_name,
+                        }
+                    };
+
                     // Update local state
                     if let Some(key) = self.app.keys.get_mut(&key_id) {
-                        key.xpub = Some(xpub.clone());
+                        key.xpub = Some(xpub);
                     }
 
                     // Send to backend
                     if let Some(wallet_id) = self.app.selected_wallet {
-                        self.backend.edit_xpub(wallet_id, Some(xpub), key_id);
+                        self.backend.edit_xpub(wallet_id, Some(xpub_json), key_id);
                     }
 
                     // Close modal on success and stop HW listening
