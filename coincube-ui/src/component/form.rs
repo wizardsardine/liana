@@ -114,8 +114,15 @@ where
     {
         Self {
             input: text_input::TextInput::new(placeholder, &value.value).on_input(move |s| {
-                // Allow empty or valid f64 numbers with optional decimal point
-                if s.is_empty() || s.parse::<f64>().is_ok() || s.ends_with('.') || s == "0." {
+                // Allow empty, or valid non-negative decimal numbers (including trailing dot for typing)
+                let is_valid = s.is_empty() || {
+                    let trimmed = s.trim_end_matches('.');
+                    !s.starts_with('-')
+                        && (trimmed.is_empty() || trimmed.parse::<f64>().is_ok())
+                        && s.chars().all(|c| c.is_ascii_digit() || c == '.')
+                        && s.matches('.').count() <= 1
+                };
+                if is_valid {
                     on_change(s)
                 } else {
                     on_change(value.value.clone())

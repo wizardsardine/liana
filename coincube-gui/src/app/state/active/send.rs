@@ -168,27 +168,30 @@ impl State for ActiveSend {
                             ))
                         });
 
-                    let fetch_lightning_limits = Task::perform(
-                        async move { breez_clone.fetch_lightning_limits().await },
-                        |limits| {
-                            if let Ok(limits) = limits {
-                                Message::View(view::Message::ActiveSend(
-                                    view::ActiveSendMessage::LimitsUpdated {
-                                        min_sat: limits.send.min_sat,
-                                        max_sat: limits.send.max_sat,
-                                    },
-                                ))
-                            } else {
-                                Message::View(view::Message::ActiveSend(
-                                    view::ActiveSendMessage::Error(String::from(
-                                        "Couldn't fetch lightning limits",
-                                    )),
-                                ))
-                            }
-                        },
-                    );
-
-                    return Task::batch(vec![validate_input, fetch_lightning_limits]);
+                    // Fetch limits only if not already available
+                    if self.limits.is_none() {
+                        let fetch_lightning_limits = Task::perform(
+                            async move { breez_clone.fetch_lightning_limits().await },
+                            |limits| {
+                                if let Ok(limits) = limits {
+                                    Message::View(view::Message::ActiveSend(
+                                        view::ActiveSendMessage::LimitsUpdated {
+                                            min_sat: limits.send.min_sat,
+                                            max_sat: limits.send.max_sat,
+                                        },
+                                    ))
+                                } else {
+                                    Message::View(view::Message::ActiveSend(
+                                        view::ActiveSendMessage::Error(String::from(
+                                            "Couldn't fetch lightning limits",
+                                        )),
+                                    ))
+                                }
+                            },
+                        );
+                        return Task::batch(vec![validate_input, fetch_lightning_limits]);
+                    }
+                    return validate_input;
                 }
                 view::ActiveSendMessage::Send => {
                     let description = if let Some(input_type) = &self.input_type {
@@ -233,8 +236,10 @@ impl State for ActiveSend {
                                     if let breez_sdk_liquid::Amount::Bitcoin { amount_msat } =
                                         min_amount
                                     {
+                                        // convert from millisat to sat
+                                        let amount_sat = amount_msat / 1000;
                                         self.limits = Some((
-                                            std::cmp::max(min_limits, amount_msat),
+                                            std::cmp::max(min_limits, amount_sat),
                                             max_limits,
                                         ));
                                     }
@@ -345,7 +350,7 @@ impl State for ActiveSend {
                 view::ActiveSendMessage::Error(err) => {
                     self.error = Some(err);
                     self.is_sending = false; // Reset sending flag on error
-                                             // Auto-dismiss error after 5 seconds
+                                             // Auto-dismiss error after 10 seconds
                     return Task::perform(
                         async {
                             tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
@@ -362,9 +367,7 @@ impl State for ActiveSend {
                 }
                 view::ActiveSendMessage::InputValidated(input_type) => {
                     self.input.valid = input_type.is_some();
-                    if let Some(input_type) = input_type {
-                        self.input_type = Some(input_type);
-                    }
+                    self.input_type = input_type;
                 }
                 view::ActiveSendMessage::PopupMessage(SendPopupMessage::AmountEdited(v)) => {
                     if let ActiveSendFlowState::Main {

@@ -8,8 +8,8 @@ pub mod buysell;
 
 pub mod vault;
 
-pub use message::*;
 pub use active::*;
+pub use message::*;
 pub use vault::fiat::FiatAmountConverter;
 pub use vault::warning::warn;
 
