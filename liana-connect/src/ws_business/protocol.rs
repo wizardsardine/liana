@@ -14,8 +14,7 @@ use tungstenite::Message as WsMessage;
 use uuid::Uuid;
 
 use crate::ws_business::models::{
-    Key, KeyType, Org, PolicyTemplate, SpendingPath, Timelock, User, UserRole, Wallet,
-    WalletStatus,
+    Key, KeyType, Org, PolicyTemplate, SpendingPath, Timelock, User, UserRole, Wallet, WalletStatus,
 };
 
 // ============================================================================
@@ -127,6 +126,10 @@ pub struct KeyJson {
     pub key_type_str: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub xpub: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_edited: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_editor: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -222,7 +225,12 @@ impl std::error::Error for WssConversionError {}
 // ============================================================================
 
 /// Create a WebSocket message from protocol request data
-pub fn create_ws_request(msg_type: &str, token: &str, request_id: &str, payload: Value) -> WsMessage {
+pub fn create_ws_request(
+    msg_type: &str,
+    token: &str,
+    request_id: &str,
+    payload: Value,
+) -> WsMessage {
     let protocol_request = ProtocolRequest {
         msg_type: msg_type.to_string(),
         token: token.to_string(),
@@ -279,6 +287,8 @@ impl TryFrom<OrgJson> for Org {
             wallets,
             users,
             owners,
+            last_edited: None,
+            last_editor: None,
         })
     }
 }
@@ -303,6 +313,8 @@ impl TryFrom<UserJson> for User {
             email: json.email,
             orgs,
             role,
+            last_edited: None,
+            last_editor: None,
         })
     }
 }
@@ -325,6 +337,8 @@ impl TryFrom<WalletJson> for Wallet {
             email: json.owner_email,
             orgs: Vec::new(),
             role: UserRole::Owner,
+            last_edited: None,
+            last_editor: None,
         };
 
         let template = json.template.map(|t| t.try_into()).transpose()?;
@@ -336,6 +350,8 @@ impl TryFrom<WalletJson> for Wallet {
             id,
             status,
             template,
+            last_edited: None,
+            last_editor: None,
         })
     }
 }
@@ -378,6 +394,10 @@ impl TryFrom<KeyJson> for Key {
             .xpub
             .map(|x| DescriptorPublicKey::from_str(&x).map_err(|e| format!("Invalid xpub: {}", e)))
             .transpose()?;
+        let last_editor = json
+            .last_editor
+            .map(|s| Uuid::parse_str(&s).map_err(|e| format!("Invalid last_editor UUID: {}", e)))
+            .transpose()?;
 
         Ok(Key {
             id: json.id,
@@ -386,6 +406,8 @@ impl TryFrom<KeyJson> for Key {
             email: json.email,
             key_type,
             xpub,
+            last_edited: json.last_edited,
+            last_editor,
         })
     }
 }
@@ -398,6 +420,8 @@ impl TryFrom<SpendingPathJson> for SpendingPath {
             is_primary: json.is_primary,
             threshold_n: json.threshold_n,
             key_ids: json.key_ids,
+            last_edited: None,
+            last_editor: None,
         })
     }
 }
@@ -485,6 +509,8 @@ impl From<&Key> for KeyJson {
             email: key.email.clone(),
             key_type_str: key.key_type.as_str().to_string(),
             xpub: key.xpub.as_ref().map(|x| x.to_string()),
+            last_edited: key.last_edited,
+            last_editor: key.last_editor.map(|u| u.to_string()),
         }
     }
 }
@@ -519,6 +545,7 @@ pub enum Request {
     },
     Ping,
     Close,
+    GetServerTime,
     FetchOrg {
         id: Uuid,
     },
@@ -552,6 +579,7 @@ pub enum Request {
 pub enum Response {
     Connected { version: u8 },
     Pong,
+    ServerTime { timestamp: u64 },
     Org { org: OrgJson },
     Wallet { wallet: WalletJson },
     User { user: UserJson },
@@ -569,6 +597,7 @@ impl Request {
             ),
             Request::Ping => ("ping", serde_json::json!({})),
             Request::Close => ("close", serde_json::json!({})),
+            Request::GetServerTime => ("get_server_time", serde_json::json!({})),
             Request::FetchOrg { id } => (
                 "fetch_org",
                 serde_json::to_value(FetchOrgPayload { id: id.to_string() })
@@ -659,6 +688,15 @@ impl Response {
                 }
             }
             "pong" => Response::Pong,
+            "server_time" => {
+                let payload = protocol_response.payload.ok_or_else(|| {
+                    WssConversionError::DeserializationFailed("Missing payload".to_string())
+                })?;
+                let timestamp = payload["timestamp"].as_u64().ok_or_else(|| {
+                    WssConversionError::DeserializationFailed("Missing timestamp".to_string())
+                })?;
+                Response::ServerTime { timestamp }
+            }
             "org" => {
                 let payload: OrgJson =
                     serde_json::from_value(protocol_response.payload.ok_or_else(|| {

@@ -14,7 +14,7 @@ pub use template_builder::template_builder_view;
 pub use wallet_select::wallet_select_view;
 pub use xpub::xpub_view;
 
-use crate::state::message::Msg;
+use crate::{backend::Backend, state::message::Msg, state::State};
 use iced::{
     widget::{container, scrollable, Space},
     Alignment, Length,
@@ -24,6 +24,31 @@ use liana_ui::{
     icon, theme,
     widget::*,
 };
+use uuid::Uuid;
+
+/// Format last edit information as "Edited by [You|email] [relative_time]".
+/// Returns None if `last_edited` is None.
+pub fn format_last_edit_info(
+    last_edited: Option<u64>,
+    last_editor: Option<Uuid>,
+    state: &State,
+    current_user_email_lower: &str,
+) -> Option<String> {
+    last_edited.map(|ts| {
+        let relative_time = state.app.format_relative_time(ts);
+        let editor_name = last_editor
+            .and_then(|editor_id| state.backend.get_user(editor_id))
+            .map(|user| {
+                if user.email.to_lowercase() == current_user_email_lower {
+                    "You".to_string()
+                } else {
+                    user.email.clone()
+                }
+            })
+            .unwrap_or_else(|| "Unknown".to_string());
+        format!("Edited by {} {}", editor_name, relative_time)
+    })
+}
 
 const EMAIL_HEADER_SPACER: u16 = 30;
 

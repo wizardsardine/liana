@@ -135,12 +135,22 @@ impl Server {
         // Spawn HTTP auth server thread
         let auth_clone = Arc::clone(&self.auth);
         let server_url_clone = server_url.clone();
+        let http_state = ServerState {
+            orgs: Arc::clone(&self.state.orgs),
+            wallets: Arc::clone(&self.state.wallets),
+            users: Arc::clone(&self.state.users),
+        };
         thread::spawn(move || {
             for stream in auth_listener.incoming() {
                 match stream {
                     Ok(mut stream) => {
                         let auth_clone = Arc::clone(&auth_clone);
                         let server_url_clone = server_url_clone.clone();
+                        let state_clone = ServerState {
+                            orgs: Arc::clone(&http_state.orgs),
+                            wallets: Arc::clone(&http_state.wallets),
+                            users: Arc::clone(&http_state.users),
+                        };
 
                         thread::spawn(move || {
                             if let Some(req) = parse_http_request(&mut stream) {
@@ -152,6 +162,7 @@ impl Server {
                                     &req.body,
                                     &server_url_clone,
                                     &auth_clone,
+                                    &state_clone,
                                 );
                             }
                         });

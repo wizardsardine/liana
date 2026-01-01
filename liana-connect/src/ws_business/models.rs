@@ -137,6 +137,8 @@ pub struct Key {
     pub email: String,
     pub key_type: KeyType,
     pub xpub: Option<DescriptorPublicKey>,
+    pub last_edited: Option<u64>,
+    pub last_editor: Option<Uuid>,
 }
 
 // ============================================================================
@@ -213,6 +215,8 @@ pub struct SpendingPath {
     pub is_primary: bool,
     pub threshold_n: u8,
     pub key_ids: Vec<u8>,
+    pub last_edited: Option<u64>,
+    pub last_editor: Option<Uuid>,
 }
 
 impl SpendingPath {
@@ -221,6 +225,8 @@ impl SpendingPath {
             is_primary,
             threshold_n,
             key_ids,
+            last_edited: None,
+            last_editor: None,
         }
     }
 
@@ -280,6 +286,8 @@ pub struct Org {
     pub wallets: BTreeSet<Uuid>,
     pub users: BTreeSet<Uuid>,
     pub owners: Vec<Uuid>,
+    pub last_edited: Option<u64>,
+    pub last_editor: Option<Uuid>,
 }
 
 #[derive(Debug, Clone)]
@@ -302,6 +310,8 @@ pub struct User {
     pub email: String,
     pub orgs: Vec<Uuid>,
     pub role: UserRole,
+    pub last_edited: Option<u64>,
+    pub last_editor: Option<Uuid>,
 }
 
 // ============================================================================
@@ -316,4 +326,6 @@ pub struct Wallet {
     pub id: Uuid,
     pub status: WalletStatus,
     pub template: Option<PolicyTemplate>,
+    pub last_edited: Option<u64>,
+    pub last_editor: Option<Uuid>,
 }

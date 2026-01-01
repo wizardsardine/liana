@@ -1,6 +1,7 @@
 use crate::{
     backend::Backend,
     state::{Msg, State},
+    views::format_last_edit_info,
 };
 use iced::{
     widget::{
@@ -94,7 +95,11 @@ fn xpub_status_badge(has_xpub: bool) -> Element<'static, Msg> {
 }
 
 /// Create a key card displaying key information with xpub status.
-fn xpub_key_card(key_id: u8, key: &liana_connect::Key) -> Element<'static, Msg> {
+fn xpub_key_card(
+    key_id: u8,
+    key: &liana_connect::Key,
+    last_edit_info: Option<String>,
+) -> Element<'static, Msg> {
     let mut content = Column::new().spacing(5);
 
     // First row: |<icon>|<alias>|<spacer>|<status_badge>
@@ -119,6 +124,11 @@ fn xpub_key_card(key_id: u8, key: &liana_connect::Key) -> Element<'static, Msg> 
 
     // Third row: Key type
     content = content.push(text::p2_regular(key.key_type.as_str()));
+
+    // Fourth row: Last edit info (optional)
+    if let Some(info) = last_edit_info {
+        content = content.push(text::caption(info).style(liana_ui::theme::text::secondary));
+    }
 
     // Wrap card content - use Fill width so Button controls the final width
     let card_content = Container::new(content).padding(15).width(Length::Fill);
@@ -174,9 +184,7 @@ pub fn xpub_view(state: &State) -> Element<'_, Msg> {
             // For participants: only show keys matching their email
             // For WSManager/Owner: show all keys
             match user_role.as_ref() {
-                Some(UserRole::Participant) => {
-                    key.email.to_lowercase() == current_user_email_lower
-                }
+                Some(UserRole::Participant) => key.email.to_lowercase() == current_user_email_lower,
                 Some(UserRole::WSManager) | Some(UserRole::Owner) | None => true,
             }
         })
@@ -200,7 +208,14 @@ pub fn xpub_view(state: &State) -> Element<'_, Msg> {
     } else {
         // Always show key cards so users can edit/reset xpubs
         for (key_id, key) in filtered_keys {
-            list_content = list_content.push(xpub_key_card(key_id, key));
+            let last_edit_info = format_last_edit_info(
+                key.last_edited,
+                key.last_editor,
+                state,
+                &current_user_email_lower,
+            );
+
+            list_content = list_content.push(xpub_key_card(key_id, key, last_edit_info));
         }
     }
 

@@ -1,11 +1,23 @@
 use liana_connect::{Request, Response, User, UserRole, Wallet, WalletStatus, WssError};
+use std::time::{SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
 
 use crate::state::ServerState;
 
+/// Get current unix timestamp in seconds
+fn now_timestamp() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
 /// Process a request and return a response
-pub fn handle_request(request: Request, state: &ServerState) -> Response {
+pub fn handle_request(request: Request, state: &ServerState, editor_id: Uuid) -> Response {
     match request {
+        Request::GetServerTime => Response::ServerTime {
+            timestamp: now_timestamp(),
+        },
         Request::FetchOrg { id } => handle_fetch_org(state, id),
         Request::FetchWallet { id } => handle_fetch_wallet(state, id),
         Request::FetchUser { id } => handle_fetch_user(state, id),
@@ -13,8 +25,8 @@ pub fn handle_request(request: Request, state: &ServerState) -> Response {
             name,
             org_id,
             owner_id,
-        } => handle_create_wallet(state, name, org_id, owner_id),
-        Request::EditWallet { wallet } => handle_edit_wallet(state, wallet),
+        } => handle_create_wallet(state, name, org_id, owner_id, editor_id),
+        Request::EditWallet { wallet } => handle_edit_wallet(state, wallet, editor_id),
         Request::RemoveWalletFromOrg { org_id, wallet_id } => {
             handle_remove_wallet_from_org(state, org_id, wallet_id)
         }
@@ -22,7 +34,7 @@ pub fn handle_request(request: Request, state: &ServerState) -> Response {
             wallet_id,
             key_id,
             xpub,
-        } => handle_edit_xpub(state, wallet_id, key_id, xpub),
+        } => handle_edit_xpub(state, wallet_id, key_id, xpub, editor_id),
         _ => handle_unknown_request(),
     }
 }
@@ -83,7 +95,9 @@ fn handle_create_wallet(
     name: String,
     org_id: Uuid,
     owner_id: Uuid,
+    editor_id: Uuid,
 ) -> Response {
+    let timestamp = now_timestamp();
     let users = state.users.lock().unwrap();
     let owner = users.get(&owner_id).cloned().unwrap_or_else(|| User {
         name: "Unknown User".to_string(),
@@ -91,6 +105,8 @@ fn handle_create_wallet(
         email: "unknown@example.com".to_string(),
         orgs: Vec::new(),
         role: UserRole::Owner,
+        last_edited: Some(timestamp),
+        last_editor: Some(editor_id),
     });
     drop(users);
 
@@ -102,6 +118,8 @@ fn handle_create_wallet(
         id: wallet_id,
         template: None,
         status: WalletStatus::Created,
+        last_edited: Some(timestamp),
+        last_editor: Some(editor_id),
     };
 
     // Store wallet in state
@@ -121,7 +139,8 @@ fn handle_create_wallet(
     }
 }
 
-fn handle_edit_wallet(state: &ServerState, wallet: Wallet) -> Response {
+fn handle_edit_wallet(state: &ServerState, mut wallet: Wallet, editor_id: Uuid) -> Response {
+    let timestamp = now_timestamp();
     let mut wallets = state.wallets.lock().unwrap();
 
     // Check if wallet exists and get current state
@@ -211,6 +230,10 @@ fn handle_edit_wallet(state: &ServerState, wallet: Wallet) -> Response {
         }
     }
 
+    // Set last_edited and last_editor
+    wallet.last_edited = Some(timestamp);
+    wallet.last_editor = Some(editor_id);
+
     // Update wallet in state
     wallets.insert(wallet.id, wallet.clone());
     drop(wallets);
@@ -260,7 +283,9 @@ fn handle_edit_xpub(
     wallet_id: Uuid,
     key_id: u8,
     xpub: Option<miniscript::DescriptorPublicKey>,
+    editor_id: Uuid,
 ) -> Response {
+    let timestamp = now_timestamp();
     let mut wallets = state.wallets.lock().unwrap();
     if let Some(wallet) = wallets.get_mut(&wallet_id) {
         // Finalized wallets are immutable
@@ -278,8 +303,15 @@ fn handle_edit_xpub(
         if let Some(template) = &mut wallet.template {
             if let Some(key) = template.keys.get_mut(&key_id) {
                 key.xpub = xpub;
+                key.last_edited = Some(timestamp);
+                key.last_editor = Some(editor_id);
             }
         }
+
+        // Update wallet timestamps
+        wallet.last_edited = Some(timestamp);
+        wallet.last_editor = Some(editor_id);
+
         let response = Response::Wallet {
             wallet: (&*wallet).into(),
         };

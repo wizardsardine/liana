@@ -1,4 +1,7 @@
-use crate::state::{message::Msg, State};
+use crate::{
+    state::{message::Msg, State},
+    views::format_last_edit_info,
+};
 use iced::{
     widget::{
         button::{Status, Style},
@@ -246,6 +249,7 @@ fn path_card(
     is_primary: bool,
     path_index: Option<usize>,
     is_editable: bool,
+    last_edit_info: Option<String>,
 ) -> Element<'static, Msg> {
     // Get key aliases
     let key_aliases: Vec<String> = path
@@ -277,10 +281,14 @@ fn path_card(
         Some(tl) => format_timelock_human(tl),
     };
 
-    let content = Column::new()
+    let mut content = Column::new()
         .spacing(5)
         .push(text::p1_regular(keys_text))
         .push(text::p2_regular(timelock_text));
+
+    if let Some(info) = last_edit_info {
+        content = content.push(text::caption(info).style(liana_ui::theme::text::secondary));
+    }
 
     // Wrap card content - use Fill width so Button controls the final width
     let card_content = Container::new(content).padding(15).width(Length::Fill);
@@ -305,6 +313,7 @@ pub fn template_visualization(state: &State) -> Element<'static, Msg> {
     let primary_path = &state.app.primary_path;
     let secondary_paths = &state.app.secondary_paths;
     let keys = &state.app.keys;
+    let current_user_email_lower = state.views.login.email.form.value.to_lowercase();
 
     // Determine if user can edit (WSManager only)
     let is_editable = matches!(state.app.current_user_role, Some(UserRole::WSManager));
@@ -318,16 +327,36 @@ pub fn template_visualization(state: &State) -> Element<'static, Msg> {
         .push(Space::with_height(50));
 
     // Primary path row: [r_shape] [path_card]
+    let primary_last_edit = format_last_edit_info(
+        primary_path.last_edited,
+        primary_path.last_editor,
+        state,
+        &current_user_email_lower,
+    );
     let primary_row = Row::new()
         .spacing(15)
         .align_y(Alignment::Center)
         .push(r_shape(0, total_count))
-        .push(path_card(primary_path, keys, None, true, None, is_editable));
+        .push(path_card(
+            primary_path,
+            keys,
+            None,
+            true,
+            None,
+            is_editable,
+            primary_last_edit,
+        ));
 
     column = column.push(primary_row);
 
     // Secondary path rows (with delete button if editable)
     for (index, (path, timelock)) in secondary_paths.iter().enumerate() {
+        let secondary_last_edit = format_last_edit_info(
+            path.last_edited,
+            path.last_editor,
+            state,
+            &current_user_email_lower,
+        );
         let mut secondary_row = Row::new()
             .spacing(15)
             .align_y(Alignment::Center)
@@ -339,6 +368,7 @@ pub fn template_visualization(state: &State) -> Element<'static, Msg> {
                 false,
                 Some(index),
                 is_editable,
+                secondary_last_edit,
             ));
 
         // Only show delete button if editable (WSManager)

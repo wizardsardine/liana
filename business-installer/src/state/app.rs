@@ -1,5 +1,6 @@
 use liana_connect::{models::UserRole, Key, KeyType, PolicyTemplate, SpendingPath, Timelock};
 use std::collections::BTreeMap;
+use std::time::{SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
 
 /// Core application data
@@ -19,6 +20,8 @@ pub struct AppState {
     pub reconnecting: bool,
     /// Flag to signal exit to Liana Lite login
     pub exit_to_liana_lite: bool,
+    /// Server time offset in seconds (server_time - client_time)
+    pub server_time_offset: i64,
 }
 
 impl AppState {
@@ -26,6 +29,69 @@ impl AppState {
     pub fn sort_secondary_paths(&mut self) {
         self.secondary_paths
             .sort_by(|a, b| a.1.blocks.cmp(&b.1.blocks));
+    }
+
+    /// Get current time in seconds, adjusted for server time offset
+    fn now_adjusted(&self) -> u64 {
+        let client_ts = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        (client_ts as i64 + self.server_time_offset) as u64
+    }
+
+    /// Format a server timestamp as relative time (e.g., "5 minutes ago")
+    pub fn format_relative_time(&self, server_timestamp: u64) -> String {
+        let now = self.now_adjusted();
+        if server_timestamp > now {
+            return "just now".to_string();
+        }
+        let diff = now - server_timestamp;
+
+        const MINUTE: u64 = 60;
+        const HOUR: u64 = 60 * MINUTE;
+        const DAY: u64 = 24 * HOUR;
+        const WEEK: u64 = 7 * DAY;
+        const MONTH: u64 = 30 * DAY;
+
+        if diff < MINUTE {
+            "just now".to_string()
+        } else if diff < HOUR {
+            let mins = diff / MINUTE;
+            if mins == 1 {
+                "1 minute ago".to_string()
+            } else {
+                format!("{} minutes ago", mins)
+            }
+        } else if diff < DAY {
+            let hours = diff / HOUR;
+            if hours == 1 {
+                "1 hour ago".to_string()
+            } else {
+                format!("{} hours ago", hours)
+            }
+        } else if diff < WEEK {
+            let days = diff / DAY;
+            if days == 1 {
+                "1 day ago".to_string()
+            } else {
+                format!("{} days ago", days)
+            }
+        } else if diff < MONTH {
+            let weeks = diff / WEEK;
+            if weeks == 1 {
+                "1 week ago".to_string()
+            } else {
+                format!("{} weeks ago", weeks)
+            }
+        } else {
+            let months = diff / MONTH;
+            if months == 1 {
+                "1 month ago".to_string()
+            } else {
+                format!("{} months ago", months)
+            }
+        }
     }
 
     pub fn new() -> Self {
@@ -40,6 +106,8 @@ impl AppState {
                 email: "owner@example.com".to_string(),
                 key_type: KeyType::Internal,
                 xpub: None,
+                last_edited: None,
+                last_editor: None,
             },
         );
         keys.insert(
@@ -51,6 +119,8 @@ impl AppState {
                 email: "bob@example.com".to_string(),
                 key_type: KeyType::External,
                 xpub: None,
+                last_edited: None,
+                last_editor: None,
             },
         );
         keys.insert(
@@ -62,6 +132,8 @@ impl AppState {
                 email: "alice@example.com".to_string(),
                 key_type: KeyType::External,
                 xpub: None,
+                last_edited: None,
+                last_editor: None,
             },
         );
 
@@ -92,6 +164,7 @@ impl AppState {
             current_user_role: None,
             reconnecting: false,
             exit_to_liana_lite: false,
+            server_time_offset: 0,
         }
     }
 }
@@ -133,6 +206,7 @@ impl From<PolicyTemplate> for AppState {
             current_user_role: None,
             reconnecting: false,
             exit_to_liana_lite: false,
+            server_time_offset: 0,
         }
     }
 }

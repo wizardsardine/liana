@@ -14,7 +14,7 @@ use liana_ui::{
 
 use uuid::Uuid;
 
-use super::{layout_with_scrollable_list, menu_entry};
+use super::{format_last_edit_info, layout_with_scrollable_list, menu_entry};
 
 /// Derive the user's role for a specific wallet based on wallet data
 fn derive_user_role(wallet: &Wallet, current_user_email: &str) -> UserRole {
@@ -83,6 +83,7 @@ pub fn wallet_card<'a>(
     status: &WalletStatus,
     role: &UserRole,
     id: Uuid,
+    last_edit_info: Option<String>,
 ) -> Element<'a, Msg> {
     let keys = match key_count {
         0 => "".to_string(),
@@ -90,11 +91,15 @@ pub fn wallet_card<'a>(
         c => format!("({c} keys)"),
     };
 
-    // Left side: wallet name and key count
-    let left_col = Column::new()
+    // Left side: wallet name, key count, and edit info
+    let mut left_col = Column::new()
         .push(text::h3(alias))
         .push(text::p1_regular(keys))
         .spacing(4);
+
+    if let Some(info) = last_edit_info {
+        left_col = left_col.push(text::caption(info).style(liana_ui::theme::text::secondary));
+    }
 
     // Right side: status badge and role label
     // Don't show "Manager" role - it's already in the header for WSManager users
@@ -293,11 +298,26 @@ pub fn wallet_select_view(state: &State) -> Element<'_, Msg> {
                     list_content = list_content
                         .push(text::p1_regular("No wallets found matching your search."));
                 } else {
+                    let current_user_email_lower = current_user_email.to_lowercase();
                     // Render sorted wallets
                     for (id, wallet, role) in wallets_to_display {
                         let key_count = wallet.template.as_ref().map(|t| t.keys.len()).unwrap_or(0);
-                        let card =
-                            wallet_card(wallet.alias.clone(), key_count, &wallet.status, &role, id);
+
+                        let last_edit_info = format_last_edit_info(
+                            wallet.last_edited,
+                            wallet.last_editor,
+                            state,
+                            &current_user_email_lower,
+                        );
+
+                        let card = wallet_card(
+                            wallet.alias.clone(),
+                            key_count,
+                            &wallet.status,
+                            &role,
+                            id,
+                            last_edit_info,
+                        );
                         list_content = list_content.push(card);
                     }
                 }

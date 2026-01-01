@@ -149,6 +149,7 @@ impl State {
             Notification::LoginSuccess => self.on_backend_login_success(),
             Notification::LoginFail => self.on_backend_login_fail(),
             Notification::Error(error) => self.on_backend_error(error),
+            Notification::ServerTime(server_ts) => self.on_backend_server_time(server_ts),
             Notification::Org(_) => { /* Cache already updated, no action needed */ }
             Notification::Wallet(wallet_id) => return self.on_backend_wallet(wallet_id),
             Notification::User(_) => { /* Cache already updated, no action needed */ }
@@ -388,6 +389,8 @@ impl State {
                     email: modal_state.email.clone(),
                     key_type: modal_state.key_type,
                     xpub: None,
+                    last_edited: None,
+                    last_editor: None,
                 };
                 self.app.keys.insert(modal_state.key_id, key);
                 self.app.next_key_id = self.app.next_key_id.wrapping_add(1);
@@ -437,6 +440,8 @@ impl State {
             owner: wallet.owner.clone(),
             status,
             template: Some(template),
+            last_edited: None,
+            last_editor: None,
         })
     }
     fn on_template_add_key_to_primary(&mut self, key_id: u8) {
@@ -756,6 +761,17 @@ impl State {
             self.views.login.account_select.selected_email = None;
             self.current_view = View::OrgSelect;
         }
+        // Fetch server time to calculate offset
+        self.backend.fetch_server_time();
+    }
+
+    fn on_backend_server_time(&mut self, server_ts: u64) {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let client_ts = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        self.app.server_time_offset = server_ts as i64 - client_ts as i64;
     }
 
     fn on_backend_auth_code_sent(&mut self) -> Task<Msg> {
@@ -1159,6 +1175,8 @@ impl State {
                 is_primary: true,
                 threshold_n: 0,
                 key_ids: vec![],
+                last_edited: None,
+                last_editor: None,
             };
             self.app.secondary_paths.clear();
             self.app.next_key_id = 0;

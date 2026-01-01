@@ -14,7 +14,7 @@ use liana_ui::{
 
 use uuid::Uuid;
 
-use super::{layout_with_scrollable_list, menu_entry};
+use super::{format_last_edit_info, layout_with_scrollable_list, menu_entry};
 
 /// Derive the user's role for a specific wallet
 fn derive_user_role(wallet: &Wallet, current_user_email: &str) -> UserRole {
@@ -48,16 +48,31 @@ fn is_wallet_accessible(wallet: &Wallet, current_user_email: &str) -> bool {
     true
 }
 
-pub fn org_card<'a>(name: String, count: usize, id: Uuid) -> Element<'a, Msg> {
+pub fn org_card<'a>(
+    name: String,
+    count: usize,
+    id: Uuid,
+    last_edit_info: Option<String>,
+) -> Element<'a, Msg> {
     let wallets = match count {
         0 => "".to_string(),
         1 => "(1 wallet)".to_string(),
         c => format!("({c} wallets)"),
     };
-    let content = row![text::h3(name), text::h4_bold(wallets)]
+
+    let header = row![text::h3(name), text::h4_bold(wallets)]
         .spacing(10)
-        .align_y(Alignment::End)
-        .into();
+        .align_y(Alignment::End);
+
+    let content: Element<'_, Msg> = if let Some(info) = last_edit_info {
+        Column::new()
+            .spacing(5)
+            .push(header)
+            .push(text::caption(info).style(liana_ui::theme::text::secondary))
+            .into()
+    } else {
+        header.into()
+    };
 
     let message = Some(Msg::OrgSelected(id));
 
@@ -171,6 +186,7 @@ pub fn org_select_view(state: &State) -> Element<'_, Msg> {
     } else if orgs.is_empty() {
         list_content = list_content.push(no_org_card());
     } else {
+        let current_user_email_lower = current_user_email.to_lowercase();
         for (id, org) in &filtered_orgs {
             // Count only wallets accessible to this user
             let wallet_count = org
@@ -179,7 +195,15 @@ pub fn org_select_view(state: &State) -> Element<'_, Msg> {
                 .filter_map(|wallet_id| state.backend.get_wallet(*wallet_id))
                 .filter(|wallet| is_wallet_accessible(wallet, current_user_email))
                 .count();
-            let card = org_card(org.name.clone(), wallet_count, **id);
+
+            let last_edit_info = format_last_edit_info(
+                org.last_edited,
+                org.last_editor,
+                state,
+                &current_user_email_lower,
+            );
+
+            let card = org_card(org.name.clone(), wallet_count, **id, last_edit_info);
             list_content = list_content.push(card);
         }
     }

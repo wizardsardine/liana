@@ -1,6 +1,7 @@
 //! HTTP request handling for auth and config endpoints
 
 use crate::auth::AuthManager;
+use crate::state::ServerState;
 use serde::{Deserialize, Serialize};
 use std::io::Write;
 use std::net::TcpStream;
@@ -73,6 +74,7 @@ pub fn send_response(stream: &mut TcpStream, status: u16, status_text: &str, bod
 
 /// Handle HTTP request and return response
 /// Returns true if request was handled, false if it should be passed to WebSocket
+#[allow(clippy::too_many_arguments)]
 pub fn handle_http_request(
     stream: &mut TcpStream,
     method: &str,
@@ -81,6 +83,7 @@ pub fn handle_http_request(
     body: &[u8],
     server_url: &str,
     auth: &Arc<AuthManager>,
+    state: &ServerState,
 ) -> bool {
     log::debug!("HTTP {} {}", method, path);
 
@@ -148,13 +151,38 @@ pub fn handle_http_request(
                             req.email,
                             user.role
                         );
-                        let response = AccessTokenResponse {
-                            access_token: format!("access-token-{}", uuid::Uuid::new_v4()),
-                            expires_at: chrono::Utc::now().timestamp() + 3600, // 1 hour
-                            refresh_token: format!("refresh-token-{}", uuid::Uuid::new_v4()),
-                        };
-                        let body = serde_json::to_string(&response).unwrap();
-                        send_response(stream, 200, "OK", &body);
+                        // Look up user UUID from state
+                        let users = state.users.lock().unwrap();
+                        let user_uuid = users
+                            .values()
+                            .find(|u| u.email == req.email)
+                            .map(|u| u.uuid);
+                        drop(users);
+
+                        match user_uuid {
+                            Some(uuid) => {
+                                // Include UUID in token for user identification
+                                let response = AccessTokenResponse {
+                                    access_token: format!("access-token-{}", uuid),
+                                    expires_at: chrono::Utc::now().timestamp() + 3600, // 1 hour
+                                    refresh_token: format!(
+                                        "refresh-token-{}",
+                                        uuid::Uuid::new_v4()
+                                    ),
+                                };
+                                let body = serde_json::to_string(&response).unwrap();
+                                send_response(stream, 200, "OK", &body);
+                            }
+                            None => {
+                                log::error!("User {} not found in state", req.email);
+                                send_response(
+                                    stream,
+                                    500,
+                                    "Internal Server Error",
+                                    "{\"error\": \"User not found\"}",
+                                );
+                            }
+                        }
                     } else {
                         log::warn!("Invalid OTP code '{}' for email: {}", req.token, req.email);
                         send_response(

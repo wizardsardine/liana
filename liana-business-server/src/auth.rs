@@ -1,6 +1,7 @@
 use liana_connect::UserRole;
 use rand::Rng;
 use std::collections::HashMap;
+use uuid::Uuid;
 
 /// Test user configuration
 #[derive(Debug, Clone)]
@@ -61,13 +62,11 @@ impl AuthManager {
     }
 
     /// Validate an access token (JWT-like)
-    /// In dev mode, we accept any token that looks like "access-token-*"
-    pub fn validate_token(&self, token: &str) -> Option<()> {
-        if token.starts_with("access-token-") {
-            Some(())
-        } else {
-            None
-        }
+    /// Token format: "access-token-{uuid}"
+    /// Returns the user UUID if valid
+    pub fn validate_token(&self, token: &str) -> Option<Uuid> {
+        let uuid_str = token.strip_prefix("access-token-")?;
+        Uuid::parse_str(uuid_str).ok()
     }
 
     /// Check if an email is a registered test user

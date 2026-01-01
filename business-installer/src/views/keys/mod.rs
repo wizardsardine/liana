@@ -20,7 +20,7 @@ use liana_ui::{
     widget::*,
 };
 
-use super::layout_with_scrollable_list;
+use super::{format_last_edit_info, layout_with_scrollable_list};
 
 // Card width constant (matching path cards)
 const KEY_CARD_WIDTH: f32 = 600.0;
@@ -85,7 +85,11 @@ fn bordered_button_style(status: Status, radius: f32) -> Style {
 }
 
 /// Create a key card displaying key information.
-fn key_card(key_id: u8, key: &liana_connect::Key) -> Element<'static, Msg> {
+fn key_card(
+    key_id: u8,
+    key: &liana_connect::Key,
+    last_edit_info: Option<String>,
+) -> Element<'static, Msg> {
     const BADGE_WIDTH: f32 = 100.0;
 
     // Email (optional)
@@ -114,10 +118,16 @@ fn key_card(key_id: u8, key: &liana_connect::Key) -> Element<'static, Msg> {
     // Description (optional)
     let description = (!key.description.is_empty()).then(|| text::p2_regular(&key.description));
 
+    // Last edit info (optional)
+    let last_edit = last_edit_info.map(|info| {
+        text::caption(&info).style(liana_ui::theme::text::secondary)
+    });
+
     let content = Column::new()
         .spacing(5)
         .push(header_row)
-        .push_maybe(description);
+        .push_maybe(description)
+        .push_maybe(last_edit);
 
     let card_content = Container::new(content).padding(15).width(Length::Fill);
 
@@ -175,12 +185,21 @@ pub fn keys_view(state: &State) -> Element<'_, Msg> {
 }
 
 fn keys_visualization(state: &State) -> Element<'static, Msg> {
+    let current_user_email_lower = state.views.login.email.form.value.to_lowercase();
+
     // Build key rows with delete buttons
     let key_rows: Vec<Element<'static, Msg>> = state
         .app
         .keys
         .iter()
         .map(|(key_id, key)| {
+            let last_edit_info = format_last_edit_info(
+                key.last_edited,
+                key.last_editor,
+                state,
+                &current_user_email_lower,
+            );
+
             let delete_button = Button::new(
                 Container::new(icon::trash_icon())
                     .width(Length::Fixed(20.0))
@@ -195,7 +214,7 @@ fn keys_visualization(state: &State) -> Element<'static, Msg> {
             Row::new()
                 .spacing(15)
                 .align_y(Alignment::Center)
-                .push(key_card(*key_id, key))
+                .push(key_card(*key_id, key, last_edit_info))
                 .push(delete_button)
                 .into()
         })

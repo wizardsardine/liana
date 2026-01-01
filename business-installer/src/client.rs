@@ -655,6 +655,9 @@ fn handle_wss_message(
         Response::User { user } => {
             handle_user(user, users, n_sender)?;
         }
+        Response::ServerTime { timestamp } => {
+            handle_server_time(timestamp, n_sender)?;
+        }
     }
 
     Ok(())
@@ -666,6 +669,7 @@ fn get_expected_response_type(request: &Request) -> ExpectedResponseType {
         Request::Connect { .. } => ExpectedResponseType::Connected,
         Request::Ping => ExpectedResponseType::Pong,
         Request::Close => ExpectedResponseType::None, // No response expected
+        Request::GetServerTime => ExpectedResponseType::ServerTime,
         Request::FetchOrg { .. } | Request::RemoveWalletFromOrg { .. } => ExpectedResponseType::Org,
         Request::CreateWallet { .. }
         | Request::EditWallet { .. }
@@ -679,6 +683,7 @@ fn get_expected_response_type(request: &Request) -> ExpectedResponseType {
 enum ExpectedResponseType {
     Connected,
     Pong,
+    ServerTime,
     Org,
     Wallet,
     User,
@@ -690,6 +695,7 @@ fn matches_response_type(response: &Response, expected: ExpectedResponseType) ->
     match (response, expected) {
         (Response::Connected { .. }, ExpectedResponseType::Connected) => true,
         (Response::Pong, ExpectedResponseType::Pong) => true,
+        (Response::ServerTime { .. }, ExpectedResponseType::ServerTime) => true,
         (Response::Org { .. }, ExpectedResponseType::Org) => true,
         (Response::Wallet { .. }, ExpectedResponseType::Wallet) => true,
         (Response::User { .. }, ExpectedResponseType::User) => true,
@@ -806,6 +812,14 @@ fn handle_user(
 
     // Send response
     let _ = notification_sender.send(Notification::User(user_id).into());
+    Ok(())
+}
+
+fn handle_server_time(
+    timestamp: u64,
+    notification_sender: &channel::Sender<Message>,
+) -> Result<(), String> {
+    let _ = notification_sender.send(Notification::ServerTime(timestamp).into());
     Ok(())
 }
 
@@ -1147,6 +1161,14 @@ impl Backend for Client {
             let _ = sender.send(Request::FetchUser { id });
         }
     }
+
+    fn fetch_server_time(&mut self) {
+        check_connection!(self);
+
+        if let Some(sender) = &self.request_sender {
+            let _ = sender.send(Request::GetServerTime);
+        }
+    }
 }
 
 // Helper function to serialize Response to WsMessage for DummyServer
@@ -1158,6 +1180,11 @@ fn response_to_ws_message(response: &Response, request_id: Option<String>) -> Ws
             None,
         ),
         Response::Pong => ("pong".to_string(), None, None),
+        Response::ServerTime { timestamp } => (
+            "server_time".to_string(),
+            Some(serde_json::json!({ "timestamp": timestamp })),
+            None,
+        ),
         Response::Org { org } => (
             "org".to_string(),
             Some(serde_json::to_value(org).unwrap()),

@@ -48,6 +48,8 @@ fn init_test_data(
         email: "owner@example.com".to_string(),
         orgs: Vec::new(),
         role: UserRole::Owner,
+        last_edited: None,
+        last_editor: None,
     };
     users.insert(owner_user.uuid, owner_user.clone());
 
@@ -58,6 +60,8 @@ fn init_test_data(
         email: "shared-owner@example.com".to_string(),
         orgs: Vec::new(),
         role: UserRole::Owner,
+        last_edited: None,
+        last_editor: None,
     };
     users.insert(shared_owner.uuid, shared_owner.clone());
 
@@ -83,6 +87,8 @@ fn init_test_data(
             email: "owner@example.com".to_string(),
             key_type: KeyType::Internal,
             xpub: None,
+            last_edited: None,
+            last_editor: None,
         },
     );
     wallet1_template.keys.insert(
@@ -94,6 +100,8 @@ fn init_test_data(
             email: "bob@example.com".to_string(),
             key_type: KeyType::External,
             xpub: None,
+            last_edited: None,
+            last_editor: None,
         },
     );
     wallet1_template.keys.insert(
@@ -105,6 +113,8 @@ fn init_test_data(
             email: "alice@example.com".to_string(),
             key_type: KeyType::External,
             xpub: None,
+            last_edited: None,
+            last_editor: None,
         },
     );
     // Primary path: All of Owner, Bob (threshold = 2)
@@ -129,6 +139,8 @@ fn init_test_data(
         id: wallet1_id,
         template: Some(wallet1_template),
         status: WalletStatus::Drafted,
+        last_edited: None,
+        last_editor: None,
     };
     org1_wallets.insert(wallet1_id);
     wallets.insert(wallet1_id, wallet1);
@@ -150,6 +162,8 @@ fn init_test_data(
             email: "owner@example.com".to_string(),
             key_type: KeyType::Internal,
             xpub: None,
+            last_edited: None,
+            last_editor: None,
         },
     );
     wallet2_template.keys.insert(
@@ -161,6 +175,8 @@ fn init_test_data(
             email: "user@example.com".to_string(),
             key_type: KeyType::External,
             xpub: None,
+            last_edited: None,
+            last_editor: None,
         },
     );
     wallet2_template.primary_path.key_ids.push(0);
@@ -174,6 +190,8 @@ fn init_test_data(
         id: wallet2_id,
         template: Some(wallet2_template),
         status: WalletStatus::Validated,
+        last_edited: None,
+        last_editor: None,
     };
     org1_wallets.insert(wallet2_id);
     wallets.insert(wallet2_id, wallet2);
@@ -195,6 +213,8 @@ fn init_test_data(
             email: "owner@example.com".to_string(),
             key_type: KeyType::Internal,
             xpub: None,
+            last_edited: None,
+            last_editor: None,
         },
     );
     wallet3_template.keys.insert(
@@ -206,6 +226,8 @@ fn init_test_data(
             email: "user@example.com".to_string(),
             key_type: KeyType::External,
             xpub: None,
+            last_edited: None,
+            last_editor: None,
         },
     );
     wallet3_template.primary_path.key_ids.push(0);
@@ -219,6 +241,8 @@ fn init_test_data(
         id: wallet3_id,
         template: Some(wallet3_template),
         status: WalletStatus::Finalized,
+        last_edited: None,
+        last_editor: None,
     };
     org1_wallets.insert(wallet3_id);
     wallets.insert(wallet3_id, wallet3);
@@ -241,6 +265,8 @@ fn init_test_data(
             email: "shared-owner@example.com".to_string(),
             key_type: KeyType::Internal,
             xpub: None,
+            last_edited: None,
+            last_editor: None,
         },
     );
     wallet4_template.keys.insert(
@@ -252,6 +278,8 @@ fn init_test_data(
             email: "owner@example.com".to_string(),
             key_type: KeyType::External,
             xpub: None,
+            last_edited: None,
+            last_editor: None,
         },
     );
     wallet4_template.keys.insert(
@@ -263,6 +291,8 @@ fn init_test_data(
             email: "user@example.com".to_string(),
             key_type: KeyType::External,
             xpub: None,
+            last_edited: None,
+            last_editor: None,
         },
     );
     wallet4_template.primary_path.key_ids.push(0);
@@ -277,6 +307,8 @@ fn init_test_data(
         id: wallet4_id,
         template: Some(wallet4_template),
         status: WalletStatus::Finalized,
+        last_edited: None,
+        last_editor: None,
     };
     org1_wallets.insert(wallet4_id);
     wallets.insert(wallet4_id, wallet4);
@@ -287,6 +319,8 @@ fn init_test_data(
         wallets: org1_wallets,
         users: Default::default(),
         owners: Default::default(),
+        last_edited: None,
+        last_editor: None,
     };
     orgs.insert(org1_id, org1);
 
@@ -298,6 +332,8 @@ fn init_test_data(
         wallets: BTreeSet::new(),
         users: Default::default(),
         owners: Default::default(),
+        last_edited: None,
+        last_editor: None,
     };
     orgs.insert(org2_id, org2);
 }

@@ -45,6 +45,7 @@ pub enum Notification {
     AuthCodeFail,
     LoginSuccess,
     LoginFail,
+    ServerTime(u64),
     Org(Uuid),
     Wallet(Uuid),
     User(Uuid),
@@ -92,7 +93,7 @@ pub trait Backend {
         key_id: u8);                                                     // -> Response::Wallet
 
     fn fetch_user(&mut self, id: Uuid);         // -> Response::User
-
+    fn fetch_server_time(&mut self);            // -> Response::ServerTime
 }
 
 /// Stream wrapper for Backend responses

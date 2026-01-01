@@ -317,20 +317,24 @@ fn handle_client_messages(
 
                 let msg_type = protocol_request["type"].as_str().unwrap_or("");
 
-                // Validate token for each request
+                // Validate token for each request and get user UUID
                 let token = protocol_request["token"].as_str().unwrap_or("");
-                if auth.validate_token(token).is_none() && msg_type != "close" {
-                    let error_response = Response::Error {
-                        error: WssError {
-                            code: "INVALID_TOKEN".to_string(),
-                            message: "Invalid authentication token".to_string(),
-                            request_id: request_id.clone(),
-                        },
-                    };
-                    let ws_msg = response_to_ws_message(&error_response, request_id);
-                    let _ = ws_stream.send(ws_msg);
-                    continue;
-                }
+                let editor_id = match auth.validate_token(token) {
+                    Some(uuid) => uuid,
+                    None if msg_type == "close" => Uuid::nil(),
+                    None => {
+                        let error_response = Response::Error {
+                            error: WssError {
+                                code: "INVALID_TOKEN".to_string(),
+                                message: "Invalid authentication token".to_string(),
+                                request_id: request_id.clone(),
+                            },
+                        };
+                        let ws_msg = response_to_ws_message(&error_response, request_id);
+                        let _ = ws_stream.send(ws_msg);
+                        continue;
+                    }
+                };
 
                 // Handle special message types
                 match msg_type {
@@ -367,7 +371,7 @@ fn handle_client_messages(
                         };
 
                         // Handle request
-                        let response = handle_request(request.clone(), state);
+                        let response = handle_request(request.clone(), state, editor_id);
 
                         // Send response to client
                         let ws_msg = response_to_ws_message(&response, request_id.clone());
@@ -461,6 +465,11 @@ fn response_to_ws_message(response: &Response, request_id: Option<String>) -> Ws
             None,
         ),
         Response::Pong => ("pong".to_string(), None, None),
+        Response::ServerTime { timestamp } => (
+            "server_time".to_string(),
+            Some(serde_json::json!({ "timestamp": timestamp })),
+            None,
+        ),
         Response::Org { org } => (
             "org".to_string(),
             Some(serde_json::to_value(org).unwrap()),
@@ -502,6 +511,7 @@ fn parse_request(msg_type: &str, payload: &serde_json::Value) -> Result<Request,
         }
         "ping" => Ok(Request::Ping),
         "close" => Ok(Request::Close),
+        "get_server_time" => Ok(Request::GetServerTime),
         "fetch_org" => {
             let id = payload["id"]
                 .as_str()
