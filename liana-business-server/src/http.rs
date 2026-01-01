@@ -153,14 +153,25 @@ pub fn handle_http_request(
                         );
                         // Look up user UUID from state
                         let users = state.users.lock().unwrap();
-                        let user_uuid = users
+                        log::info!(
+                            "Looking up email '{}' in {} users",
+                            req.email,
+                            users.len()
+                        );
+                        let user_data = users
                             .values()
                             .find(|u| u.email == req.email)
-                            .map(|u| u.uuid);
+                            .map(|u| (u.uuid, u.role.clone()));
                         drop(users);
 
-                        match user_uuid {
-                            Some(uuid) => {
+                        match user_data {
+                            Some((uuid, role)) => {
+                                log::info!(
+                                    "Found user: uuid={} role={:?} for email={}",
+                                    uuid,
+                                    role,
+                                    req.email
+                                );
                                 // Include UUID in token for user identification
                                 let response = AccessTokenResponse {
                                     access_token: format!("access-token-{}", uuid),

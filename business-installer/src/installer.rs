@@ -1,6 +1,6 @@
 use crate::state::State;
 use crossbeam::channel::{self};
-use iced::{Subscription, Task};
+use iced::Task;
 use liana::miniscript::bitcoin::{self};
 use liana_gui::{
     app::settings::{AuthConfig, WalletId},

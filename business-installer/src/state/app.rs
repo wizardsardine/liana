@@ -14,8 +14,10 @@ pub struct AppState {
     pub selected_org: Option<Uuid>,
     pub selected_wallet: Option<Uuid>,
     pub current_wallet_template: Option<PolicyTemplate>,
-    /// Current user's role for the selected wallet
+    /// Current user's role for the selected wallet (set when wallet is selected)
     pub current_user_role: Option<UserRole>,
+    /// Logged-in user's global role from their User record
+    pub global_user_role: Option<UserRole>,
     /// Flag to track intentional reconnection (don't show error on disconnect)
     pub reconnecting: bool,
     /// Flag to signal exit to Liana Lite login
@@ -177,6 +179,7 @@ impl AppState {
             selected_wallet: None,
             current_wallet_template: None,
             current_user_role: None,
+            global_user_role: None,
             reconnecting: false,
             exit_to_liana_lite: false,
             server_time_offset: 0,
@@ -219,6 +222,7 @@ impl From<PolicyTemplate> for AppState {
             selected_wallet: None,
             current_wallet_template: None,
             current_user_role: None,
+            global_user_role: None,
             reconnecting: false,
             exit_to_liana_lite: false,
             server_time_offset: 0,

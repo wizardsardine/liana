@@ -10,23 +10,33 @@ use liana_ui::widget::text_input;
 use tracing::debug;
 use uuid::Uuid;
 
-/// Derive the user's role for a specific wallet based on wallet data
-fn derive_user_role(wallet: &Wallet, current_user_email: &str) -> UserRole {
+/// Derive the user's role for a specific wallet based on wallet data and global role
+/// Returns None if the user has no access to this wallet
+fn derive_user_role(
+    wallet: &Wallet,
+    current_user_email: &str,
+    global_role: Option<UserRole>,
+) -> Option<UserRole> {
+    // WSManager has access to all wallets
+    if matches!(global_role, Some(UserRole::WSManager)) {
+        return Some(UserRole::WSManager);
+    }
+
     let email_lower = current_user_email.to_lowercase();
     // Check if user is wallet owner
     if wallet.owner.email.to_lowercase() == email_lower {
-        return UserRole::Owner;
+        return Some(UserRole::Owner);
     }
     // Check if user is a participant (has keys with matching email)
     if let Some(template) = &wallet.template {
         for key in template.keys.values() {
             if key.email.to_lowercase() == email_lower {
-                return UserRole::Participant;
+                return Some(UserRole::Participant);
             }
         }
     }
-    // Default to WSManager (platform admin)
-    UserRole::WSManager
+    // User has no access to this wallet
+    None
 }
 
 // Update routing logic
@@ -155,7 +165,16 @@ impl State {
             Notification::ServerTime(server_ts) => self.on_backend_server_time(server_ts),
             Notification::Org(_) => { /* Cache already updated, no action needed */ }
             Notification::Wallet(wallet_id) => return self.on_backend_wallet(wallet_id),
-            Notification::User(_) => { /* Cache already updated, no action needed */ }
+            Notification::User(user_id) => {
+                // Check if this user matches the logged-in user's email
+                // If so, set their global role
+                let logged_in_email = self.views.login.email.form.value.to_lowercase();
+                if let Some(user) = self.backend.get_user(user_id) {
+                    if user.email.to_lowercase() == logged_in_email {
+                        self.app.global_user_role = Some(user.role);
+                    }
+                }
+            }
         }
         Task::none()
     }
@@ -247,11 +266,13 @@ impl State {
         // Get wallet and check access before loading
         let (wallet_status, user_role) = {
             let current_email = &self.views.login.email.form.value;
+            let global_role = self.app.global_user_role.clone();
             if let Some(org_id) = self.app.selected_org {
                 if let Some(org) = self.backend.get_org(org_id) {
                     if let Some(wallet) = org.wallets.get(&id) {
-                        let role = derive_user_role(wallet, current_email);
-                        (Some(wallet.status.clone()), Some(role))
+                        // derive_user_role returns Option<UserRole>
+                        let role = derive_user_role(wallet, current_email, global_role);
+                        (Some(wallet.status.clone()), role)
                     } else {
                         (None, None)
                     }
@@ -262,21 +283,6 @@ impl State {
                 (None, None)
             }
         };
-
-        // Check access based on role + status
-        if let (Some(status), Some(role)) = (&wallet_status, &user_role) {
-            if let (
-                WalletStatus::Created | WalletStatus::Drafted | WalletStatus::Locked,
-                UserRole::Participant,
-            ) = (status, role)
-            {
-                self.on_warning_show_modal(
-                    "Access Denied",
-                    "Participants cannot access Draft or Locked wallets. Please wait for the wallet to be validated.",
-                );
-                return;
-            }
-        }
 
         // Store user role for the selected wallet
         self.app.current_user_role = user_role;

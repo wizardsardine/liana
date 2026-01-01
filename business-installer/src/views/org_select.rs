@@ -16,29 +16,46 @@ use uuid::Uuid;
 
 use super::{format_last_edit_info, layout_with_scrollable_list, menu_entry};
 
-/// Derive the user's role for a specific wallet
-fn derive_user_role(wallet: &Wallet, current_user_email: &str) -> UserRole {
+/// Derive the user's role for a specific wallet based on wallet data and global role
+/// Returns None if the user has no access to this wallet
+fn derive_user_role(
+    wallet: &Wallet,
+    current_user_email: &str,
+    global_role: Option<UserRole>,
+) -> Option<UserRole> {
+    // WSManager has access to all wallets
+    if matches!(global_role, Some(UserRole::WSManager)) {
+        return Some(UserRole::WSManager);
+    }
+
     let email_lower = current_user_email.to_lowercase();
     // Check if user is wallet owner
     if wallet.owner.email.to_lowercase() == email_lower {
-        return UserRole::Owner;
+        return Some(UserRole::Owner);
     }
     // Check if user is a participant (has keys with matching email)
     if let Some(template) = &wallet.template {
         for key in template.keys.values() {
             if key.email.to_lowercase() == email_lower {
-                return UserRole::Participant;
+                return Some(UserRole::Participant);
             }
         }
     }
-    // Default to WSManager (platform admin)
-    UserRole::WSManager
+    // User has no access to this wallet
+    None
 }
 
 /// Check if a wallet is accessible to the current user
 /// Participants cannot access Draft (Created/Drafted/Locked) wallets
-fn is_wallet_accessible(wallet: &Wallet, current_user_email: &str) -> bool {
-    let role = derive_user_role(wallet, current_user_email);
+fn is_wallet_accessible(
+    wallet: &Wallet,
+    current_user_email: &str,
+    global_role: Option<UserRole>,
+) -> bool {
+    let role = match derive_user_role(wallet, current_user_email, global_role) {
+        Some(r) => r,
+        None => return false, // No access
+    };
     // Participants cannot access Draft or Locked wallets
     if matches!(role, UserRole::Participant)
         && matches!(
@@ -190,13 +207,17 @@ pub fn org_select_view(state: &State) -> Element<'_, Msg> {
         list_content = list_content.push(no_org_card());
     } else {
         let current_user_email_lower = current_user_email.to_lowercase();
+        // Use global role from User record for filtering
+        let global_role = state.app.global_user_role.clone();
         for (id, org) in &filtered_orgs {
             // Count only wallets accessible to this user
             let wallet_count = org
                 .wallets
                 .iter()
                 .filter_map(|wallet_id| state.backend.get_wallet(*wallet_id))
-                .filter(|wallet| is_wallet_accessible(wallet, current_user_email))
+                .filter(|wallet| {
+                    is_wallet_accessible(wallet, current_user_email, global_role.clone())
+                })
                 .count();
 
             let last_edit_info = format_last_edit_info(

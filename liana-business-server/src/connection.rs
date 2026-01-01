@@ -1,13 +1,14 @@
 use crossbeam::channel::{self, Receiver, Sender};
-use liana_connect::{ConnectedPayload, Request, Response, Wallet, WssError};
+use liana_connect::{ConnectedPayload, Org, Request, Response, UserRole, Wallet, WssError};
 use serde_json::json;
+use std::collections::BTreeSet;
 use std::net::TcpStream;
 use std::sync::Arc;
 use tungstenite::{accept, Message as WsMessage, WebSocket};
 use uuid::Uuid;
 
 use crate::auth::AuthManager;
-use crate::handler::handle_request;
+use crate::handler::{can_user_access_wallet, handle_request};
 use crate::state::ServerState;
 
 /// Unique identifier for each client connection
@@ -48,7 +49,7 @@ impl ClientConnection {
             Err(e) => return Err(format!("Failed to read connect message: {}", e)),
         };
 
-        log::info!("[new] Connect request: {}", connect_msg);
+        log::debug!("Connect request: {}", connect_msg);
 
         // Parse connect request
         let protocol_request: serde_json::Value = serde_json::from_str(&connect_msg)
@@ -59,29 +60,32 @@ impl ClientConnection {
             return Err(format!("Expected 'connect' message, got '{}'", msg_type));
         }
 
-        // Validate token
+        // Validate token and get user_id
         let token = protocol_request["token"].as_str().unwrap_or("");
-        log::info!("[new] Token: '{}'", token);
-        if auth.validate_token(token).is_none() {
-            log::warn!("[new] Token validation FAILED");
-            let error_response = Response::Error {
-                error: WssError {
-                    code: "INVALID_TOKEN".to_string(),
-                    message: "Invalid authentication token".to_string(),
-                    request_id: protocol_request["request_id"]
+        log::debug!("Token received for validation");
+        let user_id = match auth.validate_token(token) {
+            Some(uid) => uid,
+            None => {
+                log::warn!("Token validation failed");
+                let error_response = Response::Error {
+                    error: WssError {
+                        code: "INVALID_TOKEN".to_string(),
+                        message: "Invalid authentication token".to_string(),
+                        request_id: protocol_request["request_id"]
+                            .as_str()
+                            .map(|s| s.to_string()),
+                    },
+                };
+                let ws_msg = response_to_ws_message(
+                    &error_response,
+                    protocol_request["request_id"]
                         .as_str()
                         .map(|s| s.to_string()),
-                },
-            };
-            let ws_msg = response_to_ws_message(
-                &error_response,
-                protocol_request["request_id"]
-                    .as_str()
-                    .map(|s| s.to_string()),
-            );
-            let _ = ws_stream.send(ws_msg);
-            return Err("Invalid token".to_string());
-        }
+                );
+                let _ = ws_stream.send(ws_msg);
+                return Err("Invalid token".to_string());
+            }
+        };
 
         let request_id = protocol_request["request_id"]
             .as_str()
@@ -94,18 +98,65 @@ impl ClientConnection {
             .send(ws_msg)
             .map_err(|e| format!("Failed to send connected response: {}", e))?;
 
-        // Send all accessible orgs to the client
-        // For now, send all orgs (WSManager sees all, filtering can be added later)
-        {
-            let orgs = state.orgs.lock().unwrap();
-            for org in orgs.values() {
-                let org_response = Response::Org { org: org.into() };
-                let ws_msg = response_to_ws_message(&org_response, None);
-                if let Err(e) = ws_stream.send(ws_msg) {
-                    log::warn!("[new] Failed to send initial org to client: {}", e);
+        // Get user's email, global role, and user data for sending
+        let (user_email, global_role, logged_in_user) = {
+            let users = state.users.lock().unwrap();
+            match users.get(&user_id) {
+                Some(u) => (u.email.clone(), u.role.clone(), Some(u.clone())),
+                None => {
+                    log::warn!("User {} not found, defaulting to Participant", user_id);
+                    (String::new(), UserRole::Participant, None)
                 }
             }
-            log::info!("[new] Sent {} orgs to client {}", orgs.len(), id);
+        };
+
+        // Send all accessible orgs to the client with filtered wallet lists
+        {
+            let orgs = state.orgs.lock().unwrap();
+            let wallets = state.wallets.lock().unwrap();
+            for org in orgs.values() {
+                // Filter wallet IDs based on user access
+                let filtered_wallet_ids: BTreeSet<Uuid> = org
+                    .wallets
+                    .iter()
+                    .filter(|wallet_id| {
+                        if let Some(wallet) = wallets.get(wallet_id) {
+                            can_user_access_wallet(wallet, &user_email, global_role.clone())
+                        } else {
+                            false
+                        }
+                    })
+                    .copied()
+                    .collect();
+
+                // Create filtered org
+                let filtered_org = Org {
+                    name: org.name.clone(),
+                    id: org.id,
+                    wallets: filtered_wallet_ids,
+                    users: org.users.clone(),
+                    owners: org.owners.clone(),
+                    last_edited: org.last_edited,
+                    last_editor: org.last_editor,
+                };
+
+                let org_response = Response::Org {
+                    org: (&filtered_org).into(),
+                };
+                let ws_msg = response_to_ws_message(&org_response, None);
+                if let Err(e) = ws_stream.send(ws_msg) {
+                    log::warn!("Failed to send initial org to client: {}", e);
+                }
+            }
+        }
+
+        // Send the logged-in user's data so client knows their role
+        if let Some(user) = logged_in_user {
+            let user_response = Response::User { user: (&user).into() };
+            let ws_msg = response_to_ws_message(&user_response, None);
+            if let Err(e) = ws_stream.send(ws_msg) {
+                log::warn!("Failed to send logged-in user data: {}", e);
+            }
         }
 
         // Enable non-blocking reads after handshake
@@ -169,7 +220,7 @@ impl ClientConnection {
             Err(e) => return Err(format!("Failed to read connect message: {}", e)),
         };
 
-        log::info!("[from_ws] Connect request: {}", connect_msg);
+        log::debug!("Connect request: {}", connect_msg);
 
         // Parse connect request
         let protocol_request: serde_json::Value = serde_json::from_str(&connect_msg)
@@ -180,29 +231,32 @@ impl ClientConnection {
             return Err(format!("Expected 'connect' message, got '{}'", msg_type));
         }
 
-        // Validate token
+        // Validate token and get user_id
         let token = protocol_request["token"].as_str().unwrap_or("");
-        log::info!("[from_ws] Token: '{}'", token);
-        if auth.validate_token(token).is_none() {
-            log::warn!("[from_ws] Token validation FAILED");
-            let error_response = Response::Error {
-                error: WssError {
-                    code: "INVALID_TOKEN".to_string(),
-                    message: "Invalid authentication token".to_string(),
-                    request_id: protocol_request["request_id"]
+        log::debug!("Token received for validation");
+        let user_id = match auth.validate_token(token) {
+            Some(uid) => uid,
+            None => {
+                log::warn!("Token validation failed");
+                let error_response = Response::Error {
+                    error: WssError {
+                        code: "INVALID_TOKEN".to_string(),
+                        message: "Invalid authentication token".to_string(),
+                        request_id: protocol_request["request_id"]
+                            .as_str()
+                            .map(|s| s.to_string()),
+                    },
+                };
+                let ws_msg = response_to_ws_message(
+                    &error_response,
+                    protocol_request["request_id"]
                         .as_str()
                         .map(|s| s.to_string()),
-                },
-            };
-            let ws_msg = response_to_ws_message(
-                &error_response,
-                protocol_request["request_id"]
-                    .as_str()
-                    .map(|s| s.to_string()),
-            );
-            let _ = ws_stream.send(ws_msg);
-            return Err("Invalid token".to_string());
-        }
+                );
+                let _ = ws_stream.send(ws_msg);
+                return Err("Invalid token".to_string());
+            }
+        };
 
         let request_id = protocol_request["request_id"]
             .as_str()
@@ -215,18 +269,65 @@ impl ClientConnection {
             .send(ws_msg)
             .map_err(|e| format!("Failed to send connected response: {}", e))?;
 
-        // Send all accessible orgs to the client
-        // For now, send all orgs (WSManager sees all, filtering can be added later)
-        {
-            let orgs = state.orgs.lock().unwrap();
-            for org in orgs.values() {
-                let org_response = Response::Org { org: org.into() };
-                let ws_msg = response_to_ws_message(&org_response, None);
-                if let Err(e) = ws_stream.send(ws_msg) {
-                    log::warn!("[from_ws] Failed to send initial org to client: {}", e);
+        // Get user's email, global role, and user data for sending
+        let (user_email, global_role, logged_in_user) = {
+            let users = state.users.lock().unwrap();
+            match users.get(&user_id) {
+                Some(u) => (u.email.clone(), u.role.clone(), Some(u.clone())),
+                None => {
+                    log::warn!("User {} not found, defaulting to Participant", user_id);
+                    (String::new(), UserRole::Participant, None)
                 }
             }
-            log::info!("[from_ws] Sent {} orgs to client {}", orgs.len(), id);
+        };
+
+        // Send all accessible orgs to the client with filtered wallet lists
+        {
+            let orgs = state.orgs.lock().unwrap();
+            let wallets = state.wallets.lock().unwrap();
+            for org in orgs.values() {
+                // Filter wallet IDs based on user access
+                let filtered_wallet_ids: BTreeSet<Uuid> = org
+                    .wallets
+                    .iter()
+                    .filter(|wallet_id| {
+                        if let Some(wallet) = wallets.get(wallet_id) {
+                            can_user_access_wallet(wallet, &user_email, global_role.clone())
+                        } else {
+                            false
+                        }
+                    })
+                    .copied()
+                    .collect();
+
+                // Create filtered org
+                let filtered_org = Org {
+                    name: org.name.clone(),
+                    id: org.id,
+                    wallets: filtered_wallet_ids,
+                    users: org.users.clone(),
+                    owners: org.owners.clone(),
+                    last_edited: org.last_edited,
+                    last_editor: org.last_editor,
+                };
+
+                let org_response = Response::Org {
+                    org: (&filtered_org).into(),
+                };
+                let ws_msg = response_to_ws_message(&org_response, None);
+                if let Err(e) = ws_stream.send(ws_msg) {
+                    log::warn!("Failed to send initial org to client: {}", e);
+                }
+            }
+        }
+
+        // Send the logged-in user's data so client knows their role
+        if let Some(user) = logged_in_user {
+            let user_response = Response::User { user: (&user).into() };
+            let ws_msg = response_to_ws_message(&user_response, None);
+            if let Err(e) = ws_stream.send(ws_msg) {
+                log::warn!("Failed to send logged-in user data: {}", e);
+            }
         }
 
         // Enable non-blocking reads after handshake
@@ -379,46 +480,29 @@ fn handle_client_messages(
                         }
 
                         // Determine if we need to broadcast to other clients
-                        log::info!("[REQ] Processing request type: {:?}", request);
                         let notification = match &request {
                             Request::EditWallet { wallet } => {
-                                log::info!(
-                                    "[REQ] EditWallet -> broadcasting Wallet({})",
-                                    wallet.id
-                                );
                                 Some(Notification::Wallet(wallet.id))
                             }
                             Request::CreateWallet { .. } => {
                                 // Extract wallet ID from response
                                 if let Response::Wallet { wallet } = &response {
-                                    log::info!(
-                                        "[REQ] CreateWallet -> broadcasting Wallet({})",
-                                        wallet.id
-                                    );
                                     Some(Notification::Wallet(Uuid::parse_str(&wallet.id).unwrap()))
                                 } else {
                                     None
                                 }
                             }
                             Request::EditXpub { wallet_id, .. } => {
-                                log::info!("[REQ] EditXpub -> broadcasting Wallet({})", wallet_id);
                                 Some(Notification::Wallet(*wallet_id))
                             }
                             Request::RemoveWalletFromOrg { org_id, .. } => {
-                                log::info!(
-                                    "[REQ] RemoveWalletFromOrg -> broadcasting Org({})",
-                                    org_id
-                                );
                                 Some(Notification::Org(*org_id))
                             }
-                            _ => {
-                                log::info!("[REQ] No broadcast needed for this request type");
-                                None
-                            }
+                            _ => None,
                         };
 
                         if let Some(notif) = notification {
-                            log::info!("[REQ] Sending broadcast notification: {:?}", notif);
+                            log::debug!("Sending broadcast notification: {:?}", notif);
                             let _ = broadcast_sender.send((client_id, notif));
                         }
                     }

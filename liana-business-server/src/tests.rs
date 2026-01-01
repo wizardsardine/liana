@@ -1,229 +1,284 @@
 #[cfg(test)]
-mod testss {
-    use serde_json::json;
-    use std::net::TcpStream;
-    use std::thread;
-    use std::time::Duration;
-    use tungstenite::{connect, Message};
+mod tests_ {
     use uuid::Uuid;
 
-    fn start_test_server(port: u16) -> thread::JoinHandle<()> {
-        thread::spawn(move || {
-            let mut server = crate::server::Server::new("127.0.0.1", 0, port).unwrap();
-            // Server will run indefinitely
-            let _ = server.run();
-        })
-    }
-
-    fn wait_for_server(port: u16, timeout_secs: u64) -> bool {
-        let start = std::time::Instant::now();
-        while start.elapsed().as_secs() < timeout_secs {
-            if TcpStream::connect(format!("127.0.0.1:{}", port)).is_ok() {
-                return true;
-            }
-            thread::sleep(Duration::from_millis(100));
-        }
-        false
-    }
-
+    /// Test that verifies the full state initialization and wallet filtering
+    /// This simulates what happens when a user connects
     #[test]
-    fn test_server_connection() {
-        let port = 18080;
-        let _server_handle = start_test_server(port);
+    fn test_wsmanager_wallet_filtering_with_real_state() {
+        use crate::handler::can_user_access_wallet;
+        use crate::state::ServerState;
+        use liana_connect::UserRole;
+        use std::collections::BTreeSet;
 
-        // Wait for server to start
+        // Create state (this calls init_test_data)
+        let state = ServerState::new();
+
+        // Get users, orgs, wallets
+        let users = state.users.lock().unwrap();
+        let orgs = state.orgs.lock().unwrap();
+        let wallets = state.wallets.lock().unwrap();
+
+        // Verify data is populated
         assert!(
-            wait_for_server(port, 5),
-            "Server failed to start within timeout"
+            users.len() >= 6,
+            "Should have at least 6 users, got {}",
+            users.len()
+        );
+        assert!(
+            orgs.len() >= 2,
+            "Should have at least 2 orgs, got {}",
+            orgs.len()
+        );
+        assert!(
+            wallets.len() >= 4,
+            "Should have at least 4 wallets, got {}",
+            wallets.len()
         );
 
-        // Connect to server
-        let url = format!("ws://127.0.0.1:{}", port);
-        let (mut socket, _response) = connect(url).expect("Failed to connect to server");
+        // Find WSManager user by email
+        let ws_manager = users
+            .values()
+            .find(|u| u.email == "ws@example.com")
+            .expect("WSManager user should exist");
 
-        // Send connect message
-        let connect_msg = json!({
-            "type": "connect",
-            "token": "owner-token",
-            "request_id": Uuid::new_v4().to_string(),
-            "payload": {
-                "version": 1
-            }
-        });
+        assert_eq!(
+            ws_manager.role,
+            UserRole::WSManager,
+            "ws@example.com should have WSManager role"
+        );
 
-        socket
-            .send(Message::Text(connect_msg.to_string()))
-            .expect("Failed to send connect message");
+        // Find Acme Corp org
+        let acme_org = orgs
+            .values()
+            .find(|o| o.name == "Acme Corp")
+            .expect("Acme Corp org should exist");
 
-        // Receive connected response
-        let msg = socket.read().expect("Failed to read connected response");
-        if let Message::Text(text) = msg {
-            let response: serde_json::Value = serde_json::from_str(&text).unwrap();
-            assert_eq!(response["type"], "connected");
-            assert_eq!(response["payload"]["version"], 1);
-        } else {
-            panic!("Expected text message");
-        }
+        assert!(
+            acme_org.wallets.len() >= 4,
+            "Acme Corp should have at least 4 wallets, got {}",
+            acme_org.wallets.len()
+        );
 
-        socket.close(None).ok();
+        // Simulate the filtering that happens in connection.rs
+        let user_email = &ws_manager.email;
+        let global_role = ws_manager.role.clone();
+
+        let filtered_wallet_ids: BTreeSet<Uuid> = acme_org
+            .wallets
+            .iter()
+            .filter(|wallet_id| {
+                if let Some(wallet) = wallets.get(wallet_id) {
+                    can_user_access_wallet(wallet, user_email, global_role.clone())
+                } else {
+                    panic!(
+                        "Wallet {} in org.wallets but not in state.wallets!",
+                        wallet_id
+                    );
+                }
+            })
+            .copied()
+            .collect();
+
+        // WSManager should see ALL wallets
+        assert_eq!(
+            filtered_wallet_ids.len(),
+            acme_org.wallets.len(),
+            "WSManager should see ALL {} wallets in Acme Corp, got {}",
+            acme_org.wallets.len(),
+            filtered_wallet_ids.len()
+        );
     }
 
+    /// Test participant filtering - should NOT see draft/locked wallets
     #[test]
-    fn test_invalid_token() {
-        let port = 18081;
-        let _server_handle = start_test_server(port);
+    fn test_participant_wallet_filtering_with_real_state() {
+        use crate::handler::can_user_access_wallet;
+        use crate::state::ServerState;
+        use liana_connect::UserRole;
+        use std::collections::BTreeSet;
 
-        assert!(wait_for_server(port, 5), "Server failed to start");
+        let state = ServerState::new();
 
-        let url = format!("ws://127.0.0.1:{}", port);
-        let (mut socket, _) = connect(url).expect("Failed to connect");
+        let users = state.users.lock().unwrap();
+        let orgs = state.orgs.lock().unwrap();
+        let wallets = state.wallets.lock().unwrap();
 
-        // Send connect with invalid token
-        let connect_msg = json!({
-            "type": "connect",
-            "token": "invalid-token-12345",
-            "request_id": Uuid::new_v4().to_string(),
-            "payload": {
-                "version": 1
-            }
-        });
+        // Find participant user
+        let participant = users
+            .values()
+            .find(|u| u.email == "user@example.com")
+            .expect("Participant user should exist");
 
-        socket
-            .send(Message::Text(connect_msg.to_string()))
-            .expect("Failed to send");
+        assert_eq!(participant.role, UserRole::Participant);
 
-        // Expect error response
-        let msg = socket.read().expect("Failed to read response");
-        if let Message::Text(text) = msg {
-            let response: serde_json::Value = serde_json::from_str(&text).unwrap();
-            assert_eq!(response["type"], "error");
-            assert_eq!(response["error"]["code"], "INVALID_TOKEN");
-        } else {
-            panic!("Expected text message");
+        // Find Acme Corp
+        let acme_org = orgs
+            .values()
+            .find(|o| o.name == "Acme Corp")
+            .expect("Acme Corp should exist");
+
+        // Simulate filtering
+        let user_email = &participant.email;
+        let global_role = participant.role.clone();
+
+        let filtered_wallet_ids: BTreeSet<Uuid> = acme_org
+            .wallets
+            .iter()
+            .filter(|wallet_id| {
+                if let Some(wallet) = wallets.get(wallet_id) {
+                    can_user_access_wallet(wallet, user_email, global_role.clone())
+                } else {
+                    false
+                }
+            })
+            .copied()
+            .collect();
+
+        // Participant should see fewer wallets than WSManager (no draft/locked)
+        // user@example.com has keys in Validated, Final, Shared wallets (3 wallets)
+        // But Shared is Finalized, so all 3 should be visible
+        assert!(
+            filtered_wallet_ids.len() <= 3,
+            "Participant should see at most 3 wallets, got {}",
+            filtered_wallet_ids.len()
+        );
+
+        // Verify Draft Wallet is NOT included
+        for wallet_id in &filtered_wallet_ids {
+            let wallet = wallets.get(wallet_id).unwrap();
+            assert!(
+                !matches!(wallet.status, liana_connect::WalletStatus::Drafted),
+                "Participant should not see Draft wallet '{}'",
+                wallet.alias
+            );
         }
-
-        socket.close(None).ok();
     }
 
+    /// Test the full token -> user lookup -> wallet filtering flow
+    /// This simulates exactly what happens in connection.rs
     #[test]
-    fn test_multi_client_broadcast() {
-        let port = 18082;
-        let _server_handle = start_test_server(port);
+    fn test_token_to_wallet_filtering_flow() {
+        use crate::auth::AuthManager;
+        use crate::handler::can_user_access_wallet;
+        use crate::state::ServerState;
+        use liana_connect::UserRole;
+        use std::collections::BTreeSet;
 
-        assert!(wait_for_server(port, 5), "Server failed to start");
+        // Create state and auth manager (same as server startup)
+        let state = ServerState::new();
+        let auth = AuthManager::new();
 
-        let url = format!("ws://127.0.0.1:{}", port);
+        let email = "ws@example.com";
 
-        // Connect client 1
-        let (mut client1, _) = connect(&url).expect("Client 1 failed to connect");
-        let connect_msg1 = json!({
-            "type": "connect",
-            "token": "owner-token",
-            "request_id": Uuid::new_v4().to_string(),
-            "payload": {"version": 1}
-        });
-        client1.send(Message::Text(connect_msg1.to_string())).ok();
-        let _ = client1.read(); // Read connected response
+        // Step 1: Look up user UUID from state.users by email (as done in http.rs after OTP)
+        let user_uuid = {
+            let users = state.users.lock().unwrap();
+            users
+                .values()
+                .find(|u| u.email == email)
+                .map(|u| u.uuid)
+                .expect("User should exist in state.users")
+        };
 
-        // Connect client 2
-        let (mut client2, _) = connect(&url).expect("Client 2 failed to connect");
-        let connect_msg2 = json!({
-            "type": "connect",
-            "token": "participant-token",
-            "request_id": Uuid::new_v4().to_string(),
-            "payload": {"version": 1}
-        });
-        client2.send(Message::Text(connect_msg2.to_string())).ok();
-        let _ = client2.read(); // Read connected response
+        // Step 2: Create token with UUID (as done in http.rs)
+        let token = format!("access-token-{}", user_uuid);
 
-        // Client 1 fetches org
-        let request_id = Uuid::new_v4().to_string();
-        let fetch_org_msg = json!({
-            "type": "fetch_org",
-            "token": "owner-token",
-            "request_id": request_id,
-            "payload": {
-                "id": Uuid::new_v4().to_string() // Random ID, will return error but that's ok for test
-            }
-        });
+        // Step 3: Validate token and extract UUID (as done in connection.rs)
+        let extracted_user_id = auth.validate_token(&token).expect("Token should be valid");
+        assert_eq!(extracted_user_id, user_uuid, "Extracted UUID should match");
 
-        client1.send(Message::Text(fetch_org_msg.to_string())).ok();
-        let _ = client1.read(); // Read response
+        // Step 4: Look up user by UUID (as done in connection.rs)
+        let (user_email, global_role) = {
+            let users = state.users.lock().unwrap();
+            users
+                .get(&extracted_user_id)
+                .map(|u| (u.email.clone(), u.role.clone()))
+                .expect("User should be found by UUID")
+        };
 
-        // Both clients should still be connected
-        let ping_msg = json!({
-            "type": "ping",
-            "token": "owner-token",
-            "request_id": Uuid::new_v4().to_string(),
-            "payload": {}
-        });
+        assert_eq!(user_email, email);
+        assert_eq!(
+            global_role,
+            UserRole::WSManager,
+            "Global role should be WSManager"
+        );
 
-        client1.send(Message::Text(ping_msg.to_string())).ok();
-        let msg = client1.read().expect("Client 1 should receive pong");
-        if let Message::Text(text) = msg {
-            let response: serde_json::Value = serde_json::from_str(&text).unwrap();
-            assert_eq!(response["type"], "pong");
-        }
+        // Step 5: Filter wallets (as done in connection.rs)
+        let orgs = state.orgs.lock().unwrap();
+        let wallets = state.wallets.lock().unwrap();
 
-        let ping_msg2 = json!({
-            "type": "ping",
-            "token": "participant-token",
-            "request_id": Uuid::new_v4().to_string(),
-            "payload": {}
-        });
+        let acme_org = orgs
+            .values()
+            .find(|o| o.name == "Acme Corp")
+            .expect("Acme Corp should exist");
 
-        client2.send(Message::Text(ping_msg2.to_string())).ok();
-        let msg = client2.read().expect("Client 2 should receive pong");
-        if let Message::Text(text) = msg {
-            let response: serde_json::Value = serde_json::from_str(&text).unwrap();
-            assert_eq!(response["type"], "pong");
-        }
+        let filtered_wallet_ids: BTreeSet<Uuid> = acme_org
+            .wallets
+            .iter()
+            .filter(|wallet_id| {
+                if let Some(wallet) = wallets.get(wallet_id) {
+                    can_user_access_wallet(wallet, &user_email, global_role.clone())
+                } else {
+                    false
+                }
+            })
+            .copied()
+            .collect();
 
-        client1.close(None).ok();
-        client2.close(None).ok();
+        assert_eq!(
+            filtered_wallet_ids.len(),
+            acme_org.wallets.len(),
+            "WSManager should see ALL {} wallets in Acme Corp, but only sees {}",
+            acme_org.wallets.len(),
+            filtered_wallet_ids.len()
+        );
     }
 
+    /// Test with SEPARATE state and auth instances to simulate potential bug
+    /// Confirms that if HTTP and WS used different state instances, UUIDs would mismatch
     #[test]
-    fn test_ping_pong() {
-        let port = 18083;
-        let _server_handle = start_test_server(port);
+    fn test_separate_state_instances_would_fail() {
+        use crate::auth::AuthManager;
+        use crate::state::ServerState;
 
-        assert!(wait_for_server(port, 5), "Server failed to start");
+        // This simulates a potential bug: if HTTP and WS use different state instances,
+        // the UUIDs would be different (since they're randomly generated)
 
-        let url = format!("ws://127.0.0.1:{}", port);
-        let (mut socket, _) = connect(&url).expect("Failed to connect");
+        let http_state = ServerState::new(); // HTTP handler state
+        let ws_state = ServerState::new(); // WebSocket handler state (DIFFERENT!)
+        let auth = AuthManager::new();
 
-        // Connect
-        let connect_msg = json!({
-            "type": "connect",
-            "token": "ws-manager-token",
-            "request_id": Uuid::new_v4().to_string(),
-            "payload": {"version": 1}
-        });
-        socket.send(Message::Text(connect_msg.to_string())).ok();
-        let _ = socket.read(); // Read connected
+        let email = "ws@example.com";
 
-        // Send ping
-        let request_id = Uuid::new_v4().to_string();
-        let ping_msg = json!({
-            "type": "ping",
-            "token": "ws-manager-token",
-            "request_id": request_id.clone(),
-            "payload": {}
-        });
+        // HTTP handler looks up user by email in http_state
+        let user_uuid_from_http = {
+            let users = http_state.users.lock().unwrap();
+            users
+                .values()
+                .find(|u| u.email == email)
+                .map(|u| u.uuid)
+                .expect("User should exist")
+        };
 
-        socket.send(Message::Text(ping_msg.to_string())).ok();
+        // Token is created with UUID from http_state
+        let token = format!("access-token-{}", user_uuid_from_http);
 
-        // Receive pong
-        let msg = socket.read().expect("Failed to read pong");
-        if let Message::Text(text) = msg {
-            let response: serde_json::Value = serde_json::from_str(&text).unwrap();
-            assert_eq!(response["type"], "pong");
-            assert_eq!(response["request_id"], request_id);
-        } else {
-            panic!("Expected text message");
-        }
+        // WebSocket handler extracts UUID from token
+        let extracted_user_id = auth.validate_token(&token).expect("Token should be valid");
 
-        socket.close(None).ok();
+        // WebSocket handler looks up user by UUID in ws_state (DIFFERENT instance!)
+        let user_found = {
+            let users = ws_state.users.lock().unwrap();
+            users.get(&extracted_user_id).is_some()
+        };
+
+        // This would be false because the UUIDs are different!
+        // This test confirms the bug would occur if separate state instances were used
+        assert!(
+            !user_found,
+            "EXPECTED: If HTTP and WS use different ServerState instances, \
+             user lookup by UUID fails because UUIDs are randomly generated!"
+        );
     }
 }

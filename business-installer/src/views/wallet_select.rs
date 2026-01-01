@@ -16,23 +16,33 @@ use uuid::Uuid;
 
 use super::{format_last_edit_info, layout_with_scrollable_list, menu_entry};
 
-/// Derive the user's role for a specific wallet based on wallet data
-fn derive_user_role(wallet: &Wallet, current_user_email: &str) -> UserRole {
+/// Derive the user's role for a specific wallet based on wallet data and global role
+/// Returns None if the user has no access to this wallet
+fn derive_user_role(
+    wallet: &Wallet,
+    current_user_email: &str,
+    global_role: Option<UserRole>,
+) -> Option<UserRole> {
+    // WSManager has access to all wallets
+    if matches!(global_role, Some(UserRole::WSManager)) {
+        return Some(UserRole::WSManager);
+    }
+
     let email_lower = current_user_email.to_lowercase();
     // Check if user is wallet owner
     if wallet.owner.email.to_lowercase() == email_lower {
-        return UserRole::Owner;
+        return Some(UserRole::Owner);
     }
     // Check if user is a participant (has keys with matching email)
     if let Some(template) = &wallet.template {
         for key in template.keys.values() {
             if key.email.to_lowercase() == email_lower {
-                return UserRole::Participant;
+                return Some(UserRole::Participant);
             }
         }
     }
-    // Default to WSManager (platform admin)
-    UserRole::WSManager
+    // User has no access to this wallet
+    None
 }
 
 /// Fixed width for status badges to ensure alignment
@@ -260,6 +270,9 @@ pub fn wallet_select_view(state: &State) -> Element<'_, Msg> {
     // Filter wallets by search text (case-insensitive)
     let search_filter = state.views.wallet_select.search_filter.to_lowercase();
 
+    // Get the user's global role (from User record, not per-wallet)
+    let global_role = state.app.global_user_role.clone();
+
     if has_wallets {
         if let Some(org_id) = state.app.selected_org {
             if let Some(org) = state.backend.get_org(org_id) {
@@ -268,7 +281,9 @@ pub fn wallet_select_view(state: &State) -> Element<'_, Msg> {
                     .wallets
                     .iter()
                     .filter_map(|(id, wallet)| {
-                        let role = derive_user_role(wallet, current_user_email);
+                        // Get role for this wallet (None = no access)
+                        let role =
+                            derive_user_role(wallet, current_user_email, global_role.clone())?;
 
                         // Participants should NOT see Draft or Locked wallets
                         let is_draft_or_locked = matches!(
