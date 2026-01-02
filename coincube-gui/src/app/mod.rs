@@ -84,9 +84,9 @@ impl Panels {
             active_expanded: false,
             // Active panels always available (use BreezClient, not Vault wallet)
             global_home: if let Some(w) = &wallet {
-                GlobalHome::new(w.clone())
+                GlobalHome::new(w.clone(), breez_client.clone())
             } else {
-                GlobalHome::new_without_wallet()
+                GlobalHome::new_without_wallet(breez_client.clone())
             },
             active_overview: ActiveOverview::new(breez_client.clone()),
             active_send: ActiveSend::new(breez_client.clone()),
@@ -129,7 +129,7 @@ impl Panels {
             current: Menu::Home,
             vault_expanded: false,
             active_expanded: false,
-            global_home: GlobalHome::new(wallet.clone()),
+            global_home: GlobalHome::new(wallet.clone(), breez_client.clone()),
             vault_overview: Some(VaultOverview::new(
                 wallet.clone(),
                 cache.coins(),
@@ -389,12 +389,18 @@ impl App {
             config_arc.clone(),
             restored_from_backup,
         );
-        let cmd = if let Some(vault_overview) = panels.vault_overview.as_mut() {
-            vault_overview.reload(Some(daemon.clone()), Some(wallet.clone()))
+        let mut tasks = vec![];
+        if let Some(vault_overview) = panels.vault_overview.as_mut() {
+            tasks.push(vault_overview.reload(Some(daemon.clone()), Some(wallet.clone())));
         } else {
             tracing::warn!("vault_overview not present in App::new despite vault being configured");
-            Task::none()
-        };
+        }
+        tasks.push(
+            panels
+                .global_home
+                .reload(Some(daemon.clone()), Some(wallet.clone())),
+        );
+        let cmd = Task::batch(tasks);
         let mut cache_with_vault = cache;
         cache_with_vault.has_vault = true;
         (
@@ -433,8 +439,9 @@ impl App {
         };
         tracing::debug!("Cache configured with has_vault=false");
 
-        // Create panels without vault - Active wallet always available via BreezClient
-        let panels = Panels::new_without_vault(breez_client.clone(), None);
+        let mut panels = Panels::new_without_vault(breez_client.clone(), None);
+
+        let cmd = panels.global_home.reload(None, None);
 
         tracing::info!("App created without vault successfully");
         (
@@ -449,7 +456,7 @@ impl App {
                 config: config_arc,
                 datadir,
             },
-            Task::none(),
+            cmd,
         )
     }
 

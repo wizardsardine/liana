@@ -9,6 +9,7 @@ use crate::{
 };
 
 use breez_sdk_liquid::InputType;
+use coincube_core::miniscript::bitcoin::Amount;
 use coincube_core::miniscript::bitcoin::{bip32::Fingerprint, Address, OutPoint};
 use coincube_core::spend::SpendCreationError;
 
@@ -322,4 +323,6 @@ pub enum HomeMessage {
     ConfirmTransfer,
     NextStep,
     PreviousStep,
+    Error(String),
+    ActiveBalanceUpdated(Amount),
 }
