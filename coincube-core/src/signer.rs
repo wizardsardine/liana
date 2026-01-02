@@ -163,10 +163,21 @@ impl HotSigner {
     }
 
     /// Read mnemonics from datadir (with optional password for encrypted files)
+    /// If `skip_active` is true, skip files containing "-active-" in the filename (Active wallet mnemonics)
     pub fn from_datadir_with_password(
         datadir_root: &path::Path,
         network: bitcoin::Network,
         password: Option<&str>,
+    ) -> Result<Vec<Self>, SignerError> {
+        Self::from_datadir_with_password_filtered(datadir_root, network, password, false)
+    }
+
+    /// Read mnemonics from datadir, optionally filtering out Active wallet mnemonics
+    pub fn from_datadir_with_password_filtered(
+        datadir_root: &path::Path,
+        network: bitcoin::Network,
+        password: Option<&str>,
+        skip_active: bool,
     ) -> Result<Vec<Self>, SignerError> {
         let mut signers = Vec::new();
 
@@ -176,10 +187,19 @@ impl HotSigner {
 
         for entry in mnemonic_paths {
             let path = entry.map_err(SignerError::MnemonicStorage)?.path();
+
+            // Skip Active wallet mnemonics if requested (they're managed by Breez SDK)
+            if skip_active {
+                if let Some(filename) = path.file_name().and_then(|n| n.to_str()) {
+                    if filename.contains("-active-") {
+                        continue;
+                    }
+                }
+            }
+
             let data = fs::read(&path).map_err(SignerError::MnemonicStorage)?;
 
             let mnemonic_str = if Self::is_encrypted(&data) {
-                // Encrypted file
                 let pwd = password.ok_or_else(|| {
                     SignerError::Decryption("Password required for encrypted mnemonic".to_string())
                 })?;
@@ -197,12 +217,71 @@ impl HotSigner {
         Ok(signers)
     }
 
+    /// Load a specific signer by fingerprint from datadir
+    pub fn from_datadir_by_fingerprint(
+        datadir_root: &path::Path,
+        network: bitcoin::Network,
+        target_fingerprint: Fingerprint,
+        password: &str,
+    ) -> Result<Self, SignerError> {
+        let mnemonics_folder = Self::mnemonics_folder(datadir_root, network);
+        let mnemonic_paths =
+            fs::read_dir(&mnemonics_folder).map_err(SignerError::MnemonicStorage)?;
+
+        // First, try to find a file with the fingerprint in its name (fast path)
+        let fingerprint_str = target_fingerprint.to_string();
+        for entry in mnemonic_paths {
+            let path = entry.map_err(SignerError::MnemonicStorage)?.path();
+
+            // Check if filename contains the target fingerprint
+            if let Some(filename) = path.file_name().and_then(|n| n.to_str()) {
+                if filename.contains(&fingerprint_str) {
+                    // Found a potential match, try to load it
+                    let data = fs::read(&path).map_err(SignerError::MnemonicStorage)?;
+
+                    let mnemonic_str = if Self::is_encrypted(&data) {
+                        Self::decrypt_mnemonic(&data, password)?
+                    } else {
+                        // Unencrypted file (backward compatibility)
+                        String::from_utf8(data).map_err(|e| {
+                            SignerError::MnemonicStorage(io::Error::new(
+                                io::ErrorKind::InvalidData,
+                                e,
+                            ))
+                        })?
+                    };
+
+                    let signer = Self::from_str(network, &mnemonic_str)?;
+
+                    // Verify the fingerprint matches
+                    let secp = secp256k1::Secp256k1::signing_only();
+                    if signer.fingerprint(&secp) == target_fingerprint {
+                        return Ok(signer);
+                    }
+                }
+            }
+        }
+        Err(SignerError::MnemonicStorage(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("Signer with fingerprint {} not found", target_fingerprint),
+        )))
+    }
+
     /// Legacy method (backward compatible)
+    /// Loads all mnemonics from datadir without password
     pub fn from_datadir(
         datadir_root: &path::Path,
         network: bitcoin::Network,
     ) -> Result<Vec<Self>, SignerError> {
-        Self::from_datadir_with_password(datadir_root, network, None)
+        Self::from_datadir_with_password_filtered(datadir_root, network, None, false)
+    }
+
+    /// Load only Vault mnemonics (skip Active wallet mnemonics)
+    pub fn from_datadir_vault_only(
+        datadir_root: &path::Path,
+        network: bitcoin::Network,
+    ) -> Result<Vec<Self>, SignerError> {
+        Self::from_datadir_with_password_filtered(datadir_root, network, None, true)
     }
 
     /// The BIP39 mnemonics from which the master key of this signer is derived.

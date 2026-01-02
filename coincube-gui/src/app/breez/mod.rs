@@ -42,20 +42,23 @@ pub async fn load_breez_client(
     datadir: &Path,
     network: Network,
     active_signer_fingerprint: Fingerprint,
-    password: Option<&str>,
+    password: &str,
 ) -> Result<Arc<BreezClient>, BreezError> {
-    // Load all HotSigners from datadir
-    let signers = HotSigner::from_datadir_with_password(datadir, network, password)
-        .map_err(|e| BreezError::SignerError(e.to_string()))?;
-
-    // Create secp context for fingerprint comparison
-    let secp = coincube_core::miniscript::bitcoin::secp256k1::Secp256k1::new();
-
-    // Find the signer matching the fingerprint
-    let active_signer = signers
-        .into_iter()
-        .find(|s| s.fingerprint(&secp) == active_signer_fingerprint)
-        .ok_or(BreezError::SignerNotFound(active_signer_fingerprint))?;
+    // Load only the specific signer by fingerprint (more efficient and secure)
+    let active_signer = HotSigner::from_datadir_by_fingerprint(
+        datadir,
+        network,
+        active_signer_fingerprint,
+        password,
+    )
+    .map_err(|e| match e {
+        coincube_core::signer::SignerError::MnemonicStorage(io_err)
+            if io_err.kind() == std::io::ErrorKind::NotFound =>
+        {
+            BreezError::SignerNotFound(active_signer_fingerprint)
+        }
+        _ => BreezError::SignerError(e.to_string()),
+    })?;
 
     // Create Breez config
     let breez_config = BreezConfig::from_env(network, datadir)?;

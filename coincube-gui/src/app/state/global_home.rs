@@ -274,7 +274,6 @@ impl State for GlobalHome {
                     (info.wallet_info.balance_sat + info.wallet_info.pending_receive_sat)
                         .saturating_sub(info.wallet_info.pending_send_sat),
                 );
-                log::error!("Inside the ok block active balance fetch");
                 Message::View(view::Message::Home(HomeMessage::ActiveBalanceUpdated(
                     balance,
                 )))

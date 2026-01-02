@@ -548,13 +548,19 @@ impl State for ActiveSend {
                                             current_input.valid = true;
                                         }
                                     } else {
-                                        current_input.valid = true;
+                                        // Conversion to BTC failed
+                                        current_input.valid = false;
+                                        current_input.warning = Some("Unable to convert to BTC");
                                     }
                                 } else {
-                                    current_input.valid = true;
+                                    // Invalid fiat amount format
+                                    current_input.valid = false;
+                                    current_input.warning = Some("Invalid fiat amount");
                                 }
                             } else {
-                                current_input.valid = true;
+                                // Converter not available
+                                current_input.valid = false;
+                                current_input.warning = Some("Exchange rate unavailable");
                             }
                         } else {
                             current_input.valid = false;
@@ -590,7 +596,7 @@ impl State for ActiveSend {
                     }
                 }
                 view::ActiveSendMessage::PopupMessage(SendPopupMessage::FiatDone) => {
-                    if let ActiveSendFlowState::Main { modal } = &self.flow_state {
+                    if let ActiveSendFlowState::Main { modal } = &mut self.flow_state {
                         if let Modal::FiatInput {
                             fiat_input,
                             selected_currency,
@@ -599,8 +605,9 @@ impl State for ActiveSend {
                         } = modal
                         {
                             if let Ok(_fiat_val) = fiat_input.value.parse::<f64>() {
-                                // Convert fiat to BTC using the converter for selected currency
+                                // Check if converter is available
                                 if let Some(converter) = converters.get(selected_currency) {
+                                    // Convert fiat to BTC using the converter for selected currency
                                     if let Ok(fiat_amount) =
                                         view::vault::fiat::FiatAmount::from_str_in(
                                             &fiat_input.value,
@@ -635,14 +642,27 @@ impl State for ActiveSend {
                                                 valid,
                                                 warning,
                                             };
+
+                                            // Only close modal on successful conversion
+                                            self.flow_state = ActiveSendFlowState::Main {
+                                                modal: Modal::AmountInput,
+                                            };
+                                        } else {
+                                            // Conversion to BTC failed - stay in fiat modal with error
+                                            fiat_input.valid = false;
+                                            fiat_input.warning = Some("Unable to convert to BTC");
                                         }
+                                    } else {
+                                        // Invalid fiat amount - stay in fiat modal with error
+                                        fiat_input.valid = false;
+                                        fiat_input.warning = Some("Invalid fiat amount");
                                     }
+                                } else {
+                                    // Converter not available - stay in fiat modal with error
+                                    fiat_input.valid = false;
+                                    fiat_input.warning = Some("Exchange rate unavailable");
                                 }
                             }
-
-                            self.flow_state = ActiveSendFlowState::Main {
-                                modal: Modal::AmountInput,
-                            };
                         }
                     }
                 }
