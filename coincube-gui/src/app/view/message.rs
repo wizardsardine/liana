@@ -229,6 +229,7 @@ pub enum ActiveOverviewMessage {
         recent_payment: Vec<breez_sdk_liquid::prelude::Payment>,
     },
     Error(String),
+    RefreshRequested,
 }
 
 #[derive(Debug, Clone)]
@@ -246,13 +247,19 @@ pub enum ActiveSendMessage {
     // Send flow popup messages
     PopupMessage(SendPopupMessage),
     PrepareResponseReceived(breez_sdk_liquid::prelude::PrepareSendResponse),
+    PrepareOnChainResponseReceived(breez_sdk_liquid::prelude::PreparePayOnchainResponse),
     ConfirmSend,
     SendComplete,
     BackToHome,
-    LimitsUpdated {
+    LightningLimitsFetched {
         min_sat: u64,
         max_sat: u64,
     },
+    OnChainLimitsFetched {
+        min_sat: u64,
+        max_sat: u64,
+    },
+    RefreshRequested,
 }
 
 #[derive(Debug, Clone)]

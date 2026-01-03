@@ -44,12 +44,14 @@ pub struct ActiveSend {
     recent_transaction: Vec<view::active::RecentTransaction>,
     input: form::Value<String>,
     input_type: Option<InputType>,
-    limits: Option<(u64, u64)>, // (min_sats, max_sats)
+    lightning_limits: Option<(u64, u64)>, // (min_sats, max_sats)
+    onchain_limits: Option<(u64, u64)>,   // (min_sats, max_sats)
     flow_state: ActiveSendFlowState,
     description: Option<String>,
     comment: Option<String>,
     error: Option<String>,
     prepare_response: Option<breez_sdk_liquid::prelude::PrepareSendResponse>,
+    prepare_onchain_response: Option<breez_sdk_liquid::prelude::PreparePayOnchainResponse>,
     is_sending: bool,
 }
 
@@ -65,10 +67,12 @@ impl ActiveSend {
             error: None,
             flow_state: ActiveSendFlowState::Main { modal: Modal::None },
             input_type: None,
-            limits: None,
+            lightning_limits: None,
+            onchain_limits: None,
             comment: None,
             description: None,
             prepare_response: None,
+            prepare_onchain_response: None,
             is_sending: false,
         }
     }
@@ -134,13 +138,14 @@ impl State for ActiveSend {
             &self.amount_input,
             comment,
             self.description.as_deref(),
-            self.limits,
+            self.lightning_limits,
             self.amount,
             self.prepare_response.as_ref(),
             self.is_sending,
             menu,
             cache,
             &self.input_type,
+            self.onchain_limits,
         )
     }
 
@@ -157,6 +162,7 @@ impl State for ActiveSend {
                     self.error = None;
                     let breez = self.breez_client.clone();
                     let breez_clone = self.breez_client.clone();
+                    let breez_client = self.breez_client.clone();
                     // TODO: Add some kind of debouncing mechanism here, so that we don't call breez
                     // API again and again
                     let validate_input =
@@ -167,13 +173,13 @@ impl State for ActiveSend {
                         });
 
                     // Fetch limits only if not already available
-                    if self.limits.is_none() {
+                    if self.lightning_limits.is_none() || self.onchain_limits.is_none() {
                         let fetch_lightning_limits = Task::perform(
                             async move { breez_clone.fetch_lightning_limits().await },
                             |limits| {
                                 if let Ok(limits) = limits {
                                     Message::View(view::Message::ActiveSend(
-                                        view::ActiveSendMessage::LimitsUpdated {
+                                        view::ActiveSendMessage::LightningLimitsFetched {
                                             min_sat: limits.send.min_sat,
                                             max_sat: limits.send.max_sat,
                                         },
@@ -187,7 +193,31 @@ impl State for ActiveSend {
                                 }
                             },
                         );
-                        return Task::batch(vec![validate_input, fetch_lightning_limits]);
+
+                        let fetch_onchain_limits = Task::perform(
+                            async move { breez_client.fetch_onchain_limits().await },
+                            |limits| {
+                                if let Ok(limits) = limits {
+                                    Message::View(view::Message::ActiveSend(
+                                        view::ActiveSendMessage::OnChainLimitsFetched {
+                                            min_sat: limits.send.min_sat,
+                                            max_sat: limits.send.max_sat,
+                                        },
+                                    ))
+                                } else {
+                                    Message::View(view::Message::ActiveSend(
+                                        view::ActiveSendMessage::Error(String::from(
+                                            "Couldn't fetch Onchain limits",
+                                        )),
+                                    ))
+                                }
+                            },
+                        );
+                        return Task::batch(vec![
+                            validate_input,
+                            fetch_lightning_limits,
+                            fetch_onchain_limits,
+                        ]);
                     }
                     return validate_input;
                 }
@@ -230,13 +260,13 @@ impl State for ActiveSend {
                                     breez_sdk_liquid::Amount::Bitcoin { amount_msat: 0 },
                                 );
 
-                                if let Some((min_limits, max_limits)) = self.limits {
+                                if let Some((min_limits, max_limits)) = self.lightning_limits {
                                     if let breez_sdk_liquid::Amount::Bitcoin { amount_msat } =
                                         min_amount
                                     {
                                         // convert from millisat to sat
                                         let amount_sat = amount_msat / 1000;
-                                        self.limits = Some((
+                                        self.lightning_limits = Some((
                                             std::cmp::max(min_limits, amount_sat),
                                             max_limits,
                                         ));
@@ -318,6 +348,8 @@ impl State for ActiveSend {
                                     payment.payment_type,
                                     breez_sdk_liquid::prelude::PaymentType::Receive
                                 );
+
+                                let details = payment.details.clone();
                                 let sign = if is_incoming { "+" } else { "-" };
                                 view::active::RecentTransaction {
                                     description: desc.to_owned(),
@@ -327,6 +359,7 @@ impl State for ActiveSend {
                                     is_incoming,
                                     sign,
                                     status,
+                                    details,
                                 }
                             })
                             .collect();
@@ -379,7 +412,7 @@ impl State for ActiveSend {
                                 self.amount_input.warning = Some("Insufficient balance");
                             }
                             // Check limits if available
-                            else if let Some((min_sat, max_sat)) = self.limits {
+                            else if let Some((min_sat, max_sat)) = self.lightning_limits {
                                 if amount_sats < min_sat {
                                     self.amount_input.valid = false;
                                     self.amount_input.warning = Some("Below minimum limit");
@@ -519,7 +552,9 @@ impl State for ActiveSend {
                                         if btc_amount > self.btc_balance {
                                             current_input.valid = false;
                                             current_input.warning = Some("Insufficient balance");
-                                        } else if let Some((min_sat, max_sat)) = self.limits {
+                                        } else if let Some((min_sat, max_sat)) =
+                                            self.lightning_limits
+                                        {
                                             if amount_sats < min_sat {
                                                 current_input.valid = false;
                                                 current_input.warning = Some("Below minimum limit");
@@ -611,7 +646,9 @@ impl State for ActiveSend {
                                             let (valid, warning) = if btc_amount > self.btc_balance
                                             {
                                                 (false, Some("Amount exceeds available balance"))
-                                            } else if let Some((min_sat, max_sat)) = self.limits {
+                                            } else if let Some((min_sat, max_sat)) =
+                                                self.lightning_limits
+                                            {
                                                 if amount_sats < min_sat {
                                                     (false, Some("Amount is below minimum limit"))
                                                 } else if amount_sats > max_sat {
@@ -670,9 +707,10 @@ impl State for ActiveSend {
                                 };
 
                                 let breez_client = self.breez_client.clone();
+                                let breez_clone = self.breez_client.clone();
                                 let amount_sat = self.amount.to_sat();
 
-                                return Task::perform(
+                                let lightning_send = Task::perform(
                                     async move {
                                         breez_client
                                             .prepare_send_payment(&breez_sdk_liquid::prelude::PrepareSendRequest {
@@ -699,6 +737,40 @@ impl State for ActiveSend {
                                         )),
                                     },
                                 );
+
+                                let onchain_send = Task::perform(
+                                    async move {
+                                        breez_clone.prepare_pay_onchain(&breez_sdk_liquid::prelude::PreparePayOnchainRequest {
+                                        amount: breez_sdk_liquid::prelude::PayAmount::Bitcoin {
+                                            receiver_amount_sat: amount_sat,
+                                        },
+                                        fee_rate_sat_per_vbyte: None,
+                                    }).await
+                                    },
+                                    |result| {
+                                        match result {
+                                        Ok(prepare_response) => {
+                                            Message::View(view::Message::ActiveSend(
+                                                view::ActiveSendMessage::PrepareOnChainResponseReceived(
+                                                    prepare_response,
+                                                ),
+                                            ))
+                                        }
+                                        Err(e) => Message::View(view::Message::ActiveSend(
+                                            view::ActiveSendMessage::Error(format!(
+                                                "Failed to prepare payment: {}",
+                                                e
+                                            )),
+                                        )),
+                                    }
+                                    },
+                                );
+
+                                if let InputType::BitcoinAddress { .. } = input_type {
+                                    return onchain_send;
+                                } else {
+                                    return lightning_send;
+                                }
                             }
                         }
                     }
@@ -707,10 +779,14 @@ impl State for ActiveSend {
                     self.prepare_response = Some(prepare_response);
                     self.flow_state = ActiveSendFlowState::FinalCheck;
                 }
+                view::ActiveSendMessage::PrepareOnChainResponseReceived(prepare_response) => {
+                    self.prepare_onchain_response = Some(prepare_response);
+                    self.flow_state = ActiveSendFlowState::FinalCheck;
+                }
                 view::ActiveSendMessage::PopupMessage(SendPopupMessage::Close) => {
                     self.flow_state = ActiveSendFlowState::Main { modal: Modal::None };
                     self.amount = Amount::ZERO;
-                    self.limits = None;
+                    self.lightning_limits = None;
                     self.description = None;
                     self.comment = None;
                     self.amount_input = form::Value::default();
@@ -753,6 +829,40 @@ impl State for ActiveSend {
                                     )),
                                 },
                             );
+                        } else if let Some(prepare_onchain_response) =
+                            self.prepare_onchain_response.clone()
+                        {
+                            if let Some(input_type) = self.input_type.clone() {
+                                if let InputType::BitcoinAddress { address } = input_type {
+                                    let breez_client = self.breez_client.clone();
+
+                                    return Task::perform(
+                                        async move {
+                                            breez_client
+                                                .pay_onchain(
+                                                    &breez_sdk_liquid::prelude::PayOnchainRequest {
+                                                        address: address.address.clone(),
+                                                        prepare_response: prepare_onchain_response,
+                                                    },
+                                                )
+                                                .await
+                                        },
+                                        |result| match result {
+                                            Ok(_send_response) => {
+                                                Message::View(view::Message::ActiveSend(
+                                                    view::ActiveSendMessage::SendComplete,
+                                                ))
+                                            }
+                                            Err(e) => Message::View(view::Message::ActiveSend(
+                                                view::ActiveSendMessage::Error(format!(
+                                                    "Failed to send payment: {}",
+                                                    e
+                                                )),
+                                            )),
+                                        },
+                                    );
+                                }
+                            }
                         } else {
                             self.error = Some("No prepare response available".to_string());
                             self.is_sending = false;
@@ -771,18 +881,24 @@ impl State for ActiveSend {
                     self.input_type = None;
                     self.description = None;
                     self.comment = None;
-                    self.limits = None;
+                    self.lightning_limits = None;
                     self.prepare_response = None;
                     self.is_sending = false;
                     self.flow_state = ActiveSendFlowState::Main { modal: Modal::None };
                 }
-                view::ActiveSendMessage::LimitsUpdated { min_sat, max_sat } => {
-                    self.limits = Some((min_sat, max_sat));
+                view::ActiveSendMessage::LightningLimitsFetched { min_sat, max_sat } => {
+                    self.lightning_limits = Some((min_sat, max_sat));
+                }
+                view::ActiveSendMessage::OnChainLimitsFetched { min_sat, max_sat } => {
+                    self.onchain_limits = Some((min_sat, max_sat));
                 }
                 view::ActiveSendMessage::PopupMessage(SendPopupMessage::FiatClose) => {
                     self.flow_state = ActiveSendFlowState::Main {
                         modal: Modal::AmountInput,
                     }
+                }
+                view::ActiveSendMessage::RefreshRequested => {
+                    return self.load_balance();
                 }
             }
         }
