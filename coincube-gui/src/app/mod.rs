@@ -650,14 +650,12 @@ impl App {
             "App::subscription() called, has_vault={}",
             self.cache.has_vault
         );
-        
+
         let mut subscriptions = vec![];
-        
+
         // Always subscribe to Breez events (handles fee acceptance globally)
-        subscriptions.push(
-            self.breez_client.subscription().map(Message::BreezEvent)
-        );
-        
+        subscriptions.push(self.breez_client.subscription().map(Message::BreezEvent));
+
         // Only create tick subscription if we have a vault (daemon exists)
         if self.daemon.is_some() {
             subscriptions.push(
@@ -692,13 +690,13 @@ impl App {
                 .map(|_| Message::Tick),
             );
         }
-        
+
         // Current panel's subscription
         subscriptions.push(
             self.panels
                 .current()
                 .unwrap_or(&self.panels.global_home)
-                .subscription()
+                .subscription(),
         );
 
         Subscription::batch(subscriptions)
@@ -930,16 +928,16 @@ impl App {
                 }
             }
             Message::View(view::Message::Clipboard(text)) => return clipboard::write(text),
-            
+
             Message::BreezEvent(event) => {
                 use breez_sdk_liquid::prelude::{PaymentDetails, SdkEvent};
                 log::info!("App received Breez Event: {:?}", event);
-                
+
                 match event {
                     SdkEvent::PaymentWaitingFeeAcceptance { details } => {
                         log::info!("Payment waiting for fee acceptance: {:?}", details);
                         let client = self.breez_client.clone();
-                        
+
                         return Task::perform(
                             async move {
                                 if let PaymentDetails::Bitcoin { swap_id, .. } = details.details {
@@ -951,11 +949,17 @@ impl App {
                                                 fees_response.payer_amount_sat,
                                                 fees_response.fees_sat
                                             );
-                                            if let Err(e) = client.accept_payment_proposed_fees(fees_response).await {
+                                            if let Err(e) = client
+                                                .accept_payment_proposed_fees(fees_response)
+                                                .await
+                                            {
                                                 log::error!("Failed to accept payment fees: {}", e);
                                                 Err(format!("Failed to accept payment fees: {}", e))
                                             } else {
-                                                log::info!("Successfully accepted fees for swap {}", swap_id);
+                                                log::info!(
+                                                    "Successfully accepted fees for swap {}",
+                                                    swap_id
+                                                );
                                                 Ok(())
                                             }
                                         }

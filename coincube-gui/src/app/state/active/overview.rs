@@ -98,7 +98,9 @@ impl ActiveOverview {
 
                 let error = match (&info, &payments) {
                     (Err(_), Err(_)) => Some("Couldn't fetch balance or transactions".to_string()),
-                    (Err(_), _) => Some("Network issue - showing balance from cached transactions".to_string()),
+                    (Err(_), _) => {
+                        Some("Network issue - showing balance from cached transactions".to_string())
+                    }
                     (_, Err(_)) => Some("Couldn't fetch recent transactions".to_string()),
                     _ => None,
                 };

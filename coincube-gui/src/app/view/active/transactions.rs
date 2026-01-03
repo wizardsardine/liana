@@ -12,8 +12,8 @@ use iced::{
 };
 
 use crate::app::menu::Menu;
-use crate::app::view::FiatAmountConverter;
 use crate::app::view::message::Message;
+use crate::app::view::FiatAmountConverter;
 
 pub fn active_transactions_view<'a>(
     payments: &'a [Payment],
@@ -60,7 +60,7 @@ pub fn active_transactions_view<'a>(
     } else {
         // Show balance with fiat conversion (like Vault overview)
         let fiat_balance = fiat_converter.as_ref().map(|c| c.convert(*balance));
-        
+
         content = content.push(
             Row::new()
                 .align_y(Alignment::Center)
@@ -70,7 +70,7 @@ pub fn active_transactions_view<'a>(
                         .align_y(Alignment::Center)
                         .push(Space::new().width(20))
                         .push(fiat.to_text().size(H2_SIZE).color(color::GREY_2))
-                }))
+                })),
         );
 
         // Transaction list
@@ -82,7 +82,10 @@ pub fn active_transactions_view<'a>(
     content.into()
 }
 
-fn transaction_row<'a>(payment: &'a Payment, fiat_converter: Option<FiatAmountConverter>) -> Element<'a, Message> {
+fn transaction_row<'a>(
+    payment: &'a Payment,
+    fiat_converter: Option<FiatAmountConverter>,
+) -> Element<'a, Message> {
     let is_receive = matches!(payment.payment_type, PaymentType::Receive);
     let sign = if is_receive { "+" } else { "-" };
     let amount_color = if is_receive {
@@ -125,9 +128,7 @@ fn transaction_row<'a>(payment: &'a Payment, fiat_converter: Option<FiatAmountCo
                     .push_maybe(fiat_converter.map(|converter| {
                         let amount = Amount::from_sat(payment.amount_sat);
                         let fiat = converter.convert(amount);
-                        fiat.to_text()
-                            .size(14)
-                            .style(theme::text::secondary)
+                        fiat.to_text().size(14).style(theme::text::secondary)
                     })),
             ),
     )
