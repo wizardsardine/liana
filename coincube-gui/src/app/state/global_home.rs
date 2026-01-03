@@ -271,8 +271,7 @@ impl State for GlobalHome {
         Task::perform(async move { breez_client.info().await }, |info| {
             if let Ok(info) = info {
                 let balance = Amount::from_sat(
-                    (info.wallet_info.balance_sat + info.wallet_info.pending_receive_sat)
-                        .saturating_sub(info.wallet_info.pending_send_sat),
+                    info.wallet_info.balance_sat + info.wallet_info.pending_receive_sat,
                 );
                 Message::View(view::Message::Home(HomeMessage::ActiveBalanceUpdated(
                     balance,

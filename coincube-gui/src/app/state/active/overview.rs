@@ -43,8 +43,7 @@ impl ActiveOverview {
                     .as_ref()
                     .map(|info| {
                         Amount::from_sat(
-                            (info.wallet_info.balance_sat + info.wallet_info.pending_receive_sat)
-                                .saturating_sub(info.wallet_info.pending_send_sat),
+                            info.wallet_info.balance_sat + info.wallet_info.pending_receive_sat,
                         )
                     })
                     .unwrap_or(Amount::ZERO);
