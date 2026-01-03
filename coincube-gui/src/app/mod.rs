@@ -650,9 +650,17 @@ impl App {
             "App::subscription() called, has_vault={}",
             self.cache.has_vault
         );
+        
+        let mut subscriptions = vec![];
+        
+        // Always subscribe to Breez events (handles fee acceptance globally)
+        subscriptions.push(
+            self.breez_client.subscription().map(Message::BreezEvent)
+        );
+        
         // Only create tick subscription if we have a vault (daemon exists)
-        let subscriptions = if self.daemon.is_some() {
-            vec![
+        if self.daemon.is_some() {
+            subscriptions.push(
                 time::every(Duration::from_secs(
                     match sync_status(
                         self.daemon_backend(),
@@ -682,19 +690,16 @@ impl App {
                     },
                 ))
                 .map(|_| Message::Tick),
-                self.panels
-                    .current()
-                    .unwrap_or(&self.panels.global_home)
-                    .subscription(),
-            ]
-        } else {
-            // No vault - only subscribe to panel events, no tick updates
-            vec![self
-                .panels
+            );
+        }
+        
+        // Current panel's subscription
+        subscriptions.push(
+            self.panels
                 .current()
                 .unwrap_or(&self.panels.global_home)
-                .subscription()]
-        };
+                .subscription()
+        );
 
         Subscription::batch(subscriptions)
     }
@@ -925,6 +930,66 @@ impl App {
                 }
             }
             Message::View(view::Message::Clipboard(text)) => return clipboard::write(text),
+            
+            Message::BreezEvent(event) => {
+                use breez_sdk_liquid::prelude::{PaymentDetails, SdkEvent};
+                log::info!("App received Breez Event: {:?}", event);
+                
+                match event {
+                    SdkEvent::PaymentWaitingFeeAcceptance { details } => {
+                        log::info!("Payment waiting for fee acceptance: {:?}", details);
+                        let client = self.breez_client.clone();
+                        
+                        return Task::perform(
+                            async move {
+                                if let PaymentDetails::Bitcoin { swap_id, .. } = details.details {
+                                    match client.fetch_payment_proposed_fees(&swap_id).await {
+                                        Ok(fees_response) => {
+                                            log::info!(
+                                                "Accepting fees for swap {}: payer_amount={}, fees={}",
+                                                swap_id,
+                                                fees_response.payer_amount_sat,
+                                                fees_response.fees_sat
+                                            );
+                                            if let Err(e) = client.accept_payment_proposed_fees(fees_response).await {
+                                                log::error!("Failed to accept payment fees: {}", e);
+                                                Err(format!("Failed to accept payment fees: {}", e))
+                                            } else {
+                                                log::info!("Successfully accepted fees for swap {}", swap_id);
+                                                Ok(())
+                                            }
+                                        }
+                                        Err(e) => {
+                                            log::error!("Failed to fetch proposed fees: {}", e);
+                                            Err(format!("Failed to fetch proposed fees: {}", e))
+                                        }
+                                    }
+                                } else {
+                                    Ok(())
+                                }
+                            },
+                            |result| {
+                                if let Err(err) = result {
+                                    log::error!("Fee acceptance failed: {}", err);
+                                }
+                                // Trigger a cache update to refresh balance displays
+                                Message::Tick
+                            },
+                        );
+                    }
+                    SdkEvent::PaymentPending { .. }
+                    | SdkEvent::PaymentSucceeded { .. }
+                    | SdkEvent::PaymentFailed { .. }
+                    | SdkEvent::PaymentWaitingConfirmation { .. } => {
+                        // Payment state changed - trigger cache update
+                        return Task::done(Message::Tick);
+                    }
+                    _ => {
+                        // Other events - just log
+                        log::debug!("Unhandled Breez event: {:?}", event);
+                    }
+                }
+            }
 
             msg => {
                 if let (Some(daemon), Some(panel)) =

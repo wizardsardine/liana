@@ -228,7 +228,6 @@ pub enum ActiveOverviewMessage {
         balance: coincube_core::miniscript::bitcoin::Amount,
         recent_payment: Vec<breez_sdk_liquid::prelude::Payment>,
     },
-    BreezEvent(breez_sdk_liquid::prelude::SdkEvent),
     Error(String),
 }
 
@@ -242,7 +241,6 @@ pub enum ActiveSendMessage {
         balance: coincube_core::miniscript::bitcoin::Amount,
         recent_payment: Vec<breez_sdk_liquid::prelude::Payment>,
     },
-    BreezEvent(breez_sdk_liquid::prelude::SdkEvent),
     Error(String),
     ClearError,
     // Send flow popup messages

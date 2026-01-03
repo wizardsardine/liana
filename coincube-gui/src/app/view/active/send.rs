@@ -173,15 +173,13 @@ pub fn active_send_view<'a>(
                         .push(p1_bold(&tx.description).bold())
                         .push(
                             Row::new()
-                                .push_maybe(if let PaymentState::Complete = tx.status {
+                                .push_maybe(if !matches!(tx.status, PaymentState::Pending) {
                                     Some(p2_regular(&tx.time_ago).style(theme::text::secondary))
                                 } else {
                                     None
                                 })
                                 .push_maybe({
-                                    if let PaymentState::Complete = tx.status {
-                                        None
-                                    } else {
+                                    if matches!(tx.status, PaymentState::Pending) {
                                         let (bg, fg) = (color::GREY_3, color::BLACK);
                                         Some(
                                             Container::new(
@@ -210,6 +208,8 @@ pub fn active_send_view<'a>(
                                                 },
                                             ),
                                         )
+                                    } else {
+                                        None
                                     }
                                 })
                                 .spacing(8),

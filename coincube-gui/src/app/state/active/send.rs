@@ -2,7 +2,6 @@ use std::convert::TryInto;
 use std::sync::Arc;
 
 use breez_sdk_liquid::model::PaymentDetails;
-use breez_sdk_liquid::prelude::SdkEvent;
 use breez_sdk_liquid::InputType;
 use coincube_core::miniscript::bitcoin::Amount;
 use coincube_ui::{component::form, widget::*};
@@ -332,18 +331,6 @@ impl State for ActiveSend {
                             })
                             .collect();
                         self.recent_transaction = txns;
-                    }
-                }
-                view::ActiveSendMessage::BreezEvent(event) => {
-                    log::info!("Received Breez Event: {:?}", event);
-                    match event {
-                        SdkEvent::PaymentPending { .. }
-                        | SdkEvent::PaymentSucceeded { .. }
-                        | SdkEvent::PaymentFailed { .. }
-                        | SdkEvent::PaymentWaitingConfirmation { .. } => {
-                            return self.load_balance();
-                        }
-                        _ => {}
                     }
                 }
                 view::ActiveSendMessage::Error(err) => {
@@ -803,11 +790,7 @@ impl State for ActiveSend {
     }
 
     fn subscription(&self) -> iced::Subscription<Message> {
-        self.breez_client.subscription().map(|e| {
-            Message::View(view::Message::ActiveSend(
-                view::ActiveSendMessage::BreezEvent(e),
-            ))
-        })
+        iced::Subscription::none()
     }
 
     fn reload(

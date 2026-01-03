@@ -1,6 +1,8 @@
+use std::convert::TryInto;
 use std::sync::Arc;
 
 use breez_sdk_liquid::prelude::Payment;
+use coincube_core::miniscript::bitcoin::Amount;
 use coincube_ui::widget::*;
 use iced::Task;
 
@@ -12,8 +14,7 @@ pub struct ActiveTransactions {
     breez_client: Arc<BreezClient>,
     payments: Vec<Payment>,
     loading: bool,
-    balance_sat: u64,
-    balance_usd: f64,
+    balance: Amount,
 }
 
 impl ActiveTransactions {
@@ -22,8 +23,7 @@ impl ActiveTransactions {
             breez_client,
             payments: Vec::new(),
             loading: false,
-            balance_sat: 0,
-            balance_usd: 0.0,
+            balance: Amount::ZERO,
         }
     }
 
@@ -31,7 +31,7 @@ impl ActiveTransactions {
         // Placeholder: In the future, this will preselect a transaction
     }
 
-    fn calculate_balance(&self) -> u64 {
+    fn calculate_balance(&self) -> Amount {
         use breez_sdk_liquid::prelude::PaymentType;
         let mut balance: i64 = 0;
 
@@ -46,20 +46,21 @@ impl ActiveTransactions {
             }
         }
 
-        balance.max(0) as u64
+        Amount::from_sat(balance.max(0) as u64)
     }
 }
 
 impl State for ActiveTransactions {
     fn view<'a>(&'a self, menu: &'a Menu, cache: &'a Cache) -> Element<'a, view::Message> {
+        let fiat_converter = cache.fiat_price.as_ref().and_then(|p| p.try_into().ok());
         view::dashboard(
             menu,
             cache,
             None,
             view::active::active_transactions_view(
                 &self.payments,
-                self.balance_sat,
-                self.balance_usd,
+                &self.balance,
+                fiat_converter,
                 self.loading,
             ),
         )
@@ -75,10 +76,7 @@ impl State for ActiveTransactions {
             Message::PaymentsLoaded(Ok(payments)) => {
                 self.loading = false;
                 self.payments = payments;
-                // Calculate balance from payments
-                self.balance_sat = self.calculate_balance();
-                // Mock USD conversion (in production, use real exchange rate)
-                self.balance_usd = (self.balance_sat as f64 / 100_000_000.0) * 100_000.0;
+                self.balance = self.calculate_balance();
                 Task::none()
             }
             Message::PaymentsLoaded(Err(_e)) => {

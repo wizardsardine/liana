@@ -1,6 +1,8 @@
 use breez_sdk_liquid::prelude::{Payment, PaymentType};
+use coincube_core::miniscript::bitcoin::Amount;
 use coincube_ui::{
-    component::{button, text::*},
+    color,
+    component::{amount::amount_with_size, button, text::*},
     icon, theme,
     widget::*,
 };
@@ -10,14 +12,15 @@ use iced::{
 };
 
 use crate::app::menu::Menu;
+use crate::app::view::FiatAmountConverter;
 use crate::app::view::message::Message;
 
-pub fn active_transactions_view(
-    payments: &[Payment],
-    balance_sat: u64,
-    balance_usd: f64,
+pub fn active_transactions_view<'a>(
+    payments: &'a [Payment],
+    balance: &'a Amount,
+    fiat_converter: Option<FiatAmountConverter>,
     _loading: bool,
-) -> Element<Message> {
+) -> Element<'a, Message> {
     let mut content = Column::new().spacing(30).width(Length::Fill).padding(40);
 
     if payments.is_empty() {
@@ -55,33 +58,31 @@ pub fn active_transactions_view(
                 ),
         );
     } else {
-        // Show balance
-        let balance_btc = balance_sat as f64 / 100_000_000.0;
+        // Show balance with fiat conversion (like Vault overview)
+        let fiat_balance = fiat_converter.as_ref().map(|c| c.convert(*balance));
+        
         content = content.push(
-            Column::new()
-                .spacing(8)
-                .push(
-                    text(format!("{:.8} sats", balance_btc))
-                        .size(32)
-                        .style(theme::text::warning),
-                )
-                .push(
-                    text(format!("~ $ {:.2}", balance_usd))
-                        .size(18)
-                        .style(theme::text::secondary),
-                ),
+            Row::new()
+                .align_y(Alignment::Center)
+                .push(amount_with_size(balance, H1_SIZE))
+                .push_maybe(fiat_balance.map(|fiat| {
+                    Row::new()
+                        .align_y(Alignment::Center)
+                        .push(Space::new().width(20))
+                        .push(fiat.to_text().size(H2_SIZE).color(color::GREY_2))
+                }))
         );
 
         // Transaction list
         for payment in payments {
-            content = content.push(transaction_row(payment));
+            content = content.push(transaction_row(payment, fiat_converter));
         }
     }
 
     content.into()
 }
 
-fn transaction_row(payment: &Payment) -> Element<Message> {
+fn transaction_row<'a>(payment: &'a Payment, fiat_converter: Option<FiatAmountConverter>) -> Element<'a, Message> {
     let is_receive = matches!(payment.payment_type, PaymentType::Receive);
     let sign = if is_receive { "+" } else { "-" };
     let amount_color = if is_receive {
@@ -121,11 +122,13 @@ fn transaction_row(payment: &Payment) -> Element<Message> {
                             .size(16)
                             .style(amount_color),
                     )
-                    .push(
-                        text(format!("about $ {:.2}", payment.amount_sat as f64 / 100.0))
+                    .push_maybe(fiat_converter.map(|converter| {
+                        let amount = Amount::from_sat(payment.amount_sat);
+                        let fiat = converter.convert(amount);
+                        fiat.to_text()
                             .size(14)
-                            .style(theme::text::secondary),
-                    ),
+                            .style(theme::text::secondary)
+                    })),
             ),
     )
     .padding(20)

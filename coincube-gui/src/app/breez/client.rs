@@ -334,6 +334,28 @@ impl BreezClient {
             .map_err(|e| BreezError::Sdk(e.to_string()))
     }
 
+    pub async fn fetch_payment_proposed_fees(
+        &self,
+        swap_id: &str,
+    ) -> Result<breez::FetchPaymentProposedFeesResponse, BreezError> {
+        self.sdk
+            .fetch_payment_proposed_fees(&breez::FetchPaymentProposedFeesRequest {
+                swap_id: swap_id.to_string(),
+            })
+            .await
+            .map_err(|e| BreezError::Sdk(e.to_string()))
+    }
+
+    pub async fn accept_payment_proposed_fees(
+        &self,
+        response: breez::FetchPaymentProposedFeesResponse,
+    ) -> Result<(), BreezError> {
+        self.sdk
+            .accept_payment_proposed_fees(&breez::AcceptPaymentProposedFeesRequest { response })
+            .await
+            .map_err(|e| BreezError::Sdk(e.to_string()))
+    }
+
     pub async fn validate_input(&self, input: String) -> Option<InputType> {
         self.sdk.parse(&input).await.ok()
     }
