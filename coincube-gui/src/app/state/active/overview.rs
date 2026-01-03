@@ -43,8 +43,7 @@ impl ActiveOverview {
                     .as_ref()
                     .map(|info| {
                         Amount::from_sat(
-                            (info.wallet_info.balance_sat + info.wallet_info.pending_receive_sat)
-                                .saturating_sub(info.wallet_info.pending_send_sat),
+                            info.wallet_info.balance_sat + info.wallet_info.pending_receive_sat,
                         )
                     })
                     .unwrap_or(Amount::ZERO);
@@ -130,9 +129,24 @@ impl State for ActiveOverview {
                                     .map(|c: &view::FiatAmountConverter| c.convert(amount));
 
                                 let desc = match &payment.details {
-                                    PaymentDetails::Lightning { description, .. }
-                                    | PaymentDetails::Liquid { description, .. }
-                                    | PaymentDetails::Bitcoin { description, .. } => description,
+                                    PaymentDetails::Lightning {
+                                        payer_note,
+                                        description,
+                                        ..
+                                    } => payer_note
+                                        .as_ref()
+                                        .filter(|s| !s.is_empty())
+                                        .unwrap_or(description),
+                                    PaymentDetails::Liquid {
+                                        payer_note,
+                                        description,
+                                        ..
+                                    } => payer_note
+                                        .as_ref()
+                                        .filter(|s| !s.is_empty())
+                                        .unwrap_or(description),
+
+                                    PaymentDetails::Bitcoin { description, .. } => description,
                                 };
 
                                 let is_incoming = matches!(

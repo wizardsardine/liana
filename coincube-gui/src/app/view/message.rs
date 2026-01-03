@@ -8,6 +8,8 @@ use crate::{
     services::fiat::{Currency, PriceSource},
 };
 
+use breez_sdk_liquid::InputType;
+use coincube_core::miniscript::bitcoin::Amount;
 use coincube_core::miniscript::bitcoin::{bip32::Fingerprint, Address, OutPoint};
 use coincube_core::spend::SpendCreationError;
 
@@ -232,7 +234,8 @@ pub enum ActiveOverviewMessage {
 
 #[derive(Debug, Clone)]
 pub enum ActiveSendMessage {
-    InvoiceEdited(String),
+    InputEdited(String),
+    InputValidated(Option<InputType>),
     Send,
     History,
     DataLoaded {
@@ -241,6 +244,36 @@ pub enum ActiveSendMessage {
     },
     BreezEvent(breez_sdk_liquid::prelude::SdkEvent),
     Error(String),
+    ClearError,
+    // Send flow popup messages
+    PopupMessage(SendPopupMessage),
+    PrepareResponseReceived(breez_sdk_liquid::prelude::PrepareSendResponse),
+    ConfirmSend,
+    SendComplete,
+    BackToHome,
+    LimitsUpdated {
+        min_sat: u64,
+        max_sat: u64,
+    },
+}
+
+#[derive(Debug, Clone)]
+pub enum SendPopupMessage {
+    AmountEdited(String),
+    CommentEdited(String),
+    FiatConvert,
+    FiatInputEdited(String),
+    FiatCurrencySelected(crate::services::fiat::Currency),
+    FiatPricesLoaded(
+        std::collections::HashMap<
+            crate::services::fiat::Currency,
+            crate::app::view::FiatAmountConverter,
+        >,
+    ),
+    FiatDone,
+    FiatClose,
+    Done,
+    Close,
 }
 
 #[derive(Debug, Clone)]
@@ -290,4 +323,6 @@ pub enum HomeMessage {
     ConfirmTransfer,
     NextStep,
     PreviousStep,
+    Error(String),
+    ActiveBalanceUpdated(Amount),
 }

@@ -60,13 +60,15 @@ pub fn active_overview_view<'a>(
                         .push(p1_bold(&tx.description).bold())
                         .push(
                             Row::new()
-                                .push_maybe(if tx.status != PaymentState::Pending {
+                                .push_maybe(if let PaymentState::Complete = tx.status {
                                     Some(p2_regular(&tx.time_ago).style(theme::text::secondary))
                                 } else {
                                     None
                                 })
                                 .push_maybe({
-                                    if let PaymentState::Pending = tx.status {
+                                    if let PaymentState::Complete = tx.status {
+                                        None
+                                    } else {
                                         let (bg, fg) = (color::GREY_3, color::BLACK);
                                         Some(
                                             Container::new(
@@ -95,8 +97,6 @@ pub fn active_overview_view<'a>(
                                                 },
                                             ),
                                         )
-                                    } else {
-                                        None
                                     }
                                 })
                                 .spacing(8),

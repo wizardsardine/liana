@@ -7,6 +7,7 @@ use coincube_ui::widget::*;
 use iced::Task;
 
 use super::{fiat_converter_for_wallet, Cache, Menu, State};
+use crate::app::breez::BreezClient;
 use crate::app::error::Error;
 use crate::app::state::vault::label::LabelsEdited;
 use crate::app::state::vault::receive::ShowQrCodeModal;
@@ -40,8 +41,9 @@ impl Labelled for ReceiveAddressInfo {
     }
 }
 
-#[derive(Default)]
 pub struct GlobalHome {
+    breez_client: Arc<BreezClient>,
+    active_balance: Amount,
     wallet: Option<Arc<Wallet>>,
     balance_masked: bool,
     transfer_direction: Option<TransferDirection>,
@@ -56,15 +58,40 @@ pub struct GlobalHome {
 }
 
 impl GlobalHome {
-    pub fn new(wallet: Arc<Wallet>) -> Self {
+    pub fn new(wallet: Arc<Wallet>, breez_client: Arc<BreezClient>) -> Self {
         Self {
             wallet: Some(wallet),
-            ..Default::default()
+            active_balance: Amount::ZERO,
+            breez_client,
+            balance_masked: false,
+            transfer_direction: None,
+            current_view: HomeView::default(),
+            entered_amount: form::Value::default(),
+            receive_address_info: None,
+            labels_edited: LabelsEdited::default(),
+            address_expanded: false,
+            modal: Modal::default(),
+            empty_labels: HashMap::default(),
+            warning: None,
         }
     }
 
-    pub fn new_without_wallet() -> Self {
-        Self::default()
+    pub fn new_without_wallet(breez_client: Arc<BreezClient>) -> Self {
+        Self {
+            wallet: None,
+            active_balance: Amount::from_sat(90099),
+            breez_client,
+            balance_masked: false,
+            transfer_direction: None,
+            current_view: HomeView::default(),
+            entered_amount: form::Value::default(),
+            receive_address_info: None,
+            labels_edited: LabelsEdited::default(),
+            address_expanded: false,
+            modal: Modal::default(),
+            empty_labels: HashMap::default(),
+            warning: None,
+        }
     }
 }
 
@@ -76,7 +103,7 @@ impl State for GlobalHome {
             .filter(|coin| coin.spend_info.is_none())
             .fold(Amount::from_sat(0), |acc, coin| acc + coin.amount);
 
-        let active_balance = Amount::from_sat(0);
+        let active_balance = self.active_balance;
 
         let fiat_converter = self
             .wallet
@@ -124,7 +151,6 @@ impl State for GlobalHome {
         _cache: &Cache,
         message: Message,
     ) -> Task<Message> {
-        let daemon = daemon.expect("Daemon required for global home panel");
         match message {
             Message::View(view::Message::Home(msg)) => match msg {
                 HomeMessage::ToggleBalanceMask => {
@@ -132,21 +158,24 @@ impl State for GlobalHome {
                     Task::none()
                 }
                 HomeMessage::NextStep => {
-                    if self.current_view.step == 2 {
-                        if let Some(TransferDirection::ActiveToVault) = self.transfer_direction {
-                            self.current_view.next();
-                            return Task::perform(
-                                async move {
-                                    match daemon.get_new_address().await {
-                                        Ok(res) => Ok((res.address, res.derivation_index)),
-                                        Err(e) => Err(e.into()),
-                                    }
-                                },
-                                Message::ReceiveAddress,
-                            );
+                    if let Some(daemon) = daemon {
+                        if self.current_view.step == 2 {
+                            if let Some(TransferDirection::ActiveToVault) = self.transfer_direction
+                            {
+                                self.current_view.next();
+                                return Task::perform(
+                                    async move {
+                                        match daemon.get_new_address().await {
+                                            Ok(res) => Ok((res.address, res.derivation_index)),
+                                            Err(e) => Err(e.into()),
+                                        }
+                                    },
+                                    Message::ReceiveAddress,
+                                );
+                            }
                         }
+                        self.current_view.next();
                     }
-                    self.current_view.next();
                     Task::none()
                 }
                 HomeMessage::PreviousStep => {
@@ -163,6 +192,14 @@ impl State for GlobalHome {
                 }
                 HomeMessage::ConfirmTransfer => {
                     // TODO: Implement transfer confirmation logic (we don't have active wallet yet)
+                    Task::none()
+                }
+                HomeMessage::Error(err) => {
+                    self.warning = Some(Error::Unexpected(err));
+                    Task::none()
+                }
+                HomeMessage::ActiveBalanceUpdated(active_balance) => {
+                    self.active_balance = active_balance;
                     Task::none()
                 }
             },
@@ -187,21 +224,25 @@ impl State for GlobalHome {
                 Task::none()
             }
             Message::View(view::Message::Label(_, _)) | Message::LabelsUpdated(_) => {
-                match self.labels_edited.update(
-                    daemon,
-                    message,
-                    self.receive_address_info
-                        .iter_mut()
-                        .map(|info| info as &mut dyn crate::daemon::model::LabelsLoader),
-                ) {
-                    Ok(cmd) => {
-                        self.warning = None;
-                        cmd
+                if let Some(daemon) = daemon {
+                    match self.labels_edited.update(
+                        daemon,
+                        message,
+                        self.receive_address_info
+                            .iter_mut()
+                            .map(|info| info as &mut dyn crate::daemon::model::LabelsLoader),
+                    ) {
+                        Ok(cmd) => {
+                            self.warning = None;
+                            cmd
+                        }
+                        Err(e) => {
+                            self.warning = Some(e);
+                            Task::none()
+                        }
                     }
-                    Err(e) => {
-                        self.warning = Some(e);
-                        Task::none()
-                    }
+                } else {
+                    Task::none()
                 }
             }
             Message::View(view::Message::ShowQrCode(_)) => {
@@ -226,6 +267,20 @@ impl State for GlobalHome {
         wallet: Option<Arc<Wallet>>,
     ) -> Task<Message> {
         self.wallet = wallet;
-        Task::none()
+        let breez_client = self.breez_client.clone();
+        Task::perform(async move { breez_client.info().await }, |info| {
+            if let Ok(info) = info {
+                let balance = Amount::from_sat(
+                    info.wallet_info.balance_sat + info.wallet_info.pending_receive_sat,
+                );
+                Message::View(view::Message::Home(HomeMessage::ActiveBalanceUpdated(
+                    balance,
+                )))
+            } else {
+                Message::View(view::Message::Home(HomeMessage::Error(
+                    "Couldn't fetch Active Wallet Balance".to_string(),
+                )))
+            }
+        })
     }
 }

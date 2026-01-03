@@ -556,7 +556,7 @@ impl Tab {
                                             datadir_clone.path(),
                                             network_val,
                                             fingerprint,
-                                            Some(&pin),
+                                            &pin,
                                         )
                                         .await
                                     } else {

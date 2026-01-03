@@ -1,4 +1,4 @@
-mod active;
+pub mod active;
 mod global_home;
 pub mod vault;
 
