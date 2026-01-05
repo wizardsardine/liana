@@ -103,7 +103,9 @@ where
 
     fn update(&mut self, message: Message) -> Task<Message>;
 
-    fn subscription(&self) -> Subscription<Message>;
+    fn subscription(&self) -> Subscription<Message> {
+        Subscription::none()
+    }
 
     fn view(&self) -> Element<Message>;
 

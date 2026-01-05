@@ -85,10 +85,6 @@ impl<'a> Installer<'a, Message> for BusinessInstaller {
         self.state.update(message)
     }
 
-    fn subscription(&self) -> Subscription<Message> {
-        Subscription::none()
-    }
-
     fn view(&self) -> Element<Message> {
         self.state.view()
     }
@@ -108,9 +104,9 @@ impl<'a> Installer<'a, Message> for BusinessInstaller {
 
     fn exit_maybe(&mut self, _msg: &Message) -> Option<NextState> {
         // Check if we should exit to Liana Lite (user selected a Final wallet)
-        if self.state.app.exit_to_liana_lite {
+        if self.state.app.exit {
             // Reset the flag
-            self.state.app.exit_to_liana_lite = false;
+            self.state.app.exit = false;
 
             // Get wallet ID from selected wallet
             let wallet_id_str = self
@@ -174,4 +170,3 @@ impl Drop for BusinessInstaller {
         self.state.close_backend();
     }
 }
-

@@ -20,8 +20,8 @@ pub struct AppState {
     pub global_user_role: Option<UserRole>,
     /// Flag to track intentional reconnection (don't show error on disconnect)
     pub reconnecting: bool,
-    /// Flag to signal exit to Liana Lite login
-    pub exit_to_liana_lite: bool,
+    /// Flag to signal exit
+    pub exit: bool,
     /// Server time offset in seconds (server_time - client_time)
     pub server_time_offset: i64,
 }
@@ -181,7 +181,7 @@ impl AppState {
             current_user_role: None,
             global_user_role: None,
             reconnecting: false,
-            exit_to_liana_lite: false,
+            exit: false,
             server_time_offset: 0,
         }
     }
@@ -224,7 +224,7 @@ impl From<PolicyTemplate> for AppState {
             current_user_role: None,
             global_user_role: None,
             reconnecting: false,
-            exit_to_liana_lite: false,
+            exit: false,
             server_time_offset: 0,
         }
     }

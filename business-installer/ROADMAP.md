@@ -125,7 +125,7 @@ When user arrives at wallet selection, three possible subflows based on status:
 
 ### 1.6 Load Wallet Subflow
 - [x] Implement `exit_maybe()` returning `NextState::LoginLianaLite`
-  - [x] Added `exit_to_liana_lite` flag in AppState
+  - [x] Added `exit` flag in AppState (generic exit signal)
   - [x] Finalized wallet selection triggers exit
   - [x] Build `WalletId` and `AuthConfig` for handoff
 - [x] Only available for Final status wallets
@@ -419,6 +419,10 @@ real-time notifications, and in-memory storage.
   - Specter - ✗ Disabled (requires `tokio::net::TcpStream`)
 
 ## Changelog
+
+### 2026-01-05
+- Refactored `exit_to_liana_lite` flag to generic `exit` flag in AppState
+- Moved default `subscription()` implementation to `Installer` trait (no longer needs override in each implementer)
 
 ### 2025-12-30
 - Xpub modal: Implemented two-step device selection pattern (matching liana-gui installer)

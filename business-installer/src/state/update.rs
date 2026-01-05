@@ -313,7 +313,7 @@ impl State {
             Some(WalletStatus::Finalized) => {
                 // Final -> Signal exit to Liana Lite
                 // exit_maybe() will return NextState::LoginLianaLite
-                self.app.exit_to_liana_lite = true;
+                self.app.exit = true;
             }
             Some(WalletStatus::Created)
             | Some(WalletStatus::Drafted)
@@ -996,7 +996,7 @@ impl State {
         self.app.selected_wallet = None;
         self.app.current_wallet_template = None;
         self.app.reconnecting = false;
-        self.app.exit_to_liana_lite = false;
+        self.app.exit = false;
 
         // Navigate to login view
         self.current_view = View::Login;
