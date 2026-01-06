@@ -973,21 +973,58 @@ pub fn create_app_with_remote_backend(
     let network_dir = coincube_dir.network_directory(network);
     let wallet_id = wallet_settings.wallet_id();
     let wallet_alias_for_cube = wallet.metadata.wallet_alias.clone();
-    let cube_settings = app::settings::Settings::from_file(&network_dir)
-        .ok()
-        .and_then(|s| {
-            s.cubes
-                .into_iter()
+    let mut cube_settings = None;
+    let mut needs_persistence = false;
+    
+    match app::settings::Settings::from_file(&network_dir) {
+        Ok(mut settings) => {
+            if let Some(found_cube) = settings
+                .cubes
+                .iter()
                 .find(|c| c.vault_wallet_id.as_ref() == Some(&wallet_id))
-        })
-        .unwrap_or_else(|| {
-            tracing::warn!("No cube found for vault wallet, creating new cube");
-            app::settings::CubeSettings::new(
+            {
+                cube_settings = Some(found_cube.clone());
+            } else {
+                tracing::warn!("No cube found for vault wallet, creating and persisting new cube");
+                let new_cube = app::settings::CubeSettings::new(
+                    wallet_alias_for_cube.unwrap_or_else(|| "My Cube".to_string()),
+                    network,
+                )
+                .with_vault(wallet_id);
+                
+                settings.cubes.push(new_cube.clone());
+                cube_settings = Some(new_cube);
+                needs_persistence = true;
+                
+                if let Err(e) = tokio::runtime::Handle::current().block_on(async {
+                    update_settings_file(&network_dir, |_| Some(settings)).await
+                }) {
+                    tracing::error!("Failed to persist new cube for remote backend: {}", e);
+                }
+            }
+        }
+        Err(_) => {
+            tracing::warn!("No settings file found, creating new cube and settings file");
+            let new_cube = app::settings::CubeSettings::new(
                 wallet_alias_for_cube.unwrap_or_else(|| "My Cube".to_string()),
                 network,
             )
-            .with_vault(wallet_id)
-        });
+            .with_vault(wallet_id);
+            
+            let mut new_settings = app::settings::Settings::default();
+            new_settings.cubes.push(new_cube.clone());
+            cube_settings = Some(new_cube);
+            needs_persistence = true;
+            
+            if let Err(e) = tokio::runtime::Handle::current().block_on(async {
+                update_settings_file(&network_dir, |_| Some(new_settings)).await
+            }) {
+                tracing::error!("Failed to create settings file for remote backend: {}", e);
+            }
+        }
+    }
+    
+    let cube_settings = cube_settings.expect("Cube settings should be available");
 
     App::new(
         Cache {
