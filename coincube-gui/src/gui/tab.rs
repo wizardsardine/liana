@@ -974,7 +974,6 @@ pub fn create_app_with_remote_backend(
     let wallet_id = wallet_settings.wallet_id();
     let wallet_alias_for_cube = wallet.metadata.wallet_alias.clone();
     let mut cube_settings = None;
-    let mut needs_persistence = false;
     
     match app::settings::Settings::from_file(&network_dir) {
         Ok(mut settings) => {
@@ -994,7 +993,6 @@ pub fn create_app_with_remote_backend(
                 
                 settings.cubes.push(new_cube.clone());
                 cube_settings = Some(new_cube);
-                needs_persistence = true;
                 
                 if let Err(e) = tokio::runtime::Handle::current().block_on(async {
                     update_settings_file(&network_dir, |_| Some(settings)).await
@@ -1014,7 +1012,6 @@ pub fn create_app_with_remote_backend(
             let mut new_settings = app::settings::Settings::default();
             new_settings.cubes.push(new_cube.clone());
             cube_settings = Some(new_cube);
-            needs_persistence = true;
             
             if let Err(e) = tokio::runtime::Handle::current().block_on(async {
                 update_settings_file(&network_dir, |_| Some(new_settings)).await

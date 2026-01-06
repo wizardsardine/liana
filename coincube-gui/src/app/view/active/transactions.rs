@@ -269,7 +269,12 @@ pub fn payment_detail_view<'a>(
                                 .push(match payment.status {
                                     PaymentState::Complete => text("Complete").style(theme::text::success),
                                     PaymentState::Pending => text("Pending").style(theme::text::secondary),
-                                    PaymentState::Failed => text("Failed").style(theme::text::danger),
+                                    PaymentState::Created => text("Created").style(theme::text::secondary),
+                                    PaymentState::Failed => text("Failed").style(theme::text::destructive),
+                                    PaymentState::TimedOut => text("Timed Out").style(theme::text::destructive),
+                                    PaymentState::Refundable => text("Refundable").style(theme::text::destructive),
+                                    PaymentState::RefundPending => text("Refund Pending").style(theme::text::secondary),
+                                    PaymentState::WaitingFeeAcceptance => text("Waiting Fee Acceptance").style(theme::text::secondary),
                                 }),
                         )
                         .spacing(20),
