@@ -9,7 +9,7 @@ use crate::{
     services::fiat::{Currency, PriceSource},
 };
 
-use breez_sdk_liquid::prelude::{Payment, PrepareSendResponse};
+use breez_sdk_liquid::prelude::{Payment, PreparePayOnchainResponse, PrepareSendResponse};
 use breez_sdk_liquid::InputType;
 use coincube_core::miniscript::bitcoin::Amount;
 use coincube_core::miniscript::bitcoin::{bip32::Fingerprint, Address, OutPoint};
@@ -232,6 +232,7 @@ pub enum ActiveOverviewMessage {
         recent_payment: Vec<Payment>,
     },
     Error(String),
+    RefreshRequested,
 }
 
 #[derive(Debug, Clone)]
@@ -249,13 +250,19 @@ pub enum ActiveSendMessage {
     // Send flow popup messages
     PopupMessage(SendPopupMessage),
     PrepareResponseReceived(PrepareSendResponse),
+    PrepareOnChainResponseReceived(PreparePayOnchainResponse),
     ConfirmSend,
     SendComplete,
     BackToHome,
-    LimitsUpdated {
+    LightningLimitsFetched {
         min_sat: u64,
         max_sat: u64,
     },
+    OnChainLimitsFetched {
+        min_sat: u64,
+        max_sat: u64,
+    },
+    RefreshRequested,
 }
 
 #[derive(Debug, Clone)]

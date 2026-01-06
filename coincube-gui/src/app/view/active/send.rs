@@ -1,4 +1,7 @@
-use breez_sdk_liquid::{model::PaymentState, InputType};
+use breez_sdk_liquid::{
+    model::{PaymentDetails, PaymentState},
+    InputType,
+};
 use coincube_core::miniscript::bitcoin::Amount;
 use coincube_ui::{
     color,
@@ -28,13 +31,14 @@ pub fn active_send_with_flow<'a>(
     amount_input: &'a form::Value<String>,
     comment: String,
     description: Option<&'a str>,
-    limits: Option<(u64, u64)>,
+    lightning_limits: Option<(u64, u64)>,
     amount: Amount,
     prepare_response: Option<&'a breez_sdk_liquid::prelude::PrepareSendResponse>,
     is_sending: bool,
     menu: &'a Menu,
     cache: &'a Cache,
     input_type: &'a Option<InputType>,
+    onchain_limits: Option<(u64, u64)>,
 ) -> Element<'a, Message> {
     let base_content = match flow_state {
         ActiveSendFlowState::Main { modal } => {
@@ -58,7 +62,9 @@ pub fn active_send_with_flow<'a>(
                         fiat_converter.is_some(),
                         btc_balance,
                         description,
-                        limits,
+                        lightning_limits,
+                        onchain_limits,
+                        input_type,
                     )
                     .map(Message::ActiveSend);
                     coincube_ui::widget::modal::Modal::new(content, modal_content)
@@ -163,10 +169,11 @@ pub fn active_send_view<'a>(
             let row = Row::new()
                 .spacing(15)
                 .align_y(Alignment::Start)
-                .push(
-                    Container::new(icon::lightning_icon().size(24).color(color::ORANGE))
-                        .padding(10),
-                )
+                .push(if let PaymentDetails::Bitcoin { .. } = tx.details {
+                    Container::new(icon::bitcoin_icon().size(24).color(color::ORANGE)).padding(10)
+                } else {
+                    Container::new(icon::lightning_icon().size(24).color(color::ORANGE)).padding(10)
+                })
                 .push(
                     Column::new()
                         .spacing(5)
@@ -332,6 +339,7 @@ pub struct RecentTransaction {
     pub is_incoming: bool,
     pub sign: &'static str,
     pub status: PaymentState,
+    pub details: PaymentDetails,
 }
 
 pub fn amount_input_model<'a>(
@@ -340,7 +348,9 @@ pub fn amount_input_model<'a>(
     has_fiat_converter: bool,
     btc_balance: Amount,
     description: Option<&'a str>,
-    limits: Option<(u64, u64)>,
+    lightning_limits: Option<(u64, u64)>,
+    onchain_limits: Option<(u64, u64)>,
+    input_type: &'a Option<InputType>,
 ) -> Element<'a, ActiveSendMessage> {
     let mut content = Column::new()
         .spacing(20)
@@ -413,16 +423,32 @@ pub fn amount_input_model<'a>(
         .padding(10),
     );
 
-    if let Some((min_sat, max_sat)) = limits {
-        let min_btc = Amount::from_sat(min_sat).to_btc();
-        let max_btc = Amount::from_sat(max_sat).to_btc();
-        amount_input_section = amount_input_section.push(
-            text(format!(
-                "Enter an amount between {} BTC and {} BTC",
-                min_btc, max_btc
-            ))
-            .size(12),
-        );
+    if let Some(input_type) = input_type {
+        if matches!(input_type, InputType::BitcoinAddress { .. }) {
+            if let Some((min_sat, max_sat)) = onchain_limits {
+                let min_btc = Amount::from_sat(min_sat).to_btc();
+                let max_btc = Amount::from_sat(max_sat).to_btc();
+                amount_input_section = amount_input_section.push(
+                    text(format!(
+                        "Enter an amount between {} BTC and {} BTC",
+                        min_btc, max_btc
+                    ))
+                    .size(12),
+                );
+            }
+        } else {
+            if let Some((min_sat, max_sat)) = lightning_limits {
+                let min_btc = Amount::from_sat(min_sat).to_btc();
+                let max_btc = Amount::from_sat(max_sat).to_btc();
+                amount_input_section = amount_input_section.push(
+                    text(format!(
+                        "Enter an amount between {} BTC and {} BTC",
+                        min_btc, max_btc
+                    ))
+                    .size(12),
+                );
+            }
+        }
     }
 
     amount_label_section = amount_label_section.push(amount_input_section);

@@ -1,4 +1,4 @@
-use breez_sdk_liquid::model::PaymentState;
+use breez_sdk_liquid::model::{PaymentDetails, PaymentState};
 use coincube_core::miniscript::bitcoin::Amount;
 use coincube_ui::{
     color,
@@ -50,10 +50,11 @@ pub fn active_overview_view<'a>(
             let row = Row::new()
                 .spacing(15)
                 .align_y(Alignment::Start)
-                .push(
-                    Container::new(icon::lightning_icon().size(24).color(color::ORANGE))
-                        .padding(10),
-                )
+                .push(if let PaymentDetails::Bitcoin { .. } = tx.details {
+                    Container::new(icon::bitcoin_icon().size(24).color(color::ORANGE)).padding(10)
+                } else {
+                    Container::new(icon::lightning_icon().size(24).color(color::ORANGE)).padding(10)
+                })
                 .push(
                     Column::new()
                         .spacing(5)

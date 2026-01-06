@@ -1078,7 +1078,15 @@ impl App {
                     | SdkEvent::PaymentFailed { .. }
                     | SdkEvent::PaymentWaitingConfirmation { .. } => {
                         // Payment state changed - trigger cache update
-                        return Task::done(Message::Tick);
+                        return Task::batch(vec![
+                            Task::done(Message::Tick),
+                            Task::done(Message::View(view::Message::ActiveSend(
+                                view::ActiveSendMessage::RefreshRequested,
+                            ))),
+                            Task::done(Message::View(view::Message::ActiveOverview(
+                                view::ActiveOverviewMessage::RefreshRequested,
+                            ))),
+                        ]);
                     }
                     _ => {
                         // Other events - just log

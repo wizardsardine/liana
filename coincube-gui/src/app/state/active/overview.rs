@@ -203,6 +203,7 @@ impl State for ActiveOverview {
                                     payment.payment_type,
                                     breez_sdk_liquid::prelude::PaymentType::Receive
                                 );
+                                let details = payment.details.clone();
                                 let sign = if is_incoming { "+" } else { "-" };
                                 view::active::RecentTransaction {
                                     description: desc.to_owned(),
@@ -212,6 +213,7 @@ impl State for ActiveOverview {
                                     is_incoming,
                                     sign,
                                     status,
+                                    details,
                                 }
                             })
                             .collect();
@@ -220,6 +222,9 @@ impl State for ActiveOverview {
                 }
                 view::ActiveOverviewMessage::Error(err) => {
                     self.error = Some(err);
+                }
+                view::ActiveOverviewMessage::RefreshRequested => {
+                    return self.load_balance();
                 }
             }
         }
