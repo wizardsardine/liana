@@ -263,20 +263,34 @@ pub fn payment_detail_view<'a>(
                                 .width(Length::FillPortion(1))
                                 .push(text("Status").bold()),
                         )
-                        .push(
-                            Column::new()
-                                .width(Length::FillPortion(2))
-                                .push(match payment.status {
-                                    PaymentState::Complete => text("Complete").style(theme::text::success),
-                                    PaymentState::Pending => text("Pending").style(theme::text::secondary),
-                                    PaymentState::Created => text("Created").style(theme::text::secondary),
-                                    PaymentState::Failed => text("Failed").style(theme::text::destructive),
-                                    PaymentState::TimedOut => text("Timed Out").style(theme::text::destructive),
-                                    PaymentState::Refundable => text("Refundable").style(theme::text::destructive),
-                                    PaymentState::RefundPending => text("Refund Pending").style(theme::text::secondary),
-                                    PaymentState::WaitingFeeAcceptance => text("Waiting Fee Acceptance").style(theme::text::secondary),
-                                }),
-                        )
+                        .push(Column::new().width(Length::FillPortion(2)).push(
+                            match payment.status {
+                                PaymentState::Complete => {
+                                    text("Complete").style(theme::text::success)
+                                }
+                                PaymentState::Pending => {
+                                    text("Pending").style(theme::text::secondary)
+                                }
+                                PaymentState::Created => {
+                                    text("Created").style(theme::text::secondary)
+                                }
+                                PaymentState::Failed => {
+                                    text("Failed").style(theme::text::destructive)
+                                }
+                                PaymentState::TimedOut => {
+                                    text("Timed Out").style(theme::text::destructive)
+                                }
+                                PaymentState::Refundable => {
+                                    text("Refundable").style(theme::text::destructive)
+                                }
+                                PaymentState::RefundPending => {
+                                    text("Refund Pending").style(theme::text::secondary)
+                                }
+                                PaymentState::WaitingFeeAcceptance => {
+                                    text("Waiting Fee Acceptance").style(theme::text::secondary)
+                                }
+                            },
+                        ))
                         .spacing(20),
                 )
                 .push(

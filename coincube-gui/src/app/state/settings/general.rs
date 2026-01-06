@@ -52,7 +52,10 @@ async fn update_price_setting(
         )),
         Err(e) => {
             tracing::error!("Failed to save price setting: {:?}", e);
-            Err(Error::Unexpected(format!("Failed to update settings: {}", e)))
+            Err(Error::Unexpected(format!(
+                "Failed to update settings: {}",
+                e
+            )))
         }
     }
 }
@@ -91,7 +94,10 @@ async fn update_unit_setting(
         )),
         Err(e) => {
             tracing::error!("Failed to save unit setting: {:?}", e);
-            Err(Error::Unexpected(format!("Failed to update settings: {}", e)))
+            Err(Error::Unexpected(format!(
+                "Failed to update settings: {}",
+                e
+            )))
         }
     }
 }
