@@ -339,7 +339,7 @@ impl Client {
         });
     }
 
-    /// Logout: clear token, close connection, and remove auth cache
+    /// Logout: clear token, close connection, remove auth cache, and clear data caches
     pub fn logout(&mut self) {
         // Clear token from memory
         if let Ok(mut token_guard) = self.token.lock() {
@@ -353,6 +353,17 @@ impl Client {
 
         // Close WebSocket connection
         self.close();
+
+        // Clear org/wallet/user caches
+        if let Ok(mut orgs) = self.orgs.lock() {
+            orgs.clear();
+        }
+        if let Ok(mut wallets) = self.wallets.lock() {
+            wallets.clear();
+        }
+        if let Ok(mut users) = self.users.lock() {
+            users.clear();
+        }
 
         // Remove auth cache from disk if network_dir and email are available
         if let (Some(network_dir), Some(email)) = (self.network_dir.clone(), self.email.clone()) {

@@ -995,6 +995,7 @@ impl State {
         self.app.selected_org = None;
         self.app.selected_wallet = None;
         self.app.current_wallet_template = None;
+        self.app.global_user_role = None;
         self.app.reconnecting = false;
         self.app.exit = false;
 
