@@ -100,35 +100,31 @@ fn xpub_key_card(
     key: &liana_connect::Key,
     last_edit_info: Option<String>,
 ) -> Element<'static, Msg> {
-    let mut content = Column::new().spacing(5);
-
-    // First row: |<icon>|<alias>|<spacer>|<status_badge>
-    let mut header_row = Row::new()
+    // First row: |<icon>|<alias>|<email>|<spacer>|<status_badge>
+    let header_row = Row::new()
         .spacing(10)
         .align_y(Alignment::Center)
         .push(icon::key_icon())
-        .push(text::p1_regular(&key.alias));
+        .push(text::p1_regular(&key.alias))
+        .push(text::p1_regular(&key.email))
+        .push(Space::with_width(Length::Fill))
+        .push(xpub_status_badge(key.xpub.is_some()));
 
-    // Spacer to push badge to the right
-    header_row = header_row.push(Space::with_width(Length::Fill));
-
-    // Status badge
-    header_row = header_row.push(xpub_status_badge(key.xpub.is_some()));
-
-    content = content.push(header_row);
-
-    // Second row: Email
-    if !key.email.is_empty() {
-        content = content.push(text::p2_regular(&key.email));
-    }
+    // Second row: Description
+    let description = text::p2_regular(&key.description);
 
     // Third row: Key type
-    content = content.push(text::p2_regular(key.key_type.as_str()));
+    let key_type = text::p2_regular(key.key_type);
 
     // Fourth row: Last edit info (optional)
-    if let Some(info) = last_edit_info {
-        content = content.push(text::caption(info).style(liana_ui::theme::text::secondary));
-    }
+    let edit_info = last_edit_info.map(text::caption);
+
+    let content = Column::new()
+        .push(header_row)
+        .push(description)
+        .push(key_type)
+        .push_maybe(edit_info)
+        .spacing(5);
 
     // Wrap card content - use Fill width so Button controls the final width
     let card_content = Container::new(content).padding(15).width(Length::Fill);
