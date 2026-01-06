@@ -133,8 +133,30 @@ impl Client {
         };
 
         let network = self.network.unwrap_or(Network::Signet);
-        let auth_client = self.auth_client.clone();
         let token = self.token.clone();
+
+        // Get existing auth client BEFORE entering async context
+        let existing_auth_client = {
+            let client_guard = self.auth_client.lock().unwrap();
+            client_guard.clone()
+        };
+
+        // If no existing auth client, fetch config BEFORE entering async context
+        // (reqwest::blocking cannot be used inside tokio runtime)
+        let fallback_auth_client = if existing_auth_client.is_none() {
+            match get_service_config_blocking(network) {
+                Ok(cfg) => Some(AuthClient::new(
+                    cfg.auth_api_url,
+                    cfg.auth_api_public_key,
+                    email.clone(),
+                )),
+                Err(_) => None,
+            }
+        } else {
+            None
+        };
+
+        let auth_client_for_refresh = existing_auth_client.or(fallback_auth_client);
 
         let rt = tokio::runtime::Runtime::new().unwrap();
         let result = rt.block_on(async {
@@ -150,29 +172,7 @@ impl Client {
                         Ok(tokens.access_token.clone())
                     } else {
                         // Token expired, try to refresh
-                        let auth_client = {
-                            let client_guard = auth_client.lock().unwrap();
-                            client_guard.clone()
-                        };
-
-                        // Try to get existing auth client, or create one if we have email and network
-                        let auth_client = if let Some(client) = auth_client {
-                            Some(client)
-                        } else {
-                            // Create auth client on the fly using stored network
-                            let config = match get_service_config_blocking(network) {
-                                Ok(cfg) => cfg,
-                                Err(_) => return Err(()),
-                            };
-
-                            Some(AuthClient::new(
-                                config.auth_api_url,
-                                config.auth_api_public_key,
-                                email.clone(),
-                            ))
-                        };
-
-                        if let Some(client) = auth_client {
+                        if let Some(client) = auth_client_for_refresh {
                             match client.refresh_token(&tokens.refresh_token).await {
                                 Ok(new_tokens) => {
                                     // Update cache
@@ -242,6 +242,13 @@ impl Client {
         let mut valid = vec![];
         let mut to_remove = vec![];
 
+        // Fetch config BEFORE entering async context
+        // (reqwest::blocking cannot be used inside tokio runtime)
+        let config = match get_service_config_blocking(network) {
+            Ok(cfg) => Some(cfg),
+            Err(_) => None,
+        };
+
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
             for account in cache.accounts {
@@ -255,17 +262,17 @@ impl Client {
                     });
                 } else {
                     // Token expired, try to refresh
-                    let config = match get_service_config_blocking(network) {
-                        Ok(cfg) => cfg,
-                        Err(_) => {
+                    let config = match &config {
+                        Some(cfg) => cfg,
+                        None => {
                             to_remove.push(account.email);
                             continue;
                         }
                     };
 
                     let auth_client = AuthClient::new(
-                        config.auth_api_url,
-                        config.auth_api_public_key,
+                        config.auth_api_url.clone(),
+                        config.auth_api_public_key.clone(),
                         account.email.clone(),
                     );
 
@@ -903,49 +910,46 @@ impl Backend for Client {
         debug!("auth_request: starting for email={}", email);
 
         thread::spawn(move || {
+            // Get service config BEFORE entering async context
+            // (reqwest::blocking cannot be used inside tokio runtime)
+            debug!(
+                "auth_request: fetching service config for network={:?}",
+                network
+            );
+            let config = match get_service_config_blocking(network) {
+                Ok(cfg) => {
+                    debug!(
+                        "auth_request: got config auth_api_url={} backend_api_url={}",
+                        cfg.auth_api_url, cfg.backend_api_url
+                    );
+                    cfg
+                }
+                Err(e) => {
+                    debug!("auth_request: failed to get service config: {:?}", e);
+                    let _ = notif_sender.send(Notification::AuthCodeFail.into());
+                    return;
+                }
+            };
+
+            // Create auth client
+            debug!(
+                "auth_request: creating AuthClient with url={} email={}",
+                config.auth_api_url, email_clone
+            );
+            let auth_client = AuthClient::new(
+                config.auth_api_url.clone(),
+                config.auth_api_public_key.clone(),
+                email_clone.clone(),
+            );
+
+            // Send OTP (requires async for the HTTP call)
+            debug!("auth_request: sending OTP request");
             let rt = tokio::runtime::Runtime::new().unwrap();
             let result = rt.block_on(async {
-                // Get service config
-                debug!(
-                    "auth_request: fetching service config for network={:?}",
-                    network
-                );
-                let config = match get_service_config_blocking(network) {
-                    Ok(cfg) => {
-                        debug!(
-                            "auth_request: got config auth_api_url={} backend_api_url={}",
-                            cfg.auth_api_url, cfg.backend_api_url
-                        );
-                        cfg
-                    }
-                    Err(e) => {
-                        debug!("auth_request: failed to get service config: {:?}", e);
-                        let _ = notif_sender.send(Notification::AuthCodeFail.into());
-                        return Err(());
-                    }
-                };
-
-                // Create auth client
-                debug!(
-                    "auth_request: creating AuthClient with url={} email={}",
-                    config.auth_api_url, email_clone
-                );
-                let auth_client = AuthClient::new(
-                    config.auth_api_url.clone(),
-                    config.auth_api_public_key.clone(),
-                    email_clone.clone(),
-                );
-
-                // Send OTP
-                debug!("auth_request: sending OTP request");
                 match auth_client.sign_in_otp().await {
                     Ok(()) => {
                         debug!("auth_request: OTP sent successfully");
-                        // Store auth client
-                        if let Ok(mut client_guard) = auth_client_2.lock() {
-                            *client_guard = Some(auth_client);
-                        }
-                        Ok(())
+                        Ok(auth_client)
                     }
                     Err(e) => {
                         debug!(
@@ -967,10 +971,19 @@ impl Backend for Client {
                 }
             });
 
-            // Send success notification
-            if result.is_ok() {
-                debug!("auth_request: sending AuthCodeSent notification");
-                let _ = notif_sender.send(Notification::AuthCodeSent.into());
+            // Handle result after async block
+            match result {
+                Ok(client) => {
+                    // Store auth client
+                    if let Ok(mut client_guard) = auth_client_2.lock() {
+                        *client_guard = Some(client);
+                    }
+                    debug!("auth_request: sending AuthCodeSent notification");
+                    let _ = notif_sender.send(Notification::AuthCodeSent.into());
+                }
+                Err(()) => {
+                    // Error notification already sent in async block
+                }
             }
         });
     }

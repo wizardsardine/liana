@@ -65,6 +65,54 @@ fn init_test_data(
     };
     users.insert(shared_owner.uuid, shared_owner.clone());
 
+    // WSManager user - manages all wallets
+    let ws_manager = User {
+        name: "WS Manager".to_string(),
+        uuid: Uuid::new_v4(),
+        email: "ws@example.com".to_string(),
+        orgs: Vec::new(),
+        role: UserRole::WSManager,
+        last_edited: None,
+        last_editor: None,
+    };
+    users.insert(ws_manager.uuid, ws_manager.clone());
+
+    // Participant user
+    let participant_user = User {
+        name: "Participant User".to_string(),
+        uuid: Uuid::new_v4(),
+        email: "user@example.com".to_string(),
+        orgs: Vec::new(),
+        role: UserRole::Participant,
+        last_edited: None,
+        last_editor: None,
+    };
+    users.insert(participant_user.uuid, participant_user.clone());
+
+    // Bob - participant
+    let bob_user = User {
+        name: "Bob".to_string(),
+        uuid: Uuid::new_v4(),
+        email: "bob@example.com".to_string(),
+        orgs: Vec::new(),
+        role: UserRole::Participant,
+        last_edited: None,
+        last_editor: None,
+    };
+    users.insert(bob_user.uuid, bob_user.clone());
+
+    // Alice - participant
+    let alice_user = User {
+        name: "Alice".to_string(),
+        uuid: Uuid::new_v4(),
+        email: "alice@example.com".to_string(),
+        orgs: Vec::new(),
+        role: UserRole::Participant,
+        last_edited: None,
+        last_editor: None,
+    };
+    users.insert(alice_user.uuid, alice_user.clone());
+
     // Create Org 1: "Acme Corp" - demonstrates all wallet statuses and roles
     let org1_id = Uuid::new_v4();
     let mut org1_wallets = BTreeSet::new();
