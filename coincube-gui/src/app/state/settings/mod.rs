@@ -52,7 +52,6 @@ impl State for SettingsState {
         cache: &Cache,
         message: Message,
     ) -> Task<Message> {
-        tracing::info!("SettingsState: Received message: {:?}", message);
         match &message {
             Message::View(view::Message::Settings(view::SettingsMessage::GeneralSection)) => {
                 self.setting = Some(

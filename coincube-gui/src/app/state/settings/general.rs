@@ -219,6 +219,27 @@ impl State for GeneralSettingsState {
             }
             Message::SettingsSaveFailed(e) => {
                 self.error = Some(e);
+                // Reload settings from disk to revert toggle state to persisted value
+                let network_dir = cache.datadir_path.network_directory(cache.network);
+                if let Ok(settings) = crate::app::settings::Settings::from_file(&network_dir) {
+                    if let Some(cube) = settings.cubes.iter().find(|c| c.id == self.cube_id) {
+                        tracing::info!(
+                            "Reverting unit_setting to persisted value after save failure: {:?}",
+                            cube.unit_setting.display_unit
+                        );
+                        self.new_unit_setting = cube.unit_setting.clone();
+                        if let Some(fiat_price) = &cube.fiat_price {
+                            self.new_price_setting = fiat_price.clone();
+                        }
+                    } else {
+                        tracing::warn!(
+                            "Could not revert settings: Cube not found with id: {}",
+                            self.cube_id
+                        );
+                    }
+                } else {
+                    tracing::error!("Could not revert settings: Failed to load settings from disk");
+                }
                 Task::none()
             }
             Message::Fiat(FiatMessage::ValidateCurrencySetting) => {
