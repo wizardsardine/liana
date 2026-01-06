@@ -1,3 +1,4 @@
+use breez_sdk_liquid::model::{PaymentDetails, PaymentState};
 use breez_sdk_liquid::prelude::{Payment, PaymentType};
 use coincube_core::miniscript::bitcoin::Amount;
 use coincube_ui::{
@@ -96,8 +97,26 @@ fn transaction_row<'a>(
     // Format timestamp
     let time_text = format_time_ago(payment.timestamp as u32);
 
-    // Get description or default
-    let description = "Payment".to_string();
+    // Extract description from payment details
+    let description = match &payment.details {
+        PaymentDetails::Lightning {
+            payer_note,
+            description,
+            ..
+        } => payer_note
+            .as_ref()
+            .filter(|s| !s.is_empty())
+            .unwrap_or(description),
+        PaymentDetails::Liquid {
+            payer_note,
+            description,
+            ..
+        } => payer_note
+            .as_ref()
+            .filter(|s| !s.is_empty())
+            .unwrap_or(description),
+        PaymentDetails::Bitcoin { description, .. } => description,
+    };
 
     let btc_amount = Amount::from_sat(payment.amount_sat);
 
@@ -164,8 +183,26 @@ pub fn payment_detail_view<'a>(
     // Format full date/time
     let date_text = format_timestamp(payment.timestamp as u64);
 
-    // Get description
-    let description = "Payment".to_string();
+    // Extract description from payment details
+    let description = match &payment.details {
+        PaymentDetails::Lightning {
+            payer_note,
+            description,
+            ..
+        } => payer_note
+            .as_ref()
+            .filter(|s| !s.is_empty())
+            .unwrap_or(description),
+        PaymentDetails::Liquid {
+            payer_note,
+            description,
+            ..
+        } => payer_note
+            .as_ref()
+            .filter(|s| !s.is_empty())
+            .unwrap_or(description),
+        PaymentDetails::Bitcoin { description, .. } => description,
+    };
 
     Column::new()
         .spacing(20)
@@ -229,7 +266,11 @@ pub fn payment_detail_view<'a>(
                         .push(
                             Column::new()
                                 .width(Length::FillPortion(2))
-                                .push(text("Complete").style(theme::text::success)),
+                                .push(match payment.status {
+                                    PaymentState::Complete => text("Complete").style(theme::text::success),
+                                    PaymentState::Pending => text("Pending").style(theme::text::secondary),
+                                    PaymentState::Failed => text("Failed").style(theme::text::danger),
+                                }),
                         )
                         .spacing(20),
                 )
