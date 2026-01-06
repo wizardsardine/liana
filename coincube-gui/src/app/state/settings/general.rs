@@ -234,9 +234,7 @@ impl State for GeneralSettingsState {
                             cube.unit_setting.display_unit
                         );
                         self.new_unit_setting = cube.unit_setting.clone();
-                        if let Some(fiat_price) = &cube.fiat_price {
-                            self.new_price_setting = fiat_price.clone();
-                        }
+                        self.new_price_setting = cube.fiat_price.clone().unwrap_or_default();
                     } else {
                         tracing::warn!(
                             "Could not revert settings: Cube not found with id: {}",
