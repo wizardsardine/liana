@@ -2,7 +2,6 @@ use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
 use std::sync::Arc;
 
-use crate::app::cache::FiatPrice;
 use crate::dir::CoincubeDirectory;
 use crate::{
     app::settings, daemon::DaemonBackend, hw::HardwareWalletConfig, node::NodeType, signer::Signer,
@@ -13,7 +12,7 @@ use coincube_core::{miniscript::bitcoin, signer::HotSigner};
 use coincube_core::descriptors::CoincubeDescriptor;
 use coincube_core::miniscript::bitcoin::bip32::Fingerprint;
 
-use super::settings::{fiat, WalletId, WalletSettings};
+use super::settings::{WalletId, WalletSettings};
 
 const DEFAULT_WALLET_NAME: &str = "Coincube";
 
@@ -43,7 +42,6 @@ pub struct Wallet {
     pub provider_keys: HashMap<Fingerprint, settings::ProviderKey>,
     pub hardware_wallets: Vec<HardwareWalletConfig>,
     pub signer: Option<Arc<Signer>>,
-    pub fiat_price_setting: Option<fiat::PriceSetting>,
 }
 
 impl Wallet {
@@ -77,7 +75,6 @@ impl Wallet {
             provider_keys: HashMap::new(),
             hardware_wallets: Vec::new(),
             signer: None,
-            fiat_price_setting: None,
         }
     }
 
@@ -124,22 +121,14 @@ impl Wallet {
         self
     }
 
-    pub fn with_fiat_price_setting(
-        mut self,
-        fiat_price_setting: Option<fiat::PriceSetting>,
-    ) -> Self {
-        self.fiat_price_setting = fiat_price_setting;
-        self
-    }
-
     pub fn descriptor_keys(&self) -> HashSet<Fingerprint> {
         let info = self.main_descriptor.policy();
         let mut descriptor_keys = HashSet::new();
         for (fingerprint, _) in info.primary_path().thresh_origins().1.iter() {
             descriptor_keys.insert(*fingerprint);
         }
-        for path in info.recovery_paths().values() {
-            for (fingerprint, _) in path.thresh_origins().1.iter() {
+        for (_, path_info) in info.recovery_paths().iter() {
+            for (fingerprint, _) in path_info.thresh_origins().1.iter() {
                 descriptor_keys.insert(*fingerprint);
             }
         }
@@ -156,8 +145,7 @@ impl Wallet {
                 .with_alias(wallet_settings.alias)
                 .with_name(wallet_settings.name)
                 .with_pinned_at(wallet_settings.pinned_at)
-                .with_hardware_wallets(wallet_settings.hardware_wallets)
-                .with_fiat_price_setting(wallet_settings.fiat_price))
+                .with_hardware_wallets(wallet_settings.hardware_wallets))
         }
     }
 
@@ -213,16 +201,6 @@ impl Wallet {
         });
 
         map
-    }
-
-    /// Whether the wallet's fiat price setting is enabled and matches
-    /// the given fiat price's source and currency.
-    pub fn fiat_price_is_relevant(&self, fiat_price: &FiatPrice) -> bool {
-        self.fiat_price_setting.as_ref().is_some_and(|sett| {
-            sett.is_enabled
-                && sett.source == fiat_price.source()
-                && sett.currency == fiat_price.currency()
-        })
     }
 }
 

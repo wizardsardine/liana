@@ -1,6 +1,7 @@
 //! Settings is the module to handle the GUI settings file.
 //! The settings file is used by the GUI to store useful information.
 pub mod fiat;
+pub mod unit;
 
 use std::collections::HashMap;
 
@@ -136,6 +137,12 @@ pub struct CubeSettings {
     pub security_pin_hash: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub active_wallet_signer_fingerprint: Option<Fingerprint>,
+    /// Bitcoin display unit preference for this cube
+    #[serde(default)]
+    pub unit_setting: unit::UnitSetting,
+    /// Fiat price display preference for this cube
+    #[serde(default, deserialize_with = "ok_or_none")]
+    pub fiat_price: Option<fiat::PriceSetting>,
 }
 
 impl CubeSettings {
@@ -150,6 +157,8 @@ impl CubeSettings {
             active_wallet_signer_fingerprint: None,
             backed_up: false,
             mfa_done: false,
+            unit_setting: unit::UnitSetting::default(),
+            fiat_price: None,
         }
     }
 
@@ -283,10 +292,6 @@ pub struct WalletSettings {
     /// Start internal bitcoind executable.
     /// if None, the app must refer to the gui.toml start_internal_bitcoind field.
     pub start_internal_bitcoind: Option<bool>,
-    // If the settings file contains a currency or source that is no longer supported, the price
-    // setting will be set to None during deserialization and the user will need to reconfigure it.
-    #[serde(default, deserialize_with = "ok_or_none")]
-    pub fiat_price: Option<fiat::PriceSetting>,
 }
 
 impl WalletSettings {

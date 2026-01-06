@@ -39,18 +39,68 @@ impl ActiveOverview {
                 let info = breez_client.info().await;
                 let payments = breez_client.list_payments(Some(2)).await;
 
-                let balance = info
-                    .as_ref()
-                    .map(|info| {
-                        Amount::from_sat(
-                            info.wallet_info.balance_sat + info.wallet_info.pending_receive_sat,
-                        )
-                    })
-                    .unwrap_or(Amount::ZERO);
+                // Log info response for debugging
+                match &info {
+                    Ok(info) => {
+                        tracing::info!(
+                            "Active wallet info: balance_sat={}, pending_send_sat={}, pending_receive_sat={}",
+                            info.wallet_info.balance_sat,
+                            info.wallet_info.pending_send_sat,
+                            info.wallet_info.pending_receive_sat
+                        );
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to fetch Active wallet info: {}", e);
+                    }
+                }
+
+                // Calculate balance from payments for comparison
+                let calculated_balance = if let Ok(payments) = &payments {
+                    use breez_sdk_liquid::prelude::PaymentType;
+                    let mut balance_sat: i64 = 0;
+                    for payment in payments {
+                        match payment.payment_type {
+                            PaymentType::Receive => balance_sat += payment.amount_sat as i64,
+                            PaymentType::Send => balance_sat -= payment.amount_sat as i64,
+                        }
+                    }
+                    let calculated = Amount::from_sat(balance_sat.max(0) as u64);
+                    tracing::info!(
+                        "Calculated balance from {} payments: {} sats",
+                        payments.len(),
+                        calculated.to_sat()
+                    );
+                    calculated
+                } else {
+                    Amount::ZERO
+                };
+
+                // Use the maximum of info balance and calculated balance
+                let balance = if let Ok(info) = &info {
+                    let info_balance = Amount::from_sat(
+                        info.wallet_info.balance_sat + info.wallet_info.pending_receive_sat,
+                    );
+                    let final_balance = if calculated_balance > info_balance {
+                        tracing::warn!(
+                            "SDK info balance ({} sats) is less than calculated balance ({} sats), using calculated balance",
+                            info_balance.to_sat(),
+                            calculated_balance.to_sat()
+                        );
+                        calculated_balance
+                    } else {
+                        info_balance
+                    };
+                    final_balance
+                } else {
+                    // Network error - use calculated balance from cached payments as fallback
+                    calculated_balance
+                };
 
                 let error = match (&info, &payments) {
                     (Err(_), Err(_)) => Some("Couldn't fetch balance or transactions".to_string()),
-                    (Err(_), _) => Some("Couldn't fetch account balance".to_string()),
+                    (Err(_), _) => {
+                        Some("Network issue - showing balance from cached transactions".to_string())
+                    }
                     (_, Err(_)) => Some("Couldn't fetch recent transactions".to_string()),
                     _ => None,
                 };
@@ -153,6 +203,7 @@ impl State for ActiveOverview {
                                     payment.payment_type,
                                     breez_sdk_liquid::prelude::PaymentType::Receive
                                 );
+                                let details = payment.details.clone();
                                 let sign = if is_incoming { "+" } else { "-" };
                                 view::active::RecentTransaction {
                                     description: desc.to_owned(),
@@ -162,27 +213,18 @@ impl State for ActiveOverview {
                                     is_incoming,
                                     sign,
                                     status,
+                                    details,
                                 }
                             })
                             .collect();
                         self.recent_transaction = txns;
                     }
                 }
-                view::ActiveOverviewMessage::BreezEvent(event) => {
-                    use breez_sdk_liquid::prelude::SdkEvent;
-                    log::info!("Received Breez Event: {:?}", event);
-                    match event {
-                        SdkEvent::PaymentPending { .. }
-                        | SdkEvent::PaymentSucceeded { .. }
-                        | SdkEvent::PaymentFailed { .. }
-                        | SdkEvent::PaymentWaitingConfirmation { .. } => {
-                            return self.load_balance();
-                        }
-                        _ => {}
-                    }
-                }
                 view::ActiveOverviewMessage::Error(err) => {
                     self.error = Some(err);
+                }
+                view::ActiveOverviewMessage::RefreshRequested => {
+                    return self.load_balance();
                 }
             }
         }
@@ -190,11 +232,7 @@ impl State for ActiveOverview {
     }
 
     fn subscription(&self) -> iced::Subscription<Message> {
-        self.breez_client.subscription().map(|e| {
-            Message::View(view::Message::ActiveOverview(
-                view::ActiveOverviewMessage::BreezEvent(e),
-            ))
-        })
+        iced::Subscription::none()
     }
 
     fn reload(

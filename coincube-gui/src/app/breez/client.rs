@@ -1,5 +1,7 @@
 use breez_sdk_liquid::{
-    bitcoin::Network, model::LightningPaymentLimitsResponse, prelude as breez, InputType,
+    bitcoin::Network,
+    model::{LightningPaymentLimitsResponse, OnchainPaymentLimitsResponse},
+    prelude as breez, InputType,
 };
 use coincube_core::{
     miniscript::bitcoin::{
@@ -304,6 +306,24 @@ impl BreezClient {
             .await
             .map_err(|e| BreezError::Sdk(e.to_string()))
     }
+    pub async fn prepare_pay_onchain(
+        &self,
+        request: &breez::PreparePayOnchainRequest,
+    ) -> Result<breez::PreparePayOnchainResponse, BreezError> {
+        self.sdk
+            .prepare_pay_onchain(request)
+            .await
+            .map_err(|e| BreezError::Sdk(e.to_string()))
+    }
+    pub async fn pay_onchain(
+        &self,
+        request: &breez::PayOnchainRequest,
+    ) -> Result<breez::SendPaymentResponse, BreezError> {
+        self.sdk
+            .pay_onchain(request)
+            .await
+            .map_err(|e| BreezError::Sdk(e.to_string()))
+    }
 
     pub async fn send_payment(
         &self,
@@ -334,6 +354,28 @@ impl BreezClient {
             .map_err(|e| BreezError::Sdk(e.to_string()))
     }
 
+    pub async fn fetch_payment_proposed_fees(
+        &self,
+        swap_id: &str,
+    ) -> Result<breez::FetchPaymentProposedFeesResponse, BreezError> {
+        self.sdk
+            .fetch_payment_proposed_fees(&breez::FetchPaymentProposedFeesRequest {
+                swap_id: swap_id.to_string(),
+            })
+            .await
+            .map_err(|e| BreezError::Sdk(e.to_string()))
+    }
+
+    pub async fn accept_payment_proposed_fees(
+        &self,
+        response: breez::FetchPaymentProposedFeesResponse,
+    ) -> Result<(), BreezError> {
+        self.sdk
+            .accept_payment_proposed_fees(&breez::AcceptPaymentProposedFeesRequest { response })
+            .await
+            .map_err(|e| BreezError::Sdk(e.to_string()))
+    }
+
     pub async fn validate_input(&self, input: String) -> Option<InputType> {
         self.sdk.parse(&input).await.ok()
     }
@@ -343,6 +385,12 @@ impl BreezClient {
     ) -> Result<LightningPaymentLimitsResponse, BreezError> {
         self.sdk
             .fetch_lightning_limits()
+            .await
+            .map_err(|e| BreezError::Sdk(e.to_string()))
+    }
+    pub async fn fetch_onchain_limits(&self) -> Result<OnchainPaymentLimitsResponse, BreezError> {
+        self.sdk
+            .fetch_onchain_limits()
             .await
             .map_err(|e| BreezError::Sdk(e.to_string()))
     }

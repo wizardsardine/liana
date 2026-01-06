@@ -73,6 +73,9 @@ pub enum Message {
     Export(ImportExportMessage),
     PaymentsLoaded(Result<Vec<breez_sdk_liquid::prelude::Payment>, BreezError>),
     BreezInfo(Result<breez_sdk_liquid::prelude::GetInfoResponse, BreezError>),
+    BreezEvent(breez_sdk_liquid::prelude::SdkEvent),
+    SettingsSaved,
+    SettingsSaveFailed(Error),
 }
 
 impl From<ImportExportMessage> for Message {

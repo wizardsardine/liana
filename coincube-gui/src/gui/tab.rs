@@ -107,6 +107,14 @@ impl Tab {
         }
     }
 
+    pub fn cube_settings(&self) -> Option<&app::settings::CubeSettings> {
+        if let State::App(ref app) = self.state {
+            Some(app.cube_settings())
+        } else {
+            None
+        }
+    }
+
     pub fn title(&self) -> &str {
         match &self.state {
             State::Installer(_) => "Installer",
@@ -394,7 +402,14 @@ impl Tab {
                     self.state = State::Installer(Box::new(install));
                     command.map(|msg| Message::Install(Box::new(msg)))
                 }
-                loader::Message::Synced(Ok((wallet, cache, daemon, bitcoind, backup))) => {
+                loader::Message::Synced(Ok((
+                    wallet,
+                    cache,
+                    daemon,
+                    bitcoind,
+                    backup,
+                    cube_settings,
+                ))) => {
                     if let Some(backup) = backup {
                         let config = loader.gui_config.clone();
                         let datadir = loader.datadir_path.clone();
@@ -426,6 +441,7 @@ impl Tab {
                                     datadir: loader.datadir_path.clone(),
                                     bitcoind,
                                     restored_from_backup: false,
+                                    cube_settings,
                                 },
                             )));
                         }
@@ -458,6 +474,7 @@ impl Tab {
                             datadir,
                             bitcoind,
                             restored_from_backup,
+                            cube_settings: loader.cube_settings.clone(),
                         })));
                     }
 
@@ -482,6 +499,7 @@ impl Tab {
                     datadir,
                     bitcoind,
                     restored_from_backup,
+                    cube_settings,
                 } => {
                     let (app, command) = App::new(
                         cache,
@@ -492,6 +510,7 @@ impl Tab {
                         datadir,
                         bitcoind,
                         restored_from_backup,
+                        cube_settings,
                     );
                     self.state = State::App(app);
                     command.map(|msg| Message::Run(Box::new(msg)))
@@ -525,15 +544,15 @@ impl Tab {
             }
             (State::PinEntry(pin_entry), Message::PinEntry(msg)) => match *msg {
                 crate::pin_entry::Message::PinVerified => {
-                    // PIN successfully verified, proceed to next state based on on_success
+                    // After PIN verification, load BreezClient before routing to App/Loader/Login
                     match &pin_entry.on_success {
                         crate::pin_entry::PinEntrySuccess::LoadApp {
                             datadir,
                             config,
                             network,
+                            wallet_settings,
                             internal_bitcoind,
                             backup,
-                            wallet_settings,
                         } => {
                             let cube = pin_entry.cube().clone();
                             let pin = pin_entry.pin();
@@ -950,6 +969,63 @@ pub fn create_app_with_remote_backend(
         .map(|pk| (pk.fingerprint, pk.into()))
         .collect();
 
+    // Load cube settings for this wallet
+    let network_dir = coincube_dir.network_directory(network);
+    let wallet_id = wallet_settings.wallet_id();
+    let wallet_alias_for_cube = wallet.metadata.wallet_alias.clone();
+    let mut cube_settings = None;
+    let mut needs_persistence = false;
+    
+    match app::settings::Settings::from_file(&network_dir) {
+        Ok(mut settings) => {
+            if let Some(found_cube) = settings
+                .cubes
+                .iter()
+                .find(|c| c.vault_wallet_id.as_ref() == Some(&wallet_id))
+            {
+                cube_settings = Some(found_cube.clone());
+            } else {
+                tracing::warn!("No cube found for vault wallet, creating and persisting new cube");
+                let new_cube = app::settings::CubeSettings::new(
+                    wallet_alias_for_cube.unwrap_or_else(|| "My Cube".to_string()),
+                    network,
+                )
+                .with_vault(wallet_id);
+                
+                settings.cubes.push(new_cube.clone());
+                cube_settings = Some(new_cube);
+                needs_persistence = true;
+                
+                if let Err(e) = tokio::runtime::Handle::current().block_on(async {
+                    update_settings_file(&network_dir, |_| Some(settings)).await
+                }) {
+                    tracing::error!("Failed to persist new cube for remote backend: {}", e);
+                }
+            }
+        }
+        Err(_) => {
+            tracing::warn!("No settings file found, creating new cube and settings file");
+            let new_cube = app::settings::CubeSettings::new(
+                wallet_alias_for_cube.unwrap_or_else(|| "My Cube".to_string()),
+                network,
+            )
+            .with_vault(wallet_id);
+            
+            let mut new_settings = app::settings::Settings::default();
+            new_settings.cubes.push(new_cube.clone());
+            cube_settings = Some(new_cube);
+            needs_persistence = true;
+            
+            if let Err(e) = tokio::runtime::Handle::current().block_on(async {
+                update_settings_file(&network_dir, |_| Some(new_settings)).await
+            }) {
+                tracing::error!("Failed to create settings file for remote backend: {}", e);
+            }
+        }
+    }
+    
+    let cube_settings = cube_settings.expect("Cube settings should be available");
+
     App::new(
         Cache {
             network,
@@ -966,6 +1042,7 @@ pub fn create_app_with_remote_backend(
                 last_tick: Instant::now(),
             },
             fiat_price: None,
+            bitcoin_unit: cube_settings.unit_setting.display_unit,
             vault_expanded: false,
             active_expanded: false,
             has_vault: true,
@@ -978,7 +1055,6 @@ pub fn create_app_with_remote_backend(
                 .with_key_aliases(aliases)
                 .with_provider_keys(provider_keys)
                 .with_hardware_wallets(hws)
-                .with_fiat_price_setting(wallet_settings.fiat_price)
                 .load_hotsigners(&coincube_dir, network)
                 .expect("Datadir should be conform"),
         ),
@@ -988,5 +1064,6 @@ pub fn create_app_with_remote_backend(
         coincube_dir,
         None,
         false,
+        cube_settings,
     )
 }

@@ -27,7 +27,7 @@ use crate::{
         error::Error,
         menu::Menu,
         message::Message,
-        state::{fiat_converter_for_wallet, vault::psbt},
+        state::vault::psbt,
         view::{self, vault::fiat::FiatAmount, CreateSpendMessage},
         wallet::Wallet,
     },
@@ -841,7 +841,8 @@ impl Step for DefineSpend {
     }
 
     fn view<'a>(&'a self, menu: &'a Menu, cache: &'a Cache) -> Element<'a, view::Message> {
-        let converter = fiat_converter_for_wallet(&self.wallet, cache);
+        let converter: Option<view::FiatAmountConverter> =
+            cache.fiat_price.as_ref().and_then(|p| p.try_into().ok());
         view::vault::spend::create_spend_tx(
             menu,
             cache,

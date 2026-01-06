@@ -266,7 +266,9 @@ impl State for ActiveSettings {
         _daemon: Option<Arc<dyn Daemon + Sync + Send>>,
         _wallet: Option<Arc<Wallet>>,
     ) -> Task<Message> {
-        // Active wallet doesn't use Vault wallet - uses BreezClient instead
+        // Reset to main menu when reloading (e.g., clicking Settings in breadcrumb)
+        let (backed_up, mfa) = fetch_main_menu_state(self.breez_client.clone());
+        self.flow_state = ActiveSettingsFlowState::MainMenu { backed_up, mfa };
         Task::none()
     }
 }

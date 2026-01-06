@@ -25,22 +25,18 @@ impl BreezConfig {
     }
 
     pub fn sdk_config(&self) -> breez::Config {
-        let (liquid_explorer_url, bitcoin_explorer_url) = match self.network {
-            bitcoin::Network::Bitcoin => (
-                "https://blockstream.info/liquid/api",
-                "https://blockstream.info/api",
-            ),
-            bitcoin::Network::Testnet => (
-                "https://blockstream.info/liquidtestnet/api",
-                "https://blockstream.info/testnet/api",
-            ),
-            bitcoin::Network::Signet => (
-                "https://blockstream.info/liquidtestnet/api",
-                "https://blockstream.info/signet/api",
-            ),
-            bitcoin::Network::Regtest | bitcoin::Network::Testnet4 => {
-                ("http://localhost:4003/api", "http://localhost:4002/api")
-            }
+        // Allow overriding Esplora URLs via environment variables
+        let liquid_explorer_url = match self.network {
+            bitcoin::Network::Bitcoin => "https://blockstream.info/liquid/api",
+            bitcoin::Network::Testnet => "https://blockstream.info/liquidtestnet/api",
+            bitcoin::Network::Signet => "https://blockstream.info/liquidtestnet/api",
+            bitcoin::Network::Regtest | bitcoin::Network::Testnet4 => "http://localhost:4003/api",
+        };
+        let bitcoin_explorer_url = match self.network {
+            bitcoin::Network::Bitcoin => "https://blockstream.info/api",
+            bitcoin::Network::Testnet => "https://blockstream.info/testnet/api",
+            bitcoin::Network::Signet => "https://blockstream.info/signet/api",
+            bitcoin::Network::Regtest | bitcoin::Network::Testnet4 => "http://localhost:4002/api",
         };
 
         breez::Config {
@@ -71,8 +67,9 @@ impl BreezConfig {
             asset_metadata: None,
             sideswap_api_key: None,
             use_magic_routing_hints: true,
-            onchain_sync_period_sec: 10,
-            onchain_sync_request_timeout_sec: 7,
+            // Increased from 10 to 60 seconds to reduce API rate limiting
+            onchain_sync_period_sec: 60,
+            onchain_sync_request_timeout_sec: 10,
         }
     }
 }

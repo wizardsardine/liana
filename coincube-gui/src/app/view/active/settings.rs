@@ -7,11 +7,33 @@ use coincube_ui::{
     theme::{self},
 };
 use iced::Alignment;
-use iced::{widget::container, widget::Column, widget::Space, Length};
+use iced::{widget::container, widget::Column, widget::Row, widget::Space, Length};
 
 use crate::app::state::{ActiveSettingsFlowState, BackupWalletState};
 use crate::app::view::message::{BackupWalletMessage, Message};
 use crate::app::view::ActiveSettingsMessage;
+
+fn header(title: &str) -> Element<'static, Message> {
+    Row::new()
+        .spacing(10)
+        .align_y(Alignment::Center)
+        .push(
+            Button::new(text("Settings").size(30).bold())
+                .style(theme::button::transparent)
+                .on_press(Message::Menu(crate::app::menu::Menu::Active(
+                    crate::app::menu::ActiveSubMenu::Settings(None),
+                ))),
+        )
+        .push(icon::chevron_right().size(30))
+        .push(
+            Button::new(text(title).size(30).bold())
+                .style(theme::button::transparent)
+                .on_press(Message::Menu(crate::app::menu::Menu::Active(
+                    crate::app::menu::ActiveSubMenu::Settings(None),
+                ))),
+        )
+        .into()
+}
 
 pub fn active_settings_view<'a>(
     active_signer: Arc<Mutex<HotSigner>>,
@@ -79,10 +101,16 @@ fn main_menu_view(backed_up: bool, mfa: bool) -> Element<'static, Message> {
         Message::Settings(crate::app::view::SettingsMessage::GeneralSection),
     );
 
+    let header = Button::new(text("Settings").size(30).bold())
+        .style(theme::button::transparent)
+        .on_press(Message::Menu(crate::app::menu::Menu::Active(
+            crate::app::menu::ActiveSubMenu::Settings(None),
+        )));
+
     Column::new()
         .spacing(20)
         .width(Length::Fill)
-        .push(h3("Settings"))
+        .push(header)
         .push(Space::new().height(Length::Fixed(20.0)))
         .push(backup)
         .push(mfa)
@@ -98,30 +126,7 @@ fn backup_intro_view(checked: bool) -> Element<'static, Message> {
     Column::new()
         .spacing(20)
         .width(Length::Fill)
-        .push(
-            Row::new()
-                .width(Length::Fill)
-                .align_y(Alignment::Start)
-                .push(
-                    coincube_ui::component::button::secondary(Some(icon::previous_icon().size(24)), "PREVIOUS")
-                        .on_press(Message::ActiveSettings(ActiveSettingsMessage::BackupWallet(BackupWalletMessage::PreviousStep)))
-                        .style(theme::button::transparent)
-                )
-                .push(Space::new().width(Length::Fill))
-        )
-        .push(
-            Row::new()
-                .width(Length::Fill)
-                .align_y(Alignment::Center)
-                .push(Space::new().width(Length::Fill))
-                .push(
-                    Column::new()
-                        .width(Length::Shrink)
-                        .align_x(Alignment::Center)
-                        .push(h3("Backup Phrase"))
-                )
-                .push(Space::new().width(Length::Fill))
-        )
+        .push(header("Back up your wallet"))
         .push(Space::new().height(Length::Fixed(16.0)))
         .push(
             Row::new()
@@ -236,30 +241,7 @@ fn recovery_phrase_view(mnemonic: [&'static str; 12]) -> Element<'static, Messag
     Column::new()
         .spacing(20)
         .width(Length::Fill)
-        .push(
-            Row::new()
-                .width(Length::Fill)
-                .align_y(Alignment::Start)
-                .push(
-                    coincube_ui::component::button::secondary(Some(icon::previous_icon().size(24)), "PREVIOUS")
-                        .on_press(Message::ActiveSettings(ActiveSettingsMessage::BackupWallet(BackupWalletMessage::PreviousStep)))
-                        .style(theme::button::transparent)
-                )
-                .push(Space::new().width(Length::Fill))
-        )
-        .push(
-            Row::new()
-                .width(Length::Fill)
-                .align_y(Alignment::Center)
-                .push(Space::new().width(Length::Fill))
-                .push(
-                    Column::new()
-                        .width(Length::Shrink)
-                        .align_x(Alignment::Center)
-                        .push(h3("Your Recovery Phrase"))
-                )
-                .push(Space::new().width(Length::Fill))
-        )
+        .push(header("Your Recovery Phrase"))
         .push(
             Row::new()
                 .width(Length::Fill)
@@ -358,38 +340,7 @@ fn verification_view<'a>(
 
     let mut content = Column::new().spacing(20).width(Length::Fill);
 
-    // Previous button
-    content = content.push(
-        Row::new()
-            .width(Length::Fill)
-            .align_y(Alignment::Start)
-            .push(
-                coincube_ui::component::button::secondary(
-                    Some(icon::previous_icon().size(24)),
-                    "PREVIOUS",
-                )
-                .on_press(Message::ActiveSettings(
-                    ActiveSettingsMessage::BackupWallet(BackupWalletMessage::PreviousStep),
-                ))
-                .style(theme::button::transparent),
-            )
-            .push(Space::new().width(Length::Fill)),
-    );
-
-    // Heading
-    content = content.push(
-        Row::new()
-            .width(Length::Fill)
-            .align_y(Alignment::Center)
-            .push(Space::new().width(Length::Fill))
-            .push(
-                Column::new()
-                    .width(Length::Shrink)
-                    .align_x(Alignment::Center)
-                    .push(h3("Verify Your Recovery Phrase")),
-            )
-            .push(Space::new().width(Length::Fill)),
-    );
+    content = content.push(header("Verify Your Recovery Phrase"));
 
     // Subheading
     content = content.push(
@@ -514,6 +465,7 @@ fn completed_view() -> Element<'static, Message> {
     Column::new()
         .spacing(20)
         .width(Length::Fill)
+        .push(header("Backup Complete"))
         .push(Space::new().height(Length::Fixed(20.0)))
         .push(
             Row::new()
@@ -526,19 +478,6 @@ fn completed_view() -> Element<'static, Message> {
                 .push(Space::new().width(Length::Fill))
         )
         .push(Space::new().height(Length::Fixed(16.0)))
-        .push(
-            Row::new()
-                .width(Length::Fill)
-                .align_y(Alignment::Center)
-                .push(Space::new().width(Length::Fill))
-                .push(
-                    Column::new()
-                        .width(Length::Shrink)
-                        .align_x(Alignment::Center)
-                        .push(h3("Backup Complete"))
-                )
-                .push(Space::new().width(Length::Fill))
-        )
         .push(
             Row::new()
                 .width(Length::Fill)

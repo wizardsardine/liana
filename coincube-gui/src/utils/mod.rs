@@ -42,6 +42,15 @@ pub fn default_derivation_path(network: Network) -> DerivationPath {
     .unwrap()
 }
 
+pub fn format_timestamp(timestamp: u64) -> String {
+    use chrono::{DateTime, Local, Utc};
+    DateTime::<Utc>::from_timestamp(timestamp as i64, 0)
+        .expect("Valid timestamp")
+        .with_timezone(&Local)
+        .format("%b. %d, %Y - %T")
+        .to_string()
+}
+
 pub fn format_time_ago(timestamp: u32) -> String {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

@@ -1,6 +1,8 @@
+use std::convert::TryInto;
 use std::sync::Arc;
 
 use breez_sdk_liquid::prelude::Payment;
+use coincube_core::miniscript::bitcoin::Amount;
 use coincube_ui::widget::*;
 use iced::Task;
 
@@ -11,9 +13,9 @@ use crate::daemon::Daemon;
 pub struct ActiveTransactions {
     breez_client: Arc<BreezClient>,
     payments: Vec<Payment>,
+    selected_payment: Option<Payment>,
     loading: bool,
-    balance_sat: u64,
-    balance_usd: f64,
+    balance: Amount,
 }
 
 impl ActiveTransactions {
@@ -21,9 +23,9 @@ impl ActiveTransactions {
         Self {
             breez_client,
             payments: Vec::new(),
+            selected_payment: None,
             loading: false,
-            balance_sat: 0,
-            balance_usd: 0.0,
+            balance: Amount::ZERO,
         }
     }
 
@@ -31,7 +33,7 @@ impl ActiveTransactions {
         // Placeholder: In the future, this will preselect a transaction
     }
 
-    fn calculate_balance(&self) -> u64 {
+    fn calculate_balance(&self) -> Amount {
         use breez_sdk_liquid::prelude::PaymentType;
         let mut balance: i64 = 0;
 
@@ -46,23 +48,37 @@ impl ActiveTransactions {
             }
         }
 
-        balance.max(0) as u64
+        Amount::from_sat(balance.max(0) as u64)
     }
 }
 
 impl State for ActiveTransactions {
     fn view<'a>(&'a self, menu: &'a Menu, cache: &'a Cache) -> Element<'a, view::Message> {
-        view::dashboard(
-            menu,
-            cache,
-            None,
-            view::active::active_transactions_view(
-                &self.payments,
-                self.balance_sat,
-                self.balance_usd,
-                self.loading,
-            ),
-        )
+        let fiat_converter = cache.fiat_price.as_ref().and_then(|p| p.try_into().ok());
+        if let Some(payment) = &self.selected_payment {
+            view::dashboard(
+                menu,
+                cache,
+                None,
+                view::active::payment_detail_view(
+                    payment,
+                    fiat_converter,
+                    cache.bitcoin_unit.into(),
+                ),
+            )
+        } else {
+            view::dashboard(
+                menu,
+                cache,
+                None,
+                view::active::active_transactions_view(
+                    &self.payments,
+                    &self.balance,
+                    fiat_converter,
+                    self.loading,
+                ),
+            )
+        }
     }
 
     fn update(
@@ -75,14 +91,19 @@ impl State for ActiveTransactions {
             Message::PaymentsLoaded(Ok(payments)) => {
                 self.loading = false;
                 self.payments = payments;
-                // Calculate balance from payments
-                self.balance_sat = self.calculate_balance();
-                // Mock USD conversion (in production, use real exchange rate)
-                self.balance_usd = (self.balance_sat as f64 / 100_000_000.0) * 100_000.0;
+                self.balance = self.calculate_balance();
                 Task::none()
             }
             Message::PaymentsLoaded(Err(_e)) => {
                 self.loading = false;
+                Task::none()
+            }
+            Message::View(view::Message::Select(i)) => {
+                self.selected_payment = self.payments.get(i).cloned();
+                Task::none()
+            }
+            Message::View(view::Message::Reload) | Message::View(view::Message::Close) => {
+                self.selected_payment = None;
                 Task::none()
             }
             _ => Task::none(),
@@ -95,6 +116,7 @@ impl State for ActiveTransactions {
         _wallet: Option<Arc<Wallet>>,
     ) -> Task<Message> {
         self.loading = true;
+        self.selected_payment = None;
         let client = self.breez_client.clone();
 
         Task::perform(
