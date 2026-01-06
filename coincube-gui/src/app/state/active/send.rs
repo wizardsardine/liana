@@ -88,9 +88,11 @@ impl ActiveSend {
                 let balance = info
                     .as_ref()
                     .map(|info| {
-                        Amount::from_sat(
-                            info.wallet_info.balance_sat + info.wallet_info.pending_receive_sat,
-                        )
+                        let balance_with_pending =
+                            info.wallet_info.balance_sat + info.wallet_info.pending_receive_sat;
+                        let available =
+                            balance_with_pending.saturating_sub(info.wallet_info.pending_send_sat);
+                        Amount::from_sat(available)
                     })
                     .unwrap_or(Amount::ZERO);
 

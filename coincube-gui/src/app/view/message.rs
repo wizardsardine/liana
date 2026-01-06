@@ -283,6 +283,7 @@ pub enum SendPopupMessage {
 pub enum ActiveReceiveMessage {
     ToggleMethod(ReceiveMethod),
     Copy,
+    ClearToast,
     GenerateAddress,
     AddressGenerated(ReceiveMethod, Result<String, String>),
     AmountInput(String),

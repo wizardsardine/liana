@@ -21,7 +21,7 @@ use iced::{
 
 use coincube_ui::{
     color,
-    component::{button, text::*},
+    component::{button, text, text::*},
     icon::{
         coins_icon, cross_icon, cube_icon, down_icon, home_icon, lightning_icon, plus_icon,
         receipt_icon, receive_icon, recovery_icon, send_icon, settings_icon, up_icon, vault_icon,
@@ -35,6 +35,14 @@ use coincube_ui::{
 use coincube_ui::icon::bitcoin_icon;
 
 use crate::app::{cache::Cache, error::Error, menu::Menu};
+
+/// Simple toast notification for clipboard copy and other success messages
+pub fn simple_toast(message: &str) -> Container<Message> {
+    container(text::p2_regular(message))
+        .padding(15)
+        .style(theme::notification::success)
+        .max_width(400.0)
+}
 
 fn menu_bar_highlight<'a, T: 'a>() -> Container<'a, T> {
     Container::new(Space::new().width(Length::Fixed(5.0)))

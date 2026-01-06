@@ -55,6 +55,14 @@ pub fn active_receive_view<'a>(
             8
         };
 
+        // Clean on-chain addresses for display (but keep original for QR code)
+        let display_addr = if *receive_method == ReceiveMethod::OnChain {
+            let cleaned = addr.strip_prefix("bitcoin:").unwrap_or(addr);
+            cleaned.split('?').next().unwrap_or(cleaned)
+        } else {
+            addr
+        };
+
         content = content.push(
             Column::new()
                 .spacing(30)
@@ -66,14 +74,15 @@ pub fn active_receive_view<'a>(
                 )
                 .push(
                     Container::new(
-                        text(addr)
+                        text(display_addr)
                             .size(12)
                             .style(theme::text::secondary)
                             .wrapping(Wrapping::Glyph),
                     )
                     .width(Length::Fill)
                     .max_width(600)
-                    .padding(10),
+                    .padding(10)
+                    .center_x(Length::Fill),
                 )
                 .push(action_buttons(receive_method)),
         );
