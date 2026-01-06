@@ -973,7 +973,6 @@ pub fn create_app_with_remote_backend(
     let network_dir = coincube_dir.network_directory(network);
     let wallet_id = wallet_settings.wallet_id();
     let wallet_alias_for_cube = wallet.metadata.wallet_alias.clone();
-    let mut cube_settings = None;
 
     match app::settings::Settings::from_file(&network_dir) {
         Ok(mut settings) => {
