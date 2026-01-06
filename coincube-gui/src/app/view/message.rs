@@ -1,6 +1,7 @@
 use crate::{
     app::{
         menu::Menu,
+        settings::unit::BitcoinDisplayUnit,
         view::{global_home::TransferDirection, FiatAmountConverter},
     },
     export::ImportExportMessage,
@@ -8,6 +9,7 @@ use crate::{
     services::fiat::{Currency, PriceSource},
 };
 
+use breez_sdk_liquid::prelude::{Payment, PrepareSendResponse};
 use breez_sdk_liquid::InputType;
 use coincube_core::miniscript::bitcoin::Amount;
 use coincube_core::miniscript::bitcoin::{bip32::Fingerprint, Address, OutPoint};
@@ -130,6 +132,7 @@ pub enum SettingsMessage {
     WalletAliasEdited(String),
     Save,
     GeneralSection,
+    DisplayUnitChanged(BitcoinDisplayUnit),
     Fiat(FiatMessage),
 }
 
@@ -225,8 +228,8 @@ pub enum ActiveOverviewMessage {
     Receive,
     History,
     DataLoaded {
-        balance: coincube_core::miniscript::bitcoin::Amount,
-        recent_payment: Vec<breez_sdk_liquid::prelude::Payment>,
+        balance: Amount,
+        recent_payment: Vec<Payment>,
     },
     Error(String),
 }
@@ -238,14 +241,14 @@ pub enum ActiveSendMessage {
     Send,
     History,
     DataLoaded {
-        balance: coincube_core::miniscript::bitcoin::Amount,
-        recent_payment: Vec<breez_sdk_liquid::prelude::Payment>,
+        balance: Amount,
+        recent_payment: Vec<Payment>,
     },
     Error(String),
     ClearError,
     // Send flow popup messages
     PopupMessage(SendPopupMessage),
-    PrepareResponseReceived(breez_sdk_liquid::prelude::PrepareSendResponse),
+    PrepareResponseReceived(PrepareSendResponse),
     ConfirmSend,
     SendComplete,
     BackToHome,
@@ -261,13 +264,8 @@ pub enum SendPopupMessage {
     CommentEdited(String),
     FiatConvert,
     FiatInputEdited(String),
-    FiatCurrencySelected(crate::services::fiat::Currency),
-    FiatPricesLoaded(
-        std::collections::HashMap<
-            crate::services::fiat::Currency,
-            crate::app::view::FiatAmountConverter,
-        >,
-    ),
+    FiatCurrencySelected(Currency),
+    FiatPricesLoaded(std::collections::HashMap<Currency, FiatAmountConverter>),
     FiatDone,
     FiatClose,
     Done,
@@ -308,8 +306,14 @@ pub enum BackupWalletMessage {
 }
 
 impl From<FiatMessage> for Message {
-    fn from(msg: FiatMessage) -> Self {
-        Message::Settings(SettingsMessage::Fiat(msg))
+    fn from(value: FiatMessage) -> Self {
+        Message::Settings(SettingsMessage::Fiat(value))
+    }
+}
+
+impl From<SettingsMessage> for Message {
+    fn from(value: SettingsMessage) -> Self {
+        Message::Settings(value)
     }
 }
 

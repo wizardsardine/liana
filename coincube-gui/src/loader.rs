@@ -23,6 +23,7 @@ use coincubed::{
 };
 
 use crate::app;
+use crate::app::breez::BreezClient;
 use crate::app::cache::DaemonCache;
 use crate::app::settings::{CubeSettings, WalletSettings};
 use crate::backup::Backup;
@@ -65,7 +66,7 @@ pub struct Loader {
     pub backup: Option<Backup>,
     pub wallet_settings: Option<WalletSettings>,
     pub cube_settings: CubeSettings,
-    pub breez_client: Option<std::sync::Arc<crate::app::breez::BreezClient>>,
+    pub breez_client: Option<std::sync::Arc<BreezClient>>,
     step: Step,
 }
 
@@ -93,6 +94,7 @@ pub enum Message {
                 Arc<dyn Daemon + Sync + Send>,
                 Option<Bitcoind>,
                 Option<Backup>,
+                CubeSettings,
             ),
             Error,
         >,
@@ -112,7 +114,7 @@ pub enum Message {
         /* restored_from_backup */ bool,
     ),
     BreezLoaded {
-        breez: std::sync::Arc<crate::app::breez::BreezClient>,
+        breez: std::sync::Arc<BreezClient>,
         cache: Cache,
         wallet: Arc<Wallet>,
         config: app::Config,
@@ -120,6 +122,7 @@ pub enum Message {
         datadir: CoincubeDirectory,
         bitcoind: Option<Bitcoind>,
         restored_from_backup: bool,
+        cube_settings: CubeSettings,
     },
     Started(StartedResult),
     Loaded(Result<(Arc<dyn Daemon + Sync + Send>, GetInfoResult), Error>),
@@ -138,7 +141,7 @@ impl Loader {
         backup: Option<Backup>,
         wallet_settings: Option<WalletSettings>,
         cube_settings: CubeSettings,
-        breez_client: Option<std::sync::Arc<crate::app::breez::BreezClient>>,
+        breez_client: Option<std::sync::Arc<BreezClient>>,
     ) -> (Self, Task<Message>) {
         let task = if let Some(ref wallet) = wallet_settings {
             let socket_path = datadir_path
@@ -200,6 +203,7 @@ impl Loader {
             return Task::perform(
                 load_application(
                     wallet_settings,
+                    self.cube_settings.clone(),
                     daemon,
                     info,
                     self.datadir_path.clone(),
@@ -304,6 +308,7 @@ impl Loader {
                             return Task::perform(
                                 load_application(
                                     wallet_settings,
+                                    self.cube_settings.clone(),
                                     daemon.clone(),
                                     info,
                                     self.datadir_path.clone(),
@@ -457,6 +462,7 @@ fn get_bitcoind_log(log_path: PathBuf) -> impl Stream<Item = Option<String>> {
 
 pub async fn load_application(
     wallet_settings: WalletSettings,
+    cube_settings: CubeSettings,
     daemon: Arc<dyn Daemon + Sync + Send>,
     info: GetInfoResult,
     datadir_path: CoincubeDirectory,
@@ -470,9 +476,12 @@ pub async fn load_application(
         Arc<dyn Daemon + Sync + Send>,
         Option<Bitcoind>,
         Option<Backup>,
+        CubeSettings,
     ),
     Error,
 > {
+    let bitcoin_unit = cube_settings.unit_setting.display_unit;
+
     let wallet = Wallet::new(info.descriptors.main)
         .load_from_settings(wallet_settings)?
         .load_hotsigners(&datadir_path, network)?;
@@ -492,12 +501,20 @@ pub async fn load_application(
             ..Default::default()
         },
         fiat_price: None,
+        bitcoin_unit,
         vault_expanded: false,
         active_expanded: false,
         has_vault: true,
     };
 
-    Ok((Arc::new(wallet), cache, daemon, internal_bitcoind, backup))
+    Ok((
+        Arc::new(wallet),
+        cache,
+        daemon,
+        internal_bitcoind,
+        backup,
+        cube_settings,
+    ))
 }
 
 #[derive(Clone, Debug)]

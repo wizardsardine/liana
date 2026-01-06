@@ -30,7 +30,7 @@ use crate::{
     app::{
         cache::Cache,
         error::Error,
-        menu::Menu,
+        menu::{Menu, VaultSubMenu},
         settings::ProviderKey,
         view::{vault::hw, vault::warning::warn},
     },
@@ -49,7 +49,7 @@ fn header(title: &str, msg: SettingsMessage) -> Row<'static, Message> {
         .push(
             Button::new(text("Settings").size(30).bold())
                 .style(theme::button::transparent)
-                .on_press(Message::Menu(Menu::Settings)),
+                .on_press(Message::Menu(Menu::Vault(VaultSubMenu::Settings(None)))),
         )
         .push(icon::chevron_right().size(30))
         .push(
@@ -116,14 +116,7 @@ fn export_section(
 pub fn list<'a>(menu: &'a Menu, cache: &'a Cache, is_remote_backend: bool) -> Element<'a, Message> {
     let header = Button::new(text("Settings").size(30).bold())
         .style(theme::button::transparent)
-        .on_press(Message::Menu(Menu::Settings));
-
-    let general = settings_section(
-        "General",
-        None,
-        icon::wrench_icon(),
-        Message::Settings(SettingsMessage::GeneralSection),
-    );
+        .on_press(Message::Menu(Menu::Vault(VaultSubMenu::Settings(None))));
 
     let node = settings_section(
         "Node",
@@ -153,13 +146,6 @@ pub fn list<'a>(menu: &'a Menu, cache: &'a Cache, is_remote_backend: bool) -> El
         Message::Settings(SettingsMessage::ImportExportSection),
     );
 
-    let about = settings_section(
-        "About",
-        None,
-        icon::tooltip_icon(),
-        Message::Settings(SettingsMessage::AboutSection),
-    );
-
     dashboard(
         menu,
         cache,
@@ -168,11 +154,9 @@ pub fn list<'a>(menu: &'a Menu, cache: &'a Cache, is_remote_backend: bool) -> El
             .spacing(20)
             .width(Length::Fill)
             .push(header)
-            .push(general)
             .push(if !is_remote_backend { node } else { backend })
             .push(wallet)
-            .push(import_export)
-            .push(about),
+            .push(import_export),
     )
 }
 

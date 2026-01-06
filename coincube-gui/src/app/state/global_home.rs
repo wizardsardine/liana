@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::convert::TryInto;
 use std::sync::Arc;
 
 use coincube_core::miniscript::bitcoin::{bip32::ChildNumber, Address, Amount};
@@ -6,7 +7,7 @@ use coincube_ui::component::form;
 use coincube_ui::widget::*;
 use iced::Task;
 
-use super::{fiat_converter_for_wallet, Cache, Menu, State};
+use super::{Cache, Menu, State};
 use crate::app::breez::BreezClient;
 use crate::app::error::Error;
 use crate::app::state::vault::label::LabelsEdited;
@@ -105,10 +106,9 @@ impl State for GlobalHome {
 
         let active_balance = self.active_balance;
 
-        let fiat_converter = self
-            .wallet
-            .as_ref()
-            .and_then(|w| fiat_converter_for_wallet(w, cache));
+        // Fiat price is cube-level, not wallet-level, so get it directly from cache
+        let fiat_converter: Option<view::FiatAmountConverter> =
+            cache.fiat_price.as_ref().and_then(|p| p.try_into().ok());
 
         let content = view::dashboard(
             menu,
@@ -132,6 +132,7 @@ impl State for GlobalHome {
                 labels_editing: self.labels_edited.cache(),
                 address_expanded: self.address_expanded,
                 warning: self.warning.as_ref(),
+                bitcoin_unit: cache.bitcoin_unit,
             }),
         );
 

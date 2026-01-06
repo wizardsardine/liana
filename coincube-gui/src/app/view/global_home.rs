@@ -35,6 +35,7 @@ fn wallet_card<'a>(
     fiat_converter: Option<FiatAmountConverter>,
     balance_masked: bool,
     has_vault: bool,
+    bitcoin_unit: coincube_ui::component::amount::BitcoinDisplayUnit,
 ) -> Element<'a, Message> {
     let fiat_balance = fiat_converter.as_ref().map(|c| c.convert(*balance));
 
@@ -95,7 +96,7 @@ fn wallet_card<'a>(
                             .push(if balance_masked {
                                 Row::new().push(text("********").size(H2_SIZE))
                             } else {
-                                amount_with_size(balance, H2_SIZE)
+                                amount_with_size_and_unit(balance, H2_SIZE, bitcoin_unit)
                             })
                             .push_maybe(if balance_masked {
                                 Some(text("********").size(P1_SIZE))
@@ -261,6 +262,7 @@ fn balance_summary_card<'a>(
     is_active: bool,
     balance: &Amount,
     fiat_converter: Option<FiatAmountConverter>,
+    bitcoin_unit: crate::app::settings::unit::BitcoinDisplayUnit,
 ) -> Element<'a, Message> {
     let fiat_balance = fiat_converter.as_ref().map(|c| c.convert(*balance));
 
@@ -287,7 +289,11 @@ fn balance_summary_card<'a>(
             Row::new().align_y(Alignment::Center).push(
                 Column::new()
                     .spacing(4)
-                    .push(amount_with_size(balance, H2_SIZE))
+                    .push(amount_with_size_and_unit(
+                        balance,
+                        H2_SIZE,
+                        bitcoin_unit.into(),
+                    ))
                     .push_maybe(
                         fiat_balance.map(|fiat| fiat.to_text().size(P1_SIZE).color(color::GREY_2)),
                     ),
@@ -366,6 +372,7 @@ fn enter_amount_view<'a>(
     vault_balance: &Amount,
     fiat_converter: Option<FiatAmountConverter>,
     entered_amount: &'a form::Value<String>,
+    bitcoin_unit: crate::app::settings::unit::BitcoinDisplayUnit,
 ) -> Element<'a, Message> {
     let (from_balance, to_balance, from_name, to_name) = match direction {
         TransferDirection::ActiveToVault => (active_balance, vault_balance, "Active", "Vault"),
@@ -380,12 +387,14 @@ fn enter_amount_view<'a>(
                 true,
                 from_balance,
                 fiat_converter,
+                bitcoin_unit,
             ))
             .push(balance_summary_card(
                 to_name,
                 false,
                 to_balance,
                 fiat_converter,
+                bitcoin_unit,
             )),
         TransferDirection::VaultToActive => Row::new()
             .spacing(20)
@@ -394,12 +403,14 @@ fn enter_amount_view<'a>(
                 false,
                 from_balance,
                 fiat_converter,
+                bitcoin_unit,
             ))
             .push(balance_summary_card(
                 to_name,
                 true,
                 to_balance,
                 fiat_converter,
+                bitcoin_unit,
             )),
     };
 
@@ -672,6 +683,7 @@ pub struct GlobalViewConfig<'a> {
     pub labels_editing: &'a std::collections::HashMap<String, form::Value<String>>,
     pub address_expanded: bool,
     pub warning: Option<&'a crate::app::error::Error>,
+    pub bitcoin_unit: crate::app::settings::unit::BitcoinDisplayUnit,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -711,6 +723,7 @@ pub fn global_home_view<'a>(config: GlobalViewConfig<'a>) -> Element<'a, Message
         labels_editing,
         address_expanded,
         warning,
+        bitcoin_unit,
     } = config;
 
     match current_view.step {
@@ -725,6 +738,7 @@ pub fn global_home_view<'a>(config: GlobalViewConfig<'a>) -> Element<'a, Message
                     &vault_balance,
                     fiat_converter,
                     entered_amount,
+                    bitcoin_unit,
                 );
             }
         }
@@ -751,6 +765,7 @@ pub fn global_home_view<'a>(config: GlobalViewConfig<'a>) -> Element<'a, Message
         fiat_converter,
         balance_masked,
         false,
+        bitcoin_unit.into(),
     );
 
     let vault_card_element = wallet_card(
@@ -759,6 +774,7 @@ pub fn global_home_view<'a>(config: GlobalViewConfig<'a>) -> Element<'a, Message
         fiat_converter,
         balance_masked,
         has_vault,
+        bitcoin_unit.into(),
     );
 
     Column::new()

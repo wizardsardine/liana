@@ -2,6 +2,7 @@ mod message;
 
 pub mod active;
 pub mod global_home;
+pub mod settings;
 
 #[cfg(feature = "buysell")]
 pub mod buysell;
@@ -454,6 +455,24 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<
     {
         menu_column = menu_column.push_maybe(has_vault.then_some(buy_sell_button));
     }
+
+    // Global Settings button (always visible at bottom of main menu)
+    let global_settings_button = if matches!(menu, Menu::Settings(_)) {
+        row!(
+            button::menu_active(Some(settings_icon()), "Settings")
+                .on_press(Message::Reload)
+                .width(iced::Length::Fill),
+            menu_bar_highlight(),
+        )
+    } else {
+        row!(button::menu(Some(settings_icon()), "Settings")
+            .on_press(Message::Menu(Menu::Settings(
+                crate::app::menu::SettingsSubMenu::General
+            )))
+            .width(iced::Length::Fill),)
+    };
+
+    menu_column = menu_column.push(global_settings_button);
 
     Container::new(
         Column::new().push(menu_column.height(Length::Fill)).push(

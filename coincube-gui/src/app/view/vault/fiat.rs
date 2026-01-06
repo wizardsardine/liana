@@ -79,6 +79,14 @@ impl DisplayAmount for FiatAmount {
     fn to_formatted_string(&self) -> String {
         format_f64_as_string(self.amount, ",", self.currency().decimals(), false)
     }
+
+    fn to_formatted_string_with_unit(
+        &self,
+        _unit: coincube_ui::component::amount::BitcoinDisplayUnit,
+    ) -> String {
+        // Fiat amounts don't use bitcoin display unit, so just return the normal formatted string
+        self.to_formatted_string()
+    }
 }
 
 #[derive(Debug)]
