@@ -1,7 +1,7 @@
 use breez_sdk_liquid::prelude::{Payment, PaymentType};
 use coincube_core::miniscript::bitcoin::Amount;
 use coincube_ui::{
-    component::{amount::amount, badge, button, card, text::*},
+    component::{amount::amount, amount::DisplayAmount, badge, button, card, text::*},
     icon, theme,
     widget::*,
 };
@@ -243,7 +243,7 @@ pub fn payment_detail_view<'a>(
                         .push(
                             Column::new()
                                 .width(Length::FillPortion(2))
-                                .push(text(format!("{} sats", payment.amount_sat))),
+                                .push(text(btc_amount.to_formatted_string_with_unit(bitcoin_unit))),
                         )
                         .spacing(20),
                 )

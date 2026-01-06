@@ -25,10 +25,11 @@ async fn update_price_setting(
     new_price_setting: PriceSetting,
 ) -> Result<(), Error> {
     let network_dir = data_dir.network_directory(network);
-    let found = update_settings_file(&network_dir, |mut settings| {
+    let mut cube_found = false;
+    let result = update_settings_file(&network_dir, |mut settings| {
         if let Some(cube) = settings.cubes.iter_mut().find(|c| c.id == cube_id) {
             cube.fiat_price = Some(new_price_setting);
-            Some(settings)
+            cube_found = true;
         } else {
             tracing::error!(
                 "Cube not found with id: {} - cannot save price setting",
@@ -38,18 +39,20 @@ async fn update_price_setting(
                 "Available cubes: {:?}",
                 settings.cubes.iter().map(|c| &c.id).collect::<Vec<_>>()
             );
-            None
         }
+        // Always return Some to prevent file deletion
+        Some(settings)
     })
     .await;
 
-    match found {
-        Ok(()) => Ok(()),
+    match result {
+        Ok(()) if cube_found => Ok(()),
+        Ok(()) => Err(Error::Unexpected(
+            "Cube not found in settings file".to_string(),
+        )),
         Err(e) => {
             tracing::error!("Failed to save price setting: {:?}", e);
-            Err(Error::Unexpected(
-                "Cube not found in settings file".to_string(),
-            ))
+            Err(Error::Unexpected(format!("Failed to update settings: {}", e)))
         }
     }
 }
@@ -61,10 +64,11 @@ async fn update_unit_setting(
     new_unit_setting: UnitSetting,
 ) -> Result<(), Error> {
     let network_dir = data_dir.network_directory(network);
-    let found = update_settings_file(&network_dir, |mut settings| {
+    let mut cube_found = false;
+    let result = update_settings_file(&network_dir, |mut settings| {
         if let Some(cube) = settings.cubes.iter_mut().find(|c| c.id == cube_id) {
             cube.unit_setting = new_unit_setting;
-            Some(settings)
+            cube_found = true;
         } else {
             tracing::error!(
                 "Cube not found with id: {} - cannot save unit setting",
@@ -74,18 +78,20 @@ async fn update_unit_setting(
                 "Available cubes: {:?}",
                 settings.cubes.iter().map(|c| &c.id).collect::<Vec<_>>()
             );
-            None // Return None to prevent saving if cube not found
         }
+        // Always return Some to prevent file deletion
+        Some(settings)
     })
     .await;
 
-    match found {
-        Ok(()) => Ok(()),
+    match result {
+        Ok(()) if cube_found => Ok(()),
+        Ok(()) => Err(Error::Unexpected(
+            "Cube not found in settings file".to_string(),
+        )),
         Err(e) => {
             tracing::error!("Failed to save unit setting: {:?}", e);
-            Err(Error::Unexpected(
-                "Cube not found in settings file".to_string(),
-            ))
+            Err(Error::Unexpected(format!("Failed to update settings: {}", e)))
         }
     }
 }
