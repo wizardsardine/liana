@@ -20,9 +20,9 @@
 - [ ] **3.3 Participant Flow**
 - [ ] **4. Local Storage**
 - [ ] **1.8 UI/Wording Improvements**
-  - [ ] 1.8.1 Wallet Status Labels
+  - [x] 1.8.1 Wallet Status Labels
     - [x] Change "Validated" badge: text to "Set keys", style to warning (amber)
-    - [ ] Add "Active" badge for Finalized wallets (green, success style)
+    - [x] Add "Active" badge for Finalized wallets (green, success style)
   - [ ] 1.8.2 Manage Key Modal Field Labels
     - [ ] Rename "Alias" to "Key Alias"
     - [ ] Rename "Description" to "Key Description"

@@ -49,7 +49,6 @@ fn derive_user_role(
 const STATUS_BADGE_WIDTH: f32 = 80.0;
 
 /// Render a colored status badge for wallet status
-/// Returns empty space for finalized wallets (no badge needed for final state)
 fn status_badge(status: &WalletStatus) -> Element<'static, Msg> {
     match status {
         WalletStatus::Created | WalletStatus::Drafted => Container::new(text::caption("Draft"))
@@ -70,7 +69,12 @@ fn status_badge(status: &WalletStatus) -> Element<'static, Msg> {
             .center_x(STATUS_BADGE_WIDTH)
             .style(theme::pill::warning)
             .into(),
-        WalletStatus::Finalized => Space::with_width(STATUS_BADGE_WIDTH).into(),
+        WalletStatus::Finalized => Container::new(text::caption("Active"))
+            .padding([4, 12])
+            .width(STATUS_BADGE_WIDTH)
+            .center_x(STATUS_BADGE_WIDTH)
+            .style(theme::pill::success)
+            .into(),
     }
 }
 
