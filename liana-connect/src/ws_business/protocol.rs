@@ -158,9 +158,9 @@ pub struct KeyJson {
     pub xpub_device_version: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub xpub_file_name: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_edited: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_editor: Option<String>,
 }
 
@@ -169,6 +169,10 @@ pub struct SpendingPathJson {
     pub is_primary: bool,
     pub threshold_n: u8,
     pub key_ids: Vec<u8>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_edited: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_editor: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -453,12 +457,18 @@ impl TryFrom<SpendingPathJson> for SpendingPath {
     type Error = String;
 
     fn try_from(json: SpendingPathJson) -> Result<Self, Self::Error> {
+        let last_editor = json
+            .last_editor
+            .map(|s| Uuid::parse_str(&s))
+            .transpose()
+            .map_err(|e| format!("Invalid last_editor UUID: {}", e))?;
+
         Ok(SpendingPath {
             is_primary: json.is_primary,
             threshold_n: json.threshold_n,
             key_ids: json.key_ids,
-            last_edited: None,
-            last_editor: None,
+            last_edited: json.last_edited,
+            last_editor,
         })
     }
 }
@@ -563,6 +573,8 @@ impl From<&SpendingPath> for SpendingPathJson {
             is_primary: path.is_primary,
             threshold_n: path.threshold_n,
             key_ids: path.key_ids.clone(),
+            last_edited: path.last_edited,
+            last_editor: path.last_editor.map(|u| u.to_string()),
         }
     }
 }

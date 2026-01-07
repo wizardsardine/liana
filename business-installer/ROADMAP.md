@@ -420,6 +420,11 @@ real-time notifications, and in-memory storage.
 
 ## Changelog
 
+### 2026-01-07
+- Added `last_edited` and `last_editor` fields to `SpendingPathJson` protocol struct
+- Server now sets path-level last_edited info when paths are created or modified
+- Template view now displays "Edited by [user] [time ago]" for each path
+
 ### 2026-01-05
 - Refactored `exit_to_liana_lite` flag to generic `exit` flag in AppState
 - Moved default `subscription()` implementation to `Installer` trait (no longer needs override in each implementer)

@@ -1,6 +1,9 @@
-use crate::state::{
-    views::path::{EditPathModalState, TimelockUnit},
-    Msg, State,
+use crate::{
+    state::{
+        views::path::{EditPathModalState, TimelockUnit},
+        Msg, State,
+    },
+    views::format_last_edit_info,
 };
 use iced::{
     widget::{checkbox, pick_list, Space},
@@ -44,6 +47,34 @@ pub fn edit_path_modal_view<'a>(
             button::transparent(Some(icon::cross_icon().size(32)), "")
                 .on_press(Msg::TemplateCancelPathModal),
         );
+
+    // Get last edit info for the path being edited
+    let current_user_email_lower = state.views.login.email.form.value.to_lowercase();
+    let last_edit_info: Option<Element<'_, Msg>> = if modal_state.is_primary {
+        format_last_edit_info(
+            state.app.primary_path.last_edited,
+            state.app.primary_path.last_editor,
+            state,
+            &current_user_email_lower,
+        )
+        .map(|info| text::caption(info).style(theme::text::secondary).into())
+    } else if let Some(idx) = modal_state.path_index {
+        state
+            .app
+            .secondary_paths
+            .get(idx)
+            .and_then(|(path, _)| {
+                format_last_edit_info(
+                    path.last_edited,
+                    path.last_editor,
+                    state,
+                    &current_user_email_lower,
+                )
+            })
+            .map(|info| text::caption(info).style(theme::text::secondary).into())
+    } else {
+        None
+    };
 
     // Key selection section
     let keys_label = text::p1_regular("Keys in Path:");
@@ -238,6 +269,7 @@ pub fn edit_path_modal_view<'a>(
 
     let content = Column::new()
         .push(header)
+        .push_maybe(last_edit_info)
         .push(keys_label)
         .push(keys_column)
         .push(threshold_row)

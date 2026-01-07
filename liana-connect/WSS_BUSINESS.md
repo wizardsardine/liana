@@ -402,9 +402,15 @@ and [SecondaryPath Object](#secondarypath-object) for nested structure definitio
 {
   "is_primary": <boolean>,
   "threshold_n": <number>,
-  "key_ids": [<number>]
+  "key_ids": [<number>],
+  "last_edited": <number|null>,
+  "last_editor": <string|null>
 }
 ```
+
+**Note:** `last_edited` is a Unix timestamp (seconds) indicating when the path was last
+modified. `last_editor` is the UUID of the user who last edited this path. Both fields
+are optional and omitted when not set.
 
 ### Timelock Object
 

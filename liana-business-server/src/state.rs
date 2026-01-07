@@ -1,7 +1,16 @@
 use liana_connect::{Key, KeyType, Org, PolicyTemplate, SpendingPath, Timelock, User, UserRole, Wallet, WalletStatus};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
+use std::time::{SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
+
+/// Get current unix timestamp in seconds
+fn now_timestamp() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+}
 
 /// Server state holding all organizations, wallets, and users
 pub struct ServerState {
@@ -125,7 +134,8 @@ fn init_test_data(
     // -------------------------------------------------------------------------
     let wallet1_id = Uuid::new_v4();
     let mut wallet1_template = PolicyTemplate::new();
-    // Keys: Owner, Bob, Alice
+    // Keys: Owner, Bob, Alice (with initial last_edited values)
+    let key_timestamp = now_timestamp();
     wallet1_template.keys.insert(
         0,
         Key {
@@ -140,8 +150,8 @@ fn init_test_data(
             xpub_device_fingerprint: None,
             xpub_device_version: None,
             xpub_file_name: None,
-            last_edited: None,
-            last_editor: None,
+            last_edited: Some(key_timestamp - 1800), // 30 min ago
+            last_editor: Some(ws_manager.uuid),
         },
     );
     wallet1_template.keys.insert(
@@ -158,8 +168,8 @@ fn init_test_data(
             xpub_device_fingerprint: None,
             xpub_device_version: None,
             xpub_file_name: None,
-            last_edited: None,
-            last_editor: None,
+            last_edited: Some(key_timestamp - 5400), // 1.5 hours ago
+            last_editor: Some(ws_manager.uuid),
         },
     );
     wallet1_template.keys.insert(
@@ -176,24 +186,27 @@ fn init_test_data(
             xpub_device_fingerprint: None,
             xpub_device_version: None,
             xpub_file_name: None,
-            last_edited: None,
-            last_editor: None,
+            last_edited: Some(key_timestamp - 172800), // 2 days ago
+            last_editor: Some(ws_manager.uuid),
         },
     );
     // Primary path: All of Owner, Bob (threshold = 2)
     wallet1_template.primary_path.key_ids.push(0); // Owner
     wallet1_template.primary_path.key_ids.push(1); // Bob
     wallet1_template.primary_path.threshold_n = 2;
+    // Set initial last_edited on primary path (1 hour ago)
+    wallet1_template.primary_path.last_edited = Some(now_timestamp() - 3600);
+    wallet1_template.primary_path.last_editor = Some(ws_manager.uuid);
     // Secondary path 1: 1 of Alice, Bob - After 2 months (8760 blocks)
-    wallet1_template.secondary_paths.push((
-        SpendingPath::new(false, 1, vec![2, 1]), // Alice, Bob
-        Timelock::new(8760),                     // 2 months
-    ));
+    let mut secondary1 = SpendingPath::new(false, 1, vec![2, 1]); // Alice, Bob
+    secondary1.last_edited = Some(now_timestamp() - 7200); // 2 hours ago
+    secondary1.last_editor = Some(ws_manager.uuid);
+    wallet1_template.secondary_paths.push((secondary1, Timelock::new(8760)));
     // Secondary path 2: Owner - After 5 months (21900 blocks)
-    wallet1_template.secondary_paths.push((
-        SpendingPath::new(false, 1, vec![0]), // Owner
-        Timelock::new(21900),                 // 5 months
-    ));
+    let mut secondary2 = SpendingPath::new(false, 1, vec![0]); // Owner
+    secondary2.last_edited = Some(now_timestamp() - 86400); // 1 day ago
+    secondary2.last_editor = Some(ws_manager.uuid);
+    wallet1_template.secondary_paths.push((secondary2, Timelock::new(21900)));
 
     let wallet1 = Wallet {
         alias: "Draft Wallet".to_string(),

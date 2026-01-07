@@ -458,9 +458,81 @@ fn handle_edit_wallet(state: &ServerState, mut wallet: Wallet, editor_id: Uuid) 
         }
     }
 
-    // Set last_edited and last_editor
+    // Set last_edited and last_editor on wallet
     wallet.last_edited = Some(timestamp);
     wallet.last_editor = Some(editor_id);
+
+    // Set last_edited and last_editor on changed paths
+    if let Some(ref mut new_template) = wallet.template {
+        let old_template = existing.template.as_ref();
+
+        // Check primary path - compare ignoring last_edited/last_editor
+        let primary_changed = match old_template {
+            Some(old) => {
+                old.primary_path.key_ids != new_template.primary_path.key_ids
+                    || old.primary_path.threshold_n != new_template.primary_path.threshold_n
+            }
+            None => true, // New template, path is new
+        };
+        if primary_changed {
+            new_template.primary_path.last_edited = Some(timestamp);
+            new_template.primary_path.last_editor = Some(editor_id);
+        } else if let Some(old) = old_template {
+            // Preserve existing last_edited info
+            new_template.primary_path.last_edited = old.primary_path.last_edited;
+            new_template.primary_path.last_editor = old.primary_path.last_editor;
+        }
+
+        // Check secondary paths
+        for (i, (new_path, new_timelock)) in new_template.secondary_paths.iter_mut().enumerate() {
+            let path_changed = match old_template {
+                Some(old) => {
+                    // Try to find a matching old path by index
+                    old.secondary_paths.get(i).map_or(true, |(old_path, old_timelock)| {
+                        old_path.key_ids != new_path.key_ids
+                            || old_path.threshold_n != new_path.threshold_n
+                            || old_timelock.blocks != new_timelock.blocks
+                    })
+                }
+                None => true, // New template, path is new
+            };
+            if path_changed {
+                new_path.last_edited = Some(timestamp);
+                new_path.last_editor = Some(editor_id);
+            } else if let Some(old) = old_template {
+                // Preserve existing last_edited info
+                if let Some((old_path, _)) = old.secondary_paths.get(i) {
+                    new_path.last_edited = old_path.last_edited;
+                    new_path.last_editor = old_path.last_editor;
+                }
+            }
+        }
+
+        // Check keys - compare ignoring last_edited/last_editor and xpub fields
+        for (key_id, new_key) in new_template.keys.iter_mut() {
+            let key_changed = match old_template {
+                Some(old) => {
+                    old.keys.get(key_id).map_or(true, |old_key| {
+                        old_key.alias != new_key.alias
+                            || old_key.description != new_key.description
+                            || old_key.email != new_key.email
+                            || old_key.key_type != new_key.key_type
+                    })
+                }
+                None => true, // New template, key is new
+            };
+            if key_changed {
+                new_key.last_edited = Some(timestamp);
+                new_key.last_editor = Some(editor_id);
+            } else if let Some(old) = old_template {
+                // Preserve existing last_edited info
+                if let Some(old_key) = old.keys.get(key_id) {
+                    new_key.last_edited = old_key.last_edited;
+                    new_key.last_editor = old_key.last_editor;
+                }
+            }
+        }
+    }
 
     // Update wallet in state
     wallets.insert(wallet.id, wallet.clone());

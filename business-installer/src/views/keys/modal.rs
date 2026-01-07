@@ -1,22 +1,28 @@
-use crate::state::{views::keys::EditKeyModalState, Message, State};
+use crate::{
+    state::{views::keys::EditKeyModalState, Message, State},
+    views::format_last_edit_info,
+};
 use iced::{
     widget::{pick_list, Space},
     Alignment, Length,
 };
 use liana_ui::{
     component::{button, card, form, text},
-    icon,
+    icon, theme,
     widget::*,
 };
 
 pub fn key_modal_view(state: &State) -> Option<Element<'_, Message>> {
     if let Some(modal_state) = &state.views.keys.edit_key {
-        return Some(edit_key_modal_view(modal_state));
+        return Some(edit_key_modal_view(state, modal_state));
     }
     None
 }
 
-pub fn edit_key_modal_view(modal_state: &EditKeyModalState) -> Element<'_, Message> {
+pub fn edit_key_modal_view<'a>(
+    state: &'a State,
+    modal_state: &'a EditKeyModalState,
+) -> Element<'a, Message> {
     // Header
     let title = if modal_state.is_new {
         "New Key"
@@ -32,6 +38,26 @@ pub fn edit_key_modal_view(modal_state: &EditKeyModalState) -> Element<'_, Messa
             button::transparent(Some(icon::cross_icon().size(32)), "")
                 .on_press(Message::KeyCancelModal),
         );
+
+    // Get last edit info for the key being edited (only for existing keys)
+    let current_user_email_lower = state.views.login.email.form.value.to_lowercase();
+    let last_edit_info: Option<Element<'_, Message>> = if !modal_state.is_new {
+        state
+            .app
+            .keys
+            .get(&modal_state.key_id)
+            .and_then(|key| {
+                format_last_edit_info(
+                    key.last_edited,
+                    key.last_editor,
+                    state,
+                    &current_user_email_lower,
+                )
+            })
+            .map(|info| text::caption(info).style(theme::text::secondary).into())
+    } else {
+        None
+    };
 
     // Alias input - validate (must not be empty)
     // No warning if empty, but Save button will be disabled
@@ -135,6 +161,7 @@ pub fn edit_key_modal_view(modal_state: &EditKeyModalState) -> Element<'_, Messa
 
     let content = Column::new()
         .push(header)
+        .push_maybe(last_edit_info)
         .push(alias_input)
         .push(description_input)
         .push(email_input)
