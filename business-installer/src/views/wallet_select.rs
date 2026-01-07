@@ -64,11 +64,11 @@ fn status_badge(status: &WalletStatus) -> Element<'static, Msg> {
             .center_x(STATUS_BADGE_WIDTH)
             .style(theme::pill::simple)
             .into(),
-        WalletStatus::Validated => Container::new(text::caption("Validated"))
+        WalletStatus::Validated => Container::new(text::caption("Set keys"))
             .padding([4, 12])
             .width(STATUS_BADGE_WIDTH)
             .center_x(STATUS_BADGE_WIDTH)
-            .style(theme::pill::primary)
+            .style(theme::pill::warning)
             .into(),
         WalletStatus::Finalized => Space::with_width(STATUS_BADGE_WIDTH).into(),
     }

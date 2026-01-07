@@ -19,6 +19,24 @@
 - [ ] **3.2 Owner Flow**
 - [ ] **3.3 Participant Flow**
 - [ ] **4. Local Storage**
+- [ ] **1.8 UI/Wording Improvements**
+  - [ ] 1.8.1 Wallet Status Labels
+    - [x] Change "Validated" badge: text to "Set keys", style to warning (amber)
+    - [ ] Add "Active" badge for Finalized wallets (green, success style)
+  - [ ] 1.8.2 Manage Key Modal Field Labels
+    - [ ] Rename "Alias" to "Key Alias"
+    - [ ] Rename "Description" to "Key Description"
+    - [ ] Rename "Email" to "Email Address of the Key Manager"
+    - [ ] Add tooltip to "Key Type" with descriptions for each type
+  - [ ] 1.8.3 Key Information Screen (Set Keys)
+    - [ ] Change "Missing" badge text to "Not Set"
+    - [ ] Rename screen title from "Add Key Information" to "Set Keys"
+    - [ ] Update breadcrumb from "Key Information" to "Set Keys"
+    - [ ] Update intro text with hardware device recommendation
+  - [ ] 1.8.4 Header/Breadcrumb Pluralization
+    - [ ] Change "Organization" breadcrumb to "Organizations"
+    - [ ] Change "Select Organization" title to "Select an Organization"
+    - [ ] Change "Wallet" breadcrumb to "Wallets"
 
 ## Concepts
 
