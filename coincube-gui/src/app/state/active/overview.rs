@@ -88,6 +88,7 @@ impl State for ActiveOverview {
             fiat_converter,
             &self.recent_transaction,
             self.error.as_deref(),
+            cache.bitcoin_unit.into(),
         )
         .map(view::Message::ActiveOverview);
 

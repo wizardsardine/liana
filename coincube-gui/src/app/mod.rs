@@ -193,14 +193,41 @@ impl Panels {
             )),
             transactions: Some(VaultTransactionsPanel::new(wallet.clone())),
             psbts: Some(PsbtsPanel::new(wallet.clone())),
-            recovery: Some(new_recovery_panel(wallet.clone(), cache)),
-            receive: Some(VaultReceivePanel::new(data_dir.clone(), wallet.clone())),
-            create_spend: Some(CreateSpendPanel::new(
+            recovery: Some(new_recovery_panel(
                 wallet.clone(),
-                cache.coins(),
-                cache.blockheight() as u32,
-                cache.network,
+                cache,
+                sync_status(
+                    daemon_backend.clone(),
+                    cache.blockheight(),
+                    cache.sync_progress(),
+                    cache.last_poll_timestamp(),
+                    cache.last_poll_at_startup,
+                ),
             )),
+            receive: Some(VaultReceivePanel::new(data_dir.clone(), wallet.clone())),
+            create_spend: Some({
+                let (balance, unconfirmed_balance, _, _) = state::coins_summary(
+                    cache.coins(),
+                    cache.blockheight() as u32,
+                    wallet.main_descriptor.first_timelock_value(),
+                );
+                CreateSpendPanel::new(
+                    wallet.clone(),
+                    cache.coins(),
+                    cache.blockheight() as u32,
+                    cache.network,
+                    balance,
+                    unconfirmed_balance,
+                    sync_status(
+                        daemon_backend.clone(),
+                        cache.blockheight(),
+                        cache.sync_progress(),
+                        cache.last_poll_timestamp(),
+                        cache.last_poll_at_startup,
+                    ),
+                    cache.bitcoin_unit.into(),
+                )
+            }),
             settings: Some(VaultSettingsState::new(
                 data_dir.clone(),
                 wallet.clone(),
@@ -246,14 +273,41 @@ impl Panels {
         ));
         self.transactions = Some(VaultTransactionsPanel::new(wallet.clone()));
         self.psbts = Some(PsbtsPanel::new(wallet.clone()));
-        self.recovery = Some(new_recovery_panel(wallet.clone(), cache));
-        self.receive = Some(VaultReceivePanel::new(data_dir.clone(), wallet.clone()));
-        self.create_spend = Some(CreateSpendPanel::new(
+        self.recovery = Some(new_recovery_panel(
             wallet.clone(),
-            cache.coins(),
-            cache.blockheight() as u32,
-            cache.network,
+            cache,
+            sync_status(
+                daemon_backend.clone(),
+                cache.blockheight(),
+                cache.sync_progress(),
+                cache.last_poll_timestamp(),
+                cache.last_poll_at_startup,
+            ),
         ));
+        self.receive = Some(VaultReceivePanel::new(data_dir.clone(), wallet.clone()));
+        self.create_spend = Some({
+            let (balance, unconfirmed_balance, _, _) = state::coins_summary(
+                cache.coins(),
+                cache.blockheight() as u32,
+                wallet.main_descriptor.first_timelock_value(),
+            );
+            CreateSpendPanel::new(
+                wallet.clone(),
+                cache.coins(),
+                cache.blockheight() as u32,
+                cache.network,
+                balance,
+                unconfirmed_balance,
+                sync_status(
+                    daemon_backend.clone(),
+                    cache.blockheight(),
+                    cache.sync_progress(),
+                    cache.last_poll_timestamp(),
+                    cache.last_poll_at_startup,
+                ),
+                cache.bitcoin_unit.into(),
+            )
+        });
         self.settings = Some(VaultSettingsState::new(
             data_dir.clone(),
             wallet.clone(),
@@ -624,12 +678,27 @@ impl App {
                             }
                         }
                         menu::VaultSubMenu::Coins(Some(preselected)) => {
+                            let (balance, unconfirmed_balance, _, _) = state::coins_summary(
+                                self.cache.coins(),
+                                self.cache.blockheight() as u32,
+                                wallet.main_descriptor.first_timelock_value(),
+                            );
                             self.panels.create_spend = Some(CreateSpendPanel::new_self_send(
                                 wallet.clone(),
                                 self.cache.coins(),
                                 self.cache.blockheight() as u32,
                                 preselected,
                                 self.cache.network,
+                                balance,
+                                unconfirmed_balance,
+                                sync_status(
+                                    self.daemon_backend(),
+                                    self.cache.blockheight(),
+                                    self.cache.sync_progress(),
+                                    self.cache.last_poll_timestamp(),
+                                    self.cache.last_poll_at_startup,
+                                ),
+                                self.cache.bitcoin_unit.into(),
                             ));
                         }
                         menu::VaultSubMenu::Send => {
@@ -640,12 +709,29 @@ impl App {
                                 .as_ref()
                                 .is_none_or(|p| !p.keep_state())
                             {
-                                self.panels.create_spend = Some(CreateSpendPanel::new(
-                                    wallet.clone(),
-                                    self.cache.coins(),
-                                    self.cache.blockheight() as u32,
-                                    self.cache.network,
-                                ));
+                                self.panels.create_spend = Some({
+                                    let (balance, unconfirmed_balance, _, _) = state::coins_summary(
+                                        self.cache.coins(),
+                                        self.cache.blockheight() as u32,
+                                        wallet.main_descriptor.first_timelock_value(),
+                                    );
+                                    CreateSpendPanel::new(
+                                        wallet.clone(),
+                                        self.cache.coins(),
+                                        self.cache.blockheight() as u32,
+                                        self.cache.network,
+                                        balance,
+                                        unconfirmed_balance,
+                                        sync_status(
+                                            self.daemon_backend(),
+                                            self.cache.blockheight(),
+                                            self.cache.sync_progress(),
+                                            self.cache.last_poll_timestamp(),
+                                            self.cache.last_poll_at_startup,
+                                        ),
+                                        self.cache.bitcoin_unit.into(),
+                                    )
+                                });
                             }
                         }
                         menu::VaultSubMenu::Recovery => {
@@ -655,8 +741,17 @@ impl App {
                                 .as_ref()
                                 .is_none_or(|p| !p.keep_state())
                             {
-                                self.panels.recovery =
-                                    Some(new_recovery_panel(wallet.clone(), &self.cache));
+                                self.panels.recovery = Some(new_recovery_panel(
+                                    wallet.clone(),
+                                    &self.cache,
+                                    sync_status(
+                                        self.daemon_backend(),
+                                        self.cache.blockheight(),
+                                        self.cache.sync_progress(),
+                                        self.cache.last_poll_timestamp(),
+                                        self.cache.last_poll_at_startup,
+                                    ),
+                                ));
                             }
                         }
                         _ => {}
@@ -932,7 +1027,14 @@ impl App {
                             | Menu::Vault(crate::app::menu::VaultSubMenu::Settings(_))
                     );
 
-                    let commands = [
+                    let is_spend_current = matches!(
+                        current,
+                        Menu::Vault(crate::app::menu::VaultSubMenu::Send)
+                            | Menu::CreateSpendTx
+                            | Menu::RefreshCoins(_)
+                    );
+
+                    let mut commands = vec![
                         vault_overview.update(
                             Some(daemon.clone()),
                             &cache,
@@ -946,6 +1048,16 @@ impl App {
                             Message::UpdatePanelCache(is_settings_current),
                         ),
                     ];
+
+                    // Also update create_spend panel if it exists
+                    if let Some(create_spend) = self.panels.create_spend.as_mut() {
+                        commands.push(create_spend.update(
+                            Some(daemon.clone()),
+                            &cache,
+                            Message::UpdatePanelCache(is_spend_current),
+                        ));
+                    }
+
                     return Task::batch(commands);
                 }
             }
@@ -1165,11 +1277,24 @@ impl App {
     }
 }
 
-fn new_recovery_panel(wallet: Arc<Wallet>, cache: &Cache) -> CreateSpendPanel {
+fn new_recovery_panel(
+    wallet: Arc<Wallet>,
+    cache: &Cache,
+    sync_status: SyncStatus,
+) -> CreateSpendPanel {
+    let (balance, unconfirmed_balance, _, _) = state::coins_summary(
+        cache.coins(),
+        cache.blockheight() as u32,
+        wallet.main_descriptor.first_timelock_value(),
+    );
     CreateSpendPanel::new_recovery(
         wallet,
         cache.coins(),
         cache.blockheight() as u32,
         cache.network,
+        balance,
+        unconfirmed_balance,
+        sync_status,
+        cache.bitcoin_unit.into(),
     )
 }

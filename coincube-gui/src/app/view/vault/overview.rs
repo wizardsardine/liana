@@ -75,7 +75,7 @@ pub fn vault_overview_view<'a>(
     processing: bool,
     sync_status: &SyncStatus,
     show_rescan_warning: bool,
-    bitcoin_unit: coincube_ui::component::amount::BitcoinDisplayUnit,
+    bitcoin_unit: BitcoinDisplayUnit,
 ) -> Element<'a, Message> {
     let fiat_balance = fiat_converter.as_ref().map(|c| c.convert(*balance));
     let fiat_unconfirmed = fiat_converter.map(|c| c.convert(*unconfirmed_balance));
@@ -85,17 +85,15 @@ pub fn vault_overview_view<'a>(
             Column::new()
                 .push(
                     if sync_status.is_synced() {
-                        Row::new()
-                            .align_y(Alignment::Center)
+                        Column::new()
+                            .spacing(5)
                             .push(amount_with_size_and_unit(balance, H1_SIZE, bitcoin_unit))
-                            .push_maybe(fiat_balance.map(|fiat| {
-                                Row::new()
-                                    .align_y(Alignment::Center)
-                                    .push(Space::new().width(20))
-                                    .push(fiat.to_text().size(H2_SIZE).color(color::GREY_2))
-                            }))
+                            .push_maybe(
+                                fiat_balance
+                                    .map(|fiat| fiat.to_text().size(P2_SIZE).color(color::GREY_2)),
+                            )
                     } else {
-                        Row::new().push(spinner::Carousel::new(
+                        Column::new().push(Row::new().push(spinner::Carousel::new(
                             Duration::from_millis(1000),
                             vec![
                                 amount_with_size_and_unit(balance, H1_SIZE, bitcoin_unit),
@@ -107,7 +105,7 @@ pub fn vault_overview_view<'a>(
                                     bitcoin_unit,
                                 ),
                             ],
-                        ))
+                        )))
                     }
                     .wrap(),
                 )

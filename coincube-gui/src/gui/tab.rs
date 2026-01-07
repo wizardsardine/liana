@@ -994,7 +994,8 @@ pub fn create_app_with_remote_backend(
                     update_settings_file(&network_dir, |mut fresh_settings| {
                         fresh_settings.cubes.push(new_cube.clone());
                         Some(fresh_settings)
-                    }).await
+                    })
+                    .await
                 }) {
                     tracing::error!("Failed to persist new cube for remote backend: {}", e);
                 }
