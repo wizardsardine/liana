@@ -107,7 +107,7 @@ pub fn no_org_card() -> Element<'static, Msg> {
 pub fn org_select_view(state: &State) -> Element<'_, Msg> {
     let current_user_email = &state.views.login.email.form.value;
 
-    let title = text::h2("Select Organization");
+    let title = text::h2("Select an Organization");
     let title = row![
         Space::with_width(Length::Fill),
         title,
@@ -243,7 +243,7 @@ pub fn org_select_view(state: &State) -> Element<'_, Msg> {
         (3, 4),
         Some(current_user_email),
         role_badge,
-        &["Organization".to_string()],
+        &["Organizations".to_string()],
         header_content,
         list_content,
         None, // footer_content

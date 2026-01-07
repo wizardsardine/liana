@@ -19,7 +19,7 @@
 - [ ] **3.2 Owner Flow**
 - [ ] **3.3 Participant Flow**
 - [ ] **4. Local Storage**
-- [ ] **1.8 UI/Wording Improvements**
+- [x] **1.8 UI/Wording Improvements**
   - [x] 1.8.1 Wallet Status Labels
     - [x] Change "Validated" badge: text to "Set keys", style to warning (amber)
     - [x] Add "Active" badge for Finalized wallets (green, success style)
@@ -33,10 +33,10 @@
     - [x] Rename screen title from "Add Key Information" to "Set Keys"
     - [x] Update breadcrumb from "Key Information" to "Set Keys"
     - [x] Update intro text with hardware device recommendation
-  - [ ] 1.8.4 Header/Breadcrumb Pluralization
-    - [ ] Change "Organization" breadcrumb to "Organizations"
-    - [ ] Change "Select Organization" title to "Select an Organization"
-    - [ ] Change "Wallet" breadcrumb to "Wallets"
+  - [x] 1.8.4 Header/Breadcrumb Pluralization
+    - [x] Change "Organization" breadcrumb to "Organizations"
+    - [x] Change "Select Organization" title to "Select an Organization"
+    - [x] Change "Wallet" breadcrumb to "Wallets"
 
 ## Concepts
 
