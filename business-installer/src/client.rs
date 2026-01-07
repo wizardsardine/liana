@@ -592,7 +592,8 @@ fn wss_thread(
                         break;
                     }
                     Err(tungstenite::Error::Io(ref e)) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                        // Non-blocking read would block, continue loop
+                        // Non-blocking read would block, sleep briefly to avoid spin loop
+                        thread::sleep(Duration::from_millis(10));
                     }
                     Err(_) => {
                         let _ = notif_sender.send(Notification::Disconnected.into());
