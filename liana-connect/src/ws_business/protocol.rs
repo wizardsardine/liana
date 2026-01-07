@@ -169,9 +169,9 @@ pub struct SpendingPathJson {
     pub is_primary: bool,
     pub threshold_n: u8,
     pub key_ids: Vec<u8>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_edited: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_editor: Option<String>,
 }
 
