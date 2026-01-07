@@ -157,14 +157,14 @@ pub fn xpub_view(state: &State) -> Element<'_, Msg> {
         .and_then(|id| state.backend.get_wallet(id))
         .map(|w| w.alias.clone())
         .unwrap_or_else(|| "Wallet".to_string());
-    let breadcrumb = vec![org_name, wallet_name.clone(), "Key Information".to_string()];
+    let breadcrumb = vec![org_name, wallet_name.clone(), "Set Keys".to_string()];
 
     // Fixed header content
     let header_content = Column::new()
         .spacing(10)
         .align_x(Alignment::Center)
         .padding(20)
-        .push(text::h2(format!("{} - Add Key Information", wallet_name)))
+        .push(text::h2(format!("{} - Set Keys", wallet_name)))
         .push(Space::with_height(10))
         .push(text::p1_regular(
             "Select a key to provide extended public key (xpub) information.",

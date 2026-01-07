@@ -30,8 +30,8 @@
     - [x] Add tooltip to "Key Type" with descriptions for each type
   - [ ] 1.8.3 Key Information Screen (Set Keys)
     - [x] Change "Missing" badge text to "Not Set"
-    - [ ] Rename screen title from "Add Key Information" to "Set Keys"
-    - [ ] Update breadcrumb from "Key Information" to "Set Keys"
+    - [x] Rename screen title from "Add Key Information" to "Set Keys"
+    - [x] Update breadcrumb from "Key Information" to "Set Keys"
     - [ ] Update intro text with hardware device recommendation
   - [ ] 1.8.4 Header/Breadcrumb Pluralization
     - [ ] Change "Organization" breadcrumb to "Organizations"
