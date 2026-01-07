@@ -216,7 +216,7 @@ pub fn vault_overview_view<'a>(
         .push(
             Column::new()
                 .spacing(10)
-                .push(h4_bold("Last payments"))
+                .push(h4_bold("Last transactions"))
                 .push(events.iter().fold(Column::new().spacing(10), |col, event| {
                     if event.kind != PaymentKind::SendToSelf {
                         col.push(event_list_view(event))

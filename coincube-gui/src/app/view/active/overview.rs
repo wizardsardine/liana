@@ -61,12 +61,9 @@ pub fn active_overview_view<'a>(
 
     content = content
         .push(iced::widget::Space::new().height(Length::Fixed(10.0)))
-        .push(
-            Container::new(buttons_row)
-                .width(Length::Fill)
-                .max_width(800)
-                .align_x(Alignment::Center),
-        );
+        .push(Container::new(buttons_row).width(Length::Fill));
+
+    content = content.push(Column::new().spacing(10).push(h4_bold("Last transactions")));
 
     if !recent_transaction.is_empty() {
         for tx in recent_transaction {
@@ -164,15 +161,11 @@ pub fn active_overview_view<'a>(
 
     let history_button = button::transparent(Some(icon::history_icon()), "Transaction History")
         .on_press(ActiveOverviewMessage::History)
-        .width(Length::Fixed(150.0));
+        .width(Length::Fixed(250.0));
 
     content = content
         .push(iced::widget::Space::new().height(Length::Fixed(10.0)))
-        .push(
-            Container::new(history_button)
-                .width(Length::Fill)
-                .align_x(Alignment::Center),
-        );
+        .push(Container::new(history_button).width(Length::Fill));
 
     if let Some(err) = error {
         content = content.push(
