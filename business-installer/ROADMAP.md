@@ -24,9 +24,9 @@
     - [x] Change "Validated" badge: text to "Set keys", style to warning (amber)
     - [x] Add "Active" badge for Finalized wallets (green, success style)
   - [ ] 1.8.2 Manage Key Modal Field Labels
-    - [ ] Rename "Alias" to "Key Alias"
-    - [ ] Rename "Description" to "Key Description"
-    - [ ] Rename "Email" to "Email Address of the Key Manager"
+    - [x] Rename "Alias" to "Key Alias"
+    - [x] Rename "Description" to "Key Description"
+    - [x] Rename "Email" to "Email Address of the Key Manager"
     - [ ] Add tooltip to "Key Type" with descriptions for each type
   - [ ] 1.8.3 Key Information Screen (Set Keys)
     - [ ] Change "Missing" badge text to "Not Set"

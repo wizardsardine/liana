@@ -69,7 +69,7 @@ pub fn edit_key_modal_view<'a>(
     };
     let alias_input = Column::new()
         .spacing(5)
-        .push(text::p1_regular("Alias"))
+        .push(text::p1_regular("Key Alias"))
         .push(form::Form::new(
             "Enter key alias",
             &alias_value,
@@ -84,7 +84,7 @@ pub fn edit_key_modal_view<'a>(
     };
     let description_input = Column::new()
         .spacing(5)
-        .push(text::p1_regular("Description"))
+        .push(text::p1_regular("Key Description"))
         .push(form::Form::new(
             "Enter description",
             &desc_value,
@@ -117,9 +117,9 @@ pub fn edit_key_modal_view<'a>(
     };
     let email_input = Column::new()
         .spacing(5)
-        .push(text::p1_regular("Email"))
+        .push(text::p1_regular("Email Address of the Key Manager"))
         .push(form::Form::new(
-            "Enter email",
+            "Enter email address",
             &email_value,
             Message::KeyUpdateEmail,
         ));
