@@ -834,36 +834,36 @@ impl State for ActiveSend {
                         } else if let Some(prepare_onchain_response) =
                             self.prepare_onchain_response.clone()
                         {
-                            if let Some(input_type) = self.input_type.clone() {
-                                if let InputType::BitcoinAddress { address } = input_type {
-                                    let breez_client = self.breez_client.clone();
+                            if let Some(InputType::BitcoinAddress { address }) =
+                                self.input_type.clone()
+                            {
+                                let breez_client = self.breez_client.clone();
 
-                                    return Task::perform(
-                                        async move {
-                                            breez_client
-                                                .pay_onchain(
-                                                    &breez_sdk_liquid::prelude::PayOnchainRequest {
-                                                        address: address.address.clone(),
-                                                        prepare_response: prepare_onchain_response,
-                                                    },
-                                                )
-                                                .await
-                                        },
-                                        |result| match result {
-                                            Ok(_send_response) => {
-                                                Message::View(view::Message::ActiveSend(
-                                                    view::ActiveSendMessage::SendComplete,
-                                                ))
-                                            }
-                                            Err(e) => Message::View(view::Message::ActiveSend(
-                                                view::ActiveSendMessage::Error(format!(
-                                                    "Failed to send payment: {}",
-                                                    e
-                                                )),
+                                return Task::perform(
+                                    async move {
+                                        breez_client
+                                            .pay_onchain(
+                                                &breez_sdk_liquid::prelude::PayOnchainRequest {
+                                                    address: address.address.clone(),
+                                                    prepare_response: prepare_onchain_response,
+                                                },
+                                            )
+                                            .await
+                                    },
+                                    |result| match result {
+                                        Ok(_send_response) => {
+                                            Message::View(view::Message::ActiveSend(
+                                                view::ActiveSendMessage::SendComplete,
+                                            ))
+                                        }
+                                        Err(e) => Message::View(view::Message::ActiveSend(
+                                            view::ActiveSendMessage::Error(format!(
+                                                "Failed to send payment: {}",
+                                                e
                                             )),
-                                        },
-                                    );
-                                }
+                                        )),
+                                    },
+                                );
                             }
                         } else {
                             self.error = Some("No prepare response available".to_string());

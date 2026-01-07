@@ -328,6 +328,7 @@ impl State for GeneralSettingsState {
                 let datadir_path = cache.datadir_path.clone();
 
                 // Save to disk - cache update will happen in App::update after this returns
+                #[allow(clippy::let_and_return)]
                 return Task::perform(
                     async move {
                         tracing::info!(

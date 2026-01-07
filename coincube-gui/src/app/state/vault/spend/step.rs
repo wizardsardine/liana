@@ -178,6 +178,7 @@ pub struct DefineSpend {
     bitcoin_unit: BitcoinDisplayUnit,
 }
 
+#[allow(clippy::too_many_arguments)]
 impl DefineSpend {
     pub fn new(
         network: Network,

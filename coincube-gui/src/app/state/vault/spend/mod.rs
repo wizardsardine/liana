@@ -41,6 +41,7 @@ pub struct CreateSpendPanel {
 
 impl CreateSpendPanel {
     /// Create a new instance to be used for a primary path spend.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         wallet: Arc<Wallet>,
         coins: &[Coin],
@@ -80,6 +81,7 @@ impl CreateSpendPanel {
     /// Create a new instance to be used for a recovery spend.
     ///
     /// By default, the wallet's first timelock value is used for `DefineSpend`.
+    #[allow(clippy::too_many_arguments)]
     pub fn new_recovery(
         wallet: Arc<Wallet>,
         coins: &[Coin],
@@ -122,6 +124,7 @@ impl CreateSpendPanel {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn new_self_send(
         wallet: Arc<Wallet>,
         coins: &[Coin],
