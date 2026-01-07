@@ -306,6 +306,7 @@ impl BreezClient {
             .await
             .map_err(|e| BreezError::Sdk(e.to_string()))
     }
+
     pub async fn prepare_pay_onchain(
         &self,
         request: &breez::PreparePayOnchainRequest,
@@ -315,6 +316,7 @@ impl BreezClient {
             .await
             .map_err(|e| BreezError::Sdk(e.to_string()))
     }
+
     pub async fn pay_onchain(
         &self,
         request: &breez::PayOnchainRequest,
@@ -388,6 +390,7 @@ impl BreezClient {
             .await
             .map_err(|e| BreezError::Sdk(e.to_string()))
     }
+
     pub async fn fetch_onchain_limits(&self) -> Result<OnchainPaymentLimitsResponse, BreezError> {
         self.sdk
             .fetch_onchain_limits()
@@ -432,12 +435,8 @@ fn make_breez_stream(state: &BreezSubscriptionState) -> impl Stream<Item = breez
             let listener = BreezEventListener { sender };
 
             if let Ok(id) = client.sdk.add_event_listener(Box::new(listener)).await {
-                loop {
-                    if let Some(event) = receiver.recv().await {
-                        let _ = output.send(event).await;
-                    } else {
-                        break;
-                    }
+                while let Some(event) = receiver.recv().await {
+                    let _ = output.send(event).await;
                 }
 
                 let _ = client.sdk.remove_event_listener(id).await;

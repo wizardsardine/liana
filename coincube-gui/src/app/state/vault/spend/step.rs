@@ -19,7 +19,10 @@ use coincube_core::{
 use coincubed::commands::ListCoinsEntry;
 use iced::{Subscription, Task};
 
-use coincube_ui::{component::form, widget::Element};
+use coincube_ui::{
+    component::{amount::BitcoinDisplayUnit, form},
+    widget::Element,
+};
 
 use crate::{
     app::{
@@ -29,7 +32,7 @@ use crate::{
         message::Message,
         state::vault::psbt,
         view::{self, vault::fiat::FiatAmount, CreateSpendMessage},
-        wallet::Wallet,
+        wallet::{SyncStatus, Wallet},
     },
     daemon::{
         model::{coin_is_owned, remaining_sequence, Coin, CreateSpendResult, SpendTx},
@@ -169,8 +172,13 @@ pub struct DefineSpend {
     /// Whether this is the first step of the spend creation.
     /// Required in order to know whether the user can navigate to a previous step.
     is_first_step: bool,
+    balance: Amount,
+    unconfirmed_balance: Amount,
+    sync_status: SyncStatus,
+    bitcoin_unit: BitcoinDisplayUnit,
 }
 
+#[allow(clippy::too_many_arguments)]
 impl DefineSpend {
     pub fn new(
         network: Network,
@@ -179,6 +187,10 @@ impl DefineSpend {
         tip_height: u32,
         recovery_timelock: Option<u16>,
         is_first_step: bool,
+        balance: Amount,
+        unconfirmed_balance: Amount,
+        sync_status: SyncStatus,
+        bitcoin_unit: BitcoinDisplayUnit,
     ) -> Self {
         let coins = filter_coins(
             coins,
@@ -209,6 +221,10 @@ impl DefineSpend {
             warning: None,
             is_first_step,
             loading_fee_estimate: None,
+            balance,
+            unconfirmed_balance,
+            sync_status,
+            bitcoin_unit,
         }
     }
 
@@ -526,6 +542,10 @@ impl Step for DefineSpend {
                         tip_height as u32,
                         Some(new_tl),
                         self.is_first_step,
+                        self.balance,
+                        self.unconfirmed_balance,
+                        self.sync_status.clone(),
+                        self.bitcoin_unit,
                     );
                     *self = new;
                     return;
@@ -560,6 +580,16 @@ impl Step for DefineSpend {
         message: Message,
     ) -> Task<Message> {
         match message {
+            Message::UpdatePanelCache(_) => {
+                // Update sync_status from cache, same as VaultOverview does
+                self.sync_status = crate::app::wallet::sync_status(
+                    daemon.backend(),
+                    cache.blockheight(),
+                    cache.sync_progress(),
+                    cache.last_poll_timestamp(),
+                    cache.last_poll_at_startup,
+                );
+            }
             Message::View(view::Message::CreateSpend(msg)) => {
                 match msg {
                     view::CreateSpendMessage::BatchLabelEdited(label) => {
@@ -578,6 +608,10 @@ impl Step for DefineSpend {
                             self.tip_height,
                             self.recovery_timelock,
                             self.is_first_step,
+                            self.balance,
+                            self.unconfirmed_balance,
+                            self.sync_status.clone(),
+                            self.bitcoin_unit,
                         );
                         return Task::none();
                     }
@@ -844,6 +878,8 @@ impl Step for DefineSpend {
         let converter: Option<view::FiatAmountConverter> =
             cache.fiat_price.as_ref().and_then(|p| p.try_into().ok());
         view::vault::spend::create_spend_tx(
+            &self.balance,
+            &self.unconfirmed_balance,
             menu,
             cache,
             converter.as_ref(),
@@ -866,9 +902,11 @@ impl Step for DefineSpend {
             self.amount_left_to_select.as_ref(),
             &self.feerate,
             self.fee_amount.as_ref(),
+            &self.sync_status,
             self.warning.as_ref(),
             self.is_first_step,
             self.loading_fee_estimate,
+            self.bitcoin_unit,
         )
     }
 

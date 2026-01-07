@@ -39,68 +39,20 @@ impl ActiveOverview {
                 let info = breez_client.info().await;
                 let payments = breez_client.list_payments(Some(2)).await;
 
-                // Log info response for debugging
-                match &info {
-                    Ok(info) => {
-                        tracing::info!(
-                            "Active wallet info: balance_sat={}, pending_send_sat={}, pending_receive_sat={}",
-                            info.wallet_info.balance_sat,
-                            info.wallet_info.pending_send_sat,
-                            info.wallet_info.pending_receive_sat
-                        );
-                    }
-                    Err(e) => {
-                        tracing::warn!("Failed to fetch Active wallet info: {}", e);
-                    }
-                }
-
-                // Calculate balance from payments for comparison
-                let calculated_balance = if let Ok(payments) = &payments {
-                    use breez_sdk_liquid::prelude::PaymentType;
-                    let mut balance_sat: i64 = 0;
-                    for payment in payments {
-                        match payment.payment_type {
-                            PaymentType::Receive => balance_sat += payment.amount_sat as i64,
-                            PaymentType::Send => balance_sat -= payment.amount_sat as i64,
-                        }
-                    }
-                    let calculated = Amount::from_sat(balance_sat.max(0) as u64);
-                    tracing::info!(
-                        "Calculated balance from {} payments: {} sats",
-                        payments.len(),
-                        calculated.to_sat()
-                    );
-                    calculated
-                } else {
-                    Amount::ZERO
-                };
-
-                // Use the maximum of info balance and calculated balance
-                let balance = if let Ok(info) = &info {
-                    let info_balance = Amount::from_sat(
-                        info.wallet_info.balance_sat + info.wallet_info.pending_receive_sat,
-                    );
-                    let final_balance = if calculated_balance > info_balance {
-                        tracing::warn!(
-                            "SDK info balance ({} sats) is less than calculated balance ({} sats), using calculated balance",
-                            info_balance.to_sat(),
-                            calculated_balance.to_sat()
-                        );
-                        calculated_balance
-                    } else {
-                        info_balance
-                    };
-                    final_balance
-                } else {
-                    // Network error - use calculated balance from cached payments as fallback
-                    calculated_balance
-                };
+                let balance = info
+                    .as_ref()
+                    .map(|info| {
+                        let balance_with_pending =
+                            info.wallet_info.balance_sat + info.wallet_info.pending_receive_sat;
+                        let available =
+                            balance_with_pending.saturating_sub(info.wallet_info.pending_send_sat);
+                        Amount::from_sat(available)
+                    })
+                    .unwrap_or(Amount::ZERO);
 
                 let error = match (&info, &payments) {
                     (Err(_), Err(_)) => Some("Couldn't fetch balance or transactions".to_string()),
-                    (Err(_), _) => {
-                        Some("Network issue - showing balance from cached transactions".to_string())
-                    }
+                    (Err(_), _) => Some("Couldn't fetch account balance".to_string()),
                     (_, Err(_)) => Some("Couldn't fetch recent transactions".to_string()),
                     _ => None,
                 };
@@ -136,6 +88,7 @@ impl State for ActiveOverview {
             fiat_converter,
             &self.recent_transaction,
             self.error.as_deref(),
+            cache.bitcoin_unit.into(),
         )
         .map(view::Message::ActiveOverview);
 
@@ -165,7 +118,7 @@ impl State for ActiveOverview {
                 } => {
                     self.btc_balance = balance;
 
-                    if recent_payment.len() > 0 {
+                    if !recent_payment.is_empty() {
                         let fiat_converter: Option<view::FiatAmountConverter> =
                             cache.fiat_price.as_ref().and_then(|p| p.try_into().ok());
                         let txns = recent_payment

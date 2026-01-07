@@ -2,7 +2,7 @@ use breez_sdk_liquid::model::{PaymentDetails, PaymentState};
 use breez_sdk_liquid::prelude::{Payment, PaymentType};
 use coincube_core::miniscript::bitcoin::Amount;
 use coincube_ui::{
-    component::{amount::amount, amount::DisplayAmount, badge, button, card, text::*},
+    component::{amount::DisplayAmount, badge, button, card, text::*},
     icon, theme,
     widget::*,
 };
@@ -22,6 +22,7 @@ pub fn active_transactions_view<'a>(
     _balance: &'a Amount,
     fiat_converter: Option<FiatAmountConverter>,
     _loading: bool,
+    bitcoin_unit: coincube_ui::component::amount::BitcoinDisplayUnit,
 ) -> Element<'a, Message> {
     let mut content = Column::new().spacing(20).width(Length::Fill);
 
@@ -73,14 +74,14 @@ pub fn active_transactions_view<'a>(
     } else {
         // Transaction list
         content = content.push(
-            Column::new().spacing(10).push(
-                payments
-                    .iter()
-                    .enumerate()
-                    .fold(Column::new().spacing(10), |col, (i, payment)| {
-                        col.push(transaction_row(i, payment, fiat_converter))
-                    }),
-            ),
+            Column::new()
+                .spacing(10)
+                .push(payments.iter().enumerate().fold(
+                    Column::new().spacing(10),
+                    |col, (i, payment)| {
+                        col.push(transaction_row(i, payment, fiat_converter, bitcoin_unit))
+                    },
+                )),
         );
     }
 
@@ -91,11 +92,12 @@ fn transaction_row<'a>(
     i: usize,
     payment: &'a Payment,
     fiat_converter: Option<FiatAmountConverter>,
+    bitcoin_unit: coincube_ui::component::amount::BitcoinDisplayUnit,
 ) -> Element<'a, Message> {
     let is_receive = matches!(payment.payment_type, PaymentType::Receive);
 
     // Format timestamp
-    let time_text = format_time_ago(payment.timestamp as u32);
+    let time_text = format_time_ago(payment.timestamp);
 
     // Extract description from payment details
     let description = match &payment.details {
@@ -147,13 +149,19 @@ fn transaction_row<'a>(
                             Row::new()
                                 .spacing(5)
                                 .push(text("+"))
-                                .push(amount(&btc_amount))
+                                .push(coincube_ui::component::amount::amount_with_unit(
+                                    &btc_amount,
+                                    bitcoin_unit,
+                                ))
                                 .align_y(Alignment::Center)
                         } else {
                             Row::new()
                                 .spacing(5)
                                 .push(text("-"))
-                                .push(amount(&btc_amount))
+                                .push(coincube_ui::component::amount::amount_with_unit(
+                                    &btc_amount,
+                                    bitcoin_unit,
+                                ))
                                 .align_y(Alignment::Center)
                         })
                         .push_maybe(fiat_converter.map(|converter| {
@@ -263,20 +271,34 @@ pub fn payment_detail_view<'a>(
                                 .width(Length::FillPortion(1))
                                 .push(text("Status").bold()),
                         )
-                        .push(
-                            Column::new()
-                                .width(Length::FillPortion(2))
-                                .push(match payment.status {
-                                    PaymentState::Complete => text("Complete").style(theme::text::success),
-                                    PaymentState::Pending => text("Pending").style(theme::text::secondary),
-                                    PaymentState::Created => text("Created").style(theme::text::secondary),
-                                    PaymentState::Failed => text("Failed").style(theme::text::destructive),
-                                    PaymentState::TimedOut => text("Timed Out").style(theme::text::destructive),
-                                    PaymentState::Refundable => text("Refundable").style(theme::text::destructive),
-                                    PaymentState::RefundPending => text("Refund Pending").style(theme::text::secondary),
-                                    PaymentState::WaitingFeeAcceptance => text("Waiting Fee Acceptance").style(theme::text::secondary),
-                                }),
-                        )
+                        .push(Column::new().width(Length::FillPortion(2)).push(
+                            match payment.status {
+                                PaymentState::Complete => {
+                                    text("Complete").style(theme::text::success)
+                                }
+                                PaymentState::Pending => {
+                                    text("Pending").style(theme::text::secondary)
+                                }
+                                PaymentState::Created => {
+                                    text("Created").style(theme::text::secondary)
+                                }
+                                PaymentState::Failed => {
+                                    text("Failed").style(theme::text::destructive)
+                                }
+                                PaymentState::TimedOut => {
+                                    text("Timed Out").style(theme::text::destructive)
+                                }
+                                PaymentState::Refundable => {
+                                    text("Refundable").style(theme::text::destructive)
+                                }
+                                PaymentState::RefundPending => {
+                                    text("Refund Pending").style(theme::text::secondary)
+                                }
+                                PaymentState::WaitingFeeAcceptance => {
+                                    text("Waiting Fee Acceptance").style(theme::text::secondary)
+                                }
+                            },
+                        ))
                         .spacing(20),
                 )
                 .push(

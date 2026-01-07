@@ -1,5 +1,7 @@
 use std::sync::Arc;
+use std::time::Duration;
 
+use coincube_ui::component::toast;
 use coincube_ui::widget::*;
 use iced::{clipboard, widget::qr_code, Task};
 
@@ -72,7 +74,16 @@ impl State for ActiveReceive {
         )
         .map(view::Message::ActiveReceive);
 
-        view::dashboard(menu, cache, None, receive_view)
+        let content = view::dashboard(menu, cache, None, receive_view);
+
+        // Add toast notification for clipboard copy
+        let toasts = if let Some(message) = &self.toast {
+            vec![view::simple_toast(message).into()]
+        } else {
+            vec![]
+        };
+
+        toast::Manager::new(content, toasts).into()
     }
 
     fn update(
@@ -92,7 +103,15 @@ impl State for ActiveReceive {
                 }
                 ActiveReceiveMessage::Copy => {
                     if let Some(address) = self.current_address() {
-                        let address_copy = address.to_string();
+                        // Clean up address for clipboard
+                        let address_copy = if self.receive_method == ReceiveMethod::OnChain {
+                            // Strip "bitcoin:" prefix and query parameters for on-chain addresses
+                            let addr = address.strip_prefix("bitcoin:").unwrap_or(address);
+                            addr.split('?').next().unwrap_or(addr).to_string()
+                        } else {
+                            address.to_string()
+                        };
+
                         self.toast = Some(match self.receive_method {
                             ReceiveMethod::Lightning => {
                                 "Copied Lightning Address to clipboard".to_string()
@@ -101,12 +120,28 @@ impl State for ActiveReceive {
                                 "Copied Bitcoin Address to clipboard".to_string()
                             }
                         });
-                        return clipboard::write(address_copy);
+
+                        // Auto-dismiss toast after 3 seconds
+                        let clear_toast_task = Task::future(async {
+                            tokio::time::sleep(Duration::from_secs(3)).await;
+                            Message::View(view::Message::ActiveReceive(
+                                ActiveReceiveMessage::ClearToast,
+                            ))
+                        });
+
+                        return Task::batch([clipboard::write(address_copy), clear_toast_task]);
                     }
                     return Task::none();
                 }
+                ActiveReceiveMessage::ClearToast => {
+                    self.toast = None;
+                    return Task::none();
+                }
                 ActiveReceiveMessage::AmountInput(value) => {
-                    self.amount_input = value;
+                    // Only accept numeric characters
+                    let filtered_value: String =
+                        value.chars().filter(|c| c.is_ascii_digit()).collect();
+                    self.amount_input = filtered_value;
                     // Clear current Lightning address so user knows they need to regenerate
                     if self.receive_method == ReceiveMethod::Lightning {
                         self.lightning_address = None;
@@ -144,6 +179,9 @@ impl State for ActiveReceive {
                                         self.onchain_qr_data = Some(qr_data);
                                     }
                                 }
+                                // Clear inputs after successful generation
+                                self.amount_input.clear();
+                                self.description_input.clear();
                             }
                         }
                         Err(_) => match method {

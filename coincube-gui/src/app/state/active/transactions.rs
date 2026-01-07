@@ -76,6 +76,7 @@ impl State for ActiveTransactions {
                     &self.balance,
                     fiat_converter,
                     self.loading,
+                    cache.bitcoin_unit.into(),
                 ),
             )
         }

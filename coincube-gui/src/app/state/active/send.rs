@@ -88,9 +88,11 @@ impl ActiveSend {
                 let balance = info
                     .as_ref()
                     .map(|info| {
-                        Amount::from_sat(
-                            info.wallet_info.balance_sat + info.wallet_info.pending_receive_sat,
-                        )
+                        let balance_with_pending =
+                            info.wallet_info.balance_sat + info.wallet_info.pending_receive_sat;
+                        let available =
+                            balance_with_pending.saturating_sub(info.wallet_info.pending_send_sat);
+                        Amount::from_sat(available)
                     })
                     .unwrap_or(Amount::ZERO);
 
@@ -128,25 +130,25 @@ impl State for ActiveSend {
         let fiat_converter = cache.fiat_price.as_ref().and_then(|p| p.try_into().ok());
         let comment = self.comment.clone().unwrap_or("".to_string());
 
-        view::active_send_with_flow(
-            &self.flow_state,
-            self.btc_balance,
+        view::active_send_with_flow(view::ActiveSendFlowConfig {
+            flow_state: &self.flow_state,
+            btc_balance: self.btc_balance,
             fiat_converter,
-            &self.recent_transaction,
-            &self.input,
-            self.error.as_deref(),
-            &self.amount_input,
+            recent_transaction: &self.recent_transaction,
+            input: &self.input,
+            error: self.error.as_deref(),
+            amount_input: &self.amount_input,
             comment,
-            self.description.as_deref(),
-            self.lightning_limits,
-            self.amount,
-            self.prepare_response.as_ref(),
-            self.is_sending,
+            description: self.description.as_deref(),
+            lightning_limits: self.lightning_limits,
+            amount: self.amount,
+            prepare_response: self.prepare_response.as_ref(),
+            is_sending: self.is_sending,
             menu,
             cache,
-            &self.input_type,
-            self.onchain_limits,
-        )
+            input_type: &self.input_type,
+            onchain_limits: self.onchain_limits,
+        })
     }
 
     fn update(
@@ -310,7 +312,7 @@ impl State for ActiveSend {
                 } => {
                     self.btc_balance = balance;
 
-                    if recent_payment.len() > 0 {
+                    if !recent_payment.is_empty() {
                         let fiat_converter: Option<view::FiatAmountConverter> =
                             cache.fiat_price.as_ref().and_then(|p| p.try_into().ok());
                         let txns = recent_payment
@@ -442,81 +444,79 @@ impl State for ActiveSend {
                     }
                 }
                 view::ActiveSendMessage::PopupMessage(SendPopupMessage::FiatConvert) => {
-                    if let ActiveSendFlowState::Main { modal } = &self.flow_state {
-                        if let Modal::AmountInput = modal {
-                            // Determine default currencies
-                            use crate::services::fiat::Currency;
-                            let fiat_currency = cache
-                                .fiat_price
-                                .as_ref()
-                                .and_then(|p| {
-                                    TryInto::<view::FiatAmountConverter>::try_into(p).ok()
-                                })
-                                .map(|c| c.currency())
-                                .unwrap_or(Currency::USD);
+                    if let ActiveSendFlowState::Main {
+                        modal: Modal::AmountInput,
+                    } = &self.flow_state
+                    {
+                        // Determine default currencies
+                        use crate::services::fiat::Currency;
+                        let fiat_currency = cache
+                            .fiat_price
+                            .as_ref()
+                            .and_then(|p| TryInto::<view::FiatAmountConverter>::try_into(p).ok())
+                            .map(|c| c.currency())
+                            .unwrap_or(Currency::USD);
 
-                            let currencies = if fiat_currency == Currency::USD
-                                || fiat_currency == Currency::EUR
-                                || fiat_currency == Currency::GBP
-                                || fiat_currency == Currency::JPY
-                            {
-                                [Currency::USD, Currency::EUR, Currency::GBP, Currency::JPY]
-                            } else {
-                                [fiat_currency, Currency::USD, Currency::EUR, Currency::GBP]
-                            };
+                        let currencies = if fiat_currency == Currency::USD
+                            || fiat_currency == Currency::EUR
+                            || fiat_currency == Currency::GBP
+                            || fiat_currency == Currency::JPY
+                        {
+                            [Currency::USD, Currency::EUR, Currency::GBP, Currency::JPY]
+                        } else {
+                            [fiat_currency, Currency::USD, Currency::EUR, Currency::GBP]
+                        };
 
-                            // Transition to Fiat Input with empty converters initially
-                            self.flow_state = ActiveSendFlowState::Main {
-                                modal: Modal::FiatInput {
-                                    fiat_input: form::Value::default(),
-                                    currencies,
-                                    selected_currency: fiat_currency,
-                                    converters: std::collections::HashMap::new(),
-                                },
-                            };
+                        // Transition to Fiat Input with empty converters initially
+                        self.flow_state = ActiveSendFlowState::Main {
+                            modal: Modal::FiatInput {
+                                fiat_input: form::Value::default(),
+                                currencies,
+                                selected_currency: fiat_currency,
+                                converters: std::collections::HashMap::new(),
+                            },
+                        };
 
-                            let price_source = cache
-                                .fiat_price
-                                .as_ref()
-                                .map(|p| p.source())
-                                .unwrap_or(crate::services::fiat::PriceSource::CoinGecko);
+                        let price_source = cache
+                            .fiat_price
+                            .as_ref()
+                            .map(|p| p.source())
+                            .unwrap_or(crate::services::fiat::PriceSource::CoinGecko);
 
-                            return Task::perform(
-                                async move {
-                                    use crate::app::cache::FiatPriceRequest;
+                        return Task::perform(
+                            async move {
+                                use crate::app::cache::FiatPriceRequest;
 
-                                    let mut tasks = vec![];
-                                    for currency in currencies.iter() {
-                                        let request =
-                                            FiatPriceRequest::new(price_source, *currency);
-                                        tasks.push(async move {
-                                            let price = request.send_default().await;
-                                            (*currency, price)
-                                        });
+                                let mut tasks = vec![];
+                                for currency in currencies.iter() {
+                                    let request = FiatPriceRequest::new(price_source, *currency);
+                                    tasks.push(async move {
+                                        let price = request.send_default().await;
+                                        (*currency, price)
+                                    });
+                                }
+
+                                let mut converters = std::collections::HashMap::new();
+
+                                for task in tasks {
+                                    let (currency, price) = task.await;
+                                    if let Ok(converter) =
+                                        TryInto::<view::FiatAmountConverter>::try_into(&price)
+                                    {
+                                        converters.insert(currency, converter);
                                     }
+                                }
 
-                                    let mut converters = std::collections::HashMap::new();
-
-                                    for task in tasks {
-                                        let (currency, price) = task.await;
-                                        if let Ok(converter) =
-                                            TryInto::<view::FiatAmountConverter>::try_into(&price)
-                                        {
-                                            converters.insert(currency, converter);
-                                        }
-                                    }
-
-                                    converters
-                                },
-                                |converters| {
-                                    Message::View(view::Message::ActiveSend(
-                                        view::ActiveSendMessage::PopupMessage(
-                                            SendPopupMessage::FiatPricesLoaded(converters),
-                                        ),
-                                    ))
-                                },
-                            );
-                        }
+                                converters
+                            },
+                            |converters| {
+                                Message::View(view::Message::ActiveSend(
+                                    view::ActiveSendMessage::PopupMessage(
+                                        SendPopupMessage::FiatPricesLoaded(converters),
+                                    ),
+                                ))
+                            },
+                        );
                     }
                 }
                 view::ActiveSendMessage::PopupMessage(SendPopupMessage::FiatInputEdited(
@@ -617,160 +617,162 @@ impl State for ActiveSend {
                     }
                 }
                 view::ActiveSendMessage::PopupMessage(SendPopupMessage::FiatDone) => {
-                    if let ActiveSendFlowState::Main { modal } = &mut self.flow_state {
-                        if let Modal::FiatInput {
-                            fiat_input,
-                            selected_currency,
-                            converters,
-                            ..
-                        } = modal
-                        {
-                            if let Ok(_fiat_val) = fiat_input.value.parse::<f64>() {
-                                // Check if converter is available
-                                if let Some(converter) = converters.get(selected_currency) {
-                                    // Convert fiat to BTC using the converter for selected currency
-                                    if let Ok(fiat_amount) =
-                                        view::vault::fiat::FiatAmount::from_str_in(
-                                            &fiat_input.value,
-                                            *selected_currency,
-                                        )
-                                    {
-                                        if let Ok(btc_amount) =
-                                            converter.convert_to_btc(&fiat_amount)
-                                        {
-                                            self.amount = btc_amount;
-                                            let btc_str = btc_amount.to_btc().to_string();
-                                            let amount_sats = btc_amount.to_sat();
+                    if let ActiveSendFlowState::Main {
+                        modal:
+                            Modal::FiatInput {
+                                fiat_input,
+                                selected_currency,
+                                converters,
+                                ..
+                            },
+                    } = &mut self.flow_state
+                    {
+                        if let Ok(_fiat_val) = fiat_input.value.parse::<f64>() {
+                            // Check if converter is available
+                            if let Some(converter) = converters.get(selected_currency) {
+                                // Convert fiat to BTC using the converter for selected currency
+                                if let Ok(fiat_amount) = view::vault::fiat::FiatAmount::from_str_in(
+                                    &fiat_input.value,
+                                    *selected_currency,
+                                ) {
+                                    if let Ok(btc_amount) = converter.convert_to_btc(&fiat_amount) {
+                                        self.amount = btc_amount;
+                                        let btc_str = btc_amount.to_btc().to_string();
+                                        let amount_sats = btc_amount.to_sat();
 
-                                            // Validate the converted BTC amount
-                                            let (valid, warning) = if btc_amount > self.btc_balance
-                                            {
-                                                (false, Some("Amount exceeds available balance"))
-                                            } else if let Some((min_sat, max_sat)) =
-                                                self.lightning_limits
-                                            {
-                                                if amount_sats < min_sat {
-                                                    (false, Some("Amount is below minimum limit"))
-                                                } else if amount_sats > max_sat {
-                                                    (false, Some("Amount exceeds maximum limit"))
-                                                } else {
-                                                    (true, None)
-                                                }
+                                        // Validate the converted BTC amount
+                                        let (valid, warning) = if btc_amount > self.btc_balance {
+                                            (false, Some("Amount exceeds available balance"))
+                                        } else if let Some((min_sat, max_sat)) =
+                                            self.lightning_limits
+                                        {
+                                            if amount_sats < min_sat {
+                                                (false, Some("Amount is below minimum limit"))
+                                            } else if amount_sats > max_sat {
+                                                (false, Some("Amount exceeds maximum limit"))
                                             } else {
                                                 (true, None)
-                                            };
-
-                                            self.amount_input = form::Value {
-                                                value: btc_str,
-                                                valid,
-                                                warning,
-                                            };
-
-                                            // Only close modal on successful conversion
-                                            self.flow_state = ActiveSendFlowState::Main {
-                                                modal: Modal::AmountInput,
-                                            };
+                                            }
                                         } else {
-                                            // Conversion to BTC failed - stay in fiat modal with error
-                                            fiat_input.valid = false;
-                                            fiat_input.warning = Some("Unable to convert to BTC");
-                                        }
+                                            (true, None)
+                                        };
+
+                                        self.amount_input = form::Value {
+                                            value: btc_str,
+                                            valid,
+                                            warning,
+                                        };
+
+                                        // Only close modal on successful conversion
+                                        self.flow_state = ActiveSendFlowState::Main {
+                                            modal: Modal::AmountInput,
+                                        };
                                     } else {
-                                        // Invalid fiat amount - stay in fiat modal with error
+                                        // Conversion to BTC failed - stay in fiat modal with error
                                         fiat_input.valid = false;
-                                        fiat_input.warning = Some("Invalid fiat amount");
+                                        fiat_input.warning = Some("Unable to convert to BTC");
                                     }
                                 } else {
-                                    // Converter not available - stay in fiat modal with error
+                                    // Invalid fiat amount - stay in fiat modal with error
                                     fiat_input.valid = false;
-                                    fiat_input.warning = Some("Exchange rate unavailable");
+                                    fiat_input.warning = Some("Invalid fiat amount");
                                 }
+                            } else {
+                                // Converter not available - stay in fiat modal with error
+                                fiat_input.valid = false;
+                                fiat_input.warning = Some("Exchange rate unavailable");
                             }
                         }
                     }
                 }
                 view::ActiveSendMessage::PopupMessage(SendPopupMessage::Done) => {
-                    if let ActiveSendFlowState::Main { modal } = &self.flow_state {
-                        if let Modal::AmountInput = modal {
-                            if let Some(input_type) = &self.input_type {
-                                let destination = match input_type {
-                                    InputType::Bolt11 { invoice } => invoice.bolt11.clone(),
-                                    InputType::Bolt12Offer { offer, .. } => offer.offer.clone(),
-                                    InputType::BitcoinAddress { address } => {
-                                        address.address.clone()
-                                    }
-                                    InputType::LiquidAddress { address } => address.address.clone(),
-                                    _ => {
-                                        self.error = Some("Unsupported payment type".to_string());
-                                        return Task::none();
-                                    }
-                                };
-
-                                let breez_client = self.breez_client.clone();
-                                let breez_clone = self.breez_client.clone();
-                                let amount_sat = self.amount.to_sat();
-
-                                let lightning_send = Task::perform(
-                                    async move {
-                                        breez_client
-                                            .prepare_send_payment(&breez_sdk_liquid::prelude::PrepareSendRequest {
-                                                destination,
-                                                amount: Some(breez_sdk_liquid::prelude::PayAmount::Bitcoin {
-                                                    receiver_amount_sat: amount_sat,
-                                                }),
-                                            })
-                                            .await
-                                    },
-                                    |result| match result {
-                                        Ok(prepare_response) => {
-                                            Message::View(view::Message::ActiveSend(
-                                                view::ActiveSendMessage::PrepareResponseReceived(
-                                                    prepare_response,
-                                                ),
-                                            ))
-                                        }
-                                        Err(e) => Message::View(view::Message::ActiveSend(
-                                            view::ActiveSendMessage::Error(format!(
-                                                "Failed to prepare payment: {}",
-                                                e
-                                            )),
-                                        )),
-                                    },
-                                );
-
-                                let onchain_send = Task::perform(
-                                    async move {
-                                        breez_clone.prepare_pay_onchain(&breez_sdk_liquid::prelude::PreparePayOnchainRequest {
-                                        amount: breez_sdk_liquid::prelude::PayAmount::Bitcoin {
-                                            receiver_amount_sat: amount_sat,
-                                        },
-                                        fee_rate_sat_per_vbyte: None,
-                                    }).await
-                                    },
-                                    |result| {
-                                        match result {
-                                        Ok(prepare_response) => {
-                                            Message::View(view::Message::ActiveSend(
-                                                view::ActiveSendMessage::PrepareOnChainResponseReceived(
-                                                    prepare_response,
-                                                ),
-                                            ))
-                                        }
-                                        Err(e) => Message::View(view::Message::ActiveSend(
-                                            view::ActiveSendMessage::Error(format!(
-                                                "Failed to prepare payment: {}",
-                                                e
-                                            )),
-                                        )),
-                                    }
-                                    },
-                                );
-
-                                if let InputType::BitcoinAddress { .. } = input_type {
-                                    return onchain_send;
-                                } else {
-                                    return lightning_send;
+                    if let ActiveSendFlowState::Main {
+                        modal: Modal::AmountInput,
+                    } = &self.flow_state
+                    {
+                        if let Some(input_type) = &self.input_type {
+                            let destination = match input_type {
+                                InputType::Bolt11 { invoice } => invoice.bolt11.clone(),
+                                InputType::Bolt12Offer { offer, .. } => offer.offer.clone(),
+                                InputType::BitcoinAddress { address } => address.address.clone(),
+                                InputType::LiquidAddress { address } => address.address.clone(),
+                                _ => {
+                                    self.error = Some("Unsupported payment type".to_string());
+                                    return Task::none();
                                 }
+                            };
+
+                            let breez_client = self.breez_client.clone();
+                            let breez_clone = self.breez_client.clone();
+                            let amount_sat = self.amount.to_sat();
+
+                            let lightning_send = Task::perform(
+                                async move {
+                                    breez_client
+                                        .prepare_send_payment(
+                                            &breez_sdk_liquid::prelude::PrepareSendRequest {
+                                                destination,
+                                                amount: Some(
+                                                    breez_sdk_liquid::prelude::PayAmount::Bitcoin {
+                                                        receiver_amount_sat: amount_sat,
+                                                    },
+                                                ),
+                                            },
+                                        )
+                                        .await
+                                },
+                                |result| match result {
+                                    Ok(prepare_response) => {
+                                        Message::View(view::Message::ActiveSend(
+                                            view::ActiveSendMessage::PrepareResponseReceived(
+                                                prepare_response,
+                                            ),
+                                        ))
+                                    }
+                                    Err(e) => Message::View(view::Message::ActiveSend(
+                                        view::ActiveSendMessage::Error(format!(
+                                            "Failed to prepare payment: {}",
+                                            e
+                                        )),
+                                    )),
+                                },
+                            );
+
+                            let onchain_send = Task::perform(
+                                async move {
+                                    breez_clone
+                                        .prepare_pay_onchain(
+                                            &breez_sdk_liquid::prelude::PreparePayOnchainRequest {
+                                                amount:
+                                                    breez_sdk_liquid::prelude::PayAmount::Bitcoin {
+                                                        receiver_amount_sat: amount_sat,
+                                                    },
+                                                fee_rate_sat_per_vbyte: None,
+                                            },
+                                        )
+                                        .await
+                                },
+                                |result| match result {
+                                    Ok(prepare_response) => {
+                                        Message::View(view::Message::ActiveSend(
+                                            view::ActiveSendMessage::PrepareOnChainResponseReceived(
+                                                prepare_response,
+                                            ),
+                                        ))
+                                    }
+                                    Err(e) => Message::View(view::Message::ActiveSend(
+                                        view::ActiveSendMessage::Error(format!(
+                                            "Failed to prepare payment: {}",
+                                            e
+                                        )),
+                                    )),
+                                },
+                            );
+
+                            if let InputType::BitcoinAddress { .. } = input_type {
+                                return onchain_send;
+                            } else {
+                                return lightning_send;
                             }
                         }
                     }
@@ -832,36 +834,36 @@ impl State for ActiveSend {
                         } else if let Some(prepare_onchain_response) =
                             self.prepare_onchain_response.clone()
                         {
-                            if let Some(input_type) = self.input_type.clone() {
-                                if let InputType::BitcoinAddress { address } = input_type {
-                                    let breez_client = self.breez_client.clone();
+                            if let Some(InputType::BitcoinAddress { address }) =
+                                self.input_type.clone()
+                            {
+                                let breez_client = self.breez_client.clone();
 
-                                    return Task::perform(
-                                        async move {
-                                            breez_client
-                                                .pay_onchain(
-                                                    &breez_sdk_liquid::prelude::PayOnchainRequest {
-                                                        address: address.address.clone(),
-                                                        prepare_response: prepare_onchain_response,
-                                                    },
-                                                )
-                                                .await
-                                        },
-                                        |result| match result {
-                                            Ok(_send_response) => {
-                                                Message::View(view::Message::ActiveSend(
-                                                    view::ActiveSendMessage::SendComplete,
-                                                ))
-                                            }
-                                            Err(e) => Message::View(view::Message::ActiveSend(
-                                                view::ActiveSendMessage::Error(format!(
-                                                    "Failed to send payment: {}",
-                                                    e
-                                                )),
+                                return Task::perform(
+                                    async move {
+                                        breez_client
+                                            .pay_onchain(
+                                                &breez_sdk_liquid::prelude::PayOnchainRequest {
+                                                    address: address.address.clone(),
+                                                    prepare_response: prepare_onchain_response,
+                                                },
+                                            )
+                                            .await
+                                    },
+                                    |result| match result {
+                                        Ok(_send_response) => {
+                                            Message::View(view::Message::ActiveSend(
+                                                view::ActiveSendMessage::SendComplete,
+                                            ))
+                                        }
+                                        Err(e) => Message::View(view::Message::ActiveSend(
+                                            view::ActiveSendMessage::Error(format!(
+                                                "Failed to send payment: {}",
+                                                e
                                             )),
-                                        },
-                                    );
-                                }
+                                        )),
+                                    },
+                                );
                             }
                         } else {
                             self.error = Some("No prepare response available".to_string());

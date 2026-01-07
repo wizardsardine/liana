@@ -49,7 +49,7 @@ impl Wallet {
         let desc_str = "wsh(or_d(pk([9753c0cf/48'/1'/0'/2']tpubDEvnwrTYWyygdzFhCDTSFbhXgF5yvUWaaJFyxCCct1cgUJbJXF3H2dRZXfJmdNaz4P5pRPDoDGVQBi7UB99NYrvLhPxyedsWVLo6HyHaXVz/<0;1>/*),and_v(v:pkh([9753c0cf/48'/1'/0'/2']tpubDEvnwrTYWyygdzFhCDTSFbhXgF5yvUWaaJFyxCCct1cgUJbJXF3H2dRZXfJmdNaz4P5pRPDoDGVQBi7UB99NYrvLhPxyedsWVLo6HyHaXVz/<2;3>/*),older(52596))))#r2u9q977";
 
         let coincube_desc =
-            CoincubeDescriptor::from_str(&desc_str).expect("Failed to parse dummy descriptor");
+            CoincubeDescriptor::from_str(desc_str).expect("Failed to parse dummy descriptor");
 
         let mut wallet = Wallet::new(coincube_desc);
 

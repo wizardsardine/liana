@@ -79,7 +79,7 @@ pub fn redirect(menu: Menu) -> Task<Message> {
 ///
 /// The confirmed balance includes the values of any unconfirmed coins
 /// from self.
-fn coins_summary(
+pub fn coins_summary(
     coins: &[Coin],
     tip_height: u32,
     timelock: u16,

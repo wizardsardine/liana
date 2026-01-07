@@ -52,7 +52,10 @@ async fn update_price_setting(
         )),
         Err(e) => {
             tracing::error!("Failed to save price setting: {:?}", e);
-            Err(Error::Unexpected(format!("Failed to update settings: {}", e)))
+            Err(Error::Unexpected(format!(
+                "Failed to update settings: {}",
+                e
+            )))
         }
     }
 }
@@ -91,7 +94,10 @@ async fn update_unit_setting(
         )),
         Err(e) => {
             tracing::error!("Failed to save unit setting: {:?}", e);
-            Err(Error::Unexpected(format!("Failed to update settings: {}", e)))
+            Err(Error::Unexpected(format!(
+                "Failed to update settings: {}",
+                e
+            )))
         }
     }
 }
@@ -219,6 +225,25 @@ impl State for GeneralSettingsState {
             }
             Message::SettingsSaveFailed(e) => {
                 self.error = Some(e);
+                // Reload settings from disk to revert toggle state to persisted value
+                let network_dir = cache.datadir_path.network_directory(cache.network);
+                if let Ok(settings) = crate::app::settings::Settings::from_file(&network_dir) {
+                    if let Some(cube) = settings.cubes.iter().find(|c| c.id == self.cube_id) {
+                        tracing::info!(
+                            "Reverting unit_setting to persisted value after save failure: {:?}",
+                            cube.unit_setting.display_unit
+                        );
+                        self.new_unit_setting = cube.unit_setting.clone();
+                        self.new_price_setting = cube.fiat_price.clone().unwrap_or_default();
+                    } else {
+                        tracing::warn!(
+                            "Could not revert settings: Cube not found with id: {}",
+                            self.cube_id
+                        );
+                    }
+                } else {
+                    tracing::error!("Could not revert settings: Failed to load settings from disk");
+                }
                 Task::none()
             }
             Message::Fiat(FiatMessage::ValidateCurrencySetting) => {
@@ -303,6 +328,7 @@ impl State for GeneralSettingsState {
                 let datadir_path = cache.datadir_path.clone();
 
                 // Save to disk - cache update will happen in App::update after this returns
+                #[allow(clippy::let_and_return)]
                 return Task::perform(
                     async move {
                         tracing::info!(
