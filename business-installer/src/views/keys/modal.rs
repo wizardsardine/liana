@@ -7,7 +7,7 @@ use iced::{
     Alignment, Length,
 };
 use liana_ui::{
-    component::{button, card, form, text},
+    component::{button, card, form, text, tooltip},
     icon, theme,
     widget::*,
 };
@@ -131,13 +131,24 @@ pub fn edit_key_modal_view<'a>(
         liana_connect::KeyType::Cosigner,
         liana_connect::KeyType::SafetyNet,
     ];
-    let key_type_picker = Column::new()
+    let key_type_label = Row::new()
         .spacing(5)
+        .align_y(Alignment::Center)
         .push(text::p1_regular("Key Type"))
-        .push(
-            pick_list(key_types, Some(modal_state.key_type), Message::KeyUpdateType)
-                .width(Length::Fill),
-        );
+        .push(tooltip::tooltip(
+            "Internal: keys held by your organization.\n \
+                External: keys held by third parties.\n \
+                Cosigner: keys that co-sign transactions. \n \
+                SafetyNet: recovery keys for when primary paths fail.",
+        ));
+    let key_type_picker = Column::new().spacing(5).push(key_type_label).push(
+        pick_list(
+            key_types,
+            Some(modal_state.key_type),
+            Message::KeyUpdateType,
+        )
+        .width(Length::Fill),
+    );
 
     // Footer - Cancel and Save buttons (aligned right)
     // Save button is disabled if alias or email is invalid

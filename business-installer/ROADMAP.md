@@ -23,11 +23,11 @@
   - [x] 1.8.1 Wallet Status Labels
     - [x] Change "Validated" badge: text to "Set keys", style to warning (amber)
     - [x] Add "Active" badge for Finalized wallets (green, success style)
-  - [ ] 1.8.2 Manage Key Modal Field Labels
+  - [x] 1.8.2 Manage Key Modal Field Labels
     - [x] Rename "Alias" to "Key Alias"
     - [x] Rename "Description" to "Key Description"
     - [x] Rename "Email" to "Email Address of the Key Manager"
-    - [ ] Add tooltip to "Key Type" with descriptions for each type
+    - [x] Add tooltip to "Key Type" with descriptions for each type
   - [ ] 1.8.3 Key Information Screen (Set Keys)
     - [ ] Change "Missing" badge text to "Not Set"
     - [ ] Rename screen title from "Add Key Information" to "Set Keys"
