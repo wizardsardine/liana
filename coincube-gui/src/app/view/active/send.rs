@@ -14,58 +14,60 @@ use iced::{
     Alignment, Length,
 };
 
-use crate::app::{
-    cache::Cache,
-    menu::Menu,
-    state::active::send::{ActiveSendFlowState, Modal},
-    view::{self, vault::fiat::FiatAmount, ActiveSendMessage, FiatAmountConverter, Message},
+use crate::app::cache::Cache;
+use crate::app::menu::Menu;
+use crate::app::state::active::send::{ActiveSendFlowState, Modal};
+use crate::app::view::{
+    self, vault::fiat::FiatAmount, ActiveSendMessage, FiatAmountConverter, Message,
 };
 
-pub fn active_send_with_flow<'a>(
-    flow_state: &'a ActiveSendFlowState,
-    btc_balance: Amount,
-    fiat_converter: Option<FiatAmountConverter>,
-    recent_transaction: &'a Vec<RecentTransaction>,
-    input: &'a form::Value<String>,
-    error: Option<&'a str>,
-    amount_input: &'a form::Value<String>,
-    comment: String,
-    description: Option<&'a str>,
-    lightning_limits: Option<(u64, u64)>,
-    amount: Amount,
-    prepare_response: Option<&'a breez_sdk_liquid::prelude::PrepareSendResponse>,
-    is_sending: bool,
-    menu: &'a Menu,
-    cache: &'a Cache,
-    input_type: &'a Option<InputType>,
-    onchain_limits: Option<(u64, u64)>,
-) -> Element<'a, Message> {
-    let base_content = match flow_state {
+pub struct ActiveSendFlowConfig<'a> {
+    pub flow_state: &'a ActiveSendFlowState,
+    pub btc_balance: Amount,
+    pub fiat_converter: Option<FiatAmountConverter>,
+    pub recent_transaction: &'a Vec<RecentTransaction>,
+    pub input: &'a form::Value<String>,
+    pub error: Option<&'a str>,
+    pub amount_input: &'a form::Value<String>,
+    pub comment: String,
+    pub description: Option<&'a str>,
+    pub lightning_limits: Option<(u64, u64)>,
+    pub amount: Amount,
+    pub prepare_response: Option<&'a breez_sdk_liquid::prelude::PrepareSendResponse>,
+    pub is_sending: bool,
+    pub menu: &'a Menu,
+    pub cache: &'a Cache,
+    pub input_type: &'a Option<InputType>,
+    pub onchain_limits: Option<(u64, u64)>,
+}
+
+pub fn active_send_with_flow<'a>(config: ActiveSendFlowConfig<'a>) -> Element<'a, Message> {
+    let base_content = match config.flow_state {
         ActiveSendFlowState::Main { modal } => {
             let send_view = active_send_view(
-                btc_balance,
-                fiat_converter.clone(),
-                recent_transaction,
-                input,
-                input_type,
+                config.btc_balance,
+                config.fiat_converter,
+                config.recent_transaction,
+                config.input,
+                config.input_type,
             )
             .map(Message::ActiveSend);
 
-            let content = view::dashboard(menu, cache, None, send_view);
+            let content = view::dashboard(config.menu, config.cache, None, send_view);
 
             // Show modal if needed
             match modal {
                 Modal::AmountInput => {
-                    let modal_content = amount_input_model(
-                        amount_input,
-                        comment,
-                        fiat_converter.is_some(),
-                        btc_balance,
-                        description,
-                        lightning_limits,
-                        onchain_limits,
-                        input_type,
-                    )
+                    let modal_content = amount_input_model(AmountInputConfig {
+                        amount: config.amount_input,
+                        comment: config.comment,
+                        has_fiat_converter: config.fiat_converter.is_some(),
+                        btc_balance: config.btc_balance,
+                        description: config.description,
+                        lightning_limits: config.lightning_limits,
+                        onchain_limits: config.onchain_limits,
+                        input_type: config.input_type,
+                    })
                     .map(Message::ActiveSend);
                     coincube_ui::widget::modal::Modal::new(content, modal_content)
                         .on_blur(Some(Message::ActiveSend(ActiveSendMessage::PopupMessage(
@@ -93,23 +95,23 @@ pub fn active_send_with_flow<'a>(
         }
         ActiveSendFlowState::FinalCheck => {
             let content = final_check_page(
-                amount,
-                comment,
-                description,
-                fiat_converter.as_ref(),
-                prepare_response,
-                is_sending,
+                config.amount,
+                config.comment,
+                config.description,
+                config.fiat_converter.as_ref(),
+                config.prepare_response,
+                config.is_sending,
             )
             .map(Message::ActiveSend);
-            view::dashboard(menu, cache, None, content)
+            view::dashboard(config.menu, config.cache, None, content)
         }
         ActiveSendFlowState::Sent => {
-            let content = sent_page(amount).map(Message::ActiveSend);
-            view::dashboard(menu, cache, None, content)
+            let content = sent_page(config.amount).map(Message::ActiveSend);
+            view::dashboard(config.menu, config.cache, None, content)
         }
     };
 
-    if let Some(err) = error {
+    if let Some(err) = config.error {
         Column::new()
             .push(
                 Container::new(
@@ -342,16 +344,18 @@ pub struct RecentTransaction {
     pub details: PaymentDetails,
 }
 
-pub fn amount_input_model<'a>(
-    amount: &'a form::Value<String>,
-    comment: String,
-    has_fiat_converter: bool,
-    btc_balance: Amount,
-    description: Option<&'a str>,
-    lightning_limits: Option<(u64, u64)>,
-    onchain_limits: Option<(u64, u64)>,
-    input_type: &'a Option<InputType>,
-) -> Element<'a, ActiveSendMessage> {
+pub struct AmountInputConfig<'a> {
+    pub amount: &'a form::Value<String>,
+    pub comment: String,
+    pub has_fiat_converter: bool,
+    pub btc_balance: Amount,
+    pub description: Option<&'a str>,
+    pub lightning_limits: Option<(u64, u64)>,
+    pub onchain_limits: Option<(u64, u64)>,
+    pub input_type: &'a Option<InputType>,
+}
+
+pub fn amount_input_model<'a>(config: AmountInputConfig<'a>) -> Element<'a, ActiveSendMessage> {
     let mut content = Column::new()
         .spacing(20)
         .padding(30)
@@ -362,7 +366,7 @@ pub fn amount_input_model<'a>(
         .push(iced::widget::Space::new().width(Length::Fill))
         .push(text("BALANCE: ").size(16))
         .push(
-            text(format!("{} BTC", btc_balance.to_btc()))
+            text(format!("{} BTC", config.btc_balance.to_btc()))
                 .size(16)
                 .color(color::ORANGE),
         )
@@ -371,7 +375,7 @@ pub fn amount_input_model<'a>(
 
     content = content.push(header);
 
-    if let Some(desc) = description {
+    if let Some(desc) = config.description {
         content = content.push(
             Container::new(text(desc).size(16))
                 .padding([10, 20])
@@ -400,7 +404,7 @@ pub fn amount_input_model<'a>(
         .push(iced::widget::Space::new().width(Length::Fill))
         .align_y(Alignment::Center);
 
-    let amount_row = if has_fiat_converter {
+    let amount_row = if config.has_fiat_converter {
         amount_row.push(
             button::transparent(None, "⇄")
                 .on_press(ActiveSendMessage::PopupMessage(
@@ -417,15 +421,15 @@ pub fn amount_input_model<'a>(
     let mut amount_input_section = Column::new().spacing(5);
 
     amount_input_section = amount_input_section.push(
-        form::Form::new_amount_btc("Enter amount", &amount, |v| {
+        form::Form::new_amount_btc("Enter amount", &config.amount, |v| {
             ActiveSendMessage::PopupMessage(view::SendPopupMessage::AmountEdited(v))
         })
         .padding(10),
     );
 
-    if let Some(input_type) = input_type {
+    if let Some(input_type) = config.input_type {
         if matches!(input_type, InputType::BitcoinAddress { .. }) {
-            if let Some((min_sat, max_sat)) = onchain_limits {
+            if let Some((min_sat, max_sat)) = config.onchain_limits {
                 let min_btc = Amount::from_sat(min_sat).to_btc();
                 let max_btc = Amount::from_sat(max_sat).to_btc();
                 amount_input_section = amount_input_section.push(
@@ -436,18 +440,16 @@ pub fn amount_input_model<'a>(
                     .size(12),
                 );
             }
-        } else {
-            if let Some((min_sat, max_sat)) = lightning_limits {
-                let min_btc = Amount::from_sat(min_sat).to_btc();
-                let max_btc = Amount::from_sat(max_sat).to_btc();
-                amount_input_section = amount_input_section.push(
-                    text(format!(
-                        "Enter an amount between {} BTC and {} BTC",
-                        min_btc, max_btc
-                    ))
-                    .size(12),
-                );
-            }
+        } else if let Some((min_sat, max_sat)) = config.lightning_limits {
+            let min_btc = Amount::from_sat(min_sat).to_btc();
+            let max_btc = Amount::from_sat(max_sat).to_btc();
+            amount_input_section = amount_input_section.push(
+                text(format!(
+                    "Enter an amount between {} BTC and {} BTC",
+                    min_btc, max_btc
+                ))
+                .size(12),
+            );
         }
     }
 
@@ -459,7 +461,7 @@ pub fn amount_input_model<'a>(
     let mut comment_section = Column::new().spacing(5);
     comment_section = comment_section.push(text("Comment").size(16));
     comment_section = comment_section.push(
-        iced::widget::text_input("Comment (Optional)", &comment)
+        iced::widget::text_input("Comment (Optional)", &config.comment)
             .on_input(|v| ActiveSendMessage::PopupMessage(view::SendPopupMessage::CommentEdited(v)))
             .padding(10),
     );
@@ -467,7 +469,7 @@ pub fn amount_input_model<'a>(
     content = content.push(comment_section);
 
     let next_button = button::primary(None, "Next").width(Length::Fill);
-    let next_button = if !amount.valid || amount.value.is_empty() {
+    let next_button = if !config.amount.valid || config.amount.value.is_empty() {
         next_button
     } else {
         next_button.on_press(ActiveSendMessage::PopupMessage(

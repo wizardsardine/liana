@@ -117,7 +117,7 @@ impl State for ActiveOverview {
                 } => {
                     self.btc_balance = balance;
 
-                    if recent_payment.len() > 0 {
+                    if !recent_payment.is_empty() {
                         let fiat_converter: Option<view::FiatAmountConverter> =
                             cache.fiat_price.as_ref().and_then(|p| p.try_into().ok());
                         let txns = recent_payment

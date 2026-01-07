@@ -45,7 +45,7 @@ pub fn active_overview_view<'a>(
 
     content = content.push(balance_section);
 
-    if recent_transaction.len() > 0 {
+    if !recent_transaction.is_empty() {
         for tx in recent_transaction {
             let row = Row::new()
                 .spacing(15)
@@ -121,7 +121,7 @@ pub fn active_overview_view<'a>(
                             text(format!(
                                 "about {} {}",
                                 fiat_amount.to_rounded_string(),
-                                fiat_amount.currency().to_string()
+                                fiat_amount.currency()
                             ))
                             .size(14)
                             .color(color::GREY_3)

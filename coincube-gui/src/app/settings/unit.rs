@@ -1,15 +1,10 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum BitcoinDisplayUnit {
+    #[default]
     BTC,
     Sats,
-}
-
-impl Default for BitcoinDisplayUnit {
-    fn default() -> Self {
-        BitcoinDisplayUnit::BTC
-    }
 }
 
 impl From<BitcoinDisplayUnit> for coincube_ui::component::amount::BitcoinDisplayUnit {
