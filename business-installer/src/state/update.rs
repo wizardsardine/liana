@@ -1335,6 +1335,16 @@ impl State {
                     }
                 });
 
+                // Log xpub fetch source info
+                debug!(
+                    source = "device",
+                    device_kind = device_info.as_ref().map(|(k, _)| k.as_str()).unwrap_or("Unknown"),
+                    device_fingerprint = %fingerprint,
+                    device_version = device_info.as_ref().and_then(|(_, v)| v.as_deref()).unwrap_or("Unknown"),
+                    derivation_path = %path,
+                    "Fetched xpub from hardware device"
+                );
+
                 if let Some(modal) = self.views.xpub.modal_mut() {
                     modal.set_processing(false);
                     // Convert xpub to DescriptorPublicKey and populate input
@@ -1560,6 +1570,11 @@ impl State {
         if let Some(modal) = self.views.xpub.modal_mut() {
             match result {
                 Ok((content, filename)) => {
+                    debug!(
+                        source = "file",
+                        filename = %filename,
+                        "Loaded xpub from file"
+                    );
                     modal.update_input(content);
                     modal.input_source = Some(views::XpubInputSource::File { name: filename });
                 }
@@ -1596,6 +1611,7 @@ impl State {
 
     /// Handle pasted xpub (sets source to Pasted)
     fn on_xpub_pasted(&mut self, xpub: String) {
+        debug!(source = "pasted", "Xpub pasted from clipboard");
         if let Some(modal) = self.views.xpub.modal_mut() {
             modal.update_input(xpub);
             modal.input_source = Some(views::XpubInputSource::Pasted);
@@ -1662,6 +1678,22 @@ impl State {
                             file_name,
                         }
                     };
+
+                    // Log key update with xpub source info
+                    if let Some(key) = self.app.keys.get(&key_id) {
+                        debug!(
+                            key_id = key_id,
+                            key_alias = %key.alias,
+                            key_email = %key.email,
+                            key_type = %key.key_type.as_str(),
+                            xpub_source = %xpub_json.source,
+                            xpub_device_kind = xpub_json.device_kind.as_deref().unwrap_or("N/A"),
+                            xpub_device_fingerprint = xpub_json.device_fingerprint.as_deref().unwrap_or("N/A"),
+                            xpub_device_version = xpub_json.device_version.as_deref().unwrap_or("N/A"),
+                            xpub_file_name = xpub_json.file_name.as_deref().unwrap_or("N/A"),
+                            "Key updated with xpub"
+                        );
+                    }
 
                     // Update local state
                     if let Some(key) = self.app.keys.get_mut(&key_id) {
