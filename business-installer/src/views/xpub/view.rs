@@ -167,7 +167,7 @@ pub fn xpub_view(state: &State) -> Element<'_, Msg> {
         .push(text::h2(format!("{} - Set Keys", wallet_name)))
         .push(Space::with_height(10))
         .push(text::p1_regular(
-            "Select a key to provide extended public key (xpub) information.",
+            "Select a key to complete its setup. You can connect a hardware device (recommended) or manually add an extended public key (xpub).",
         ));
 
     // Filter keys based on role

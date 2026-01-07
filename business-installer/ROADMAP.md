@@ -28,11 +28,11 @@
     - [x] Rename "Description" to "Key Description"
     - [x] Rename "Email" to "Email Address of the Key Manager"
     - [x] Add tooltip to "Key Type" with descriptions for each type
-  - [ ] 1.8.3 Key Information Screen (Set Keys)
+  - [x] 1.8.3 Key Information Screen (Set Keys)
     - [x] Change "Missing" badge text to "Not Set"
     - [x] Rename screen title from "Add Key Information" to "Set Keys"
     - [x] Update breadcrumb from "Key Information" to "Set Keys"
-    - [ ] Update intro text with hardware device recommendation
+    - [x] Update intro text with hardware device recommendation
   - [ ] 1.8.4 Header/Breadcrumb Pluralization
     - [ ] Change "Organization" breadcrumb to "Organizations"
     - [ ] Change "Select Organization" title to "Select an Organization"
