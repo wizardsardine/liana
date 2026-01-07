@@ -975,7 +975,7 @@ pub fn create_app_with_remote_backend(
     let wallet_alias_for_cube = wallet.metadata.wallet_alias.clone();
 
     let cube_settings = match app::settings::Settings::from_file(&network_dir) {
-        Ok(mut settings) => {
+        Ok(settings) => {
             if let Some(found_cube) = settings
                 .cubes
                 .iter()
@@ -990,10 +990,11 @@ pub fn create_app_with_remote_backend(
                 )
                 .with_vault(wallet_id);
 
-                settings.cubes.push(new_cube.clone());
-
                 if let Err(e) = tokio::runtime::Handle::current().block_on(async {
-                    update_settings_file(&network_dir, |_| Some(settings)).await
+                    update_settings_file(&network_dir, |mut fresh_settings| {
+                        fresh_settings.cubes.push(new_cube.clone());
+                        Some(fresh_settings)
+                    }).await
                 }) {
                     tracing::error!("Failed to persist new cube for remote backend: {}", e);
                 }

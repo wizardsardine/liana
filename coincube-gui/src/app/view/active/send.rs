@@ -242,7 +242,7 @@ pub fn active_send_view<'a>(
                             text(format!(
                                 "about {} {}",
                                 fiat_amount.to_rounded_string(),
-                                fiat_amount.currency().to_string()
+                                fiat_amount.currency()
                             ))
                             .size(14)
                             .color(color::GREY_3)
@@ -421,7 +421,7 @@ pub fn amount_input_model<'a>(config: AmountInputConfig<'a>) -> Element<'a, Acti
     let mut amount_input_section = Column::new().spacing(5);
 
     amount_input_section = amount_input_section.push(
-        form::Form::new_amount_btc("Enter amount", &config.amount, |v| {
+        form::Form::new_amount_btc("Enter amount", config.amount, |v| {
             ActiveSendMessage::PopupMessage(view::SendPopupMessage::AmountEdited(v))
         })
         .padding(10),
