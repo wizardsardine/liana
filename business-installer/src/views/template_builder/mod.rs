@@ -38,11 +38,15 @@ pub fn template_builder_view(state: &State) -> Element<'_, Msg> {
     // Action buttons row (fixed at bottom) - role-based and status-based
     let mut buttons_row = Row::new().spacing(20).align_y(Alignment::Center);
 
-    // WSManager on Draft: "Manage Keys" + "Lock Template" (if valid)
-    if is_ws_manager && is_draft {
+    // "Manage Keys" button: WSManager on Draft, or Owner when not locked
+    if (is_ws_manager && is_draft) || (is_owner && !is_locked) {
         buttons_row = buttons_row.push(
             button::secondary(Some(icon::key_icon()), "Manage Keys").on_press(Msg::NavigateToKeys),
         );
+    }
+
+    // WSManager on Draft: "Lock Template" (if valid)
+    if is_ws_manager && is_draft {
         let is_valid = state.is_template_valid();
         let lock_button = if is_valid {
             button::primary(None, "Lock Template").on_press(Msg::TemplateLock)
