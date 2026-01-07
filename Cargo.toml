@@ -47,7 +47,7 @@ rdrand = "0.8"
 fern = "0.6"
 bip329 = { version = "0.3.0", default-features = false }
 async-trait = "0.1"
-async-hwi = { git = "https://github.com/pythcoiner/async-hwi", rev = "7e47d01"}
+async-hwi = { git = "https://github.com/pythcoiner/async-hwi", rev = "eafc645"}
 hex = "0.4.3"
 email_address = "0.2.7"
 tokio = "1.21.0"
