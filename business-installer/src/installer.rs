@@ -1,4 +1,4 @@
-use crate::state::State;
+use crate::state::{SharedWaker, State};
 use crossbeam::channel::{self};
 use iced::Task;
 use liana::miniscript::bitcoin::{self};
@@ -10,6 +10,7 @@ use liana_gui::{
 };
 use liana_ui::widget::Element;
 use std::pin::Pin;
+use std::task::{Context, Poll};
 use tracing::debug;
 
 pub use crate::state::Msg as Message;
@@ -77,6 +78,7 @@ impl<'a> Installer<'a, Message> for BusinessInstaller {
         let (installer, task) = BusinessInstaller::new(destination_path, network);
         let listener = Task::stream(NotifListener {
             receiver: installer.state.notif_receiver.clone(),
+            waker: installer.state.notif_waker.clone(),
         });
         (Box::new(installer), Task::batch([listener, task]))
     }
@@ -142,19 +144,25 @@ impl<'a> Installer<'a, Message> for BusinessInstaller {
 
 struct NotifListener {
     receiver: channel::Receiver<Message>,
+    waker: SharedWaker,
 }
 
 impl iced::futures::Stream for NotifListener {
     type Item = Message;
 
-    fn poll_next(
-        self: Pin<&mut Self>,
-        _cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Option<Self::Item>> {
-        use std::task::Poll;
-
-        let msg = self.receiver.recv().expect("poisoined");
-        Poll::Ready(Some(msg))
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        // Use non-blocking try_recv to avoid blocking the async executor
+        match self.receiver.try_recv() {
+            Ok(msg) => Poll::Ready(Some(msg)),
+            Err(channel::TryRecvError::Empty) => {
+                // Store the waker so senders can wake us when new messages arrive
+                if let Ok(mut guard) = self.waker.lock() {
+                    *guard = Some(cx.waker().clone());
+                }
+                Poll::Pending
+            }
+            Err(channel::TryRecvError::Disconnected) => Poll::Ready(None),
+        }
     }
 }
 

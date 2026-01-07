@@ -57,8 +57,6 @@ fn main() -> iced::Result {
     .settings(settings)
     .window(window_settings)
     .subscription(PolicyBuilder::subscription)
-    // HACK: poll_next() will hang forever with tokio executor
-    .executor::<futures::executor::ThreadPool>()
     .run_with(PolicyBuilder::new)
 }
 

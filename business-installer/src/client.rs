@@ -5,6 +5,7 @@ use std::{
         atomic::{AtomicBool, Ordering},
         Arc, Mutex,
     },
+    task::Waker,
     thread,
     time::{Duration, Instant},
 };
@@ -70,6 +71,9 @@ fn get_service_config_blocking(_network: Network) -> Result<ServiceConfig, reqwe
     })
 }
 
+/// Shared waker type for waking the notification stream
+pub type SharedWaker = Arc<Mutex<Option<Waker>>>;
+
 /// WSS Backend implementation
 #[derive(Debug)]
 pub struct Client {
@@ -79,6 +83,7 @@ pub struct Client {
     token: Arc<Mutex<Option<String>>>,
     request_sender: Option<channel::Sender<Request>>,
     notif_sender: channel::Sender<Message>,
+    notif_waker: SharedWaker,
     wss_thread_handle: Option<thread::JoinHandle<()>>,
     connected: Arc<AtomicBool>,
     // Auth client integration
@@ -89,7 +94,7 @@ pub struct Client {
 }
 
 impl Client {
-    pub fn new(notif_sender: channel::Sender<Message>) -> Self {
+    pub fn new(notif_sender: channel::Sender<Message>, notif_waker: SharedWaker) -> Self {
         Self {
             orgs: Arc::new(Mutex::new(BTreeMap::new())),
             wallets: Arc::new(Mutex::new(BTreeMap::new())),
@@ -97,6 +102,7 @@ impl Client {
             token: Arc::new(Mutex::new(None)),
             request_sender: None,
             notif_sender,
+            notif_waker,
             wss_thread_handle: None,
             connected: Arc::new(AtomicBool::new(false)),
             auth_client: Arc::new(Mutex::new(None)),
@@ -118,6 +124,21 @@ impl Client {
 
     pub fn set_network(&mut self, network: Network) {
         self.network = Some(network);
+    }
+
+    /// Send a notification and wake the stream so it gets polled
+    fn send_notif(
+        notif_sender: &channel::Sender<Message>,
+        notif_waker: &SharedWaker,
+        msg: Message,
+    ) {
+        if notif_sender.send(msg).is_ok() {
+            if let Ok(guard) = notif_waker.lock() {
+                if let Some(waker) = guard.as_ref() {
+                    waker.wake_by_ref();
+                }
+            }
+        }
     }
 
     pub fn is_connected(&self) -> bool {
@@ -418,6 +439,7 @@ fn wss_thread(
     request_receiver: channel::Receiver<Request>,
     request_sender: channel::Sender<Request>,
     notif_sender: channel::Sender<Message>,
+    notif_waker: SharedWaker,
     connected: Arc<AtomicBool>,
 ) {
     let url = if url.starts_with("ws://") || url.starts_with("wss://") {
@@ -429,7 +451,11 @@ fn wss_thread(
     let (mut ws_stream, _) = match tungstenite::connect(&url) {
         Ok(stream) => stream,
         Err(_) => {
-            let _ = notif_sender.send(Notification::Error(Error::WsConnection).into());
+            Client::send_notif(
+                &notif_sender,
+                &notif_waker,
+                Notification::Error(Error::WsConnection).into(),
+            );
             return;
         }
     };
@@ -440,7 +466,11 @@ fn wss_thread(
     let msg = connect_request.to_ws_message(&token, &request_id);
 
     if ws_stream.send(msg).is_err() {
-        let _ = notif_sender.send(Notification::Error(Error::WsConnection).into());
+        Client::send_notif(
+            &notif_sender,
+            &notif_waker,
+            Notification::Error(Error::WsConnection).into(),
+        );
         return;
     }
 
@@ -451,13 +481,21 @@ fn wss_thread(
             .map_err(|e| format!("Failed to convert WSS message: {}", e))
         {
             connected.store(true, Ordering::Relaxed);
-            let _ = notif_sender.send(Notification::Connected.into());
+            Client::send_notif(&notif_sender, &notif_waker, Notification::Connected.into());
         } else {
-            let _ = notif_sender.send(Notification::Error(Error::WsConnection).into());
+            Client::send_notif(
+                &notif_sender,
+                &notif_waker,
+                Notification::Error(Error::WsConnection).into(),
+            );
             return;
         }
     } else {
-        let _ = notif_sender.send(Notification::Error(Error::WsConnection).into());
+        Client::send_notif(
+            &notif_sender,
+            &notif_waker,
+            Notification::Error(Error::WsConnection).into(),
+        );
         return;
     }
 
@@ -562,7 +600,7 @@ fn wss_thread(
                             // Remove from cache on send failure
                             let mut requests = sent_requests2.lock().unwrap();
                             requests.remove(&request_id);
-                            let _ = notif_sender.send(Notification::Error(Error::WsConnection).into());
+                            Client::send_notif(&notif_sender, &notif_waker, Notification::Error(Error::WsConnection).into());
                             error!("Failed to send WebSocket request");
                             break;
                         }
@@ -581,14 +619,14 @@ fn wss_thread(
                     Ok(WsMessage::Text(text)) => {
                         // Pass the message directly to the handler
                         let msg = WsMessage::Text(text);
-                        if let Err(e) = handle_wss_message(msg, &orgs, &wallets, &users, &request_sender, &sent_requests3, &last_ping, &notif_sender) {
+                        if let Err(e) = handle_wss_message(msg, &orgs, &wallets, &users, &request_sender, &sent_requests3, &last_ping, &notif_sender, &notif_waker) {
                             // Send error notification to show warning modal
-                            let _ = notif_sender.send(Notification::Error(Error::WsMessageHandling(e)).into());
+                            Client::send_notif(&notif_sender, &notif_waker, Notification::Error(Error::WsMessageHandling(e)).into());
                         }
                     }
                     // TODO: we should log errors here
                     Ok(WsMessage::Close(_)) => {
-                        let _ = notif_sender.send(Notification::Disconnected.into());
+                        Client::send_notif(&notif_sender, &notif_waker, Notification::Disconnected.into());
                         break;
                     }
                     Err(tungstenite::Error::Io(ref e)) if e.kind() == std::io::ErrorKind::WouldBlock => {
@@ -596,7 +634,7 @@ fn wss_thread(
                         thread::sleep(Duration::from_millis(10));
                     }
                     Err(_) => {
-                        let _ = notif_sender.send(Notification::Disconnected.into());
+                        Client::send_notif(&notif_sender, &notif_waker, Notification::Disconnected.into());
                         break;
                     }
                     // TODO: we should log these messages at trace level
@@ -617,6 +655,7 @@ fn handle_wss_message(
     sent_requests: &Arc<Mutex<BTreeMap<String, Request>>>,
     last_ping_time: &Arc<Mutex<Option<Instant>>>,
     n_sender: &channel::Sender<Message>,
+    n_waker: &SharedWaker,
 ) -> Result<(), String> {
     let (response, request_id) = Response::from_ws_message(msg)
         .map_err(|e| format!("Failed to convert WSS message: {}", e))?;
@@ -660,22 +699,22 @@ fn handle_wss_message(
         }
         Response::Connected { version } => {
             // FIXME: we should never land here
-            handle_connected(version, n_sender)?;
+            handle_connected(version, n_sender, n_waker)?;
         }
         Response::Pong => {
             handle_pong(last_ping_time)?;
         }
         Response::Org { org } => {
-            handle_org(org, orgs, wallets, users, request_sender, n_sender)?;
+            handle_org(org, orgs, wallets, users, request_sender, n_sender, n_waker)?;
         }
         Response::Wallet { wallet } => {
-            handle_wallet(wallet, wallets, users, request_sender, n_sender)?;
+            handle_wallet(wallet, wallets, users, request_sender, n_sender, n_waker)?;
         }
         Response::User { user } => {
-            handle_user(user, users, n_sender)?;
+            handle_user(user, users, n_sender, n_waker)?;
         }
         Response::ServerTime { timestamp } => {
-            handle_server_time(timestamp, n_sender)?;
+            handle_server_time(timestamp, n_sender, n_waker)?;
         }
     }
 
@@ -726,8 +765,13 @@ fn matches_response_type(response: &Response, expected: ExpectedResponseType) ->
 fn handle_connected(
     _version: u8,
     notification_sender: &channel::Sender<Message>,
+    notification_waker: &SharedWaker,
 ) -> Result<(), String> {
-    let _ = notification_sender.send(Notification::Connected.into());
+    Client::send_notif(
+        notification_sender,
+        notification_waker,
+        Notification::Connected.into(),
+    );
     Ok(())
 }
 
@@ -747,6 +791,7 @@ fn handle_org(
     users: &Arc<Mutex<BTreeMap<Uuid, User>>>,
     request_sender: &channel::Sender<Request>,
     notification_sender: &channel::Sender<Message>,
+    notification_waker: &SharedWaker,
 ) -> Result<(), String> {
     let org = Org::try_from(org_json)?;
     let org_id = org.id;
@@ -780,7 +825,11 @@ fn handle_org(
     }
 
     // Send response
-    let _ = notification_sender.send(Notification::Org(org_id).into());
+    Client::send_notif(
+        notification_sender,
+        notification_waker,
+        Notification::Org(org_id).into(),
+    );
     Ok(())
 }
 
@@ -790,6 +839,7 @@ fn handle_wallet(
     users: &Arc<Mutex<BTreeMap<Uuid, User>>>,
     request_sender: &channel::Sender<Request>,
     notification_sender: &channel::Sender<Message>,
+    notification_waker: &SharedWaker,
 ) -> Result<(), String> {
     let wallet = Wallet::try_from(wallet_json)?;
     let wallet_id = wallet.id;
@@ -811,7 +861,11 @@ fn handle_wallet(
     }
 
     // Send response
-    let _ = notification_sender.send(Notification::Wallet(wallet_id).into());
+    Client::send_notif(
+        notification_sender,
+        notification_waker,
+        Notification::Wallet(wallet_id).into(),
+    );
     Ok(())
 }
 
@@ -819,6 +873,7 @@ fn handle_user(
     user_json: UserJson,
     users: &Arc<Mutex<BTreeMap<Uuid, User>>>,
     notification_sender: &channel::Sender<Message>,
+    notification_waker: &SharedWaker,
 ) -> Result<(), String> {
     let user = User::try_from(user_json)?;
     let user_id = user.uuid;
@@ -830,22 +885,35 @@ fn handle_user(
     }
 
     // Send response
-    let _ = notification_sender.send(Notification::User(user_id).into());
+    Client::send_notif(
+        notification_sender,
+        notification_waker,
+        Notification::User(user_id).into(),
+    );
     Ok(())
 }
 
 fn handle_server_time(
     timestamp: u64,
     notification_sender: &channel::Sender<Message>,
+    notification_waker: &SharedWaker,
 ) -> Result<(), String> {
-    let _ = notification_sender.send(Notification::ServerTime(timestamp).into());
+    Client::send_notif(
+        notification_sender,
+        notification_waker,
+        Notification::ServerTime(timestamp).into(),
+    );
     Ok(())
 }
 
 macro_rules! check_connection {
     ($s: ident) => {
         if !$s.connected.load(Ordering::Relaxed) {
-            let _ = $s.notif_sender.send(Notification::Disconnected.into());
+            Client::send_notif(
+                &$s.notif_sender,
+                &$s.notif_waker,
+                Notification::Disconnected.into(),
+            );
             return;
         }
     };
@@ -890,6 +958,7 @@ impl Backend for Client {
         let connected = self.connected.clone();
 
         let notif_sender = notif_sender.clone();
+        let notif_waker = self.notif_waker.clone();
         let handle = thread::spawn(move || {
             wss_thread(
                 url,
@@ -901,6 +970,7 @@ impl Backend for Client {
                 request_receiver,
                 request_sender,
                 notif_sender,
+                notif_waker,
                 connected,
             );
         });
@@ -915,6 +985,7 @@ impl Backend for Client {
         self.email = Some(email.clone());
 
         let notif_sender = self.notif_sender.clone();
+        let notif_waker = self.notif_waker.clone();
         let network = self.network.unwrap_or(Network::Signet); // Default to signet if not set
         let email_clone = email.clone();
         let auth_client_2 = self.auth_client.clone();
@@ -938,7 +1009,11 @@ impl Backend for Client {
                 }
                 Err(e) => {
                     debug!("auth_request: failed to get service config: {:?}", e);
-                    let _ = notif_sender.send(Notification::AuthCodeFail.into());
+                    Client::send_notif(
+                        &notif_sender,
+                        &notif_waker,
+                        Notification::AuthCodeFail.into(),
+                    );
                     return;
                 }
             };
@@ -971,12 +1046,24 @@ impl Backend for Client {
                         // Check if it's an invalid email error
                         if let Some(status) = e.http_status {
                             if status == 400 || status == 422 {
-                                let _ = notif_sender.send(Notification::InvalidEmail.into());
+                                Client::send_notif(
+                                    &notif_sender,
+                                    &notif_waker,
+                                    Notification::InvalidEmail.into(),
+                                );
                             } else {
-                                let _ = notif_sender.send(Notification::AuthCodeFail.into());
+                                Client::send_notif(
+                                    &notif_sender,
+                                    &notif_waker,
+                                    Notification::AuthCodeFail.into(),
+                                );
                             }
                         } else {
-                            let _ = notif_sender.send(Notification::AuthCodeFail.into());
+                            Client::send_notif(
+                                &notif_sender,
+                                &notif_waker,
+                                Notification::AuthCodeFail.into(),
+                            );
                         }
                         Err(())
                     }
@@ -991,7 +1078,11 @@ impl Backend for Client {
                         *client_guard = Some(client);
                     }
                     debug!("auth_request: sending AuthCodeSent notification");
-                    let _ = notif_sender.send(Notification::AuthCodeSent.into());
+                    Client::send_notif(
+                        &notif_sender,
+                        &notif_waker,
+                        Notification::AuthCodeSent.into(),
+                    );
                 }
                 Err(()) => {
                     // Error notification already sent in async block
@@ -1002,6 +1093,7 @@ impl Backend for Client {
 
     fn auth_code(&mut self, code: String) {
         let notif_sender = self.notif_sender.clone();
+        let notif_waker = self.notif_waker.clone();
         let auth_client_shared = Arc::clone(&self.auth_client);
         let network_dir = self.network_dir.clone();
         let _email = self.email.clone();
@@ -1019,7 +1111,11 @@ impl Backend for Client {
                 let auth_client = match auth_client {
                     Some(client) => client,
                     None => {
-                        let _ = notif_sender.send(Notification::LoginFail.into());
+                        Client::send_notif(
+                            &notif_sender,
+                            &notif_waker,
+                            Notification::LoginFail.into(),
+                        );
                         return Err(());
                     }
                 };
@@ -1028,7 +1124,11 @@ impl Backend for Client {
                 let tokens = match auth_client.verify_otp(code.trim()).await {
                     Ok(tokens) => tokens,
                     Err(_) => {
-                        let _ = notif_sender.send(Notification::LoginFail.into());
+                        Client::send_notif(
+                            &notif_sender,
+                            &notif_waker,
+                            Notification::LoginFail.into(),
+                        );
                         return Err(());
                     }
                 };
@@ -1056,7 +1156,11 @@ impl Backend for Client {
 
             match result {
                 Ok(_) => {
-                    let _ = notif_sender.send(Notification::LoginSuccess.into());
+                    Client::send_notif(
+                        &notif_sender,
+                        &notif_waker,
+                        Notification::LoginSuccess.into(),
+                    );
                 }
                 Err(_) => {
                     // Error already handled above

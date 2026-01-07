@@ -12,6 +12,13 @@ use crossbeam::channel;
 use liana_ui::widget::{modal::Modal, Element};
 pub use message::{Message, Msg};
 use miniscript::bitcoin::Network;
+use std::sync::{Arc, Mutex};
+use std::task::Waker;
+
+/// Shared waker for the notification stream.
+/// When a message is sent to notif_sender, the sender should wake this
+/// so the stream gets polled again by the async executor.
+pub type SharedWaker = Arc<Mutex<Option<Waker>>>;
 
 pub mod app;
 pub mod message;
@@ -37,33 +44,78 @@ pub struct State {
     pub current_view: View,
     pub notif_sender: channel::Sender<Message>,
     pub notif_receiver: channel::Receiver<Message>,
+    /// Shared waker for the notification stream - wake this after sending to notif_sender
+    pub notif_waker: SharedWaker,
     pub hw: HwiService<Message>,
     /// Track if HW listener is running (to make stop_hw idempotent)
     hw_running: bool,
     /// Bitcoin network (mainnet, testnet, signet, regtest)
     pub network: Network,
+    /// Dedicated sender for HwiService - messages are bridged to notif_sender with waking
+    hw_sender: channel::Sender<Message>,
+    /// Handle to the bridge thread (for cleanup)
+    hw_bridge_handle: Option<std::thread::JoinHandle<()>>,
 }
 
 impl State {
     pub fn new(network: Network) -> Self {
         let (notif_sender, notif_receiver) = channel::unbounded();
+        let notif_waker: SharedWaker = Arc::new(Mutex::new(None));
+
+        // Create a dedicated channel for HwiService
+        let (hw_sender, hw_receiver) = channel::unbounded::<Message>();
+
+        // Spawn bridge thread: forwards HW messages to notif_sender with waking
+        let bridge_notif_sender = notif_sender.clone();
+        let bridge_waker = notif_waker.clone();
+        let hw_bridge_handle = std::thread::spawn(move || {
+            tracing::debug!("HW bridge thread started");
+            while let Ok(msg) = hw_receiver.recv() {
+                if bridge_notif_sender.send(msg).is_ok() {
+                    if let Ok(guard) = bridge_waker.lock() {
+                        if let Some(waker) = guard.as_ref() {
+                            waker.wake_by_ref();
+                        }
+                    }
+                }
+            }
+            tracing::debug!("HW bridge thread stopped (channel disconnected)");
+        });
+
         Self {
             app: AppState::new(),
             views: views::ViewsState::new(),
-            backend: Client::new(notif_sender.clone()),
+            backend: Client::new(notif_sender.clone(), notif_waker.clone()),
             current_view: View::Login,
             notif_sender,
             notif_receiver,
+            notif_waker,
+            // Note: Passing None for runtime - HwiService will create its own if needed.
+            // We can't pass iced's tokio runtime as we only have a Handle, not a &Runtime.
             hw: HwiService::new(network, None),
             hw_running: false,
             network,
+            hw_sender,
+            hw_bridge_handle: Some(hw_bridge_handle),
+        }
+    }
+
+    /// Send a message to the notification channel and wake the stream.
+    /// This ensures the async executor re-polls the stream to receive the message.
+    pub fn send_notif(&self, msg: Message) {
+        if self.notif_sender.send(msg).is_ok() {
+            if let Ok(guard) = self.notif_waker.lock() {
+                if let Some(waker) = guard.as_ref() {
+                    waker.wake_by_ref();
+                }
+            }
         }
     }
 
     /// Start hardware wallet listening (call when modal opens)
     pub fn start_hw(&mut self) {
         if !self.hw_running {
-            self.hw.start(self.notif_sender.clone());
+            self.hw.start(self.hw_sender.clone());
             self.hw_running = true;
         }
     }
