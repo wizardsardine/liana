@@ -13,6 +13,7 @@ use crate::daemon::Daemon;
 pub struct ActiveTransactions {
     breez_client: Arc<BreezClient>,
     payments: Vec<Payment>,
+    selected_payment: Option<Payment>,
     loading: bool,
     balance: Amount,
 }
@@ -22,6 +23,7 @@ impl ActiveTransactions {
         Self {
             breez_client,
             payments: Vec::new(),
+            selected_payment: None,
             loading: false,
             balance: Amount::ZERO,
         }
@@ -53,17 +55,31 @@ impl ActiveTransactions {
 impl State for ActiveTransactions {
     fn view<'a>(&'a self, menu: &'a Menu, cache: &'a Cache) -> Element<'a, view::Message> {
         let fiat_converter = cache.fiat_price.as_ref().and_then(|p| p.try_into().ok());
-        view::dashboard(
-            menu,
-            cache,
-            None,
-            view::active::active_transactions_view(
-                &self.payments,
-                &self.balance,
-                fiat_converter,
-                self.loading,
-            ),
-        )
+        if let Some(payment) = &self.selected_payment {
+            view::dashboard(
+                menu,
+                cache,
+                None,
+                view::active::payment_detail_view(
+                    payment,
+                    fiat_converter,
+                    cache.bitcoin_unit.into(),
+                ),
+            )
+        } else {
+            view::dashboard(
+                menu,
+                cache,
+                None,
+                view::active::active_transactions_view(
+                    &self.payments,
+                    &self.balance,
+                    fiat_converter,
+                    self.loading,
+                    cache.bitcoin_unit.into(),
+                ),
+            )
+        }
     }
 
     fn update(
@@ -83,6 +99,14 @@ impl State for ActiveTransactions {
                 self.loading = false;
                 Task::none()
             }
+            Message::View(view::Message::Select(i)) => {
+                self.selected_payment = self.payments.get(i).cloned();
+                Task::none()
+            }
+            Message::View(view::Message::Reload) | Message::View(view::Message::Close) => {
+                self.selected_payment = None;
+                Task::none()
+            }
             _ => Task::none(),
         }
     }
@@ -93,6 +117,7 @@ impl State for ActiveTransactions {
         _wallet: Option<Arc<Wallet>>,
     ) -> Task<Message> {
         self.loading = true;
+        self.selected_payment = None;
         let client = self.breez_client.clone();
 
         Task::perform(

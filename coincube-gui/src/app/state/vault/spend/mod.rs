@@ -12,12 +12,22 @@ use coincubed::commands::CoinStatus;
 
 use super::{super::redirect, super::State};
 use crate::{
-    app::{cache::Cache, error::Error, menu::Menu, message::Message, view, wallet::Wallet},
+    app::{
+        cache::Cache,
+        error::Error,
+        menu::Menu,
+        message::Message,
+        view,
+        wallet::{SyncStatus, Wallet},
+    },
     daemon::{
         model::{Coin, LabelItem},
         Daemon,
     },
 };
+
+use coincube_core::miniscript::bitcoin::Amount;
+use coincube_ui::component::amount::BitcoinDisplayUnit;
 
 pub struct CreateSpendPanel {
     draft: step::TransactionDraft,
@@ -31,14 +41,34 @@ pub struct CreateSpendPanel {
 
 impl CreateSpendPanel {
     /// Create a new instance to be used for a primary path spend.
-    pub fn new(wallet: Arc<Wallet>, coins: &[Coin], blockheight: u32, network: Network) -> Self {
+    pub fn new(
+        wallet: Arc<Wallet>,
+        coins: &[Coin],
+        blockheight: u32,
+        network: Network,
+        balance: Amount,
+        unconfirmed_balance: Amount,
+        sync_status: SyncStatus,
+        bitcoin_unit: BitcoinDisplayUnit,
+    ) -> Self {
         Self {
             draft: step::TransactionDraft::new(network, None),
             current: 0,
             steps: vec![
                 Box::new(
-                    step::DefineSpend::new(network, wallet.clone(), coins, blockheight, None, true)
-                        .with_coins_sorted(blockheight),
+                    step::DefineSpend::new(
+                        network,
+                        wallet.clone(),
+                        coins,
+                        blockheight,
+                        None,
+                        true,
+                        balance,
+                        unconfirmed_balance,
+                        sync_status,
+                        bitcoin_unit,
+                    )
+                    .with_coins_sorted(blockheight),
                 ),
                 Box::new(step::SaveSpend::new(wallet)),
             ],
@@ -55,6 +85,10 @@ impl CreateSpendPanel {
         coins: &[Coin],
         blockheight: u32,
         network: Network,
+        balance: Amount,
+        unconfirmed_balance: Amount,
+        sync_status: SyncStatus,
+        bitcoin_unit: BitcoinDisplayUnit,
     ) -> Self {
         let timelock = wallet.as_ref().main_descriptor.first_timelock_value();
         Self {
@@ -74,6 +108,10 @@ impl CreateSpendPanel {
                         blockheight,
                         Some(timelock), // the recovery timelock must always be set to a value
                         false,
+                        balance,
+                        unconfirmed_balance,
+                        sync_status,
+                        bitcoin_unit,
                     )
                     .with_coins_sorted(blockheight),
                 ),
@@ -90,16 +128,31 @@ impl CreateSpendPanel {
         blockheight: u32,
         preselected_coins: &[OutPoint],
         network: Network,
+        balance: Amount,
+        unconfirmed_balance: Amount,
+        sync_status: SyncStatus,
+        bitcoin_unit: BitcoinDisplayUnit,
     ) -> Self {
         Self {
             draft: step::TransactionDraft::new(network, None),
             current: 0,
             steps: vec![
                 Box::new(
-                    step::DefineSpend::new(network, wallet.clone(), coins, blockheight, None, true)
-                        .with_preselected_coins(preselected_coins)
-                        .with_coins_sorted(blockheight)
-                        .self_send(),
+                    step::DefineSpend::new(
+                        network,
+                        wallet.clone(),
+                        coins,
+                        blockheight,
+                        None,
+                        true,
+                        balance,
+                        unconfirmed_balance,
+                        sync_status,
+                        bitcoin_unit,
+                    )
+                    .with_preselected_coins(preselected_coins)
+                    .with_coins_sorted(blockheight)
+                    .self_send(),
                 ),
                 Box::new(step::SaveSpend::new(wallet)),
             ],

@@ -2,6 +2,7 @@ mod message;
 
 pub mod active;
 pub mod global_home;
+pub mod settings;
 
 #[cfg(feature = "buysell")]
 pub mod buysell;
@@ -20,7 +21,7 @@ use iced::{
 
 use coincube_ui::{
     color,
-    component::{button, text::*},
+    component::{button, text, text::*},
     icon::{
         coins_icon, cross_icon, cube_icon, down_icon, home_icon, lightning_icon, plus_icon,
         receipt_icon, receive_icon, recovery_icon, send_icon, settings_icon, up_icon, vault_icon,
@@ -34,6 +35,14 @@ use coincube_ui::{
 use coincube_ui::icon::bitcoin_icon;
 
 use crate::app::{cache::Cache, error::Error, menu::Menu};
+
+/// Simple toast notification for clipboard copy and other success messages
+pub fn simple_toast(message: &str) -> Container<Message> {
+    container(text::p2_regular(message))
+        .padding(15)
+        .style(theme::notification::success)
+        .max_width(400.0)
+}
 
 fn menu_bar_highlight<'a, T: 'a>() -> Container<'a, T> {
     Container::new(Space::new().width(Length::Fixed(5.0)))
@@ -454,6 +463,24 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<
     {
         menu_column = menu_column.push_maybe(has_vault.then_some(buy_sell_button));
     }
+
+    // Global Settings button (always visible at bottom of main menu)
+    let global_settings_button = if matches!(menu, Menu::Settings(_)) {
+        row!(
+            button::menu_active(Some(settings_icon()), "Settings")
+                .on_press(Message::Reload)
+                .width(iced::Length::Fill),
+            menu_bar_highlight(),
+        )
+    } else {
+        row!(button::menu(Some(settings_icon()), "Settings")
+            .on_press(Message::Menu(Menu::Settings(
+                crate::app::menu::SettingsSubMenu::General
+            )))
+            .width(iced::Length::Fill),)
+    };
+
+    menu_column = menu_column.push(global_settings_button);
 
     Container::new(
         Column::new().push(menu_column.height(Length::Fill)).push(

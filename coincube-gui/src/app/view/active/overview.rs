@@ -2,7 +2,7 @@ use breez_sdk_liquid::model::{PaymentDetails, PaymentState};
 use coincube_core::miniscript::bitcoin::Amount;
 use coincube_ui::{
     color,
-    component::{button, text::*},
+    component::{amount::*, button, text::*},
     icon, theme,
     widget::*,
 };
@@ -18,34 +18,54 @@ pub fn active_overview_view<'a>(
     fiat_converter: Option<FiatAmountConverter>,
     recent_transaction: &Vec<RecentTransaction>,
     error: Option<&'a str>,
+    bitcoin_unit: BitcoinDisplayUnit,
 ) -> Element<'a, ActiveOverviewMessage> {
-    let mut content = Column::new()
-        .spacing(10)
-        .width(Length::Fill)
-        .align_x(Alignment::Center)
-        .padding(40);
+    let mut content = Column::new().spacing(20);
 
-    let mut balance_section = Column::new().spacing(10).align_x(Alignment::Center).push(
-        Row::new()
-            .spacing(10)
-            .align_y(Alignment::Center)
-            .push(
-                text(format!("{:.8}", btc_balance.to_btc()))
-                    .size(48)
-                    .bold()
-                    .color(color::ORANGE),
-            )
-            .push(text("BTC").size(32).color(color::ORANGE)),
+    let fiat_balance = fiat_converter.as_ref().map(|c| c.convert(btc_balance));
+
+    content = content.push(h3("Balance")).push(
+        Column::new()
+            .spacing(5)
+            .push(amount_with_size_and_unit(
+                &btc_balance,
+                H1_SIZE,
+                bitcoin_unit,
+            ))
+            .push_maybe(fiat_balance.map(|fiat| fiat.to_text().size(P2_SIZE).color(color::GREY_2))),
     );
 
-    if let Some(converter) = &fiat_converter {
-        let fiat_amount = converter.convert(btc_balance);
-        balance_section = balance_section.push(fiat_amount.to_text().size(18).color(color::GREY_3));
-    }
+    let buttons_row = Row::new()
+        .spacing(10)
+        .width(Length::Fill)
+        .push(
+            button::primary(None, "Send")
+                .on_press(ActiveOverviewMessage::Send)
+                .width(Length::Fill),
+        )
+        .push(
+            button::secondary(None, "Receive")
+                .on_press(ActiveOverviewMessage::Receive)
+                .width(Length::Fill)
+                .style(|_, _| iced::widget::button::Style {
+                    background: Some(iced::Background::Color(iced::Color::TRANSPARENT)),
+                    text_color: color::ORANGE,
+                    border: iced::Border {
+                        color: color::ORANGE,
+                        width: 1.0,
+                        radius: 25.0.into(),
+                    },
+                    ..Default::default()
+                }),
+        );
 
-    content = content.push(balance_section);
+    content = content
+        .push(iced::widget::Space::new().height(Length::Fixed(10.0)))
+        .push(Container::new(buttons_row).width(Length::Fill));
 
-    if recent_transaction.len() > 0 {
+    content = content.push(Column::new().spacing(10).push(h4_bold("Last transactions")));
+
+    if !recent_transaction.is_empty() {
         for tx in recent_transaction {
             let row = Row::new()
                 .spacing(15)
@@ -121,7 +141,7 @@ pub fn active_overview_view<'a>(
                             text(format!(
                                 "about {} {}",
                                 fiat_amount.to_rounded_string(),
-                                fiat_amount.currency().to_string()
+                                fiat_amount.currency()
                             ))
                             .size(14)
                             .color(color::GREY_3)
@@ -139,50 +159,13 @@ pub fn active_overview_view<'a>(
         }
     }
 
-    let history_button = button::transparent(Some(icon::history_icon()), "History")
+    let history_button = button::transparent(Some(icon::history_icon()), "Transaction History")
         .on_press(ActiveOverviewMessage::History)
-        .width(Length::Fixed(150.0));
+        .width(Length::Fixed(250.0));
 
     content = content
         .push(iced::widget::Space::new().height(Length::Fixed(10.0)))
-        .push(
-            Container::new(history_button)
-                .width(Length::Fill)
-                .align_x(Alignment::Center),
-        );
-
-    let buttons_row = Row::new()
-        .spacing(10)
-        .width(Length::Fill)
-        .push(
-            button::primary(None, "Send")
-                .on_press(ActiveOverviewMessage::Send)
-                .width(Length::Fill),
-        )
-        .push(
-            button::secondary(None, "Receive")
-                .on_press(ActiveOverviewMessage::Receive)
-                .width(Length::Fill)
-                .style(|_, _| iced::widget::button::Style {
-                    background: Some(iced::Background::Color(iced::Color::TRANSPARENT)),
-                    text_color: color::ORANGE,
-                    border: iced::Border {
-                        color: color::ORANGE,
-                        width: 1.0,
-                        radius: 25.0.into(),
-                    },
-                    ..Default::default()
-                }),
-        );
-
-    content = content
-        .push(iced::widget::Space::new().height(Length::Fixed(10.0)))
-        .push(
-            Container::new(buttons_row)
-                .width(Length::Fill)
-                .max_width(800)
-                .align_x(Alignment::Center),
-        );
+        .push(Container::new(history_button).width(Length::Fill));
 
     if let Some(err) = error {
         content = content.push(

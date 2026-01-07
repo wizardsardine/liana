@@ -1,11 +1,11 @@
 pub mod active;
 mod global_home;
+pub mod settings;
 pub mod vault;
 
 #[cfg(feature = "buysell")]
 pub mod buysell;
 
-use std::convert::TryInto;
 use std::sync::Arc;
 
 use coincube_core::miniscript::bitcoin::{Amount, OutPoint};
@@ -70,18 +70,6 @@ pub fn redirect(menu: Menu) -> Task<Message> {
     })
 }
 
-/// Returns fiat converter if the wallet setting is enabled and the cached price matches the setting.
-pub fn fiat_converter_for_wallet(
-    wallet: &Wallet,
-    cache: &Cache,
-) -> Option<view::FiatAmountConverter> {
-    cache
-        .fiat_price
-        .as_ref()
-        .filter(|p| wallet.fiat_price_is_relevant(p))
-        .and_then(|p| p.try_into().ok())
-}
-
 /// Returns the confirmed and unconfirmed balances from `coins`, as well
 /// as:
 /// - the `OutPoint`s of those coins, if any, for which the current
@@ -91,7 +79,7 @@ pub fn fiat_converter_for_wallet(
 ///
 /// The confirmed balance includes the values of any unconfirmed coins
 /// from self.
-fn coins_summary(
+pub fn coins_summary(
     coins: &[Coin],
     tip_height: u32,
     timelock: u16,

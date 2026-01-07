@@ -5,6 +5,7 @@ pub enum Menu {
     Home,
     Active(ActiveSubMenu),
     Vault(VaultSubMenu),
+    Settings(SettingsSubMenu),
 
     #[cfg(feature = "buysell")]
     BuySell,
@@ -14,7 +15,6 @@ pub enum Menu {
     PSBTs,
     Transactions,
     TransactionPreSelected(Txid),
-    Settings,
     SettingsPreSelected(SettingsOption),
     Coins,
     CreateSpendTx,
@@ -42,6 +42,12 @@ pub enum VaultSubMenu {
     PSBTs(Option<Txid>),
     Recovery,
     Settings(Option<SettingsOption>),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SettingsSubMenu {
+    General,
+    About,
 }
 
 /// Pre-selectable settings options.

@@ -23,6 +23,7 @@ use coincubed::{
 };
 
 use crate::app;
+use crate::app::breez::BreezClient;
 use crate::app::cache::DaemonCache;
 use crate::app::settings::{CubeSettings, WalletSettings};
 use crate::backup::Backup;
@@ -65,7 +66,7 @@ pub struct Loader {
     pub backup: Option<Backup>,
     pub wallet_settings: Option<WalletSettings>,
     pub cube_settings: CubeSettings,
-    pub breez_client: Option<std::sync::Arc<crate::app::breez::BreezClient>>,
+    pub breez_client: Option<std::sync::Arc<BreezClient>>,
     step: Step,
 }
 
@@ -93,6 +94,7 @@ pub enum Message {
                 Arc<dyn Daemon + Sync + Send>,
                 Option<Bitcoind>,
                 Option<Backup>,
+                CubeSettings,
             ),
             Error,
         >,
@@ -112,7 +114,7 @@ pub enum Message {
         /* restored_from_backup */ bool,
     ),
     BreezLoaded {
-        breez: std::sync::Arc<crate::app::breez::BreezClient>,
+        breez: std::sync::Arc<BreezClient>,
         cache: Cache,
         wallet: Arc<Wallet>,
         config: app::Config,
@@ -120,6 +122,7 @@ pub enum Message {
         datadir: CoincubeDirectory,
         bitcoind: Option<Bitcoind>,
         restored_from_backup: bool,
+        cube_settings: CubeSettings,
     },
     Started(StartedResult),
     Loaded(Result<(Arc<dyn Daemon + Sync + Send>, GetInfoResult), Error>),
@@ -138,7 +141,7 @@ impl Loader {
         backup: Option<Backup>,
         wallet_settings: Option<WalletSettings>,
         cube_settings: CubeSettings,
-        breez_client: Option<std::sync::Arc<crate::app::breez::BreezClient>>,
+        breez_client: Option<std::sync::Arc<BreezClient>>,
     ) -> (Self, Task<Message>) {
         let task = if let Some(ref wallet) = wallet_settings {
             let socket_path = datadir_path
@@ -198,15 +201,16 @@ impl Loader {
         // load the application directly.
         if daemon.backend().node_type() != Some(NodeType::Bitcoind) || info.block_height > 0 {
             return Task::perform(
-                load_application(
+                load_application(LoadApplicationConfig {
                     wallet_settings,
+                    cube_settings: self.cube_settings.clone(),
                     daemon,
                     info,
-                    self.datadir_path.clone(),
-                    self.network,
-                    self.internal_bitcoind.clone(),
-                    self.backup.clone(),
-                ),
+                    datadir_path: self.datadir_path.clone(),
+                    network: self.network,
+                    internal_bitcoind: self.internal_bitcoind.clone(),
+                    backup: self.backup.clone(),
+                }),
                 Message::Synced,
             );
         }
@@ -302,15 +306,16 @@ impl Loader {
                                 .clone()
                                 .expect("wallet_settings must be Some when syncing");
                             return Task::perform(
-                                load_application(
+                                load_application(LoadApplicationConfig {
                                     wallet_settings,
-                                    daemon.clone(),
+                                    cube_settings: self.cube_settings.clone(),
+                                    daemon: daemon.clone(),
                                     info,
-                                    self.datadir_path.clone(),
-                                    self.network,
-                                    self.internal_bitcoind.clone(),
-                                    self.backup.clone(),
-                                ),
+                                    datadir_path: self.datadir_path.clone(),
+                                    network: self.network,
+                                    internal_bitcoind: self.internal_bitcoind.clone(),
+                                    backup: self.backup.clone(),
+                                }),
                                 Message::Synced,
                             );
                         } else {
@@ -455,14 +460,19 @@ fn get_bitcoind_log(log_path: PathBuf) -> impl Stream<Item = Option<String>> {
     })
 }
 
+pub struct LoadApplicationConfig {
+    pub wallet_settings: WalletSettings,
+    pub cube_settings: CubeSettings,
+    pub daemon: Arc<dyn Daemon + Sync + Send>,
+    pub info: GetInfoResult,
+    pub datadir_path: CoincubeDirectory,
+    pub network: bitcoin::Network,
+    pub internal_bitcoind: Option<Bitcoind>,
+    pub backup: Option<Backup>,
+}
+
 pub async fn load_application(
-    wallet_settings: WalletSettings,
-    daemon: Arc<dyn Daemon + Sync + Send>,
-    info: GetInfoResult,
-    datadir_path: CoincubeDirectory,
-    network: bitcoin::Network,
-    internal_bitcoind: Option<Bitcoind>,
-    backup: Option<Backup>,
+    config: LoadApplicationConfig,
 ) -> Result<
     (
         Arc<Wallet>,
@@ -470,34 +480,47 @@ pub async fn load_application(
         Arc<dyn Daemon + Sync + Send>,
         Option<Bitcoind>,
         Option<Backup>,
+        CubeSettings,
     ),
     Error,
 > {
-    let wallet = Wallet::new(info.descriptors.main)
-        .load_from_settings(wallet_settings)?
-        .load_hotsigners(&datadir_path, network)?;
+    let bitcoin_unit = config.cube_settings.unit_setting.display_unit;
 
-    let coins = coins_to_cache(daemon.clone()).await.map(|res| res.coins)?;
+    let wallet = Wallet::new(config.info.descriptors.main)
+        .load_from_settings(config.wallet_settings)?
+        .load_hotsigners(&config.datadir_path, config.network)?;
+
+    let coins = coins_to_cache(config.daemon.clone())
+        .await
+        .map(|res| res.coins)?;
 
     // Both last poll fields start with the same value.
     let cache = Cache {
-        datadir_path,
-        network: info.network,
-        last_poll_at_startup: info.last_poll_timestamp,
+        datadir_path: config.datadir_path,
+        network: config.info.network,
+        last_poll_at_startup: config.info.last_poll_timestamp,
         daemon_cache: DaemonCache {
-            blockheight: info.block_height,
+            blockheight: config.info.block_height,
             coins,
-            sync_progress: info.sync,
-            last_poll_timestamp: info.last_poll_timestamp,
+            sync_progress: config.info.sync,
+            last_poll_timestamp: config.info.last_poll_timestamp,
             ..Default::default()
         },
         fiat_price: None,
+        bitcoin_unit,
         vault_expanded: false,
         active_expanded: false,
         has_vault: true,
     };
 
-    Ok((Arc::new(wallet), cache, daemon, internal_bitcoind, backup))
+    Ok((
+        Arc::new(wallet),
+        cache,
+        config.daemon,
+        config.internal_bitcoind,
+        config.backup,
+        config.cube_settings,
+    ))
 }
 
 #[derive(Clone, Debug)]

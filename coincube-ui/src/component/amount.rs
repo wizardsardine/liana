@@ -3,13 +3,29 @@ use iced::Color;
 
 use crate::{color, component::text::*, widget::*};
 
+// Re-export for convenience - actual definition is in app crate
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum BitcoinDisplayUnit {
+    #[default]
+    BTC,
+    Sats,
+}
+
 pub trait DisplayAmount {
     fn to_formatted_string(&self) -> String;
+    fn to_formatted_string_with_unit(&self, unit: BitcoinDisplayUnit) -> String;
 }
 
 impl DisplayAmount for Amount {
     fn to_formatted_string(&self) -> String {
         format_f64_as_string(self.to_btc(), " ", 8, true)
+    }
+
+    fn to_formatted_string_with_unit(&self, unit: BitcoinDisplayUnit) -> String {
+        match unit {
+            BitcoinDisplayUnit::BTC => format_f64_as_string(self.to_btc(), " ", 8, true),
+            BitcoinDisplayUnit::Sats => format_u64_as_string(self.to_sat(), " "),
+        }
     }
 }
 
@@ -37,11 +53,56 @@ pub fn amount_with_size_and_colors<'a, T: 'a>(
     color_before: Color,
     color_after: Option<Color>,
 ) -> Row<'a, T> {
-    render_amount(a.to_formatted_string(), size, color_before, color_after)
+    render_amount(
+        a.to_formatted_string(),
+        size,
+        color_before,
+        color_after,
+        BitcoinDisplayUnit::BTC,
+    )
 }
 
 pub fn unconfirmed_amount_with_size<'a, T: 'a>(a: &Amount, size: u32) -> Row<'a, T> {
-    render_unconfirmed_amount(a.to_formatted_string(), size)
+    render_unconfirmed_amount(a.to_formatted_string(), size, BitcoinDisplayUnit::BTC)
+}
+
+/// Amount with default size and colors, respecting display unit preference.
+pub fn amount_with_unit<'a, T: 'a>(a: &Amount, unit: BitcoinDisplayUnit) -> Row<'a, T> {
+    amount_with_size_and_unit(a, P1_SIZE, unit)
+}
+
+/// Amount with given size, respecting display unit preference.
+pub fn amount_with_size_and_unit<'a, T: 'a>(
+    a: &Amount,
+    size: u32,
+    unit: BitcoinDisplayUnit,
+) -> Row<'a, T> {
+    amount_with_size_colors_and_unit(a, size, color::GREY_3, None, unit)
+}
+
+/// Amount with given size, colors, and display unit.
+pub fn amount_with_size_colors_and_unit<'a, T: 'a>(
+    a: &Amount,
+    size: u32,
+    color_before: Color,
+    color_after: Option<Color>,
+    unit: BitcoinDisplayUnit,
+) -> Row<'a, T> {
+    render_amount(
+        a.to_formatted_string_with_unit(unit),
+        size,
+        color_before,
+        color_after,
+        unit,
+    )
+}
+
+pub fn unconfirmed_amount_with_size_and_unit<'a, T: 'a>(
+    a: &Amount,
+    size: u32,
+    unit: BitcoinDisplayUnit,
+) -> Row<'a, T> {
+    render_unconfirmed_amount(a.to_formatted_string_with_unit(unit), size, unit)
 }
 
 //
@@ -79,6 +140,12 @@ pub fn format_f64_as_string(
     } else {
         integer
     }
+}
+
+/// Format a u64 (sats) as a string with space separators
+pub fn format_u64_as_string(value: u64, sep: &str) -> String {
+    let s = value.to_string();
+    format_amount_number_part(&s, sep)
 }
 
 // Format a "part" of a number string with spaces to fit display requirements.
@@ -119,12 +186,20 @@ fn render_amount<'a, T: 'a>(
     size: u32,
     color_before: Color,
     color_after: Option<Color>,
+    unit: BitcoinDisplayUnit,
 ) -> Row<'a, T> {
     let spacing = if size > P1_SIZE { 10 } else { 5 };
+    let unit_text = match unit {
+        BitcoinDisplayUnit::BTC => "BTC",
+        BitcoinDisplayUnit::Sats => "SATS",
+    };
 
-    let (before, after) = match split_at_first_non_zero(amount) {
+    let (before, after) = match split_at_first_non_zero(amount.clone()) {
         Some((b, a)) => (b, a),
-        None => (String::from("0.00 000 000"), String::from("")),
+        None => match unit {
+            BitcoinDisplayUnit::BTC => (String::from("0.00 000 000"), String::from("")),
+            BitcoinDisplayUnit::Sats => (String::from("0"), String::from("")),
+        },
     };
 
     let mut child_after = text(after).size(size).bold();
@@ -137,19 +212,27 @@ fn render_amount<'a, T: 'a>(
 
     Row::with_children(vec![
         row.into(),
-        text("BTC").size(size).color(color_before).into(),
+        text(unit_text).size(size).color(color_before).into(),
     ])
     .spacing(spacing)
     .align_y(iced::Alignment::Center)
 }
 
 // Build the rendering elements for displaying a Bitcoin amount.
-fn render_unconfirmed_amount<'a, T: 'a>(amount: String, size: u32) -> Row<'a, T> {
+fn render_unconfirmed_amount<'a, T: 'a>(
+    amount: String,
+    size: u32,
+    unit: BitcoinDisplayUnit,
+) -> Row<'a, T> {
     let spacing = if size > P1_SIZE { 10 } else { 5 };
+    let unit_text = match unit {
+        BitcoinDisplayUnit::BTC => "BTC",
+        BitcoinDisplayUnit::Sats => "SATS",
+    };
 
     Row::with_children(vec![
         text(amount).size(size).color(color::GREY_3).into(),
-        text("BTC").size(size).color(color::GREY_3).into(),
+        text(unit_text).size(size).color(color::GREY_3).into(),
     ])
     .spacing(spacing)
     .align_y(iced::Alignment::Center)

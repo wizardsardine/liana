@@ -13,7 +13,6 @@ use crate::{
     app::menu::Menu,
     app::message::Message,
     app::state::coins_summary,
-    app::state::fiat_converter_for_wallet,
     app::state::State,
     app::view,
     app::wallet::{sync_status, SyncStatus, Wallet},
@@ -90,7 +89,8 @@ impl VaultOverview {
 
 impl State for VaultOverview {
     fn view<'a>(&'a self, menu: &'a Menu, cache: &'a Cache) -> Element<'a, view::Message> {
-        let converter = fiat_converter_for_wallet(&self.wallet, cache);
+        let converter: Option<view::FiatAmountConverter> =
+            cache.fiat_price.as_ref().and_then(|p| p.try_into().ok());
         if let Some((tx, output_index)) = &self.selected_event {
             view::vault::overview::payment_view(
                 cache,
@@ -115,6 +115,7 @@ impl State for VaultOverview {
                     self.processing,
                     &self.sync_status,
                     self.show_rescan_warning,
+                    cache.bitcoin_unit.into(),
                 ),
             )
         }

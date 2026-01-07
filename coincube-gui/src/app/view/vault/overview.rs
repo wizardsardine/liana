@@ -75,6 +75,7 @@ pub fn vault_overview_view<'a>(
     processing: bool,
     sync_status: &SyncStatus,
     show_rescan_warning: bool,
+    bitcoin_unit: BitcoinDisplayUnit,
 ) -> Element<'a, Message> {
     let fiat_balance = fiat_converter.as_ref().map(|c| c.convert(*balance));
     let fiat_unconfirmed = fiat_converter.map(|c| c.convert(*unconfirmed_balance));
@@ -84,28 +85,27 @@ pub fn vault_overview_view<'a>(
             Column::new()
                 .push(
                     if sync_status.is_synced() {
-                        Row::new()
-                            .align_y(Alignment::Center)
-                            .push(amount_with_size(balance, H1_SIZE))
-                            .push_maybe(fiat_balance.map(|fiat| {
-                                Row::new()
-                                    .align_y(Alignment::Center)
-                                    .push(Space::new().width(20))
-                                    .push(fiat.to_text().size(H2_SIZE).color(color::GREY_2))
-                            }))
+                        Column::new()
+                            .spacing(5)
+                            .push(amount_with_size_and_unit(balance, H1_SIZE, bitcoin_unit))
+                            .push_maybe(
+                                fiat_balance
+                                    .map(|fiat| fiat.to_text().size(P2_SIZE).color(color::GREY_2)),
+                            )
                     } else {
-                        Row::new().push(spinner::Carousel::new(
+                        Column::new().push(Row::new().push(spinner::Carousel::new(
                             Duration::from_millis(1000),
                             vec![
-                                amount_with_size(balance, H1_SIZE),
-                                amount_with_size_and_colors(
+                                amount_with_size_and_unit(balance, H1_SIZE, bitcoin_unit),
+                                amount_with_size_colors_and_unit(
                                     balance,
                                     H1_SIZE,
                                     color::GREY_4,
                                     Some(color::GREY_2),
+                                    bitcoin_unit,
                                 ),
                             ],
-                        ))
+                        )))
                     }
                     .wrap(),
                 )
@@ -140,7 +140,11 @@ pub fn vault_overview_view<'a>(
                                 .spacing(10)
                                 .align_y(Alignment::Center)
                                 .push(text("+").size(H3_SIZE).style(theme::text::secondary))
-                                .push(unconfirmed_amount_with_size(unconfirmed_balance, H3_SIZE))
+                                .push(unconfirmed_amount_with_size_and_unit(
+                                    unconfirmed_balance,
+                                    H3_SIZE,
+                                    bitcoin_unit,
+                                ))
                                 .push(
                                     text("unconfirmed")
                                         .size(H3_SIZE)
@@ -212,7 +216,7 @@ pub fn vault_overview_view<'a>(
         .push(
             Column::new()
                 .spacing(10)
-                .push(h4_bold("Last payments"))
+                .push(h4_bold("Last transactions"))
                 .push(events.iter().fold(Column::new().spacing(10), |col, event| {
                     if event.kind != PaymentKind::SendToSelf {
                         col.push(event_list_view(event))

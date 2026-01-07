@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::time::Duration;
 
 use iced::{
     alignment,
@@ -12,8 +13,10 @@ use coincube_core::{
 };
 
 use coincube_ui::{
-    component::{amount::*, badge, button, form, text::*},
-    icon, theme,
+    color,
+    component::{amount::*, badge, button, form, spinner, text::*},
+    icon::{self},
+    theme,
     widget::*,
 };
 
@@ -23,6 +26,7 @@ use crate::{
         error::Error,
         menu::Menu,
         view::{dashboard, message::*, vault::coins, vault::psbt, FiatAmountConverter},
+        wallet::SyncStatus,
     },
     daemon::model::{remaining_sequence, Coin, SpendTx},
 };
@@ -137,6 +141,8 @@ pub fn spend_view<'a>(
 
 #[allow(clippy::too_many_arguments)]
 pub fn create_spend_tx<'a>(
+    balance: &'a Amount,
+    unconfirmed_balance: &'a Amount,
     menu: &'a Menu,
     cache: &'a Cache,
     fiat_converter: Option<&FiatAmountConverter>,
@@ -151,35 +157,137 @@ pub fn create_spend_tx<'a>(
     amount_left: Option<&Amount>,
     feerate: &form::Value<String>,
     fee_amount: Option<&Amount>,
+    sync_status: &SyncStatus,
     error: Option<&Error>,
     is_first_step: bool,
     loading_fee_estimate: Option<usize>,
+    bitcoin_unit: BitcoinDisplayUnit,
 ) -> Element<'a, Message> {
     let is_self_send = recipients.is_empty();
+    let fiat_balance = fiat_converter.as_ref().map(|c| c.convert(*balance));
+    let fiat_unconfirmed = fiat_converter.map(|c| c.convert(*unconfirmed_balance));
     dashboard(
         menu,
         cache,
         error,
         Column::new()
-            .push(h3(if recovery_timelock.is_some() {
-                "Recovery"
-            } else if is_self_send {
-                "Self-transfer"
-            } else {
-                "Send"
-            }))
-            .push_maybe(if recipients.len() > 1 {
-                Some(
-                    form::Form::new("Batch label", batch_label, |s| {
-                        Message::CreateSpend(CreateSpendMessage::BatchLabelEdited(s))
+            .push(h3("Balance"))
+            .push(
+                Column::new()
+                    .push(
+                        if sync_status.is_synced() {
+                            Column::new()
+                                .spacing(5)
+                                .push(amount_with_size_and_unit(balance, H1_SIZE, bitcoin_unit))
+                                .push_maybe(
+                                    fiat_balance.map(|fiat| {
+                                        fiat.to_text().size(P2_SIZE).color(color::GREY_2)
+                                    }),
+                                )
+                        } else {
+                            Column::new().push(Row::new().push(spinner::Carousel::new(
+                                Duration::from_millis(1000),
+                                vec![
+                                    amount_with_size_and_unit(balance, H1_SIZE, bitcoin_unit),
+                                    amount_with_size_colors_and_unit(
+                                        balance,
+                                        H1_SIZE,
+                                        color::GREY_4,
+                                        Some(color::GREY_2),
+                                        bitcoin_unit,
+                                    ),
+                                ],
+                            )))
+                        }
+                        .wrap(),
+                    )
+                    .push_maybe(if !sync_status.is_synced() {
+                        Some(
+                            Row::new()
+                                .push(
+                                    match sync_status {
+                                        SyncStatus::BlockchainSync(progress) => text(format!(
+                                            "Syncing blockchain ({:.2}%)",
+                                            100.0 * *progress
+                                        )),
+                                        SyncStatus::WalletFullScan => text("Syncing"),
+                                        _ => text("Checking for new transactions"),
+                                    }
+                                    .style(theme::text::secondary),
+                                )
+                                .push(spinner::typing_text_carousel(
+                                    "...",
+                                    true,
+                                    Duration::from_millis(2000),
+                                    |content| text(content).style(theme::text::secondary),
+                                )),
+                        )
+                    } else {
+                        None
                     })
-                    .warning("Invalid label length, cannot be superior to 100")
-                    .size(30)
-                    .padding(10),
-                )
-            } else {
-                None
-            })
+                    .push(
+                        Column::new()
+                            .spacing(10)
+                            .push(h3(if recovery_timelock.is_some() {
+                                "Recovery"
+                            } else if is_self_send {
+                                "Self-transfer"
+                            } else {
+                                "Send"
+                            }))
+                            .push_maybe(if recipients.len() > 1 {
+                                Some(
+                                    form::Form::new("Batch label", batch_label, |s| {
+                                        Message::CreateSpend(CreateSpendMessage::BatchLabelEdited(
+                                            s,
+                                        ))
+                                    })
+                                    .warning("Invalid label length, cannot be superior to 100")
+                                    .size(30)
+                                    .padding(10),
+                                )
+                            } else {
+                                None
+                            })
+                            .push_maybe(
+                                if unconfirmed_balance.to_sat() != 0 && sync_status.is_synced() {
+                                    Some(
+                                        Row::new()
+                                            .spacing(10)
+                                            .align_y(Alignment::Center)
+                                            .push(
+                                                text("+")
+                                                    .size(H3_SIZE)
+                                                    .style(theme::text::secondary),
+                                            )
+                                            .push(unconfirmed_amount_with_size_and_unit(
+                                                unconfirmed_balance,
+                                                H3_SIZE,
+                                                bitcoin_unit,
+                                            ))
+                                            .push(
+                                                text("unconfirmed")
+                                                    .size(H3_SIZE)
+                                                    .style(theme::text::secondary),
+                                            )
+                                            .push_maybe(fiat_unconfirmed.map(|fiat| {
+                                                Row::new()
+                                                    .align_y(Alignment::Center)
+                                                    .push(Space::new().width(10)) // total spacing = 20 including row spacing
+                                                    .push(
+                                                        fiat.to_text()
+                                                            .size(H4_SIZE)
+                                                            .color(color::GREY_3),
+                                                    )
+                                            }))
+                                            .wrap(),
+                                    )
+                                } else {
+                                    None
+                                },
+                            ),
+                    ),
+            )
             .push(
                 Column::new()
                     .push(Column::with_children(recipients).spacing(10))
