@@ -29,7 +29,7 @@
     - [x] Rename "Email" to "Email Address of the Key Manager"
     - [x] Add tooltip to "Key Type" with descriptions for each type
   - [ ] 1.8.3 Key Information Screen (Set Keys)
-    - [ ] Change "Missing" badge text to "Not Set"
+    - [x] Change "Missing" badge text to "Not Set"
     - [ ] Rename screen title from "Add Key Information" to "Set Keys"
     - [ ] Update breadcrumb from "Key Information" to "Set Keys"
     - [ ] Update intro text with hardware device recommendation

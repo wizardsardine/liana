@@ -83,7 +83,7 @@ fn xpub_status_badge(has_xpub: bool) -> Element<'static, Msg> {
         .into()
     } else {
         Container::new(
-            Container::new(text::caption("⚠ Missing"))
+            Container::new(text::caption("⚠ Not Set"))
                 .padding([4, 12])
                 .style(liana_ui::theme::pill::warning)
                 .width(Length::Fill)
