@@ -159,18 +159,7 @@ pub fn xpub_view(state: &State) -> Element<'_, Msg> {
         .unwrap_or_else(|| "Wallet".to_string());
     let breadcrumb = vec![org_name, wallet_name.clone(), "Set Keys".to_string()];
 
-    // Fixed header content
-    let header_content = Column::new()
-        .spacing(10)
-        .align_x(Alignment::Center)
-        .padding(20)
-        .push(text::h2(format!("{} - Set Keys", wallet_name)))
-        .push(Space::with_height(10))
-        .push(text::p1_regular(
-            "Select a key to complete its setup. You can connect a hardware device (recommended) or manually add an extended public key (xpub).",
-        ));
-
-    // Filter keys based on role
+    // Filter keys based on role (needed before header to determine waiting state)
     let current_user_email_lower = current_user_email.to_lowercase();
     let filtered_keys: Vec<(u8, &liana_connect::Key)> = state
         .app
@@ -186,6 +175,45 @@ pub fn xpub_view(state: &State) -> Element<'_, Msg> {
         })
         .map(|(id, key)| (*id, key))
         .collect();
+
+    // Check if all user's keys are already set (for waiting state)
+    let all_keys_set =
+        !filtered_keys.is_empty() && filtered_keys.iter().all(|(_, key)| key.xpub.is_some());
+
+    // Fixed header content - show waiting message if all keys are set
+    let instruction: Element<'_, Msg> = if all_keys_set {
+        let keys_set_msg = if filtered_keys.len() == 1 {
+            "Your key is set."
+        } else {
+            "Your keys are set."
+        };
+        Row::new()
+            .spacing(10)
+            .align_y(Alignment::Center)
+            .push(icon::clock_icon())
+            .push(
+                Column::new()
+                    .spacing(5)
+                    .push(text::p1_bold(keys_set_msg))
+                    .push(text::p1_regular(
+                        "Once the other participants complete their key setup, you'll be able to access the wallet.",
+                    )),
+            )
+            .into()
+    } else {
+        text::p1_regular(
+            "Select a key to complete its setup. You can connect a hardware device (recommended) or manually add an extended public key (xpub).",
+        )
+        .into()
+    };
+
+    let header_content = Column::new()
+        .spacing(10)
+        .align_x(Alignment::Center)
+        .padding(20)
+        .push(text::h2(format!("{} - Set Keys", wallet_name)))
+        .push(Space::with_height(10))
+        .push(instruction);
 
     // Build scrollable key list
     let mut list_content = Column::new()
