@@ -2,6 +2,7 @@ use std::convert::TryInto;
 use std::sync::Arc;
 
 use breez_sdk_liquid::model::PaymentDetails;
+use breez_sdk_liquid::prelude::Payment;
 use coincube_core::miniscript::bitcoin::Amount;
 use coincube_ui::widget::*;
 use iced::Task;
@@ -18,6 +19,8 @@ pub struct ActiveOverview {
     breez_client: Arc<BreezClient>,
     btc_balance: Amount,
     recent_transaction: Vec<view::active::RecentTransaction>,
+    recent_payments: Vec<Payment>,
+    selected_payment: Option<Payment>,
     error: Option<String>,
 }
 
@@ -27,6 +30,8 @@ impl ActiveOverview {
             breez_client,
             btc_balance: Amount::from_sat(0),
             recent_transaction: Vec::new(),
+            recent_payments: Vec::new(),
+            selected_payment: None,
             error: None,
         }
     }
@@ -81,16 +86,29 @@ impl State for ActiveOverview {
     fn view<'a>(&'a self, menu: &'a Menu, cache: &'a Cache) -> Element<'a, view::Message> {
         let fiat_converter = cache.fiat_price.as_ref().and_then(|p| p.try_into().ok());
 
-        let send_view = view::active::active_overview_view(
-            self.btc_balance,
-            fiat_converter,
-            &self.recent_transaction,
-            self.error.as_deref(),
-            cache.bitcoin_unit.into(),
-        )
-        .map(view::Message::ActiveOverview);
+        if let Some(payment) = &self.selected_payment {
+            view::dashboard(
+                menu,
+                cache,
+                None,
+                view::active::transaction_detail_view(
+                    payment,
+                    fiat_converter,
+                    cache.bitcoin_unit.into(),
+                ),
+            )
+        } else {
+            let send_view = view::active::active_overview_view(
+                self.btc_balance,
+                fiat_converter,
+                &self.recent_transaction,
+                self.error.as_deref(),
+                cache.bitcoin_unit.into(),
+            )
+            .map(view::Message::ActiveOverview);
 
-        view::dashboard(menu, cache, None, send_view)
+            view::dashboard(menu, cache, None, send_view)
+        }
     }
 
     fn update(
@@ -99,7 +117,7 @@ impl State for ActiveOverview {
         cache: &Cache,
         message: Message,
     ) -> Task<Message> {
-        if let Message::View(view::Message::ActiveOverview(msg)) = message {
+        if let Message::View(view::Message::ActiveOverview(ref msg)) = message {
             match msg {
                 view::ActiveOverviewMessage::Send => {
                     return redirect(Menu::Active(ActiveSubMenu::Send));
@@ -110,11 +128,17 @@ impl State for ActiveOverview {
                 view::ActiveOverviewMessage::History => {
                     return redirect(Menu::Active(ActiveSubMenu::Transactions(None)));
                 }
+                view::ActiveOverviewMessage::SelectTransaction(idx) => {
+                    if *idx < self.recent_payments.len() {
+                        self.selected_payment = self.recent_payments.get(*idx).cloned();
+                    }
+                }
                 view::ActiveOverviewMessage::DataLoaded {
                     balance,
                     recent_payment,
                 } => {
-                    self.btc_balance = balance;
+                    self.btc_balance = *balance;
+                    self.recent_payments = recent_payment.clone();
 
                     if !recent_payment.is_empty() {
                         let fiat_converter: Option<view::FiatAmountConverter> =
@@ -169,15 +193,21 @@ impl State for ActiveOverview {
                             })
                             .collect();
                         self.recent_transaction = txns;
+                    } else {
+                        self.recent_transaction = Vec::new();
                     }
                 }
                 view::ActiveOverviewMessage::Error(err) => {
-                    self.error = Some(err);
+                    self.error = Some(err.to_string());
                 }
                 view::ActiveOverviewMessage::RefreshRequested => {
                     return self.load_balance();
                 }
             }
+        }
+        if let Message::View(view::Message::Close) | Message::View(view::Message::Reload) = message
+        {
+            self.selected_payment = None;
         }
         Task::none()
     }
@@ -191,6 +221,7 @@ impl State for ActiveOverview {
         _daemon: Option<Arc<dyn Daemon + Sync + Send>>,
         _wallet: Option<Arc<Wallet>>,
     ) -> Task<Message> {
+        self.selected_payment = None;
         self.load_balance()
     }
 }

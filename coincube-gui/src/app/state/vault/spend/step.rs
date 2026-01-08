@@ -591,7 +591,7 @@ impl Step for DefineSpend {
                 );
 
                 // Recalculate balance from currency cache
-                let (balance, unconfirmed_balance, _, _) =  crate::app::state::coins_summary(
+                let (balance, unconfirmed_balance, _, _) = crate::app::state::coins_summary(
                     cache.coins(),
                     cache.blockheight().max(0) as u32,
                     self.wallet.main_descriptor.first_timelock_value(),
@@ -915,7 +915,7 @@ impl Step for DefineSpend {
             self.warning.as_ref(),
             self.is_first_step,
             self.loading_fee_estimate,
-            self.bitcoin_unit,
+            cache.bitcoin_unit.into(),
         )
     }
 

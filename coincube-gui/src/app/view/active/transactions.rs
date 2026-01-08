@@ -2,7 +2,12 @@ use breez_sdk_liquid::model::{PaymentDetails, PaymentState};
 use breez_sdk_liquid::prelude::{Payment, PaymentType};
 use coincube_core::miniscript::bitcoin::Amount;
 use coincube_ui::{
-    component::{amount::DisplayAmount, badge, button, card, text::*},
+    component::{
+        amount::DisplayAmount,
+        button, card,
+        text::*,
+        transaction::{TransactionDirection, TransactionListItem, TransactionType},
+    },
     icon, theme,
     widget::*,
 };
@@ -96,9 +101,6 @@ fn transaction_row<'a>(
 ) -> Element<'a, Message> {
     let is_receive = matches!(payment.payment_type, PaymentType::Receive);
 
-    // Format timestamp
-    let time_text = format_time_ago(payment.timestamp.into());
-
     // Extract description from payment details
     let description = match &payment.details {
         PaymentDetails::Lightning {
@@ -121,66 +123,35 @@ fn transaction_row<'a>(
     };
 
     let btc_amount = Amount::from_sat(payment.amount_sat);
+    let time_ago = format_time_ago(payment.timestamp.into());
 
-    Container::new(
-        Button::new(
-            Row::new()
-                .push(
-                    Row::new()
-                        .push(if is_receive {
-                            badge::receive()
-                        } else {
-                            badge::spend()
-                        })
-                        .push(
-                            Column::new()
-                                .push(p1_regular(description))
-                                .push(text(time_text).style(theme::text::secondary).small()),
-                        )
-                        .spacing(10)
-                        .align_y(Alignment::Center)
-                        .width(Length::Fill),
-                )
-                .push(
-                    Column::new()
-                        .spacing(5)
-                        .align_x(Alignment::End)
-                        .push(if is_receive {
-                            Row::new()
-                                .spacing(5)
-                                .push(text("+"))
-                                .push(coincube_ui::component::amount::amount_with_unit(
-                                    &btc_amount,
-                                    bitcoin_unit,
-                                ))
-                                .align_y(Alignment::Center)
-                        } else {
-                            Row::new()
-                                .spacing(5)
-                                .push(text("-"))
-                                .push(coincube_ui::component::amount::amount_with_unit(
-                                    &btc_amount,
-                                    bitcoin_unit,
-                                ))
-                                .align_y(Alignment::Center)
-                        })
-                        .push_maybe(fiat_converter.map(|converter| {
-                            let fiat = converter.convert(btc_amount);
-                            fiat.to_text().size(14).style(theme::text::secondary)
-                        })),
-                )
-                .align_y(Alignment::Center)
-                .spacing(20),
-        )
-        .padding(10)
-        .on_press(Message::Select(i))
-        .style(theme::button::transparent_border),
-    )
-    .style(theme::card::simple)
-    .into()
+    let direction = if is_receive {
+        TransactionDirection::Incoming
+    } else {
+        TransactionDirection::Outgoing
+    };
+
+    let tx_type = match &payment.details {
+        PaymentDetails::Lightning { .. } => TransactionType::Lightning,
+        PaymentDetails::Liquid { .. } | PaymentDetails::Bitcoin { .. } => TransactionType::Bitcoin,
+    };
+
+    let mut item = TransactionListItem::new(direction, &btc_amount, bitcoin_unit)
+        .with_label(description.to_string())
+        .with_time_ago(time_ago)
+        .with_type(tx_type);
+
+    if let Some(fiat_amount) = fiat_converter.map(|converter| {
+        let fiat = converter.convert(btc_amount);
+        format!("~{} {}", fiat.to_rounded_string(), fiat.currency())
+    }) {
+        item = item.with_fiat_amount(fiat_amount);
+    }
+
+    item.view(Message::Select(i)).into()
 }
 
-pub fn payment_detail_view<'a>(
+pub fn transaction_detail_view<'a>(
     payment: &'a Payment,
     fiat_converter: Option<FiatAmountConverter>,
     bitcoin_unit: coincube_ui::component::amount::BitcoinDisplayUnit,

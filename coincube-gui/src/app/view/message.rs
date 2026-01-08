@@ -228,6 +228,7 @@ pub enum ActiveOverviewMessage {
     Send,
     Receive,
     History,
+    SelectTransaction(usize),
     DataLoaded {
         balance: Amount,
         recent_payment: Vec<Payment>,
@@ -242,6 +243,7 @@ pub enum ActiveSendMessage {
     InputValidated(Option<InputType>),
     Send,
     History,
+    SelectTransaction(usize),
     DataLoaded {
         balance: Amount,
         recent_payment: Vec<Payment>,

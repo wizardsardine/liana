@@ -81,12 +81,13 @@ impl VaultTransactionsPanel {
 impl State for VaultTransactionsPanel {
     fn view<'a>(&'a self, menu: &'a Menu, cache: &'a Cache) -> Element<'a, view::Message> {
         if let Some(tx) = self.selected_tx.as_ref() {
-            let content = view::vault::transactions::tx_view(
+            let content = view::vault::transactions::transaction_detail_view(
                 menu,
                 cache,
                 tx,
                 self.labels_edited.cache(),
                 self.warning.as_ref(),
+                cache.bitcoin_unit.into(),
             );
             match &self.modal {
                 VaultTransactionsModal::CreateRbf(rbf) => rbf.view(content),

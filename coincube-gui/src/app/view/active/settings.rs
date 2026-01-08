@@ -85,7 +85,7 @@ fn main_menu_view(backed_up: bool, mfa: bool) -> Element<'static, Message> {
     let mfa = settings_section(
         "Two-factor authentication method",
         "Manage your two-factor authentication settings to enhance account security.",
-        icon::phone(),
+        icon::phone_icon(),
         icon::arrow_right(),
         if !mfa {
             CapsuleState::Danger
@@ -134,7 +134,7 @@ fn backup_intro_view(checked: bool) -> Element<'static, Message> {
                 .align_y(Alignment::Center)
                 .push(Space::new().width(Length::Fill))
                 .push(
-                    icon::file_earmark().size(140).color(primary_color)
+                    icon::file_earmark_icon().size(140).color(primary_color)
                 )
                 .push(Space::new().width(Length::Fill))
         )
@@ -473,7 +473,7 @@ fn completed_view() -> Element<'static, Message> {
                 .align_y(Alignment::Center)
                 .push(Space::new().width(Length::Fill))
                 .push(
-                    icon::check_circle().size(140).color(primary_color)
+                    icon::check_circle_icon().size(140).color(primary_color)
                 )
                 .push(Space::new().width(Length::Fill))
         )

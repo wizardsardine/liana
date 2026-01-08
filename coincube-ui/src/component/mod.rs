@@ -3,7 +3,6 @@ pub mod badge;
 pub mod button;
 pub mod card;
 pub mod collapse;
-pub mod event;
 pub mod form;
 pub mod hw;
 pub mod modal;
@@ -12,6 +11,7 @@ pub mod spinner;
 pub mod text;
 pub mod toast;
 pub mod tooltip;
+pub mod transaction;
 
 use bitcoin::Network;
 pub use tooltip::tooltip;

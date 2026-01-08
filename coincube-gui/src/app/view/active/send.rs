@@ -5,7 +5,12 @@ use breez_sdk_liquid::{
 use coincube_core::miniscript::bitcoin::Amount;
 use coincube_ui::{
     color,
-    component::{button, form, text::*},
+    component::{
+        amount::*,
+        button, form,
+        text::*,
+        transaction::{TransactionDirection, TransactionListItem, TransactionType},
+    },
     icon, theme,
     widget::*,
 };
@@ -50,6 +55,7 @@ pub fn active_send_with_flow<'a>(config: ActiveSendFlowConfig<'a>) -> Element<'a
                 config.recent_transaction,
                 config.input,
                 config.input_type,
+                config.cache.bitcoin_unit.into(),
             )
             .map(Message::ActiveSend);
 
@@ -139,142 +145,25 @@ pub fn active_send_view<'a>(
     recent_transaction: &Vec<RecentTransaction>,
     input: &'a form::Value<String>,
     input_type: &'a Option<InputType>,
+    bitcoin_unit: BitcoinDisplayUnit,
 ) -> Element<'a, ActiveSendMessage> {
-    let mut content = Column::new()
-        .spacing(10)
-        .width(Length::Fill)
-        .align_x(Alignment::Center)
-        .padding(40);
+    let mut content = Column::new().spacing(20);
 
-    let mut balance_section = Column::new().spacing(10).align_x(Alignment::Center).push(
-        Row::new()
-            .spacing(10)
-            .align_y(Alignment::Center)
-            .push(
-                text(format!("{:.8}", btc_balance.to_btc()))
-                    .size(48)
-                    .bold()
-                    .color(color::ORANGE),
-            )
-            .push(text("BTC").size(32).color(color::ORANGE)),
+    // Balance section - left justified
+    let fiat_balance = fiat_converter.as_ref().map(|c| c.convert(btc_balance));
+
+    content = content.push(h3("Balance")).push(
+        Column::new()
+            .spacing(5)
+            .push(amount_with_size_and_unit(
+                &btc_balance,
+                H1_SIZE,
+                bitcoin_unit,
+            ))
+            .push_maybe(fiat_balance.map(|fiat| fiat.to_text().size(P2_SIZE).color(color::GREY_2))),
     );
 
-    if let Some(converter) = &fiat_converter {
-        let fiat_amount = converter.convert(btc_balance);
-        balance_section = balance_section.push(fiat_amount.to_text().size(18).color(color::GREY_3));
-    }
-
-    content = content.push(balance_section);
-
-    if !recent_transaction.is_empty() {
-        for tx in recent_transaction {
-            let row = Row::new()
-                .spacing(15)
-                .align_y(Alignment::Start)
-                .push(if let PaymentDetails::Bitcoin { .. } = tx.details {
-                    Container::new(icon::bitcoin_icon().size(24).color(color::ORANGE)).padding(10)
-                } else {
-                    Container::new(icon::lightning_icon().size(24).color(color::ORANGE)).padding(10)
-                })
-                .push(
-                    Column::new()
-                        .spacing(5)
-                        .push(p1_bold(&tx.description).bold())
-                        .push(
-                            Row::new()
-                                .push_maybe(if !matches!(tx.status, PaymentState::Pending) {
-                                    Some(p2_regular(&tx.time_ago).style(theme::text::secondary))
-                                } else {
-                                    None
-                                })
-                                .push_maybe({
-                                    if matches!(tx.status, PaymentState::Pending) {
-                                        let (bg, fg) = (color::GREY_3, color::BLACK);
-                                        Some(
-                                            Container::new(
-                                                Row::new()
-                                                    .push(icon::warning_icon().size(14).style(
-                                                        move |_| iced::widget::text::Style {
-                                                            color: Some(fg),
-                                                        },
-                                                    ))
-                                                    .push(text("Pending").bold().size(14).style(
-                                                        move |_| iced::widget::text::Style {
-                                                            color: Some(fg),
-                                                        },
-                                                    ))
-                                                    .spacing(4),
-                                            )
-                                            .padding([2, 8])
-                                            .style(
-                                                move |_| iced::widget::container::Style {
-                                                    background: Some(iced::Background::Color(bg)),
-                                                    border: iced::Border {
-                                                        radius: 12.0.into(),
-                                                        ..Default::default()
-                                                    },
-                                                    ..Default::default()
-                                                },
-                                            ),
-                                        )
-                                    } else {
-                                        None
-                                    }
-                                })
-                                .spacing(8),
-                        ),
-                )
-                .push(iced::widget::Space::new().width(Length::Fill))
-                .push(
-                    Column::new()
-                        .spacing(5)
-                        .align_x(Alignment::End)
-                        .push(
-                            text(format!("{} {:.8} BTC", tx.sign, tx.amount.to_btc()))
-                                .size(16)
-                                .color(if tx.is_incoming {
-                                    color::GREEN
-                                } else {
-                                    color::RED
-                                }),
-                        )
-                        .push(if let Some(fiat_amount) = &tx.fiat_amount {
-                            text(format!(
-                                "about {} {}",
-                                fiat_amount.to_rounded_string(),
-                                fiat_amount.currency()
-                            ))
-                            .size(14)
-                            .color(color::GREY_3)
-                        } else {
-                            text("").size(12)
-                        }),
-                );
-            let tx = Container::new(row)
-                .padding(20)
-                .style(theme::card::simple)
-                .width(Length::Fill)
-                .max_width(800);
-            content = content.push(tx);
-            content = content.push(Space::new().width(Length::Fill).height(5));
-        }
-    }
-
-    let history_button = button::transparent(Some(icon::history_icon()), "History")
-        .on_press(ActiveSendMessage::History)
-        .width(Length::Fixed(150.0));
-
-    content = content
-        .push(iced::widget::Space::new().height(Length::Fixed(10.0)))
-        .push(
-            Container::new(history_button)
-                .width(Length::Fill)
-                .align_x(Alignment::Center),
-        );
-
-    content = content.push(iced::widget::Space::new().height(Length::Fixed(20.0)));
-
-    // Input Section
+    // Input Section - centered
     let input_section = Column::new()
         .spacing(20)
         .width(Length::Fill)
@@ -329,6 +218,79 @@ pub fn active_send_view<'a>(
         );
 
     content = content.push(input_section);
+
+    // Last transactions section - left justified, after input
+    content = content.push(Column::new().spacing(10).push(h4_bold("Last transactions")));
+
+    if !recent_transaction.is_empty() {
+        for (idx, tx) in recent_transaction.iter().enumerate() {
+            let direction = if tx.is_incoming {
+                TransactionDirection::Incoming
+            } else {
+                TransactionDirection::Outgoing
+            };
+
+            let tx_type = if let PaymentDetails::Bitcoin { .. } = tx.details {
+                TransactionType::Bitcoin
+            } else {
+                TransactionType::Lightning
+            };
+
+            let fiat_str = tx
+                .fiat_amount
+                .as_ref()
+                .map(|fiat| format!("~{} {}", fiat.to_rounded_string(), fiat.currency()));
+
+            let mut item = TransactionListItem::new(direction, &tx.amount, bitcoin_unit)
+                .with_type(tx_type)
+                .with_label(tx.description.clone())
+                .with_time_ago(tx.time_ago.clone());
+
+            if matches!(tx.status, PaymentState::Pending) {
+                let (bg, fg) = (color::GREY_3, color::BLACK);
+                let pending_badge = Container::new(
+                    Row::new()
+                        .push(
+                            icon::warning_icon()
+                                .size(14)
+                                .style(move |_| iced::widget::text::Style { color: Some(fg) }),
+                        )
+                        .push(
+                            text("Pending")
+                                .bold()
+                                .size(14)
+                                .style(move |_| iced::widget::text::Style { color: Some(fg) }),
+                        )
+                        .spacing(4),
+                )
+                .padding([2, 8])
+                .style(move |_| iced::widget::container::Style {
+                    background: Some(iced::Background::Color(bg)),
+                    border: iced::Border {
+                        radius: 12.0.into(),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                });
+                item = item.with_custom_status(pending_badge.into());
+            }
+
+            if let Some(fiat) = fiat_str {
+                item = item.with_fiat_amount(fiat);
+            }
+
+            content = content.push(item.view(ActiveSendMessage::SelectTransaction(idx)));
+        }
+    }
+
+    // History button - left justified
+    let history_button = button::transparent(Some(icon::history_icon()), "Transaction History")
+        .on_press(ActiveSendMessage::History)
+        .width(Length::Fixed(150.0));
+
+    content = content
+        .push(iced::widget::Space::new().height(Length::Fixed(10.0)))
+        .push(history_button);
 
     content.into()
 }
@@ -840,7 +802,7 @@ pub fn sent_page<'a>(amount: Amount) -> Element<'a, ActiveSendMessage> {
                 .width(Length::Fill)
                 .align_y(Alignment::Center)
                 .push(Space::new().width(Length::Fill))
-                .push(icon::check_circle().size(140).color(color::ORANGE))
+                .push(icon::check_circle_icon().size(140).color(color::ORANGE))
                 .push(Space::new().width(Length::Fill)),
         )
         .push(Space::new().height(Length::Fixed(16.0)))

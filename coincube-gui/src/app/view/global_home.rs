@@ -2,7 +2,7 @@ use coincube_ui::{
     color,
     component::{amount::*, button, form, text::*},
     icon::{
-        arrow_down_up_icon, arrow_right, check_circle, eye_outline_icon, eye_slash_icon,
+        arrow_down_up_icon, arrow_right, check_circle_icon, eye_outline_icon, eye_slash_icon,
         lightning_icon, vault_icon,
     },
     theme,
@@ -756,7 +756,7 @@ pub fn transfer_successful_view<'a>(direction: TransferDirection) -> Element<'a,
                 .width(Length::Fill)
                 .align_y(Alignment::Center)
                 .push(Space::new().width(Length::Fill))
-                .push(check_circle().size(140).color(color::ORANGE))
+                .push(check_circle_icon().size(140).color(color::ORANGE))
                 .push(Space::new().width(Length::Fill)),
         )
         .push(Space::new().height(Length::Fixed(16.0)))

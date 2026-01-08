@@ -2,13 +2,18 @@ use breez_sdk_liquid::model::{PaymentDetails, PaymentState};
 use coincube_core::miniscript::bitcoin::Amount;
 use coincube_ui::{
     color,
-    component::{amount::*, button, text::*},
+    component::{
+        amount::*,
+        button,
+        text::*,
+        transaction::{TransactionDirection, TransactionListItem, TransactionType},
+    },
     icon, theme,
     widget::*,
 };
 use iced::{
-    widget::{Column, Container, Row, Space},
-    Alignment, Length,
+    widget::{Column, Container, Row},
+    Length,
 };
 
 use crate::app::view::{active::RecentTransaction, ActiveOverviewMessage, FiatAmountConverter};
@@ -66,96 +71,63 @@ pub fn active_overview_view<'a>(
     content = content.push(Column::new().spacing(10).push(h4_bold("Last transactions")));
 
     if !recent_transaction.is_empty() {
-        for tx in recent_transaction {
-            let row = Row::new()
-                .spacing(15)
-                .align_y(Alignment::Start)
-                .push(if let PaymentDetails::Bitcoin { .. } = tx.details {
-                    Container::new(icon::bitcoin_icon().size(24).color(color::ORANGE)).padding(10)
-                } else {
-                    Container::new(icon::lightning_icon().size(24).color(color::ORANGE)).padding(10)
-                })
-                .push(
-                    Column::new()
-                        .spacing(5)
-                        .push(p1_bold(&tx.description).bold())
+        for (idx, tx) in recent_transaction.iter().enumerate() {
+            let direction = if tx.is_incoming {
+                TransactionDirection::Incoming
+            } else {
+                TransactionDirection::Outgoing
+            };
+
+            let tx_type = if let PaymentDetails::Bitcoin { .. } = tx.details {
+                TransactionType::Bitcoin
+            } else {
+                TransactionType::Lightning
+            };
+
+            let fiat_str = tx
+                .fiat_amount
+                .as_ref()
+                .map(|fiat| format!("~{} {}", fiat.to_rounded_string(), fiat.currency()));
+
+            let mut item = TransactionListItem::new(direction, &tx.amount, bitcoin_unit)
+                .with_type(tx_type)
+                .with_label(tx.description.clone())
+                .with_time_ago(tx.time_ago.clone());
+
+            if matches!(tx.status, PaymentState::Pending) {
+                let (bg, fg) = (color::GREY_3, color::BLACK);
+                let pending_badge = Container::new(
+                    Row::new()
                         .push(
-                            Row::new()
-                                .push_maybe(if !matches!(tx.status, PaymentState::Pending) {
-                                    Some(p2_regular(&tx.time_ago).style(theme::text::secondary))
-                                } else {
-                                    None
-                                })
-                                .push_maybe({
-                                    if matches!(tx.status, PaymentState::Pending) {
-                                        let (bg, fg) = (color::GREY_3, color::BLACK);
-                                        Some(
-                                            Container::new(
-                                                Row::new()
-                                                    .push(icon::warning_icon().size(14).style(
-                                                        move |_| iced::widget::text::Style {
-                                                            color: Some(fg),
-                                                        },
-                                                    ))
-                                                    .push(text("Pending").bold().size(14).style(
-                                                        move |_| iced::widget::text::Style {
-                                                            color: Some(fg),
-                                                        },
-                                                    ))
-                                                    .spacing(4),
-                                            )
-                                            .padding([2, 8])
-                                            .style(
-                                                move |_| iced::widget::container::Style {
-                                                    background: Some(iced::Background::Color(bg)),
-                                                    border: iced::Border {
-                                                        radius: 12.0.into(),
-                                                        ..Default::default()
-                                                    },
-                                                    ..Default::default()
-                                                },
-                                            ),
-                                        )
-                                    } else {
-                                        None
-                                    }
-                                })
-                                .spacing(8),
-                        ),
-                )
-                .push(iced::widget::Space::new().width(Length::Fill))
-                .push(
-                    Column::new()
-                        .spacing(5)
-                        .align_x(Alignment::End)
-                        .push(
-                            text(format!("{} {:.8} BTC", tx.sign, tx.amount.to_btc()))
-                                .size(16)
-                                .color(if tx.is_incoming {
-                                    color::GREEN
-                                } else {
-                                    color::RED
-                                }),
+                            icon::warning_icon()
+                                .size(14)
+                                .style(move |_| iced::widget::text::Style { color: Some(fg) }),
                         )
-                        .push(if let Some(fiat_amount) = &tx.fiat_amount {
-                            text(format!(
-                                "about {} {}",
-                                fiat_amount.to_rounded_string(),
-                                fiat_amount.currency()
-                            ))
-                            .size(14)
-                            .color(color::GREY_3)
-                        } else {
-                            text("").size(12)
-                        }),
-                );
-            let tx = Container::new(row)
-                .padding(20)
-                .style(theme::card::simple)
-                .width(Length::Fill)
-                .max_width(800);
-            content = content.push(tx);
-            content = content.push(Space::new().width(Length::Fill).height(5));
+                        .push(
+                            text("Pending")
+                                .bold()
+                                .size(14)
+                                .style(move |_| iced::widget::text::Style { color: Some(fg) }),
+                        )
+                        .spacing(4),
+                )
+                .padding([2, 8])
+                .style(move |_| iced::widget::container::Style {
+                    background: Some(iced::Background::Color(bg)),
+                    border: iced::Border {
+                        radius: 12.0.into(),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                });
+                item = item.with_custom_status(pending_badge.into());
+            }
+
+            if let Some(fiat) = fiat_str {
+                item = item.with_fiat_amount(fiat);
+            }
+
+            content = content.push(item.view(ActiveOverviewMessage::SelectTransaction(idx)));
         }
     }
 
