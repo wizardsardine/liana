@@ -305,7 +305,9 @@ impl State for GlobalHome {
                                         if entered_amt > self.active_balance {
                                             valid = false;
                                             warning = Some("Amount exceeds Active balance");
-                                        } else if let Some((min_sat, max_sat)) = self.onchain_send_limit {
+                                        } else if let Some((min_sat, max_sat)) =
+                                            self.onchain_send_limit
+                                        {
                                             if entered_sat < min_sat || entered_sat > max_sat {
                                                 valid = false;
                                                 warning =
@@ -317,7 +319,8 @@ impl State for GlobalHome {
                                         if entered_amt > vault_balance {
                                             valid = false;
                                             warning = Some("Amount exceeds Vault balance");
-                                        } else if let Some((min_sat, max_sat)) = self.onchain_receive_limit
+                                        } else if let Some((min_sat, max_sat)) =
+                                            self.onchain_receive_limit
                                         {
                                             if entered_sat < min_sat || entered_sat > max_sat {
                                                 valid = false;
