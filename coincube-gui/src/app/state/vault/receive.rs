@@ -417,6 +417,7 @@ impl VerifyAddressModal {
     }
 }
 
+#[derive(Debug)]
 pub struct ShowQrCodeModal {
     qr_code: qr_code::Data,
     address: String,
