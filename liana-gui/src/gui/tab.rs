@@ -56,11 +56,23 @@ where
         directory: LianaDirectory,
         network: Option<bitcoin::Network>,
     ) -> (Self, Task<Message<M>>) {
-        let (launcher, command) = Launcher::new(directory, network);
-        (
-            State::Launcher(Box::new(launcher)),
-            command.map(|msg| Message::Launch(Box::new(msg))),
-        )
+        if I::skip_launcher() {
+            // Start directly with the Installer (e.g., for liana-business where auth is mandatory)
+            let net = network.unwrap_or(bitcoin::Network::Signet);
+            let (install, command) =
+                I::new(directory, net, None, installer::UserFlow::CreateWallet);
+            (
+                State::Installer(*install),
+                command.map(|msg| Message::Install(Box::new(msg))),
+            )
+        } else {
+            // Normal flow: start with Launcher
+            let (launcher, command) = Launcher::new(directory, network);
+            (
+                State::Launcher(Box::new(launcher)),
+                command.map(|msg| Message::Launch(Box::new(msg))),
+            )
+        }
     }
 }
 

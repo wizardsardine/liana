@@ -857,6 +857,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "business-settings"
+version = "0.1.0"
+dependencies = [
+ "iced",
+ "liana",
+ "liana-gui",
+ "liana-ui",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "by_address"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

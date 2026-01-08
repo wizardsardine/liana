@@ -116,6 +116,13 @@ where
     fn network(&self) -> bitcoin::Network;
 
     fn exit_maybe(&mut self, msg: &Message) -> Option<NextState>;
+
+    /// Whether to skip the Launcher and start directly with Installer.
+    /// Default: false (show Launcher first).
+    /// Override to return `true` for installers that handle auth internally.
+    fn skip_launcher() -> bool {
+        false
+    }
 }
 
 pub struct LianaInstaller {
