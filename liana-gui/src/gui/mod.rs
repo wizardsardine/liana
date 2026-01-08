@@ -57,7 +57,7 @@ where
     window_init: Option<bool>,
     window_config: Option<WindowConfig>,
     global_cache: GlobalCache,
-    _phantom: PhantomData<M>,
+    _phantom: PhantomData<(S, M)>,
 }
 
 #[derive(Debug)]
