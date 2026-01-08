@@ -5,10 +5,7 @@ use crate::{
     widget::*,
 };
 use bitcoin::Amount;
-use iced::{
-    widget::button,
-    Alignment, Length,
-};
+use iced::{widget::button, Alignment, Length};
 
 use chrono::{DateTime, Local, Utc};
 
@@ -47,7 +44,11 @@ pub struct TransactionListItem<'a, T> {
 }
 
 impl<'a, T> TransactionListItem<'a, T> {
-    pub fn new(direction: TransactionDirection, amount: &'a Amount, bitcoin_unit: BitcoinDisplayUnit) -> Self {
+    pub fn new(
+        direction: TransactionDirection,
+        amount: &'a Amount,
+        bitcoin_unit: BitcoinDisplayUnit,
+    ) -> Self {
         Self {
             direction,
             transaction_type: None,
@@ -132,11 +133,11 @@ impl<'a, T> TransactionListItem<'a, T> {
         });
 
         let mut info_column = Column::new().spacing(5);
-        
+
         if let Some(label) = self.label {
             info_column = info_column.push(text::p1_regular(label));
         }
-        
+
         if let Some(timestamp) = self.timestamp {
             info_column = info_column.push(
                 text::p2_regular(
@@ -156,16 +157,14 @@ impl<'a, T> TransactionListItem<'a, T> {
             info_column = info_column.push(time_row);
         }
 
-        let mut left_side = Row::new()
-            .spacing(10)
-            .align_y(Alignment::Center);
-        
+        let mut left_side = Row::new().spacing(10).align_y(Alignment::Center);
+
         if let Some(type_badge) = type_badge {
             left_side = left_side.push(type_badge);
         }
 
         left_side = left_side.push(direction_badge);
-        
+
         left_side = left_side.push(info_column).width(Length::Fill);
 
         let mut content_row = Row::new()
@@ -203,9 +202,8 @@ impl<'a, T> TransactionListItem<'a, T> {
         }
 
         if let Some(fiat) = self.fiat_amount {
-            amount_column = amount_column.push(
-                text::p2_regular(fiat).style(theme::text::secondary),
-            );
+            amount_column =
+                amount_column.push(text::p2_regular(fiat).style(theme::text::secondary));
         }
 
         content_row = content_row.push(amount_column);
@@ -218,8 +216,7 @@ impl<'a, T> TransactionListItem<'a, T> {
             )
             .style(theme::card::simple)
         } else {
-            Container::new(content_row.padding(10))
-                .style(theme::card::simple)
+            Container::new(content_row.padding(10)).style(theme::card::simple)
         }
     }
 }

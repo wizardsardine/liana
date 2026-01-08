@@ -2,6 +2,7 @@ use std::convert::TryInto;
 use std::sync::Arc;
 
 use breez_sdk_liquid::model::PaymentDetails;
+use breez_sdk_liquid::prelude::Payment;
 use breez_sdk_liquid::InputType;
 use coincube_core::miniscript::bitcoin::Amount;
 use coincube_ui::{component::form, widget::*};
@@ -42,6 +43,8 @@ pub struct ActiveSend {
     amount: Amount,
     amount_input: form::Value<String>,
     recent_transaction: Vec<view::active::RecentTransaction>,
+    recent_payments: Vec<Payment>,
+    selected_payment: Option<Payment>,
     input: form::Value<String>,
     input_type: Option<InputType>,
     lightning_limits: Option<(u64, u64)>, // (min_sats, max_sats)
@@ -63,6 +66,8 @@ impl ActiveSend {
             amount: Amount::from_sat(0),
             amount_input: form::Value::default(),
             recent_transaction: Vec::new(),
+            recent_payments: Vec::new(),
+            selected_payment: None,
             input: form::Value::default(),
             error: None,
             flow_state: ActiveSendFlowState::Main { modal: Modal::None },
@@ -126,27 +131,41 @@ impl ActiveSend {
 impl State for ActiveSend {
     fn view<'a>(&'a self, menu: &'a Menu, cache: &'a Cache) -> Element<'a, view::Message> {
         let fiat_converter = cache.fiat_price.as_ref().and_then(|p| p.try_into().ok());
-        let comment = self.comment.clone().unwrap_or("".to_string());
 
-        view::active_send_with_flow(view::ActiveSendFlowConfig {
-            flow_state: &self.flow_state,
-            btc_balance: self.btc_balance,
-            fiat_converter,
-            recent_transaction: &self.recent_transaction,
-            input: &self.input,
-            error: self.error.as_deref(),
-            amount_input: &self.amount_input,
-            comment,
-            description: self.description.as_deref(),
-            lightning_limits: self.lightning_limits,
-            amount: self.amount,
-            prepare_response: self.prepare_response.as_ref(),
-            is_sending: self.is_sending,
-            menu,
-            cache,
-            input_type: &self.input_type,
-            onchain_limits: self.onchain_limits,
-        })
+        if let Some(payment) = &self.selected_payment {
+            view::dashboard(
+                menu,
+                cache,
+                None,
+                view::active::transaction_detail_view(
+                    payment,
+                    fiat_converter,
+                    cache.bitcoin_unit.into(),
+                ),
+            )
+        } else {
+            let comment = self.comment.clone().unwrap_or("".to_string());
+
+            view::active_send_with_flow(view::ActiveSendFlowConfig {
+                flow_state: &self.flow_state,
+                btc_balance: self.btc_balance,
+                fiat_converter,
+                recent_transaction: &self.recent_transaction,
+                input: &self.input,
+                error: self.error.as_deref(),
+                amount_input: &self.amount_input,
+                comment,
+                description: self.description.as_deref(),
+                lightning_limits: self.lightning_limits,
+                amount: self.amount,
+                prepare_response: self.prepare_response.as_ref(),
+                is_sending: self.is_sending,
+                menu,
+                cache,
+                input_type: &self.input_type,
+                onchain_limits: self.onchain_limits,
+            })
+        }
     }
 
     fn update(
@@ -155,7 +174,7 @@ impl State for ActiveSend {
         cache: &Cache,
         message: Message,
     ) -> Task<Message> {
-        if let Message::View(view::Message::ActiveSend(msg)) = message {
+        if let Message::View(view::Message::ActiveSend(ref msg)) = message {
             match msg {
                 view::ActiveSendMessage::InputEdited(value) => {
                     self.input.value = value.clone();
@@ -163,10 +182,11 @@ impl State for ActiveSend {
                     let breez = self.breez_client.clone();
                     let breez_clone = self.breez_client.clone();
                     let breez_client = self.breez_client.clone();
+                    let value_owned = value.clone();
                     // TODO: Add some kind of debouncing mechanism here, so that we don't call breez
                     // API again and again
                     let validate_input =
-                        Task::perform(async move { breez.validate_input(value).await }, |input| {
+                        Task::perform(async move { breez.validate_input(value_owned).await }, |input| {
                             Message::View(view::Message::ActiveSend(
                                 view::ActiveSendMessage::InputValidated(input),
                             ))
@@ -305,15 +325,16 @@ impl State for ActiveSend {
                     return redirect(Menu::Active(ActiveSubMenu::Transactions(None)));
                 }
                 view::ActiveSendMessage::SelectTransaction(idx) => {
-                    if idx < self.recent_transaction.len() {
-                        return redirect(Menu::Active(ActiveSubMenu::Transactions(None)));
+                    if *idx < self.recent_payments.len() {
+                        self.selected_payment = self.recent_payments.get(*idx).cloned();
                     }
                 }
                 view::ActiveSendMessage::DataLoaded {
                     balance,
                     recent_payment,
                 } => {
-                    self.btc_balance = balance;
+                    self.btc_balance = *balance;
+                    self.recent_payments = recent_payment.clone();
 
                     if !recent_payment.is_empty() {
                         let fiat_converter: Option<view::FiatAmountConverter> =
@@ -372,7 +393,7 @@ impl State for ActiveSend {
                     }
                 }
                 view::ActiveSendMessage::Error(err) => {
-                    self.error = Some(err);
+                    self.error = Some(err.to_string());
                     self.is_sending = false; // Reset sending flag on error
                                              // Auto-dismiss error after 10 seconds
                     return Task::perform(
@@ -391,7 +412,7 @@ impl State for ActiveSend {
                 }
                 view::ActiveSendMessage::InputValidated(input_type) => {
                     self.input.valid = input_type.is_some();
-                    self.input_type = input_type;
+                    self.input_type = input_type.clone();
                 }
                 view::ActiveSendMessage::PopupMessage(SendPopupMessage::AmountEdited(v)) => {
                     if let ActiveSendFlowState::Main {
@@ -443,7 +464,7 @@ impl State for ActiveSend {
                         modal: Modal::AmountInput,
                     } = &mut self.flow_state
                     {
-                        self.comment = Some(comment);
+                        self.comment = Some(comment.clone());
                     }
                 }
                 view::ActiveSendMessage::PopupMessage(SendPopupMessage::FiatConvert) => {
@@ -602,7 +623,7 @@ impl State for ActiveSend {
                             },
                     } = &mut self.flow_state
                     {
-                        *selected_currency = currency;
+                        *selected_currency = *currency;
                     }
                 }
                 view::ActiveSendMessage::PopupMessage(SendPopupMessage::FiatPricesLoaded(
@@ -616,7 +637,7 @@ impl State for ActiveSend {
                             },
                     } = &mut self.flow_state
                     {
-                        *modal_converters = converters;
+                        *modal_converters = converters.clone();
                     }
                 }
                 view::ActiveSendMessage::PopupMessage(SendPopupMessage::FiatDone) => {
@@ -790,11 +811,11 @@ impl State for ActiveSend {
                     }
                 }
                 view::ActiveSendMessage::PrepareResponseReceived(prepare_response) => {
-                    self.prepare_response = Some(prepare_response);
+                    self.prepare_response = Some(prepare_response.clone());
                     self.flow_state = ActiveSendFlowState::FinalCheck;
                 }
                 view::ActiveSendMessage::PrepareOnChainResponseReceived(prepare_response) => {
-                    self.prepare_onchain_response = Some(prepare_response);
+                    self.prepare_onchain_response = Some(prepare_response.clone());
                     self.flow_state = ActiveSendFlowState::FinalCheck;
                 }
                 view::ActiveSendMessage::PopupMessage(SendPopupMessage::Close) => {
@@ -901,10 +922,10 @@ impl State for ActiveSend {
                     self.flow_state = ActiveSendFlowState::Main { modal: Modal::None };
                 }
                 view::ActiveSendMessage::LightningLimitsFetched { min_sat, max_sat } => {
-                    self.lightning_limits = Some((min_sat, max_sat));
+                    self.lightning_limits = Some((*min_sat, *max_sat));
                 }
                 view::ActiveSendMessage::OnChainLimitsFetched { min_sat, max_sat } => {
-                    self.onchain_limits = Some((min_sat, max_sat));
+                    self.onchain_limits = Some((*min_sat, *max_sat));
                 }
                 view::ActiveSendMessage::PopupMessage(SendPopupMessage::FiatClose) => {
                     self.flow_state = ActiveSendFlowState::Main {
@@ -915,6 +936,10 @@ impl State for ActiveSend {
                     return self.load_balance();
                 }
             }
+        }
+        if let Message::View(view::Message::Close) | Message::View(view::Message::Reload) = message
+        {
+            self.selected_payment = None;
         }
         Task::none()
     }

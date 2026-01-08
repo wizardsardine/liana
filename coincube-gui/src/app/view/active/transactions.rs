@@ -4,8 +4,7 @@ use coincube_core::miniscript::bitcoin::Amount;
 use coincube_ui::{
     component::{
         amount::DisplayAmount,
-        button,
-        card,
+        button, card,
         text::*,
         transaction::{TransactionDirection, TransactionListItem, TransactionType},
     },

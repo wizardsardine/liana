@@ -12,8 +12,12 @@ use coincube_core::miniscript::bitcoin;
 use coincube_ui::{
     color,
     component::{
-        amount::*, button, card, form, spinner, text::*,
-        transaction::{TransactionBadge, TransactionDirection, TransactionListItem, TransactionType},
+        amount::*,
+        button, card, form, spinner,
+        text::*,
+        transaction::{
+            TransactionBadge, TransactionDirection, TransactionListItem, TransactionType,
+        },
     },
     icon::{self, cross_icon},
     theme,
@@ -259,7 +263,11 @@ pub fn vault_overview_view<'a>(
         .into()
 }
 
-fn event_list_view(event: &Payment, bitcoin_unit: BitcoinDisplayUnit, fiat_converter: Option<FiatAmountConverter>) -> Element<'_, Message> {
+fn event_list_view(
+    event: &Payment,
+    bitcoin_unit: BitcoinDisplayUnit,
+    fiat_converter: Option<FiatAmountConverter>,
+) -> Element<'_, Message> {
     let direction = if event.kind == PaymentKind::Incoming {
         TransactionDirection::Incoming
     } else {
@@ -269,9 +277,10 @@ fn event_list_view(event: &Payment, bitcoin_unit: BitcoinDisplayUnit, fiat_conve
     let label = if let Some(label) = &event.label {
         Some(label.clone())
     } else {
-        event.address_label.as_ref().map(|label| {
-            format!("address label: {}", label)
-        })
+        event
+            .address_label
+            .as_ref()
+            .map(|label| format!("address label: {}", label))
     };
 
     let mut item = TransactionListItem::new(direction, &event.amount, bitcoin_unit)

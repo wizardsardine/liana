@@ -6,7 +6,9 @@ use coincube_core::miniscript::bitcoin::Amount;
 use coincube_ui::{
     color,
     component::{
-        amount::*, button, form, text::*,
+        amount::*,
+        button, form,
+        text::*,
         transaction::{TransactionDirection, TransactionListItem, TransactionType},
     },
     icon, theme,
@@ -234,9 +236,10 @@ pub fn active_send_view<'a>(
                 TransactionType::Lightning
             };
 
-            let fiat_str = tx.fiat_amount.as_ref().map(|fiat| {
-                format!("about {} {}", fiat.to_rounded_string(), fiat.currency())
-            });
+            let fiat_str = tx
+                .fiat_amount
+                .as_ref()
+                .map(|fiat| format!("~{} {}", fiat.to_rounded_string(), fiat.currency()));
 
             let mut item = TransactionListItem::new(direction, &tx.amount, bitcoin_unit)
                 .with_type(tx_type)
@@ -247,29 +250,28 @@ pub fn active_send_view<'a>(
                 let (bg, fg) = (color::GREY_3, color::BLACK);
                 let pending_badge = Container::new(
                     Row::new()
-                        .push(icon::warning_icon().size(14).style(
-                            move |_| iced::widget::text::Style {
-                                color: Some(fg),
-                            },
-                        ))
-                        .push(text("Pending").bold().size(14).style(
-                            move |_| iced::widget::text::Style {
-                                color: Some(fg),
-                            },
-                        ))
+                        .push(
+                            icon::warning_icon()
+                                .size(14)
+                                .style(move |_| iced::widget::text::Style { color: Some(fg) }),
+                        )
+                        .push(
+                            text("Pending")
+                                .bold()
+                                .size(14)
+                                .style(move |_| iced::widget::text::Style { color: Some(fg) }),
+                        )
                         .spacing(4),
                 )
                 .padding([2, 8])
-                .style(
-                    move |_| iced::widget::container::Style {
-                        background: Some(iced::Background::Color(bg)),
-                        border: iced::Border {
-                            radius: 12.0.into(),
-                            ..Default::default()
-                        },
+                .style(move |_| iced::widget::container::Style {
+                    background: Some(iced::Background::Color(bg)),
+                    border: iced::Border {
+                        radius: 12.0.into(),
                         ..Default::default()
                     },
-                );
+                    ..Default::default()
+                });
                 item = item.with_custom_status(pending_badge.into());
             }
 

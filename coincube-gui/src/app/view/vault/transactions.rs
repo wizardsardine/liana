@@ -10,8 +10,12 @@ use iced::{
 
 use coincube_ui::{
     component::{
-        amount::*, button, card, form, text::*,
-        transaction::{TransactionBadge, TransactionDirection, TransactionListItem, TransactionType},
+        amount::*,
+        button, card, form,
+        text::*,
+        transaction::{
+            TransactionBadge, TransactionDirection, TransactionListItem, TransactionType,
+        },
     },
     icon::{self, receipt_icon},
     theme,
@@ -44,7 +48,7 @@ pub fn transactions_view<'a>(
     processing: bool,
 ) -> Element<'a, Message> {
     let fiat_converter = cache.fiat_price.as_ref().and_then(|p| p.try_into().ok());
-    
+
     dashboard(
         menu,
         cache,
@@ -73,7 +77,12 @@ pub fn transactions_view<'a>(
                         txs.iter()
                             .enumerate()
                             .fold(Column::new().spacing(10), |col, (i, tx)| {
-                                col.push(tx_list_view(i, tx, cache.bitcoin_unit.into(), fiat_converter))
+                                col.push(tx_list_view(
+                                    i,
+                                    tx,
+                                    cache.bitcoin_unit.into(),
+                                    fiat_converter,
+                                ))
                             }),
                     )
                     .push_maybe(if !is_last_page && !txs.is_empty() {
@@ -109,7 +118,12 @@ pub fn transactions_view<'a>(
     )
 }
 
-fn tx_list_view(i: usize, tx: &HistoryTransaction, bitcoin_unit: BitcoinDisplayUnit, fiat_converter: Option<FiatAmountConverter>) -> Element<'_, Message> {
+fn tx_list_view(
+    i: usize,
+    tx: &HistoryTransaction,
+    bitcoin_unit: BitcoinDisplayUnit,
+    fiat_converter: Option<FiatAmountConverter>,
+) -> Element<'_, Message> {
     let direction = if tx.is_external() {
         TransactionDirection::Incoming
     } else if tx.is_send_to_self() {
@@ -130,9 +144,9 @@ fn tx_list_view(i: usize, tx: &HistoryTransaction, bitcoin_unit: BitcoinDisplayU
         tx.labels.get(&tx.tx.compute_txid().to_string()).cloned()
     };
 
-    let timestamp = tx.time.and_then(|t| {
-        DateTime::<Utc>::from_timestamp(t as i64, 0)
-    });
+    let timestamp = tx
+        .time
+        .and_then(|t| DateTime::<Utc>::from_timestamp(t as i64, 0));
 
     let mut badges = Vec::new();
     if tx.time.is_none() {
