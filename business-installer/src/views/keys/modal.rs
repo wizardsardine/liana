@@ -138,8 +138,8 @@ pub fn edit_key_modal_view<'a>(
         .push(tooltip::tooltip(
             "Internal: keys held by your organization.\n \
                 External: keys held by third parties.\n \
-                Cosigner: keys that co-sign transactions. \n \
-                SafetyNet: recovery keys for when primary paths fail.",
+                Cosigner: Professional third party co-signing key.\n \
+                SafetyNet: Professional third party recovery key.",
         ));
     let key_type_picker = Column::new().spacing(5).push(key_type_label).push(
         pick_list(
