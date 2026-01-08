@@ -4,7 +4,7 @@ use liana_ui::{component::text::*, icon::plus_icon, theme, widget::*};
 use std::marker::PhantomData;
 
 use crate::{
-    app,
+    app::{self, settings::SettingsTrait},
     gui::Config,
     installer::{self},
 };
@@ -28,28 +28,30 @@ pub enum ViewMessage {
     AddTab,
 }
 
-pub struct Pane<I, M>
+pub struct Pane<I, S, M>
 where
     I: for<'a> installer::Installer<'a, M>,
+    S: SettingsTrait,
     M: Clone + Send + 'static,
 {
-    pub tabs: Vec<tab::Tab<I, M>>,
+    pub tabs: Vec<tab::Tab<I, S, M>>,
 
     // this is an index in the tabs array
     pub focused_tab: usize,
 
     // used to generate tabs ids.
     tabs_created: usize,
-    _phantom: PhantomData<M>,
+    _phantom: PhantomData<(S, M)>,
 }
 
-impl<I, M> Pane<I, M>
+impl<I, S, M> Pane<I, S, M>
 where
     M: Clone + Send + 'static,
     I: for<'a> installer::Installer<'a, M>,
+    S: SettingsTrait,
 {
     pub fn new(cfg: &Config) -> (Self, Task<Message<M>>) {
-        let (state, task) = tab::State::<I, M>::new(cfg.liana_directory.clone(), cfg.network);
+        let (state, task) = tab::State::<I, S, M>::new(cfg.liana_directory.clone(), cfg.network);
         (
             Self {
                 tabs: vec![tab::Tab::new(1, state)],
@@ -61,7 +63,7 @@ where
         )
     }
 
-    pub fn new_with_tab(s: tab::State<I, M>) -> Self {
+    pub fn new_with_tab(s: tab::State<I, S, M>) -> Self {
         Self {
             tabs: vec![tab::Tab::new(1, s)],
             focused_tab: 0,
@@ -71,7 +73,7 @@ where
     }
 
     fn add_tab(&mut self, cfg: &Config) -> Task<Message<M>> {
-        let (state, task) = tab::State::<I, M>::new(cfg.liana_directory.clone(), cfg.network);
+        let (state, task) = tab::State::<I, S, M>::new(cfg.liana_directory.clone(), cfg.network);
         self.tabs_created += 1;
         let id = self.tabs_created;
         self.tabs.push(tab::Tab::new(id, state));
@@ -85,7 +87,7 @@ where
         }
     }
 
-    pub fn remove_tab(&mut self, i: usize) -> Option<tab::Tab<I, M>> {
+    pub fn remove_tab(&mut self, i: usize) -> Option<tab::Tab<I, S, M>> {
         if i >= self.tabs.len() {
             return None;
         }
@@ -98,7 +100,7 @@ where
         Some(tab)
     }
 
-    pub fn add_tabs(&mut self, tabs: Vec<tab::Tab<I, M>>, focused_tab: usize) {
+    pub fn add_tabs(&mut self, tabs: Vec<tab::Tab<I, S, M>>, focused_tab: usize) {
         for mut tab in tabs {
             self.tabs_created += 1;
             let id = self.tabs_created;

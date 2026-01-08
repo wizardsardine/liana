@@ -13,7 +13,7 @@ use crate::{
     app::{
         self,
         cache::{Cache, DaemonCache},
-        settings::{self, update_settings_file, WalletSettings},
+        settings::{self, update_settings_file, LianaSettings, SettingsTrait, WalletSettings},
         wallet::Wallet,
         App,
     },
@@ -29,10 +29,11 @@ use crate::{
     },
 };
 
-pub enum State<I, M>
+pub enum State<I, S, M>
 where
     M: Clone + Send + 'static,
     I: for<'a> Installer<'a, M>,
+    S: SettingsTrait,
 {
     Launcher(Box<Launcher>),
     Installer(I),
@@ -40,13 +41,14 @@ where
     Login(Box<login::LianaLiteLogin>),
     App(App),
     #[doc(hidden)]
-    _Phantom(PhantomData<M>),
+    _Phantom(PhantomData<(S, M)>),
 }
 
-impl<I, M> State<I, M>
+impl<I, S, M> State<I, S, M>
 where
     M: Clone + Send + 'static,
     I: for<'a> Installer<'a, M>,
+    S: SettingsTrait,
 {
     pub fn new(
         directory: LianaDirectory,
@@ -72,22 +74,24 @@ where
     Login(Box<login::Message>),
 }
 
-pub struct Tab<I, M>
+pub struct Tab<I, S, M>
 where
     M: Clone + Send + 'static,
     I: for<'a> Installer<'a, M>,
+    S: SettingsTrait,
 {
     pub id: usize,
-    pub state: State<I, M>,
-    _phantom: PhantomData<M>,
+    pub state: State<I, S, M>,
+    _phantom: PhantomData<(S, M)>,
 }
 
-impl<I, M> Tab<I, M>
+impl<I, S, M> Tab<I, S, M>
 where
     M: Clone + Send + 'static,
     I: for<'a> Installer<'a, M>,
+    S: SettingsTrait,
 {
-    pub fn new(id: usize, state: State<I, M>) -> Self {
+    pub fn new(id: usize, state: State<I, S, M>) -> Self {
         Tab {
             id,
             state,
@@ -400,7 +404,7 @@ pub fn create_app_with_remote_backend(
     // then the new alias is imported and stored in the settings file.
     if wallet.metadata.wallet_alias != wallet_settings.alias {
         if let Err(e) = tokio::runtime::Handle::current().block_on(async {
-            update_settings_file(&network_directory, |mut settings| {
+            update_settings_file(&network_directory, |mut settings: LianaSettings| {
                 if let Some(w) = settings
                     .wallets
                     .iter_mut()
