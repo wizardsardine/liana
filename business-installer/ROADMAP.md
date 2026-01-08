@@ -8,13 +8,13 @@
   - [x] 2.3 WSS Protocol Extraction
 - [x] **3.0 Server Update Notifications**
 - [ ] **3.1 WS Manager Flow**
-- [ ] **1. Front**
+- [x] **1. Front**
   - [x] 1.1 Wallet Selection View
   - [x] 1.2 Edit Wallet Template Subflow (needed for completion of WS Manager flow)
-  - [ ] 1.3 Add Key Information Subflow
+  - [x] 1.3 Add Key Information Subflow
   - [x] 1.4 Filter/Search Bar (WS Manager Only)
   - [x] 1.5 Better Keyboard Navigation in Login
-  - [ ] 1.6 Load Wallet Subflow
+  - [x] 1.6 Load Wallet Subflow (exit flow implemented, local storage pending)
   - [x] 1.7 Logout Feature
 - [ ] **3.2 Owner Flow**
 - [ ] **3.3 Participant Flow**
@@ -37,6 +37,19 @@
     - [x] Change "Organization" breadcrumb to "Organizations"
     - [x] Change "Select Organization" title to "Select an Organization"
     - [x] Change "Wallet" breadcrumb to "Wallets"
+- [ ] **1.9 UI Feedback (2026-01-08)**
+  - [ ] 1.9.1 Wallet List View - Badge Colors (DEFERRED: requires custom theme, see liana-business/ROADMAP.md #6)
+    - [ ] Change "Set Keys" badge color from red to yellow/amber (warning)
+    - [ ] Change "Not Set" badge color from red to yellow/amber (warning)
+  - [x] 1.9.2 Key Type Dropdown - Tooltip Wording
+    - [x] Change "Co-signer" tooltip to: "Professional third party co-signing key"
+    - [x] Change "Safety Net" tooltip to: "Professional third party recovery key"
+  - [x] 1.9.3 Set Keys View - Waiting State
+    - [x] Add waiting message below title when user's key(s) already set: "Your key(s) is set. Once the other participants complete their key setup, you'll be able to access the wallet."
+    - [x] Add waiting icon (clock) next to message
+  - [x] 1.9.4 Set Keys View - Key Status Labels
+    - [x] Change "Populated" label to "Set"
+    - [ ] Change "Locked" label to "Approval required" with yellow/amber color (DEFERRED: requires custom theme)
 
 ## Concepts
 
@@ -193,7 +206,6 @@ Key, etc.)
 
 ### 2.4 Auth improvements
 - [ ] Automatically refresh token
-- [ ] Async instead threading?
 
 ## 3. Flows
 
@@ -237,13 +249,11 @@ WS Manager is the platform-side administrator with full access.
 
 **Implementation tasks:**
 - [x] Full template editing for Draft wallets
-  - [ ] Create/edit/delete keys
+  - [x] Create/edit/delete keys (Manage Keys view with modal)
   - [x] Create/edit/delete spending paths
   - [x] Set thresholds and timelocks
   - [x] Auto-save changes to server (status = Drafted)
-- [ ] Full key info access for Validated wallets
-  - [ ] View all keys regardless of email
-  - [ ] Add xpub to any key
+- N/A Full key info access for Validated wallets (per permission table, WSManager cannot add xpubs)
 - [ ] Wallet loading for Final wallets
 - [ ] Testing and validation
 
@@ -265,8 +275,10 @@ Owner is the consumer-side wallet manager.
 - [x] Template validation action (Draft -> Validated transition)
   - [x] Add "Validate Template" button (Owner only)
   - [x] Backend API call to change status (status = Validated)
-  - [ ] Confirm dialog before transition
-- [ ] Key info entry for Validated wallets (any key)
+  - [x] Locked state prevents accidental transitions
+- [x] Key info entry for Validated wallets (any key)
+  - [x] View all keys (WSManager/Owner have access to all keys)
+  - [x] Add xpub to any key via hardware wallet, paste, or file
 - [ ] Wallet loading for Final wallets
 - [ ] Testing and have a complete functional flow
 
@@ -286,9 +298,9 @@ Participant has limited access - can only add xpub for their own keys.
 - [x] Connect and authenticate
 - [x] Draft wallets filtered from wallet selection view
 - [x] Access denied modal if participant attempts Draft wallet access
-- [ ] Add/edit xpub for own keys only in Validated status
-  - [ ] Filter key list by `key.email == current_user.email`
-  - [ ] Hide keys belonging to other users
+- [x] Add/edit xpub for own keys only in Validated status
+  - [x] Filter key list by `key.email == current_user.email`
+  - [x] Hide keys belonging to other users
 - [ ] Wallet loading for Final wallets
 - [ ] Testing and have a complete functional flow
 
@@ -413,32 +425,38 @@ real-time notifications, and in-memory storage.
   - [x] Remove embedded dummy server (use standalone liana-business-server only)
   - [x] Add local get_service_config_blocking() for fetching config from server
 
-## Bugs to Fix
+## Bugs Fixed
 
-### Iced Backend Subscription with Tokio Executor
-- [ ] Figure out why backend subscription won't work with Tokio executor
-  - **Root cause**: When using Iced with Tokio executor, backend subscription's `poll_next()` hangs forever
-  - This is an Iced bug that prevents us from using Tokio executor
-  - Forced to use ThreadPool executor instead, which works for backend subscription
-  - But ThreadPool executor doesn't provide Tokio runtime context needed by some HW wallets
-  - Need to investigate and fix this Iced subscription polling bug
+### Iced Backend Subscription with Tokio Executor ✓
+- [x] Fixed: Now uses Tokio executor
+  - Previously: Backend subscription's `poll_next()` hung with Tokio executor
+  - Resolution: Iced subscription polling issue resolved, Tokio executor now works
 
-### Hardware Wallet Runtime Compatibility
-- [ ] Make async-hwi runtime agnostic
-  - Currently async-hwi requires Tokio runtime for some devices (BitBox02, Specter)
-  - Need to make it work with any async executor (ThreadPool, Tokio, async-std)
-  - Or provide way to run HW operations in isolated Tokio runtime without affecting main executor
+### Hardware Wallet Runtime Compatibility ✓
+- [x] Now uses `async-hwi::Service` - no runtime incompatibility
+  - Previously: async-hwi required Tokio runtime for some devices
+  - Resolution: Service abstraction handles runtime requirements
 
-- [ ] Ensure all supported signing devices work with business-installer
-  - Ledger (HID) - ✓ Working
-  - Coldcard - ✓ Working
-  - Jade (serial) - ✓ Working
-  - BitBox02 - ✗ Disabled (requires `runtime::TokioRuntime`)
-  - Specter - ✗ Disabled (requires `tokio::net::TcpStream`)
+- [ ] Test all supported signing devices with business-installer
+  - [x] Ledger (HID)
+  - [x] Coldcard
+  - [ ] BitBox02 (needs pairing code persistence, see 4.3)
+  - [ ] Jade (serial)
+  - [ ] Specter
 
 ## Changelog
 
+### 2026-01-08
+- 1.9.2: Updated key type tooltips for Co-signer and Safety Net
+- 1.9.3: Added waiting state in Set Keys view when user's keys are all set
+- 1.9.4: Changed "Populated" label to "Set" in xpub view
+- Deferred 1.9.1 (badge colors) and 1.9.4 (Locked amber) pending custom theme
+
 ### 2026-01-07
+- Fixed Iced executor issue: Now uses Tokio executor (previously had to use ThreadPool)
+- Fixed hardware wallet runtime compatibility: Now uses `async-hwi::Service`
+- HW wallet testing status: Ledger ✓, Coldcard ✓, BitBox02 (needs 4.3), Jade/Specter (TODO)
+- Updated ROADMAP tracking: Synced priority section with detailed implementation status
 - Added `last_edited` and `last_editor` fields to `SpendingPathJson` protocol struct
 - Server now sets path-level last_edited info when paths are created or modified
 - Template view now displays "Edited by [user] [time ago]" for each path
