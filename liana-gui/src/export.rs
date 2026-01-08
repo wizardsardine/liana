@@ -35,7 +35,7 @@ use iced::futures::{SinkExt, Stream};
 use crate::{
     app::{
         cache::Cache,
-        settings::{self, update_settings_file, KeySetting, WalletSettings},
+        settings::{self, update_settings_file, KeySetting, LianaSettings, WalletSettings},
         view,
         wallet::Wallet,
         Config,
@@ -1041,7 +1041,7 @@ pub async fn import_backup(
             }
         }
 
-        if let Err(e) = update_settings_file(network_dir, |mut settings| {
+        if let Err(e) = update_settings_file(network_dir, |mut settings: LianaSettings| {
             if let Some(wallet) = settings
                 .wallets
                 .iter_mut()

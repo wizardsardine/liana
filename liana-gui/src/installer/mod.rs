@@ -26,7 +26,8 @@ use crate::{
     app::{
         config as gui_config,
         settings::{
-            self, update_settings_file, AuthConfig, SettingsError, WalletId, WalletSettings,
+            self, update_settings_file, AuthConfig, LianaSettings, SettingsError, WalletId,
+            WalletSettings,
         },
         wallet::wallet_name,
     },
@@ -625,7 +626,7 @@ pub async fn install_local_wallet(
     }
 
     // create liana GUI settings file
-    update_settings_file(&network_datadir, |mut settings| {
+    update_settings_file(&network_datadir, |mut settings: LianaSettings| {
         settings.wallets.push(wallet_settings.clone());
         settings
     })
@@ -768,7 +769,7 @@ pub async fn create_remote_wallet(
         start_internal_bitcoind: None,
         fiat_price: None,
     };
-    update_settings_file(&network_datadir, |mut settings| {
+    update_settings_file(&network_datadir, |mut settings: LianaSettings| {
         settings.wallets.push(wallet_settings.clone());
         settings
     })
@@ -848,7 +849,7 @@ pub async fn import_remote_wallet(
         start_internal_bitcoind: None,
         fiat_price: None,
     };
-    update_settings_file(&network_datadir, |mut settings| {
+    update_settings_file(&network_datadir, |mut settings: LianaSettings| {
         settings.wallets.push(wallet_settings.clone());
         settings
     })

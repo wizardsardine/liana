@@ -19,7 +19,7 @@ use crate::{
         cache::Cache,
         error::Error,
         message::Message,
-        settings::{self, update_settings_file},
+        settings::{self, update_settings_file, LianaSettings},
         state::{export::ExportModal, State},
         view,
         wallet::Wallet,
@@ -448,7 +448,7 @@ async fn register_wallet(
         if daemon.backend() != DaemonBackend::RemoteBackend {
             let network_dir = data_dir.network_directory(network);
             let wallet_id = wallet.id();
-            update_settings_file(&network_dir, |mut settings| {
+            update_settings_file(&network_dir, |mut settings: LianaSettings| {
                 if let Some(wallet_setting) = settings
                     .wallets
                     .iter_mut()
@@ -503,7 +503,7 @@ pub async fn update_aliases(
         wallet = wallet.with_alias(Some(wallet_alias.clone()));
         let network_dir = data_dir.network_directory(network);
         let wallet_id = wallet.id();
-        update_settings_file(&network_dir, |mut settings| {
+        update_settings_file(&network_dir, |mut settings: LianaSettings| {
             if let Some(wallet_setting) = settings
                 .wallets
                 .iter_mut()
@@ -520,7 +520,7 @@ pub async fn update_aliases(
     if daemon.backend() != DaemonBackend::RemoteBackend {
         let network_dir = data_dir.network_directory(network);
         let wallet_id = wallet.id();
-        update_settings_file(&network_dir, |mut settings| {
+        update_settings_file(&network_dir, |mut settings: LianaSettings| {
             if let Some(wallet_setting) = settings
                 .wallets
                 .iter_mut()
