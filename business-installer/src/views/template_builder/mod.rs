@@ -63,10 +63,10 @@ pub fn template_builder_view(state: &State) -> Element<'_, Msg> {
             buttons_row.push(button::secondary(None, "Unlock").on_press(Msg::TemplateUnlock));
     }
 
-    // Owner on Locked: "Validate Template" button
+    // Owner on Locked: "Approve Template" button
     if is_owner && is_locked {
         let validate_button =
-            button::primary(None, "Validate Template").on_press(Msg::TemplateValidate);
+            button::primary(None, "Approve Template").on_press(Msg::TemplateValidate);
         buttons_row = buttons_row.push(validate_button);
     }
 
