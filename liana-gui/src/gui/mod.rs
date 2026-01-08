@@ -23,7 +23,10 @@ use crate::{
     app::{
         cache::{FiatPrice, FiatPriceRequest},
         message::{FiatMessage as AppFiatMessage, Message as AppMessage},
-        settings::global::{GlobalSettings, WindowConfig},
+        settings::{
+            global::{GlobalSettings, WindowConfig},
+            LianaSettings, SettingsTrait,
+        },
     },
     dir::LianaDirectory,
     gui::cache::GlobalCache,
@@ -39,21 +42,22 @@ use crate::{
 use iced::window::Id;
 use std::marker::PhantomData;
 
-pub type LianaGUI = GUI<installer::LianaInstaller, installer::Message>;
+pub type LianaGUI = GUI<installer::LianaInstaller, LianaSettings, installer::Message>;
 
-pub struct GUI<I, M>
+pub struct GUI<I, S, M>
 where
     I: for<'a> installer::Installer<'a, M>,
+    S: SettingsTrait,
     M: Clone + Send + 'static,
 {
-    panes: pane_grid::State<pane::Pane<I, M>>,
+    panes: pane_grid::State<pane::Pane<I, S, M>>,
     focus: Option<pane_grid::Pane>,
     config: Config,
     window_id: Option<Id>,
     window_init: Option<bool>,
     window_config: Option<WindowConfig>,
     global_cache: GlobalCache,
-    _phantom: PhantomData<M>,
+    _phantom: PhantomData<(S, M)>,
 }
 
 #[derive(Debug)]
@@ -123,9 +127,10 @@ async fn ctrl_c() -> Result<(), ()> {
     Ok(())
 }
 
-impl<I, M> GUI<I, M>
+impl<I, S, M> GUI<I, S, M>
 where
     I: for<'a> installer::Installer<'a, M>,
+    S: SettingsTrait,
     M: Clone + Send + 'static,
 {
     pub fn title(&self) -> String {
@@ -134,7 +139,7 @@ where
 
     pub fn new(
         (config, log_level): (Config, Option<LevelFilter>),
-    ) -> (GUI<I, M>, Task<Message<M>>) {
+    ) -> (GUI<I, S, M>, Task<Message<M>>) {
         let log_level = log_level.unwrap_or(LevelFilter::INFO);
         if let Err(e) = setup_logger(log_level, config.liana_directory.clone()) {
             tracing::warn!("Error while setting error: {}", e);
@@ -143,7 +148,7 @@ where
             window::get_oldest().map(Message::Window),
             Task::perform(ctrl_c(), |_| Message::CtrlC),
         ];
-        let (pane, cmd) = pane::Pane::<I, M>::new(&config);
+        let (pane, cmd) = pane::Pane::<I, S, M>::new(&config);
         let (panes, focused_pane) = pane_grid::State::new(pane);
         cmds.push(cmd.map(move |msg| Message::Pane(focused_pane, msg)));
         let window_config =

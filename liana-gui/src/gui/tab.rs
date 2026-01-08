@@ -13,9 +13,11 @@ use crate::{
     app::{
         self,
         cache::{Cache, DaemonCache},
-        settings::{self, update_settings_file, WalletSettings},
+        settings::{
+            self, update_settings_file, LianaSettings, LianaWalletSettings, SettingsError,
+            SettingsTrait,
+        },
         wallet::Wallet,
-        App,
     },
     dir::LianaDirectory,
     export::import_backup_at_launch,
@@ -29,24 +31,26 @@ use crate::{
     },
 };
 
-pub enum State<I, M>
+pub enum State<I, S, M>
 where
     M: Clone + Send + 'static,
     I: for<'a> Installer<'a, M>,
+    S: SettingsTrait,
 {
     Launcher(Box<Launcher>),
     Installer(I),
     Loader(Box<Loader>),
     Login(Box<login::LianaLiteLogin>),
-    App(App),
+    App(app::App<S>),
     #[doc(hidden)]
     _Phantom(PhantomData<M>),
 }
 
-impl<I, M> State<I, M>
+impl<I, S, M> State<I, S, M>
 where
     M: Clone + Send + 'static,
     I: for<'a> Installer<'a, M>,
+    S: SettingsTrait,
 {
     pub fn new(
         directory: LianaDirectory,
@@ -72,22 +76,24 @@ where
     Login(Box<login::Message>),
 }
 
-pub struct Tab<I, M>
+pub struct Tab<I, S, M>
 where
     M: Clone + Send + 'static,
     I: for<'a> Installer<'a, M>,
+    S: SettingsTrait,
 {
     pub id: usize,
-    pub state: State<I, M>,
-    _phantom: PhantomData<M>,
+    pub state: State<I, S, M>,
+    _phantom: PhantomData<(S, M)>,
 }
 
-impl<I, M> Tab<I, M>
+impl<I, S, M> Tab<I, S, M>
 where
     M: Clone + Send + 'static,
     I: for<'a> Installer<'a, M>,
+    S: SettingsTrait,
 {
-    pub fn new(id: usize, state: State<I, M>) -> Self {
+    pub fn new(id: usize, state: State<I, S, M>) -> Self {
         Tab {
             id,
             state,
@@ -191,7 +197,9 @@ where
                             .join(app::config::DEFAULT_FILE_NAME),
                     )
                     .expect("A gui configuration file must be present");
-                    let (app, command) = match create_app_with_remote_backend(
+
+                    // Use the trait method - returns None if S doesn't support remote backend
+                    let result = S::create_app_for_remote_backend(
                         l.directory_wallet_id.clone(),
                         backend_client,
                         wallet,
@@ -199,10 +207,17 @@ where
                         l.datadir.clone(),
                         l.network,
                         config,
-                    ) {
-                        Ok((app, command)) => (app, command),
-                        Err(e) => {
+                    );
+
+                    let (app, command) = match result {
+                        Some(Ok((app, command))) => (app, command),
+                        Some(Err(e)) => {
                             tracing::error!("{}", e);
+                            return Task::none();
+                        }
+                        None => {
+                            // This should never happen - Login state only exists for LianaSettings
+                            tracing::error!("Login state reached for settings type that doesn't support remote backend");
                             return Task::none();
                         }
                     };
@@ -292,7 +307,7 @@ where
                             },
                         )
                     } else {
-                        let (app, command) = App::new(
+                        let (app, command) = app::App::<S>::new(
                             cache,
                             wallet,
                             loader.gui_config.clone(),
@@ -309,7 +324,7 @@ where
                     Ok((cache, wallet, config, daemon, datadir, bitcoind)),
                     restored_from_backup,
                 ) => {
-                    let (app, command) = App::new(
+                    let (app, command) = app::App::<S>::new(
                         cache,
                         wallet,
                         config,
@@ -394,13 +409,14 @@ pub fn create_app_with_remote_backend(
 ) -> Result<(app::App, iced::Task<app::Message>), settings::SettingsError> {
     let network_directory = liana_dir.network_directory(network);
     let wallet_settings =
-        WalletSettings::from_file(&network_directory, |w| w.wallet_id() == wallet_id)?
-            .ok_or_else(|| settings::SettingsError::Unexpected("Wallet not found".to_string()))?;
+        LianaWalletSettings::from_file(&network_directory, |w| w.wallet_id() == wallet_id)?
+            .ok_or_else(|| SettingsError::Unexpected("Wallet not found".to_string()))?;
+
     // If someone modified the wallet_alias on Liana-Connect,
     // then the new alias is imported and stored in the settings file.
     if wallet.metadata.wallet_alias != wallet_settings.alias {
         if let Err(e) = tokio::runtime::Handle::current().block_on(async {
-            update_settings_file(&network_directory, |mut settings| {
+            update_settings_file(&network_directory, |mut settings: LianaSettings| {
                 if let Some(w) = settings
                     .wallets
                     .iter_mut()
@@ -427,6 +443,7 @@ pub fn create_app_with_remote_backend(
             token: ledger_hmac.hmac,
         })
         .collect();
+
     let aliases: HashMap<bitcoin::bip32::Fingerprint, String> = wallet
         .metadata
         .fingerprint_aliases
@@ -439,6 +456,7 @@ pub fn create_app_with_remote_backend(
             }
         })
         .collect();
+
     let provider_keys: HashMap<_, _> = wallet
         .metadata
         .provider_keys
@@ -446,7 +464,7 @@ pub fn create_app_with_remote_backend(
         .map(|pk| (pk.fingerprint, pk.into()))
         .collect();
 
-    Ok(App::new(
+    Ok(app::App::new(
         Cache {
             network,
             datadir_path: liana_dir.clone(),
