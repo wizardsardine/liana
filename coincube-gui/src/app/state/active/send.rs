@@ -327,8 +327,12 @@ impl State for ActiveSend {
                     return redirect(Menu::Active(ActiveSubMenu::Transactions(None)));
                 }
                 view::ActiveSendMessage::SelectTransaction(idx) => {
-                    if *idx < self.recent_payments.len() {
-                        self.selected_payment = self.recent_payments.get(*idx).cloned();
+                    if let Some(payment) = self.recent_payments.get(*idx).cloned() {
+                        self.selected_payment = Some(payment.clone());
+                        return Task::batch(vec![
+                            redirect(Menu::Active(ActiveSubMenu::Transactions(None))),
+                            Task::done(Message::View(view::Message::PreselectPayment(payment))),
+                        ]);
                     }
                 }
                 view::ActiveSendMessage::DataLoaded {

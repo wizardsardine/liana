@@ -444,6 +444,7 @@ pub fn transaction_detail_view<'a>(
                             &tx.tx,
                             &tx.labels,
                             labels_editing,
+                            bitcoin_unit,
                         ))
                     })
                     .push(super::psbt::outputs_view(
@@ -456,7 +457,7 @@ pub fn transaction_detail_view<'a>(
                         },
                         &tx.labels,
                         labels_editing,
-                        tx.is_single_payment().is_some(),
+                        bitcoin_unit,
                     )),
             )
             .spacing(20),

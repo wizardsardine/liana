@@ -44,6 +44,7 @@ pub fn spend_view<'a>(
     network: Network,
     currently_signing: bool,
     warning: Option<&Error>,
+    bitcoin_unit: BitcoinDisplayUnit,
 ) -> Element<'a, Message> {
     let is_recovery = tx
         .psbt
@@ -61,7 +62,7 @@ pub fn spend_view<'a>(
                 Container::new(h3(if is_recovery { "Recovery" } else { "Send" }))
                     .width(Length::Fill),
             )
-            .push(psbt::spend_header(tx, labels_editing))
+            .push(psbt::spend_header(tx, labels_editing, bitcoin_unit))
             .push_maybe(if spend_warnings.is_empty() || saved {
                 None
             } else {
@@ -91,6 +92,7 @@ pub fn spend_view<'a>(
                         &tx.psbt.unsigned_tx,
                         &tx.labels,
                         labels_editing,
+                        bitcoin_unit,
                     ))
                     .push(psbt::outputs_view(
                         &tx.psbt.unsigned_tx,
@@ -98,7 +100,7 @@ pub fn spend_view<'a>(
                         Some(tx.change_indexes.clone()),
                         &tx.labels,
                         labels_editing,
-                        tx.is_single_payment().is_some(),
+                        bitcoin_unit,
                     )),
             )
             .push(if saved {

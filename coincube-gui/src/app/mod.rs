@@ -752,21 +752,9 @@ impl App {
                     }
                 }
             }
-            menu::Menu::Active(submenu) => {
-                if let menu::ActiveSubMenu::Transactions(Some(txid)) = submenu {
-                    if let Some(daemon) = &self.daemon {
-                        if let Ok(Some(tx)) = Handle::current().block_on(async {
-                            daemon
-                                .get_history_txs(&[*txid])
-                                .await
-                                .map(|txs| txs.first().cloned())
-                        }) {
-                            self.panels.active_transactions.preselect(tx);
-                            self.panels.current = menu;
-                            return Task::none();
-                        }
-                    }
-                }
+            menu::Menu::Active(_submenu) => {
+                // Active transaction preselection is handled via PreselectPayment message
+                // since Payment objects are passed directly instead of fetching by ID
             }
             _ => {
                 tracing::debug!(

@@ -29,8 +29,8 @@ impl ActiveTransactions {
         }
     }
 
-    pub fn preselect(&mut self, _tx: crate::daemon::model::HistoryTransaction) {
-        // Placeholder: In the future, this will preselect a transaction
+    pub fn preselect(&mut self, payment: Payment) {
+        self.selected_payment = Some(payment);
     }
 
     fn calculate_balance(&self) -> Amount {
@@ -105,6 +105,10 @@ impl State for ActiveTransactions {
             }
             Message::View(view::Message::Reload) | Message::View(view::Message::Close) => {
                 self.selected_payment = None;
+                Task::none()
+            }
+            Message::View(view::Message::PreselectPayment(payment)) => {
+                self.selected_payment = Some(payment);
                 Task::none()
             }
             _ => Task::none(),
