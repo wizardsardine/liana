@@ -46,21 +46,21 @@ pub fn template_builder_view(state: &State) -> Element<'_, Msg> {
     }
 
     // WSManager on Draft: "Lock Template" (if valid)
+    let approval = "Send for approval";
     if is_ws_manager && is_draft {
         let is_valid = state.is_template_valid();
         let lock_button = if is_valid {
-            button::primary(None, "Lock Template").on_press(Msg::TemplateLock)
+            button::primary(None, approval).on_press(Msg::TemplateLock)
         } else {
-            button::primary(None, "Lock Template")
+            button::primary(None, approval)
         };
         buttons_row = buttons_row.push(lock_button);
     }
 
     // WSManager on Locked: "Unlock" button
     if is_ws_manager && is_locked {
-        buttons_row = buttons_row.push(
-            button::secondary(None, "Unlock").on_press(Msg::TemplateUnlock),
-        );
+        buttons_row =
+            buttons_row.push(button::secondary(None, "Unlock").on_press(Msg::TemplateUnlock));
     }
 
     // Owner on Locked: "Validate Template" button
