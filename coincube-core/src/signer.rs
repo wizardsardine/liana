@@ -13,6 +13,9 @@ use aes_gcm::{
 use argon2::{
     password_hash::{PasswordHasher, SaltString},
     Argon2,
+    Algorithm,
+    Version,
+    Params,
 };
 
 use zeroize::Zeroizing;
@@ -200,10 +203,10 @@ impl HotSigner {
             let data = fs::read(&path).map_err(SignerError::MnemonicStorage)?;
 
             let mnemonic_str = if Self::is_encrypted(&data) {
-                let pwd = password.ok_or_else(|| {
-                    SignerError::Decryption("Password required for encrypted mnemonic".to_string())
-                })?;
-                Self::decrypt_mnemonic(&data, pwd)?
+                let Some(pwd) = password else {
+                   continue;
+                };
+                Self::decrypt_mnemonic(&data, pwd)?.as_str().to_string()
             } else {
                 // Unencrypted file (backward compatibility)
                 String::from_utf8(data).map_err(|e| {
@@ -222,7 +225,7 @@ impl HotSigner {
         datadir_root: &path::Path,
         network: bitcoin::Network,
         target_fingerprint: Fingerprint,
-        password: &str,
+        password: Option<&str>,
     ) -> Result<Self, SignerError> {
         let mnemonics_folder = Self::mnemonics_folder(datadir_root, network);
         let mnemonic_paths =
@@ -239,17 +242,23 @@ impl HotSigner {
                     // Found a potential match, try to load it
                     let data = fs::read(&path).map_err(SignerError::MnemonicStorage)?;
 
-                    let mnemonic_str = if Self::is_encrypted(&data) {
-                        Self::decrypt_mnemonic(&data, password)?
-                    } else {
-                        // Unencrypted file (backward compatibility)
-                        String::from_utf8(data).map_err(|e| {
-                            SignerError::MnemonicStorage(io::Error::new(
-                                io::ErrorKind::InvalidData,
-                                e,
-                            ))
-                        })?
-                    };
+                        let mnemonic_str = if Self::is_encrypted(&data) {
+                        let pwd = password.ok_or_else(|| {
+                                SignerError::MnemonicStorage(io::Error::new(
+                                    io::ErrorKind::InvalidInput,
+                                    "Password required for encrypted mnemonic",
+                                ))
+                            })?;
+                            Self::decrypt_mnemonic(&data, pwd)?.as_str().to_string()
+                        } else {
+                            // Unencrypted file (backward compatibility)
+                            String::from_utf8(data).map_err(|e| {
+                                SignerError::MnemonicStorage(io::Error::new(
+                                    io::ErrorKind::InvalidData,
+                                    e,
+                                ))
+                            })?
+                        };
 
                     let signer = Self::from_str(network, &mnemonic_str)?;
 
@@ -321,14 +330,22 @@ impl HotSigner {
         // Get BIP39 seed (without passphrase)
         let seed = self.mnemonic.to_seed("");
 
-        // SLIP-0077: master_blinding_key = HMAC-SHA512(key="SLIP-0077", msg=seed)[0:32]
-        let mut engine = HmacEngine::<sha512::Hash>::new(b"SLIP-0077");
+        // Step 1: Derive SLIP-0021 root node
+        // root = HMAC-SHA512(key="Symmetric key seed", msg=seed)
+        let mut engine = HmacEngine::<sha512::Hash>::new(b"Symmetric key seed");
         engine.input(&seed);
-        let hmac_result = Hmac::<sha512::Hash>::from_engine(engine);
-
-        // Take first 32 bytes
+        let root = Hmac::<sha512::Hash>::from_engine(engine);
+        let root_bytes = root.as_byte_array();
+        // Step 2: Derive SLIP-0077 node from root
+        // The derivation uses root[0:32] as the key and "\x00SLIP-0077" as the message
+        // The \x00 prefix is required by SLIP-0021 for child derivation
+        let mut engine = HmacEngine::<sha512::Hash>::new(&root_bytes[..32]);
+        engine.input(b"\x00SLIP-0077");
+        let node = Hmac::<sha512::Hash>::from_engine(engine);
+        let node_bytes = node.as_byte_array();
+        // Step 3: Master blinding key is bytes [32:64] of the node (the "chain code" portion)
         let mut result = [0u8; 32];
-        result.copy_from_slice(&hmac_result.as_byte_array()[..32]);
+        result.copy_from_slice(&node_bytes[32..64]);
         result
     }
 
@@ -392,8 +409,15 @@ impl HotSigner {
         let salt = SaltString::encode_b64(&salt_bytes)
             .map_err(|e| SignerError::Encryption(e.to_string()))?;
 
+        let params = Params::new(
+            65536,  // 64 MiB memory (in KiB)
+            3,      // 3 iterations
+            4,      // 4 parallel lanes
+            Some(32) // 32-byte output for AES-256 key
+        ).map_err(|e| SignerError::Encryption(e.to_string()))?;  
+
         // Derive key from password using Argon2
-        let argon2 = Argon2::default();
+        let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
         let password_hash = argon2
             .hash_password(password.as_bytes(), &salt)
             .map_err(|e| SignerError::Encryption(e.to_string()))?;
@@ -440,7 +464,7 @@ impl HotSigner {
     }
 
     /// Decrypt a mnemonic
-    fn decrypt_mnemonic(data: &[u8], password: &str) -> Result<String, SignerError> {
+    fn decrypt_mnemonic(data: &[u8], password: &str) -> Result<Zeroizing<String>, SignerError> {
         // Check marker
         if !data.starts_with(ENCRYPTED_FILE_MARKER) {
             return Err(SignerError::Decryption(
@@ -462,7 +486,15 @@ impl HotSigner {
         let salt = SaltString::encode_b64(salt_bytes)
             .map_err(|e| SignerError::Decryption(e.to_string()))?;
 
-        let argon2 = Argon2::default();
+        // Must use same params as encrypt_mnemonic
+        let params = Params::new(
+            65536,  // 64 MiB memory (in KiB)
+            3,      // 3 iterations
+            4,      // 4 parallel lanes
+            Some(32) // 32-byte output for AES-256 key
+        ).map_err(|e| SignerError::Decryption(e.to_string()))?;
+
+        let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
         let password_hash = argon2
             .hash_password(password.as_bytes(), &salt)
             .map_err(|_| SignerError::InvalidPassword)?;
@@ -489,8 +521,9 @@ impl HotSigner {
                 .map_err(|_| SignerError::InvalidPassword)?,
         );
 
-        let result = String::from_utf8(plaintext_bytes.to_vec())
-            .map_err(|e| SignerError::Decryption(e.to_string()))?;
+        let result = Zeroizing::new(String::from_utf8(plaintext_bytes.to_vec())
+            .map_err(|e| SignerError::Decryption(e.to_string()))?,
+        );
 
         Ok(result)
         // key_bytes and plaintext_bytes are automatically zeroized when dropped here

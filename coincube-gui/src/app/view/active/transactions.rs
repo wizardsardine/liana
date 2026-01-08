@@ -160,7 +160,7 @@ pub fn transaction_detail_view<'a>(
     let btc_amount = Amount::from_sat(payment.amount_sat);
 
     // Format full date/time
-    let date_text = format_timestamp(payment.timestamp as u64);
+    let date_text = format_timestamp(payment.timestamp as u64).unwrap_or_else(|| "Unknown".to_string());
 
     // Extract description from payment details
     let description = match &payment.details {

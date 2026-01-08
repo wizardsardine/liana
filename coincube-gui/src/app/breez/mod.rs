@@ -49,7 +49,7 @@ pub async fn load_breez_client(
         datadir,
         network,
         active_signer_fingerprint,
-        password,
+        Some(password),
     )
     .map_err(|e| match e {
         coincube_core::signer::SignerError::MnemonicStorage(io_err)

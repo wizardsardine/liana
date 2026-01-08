@@ -94,7 +94,7 @@ impl GlobalHome {
     pub fn new_without_wallet(breez_client: Arc<BreezClient>) -> Self {
         Self {
             wallet: None,
-            active_balance: Amount::from_sat(90099),
+            active_balance: Amount::from_sat(0),
             breez_client,
             balance_masked: false,
             transfer_direction: None,
@@ -515,11 +515,23 @@ impl State for GlobalHome {
                             .unwrap_or(&address);
 
                         if let Ok(parsed) = Address::from_str(addr_str) {
-                            self.receive_address_info = Some(ReceiveAddressInfo {
-                                address: parsed.assume_checked(),
-                                index: ChildNumber::Normal { index: 1 },
-                                labels: HashMap::new(),
-                            });
+                            let network = cache.network;
+                            match parsed.require_network(network) {
+                                Ok(checked_address) => {
+                                    self.receive_address_info = Some(ReceiveAddressInfo {
+                                        address: checked_address,
+                                        index: ChildNumber::Normal { index: 1 },
+                                        labels: HashMap::new(),
+                                    });
+                                }
+                                 Err(_) => {
+                                    log::error!(
+                                        "Address {} is not valid for network {:?}",
+                                        addr_str,
+                                        network
+                                    );
+                                }
+                            }
                         } else {
                             log::error!("Failed to parse Breez on-chain address: {}", addr_str);
                         }

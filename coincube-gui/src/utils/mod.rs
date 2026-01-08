@@ -42,13 +42,16 @@ pub fn default_derivation_path(network: Network) -> DerivationPath {
     .unwrap()
 }
 
-pub fn format_timestamp(timestamp: u64) -> String {
+pub fn format_timestamp(timestamp: u64) -> Option<String> {
     use chrono::{DateTime, Local, Utc};
-    DateTime::<Utc>::from_timestamp(timestamp as i64, 0)
-        .expect("Valid timestamp")
-        .with_timezone(&Local)
-        .format("%b. %d, %Y - %T")
-        .to_string()
+
+    let dt = DateTime::<Utc>::from_timestamp(timestamp as i64, 0)?;
+
+    Some(
+        dt.with_timezone(&Local)
+            .format("%b. %d, %Y - %T")
+            .to_string(),
+    )
 }
 
 pub fn format_time_ago(timestamp: i64) -> String {

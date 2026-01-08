@@ -48,6 +48,10 @@ pub enum State {
         create_cube: bool,
     },
     NoCube,
+    PinMigrationRequired {
+        cubes_needing_pin: Vec<CubeSettings>,
+        all_cubes: Vec<CubeSettings>,
+    }
 }
 
 pub struct Launcher {
@@ -247,7 +251,7 @@ impl Launcher {
 
                         // Use a timestamp for the Active wallet storage
                         let timestamp = chrono::Utc::now().timestamp();
-                        let active_checksum = format!("active-{}", timestamp);
+                        let active_checksum = format!("active_{}", timestamp);
 
                         // Store Active wallet mnemonic encrypted with PIN (always required)
                         active_signer
@@ -1093,43 +1097,30 @@ async fn check_network_datadir(path: NetworkDirectory) -> Result<State, String> 
     // Try to load cubes from settings
     match settings::Settings::from_file(&path) {
         Ok(s) => {
-            // Filter out cubes without PINs - mandatory PIN enforcement
-            let original_count = s.cubes.len();
-            let valid_cubes: Vec<_> = s.cubes.into_iter().filter(|c| c.has_pin()).collect();
+        let cubes_needing_pin: Vec<CubeSettings> = s.cubes.iter()
+        .filter(|c| !c.has_pin())
+        .cloned()
+        .collect();
 
-            // If we filtered out any cubes, update the settings file
-            if valid_cubes.len() != original_count {
-                let removed_count = original_count - valid_cubes.len();
-                tracing::warn!(
-                    "Removed {} cube(s) without PIN - PINs are now mandatory",
-                    removed_count
-                );
-
-                // Update settings file to remove invalid cubes
-                if let Err(e) = settings::update_settings_file(&path, |mut settings| {
-                    settings.cubes = valid_cubes.clone();
-                    Some(settings)
-                })
-                .await
-                {
-                    tracing::error!(
-                        "Failed to update settings after removing cubes without PIN: {}",
-                        e
-                    );
-                }
-            }
-
-            if valid_cubes.is_empty() {
-                // No valid cubes found - user needs to create one
-                Ok(State::NoCube)
-            } else {
-                Ok(State::Cubes {
-                    cubes: valid_cubes,
-                    create_cube: false,
-                })
-            }
+        if !cubes_needing_pin.is_empty() {
+            // do not touch settings file, show migration UI instead
+            return Ok(State::PinMigrationRequired {
+                cubes_needing_pin,
+                all_cubes: s.cubes,
+            });
         }
-        Err(settings::SettingsError::NotFound) => Ok(State::NoCube),
-        Err(e) => Err(e.to_string()),
+
+        // All cubes have PIN, continue
+        if s.cubes.is_empty() {
+            Ok(State::NoCube)
+        } else {
+            Ok(State::Cubes {
+                cubes: s.cubes,
+                create_cube: false,
+            })
+        }
+    }
+    Err(settings::SettingsError::NotFound) => Ok(State::NoCube),
+    Err(e) => Err(e.to_string()),
     }
 }
