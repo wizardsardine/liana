@@ -305,9 +305,7 @@ impl State for GlobalHome {
                                         if entered_amt > self.active_balance {
                                             valid = false;
                                             warning = Some("Amount exceeds Active balance");
-                                        }
-
-                                        if let Some((min_sat, max_sat)) = self.onchain_send_limit {
+                                        } else if let Some((min_sat, max_sat)) = self.onchain_send_limit {
                                             if entered_sat < min_sat || entered_sat > max_sat {
                                                 valid = false;
                                                 warning =
@@ -319,9 +317,7 @@ impl State for GlobalHome {
                                         if entered_amt > vault_balance {
                                             valid = false;
                                             warning = Some("Amount exceeds Vault balance");
-                                        }
-
-                                        if let Some((min_sat, max_sat)) = self.onchain_receive_limit
+                                        } else if let Some((min_sat, max_sat)) = self.onchain_receive_limit
                                         {
                                             if entered_sat < min_sat || entered_sat > max_sat {
                                                 valid = false;
@@ -496,26 +492,33 @@ impl State for GlobalHome {
                     }
                     HomeMessage::BackToHome => {
                         self.current_view.reset();
+                        self.transfer_direction = None;
+                        self.entered_amount = form::Value::default();
+                        self.receive_address_info = None;
+                        self.warning = None;
+                        self.onchain_send_limit = None;
+                        self.onchain_receive_limit = None;
+                        self.prepare_onchain_send_response = None;
+                        self.is_sending = false;
                         Task::none()
                     }
                     HomeMessage::BreezOnchainAddress(address) => {
-                        // Parse BIP-21 URI format: bitcoin:address?params
-                        let parsed_address = address.split_once(":").and_then(|(_, rest)| {
-                            rest.split_once("?").map(|(addr, _)| addr).or(Some(rest))
-                        });
+                        // Parse BIP-21 URI format: bitcoin:address?params or plain address
+                        let addr_str = address
+                            .strip_prefix("bitcoin:")
+                            .unwrap_or(&address)
+                            .split('?')
+                            .next()
+                            .unwrap_or(&address);
 
-                        if let Some(addr_str) = parsed_address {
-                            if let Ok(parsed) = Address::from_str(addr_str) {
-                                self.receive_address_info = Some(ReceiveAddressInfo {
-                                    address: parsed.assume_checked(),
-                                    index: ChildNumber::Normal { index: 1 },
-                                    labels: HashMap::new(),
-                                });
-                            } else {
-                                log::error!("Failed to parse Breez on-chain address: {}", addr_str);
-                            }
+                        if let Ok(parsed) = Address::from_str(addr_str) {
+                            self.receive_address_info = Some(ReceiveAddressInfo {
+                                address: parsed.assume_checked(),
+                                index: ChildNumber::Normal { index: 1 },
+                                labels: HashMap::new(),
+                            });
                         } else {
-                            log::error!("Unexpected Breez address format: {}", address);
+                            log::error!("Failed to parse Breez on-chain address: {}", addr_str);
                         }
                         Task::none()
                     }
