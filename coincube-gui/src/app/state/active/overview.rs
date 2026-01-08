@@ -112,6 +112,11 @@ impl State for ActiveOverview {
                 view::ActiveOverviewMessage::History => {
                     return redirect(Menu::Active(ActiveSubMenu::Transactions(None)));
                 }
+                view::ActiveOverviewMessage::SelectTransaction(idx) => {
+                    if idx < self.recent_transaction.len() {
+                        return redirect(Menu::Active(ActiveSubMenu::Transactions(None)));
+                    }
+                }
                 view::ActiveOverviewMessage::DataLoaded {
                     balance,
                     recent_payment,

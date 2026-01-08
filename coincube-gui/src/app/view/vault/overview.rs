@@ -11,7 +11,10 @@ use iced::{
 use coincube_core::miniscript::bitcoin;
 use coincube_ui::{
     color,
-    component::{amount::*, button, card, event, form, spinner, text::*},
+    component::{
+        amount::*, button, card, form, spinner, text::*,
+        transaction::{TransactionBadge, TransactionDirection, TransactionListItem, TransactionType},
+    },
     icon::{self, cross_icon},
     theme,
     widget::*,
@@ -219,7 +222,7 @@ pub fn vault_overview_view<'a>(
                 .push(h4_bold("Last transactions"))
                 .push(events.iter().fold(Column::new().spacing(10), |col, event| {
                     if event.kind != PaymentKind::SendToSelf {
-                        col.push(event_list_view(event))
+                        col.push(event_list_view(event, bitcoin_unit, fiat_converter))
                     } else {
                         col
                     }
@@ -256,47 +259,42 @@ pub fn vault_overview_view<'a>(
         .into()
 }
 
-fn event_list_view(event: &Payment) -> Element<'_, Message> {
+fn event_list_view(event: &Payment, bitcoin_unit: BitcoinDisplayUnit, fiat_converter: Option<FiatAmountConverter>) -> Element<'_, Message> {
+    let direction = if event.kind == PaymentKind::Incoming {
+        TransactionDirection::Incoming
+    } else {
+        TransactionDirection::Outgoing
+    };
+
     let label = if let Some(label) = &event.label {
-        Some(p1_regular(label))
+        Some(label.clone())
     } else {
         event.address_label.as_ref().map(|label| {
-            p1_regular(format!("address label: {}", label)).style(theme::text::secondary)
+            format!("address label: {}", label)
         })
     };
-    if event.kind == PaymentKind::Incoming {
-        if let Some(t) = event.time {
-            event::confirmed_incoming_event(
-                label,
-                t,
-                &event.amount,
-                Message::SelectPayment(event.outpoint),
-            )
-            .into()
-        } else {
-            event::unconfirmed_incoming_event(
-                label,
-                &event.amount,
-                Message::SelectPayment(event.outpoint),
-            )
-            .into()
-        }
-    } else if let Some(t) = event.time {
-        event::confirmed_outgoing_event(
-            label,
-            t,
-            &event.amount,
-            Message::SelectPayment(event.outpoint),
-        )
-        .into()
-    } else {
-        event::unconfirmed_outgoing_event(
-            label,
-            &event.amount,
-            Message::SelectPayment(event.outpoint),
-        )
-        .into()
+
+    let mut item = TransactionListItem::new(direction, &event.amount, bitcoin_unit)
+        .with_type(TransactionType::Bitcoin);
+
+    if let Some(label) = label {
+        item = item.with_label(label);
     }
+
+    if let Some(timestamp) = event.time {
+        item = item.with_timestamp(timestamp);
+    } else {
+        item = item.with_badge(TransactionBadge::Unconfirmed);
+    }
+
+    if let Some(fiat_amount) = fiat_converter.map(|converter| {
+        let fiat = converter.convert(event.amount);
+        format!("~{} {}", fiat.to_rounded_string(), fiat.currency())
+    }) {
+        item = item.with_fiat_amount(fiat_amount);
+    }
+
+    item.view(Message::SelectPayment(event.outpoint)).into()
 }
 
 pub fn payment_view<'a>(

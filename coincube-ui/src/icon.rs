@@ -283,14 +283,18 @@ pub fn lock_icon() -> Text<'static> {
     bootstrap_icon('\u{F47B}')
 }
 
-pub fn file_earmark() -> Text<'static> {
+pub fn file_earmark_icon() -> Text<'static> {
     bootstrap_icon('\u{F373}')
 }
 
-pub fn check_circle() -> Text<'static> {
+pub fn check_circle_icon() -> Text<'static> {
     bootstrap_icon('\u{F26B}')
 }
 
-pub fn phone() -> Text<'static> {
+pub fn phone_icon() -> Text<'static> {
     bootstrap_icon('\u{F4E7}')
+}
+
+pub fn chain_icon() -> Text<'static> {
+    bootstrap_icon('\u{F470}')
 }

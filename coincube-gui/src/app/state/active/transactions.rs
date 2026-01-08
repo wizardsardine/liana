@@ -60,7 +60,7 @@ impl State for ActiveTransactions {
                 menu,
                 cache,
                 None,
-                view::active::payment_detail_view(
+                view::active::transaction_detail_view(
                     payment,
                     fiat_converter,
                     cache.bitcoin_unit.into(),

@@ -12,6 +12,7 @@ pub mod spinner;
 pub mod text;
 pub mod toast;
 pub mod tooltip;
+pub mod transaction;
 
 use bitcoin::Network;
 pub use tooltip::tooltip;

@@ -513,10 +513,6 @@ impl App {
         network: coincube_core::miniscript::bitcoin::Network,
         cube_settings: settings::CubeSettings,
     ) -> (App, Task<Message>) {
-        tracing::info!(
-            "Creating app without wallet for cube: {}",
-            cube_settings.name
-        );
         let config_arc = Arc::new(config);
         // Load bitcoin_unit from cube settings if available
         let bitcoin_unit = {
@@ -538,7 +534,6 @@ impl App {
             bitcoin_unit,
             ..Default::default()
         };
-        tracing::debug!("Cache configured with has_vault=false");
 
         let mut panels = Panels::new_without_vault(
             breez_client.clone(),
@@ -550,7 +545,6 @@ impl App {
 
         let cmd = panels.global_home.reload(None, None);
 
-        tracing::info!("App created without vault successfully");
         (
             Self {
                 panels,
@@ -794,11 +788,6 @@ impl App {
     }
 
     pub fn subscription(&self) -> Subscription<Message> {
-        tracing::trace!(
-            "App::subscription() called, has_vault={}",
-            self.cache.has_vault
-        );
-
         let mut subscriptions = vec![];
 
         // Always subscribe to Breez events (handles fee acceptance globally)
@@ -914,8 +903,6 @@ impl App {
             },
         );
         if self.cache.daemon_cache.last_tick + duration <= tick {
-            tracing::debug!("Updating daemon cache");
-
             // We have to update here the last_tick to prevent that during a burst of events
             // there is a race condition with the Task and too much tasks are triggered.
             self.cache.daemon_cache.last_tick = tick;
@@ -1080,7 +1067,6 @@ impl App {
                 // If we didn't have a vault before, rebuild all vault panels
                 if was_vaultless {
                     if let Some(daemon) = &self.daemon {
-                        tracing::info!("Vault added to app - rebuilding vault panels");
                         self.panels.build_vault_panels(
                             wallet.clone(),
                             &self.cache,

@@ -306,6 +306,11 @@ impl State for ActiveSend {
                 view::ActiveSendMessage::History => {
                     return redirect(Menu::Active(ActiveSubMenu::Transactions(None)));
                 }
+                view::ActiveSendMessage::SelectTransaction(idx) => {
+                    if idx < self.recent_transaction.len() {
+                        return redirect(Menu::Active(ActiveSubMenu::Transactions(None)));
+                    }
+                }
                 view::ActiveSendMessage::DataLoaded {
                     balance,
                     recent_payment,

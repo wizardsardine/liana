@@ -225,6 +225,7 @@ pub fn create_spend_tx<'a>(
                     } else {
                         None
                     })
+                    .push(Space::new().height(Length::Fixed(20.0)))
                     .push(
                         Column::new()
                             .spacing(10)
