@@ -40,7 +40,7 @@ pub use coins::CoinsPanel;
 use label::LabelsEdited;
 pub use psbts::PsbtsPanel;
 pub use receive::ReceivePanel;
-pub use settings::SettingsState;
+pub use settings::{LianaSettingsUI, SettingsState};
 pub use spend::CreateSpendPanel;
 pub use transactions::TransactionsPanel;
 
