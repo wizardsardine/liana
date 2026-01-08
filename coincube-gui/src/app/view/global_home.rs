@@ -2,8 +2,8 @@ use coincube_ui::{
     color,
     component::{amount::*, button, form, text::*},
     icon::{
-        arrow_down_up_icon, arrow_right, eye_outline_icon, eye_slash_icon, lightning_icon,
-        vault_icon,
+        arrow_down_up_icon, arrow_right, check_circle, eye_outline_icon, eye_slash_icon,
+        lightning_icon, vault_icon,
     },
     theme,
     widget::*,
@@ -324,6 +324,8 @@ fn balance_summary_card<'a>(
 fn enter_amount_card<'a>(
     direction: TransferDirection,
     amount: &'a form::Value<String>,
+    onchain_send_limit: Option<(u64, u64)>,
+    onchain_receive_limit: Option<(u64, u64)>,
 ) -> Element<'a, Message> {
     let content = Column::new()
         .push(text("Enter Amount").bold().size(H2_SIZE))
@@ -337,22 +339,45 @@ fn enter_amount_card<'a>(
         .push(Space::new().height(Length::Fixed(80.0)))
         .push(
             Column::new()
-                .push(Container::new(
-                    form::Form::new_amount_btc("Amount in BTC", amount, |msg| {
-                        Message::Home(HomeMessage::AmountEdited(msg))
-                    })
-                    .warning("Please enter an amount")
-                    .size(20)
-                    .padding(10),
-                ))
                 .push(
-                    button::primary(None, "Next").on_press_maybe(if amount.value.is_empty() {
+                    Column::new()
+                        .push(Container::new(
+                            form::Form::new_amount_btc("Amount in BTC", amount, |msg| {
+                                Message::Home(HomeMessage::AmountEdited(msg))
+                            })
+                            .size(20)
+                            .padding(10),
+                        ))
+                        .push_maybe(
+                            if let Some(limits) = if direction == TransferDirection::ActiveToVault {
+                                onchain_send_limit
+                            } else {
+                                onchain_receive_limit
+                            } {
+                                Some(
+                                    Container::new(
+                                        text(format!(
+                                            "Enter an amount between {} BTC and {} BTC",
+                                            Amount::from_sat(limits.0).to_btc().to_string(),
+                                            Amount::from_sat(limits.1).to_btc().to_string(),
+                                        ))
+                                        .size(12),
+                                    )
+                                    .padding(7),
+                                )
+                            } else {
+                                None
+                            },
+                        ),
+                )
+                .push(button::primary(None, "Next").on_press_maybe(
+                    if amount.value.is_empty() || !amount.valid {
                         None
                     } else {
                         Some(Message::Home(HomeMessage::NextStep))
-                    }),
-                )
-                .spacing(80)
+                    },
+                ))
+                .spacing(40)
                 .width(Length::Fixed(460.0)),
         )
         .width(Length::Fill)
@@ -373,6 +398,8 @@ fn enter_amount_view<'a>(
     fiat_converter: Option<FiatAmountConverter>,
     entered_amount: &'a form::Value<String>,
     bitcoin_unit: crate::app::settings::unit::BitcoinDisplayUnit,
+    onchain_send_limit: Option<(u64, u64)>,
+    onchain_receive_limit: Option<(u64, u64)>,
 ) -> Element<'a, Message> {
     let (from_balance, to_balance, from_name, to_name) = match direction {
         TransferDirection::ActiveToVault => (active_balance, vault_balance, "Active", "Vault"),
@@ -466,7 +493,12 @@ fn enter_amount_view<'a>(
                 .align_y(Alignment::Center),
             ),
         )
-        .push(enter_amount_card(direction, entered_amount))
+        .push(enter_amount_card(
+            direction,
+            entered_amount,
+            onchain_send_limit,
+            onchain_receive_limit,
+        ))
         .padding(20)
         .width(Length::Fill)
         .align_x(Alignment::Center);
@@ -485,6 +517,7 @@ fn confirm_transfer_view<'a>(
     labels_editing: &'a std::collections::HashMap<String, form::Value<String>>,
     address_expanded: bool,
     warning: Option<&'a crate::app::error::Error>,
+    is_sending: bool,
 ) -> Element<'a, Message> {
     const NUM_ADDR_CHARS: usize = 16;
 
@@ -607,11 +640,78 @@ fn confirm_transfer_view<'a>(
                                     text("Transferring to Active wallet")
                                         .style(theme::text::secondary),
                                 )
-                                .push(
-                                    text("(Active wallet address generation not yet implemented)")
-                                        .size(12)
-                                        .style(theme::text::secondary),
-                                ),
+                                .push_maybe(receive_address.map(|addr| -> Element<'a, Message> {
+                                    if address_expanded {
+                                        Button::new(address_card(0, addr, labels, labels_editing))
+                                            .padding(0)
+                                            .on_press(Message::SelectAddress(addr.clone()))
+                                            .style(theme::button::transparent_border)
+                                            .into()
+                                    } else {
+                                        let addr_str = addr.to_string();
+                                        let addr_len = addr_str.chars().count();
+
+                                        Container::new(
+                                            Button::new(
+                                                Row::new()
+                                                    .spacing(10)
+                                                    .push(
+                                                        Container::new(
+                                                            p2_regular(
+                                                                if addr_len > 2 * NUM_ADDR_CHARS {
+                                                                    format!(
+                                                                    "{}...{}",
+                                                                    addr_str
+                                                                        .chars()
+                                                                        .take(NUM_ADDR_CHARS)
+                                                                        .collect::<String>(),
+                                                                    addr_str
+                                                                        .chars()
+                                                                        .skip(
+                                                                            addr_len
+                                                                                - NUM_ADDR_CHARS
+                                                                        )
+                                                                        .collect::<String>(),
+                                                                )
+                                                                } else {
+                                                                    addr_str.clone()
+                                                                },
+                                                            )
+                                                            .small()
+                                                            .style(theme::text::secondary),
+                                                        )
+                                                        .padding(10)
+                                                        .width(Length::Fixed(350.0)),
+                                                    )
+                                                    .push(
+                                                        Container::new(
+                                                            text(
+                                                                labels
+                                                                    .get(&addr_str)
+                                                                    .cloned()
+                                                                    .unwrap_or_default(),
+                                                            )
+                                                            .small()
+                                                            .style(theme::text::secondary),
+                                                        )
+                                                        .padding(10)
+                                                        .width(Length::Fill),
+                                                    )
+                                                    .align_y(Alignment::Center),
+                                            )
+                                            .on_press(Message::SelectAddress(addr.clone()))
+                                            .padding(20)
+                                            .width(Length::Fill)
+                                            .style(theme::button::secondary),
+                                        )
+                                        .style(theme::card::simple)
+                                        .into()
+                                    }
+                                })).
+                            push_maybe(receive_address.is_none().then(|| {
+                                text("No receiving address available. Please generate one first.")
+                                    .style(theme::text::secondary)
+                            })),
                         )
                     }
                 }),
@@ -632,8 +732,11 @@ fn confirm_transfer_view<'a>(
         )
         .push(Space::new().height(Length::Fixed(60.0)))
         .push(
-            button::primary(None, "Confirm Transfer")
-                .on_press(Message::Home(HomeMessage::ConfirmTransfer)),
+            button::primary(None, "Confirm Transfer").on_press_maybe(if !is_sending {
+                Some(Message::Home(HomeMessage::ConfirmTransfer))
+            } else {
+                None
+            }),
         );
 
     Container::new(content)
@@ -642,7 +745,71 @@ fn confirm_transfer_view<'a>(
         .into()
 }
 
-#[derive(Clone, Copy, Debug)]
+pub fn transfer_successful_view<'a>(direction: TransferDirection) -> Element<'a, Message> {
+    use coincube_ui::widget::{Column, Row};
+    Column::new()
+        .spacing(20)
+        .width(Length::Fill)
+        .push(Space::new().height(Length::Fixed(20.0)))
+        .push(
+            Row::new()
+                .width(Length::Fill)
+                .align_y(Alignment::Center)
+                .push(Space::new().width(Length::Fill))
+                .push(check_circle().size(140).color(color::ORANGE))
+                .push(Space::new().width(Length::Fill)),
+        )
+        .push(Space::new().height(Length::Fixed(16.0)))
+        .push(
+            Row::new()
+                .width(Length::Fill)
+                .align_y(Alignment::Center)
+                .push(Space::new().width(Length::Fill))
+                .push(
+                    Column::new()
+                        .width(Length::Shrink)
+                        .align_x(Alignment::Center)
+                        .push(h3("Transfer Successful!")),
+                )
+                .push(Space::new().width(Length::Fill)),
+        )
+        .push(
+            Row::new()
+                .width(Length::Fill)
+                .align_y(Alignment::Center)
+                .push(Space::new().width(Length::Fill))
+                .push(
+                    Row::new().spacing(5).push(
+                        text(format!(
+                            "Your funds have been moved to your {} Wallet",
+                            if matches!(direction, TransferDirection::ActiveToVault) {
+                                "Vault"
+                            } else {
+                                "Active"
+                            }
+                        ))
+                        .size(20),
+                    ),
+                )
+                .push(Space::new().width(Length::Fill)),
+        )
+        .push(Space::new().height(Length::Fixed(20.0)))
+        .push(
+            Row::new()
+                .width(Length::Fill)
+                .align_y(Alignment::Center)
+                .push(Space::new().width(Length::Fill))
+                .push(
+                    button::primary(None, "Back")
+                        .width(Length::Fixed(150.0))
+                        .on_press(Message::Home(HomeMessage::BackToHome)),
+                )
+                .push(Space::new().width(Length::Fill)),
+        )
+        .into()
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum TransferDirection {
     ActiveToVault,
     VaultToActive,
@@ -684,6 +851,9 @@ pub struct GlobalViewConfig<'a> {
     pub address_expanded: bool,
     pub warning: Option<&'a crate::app::error::Error>,
     pub bitcoin_unit: crate::app::settings::unit::BitcoinDisplayUnit,
+    pub onchain_send_limit: Option<(u64, u64)>,
+    pub onchain_receive_limit: Option<(u64, u64)>,
+    pub is_sending: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -724,6 +894,9 @@ pub fn global_home_view<'a>(config: GlobalViewConfig<'a>) -> Element<'a, Message
         address_expanded,
         warning,
         bitcoin_unit,
+        onchain_send_limit,
+        onchain_receive_limit,
+        is_sending,
     } = config;
 
     match current_view.step {
@@ -739,6 +912,8 @@ pub fn global_home_view<'a>(config: GlobalViewConfig<'a>) -> Element<'a, Message
                     fiat_converter,
                     entered_amount,
                     bitcoin_unit,
+                    onchain_send_limit,
+                    onchain_receive_limit,
                 );
             }
         }
@@ -752,7 +927,13 @@ pub fn global_home_view<'a>(config: GlobalViewConfig<'a>) -> Element<'a, Message
                     labels_editing,
                     address_expanded,
                     warning,
+                    is_sending,
                 );
+            }
+        }
+        4 => {
+            if let Some(direction) = transfer_direction {
+                return transfer_successful_view(direction);
             }
         }
         0 => {}

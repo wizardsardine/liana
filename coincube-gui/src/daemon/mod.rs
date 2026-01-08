@@ -1,5 +1,4 @@
 pub mod client;
-pub mod dummy;
 pub mod embedded;
 pub mod model;
 

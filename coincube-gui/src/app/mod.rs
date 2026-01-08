@@ -1198,6 +1198,9 @@ impl App {
                             Task::done(Message::View(view::Message::ActiveOverview(
                                 view::ActiveOverviewMessage::RefreshRequested,
                             ))),
+                            Task::done(Message::View(view::Message::Home(
+                                view::HomeMessage::RefreshActiveBalance,
+                            ))),
                         ]);
                     }
                     _ => {

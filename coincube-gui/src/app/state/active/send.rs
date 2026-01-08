@@ -88,11 +88,9 @@ impl ActiveSend {
                 let balance = info
                     .as_ref()
                     .map(|info| {
-                        let balance_with_pending =
+                        let balance =
                             info.wallet_info.balance_sat + info.wallet_info.pending_receive_sat;
-                        let available =
-                            balance_with_pending.saturating_sub(info.wallet_info.pending_send_sat);
-                        Amount::from_sat(available)
+                        Amount::from_sat(balance)
                     })
                     .unwrap_or(Amount::ZERO);
 
@@ -643,18 +641,27 @@ impl State for ActiveSend {
                                         // Validate the converted BTC amount
                                         let (valid, warning) = if btc_amount > self.btc_balance {
                                             (false, Some("Amount exceeds available balance"))
-                                        } else if let Some((min_sat, max_sat)) =
-                                            self.lightning_limits
-                                        {
-                                            if amount_sats < min_sat {
-                                                (false, Some("Amount is below minimum limit"))
-                                            } else if amount_sats > max_sat {
-                                                (false, Some("Amount exceeds maximum limit"))
+                                        } else {
+                                            let limits = if matches!(
+                                                self.input_type,
+                                                Some(InputType::BitcoinAddress { .. })
+                                            ) {
+                                                self.onchain_limits
+                                            } else {
+                                                self.lightning_limits
+                                            };
+
+                                            if let Some((min_sat, max_sat)) = limits {
+                                                if amount_sats < min_sat {
+                                                    (false, Some("Amount is below minimum limit"))
+                                                } else if amount_sats > max_sat {
+                                                    (false, Some("Amount exceeds maximum limit"))
+                                                } else {
+                                                    (true, None)
+                                                }
                                             } else {
                                                 (true, None)
                                             }
-                                        } else {
-                                            (true, None)
                                         };
 
                                         self.amount_input = form::Value {

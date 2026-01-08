@@ -9,8 +9,9 @@ use crate::{
     services::fiat::{Currency, PriceSource},
 };
 
-use breez_sdk_liquid::prelude::{Payment, PreparePayOnchainResponse, PrepareSendResponse};
-use breez_sdk_liquid::InputType;
+use breez_sdk_liquid::prelude::{
+    InputType, Payment, PreparePayOnchainResponse, PrepareSendResponse,
+};
 use coincube_core::miniscript::bitcoin::Amount;
 use coincube_core::miniscript::bitcoin::{bip32::Fingerprint, Address, OutPoint};
 use coincube_core::spend::SpendCreationError;
@@ -335,4 +336,13 @@ pub enum HomeMessage {
     PreviousStep,
     Error(String),
     ActiveBalanceUpdated(Amount),
+    OnChainLimitsFetched {
+        send: (u64, u64),    // (min_sat, max_sat)
+        receive: (u64, u64), // (min_sat, max_sat)
+    },
+    PrepareOnChainResponseReceived(PreparePayOnchainResponse),
+    TransferSuccessful,
+    BackToHome,
+    BreezOnchainAddress(String),
+    RefreshActiveBalance,
 }
