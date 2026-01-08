@@ -589,6 +589,15 @@ impl Step for DefineSpend {
                     cache.last_poll_timestamp(),
                     cache.last_poll_at_startup,
                 );
+
+                // Recalculate balance from currency cache
+                let (balance, unconfirmed_balance, _, _) =  crate::app::state::coins_summary(
+                    cache.coins(),
+                    cache.blockheight().max(0) as u32,
+                    self.wallet.main_descriptor.first_timelock_value(),
+                );
+                self.balance = balance;
+                self.unconfirmed_balance = unconfirmed_balance;
             }
             Message::View(view::Message::CreateSpend(msg)) => {
                 match msg {

@@ -12,7 +12,7 @@ use crate::{
 use coincube_ui::component::form;
 use iced::Task;
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct LabelsEdited(HashMap<String, form::Value<String>>);
 
 impl LabelsEdited {

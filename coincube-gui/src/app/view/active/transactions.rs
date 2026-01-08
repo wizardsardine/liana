@@ -124,7 +124,7 @@ fn transaction_row<'a>(
     };
 
     let btc_amount = Amount::from_sat(payment.amount_sat);
-    let time_ago = format_time_ago(payment.timestamp);
+    let time_ago = format_time_ago(payment.timestamp.into());
 
     let direction = if is_receive {
         TransactionDirection::Incoming
