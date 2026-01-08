@@ -193,6 +193,8 @@ impl State for ActiveOverview {
                             })
                             .collect();
                         self.recent_transaction = txns;
+                    } else {
+                        self.recent_transaction = Vec::new();
                     }
                 }
                 view::ActiveOverviewMessage::Error(err) => {
@@ -219,6 +221,7 @@ impl State for ActiveOverview {
         _daemon: Option<Arc<dyn Daemon + Sync + Send>>,
         _wallet: Option<Arc<Wallet>>,
     ) -> Task<Message> {
+        self.selected_payment = None;
         self.load_balance()
     }
 }

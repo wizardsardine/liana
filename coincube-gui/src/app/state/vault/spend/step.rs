@@ -915,7 +915,7 @@ impl Step for DefineSpend {
             self.warning.as_ref(),
             self.is_first_step,
             self.loading_fee_estimate,
-            self.bitcoin_unit,
+            cache.bitcoin_unit.into(),
         )
     }
 

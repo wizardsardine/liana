@@ -185,12 +185,14 @@ impl State for ActiveSend {
                     let value_owned = value.clone();
                     // TODO: Add some kind of debouncing mechanism here, so that we don't call breez
                     // API again and again
-                    let validate_input =
-                        Task::perform(async move { breez.validate_input(value_owned).await }, |input| {
+                    let validate_input = Task::perform(
+                        async move { breez.validate_input(value_owned).await },
+                        |input| {
                             Message::View(view::Message::ActiveSend(
                                 view::ActiveSendMessage::InputValidated(input),
                             ))
-                        });
+                        },
+                    );
 
                     // Fetch limits only if not already available
                     if self.lightning_limits.is_none() || self.onchain_limits.is_none() {
@@ -390,6 +392,8 @@ impl State for ActiveSend {
                             })
                             .collect();
                         self.recent_transaction = txns;
+                    } else {
+                        self.recent_transaction = Vec::new();
                     }
                 }
                 view::ActiveSendMessage::Error(err) => {
@@ -953,6 +957,7 @@ impl State for ActiveSend {
         _daemon: Option<Arc<dyn Daemon + Sync + Send>>,
         _wallet: Option<Arc<Wallet>>,
     ) -> Task<Message> {
+        self.selected_payment = None;
         self.load_balance()
     }
 }
