@@ -73,7 +73,7 @@ fn xpub_status_badge(has_xpub: bool) -> Element<'static, Msg> {
 
     if has_xpub {
         Container::new(
-            Container::new(text::caption("✓ Populated"))
+            Container::new(text::caption("✓ Set"))
                 .padding([4, 12])
                 .style(liana_ui::theme::pill::success)
                 .width(Length::Fill)
