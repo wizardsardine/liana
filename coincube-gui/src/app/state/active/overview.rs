@@ -126,7 +126,7 @@ impl State for ActiveOverview {
                             .map(|payment| {
                                 let amount = Amount::from_sat(payment.amount_sat);
                                 let status = payment.status;
-                                let time_ago = format_time_ago(payment.timestamp);
+                                let time_ago = format_time_ago(payment.timestamp.into());
                                 let fiat_amount = fiat_converter
                                     .as_ref()
                                     .map(|c: &view::FiatAmountConverter| c.convert(amount));

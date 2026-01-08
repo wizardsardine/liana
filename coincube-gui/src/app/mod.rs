@@ -208,13 +208,13 @@ impl Panels {
             create_spend: Some({
                 let (balance, unconfirmed_balance, _, _) = state::coins_summary(
                     cache.coins(),
-                    cache.blockheight() as u32,
+                    cache.blockheight().max(0) as u32,
                     wallet.main_descriptor.first_timelock_value(),
                 );
                 CreateSpendPanel::new(
                     wallet.clone(),
                     cache.coins(),
-                    cache.blockheight() as u32,
+                    cache.blockheight().max(0) as u32,
                     cache.network,
                     balance,
                     unconfirmed_balance,

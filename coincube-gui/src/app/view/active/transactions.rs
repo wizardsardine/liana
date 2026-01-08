@@ -97,7 +97,7 @@ fn transaction_row<'a>(
     let is_receive = matches!(payment.payment_type, PaymentType::Receive);
 
     // Format timestamp
-    let time_text = format_time_ago(payment.timestamp);
+    let time_text = format_time_ago(payment.timestamp.into());
 
     // Extract description from payment details
     let description = match &payment.details {

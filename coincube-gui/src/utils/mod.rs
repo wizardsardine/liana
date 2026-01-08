@@ -51,13 +51,13 @@ pub fn format_timestamp(timestamp: u64) -> String {
         .to_string()
 }
 
-pub fn format_time_ago(timestamp: u32) -> String {
+pub fn format_time_ago(timestamp: i64) -> String {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
-        .as_secs() as u32;
+        .as_secs() as i64;
 
-    let diff = now.saturating_sub(timestamp);
+    let diff = now.saturating_sub(timestamp).max(0) as u64;
 
     if diff < 60 {
         "just now".to_string()
