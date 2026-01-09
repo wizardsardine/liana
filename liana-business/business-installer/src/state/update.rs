@@ -1,7 +1,7 @@
 use super::{app::AppState, message::Msg, views, State, View};
 use crate::{
     backend::{Backend, Error, Notification, UserRole, Wallet, WalletStatus},
-    client::{PROTOCOL_VERSION, WS_URL},
+    client::{ws_url, PROTOCOL_VERSION},
     state::views::modals::{ConflictModalState, ConflictType},
 };
 use iced::Task;
@@ -235,7 +235,7 @@ impl State {
             // Set token and connect
             self.backend.set_token(token);
             self.backend.connect_ws(
-                WS_URL.to_string(),
+                ws_url(self.network),
                 PROTOCOL_VERSION,
                 self.notif_sender.clone(),
             );
@@ -866,7 +866,7 @@ impl State {
         // This will establish the connection now that we have a token
         // (token refresh thread is started in on_backend_connected)
         self.backend.connect_ws(
-            WS_URL.to_string(),
+            ws_url(self.network),
             PROTOCOL_VERSION,
             self.notif_sender.clone(),
         );

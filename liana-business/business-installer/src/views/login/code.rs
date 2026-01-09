@@ -1,5 +1,5 @@
 use crate::{
-    client::AUTH_API_URL,
+    client::auth_api_url,
     state::{message::Msg, State},
     views::layout,
 };
@@ -46,7 +46,7 @@ pub fn login_code_view(state: &State) -> Element<'_, Msg> {
     ];
 
     // Debug mode hint
-    let debug_hint = if AUTH_API_URL == "debug" {
+    let debug_hint = if auth_api_url(state.network) == "debug" {
         Some(text::p2_regular("Debug mode - Use code: 123456").color(color::GREY_2))
     } else {
         None

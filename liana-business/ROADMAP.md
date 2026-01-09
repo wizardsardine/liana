@@ -253,6 +253,41 @@ When user arrives at wallet selection, three possible subflows based on status:
 - [x] **Auth Improvements**
   - [x] Automatically refresh token
 
+- [x] **Separate Backend URL**
+  - liana-business uses:
+    - Mainnet: `api.business.lianawallet.com`
+    - Signet: `api.signet.business.lianawallet.com`
+  - liana-gui uses:
+    - Mainnet: `api.lianalite.com`
+    - Signet: `api.signet.lianalite.com`
+  - Initially DNS will point to the same server
+  - Enables future backend decoupling via DNS without software update
+  - [x] Update liana-business to use separate backend URL constant
+    - `client.rs`: `auth_api_url(network)` and `ws_url(network)` functions
+  - [x] Add env var override for backend URL (both liana-gui & liana-business)
+    - liana-business:
+      - `LIANA_BUSINESS_API_URL` / `LIANA_BUSINESS_WS_URL` (any network)
+      - `LIANA_BUSINESS_SIGNET_API_URL` / `LIANA_BUSINESS_SIGNET_WS_URL`
+      - `LIANA_BUSINESS_MAINNET_API_URL` / `LIANA_BUSINESS_MAINNET_WS_URL`
+    - liana-gui:
+      - `LIANA_LITE_API_URL` (any network)
+      - `LIANA_LITE_SIGNET_API_URL`, `LIANA_LITE_MAINNET_API_URL`
+  - [ ] Verify DNS records are configured
+
+- [x] **NextState::RunLianaBusiness Variant (Direct to App)**
+  - liana-business users are already authenticated with connected backend in installer
+  - `NextState::RunLianaBusiness` goes **directly to App**, skipping Login and Loader
+  - **Implementation:**
+    - [x] Added `RunLianaBusiness` variant to `NextState` enum in `liana-gui/src/installer/mod.rs`
+      - Fields: `datadir`, `network`, `wallet_id`, `email`
+    - [x] Updated `tab.rs` to handle new variant
+      - Spawns async `connect_for_business()` using cached tokens
+      - On success: creates App via `S::create_app_for_remote_backend()`
+      - On failure: falls back to `LianaLiteLogin` for re-authentication
+    - [x] Updated `BusinessInstaller::exit_maybe()` to return `RunLianaBusiness`
+    - [x] Tokens cached in `connect.json` during installer auth flow
+    - [x] App's `RedirectLianaConnectLogin` handled by falling back to Login state
+
 - [ ] **Reproducible Build Integration**
   - [ ] Add liana-business to Guix build script
   - [ ] Add liana-business to release packaging
@@ -293,6 +328,17 @@ When user arrives at wallet selection, three possible subflows based on status:
 ## Changelog
 
 ### 2026-01-09
+- Separate Backend URL with network-specific endpoints:
+  - liana-business: api.business.lianawallet.com (mainnet), api.signet.business.lianawallet.com (signet)
+  - liana-gui: api.lianalite.com (mainnet), api.signet.lianalite.com (signet)
+- Added env var overrides for local testing:
+  - liana-business: LIANA_BUSINESS_API_URL, LIANA_BUSINESS_WS_URL (global)
+  - liana-business: LIANA_BUSINESS_SIGNET_API_URL, LIANA_BUSINESS_MAINNET_API_URL (network-specific)
+  - liana-gui: LIANA_LITE_API_URL, LIANA_LITE_SIGNET_API_URL, LIANA_LITE_MAINNET_API_URL
+- NextState::RunLianaBusiness: Direct Installer→App transition (skips Login/Loader)
+  - Added `connect_for_business()` in tab.rs for token-based connection
+  - BusinessInstaller exits directly to App using cached tokens
+  - Falls back to LianaLiteLogin on connection failure
 - Auth Improvements: Background token refresh thread (checks every 60s, refreshes 5 min before expiry)
 - 1.5 Full GUI Integration: Replaced PolicyBuilder with GUI<BusinessInstaller, BusinessSettings, Message>
 - Added skip_launcher() -> true to BusinessInstaller

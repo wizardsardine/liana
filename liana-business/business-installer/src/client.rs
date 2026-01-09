@@ -31,25 +31,66 @@ use crate::{
 };
 use liana_connect::{ConnectedPayload, OrgJson, Request, Response, UserJson, WalletJson, XpubJson};
 
-/// HTTP URL for liana-business-server REST API (auth endpoints)
-// pub const AUTH_API_URL: &str = "http://127.0.0.1:8099";
-pub const AUTH_API_URL: &str = "http://54.37.41.47:8099";
+/// Default HTTP URL for liana-business backend REST API (mainnet)
+const DEFAULT_MAINNET_API_URL: &str = "https://api.business.lianawallet.com";
+/// Default HTTP URL for liana-business backend REST API (signet/testnet)
+const DEFAULT_SIGNET_API_URL: &str = "https://api.signet.business.lianawallet.com";
 
-/// WebSocket URL for liana-business-server
-// pub const WS_URL: &str = "ws://127.0.0.1:8100";
-pub const WS_URL: &str = "ws://54.37.41.47:8100";
+/// Default WebSocket URL for liana-business backend (mainnet)
+const DEFAULT_MAINNET_WS_URL: &str = "wss://api.business.lianawallet.com/ws";
+/// Default WebSocket URL for liana-business backend (signet/testnet)
+const DEFAULT_SIGNET_WS_URL: &str = "wss://api.signet.business.lianawallet.com/ws";
+
+/// Get AUTH API URL for the given network.
+/// Environment variables can override the defaults for local testing:
+/// - LIANA_BUSINESS_API_URL: overrides the URL for any network
+/// - LIANA_BUSINESS_SIGNET_API_URL: overrides only for signet/testnet
+/// - LIANA_BUSINESS_MAINNET_API_URL: overrides only for mainnet
+pub fn auth_api_url(network: Network) -> String {
+    // First check global override
+    if let Ok(url) = std::env::var("LIANA_BUSINESS_API_URL") {
+        return url;
+    }
+    // Then check network-specific override
+    if network == Network::Bitcoin {
+        std::env::var("LIANA_BUSINESS_MAINNET_API_URL")
+            .unwrap_or_else(|_| DEFAULT_MAINNET_API_URL.to_string())
+    } else {
+        std::env::var("LIANA_BUSINESS_SIGNET_API_URL")
+            .unwrap_or_else(|_| DEFAULT_SIGNET_API_URL.to_string())
+    }
+}
+
+/// Get WebSocket URL for the given network.
+/// Environment variables can override the defaults for local testing:
+/// - LIANA_BUSINESS_WS_URL: overrides the URL for any network
+/// - LIANA_BUSINESS_SIGNET_WS_URL: overrides only for signet/testnet
+/// - LIANA_BUSINESS_MAINNET_WS_URL: overrides only for mainnet
+pub fn ws_url(network: Network) -> String {
+    // First check global override
+    if let Ok(url) = std::env::var("LIANA_BUSINESS_WS_URL") {
+        return url;
+    }
+    // Then check network-specific override
+    if network == Network::Bitcoin {
+        std::env::var("LIANA_BUSINESS_MAINNET_WS_URL")
+            .unwrap_or_else(|_| DEFAULT_MAINNET_WS_URL.to_string())
+    } else {
+        std::env::var("LIANA_BUSINESS_SIGNET_WS_URL")
+            .unwrap_or_else(|_| DEFAULT_SIGNET_WS_URL.to_string())
+    }
+}
 
 /// Protocol version for WebSocket communication
 pub const PROTOCOL_VERSION: u8 = 1;
 
-/// Get service configuration for the local business server (blocking)
-/// This replaces the production get_service_config that fetches from Liana servers
-fn get_service_config_blocking(_network: Network) -> Result<ServiceConfig, reqwest::Error> {
+/// Get service configuration for the business server (blocking)
+fn get_service_config_blocking(network: Network) -> Result<ServiceConfig, reqwest::Error> {
     use tracing::debug;
 
-    // Fetch config from our local server's /v1/desktop endpoint
+    let api_url = auth_api_url(network);
     let client = reqwest::blocking::Client::new();
-    let url = format!("{}/v1/desktop", AUTH_API_URL);
+    let url = format!("{}/v1/desktop", api_url);
 
     debug!("get_service_config_blocking: fetching from {}", url);
     let response = client.get(&url).send()?;
@@ -67,7 +108,7 @@ fn get_service_config_blocking(_network: Network) -> Result<ServiceConfig, reqwe
     Ok(ServiceConfig {
         auth_api_url: res.auth_api_url,
         auth_api_public_key: res.auth_api_public_key,
-        backend_api_url: AUTH_API_URL.to_string(),
+        backend_api_url: api_url,
     })
 }
 

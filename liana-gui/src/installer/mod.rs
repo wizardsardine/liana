@@ -76,6 +76,16 @@ pub enum NextState {
         directory_wallet_id: settings::WalletId,
         auth_cfg: settings::AuthConfig,
     },
+    /// Direct transition to App for liana-business, skipping Login and Loader.
+    /// User is already authenticated in the BusinessInstaller with tokens cached.
+    RunLianaBusiness {
+        datadir: LianaDirectory,
+        network: Network,
+        /// The Connect wallet ID (UUID)
+        wallet_id: String,
+        /// User's email for token lookup and re-auth
+        email: String,
+    },
     Loader {
         datadir: LianaDirectory,
         network: bitcoin::Network,

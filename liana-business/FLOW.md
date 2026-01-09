@@ -92,13 +92,12 @@ skip_launcher() = true ──▶ Skip Launcher (login is in Installer)
 +------------------+
     │
     │ [User selects Final wallet]
-    │ [exit_maybe() returns NextState::LoginLianaLite]
-    ▼
-+------------------+
-|      LOADER      |  ◄── liana-gui framework handles this
-+------------------+
+    │ [exit_maybe() returns NextState::RunLianaBusiness]
     │
-    │ [Wallet loaded successfully]
+    │ NOTE: Goes DIRECTLY to App, skipping Login and Loader!
+    │       - User already authenticated in Installer
+    │       - Backend already connected (BackendWalletClient)
+    │       - No bitcoind sync needed (Liana Connect only)
     ▼
 +------------------+
 |       APP        |  ◄── liana-gui documentation covers this
@@ -110,6 +109,16 @@ skip_launcher() = true ──▶ Skip Launcher (login is in Installer)
 +------------------+
 |     SETTINGS     |  ◄── TBD (BusinessSettings)
 +------------------+
+```
+
+**Comparison with liana-gui LianaLite flow:**
+
+```
+LianaLite (liana-gui):
+  Installer → LoginLianaLite → LianaLiteLogin (OTP) → Loader (sync) → App
+
+LianaBusiness:
+  BusinessInstaller → RunLianaBusiness → App (DIRECT!)
 ```
 
 ---
@@ -291,14 +300,14 @@ Installer views are determined by `State::current_view` and `State::route()`:
 When user selects a wallet, routing depends on wallet status and user role:
 
 ```
-+-----------+-----------------+-------------------------------------+
-| Status    | Role            | Destination                         |
-+-----------+-----------------+-------------------------------------+
-| Draft     | WSManager/Owner | WalletEdit (template builder)       |
-| Draft     | Participant     | Warning Modal (access denied)       |
-| Validated | Any             | Xpub (key information entry)        |
-| Final     | Any             | exit_maybe() -> LoginLianaLite      |
-+-----------+-----------------+-------------------------------------+
++-----------+-----------------+---------------------------------------------+
+| Status    | Role            | Destination                                 |
++-----------+-----------------+---------------------------------------------+
+| Draft     | WSManager/Owner | WalletEdit (template builder)               |
+| Draft     | Participant     | Warning Modal (access denied)               |
+| Validated | Any             | Xpub (key information entry)                |
+| Final     | Any             | exit_maybe() -> RunLianaBusiness -> App     |
++-----------+-----------------+---------------------------------------------+
 ```
 
 ### Installer Navigation Flow
@@ -321,7 +330,7 @@ WalletSelect (shows status badges + roles)
     │                              │
     │                              ├──▶ Validated → Xpub
     │                              │
-    │                              ├──▶ Final → exit_maybe() → LoginLianaLite
+    │                              ├──▶ Final → exit_maybe() → RunLianaBusiness → App
     │                              │
     │                              └──▶ (Draft + Participant) → Warning Modal
     │
@@ -458,29 +467,60 @@ When the server sends a `Wallet` notification during modal editing:
 
 ## Installer Exit Flow (Handoff to App)
 
-When the user selects a **Final** wallet, the installer hands off to the App phase:
+When the user selects a **Final** wallet, the installer hands off **directly** to the App:
 
 ```
-Installer                          liana-gui Framework
-    │                                      │
-    │ [User selects Final wallet]          │
-    ▼                                      │
-Set self.app.exit = true                   │
-    │                                      │
-    ▼                                      │
-BusinessInstaller::exit_maybe() ──────────▶│
-    returns Some(NextState::LoginLianaLite)│
-                                           ▼
-                                    Loader Phase
-                                           │
-                                           ▼
-                                    App Phase (liana-gui)
+BusinessInstaller                       liana-gui Framework
+    │                                          │
+    │ [User selects Final wallet]              │
+    ▼                                          │
+Set self.app.exit = true                       │
+    │                                          │
+    ▼                                          │
+Prepare handoff data:                          │
+  - BackendWalletClient (already connected)    │
+  - Wallet data & coins                        │
+  - Auth config (for re-auth on disconnect)    │
+    │                                          │
+    ▼                                          │
+BusinessInstaller::exit_maybe() ──────────────▶│
+    returns Some(NextState::RunLianaBusiness)  │
+                                               │
+                    [DIRECT TRANSITION - No Login/Loader!]
+                                               │
+                                               ▼
+                                        App Phase (liana-gui)
 ```
 
-1. User selects a wallet with **Final** status
-2. Installer sets `self.app.exit = true`
-3. `BusinessInstaller::exit_maybe()` returns `Some(NextState::LoginLianaLite { ... })`
-4. liana-gui framework transitions to Loader, then App
+**Why direct to App (skipping Login and Loader)?**
+
+1. **Already authenticated** - User logged in during Installer with valid tokens
+2. **Backend connected** - `BackendWalletClient` established and ready to use
+3. **No bitcoind** - Liana Connect handles everything, no local sync needed
+
+**Handoff data in `NextState::RunLianaBusiness`:**
+
+```
++----------------------+------------------------------------------------+
+| Field                | Purpose                                        |
++----------------------+------------------------------------------------+
+| datadir              | LianaDirectory for configuration               |
+| network              | Bitcoin network (Signet/Mainnet)               |
+| gui_config           | App configuration                              |
+| daemon               | BackendWalletClient (already connected!)       |
+| wallet               | api::Wallet data                               |
+| cache                | Coins and transaction cache                    |
+| email                | User's email for re-authentication             |
++----------------------+------------------------------------------------+
+```
+
+Note: Token is already valid (user authenticated in Installer) and stored in
+`connect.json` cache. No need to pass token explicitly in the handoff.
+
+**Re-authentication handling:**
+
+If the App loses connection (session expiry), it sends `RedirectLianaConnectLogin`.
+The stored email enables initiating a new OTP authentication flow if needed.
 
 ---
 
