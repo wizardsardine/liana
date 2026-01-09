@@ -9,10 +9,14 @@ path = "src/main.rs"
 
 [dependencies]
 business-installer = { path = "./business-installer" }
+business-settings = { path = "./business-settings" }
 iced = { workspace = true, default-features = false, features = ["tokio", "svg", "image", "wgpu", "tiny-skia"] }
+iced_runtime = { workspace = true }
 liana = { path = "../liana" }
 liana-gui = { path = "../liana-gui" }
 liana-ui = { path = "../liana-ui" }
-futures = "0.3"
+backtrace = { workspace = true }
+tokio = { workspace = true, features = ["signal"] }
+log = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }

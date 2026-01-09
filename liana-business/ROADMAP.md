@@ -74,27 +74,24 @@ For detailed task tracking, see `business-installer/ROADMAP.md`.
   - [x] Add `State` as bound on `SettingsTrait::UI`
   - [x] Update `BusinessSettingsUI` to implement `State` trait
   - [x] Verify builds pass
+- [x] **1.5 Full GUI Integration** *(depends on Section 2.8)*
+  - Use `GUI<BusinessInstaller, BusinessSettings, Message>` instead of custom `PolicyBuilder` wrapper
+  - This enables full app experience: Installer → Loader → App panels (skips Launcher via `skip_launcher()`)
+  - [x] 1.5.1 Update Cargo.toml dependencies
+    - Added `business-settings`, `iced_runtime`, `backtrace`, `tokio` (with signal), `log`
+    - Removed `futures` (no longer needed)
+  - [x] 1.5.2 Rewrite main.rs
+    - Removed `PolicyBuilder` struct and impl
+    - Import `GUI`, `Config` from `liana_gui::gui`
+    - Created type alias: `type LianaBusiness = GUI<BusinessInstaller, BusinessSettings, Message>`
+    - Added command-line argument parsing (--datadir, --network, --help, --version)
+    - Set up panic hook (without bitcoind cleanup - uses Liana Connect only)
+    - Configured Iced settings and window (1200x800 default, 1000x650 min, "LianaBusiness" app ID)
+    - Run app via `iced::application()` with `LianaBusiness`
+  - [x] 1.5.3 Verify build with `cargo build`
+  - [x] 1.5.4 Added `skip_launcher() -> true` to BusinessInstaller (starts directly with Installer)
 
 ## Planned
-
-- [ ] **1.5 Full GUI Integration** *(depends on Section 2.8)*
-  - Use `GUI<BusinessInstaller, BusinessSettings, Message>` instead of custom `PolicyBuilder` wrapper
-  - This enables full app experience: Launcher → Installer → Loader → App panels
-  - [ ] 1.5.1 Update Cargo.toml dependencies
-    - Add `tokio` with signal feature (for ctrl+c handling)
-    - Add `backtrace` (for panic hook)
-    - Add `iced_runtime` (for window management)
-    - Add other dependencies from liana-gui as needed
-  - [ ] 1.5.2 Rewrite main.rs
-    - Remove `PolicyBuilder` struct and impl
-    - Import `GUI`, `Config` from `liana_gui::gui`
-    - Create type alias: `type LianaBusiness = GUI<BusinessInstaller, BusinessSettings, Message>`
-    - Add command-line argument parsing (--datadir, --network flags)
-    - Set up panic hook using liana-gui pattern
-    - Configure Iced settings and window (size, icon, min_size)
-    - Run app via `iced::application()` with `LianaBusiness`
-  - [ ] 1.5.3 Verify build with `cargo build`
-  - [ ] 1.5.4 Test full app flow (Launcher → Installer → Loader → App)
 
 ## Not Started
 

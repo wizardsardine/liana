@@ -104,6 +104,10 @@ impl<'a> Installer<'a, Message> for BusinessInstaller {
         self.network
     }
 
+    fn skip_launcher() -> bool {
+        true
+    }
+
     fn exit_maybe(&mut self, _msg: &Message) -> Option<NextState> {
         // Check if we should exit to Liana Lite (user selected a Final wallet)
         if self.state.app.exit {

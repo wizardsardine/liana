@@ -3334,12 +3334,16 @@ dependencies = [
 name = "liana-business"
 version = "0.1.0"
 dependencies = [
+ "backtrace",
  "business-installer",
- "futures",
+ "business-settings",
  "iced",
+ "iced_runtime",
  "liana",
  "liana-gui",
  "liana-ui",
+ "log",
+ "tokio",
  "tracing",
  "tracing-subscriber",
 ]
