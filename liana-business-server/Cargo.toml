@@ -9,7 +9,7 @@ path = "src/main.rs"
 
 [dependencies]
 crossbeam = { version = "0.8.4", features = ["crossbeam-channel"] }
-liana-connect = { path = "../liana-connect" }
+liana-connect = { path = "../liana-business/liana-connect" }
 miniscript = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
