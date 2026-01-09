@@ -9,7 +9,10 @@ use coincube_ui::{
 use coincube_ui::component::amount::BitcoinDisplayUnit;
 
 use crate::{
-    app::{error::Error, menu::Menu, view::placeholder},
+    app::{
+        error::Error, 
+        menu::{Menu, VaultSubMenu}, 
+        view::placeholder},
     daemon::model::{SpendStatus, SpendTx},
 };
 
@@ -76,7 +79,7 @@ pub fn psbts_view(spend_txs: &[SpendTx], bitcoin_unit: BitcoinDisplayUnit) -> El
                 )
                 .push(
                     button::secondary(Some(icon::plus_icon()), "New")
-                        .on_press(Message::Menu(Menu::CreateSpendTx)),
+                        .on_press(Message::Menu(Menu::Vault(VaultSubMenu::Send))),
                 ),
         )
         .push_maybe(spend_txs.is_empty().then(|| {

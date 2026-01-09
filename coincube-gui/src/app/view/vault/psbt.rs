@@ -31,7 +31,7 @@ use crate::{
     app::{
         cache::Cache,
         error::Error,
-        menu::Menu,
+        menu::{Menu, VaultSubMenu},
         view::{
             dashboard, message::*, vault::hw::hw_list_view, vault::label, vault::warning::warn,
         },
@@ -54,7 +54,7 @@ pub fn psbt_view<'a>(
     bitcoin_unit: BitcoinDisplayUnit,
 ) -> Element<'a, Message> {
     dashboard(
-        &Menu::PSBTs,
+        &Menu::Vault(VaultSubMenu::PSBTs(None)),
         cache,
         warning,
         Column::new()

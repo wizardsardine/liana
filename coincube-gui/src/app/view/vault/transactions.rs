@@ -26,7 +26,7 @@ use crate::{
     app::{
         cache::Cache,
         error::Error,
-        menu::Menu,
+        menu::{Menu, VaultSubMenu},
         view::{
             dashboard,
             message::{CreateRbfMessage, Message},
@@ -303,7 +303,7 @@ pub fn create_rbf_modal<'a>(
                 Row::new().push(
                     button::primary(None, "Go to replacement")
                         .width(Length::Fixed(200.0))
-                        .on_press(Message::Menu(Menu::PsbtPreSelected(id))),
+                        .on_press(Message::Menu(Menu::Vault(VaultSubMenu::PSBTs(Some(id))))),
                 )
             })),
     )
