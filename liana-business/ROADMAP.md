@@ -250,8 +250,8 @@ When user arrives at wallet selection, three possible subflows based on status:
   - [ ] 4.3 Hardware Wallet Config
     - [ ] Store `HardwareWalletConfig` for registered devices
 
-- [ ] **Auth Improvements**
-  - [ ] Automatically refresh token
+- [x] **Auth Improvements**
+  - [x] Automatically refresh token
 
 - [ ] **Reproducible Build Integration**
   - [ ] Add liana-business to Guix build script
@@ -293,6 +293,7 @@ When user arrives at wallet selection, three possible subflows based on status:
 ## Changelog
 
 ### 2026-01-09
+- Auth Improvements: Background token refresh thread (checks every 60s, refreshes 5 min before expiry)
 - 1.5 Full GUI Integration: Replaced PolicyBuilder with GUI<BusinessInstaller, BusinessSettings, Message>
 - Added skip_launcher() -> true to BusinessInstaller
 - Added command-line argument parsing (--datadir, --network, --help, --version)

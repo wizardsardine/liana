@@ -808,6 +808,9 @@ impl State {
         }
         // Fetch server time to calculate offset
         self.backend.fetch_server_time();
+
+        // Start background token refresh thread
+        self.backend.start_token_refresh_thread();
     }
 
     fn on_backend_server_time(&mut self, server_ts: u64) {
@@ -861,6 +864,7 @@ impl State {
 
         // Connect WebSocket immediately after login success
         // This will establish the connection now that we have a token
+        // (token refresh thread is started in on_backend_connected)
         self.backend.connect_ws(
             WS_URL.to_string(),
             PROTOCOL_VERSION,

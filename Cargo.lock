@@ -835,6 +835,7 @@ dependencies = [
  "chrono",
  "crossbeam",
  "email_address",
+ "futures",
  "futures-timer",
  "iced",
  "liana",

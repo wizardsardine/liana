@@ -91,6 +91,9 @@ pub struct Client {
     network: Option<Network>,
     network_dir: Option<NetworkDirectory>,
     email: Option<String>,
+    // Token refresh thread
+    refresh_thread_handle: Option<thread::JoinHandle<()>>,
+    refresh_stop: Arc<AtomicBool>,
 }
 
 impl Client {
@@ -109,6 +112,8 @@ impl Client {
             network: None,
             network_dir: None,
             email: None,
+            refresh_thread_handle: None,
+            refresh_stop: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -232,6 +237,114 @@ impl Client {
             }
             Err(_) => None,
         }
+    }
+
+    /// Start the background token refresh thread.
+    /// The thread checks token expiry every 60 seconds and refreshes if needed.
+    pub fn start_token_refresh_thread(&mut self) {
+        // Stop any existing refresh thread
+        self.stop_token_refresh_thread();
+
+        let (network_dir, email) = match (self.network_dir.clone(), self.email.clone()) {
+            (Some(nd), Some(e)) => (nd, e),
+            _ => return,
+        };
+
+        let network = self.network.unwrap_or(Network::Signet);
+        let token_arc = self.token.clone();
+        let stop_flag = self.refresh_stop.clone();
+
+        // Get auth client config before spawning thread
+        let config = match get_service_config_blocking(network) {
+            Ok(cfg) => cfg,
+            Err(_) => return,
+        };
+
+        // Reset stop flag
+        stop_flag.store(false, Ordering::Relaxed);
+
+        let handle = thread::spawn(move || {
+            loop {
+                // Sleep for 60 seconds, checking stop flag periodically
+                for _ in 0..60 {
+                    if stop_flag.load(Ordering::Relaxed) {
+                        tracing::debug!("Token refresh thread stopping");
+                        return;
+                    }
+                    thread::sleep(std::time::Duration::from_secs(1));
+                }
+
+                // Check and refresh token
+                let result = futures::executor::block_on(async {
+                    let account = match Account::from_cache(&network_dir, &email) {
+                        Ok(Some(acc)) => acc,
+                        _ => return false,
+                    };
+
+                    let tokens = &account.tokens;
+                    let now = chrono::Utc::now().timestamp();
+
+                    // Refresh if token expires within 5 minutes (300 seconds)
+                    const REFRESH_THRESHOLD_SECS: i64 = 300;
+
+                    if tokens.expires_at > now + REFRESH_THRESHOLD_SECS {
+                        return false; // No refresh needed
+                    }
+
+                    tracing::debug!(
+                        "Token expires in {} seconds, refreshing proactively",
+                        tokens.expires_at - now
+                    );
+
+                    let auth_client = AuthClient::new(
+                        config.auth_api_url.clone(),
+                        config.auth_api_public_key.clone(),
+                        email.clone(),
+                    );
+
+                    match auth_client.refresh_token(&tokens.refresh_token).await {
+                        Ok(new_tokens) => {
+                            let final_tokens = match update_connect_cache(
+                                &network_dir,
+                                &new_tokens,
+                                &auth_client,
+                                false,
+                            )
+                            .await
+                            {
+                                Ok(updated) => updated,
+                                Err(_) => new_tokens,
+                            };
+
+                            if let Ok(mut token_guard) = token_arc.lock() {
+                                *token_guard = Some(final_tokens.access_token);
+                            }
+
+                            tracing::info!("Token refreshed successfully");
+                            true
+                        }
+                        Err(e) => {
+                            tracing::warn!("Failed to refresh token: {:?}", e);
+                            false
+                        }
+                    }
+                });
+
+                if !result {
+                    tracing::trace!("Token refresh check: no refresh needed");
+                }
+            }
+        });
+
+        self.refresh_thread_handle = Some(handle);
+        tracing::debug!("Token refresh thread started");
+    }
+
+    /// Stop the background token refresh thread.
+    pub fn stop_token_refresh_thread(&mut self) {
+        self.refresh_stop.store(true, Ordering::Relaxed);
+        // Don't join - let it die on its own to avoid blocking the GUI
+        self.refresh_thread_handle.take();
     }
 
     /// Validate all cached tokens, returning valid accounts and emails to remove from cache.
@@ -362,6 +475,9 @@ impl Client {
 
     /// Logout: clear token, close connection, remove auth cache, and clear data caches
     pub fn logout(&mut self) {
+        // Stop token refresh thread
+        self.stop_token_refresh_thread();
+
         // Clear token from memory
         if let Ok(mut token_guard) = self.token.lock() {
             *token_guard = None;
