@@ -150,42 +150,4 @@ impl MavapayClient {
             MavapayResponse::Error { message } => Err(MavapayError::ApiError(message)),
         }
     }
-
-    pub async fn bank_customer_inquiry(
-        &self,
-        account_number: &str,
-        bank_code: &str,
-    ) -> Result<BankCustomerInquiry, MavapayError> {
-        let response = self
-            .request(Method::GET, "/v1/bank/name-enquiry")
-            .query(&[("accountNumber", account_number), ("bankCode", bank_code)])
-            .send()
-            .await?
-            .check_success()
-            .await?;
-
-        match response.json().await? {
-            MavapayResponse::Success { data } => Ok(data),
-            MavapayResponse::Error { message } => Err(MavapayError::ApiError(message)),
-        }
-    }
-
-    // get all transactions that match the provided query
-    pub async fn get_transactions(
-        &self,
-        options: GetTransaction<'_>,
-    ) -> Result<Vec<Transaction>, MavapayError> {
-        let response = self
-            .request(Method::GET, "/v1/transaction")
-            .query(&options)
-            .send()
-            .await?
-            .check_success()
-            .await?;
-
-        match response.json().await? {
-            MavapayResponse::Error { message } => Err(MavapayError::ApiError(message)),
-            MavapayResponse::Success { data } => Ok(data),
-        }
-    }
 }

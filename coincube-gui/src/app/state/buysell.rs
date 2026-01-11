@@ -1,8 +1,6 @@
 use iced::Task;
 use std::sync::Arc;
 
-use coincube_ui::widget::Element;
-
 use crate::{
     app::{
         cache::Cache,
@@ -16,7 +14,11 @@ use crate::{
 };
 
 impl State for BuySellPanel {
-    fn view<'a>(&'a self, menu: &'a Menu, cache: &'a Cache) -> Element<'a, ViewMessage> {
+    fn view<'a>(
+        &'a self,
+        menu: &'a Menu,
+        cache: &'a Cache,
+    ) -> coincube_ui::widget::Element<'a, ViewMessage> {
         let inner = view::dashboard(menu, cache, None, self.view());
 
         if let BuySellFlowState::Initialization { modal, .. } = &self.step {
@@ -101,7 +103,11 @@ impl State for BuySellPanel {
                             Ok(entry) => {
                                 if let Ok(user_data) = entry.get_secret() {
                                     match serde_json::from_slice::<LoginResponse>(&user_data) {
-                                        Ok(login) => self.login = Some(login),
+                                        Ok(login) => {
+                                            self.coincube_client =
+                                                CoincubeClient::new(Some(login.token.clone()));
+                                            self.login = Some(login)
+                                        }
                                         Err(er) => {
                                             log::error!("Unable to parse user information found in OS keyring: {:?}", er)
                                         }
@@ -233,9 +239,8 @@ impl State for BuySellPanel {
             // session management
             BuySellMessage::StartSession => {
                 let BuySellFlowState::Initialization { buy_or_sell, .. } = &mut self.step else {
-                    unreachable!(
-                        "`StartSession` is always called after the Initialization Flow Stage"
-                    )
+                    log::error!("`StartSession` must be always called during the Initialization Flow Stage, skipping...");
+                    return Task::none();
                 };
 
                 let Some(country) = self.detected_country.as_ref() else {
@@ -244,14 +249,14 @@ impl State for BuySellPanel {
                     );
                 };
 
-                let buy_or_sell = buy_or_sell.as_ref().unwrap_or(&panel::BuyOrSell::Sell);
+                let buy_or_sell = buy_or_sell.take().unwrap_or(panel::BuyOrSell::Sell);
 
                 match mavapay_supported(country.code) {
                     true => {
-                        log::info!("Starting buysell under Mavapay");
+                        log::info!("[BUYSELL] Starting under Mavapay for {}", country.name);
 
-                        // start buysell under Mavapay
-                        let mavapay = MavapayState::new(buy_or_sell.clone(), country.clone());
+                        // initialize buysell under Mavapay
+                        let mavapay = MavapayState::new(buy_or_sell, country.clone());
                         self.step = BuySellFlowState::Mavapay(mavapay);
 
                         if country.code != "KE" {
@@ -270,7 +275,11 @@ impl State for BuySellPanel {
                         };
                     }
                     false => {
-                        log::info!("Starting buysell under Meld for {}", country.name);
+                        log::info!("[BUYSELL] Starting buysell under Meld for {}", country.name);
+
+                        // initialize buysell under meld
+                        let meld = meld::MeldState::new(buy_or_sell, country.clone());
+                        self.step = BuySellFlowState::Meld(meld);
                     }
                 }
             }
@@ -784,7 +793,9 @@ impl State for BuySellPanel {
                         };
 
                         // persist login information in state
+                        self.coincube_client = CoincubeClient::new(Some(login.token.clone()));
                         self.login = Some(login);
+
                         self.step = BuySellFlowState::Initialization {
                             modal: state::vault::receive::Modal::None,
                             buy_or_sell_selected: None,
@@ -1023,6 +1034,9 @@ impl State for BuySellPanel {
                             )
                         }
                     },
+                    (BuySellFlowState::Meld(meld), BuySellMessage::Meld(msg)) => {
+                        return meld.update(msg).map(Message::View)
+                    }
                     (step, msg) => {
                         log::warn!("Current {:?} has ignored message: {:?}", step.name(), msg)
                     }
@@ -1052,8 +1066,29 @@ impl State for BuySellPanel {
         }
     }
 
+    fn close(&mut self) -> Task<Message> {
+        if let BuySellFlowState::Meld(meld) = &self.step {
+            if let meld::MeldFlowStep::WebviewRenderer { active } = &meld.step {
+                if let Some(strong) = std::sync::Weak::upgrade(&active.webview) {
+                    let _ = strong.set_visible(false);
+                    let _ = strong.focus_parent();
+                }
+            }
+        }
+
+        Task::none()
+    }
+
     fn subscription(&self) -> iced::Subscription<Message> {
         match &self.step {
+            BuySellFlowState::Meld(meld) => meld
+                .webview_manager
+                .subscription(std::time::Duration::from_millis(25))
+                .map(|m| {
+                    Message::View(ViewMessage::BuySell(BuySellMessage::Meld(
+                        meld::MeldMessage::WebviewManagerUpdate(m),
+                    )))
+                }),
             // periodically re-fetch the price of BTC
             BuySellFlowState::Mavapay(MavapayState {
                 step: MavapayFlowStep::Transaction { .. },
