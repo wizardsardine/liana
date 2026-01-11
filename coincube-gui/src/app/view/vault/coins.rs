@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use iced::{widget::Space, Alignment, Length};
 
+use coincube_ui::component::amount::BitcoinDisplayUnit;
 use coincube_ui::{
     component::{amount::*, badge, button, form, text::*},
     icon::{self, coins_icon},
@@ -25,6 +26,7 @@ pub fn coins_view<'a>(
     selected: &[usize],
     labels: &'a HashMap<String, String>,
     labels_editing: &'a HashMap<String, form::Value<String>>,
+    bitcoin_unit: BitcoinDisplayUnit,
 ) -> Element<'a, Message> {
     Column::new()
         .push(Container::new(h3("Coins")).width(Length::Fill))
@@ -49,6 +51,7 @@ pub fn coins_view<'a>(
                             selected.contains(&i),
                             labels,
                             labels_editing,
+                            bitcoin_unit,
                         ))
                     },
                 )),
@@ -67,6 +70,7 @@ fn coin_list_view<'a>(
     collapsed: bool,
     labels: &'a HashMap<String, String>,
     labels_editing: &'a HashMap<String, form::Value<String>>,
+    bitcoin_unit: BitcoinDisplayUnit,
 ) -> Container<'a, Message> {
     let outpoint = coin.outpoint.to_string();
     let address = coin.address.to_string();
@@ -79,7 +83,7 @@ fn coin_list_view<'a>(
                     Row::new()
                         .push(
                             Row::new()
-                                .push(badge::coin())
+                                .push(badge::bitcoin_logo())
                                 .push(if !collapsed {
                                     if let Some(label) = labels.get(&outpoint) {
                                         if !label.is_empty() {
@@ -135,7 +139,7 @@ fn coin_list_view<'a>(
                                 .align_y(Alignment::Center)
                                 .width(Length::Fill),
                         )
-                        .push(amount(&coin.amount))
+                        .push(amount_with_unit(&coin.amount, bitcoin_unit))
                         .align_y(Alignment::Center)
                         .spacing(20),
                 )

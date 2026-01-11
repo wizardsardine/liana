@@ -286,7 +286,7 @@ pub fn active_send_view<'a>(
     // History button - left justified
     let history_button = button::transparent(Some(icon::history_icon()), "Transaction History")
         .on_press(ActiveSendMessage::History)
-        .width(Length::Fixed(150.0));
+        .width(Length::Fixed(250.0));
 
     content = content
         .push(iced::widget::Space::new().height(Length::Fixed(10.0)))

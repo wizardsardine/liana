@@ -9,18 +9,6 @@ pub enum Menu {
 
     #[cfg(feature = "buysell")]
     BuySell,
-
-    // Legacy menu items (kept for backward compatibility during transition)
-    Receive,
-    PSBTs,
-    Transactions,
-    TransactionPreSelected(Txid),
-    SettingsPreSelected(SettingsOption),
-    Coins,
-    CreateSpendTx,
-    Recovery,
-    RefreshCoins(Vec<OutPoint>),
-    PsbtPreSelected(Txid),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

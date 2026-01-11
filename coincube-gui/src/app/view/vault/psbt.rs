@@ -14,6 +14,7 @@ use coincube_core::{
     },
 };
 
+use coincube_ui::component::amount::BitcoinDisplayUnit;
 use coincube_ui::{
     component::{
         amount::*,
@@ -30,7 +31,7 @@ use crate::{
     app::{
         cache::Cache,
         error::Error,
-        menu::Menu,
+        menu::{Menu, VaultSubMenu},
         view::{
             dashboard, message::*, vault::hw::hw_list_view, vault::label, vault::warning::warn,
         },
@@ -50,9 +51,10 @@ pub fn psbt_view<'a>(
     network: Network,
     currently_signing: bool,
     warning: Option<&Error>,
+    bitcoin_unit: BitcoinDisplayUnit,
 ) -> Element<'a, Message> {
     dashboard(
-        &Menu::PSBTs,
+        &Menu::Vault(VaultSubMenu::PSBTs(None)),
         cache,
         warning,
         Column::new()
@@ -74,7 +76,7 @@ pub fn psbt_view<'a>(
                         _ => None,
                     }),
             )
-            .push(spend_header(tx, labels_editing))
+            .push(spend_header(tx, labels_editing, bitcoin_unit))
             .push(spend_overview_view(
                 tx,
                 desc_info,
@@ -89,6 +91,7 @@ pub fn psbt_view<'a>(
                         &tx.psbt.unsigned_tx,
                         &tx.labels,
                         labels_editing,
+                        bitcoin_unit,
                     ))
                     .push(outputs_view(
                         &tx.psbt.unsigned_tx,
@@ -96,6 +99,7 @@ pub fn psbt_view<'a>(
                         Some(tx.change_indexes.clone()),
                         &tx.labels,
                         labels_editing,
+                        bitcoin_unit,
                         tx.is_single_payment().is_some(),
                     )),
             )
@@ -285,6 +289,7 @@ pub fn delete_action<'a>(warning: Option<&Error>, deleted: bool) -> Element<'a, 
 pub fn spend_header<'a>(
     tx: &'a SpendTx,
     labels_editing: &'a HashMap<String, form::Value<String>>,
+    bitcoin_unit: BitcoinDisplayUnit,
 ) -> Element<'a, Message> {
     let txid = tx.psbt.unsigned_tx.compute_txid().to_string();
     Column::new()
@@ -310,7 +315,11 @@ pub fn spend_header<'a>(
                 .push(if tx.is_send_to_self() {
                     Container::new(h1("Self-transfer"))
                 } else {
-                    Container::new(amount_with_size(&tx.spend_amount, H1_SIZE))
+                    Container::new(amount_with_size_and_unit(
+                        &tx.spend_amount,
+                        H1_SIZE,
+                        bitcoin_unit,
+                    ))
                 })
                 .push(
                     Row::new()
@@ -321,7 +330,10 @@ pub fn spend_header<'a>(
                         } else {
                             None
                         })
-                        .push_maybe(tx.fee_amount.map(|fee| amount_with_size(&fee, H3_SIZE)))
+                        .push_maybe(
+                            tx.fee_amount
+                                .map(|fee| amount_with_size_and_unit(&fee, H3_SIZE, bitcoin_unit)),
+                        )
                         .push(text(" ").size(H3_SIZE))
                         .push_maybe(tx.min_feerate_vb().map(|rate| {
                             text(format!("(~{} sats/vbyte)", &rate))
@@ -633,61 +645,32 @@ pub fn inputs_view<'a>(
     tx: &'a Transaction,
     labels: &'a HashMap<String, String>,
     labels_editing: &'a HashMap<String, form::Value<String>>,
+    bitcoin_unit: BitcoinDisplayUnit,
 ) -> Element<'a, Message> {
-    Container::new(Collapse::new(
-        move || {
-            Button::new(
-                Row::new()
-                    .align_y(Alignment::Center)
-                    .push(
-                        h4_bold(format!(
-                            "{} coin{} spent",
-                            tx.input.len(),
-                            if tx.input.len() == 1 { "" } else { "s" }
-                        ))
-                        .width(Length::Fill),
-                    )
-                    .push(icon::collapse_icon()),
+    Container::new(
+        Column::new()
+            .push(
+                Container::new(h4_bold(format!(
+                    "{} coin{} spent",
+                    tx.input.len(),
+                    if tx.input.len() == 1 { "" } else { "s" }
+                )))
+                .padding(20)
+                .width(Length::Fill),
             )
-            .padding(20)
-            .width(Length::Fill)
-            .style(theme::button::transparent_border)
-        },
-        move || {
-            Button::new(
-                Row::new()
-                    .align_y(Alignment::Center)
-                    .push(
-                        h4_bold(format!(
-                            "{} coin{} spent",
-                            tx.input.len(),
-                            if tx.input.len() == 1 { "" } else { "s" }
-                        ))
-                        .width(Length::Fill),
-                    )
-                    .push(icon::collapsed_icon()),
-            )
-            .padding(20)
-            .width(Length::Fill)
-            .style(theme::button::transparent_border)
-        },
-        move || {
-            tx.input
-                .iter()
-                .fold(
-                    Column::new().spacing(10).padding(20),
-                    |col: Column<'a, Message>, input| {
-                        col.push(input_view(
-                            &input.previous_output,
-                            coins.get(&input.previous_output),
-                            labels,
-                            labels_editing,
-                        ))
-                    },
-                )
-                .into()
-        },
-    ))
+            .push(tx.input.iter().fold(
+                Column::new().spacing(10).padding(20),
+                |col: Column<'a, Message>, input| {
+                    col.push(input_view(
+                        &input.previous_output,
+                        coins.get(&input.previous_output),
+                        labels,
+                        labels_editing,
+                        bitcoin_unit,
+                    ))
+                },
+            )),
+    )
     .style(theme::card::simple)
     .into()
 }
@@ -698,6 +681,7 @@ pub fn outputs_view<'a>(
     change_indexes: Option<Vec<usize>>,
     labels: &'a HashMap<String, String>,
     labels_editing: &'a HashMap<String, form::Value<String>>,
+    bitcoin_unit: BitcoinDisplayUnit,
     is_single_payment: bool,
 ) -> Element<'a, Message> {
     let change_indexes_copy = change_indexes.clone();
@@ -717,71 +701,45 @@ pub fn outputs_view<'a>(
                 })
                 .count();
             if count > 0 {
-                Container::new(Collapse::new(
-                    move || {
-                        Button::new(
-                            Row::new()
-                                .align_y(Alignment::Center)
-                                .push(
-                                    h4_bold(format!(
-                                        "{} payment{}",
-                                        count,
-                                        if count == 1 { "" } else { "s" }
-                                    ))
-                                    .width(Length::Fill),
-                                )
-                                .push(icon::collapse_icon()),
+                Container::new(
+                    Column::new()
+                        .push(
+                            Container::new(h4_bold(format!(
+                                "{} payment{}",
+                                count,
+                                if count == 1 { "" } else { "s" }
+                            )))
+                            .padding(20)
+                            .width(Length::Fill),
                         )
-                        .padding(20)
-                        .width(Length::Fill)
-                        .style(theme::button::transparent_border)
-                    },
-                    move || {
-                        Button::new(
-                            Row::new()
-                                .align_y(Alignment::Center)
-                                .push(
-                                    h4_bold(format!(
-                                        "{} payment{}",
-                                        count,
-                                        if count == 1 { "" } else { "s" }
-                                    ))
-                                    .width(Length::Fill),
-                                )
-                                .push(icon::collapsed_icon()),
-                        )
-                        .padding(20)
-                        .width(Length::Fill)
-                        .style(theme::button::transparent_border)
-                    },
-                    move || {
-                        tx.output
-                            .iter()
-                            .enumerate()
-                            .filter(|(i, _)| {
-                                if let Some(indexes) = change_indexes_copy.as_ref() {
-                                    !indexes.contains(i)
-                                } else {
-                                    true
-                                }
-                            })
-                            .fold(
-                                Column::new().padding(20),
-                                |col: Column<'a, Message>, (i, output)| {
-                                    col.spacing(10).push(payment_view(
-                                        i,
-                                        tx.compute_txid(),
-                                        output,
-                                        network,
-                                        labels,
-                                        labels_editing,
-                                        is_single_payment,
-                                    ))
-                                },
-                            )
-                            .into()
-                    },
-                ))
+                        .push(
+                            tx.output
+                                .iter()
+                                .enumerate()
+                                .filter(|(i, _)| {
+                                    if let Some(indexes) = change_indexes_copy.as_ref() {
+                                        !indexes.contains(i)
+                                    } else {
+                                        true
+                                    }
+                                })
+                                .fold(
+                                    Column::new().padding(20),
+                                    |col: Column<'a, Message>, (i, output)| {
+                                        col.spacing(10).push(payment_view(
+                                            i,
+                                            tx.compute_txid(),
+                                            output,
+                                            network,
+                                            labels,
+                                            labels_editing,
+                                            bitcoin_unit,
+                                            is_single_payment,
+                                        ))
+                                    },
+                                ),
+                        ),
+                )
                 .style(theme::card::simple)
             } else {
                 Container::new(h4_bold("0 payment").style(|t| {
@@ -830,7 +788,11 @@ pub fn outputs_view<'a>(
                                 .fold(
                                     Column::new().padding(20),
                                     |col: Column<'a, Message>, (_, output)| {
-                                        col.spacing(10).push(change_view(output, network))
+                                        col.spacing(10).push(change_view(
+                                            output,
+                                            network,
+                                            bitcoin_unit,
+                                        ))
                                     },
                                 )
                                 .into()
@@ -850,6 +812,7 @@ fn input_view<'a>(
     coin: Option<&'a Coin>,
     labels: &'a HashMap<String, String>,
     labels_editing: &'a HashMap<String, form::Value<String>>,
+    bitcoin_unit: BitcoinDisplayUnit,
 ) -> Element<'a, Message> {
     let outpoint = outpoint.to_string();
     Column::new()
@@ -870,7 +833,7 @@ fn input_view<'a>(
                     })
                     .width(Length::Fill),
                 )
-                .push_maybe(coin.map(|c| amount(&c.amount))),
+                .push_maybe(coin.map(|c| amount_with_unit(&c.amount, bitcoin_unit))),
         )
         .push(
             Column::new()
@@ -934,20 +897,21 @@ fn payment_view<'a>(
     network: Network,
     labels: &'a HashMap<String, String>,
     labels_editing: &'a HashMap<String, form::Value<String>>,
-    is_single: bool,
+    bitcoin_unit: BitcoinDisplayUnit,
+    is_single_payment: bool,
 ) -> Element<'a, Message> {
     let addr = Address::from_script(&output.script_pubkey, network)
         .ok()
         .map(|a| a.to_string());
+    let txid = txid.to_string();
     let outpoint = OutPoint {
-        txid,
+        txid: txid.parse().expect("txid string is always valid"),
         vout: i as u32,
     }
     .to_string();
-    // if the payment is single in the transaction, then the label of the txid
-    // is attached to the label of the payment.
-    let change_labels = if is_single {
-        vec![outpoint.clone(), txid.to_string()]
+
+    let labelled = if is_single_payment {
+        vec![outpoint.clone(), txid.clone()]
     } else {
         vec![outpoint.clone()]
     };
@@ -959,14 +923,20 @@ fn payment_view<'a>(
                 .spacing(5)
                 .align_y(Alignment::Center)
                 .push(
-                    Container::new(if let Some(label) = labels_editing.get(&outpoint) {
-                        label::label_editing(change_labels, label, text::P1_SIZE)
-                    } else {
-                        label::label_editable(change_labels, labels.get(&outpoint), text::P1_SIZE)
-                    })
+                    Container::new(
+                        if let Some(label) = labels_editing.get(&outpoint).or_else(|| {
+                            is_single_payment
+                                .then(|| labels_editing.get(&txid))
+                                .flatten()
+                        }) {
+                            label::label_editing(labelled, label, text::P1_SIZE)
+                        } else {
+                            label::label_editable(labelled, labels.get(&outpoint), text::P1_SIZE)
+                        },
+                    )
                     .width(Length::Fill),
                 )
-                .push(amount(&output.value)),
+                .push(amount_with_unit(&output.value, bitcoin_unit)),
         )
         .push_maybe(addr.map(|addr| {
             Column::new()
@@ -1007,7 +977,11 @@ fn payment_view<'a>(
         .into()
 }
 
-fn change_view(output: &TxOut, network: Network) -> Element<Message> {
+fn change_view(
+    output: &TxOut,
+    network: Network,
+    bitcoin_unit: BitcoinDisplayUnit,
+) -> Element<Message> {
     let addr = Address::from_script(&output.script_pubkey, network)
         .unwrap()
         .to_string();
@@ -1017,7 +991,7 @@ fn change_view(output: &TxOut, network: Network) -> Element<Message> {
         .push(
             Row::new()
                 .push(Space::new().width(Length::Fill))
-                .push(amount(&output.value)),
+                .push(amount_with_unit(&output.value, bitcoin_unit)),
         )
         .push(
             Row::new()

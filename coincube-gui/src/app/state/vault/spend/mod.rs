@@ -15,7 +15,7 @@ use crate::{
     app::{
         cache::Cache,
         error::Error,
-        menu::Menu,
+        menu::{Menu, VaultSubMenu},
         message::Message,
         view,
         wallet::{SyncStatus, Wallet},
@@ -196,7 +196,7 @@ impl State for CreateSpendPanel {
     ) -> Task<Message> {
         let daemon = daemon.expect("Daemon required for vault spend panel");
         if matches!(message, Message::View(view::Message::Close)) {
-            return redirect(Menu::PSBTs);
+            return redirect(Menu::Vault(VaultSubMenu::PSBTs(None)));
         }
 
         if matches!(message, Message::View(view::Message::Next)) {

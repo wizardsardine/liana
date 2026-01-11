@@ -12,10 +12,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install Rust toolchain
-        run: |
-          rustup update stable
-          rustup default stable
-          rustup component add rustfmt clippy
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.89.0
+          components: rustfmt, clippy
       - name: rustfmt
         run: cargo fmt -- --check
       - name: clippy

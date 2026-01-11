@@ -28,7 +28,7 @@ use crate::{
     app::{
         cache::Cache,
         error::Error,
-        menu::{self, Menu},
+        menu::{self, Menu, VaultSubMenu},
         view::{dashboard, message::Message, vault::coins, vault::label, FiatAmountConverter},
         wallet::SyncStatus,
     },
@@ -303,7 +303,10 @@ fn event_list_view(
         item = item.with_fiat_amount(fiat_amount);
     }
 
-    item.view(Message::SelectPayment(event.outpoint)).into()
+    item.view(Message::Menu(Menu::Vault(VaultSubMenu::Transactions(
+        Some(event.outpoint.txid),
+    ))))
+    .into()
 }
 
 pub fn payment_view<'a>(
@@ -423,7 +426,7 @@ pub fn payment_view<'a>(
             ))
             .push(
                 button::secondary(None, "See transaction details").on_press(Message::Menu(
-                    Menu::TransactionPreSelected(tx.tx.compute_txid()),
+                    Menu::Vault(VaultSubMenu::Transactions(Some(tx.tx.compute_txid()))),
                 )),
             )
             .spacing(20),

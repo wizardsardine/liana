@@ -1,5 +1,6 @@
 use iced::{widget::Space, Alignment, Length};
 
+use coincube_ui::component::amount::BitcoinDisplayUnit;
 use coincube_ui::{
     component::{amount::*, badge, button, card, form, text::*},
     icon::{self, receipt_icon},
@@ -8,7 +9,11 @@ use coincube_ui::{
 };
 
 use crate::{
-    app::{error::Error, menu::Menu, view::placeholder},
+    app::{
+        error::Error,
+        menu::{Menu, VaultSubMenu},
+        view::placeholder,
+    },
     daemon::model::{SpendStatus, SpendTx},
 };
 
@@ -62,7 +67,7 @@ pub fn import_psbt_success_view<'a>() -> Element<'a, Message> {
         .into()
 }
 
-pub fn psbts_view(spend_txs: &[SpendTx]) -> Element<'_, Message> {
+pub fn psbts_view(spend_txs: &[SpendTx], bitcoin_unit: BitcoinDisplayUnit) -> Element<'_, Message> {
     Column::new()
         .push(
             Row::new()
@@ -75,7 +80,7 @@ pub fn psbts_view(spend_txs: &[SpendTx]) -> Element<'_, Message> {
                 )
                 .push(
                     button::secondary(Some(icon::plus_icon()), "New")
-                        .on_press(Message::Menu(Menu::CreateSpendTx)),
+                        .on_press(Message::Menu(Menu::Vault(VaultSubMenu::Send))),
                 ),
         )
         .push_maybe(spend_txs.is_empty().then(|| {
@@ -91,7 +96,7 @@ pub fn psbts_view(spend_txs: &[SpendTx]) -> Element<'_, Message> {
                     .iter()
                     .enumerate()
                     .fold(Column::new().spacing(10), |col, (i, tx)| {
-                        col.push(spend_tx_list_view(i, tx))
+                        col.push(spend_tx_list_view(i, tx, bitcoin_unit))
                     }),
             ),
         )
@@ -100,7 +105,11 @@ pub fn psbts_view(spend_txs: &[SpendTx]) -> Element<'_, Message> {
         .into()
 }
 
-fn spend_tx_list_view(i: usize, tx: &SpendTx) -> Element<'_, Message> {
+fn spend_tx_list_view(
+    i: usize,
+    tx: &SpendTx,
+    bitcoin_unit: BitcoinDisplayUnit,
+) -> Element<'_, Message> {
     Container::new(
         Button::new(
             Row::new()
@@ -158,11 +167,14 @@ fn spend_tx_list_view(i: usize, tx: &SpendTx) -> Element<'_, Message> {
                     Column::new()
                         .align_x(Alignment::End)
                         .push(if !tx.is_send_to_self() {
-                            Container::new(amount(&tx.spend_amount))
+                            Container::new(amount_with_unit(&tx.spend_amount, bitcoin_unit))
                         } else {
                             Container::new(p1_regular("Self-transfer"))
                         })
-                        .push_maybe(tx.fee_amount.map(|fee| amount_with_size(&fee, P2_SIZE)))
+                        .push_maybe(
+                            tx.fee_amount
+                                .map(|fee| amount_with_size_and_unit(&fee, P2_SIZE, bitcoin_unit)),
+                        )
                         .width(Length::Fixed(140.0)),
                 )
                 .align_y(Alignment::Center)

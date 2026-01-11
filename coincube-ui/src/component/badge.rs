@@ -56,6 +56,13 @@ pub fn bitcoin<T>() -> Container<'static, T> {
         .center_y(Length::Fixed(40.0))
 }
 
+pub fn bitcoin_logo<T>() -> Container<'static, T> {
+    Container::new(icon::bitcoin_icon().width(Length::Fixed(20.0)))
+        .style(theme::badge::bitcoin)
+        .center_x(Length::Fixed(40.0))
+        .center_y(Length::Fixed(40.0))
+}
+
 pub fn recovery<'a, T: 'a>() -> Container<'a, T> {
     badge_pill("  Recovery  ", "This transaction is using a recovery path")
 }

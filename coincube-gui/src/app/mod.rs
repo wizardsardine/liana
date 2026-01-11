@@ -360,21 +360,9 @@ impl Panels {
                     self.settings.as_ref().map(|v| v as &dyn State)
                 }
             },
+            Menu::Settings(_) => Some(&self.global_settings as &dyn State),
             #[cfg(feature = "buysell")]
             Menu::BuySell => self.buy_sell.as_ref().map(|v| v as &dyn State),
-            // Legacy menu items
-            Menu::Receive => self.receive.as_ref().map(|v| v as &dyn State),
-            Menu::PSBTs => self.psbts.as_ref().map(|v| v as &dyn State),
-            Menu::Transactions => self.transactions.as_ref().map(|v| v as &dyn State),
-            Menu::TransactionPreSelected(_) => self.transactions.as_ref().map(|v| v as &dyn State),
-            Menu::Settings(_) | Menu::SettingsPreSelected(_) => {
-                Some(&self.global_settings as &dyn State)
-            }
-            Menu::Coins => self.coins.as_ref().map(|v| v as &dyn State),
-            Menu::CreateSpendTx => self.create_spend.as_ref().map(|v| v as &dyn State),
-            Menu::Recovery => self.recovery.as_ref().map(|v| v as &dyn State),
-            Menu::RefreshCoins(_) => self.create_spend.as_ref().map(|v| v as &dyn State),
-            Menu::PsbtPreSelected(_) => self.psbts.as_ref().map(|v| v as &dyn State),
         }
     }
 
@@ -416,23 +404,9 @@ impl Panels {
                     self.settings.as_mut().map(|v| v as &mut dyn State)
                 }
             },
+            Menu::Settings(_) => Some(&mut self.global_settings as &mut dyn State),
             #[cfg(feature = "buysell")]
             Menu::BuySell => self.buy_sell.as_mut().map(|v| v as &mut dyn State),
-            // Legacy menu items
-            Menu::Receive => self.receive.as_mut().map(|v| v as &mut dyn State),
-            Menu::PSBTs => self.psbts.as_mut().map(|v| v as &mut dyn State),
-            Menu::Transactions => self.transactions.as_mut().map(|v| v as &mut dyn State),
-            Menu::TransactionPreSelected(_) => {
-                self.transactions.as_mut().map(|v| v as &mut dyn State)
-            }
-            Menu::Settings(_) | Menu::SettingsPreSelected(_) => {
-                Some(&mut self.global_settings as &mut dyn State)
-            }
-            Menu::Coins => self.coins.as_mut().map(|v| v as &mut dyn State),
-            Menu::CreateSpendTx => self.create_spend.as_mut().map(|v| v as &mut dyn State),
-            Menu::Recovery => self.recovery.as_mut().map(|v| v as &mut dyn State),
-            Menu::RefreshCoins(_) => self.create_spend.as_mut().map(|v| v as &mut dyn State),
-            Menu::PsbtPreSelected(_) => self.psbts.as_mut().map(|v| v as &mut dyn State),
         }
     }
 }
@@ -752,21 +726,9 @@ impl App {
                     }
                 }
             }
-            menu::Menu::Active(submenu) => {
-                if let menu::ActiveSubMenu::Transactions(Some(txid)) = submenu {
-                    if let Some(daemon) = &self.daemon {
-                        if let Ok(Some(tx)) = Handle::current().block_on(async {
-                            daemon
-                                .get_history_txs(&[*txid])
-                                .await
-                                .map(|txs| txs.first().cloned())
-                        }) {
-                            self.panels.active_transactions.preselect(tx);
-                            self.panels.current = menu;
-                            return Task::none();
-                        }
-                    }
-                }
+            menu::Menu::Active(_submenu) => {
+                // Active transaction preselection is handled via PreselectPayment message
+                // since Payment objects are passed directly instead of fetching by ID
             }
             _ => {
                 tracing::debug!(
@@ -1010,16 +972,11 @@ impl App {
                     let is_settings_current = matches!(
                         current,
                         Menu::Settings(_)
-                            | Menu::SettingsPreSelected(_)
                             | Menu::Vault(crate::app::menu::VaultSubMenu::Settings(_))
                     );
 
-                    let is_spend_current = matches!(
-                        current,
-                        Menu::Vault(crate::app::menu::VaultSubMenu::Send)
-                            | Menu::CreateSpendTx
-                            | Menu::RefreshCoins(_)
-                    );
+                    let is_spend_current =
+                        matches!(current, Menu::Vault(crate::app::menu::VaultSubMenu::Send));
 
                     let mut commands = vec![
                         vault_overview.update(
