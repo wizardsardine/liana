@@ -101,6 +101,7 @@ pub fn spend_view<'a>(
                         &tx.labels,
                         labels_editing,
                         bitcoin_unit,
+                        tx.is_single_payment().is_some(),
                     )),
             )
             .push(if saved {

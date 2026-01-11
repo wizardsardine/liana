@@ -100,6 +100,7 @@ pub fn psbt_view<'a>(
                         &tx.labels,
                         labels_editing,
                         bitcoin_unit,
+                        tx.is_single_payment().is_some(),
                     )),
             )
             .push(if saved {
@@ -681,6 +682,7 @@ pub fn outputs_view<'a>(
     labels: &'a HashMap<String, String>,
     labels_editing: &'a HashMap<String, form::Value<String>>,
     bitcoin_unit: BitcoinDisplayUnit,
+    is_single_payment: bool,
 ) -> Element<'a, Message> {
     let change_indexes_copy = change_indexes.clone();
     Column::new()
@@ -732,6 +734,7 @@ pub fn outputs_view<'a>(
                                             labels,
                                             labels_editing,
                                             bitcoin_unit,
+                                            is_single_payment,
                                         ))
                                     },
                                 ),
@@ -895,15 +898,23 @@ fn payment_view<'a>(
     labels: &'a HashMap<String, String>,
     labels_editing: &'a HashMap<String, form::Value<String>>,
     bitcoin_unit: BitcoinDisplayUnit,
+    is_single_payment: bool,
 ) -> Element<'a, Message> {
     let addr = Address::from_script(&output.script_pubkey, network)
         .ok()
         .map(|a| a.to_string());
+    let txid = txid.to_string();
     let outpoint = OutPoint {
-        txid,
+        txid: txid.parse().expect("txid string is always valid"),
         vout: i as u32,
     }
     .to_string();
+
+    let labelled = if is_single_payment {
+        vec![outpoint.clone(), txid.clone()]
+    } else {
+        vec![outpoint.clone()]
+    };
     Column::new()
         .width(Length::Fill)
         .spacing(5)
@@ -912,15 +923,17 @@ fn payment_view<'a>(
                 .spacing(5)
                 .align_y(Alignment::Center)
                 .push(
-                    Container::new(if let Some(label) = labels_editing.get(&outpoint) {
-                        label::label_editing(vec![outpoint.clone()], label, text::P1_SIZE)
-                    } else {
-                        label::label_editable(
-                            vec![outpoint.clone()],
-                            labels.get(&outpoint),
-                            text::P1_SIZE,
-                        )
-                    })
+                    Container::new(
+                        if let Some(label) = labels_editing.get(&outpoint).or_else(|| {
+                            is_single_payment
+                                .then(|| labels_editing.get(&txid))
+                                .flatten()
+                        }) {
+                            label::label_editing(labelled, label, text::P1_SIZE)
+                        } else {
+                            label::label_editable(labelled, labels.get(&outpoint), text::P1_SIZE)
+                        },
+                    )
                     .width(Length::Fill),
                 )
                 .push(amount_with_unit(&output.value, bitcoin_unit)),

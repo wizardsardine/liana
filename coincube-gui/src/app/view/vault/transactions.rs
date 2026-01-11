@@ -458,6 +458,7 @@ pub fn transaction_detail_view<'a>(
                         &tx.labels,
                         labels_editing,
                         bitcoin_unit,
+                        tx.is_single_payment().is_some(),
                     )),
             )
             .spacing(20),
