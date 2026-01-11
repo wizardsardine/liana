@@ -1,18 +1,19 @@
 use iced::{widget::Space, Alignment, Length};
 
+use coincube_ui::component::amount::BitcoinDisplayUnit;
 use coincube_ui::{
     component::{amount::*, badge, button, card, form, text::*},
     icon::{self, receipt_icon},
     theme,
     widget::*,
 };
-use coincube_ui::component::amount::BitcoinDisplayUnit;
 
 use crate::{
     app::{
-        error::Error, 
-        menu::{Menu, VaultSubMenu}, 
-        view::placeholder},
+        error::Error,
+        menu::{Menu, VaultSubMenu},
+        view::placeholder,
+    },
     daemon::model::{SpendStatus, SpendTx},
 };
 
@@ -104,7 +105,11 @@ pub fn psbts_view(spend_txs: &[SpendTx], bitcoin_unit: BitcoinDisplayUnit) -> El
         .into()
 }
 
-fn spend_tx_list_view(i: usize, tx: &SpendTx, bitcoin_unit: BitcoinDisplayUnit) -> Element<'_, Message> {
+fn spend_tx_list_view(
+    i: usize,
+    tx: &SpendTx,
+    bitcoin_unit: BitcoinDisplayUnit,
+) -> Element<'_, Message> {
     Container::new(
         Button::new(
             Row::new()
@@ -166,7 +171,10 @@ fn spend_tx_list_view(i: usize, tx: &SpendTx, bitcoin_unit: BitcoinDisplayUnit) 
                         } else {
                             Container::new(p1_regular("Self-transfer"))
                         })
-                        .push_maybe(tx.fee_amount.map(|fee| amount_with_size_and_unit(&fee, P2_SIZE, bitcoin_unit)))
+                        .push_maybe(
+                            tx.fee_amount
+                                .map(|fee| amount_with_size_and_unit(&fee, P2_SIZE, bitcoin_unit)),
+                        )
                         .width(Length::Fixed(140.0)),
                 )
                 .align_y(Alignment::Center)

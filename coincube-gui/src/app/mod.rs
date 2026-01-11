@@ -975,10 +975,8 @@ impl App {
                             | Menu::Vault(crate::app::menu::VaultSubMenu::Settings(_))
                     );
 
-                    let is_spend_current = matches!(
-                        current,
-                        Menu::Vault(crate::app::menu::VaultSubMenu::Send)
-                    );
+                    let is_spend_current =
+                        matches!(current, Menu::Vault(crate::app::menu::VaultSubMenu::Send));
 
                     let mut commands = vec![
                         vault_overview.update(

@@ -2,13 +2,13 @@ use std::collections::HashMap;
 
 use iced::{widget::Space, Alignment, Length};
 
+use coincube_ui::component::amount::BitcoinDisplayUnit;
 use coincube_ui::{
     component::{amount::*, badge, button, form, text::*},
     icon::{self, coins_icon},
     theme,
     widget::*,
 };
-use coincube_ui::component::amount::BitcoinDisplayUnit;
 
 use crate::{
     app::{

@@ -14,6 +14,7 @@ use coincube_core::{
     },
 };
 
+use coincube_ui::component::amount::BitcoinDisplayUnit;
 use coincube_ui::{
     component::{
         amount::*,
@@ -25,7 +26,6 @@ use coincube_ui::{
     icon, theme,
     widget::*,
 };
-use coincube_ui::component::amount::BitcoinDisplayUnit;
 
 use crate::{
     app::{
@@ -314,7 +314,11 @@ pub fn spend_header<'a>(
                 .push(if tx.is_send_to_self() {
                     Container::new(h1("Self-transfer"))
                 } else {
-                    Container::new(amount_with_size_and_unit(&tx.spend_amount, H1_SIZE, bitcoin_unit))
+                    Container::new(amount_with_size_and_unit(
+                        &tx.spend_amount,
+                        H1_SIZE,
+                        bitcoin_unit,
+                    ))
                 })
                 .push(
                     Row::new()
@@ -325,7 +329,10 @@ pub fn spend_header<'a>(
                         } else {
                             None
                         })
-                        .push_maybe(tx.fee_amount.map(|fee| amount_with_size_and_unit(&fee, H3_SIZE, bitcoin_unit)))
+                        .push_maybe(
+                            tx.fee_amount
+                                .map(|fee| amount_with_size_and_unit(&fee, H3_SIZE, bitcoin_unit)),
+                        )
                         .push(text(" ").size(H3_SIZE))
                         .push_maybe(tx.min_feerate_vb().map(|rate| {
                             text(format!("(~{} sats/vbyte)", &rate))
@@ -642,32 +649,26 @@ pub fn inputs_view<'a>(
     Container::new(
         Column::new()
             .push(
-                Container::new(
-                    h4_bold(format!(
-                        "{} coin{} spent",
-                        tx.input.len(),
-                        if tx.input.len() == 1 { "" } else { "s" }
-                    ))
-                )
+                Container::new(h4_bold(format!(
+                    "{} coin{} spent",
+                    tx.input.len(),
+                    if tx.input.len() == 1 { "" } else { "s" }
+                )))
                 .padding(20)
-                .width(Length::Fill)
+                .width(Length::Fill),
             )
-            .push(
-                tx.input
-                    .iter()
-                    .fold(
-                        Column::new().spacing(10).padding(20),
-                        |col: Column<'a, Message>, input| {
-                            col.push(input_view(
-                                &input.previous_output,
-                                coins.get(&input.previous_output),
-                                labels,
-                                labels_editing,
-                                bitcoin_unit,
-                            ))
-                        },
-                    )
-            )
+            .push(tx.input.iter().fold(
+                Column::new().spacing(10).padding(20),
+                |col: Column<'a, Message>, input| {
+                    col.push(input_view(
+                        &input.previous_output,
+                        coins.get(&input.previous_output),
+                        labels,
+                        labels_editing,
+                        bitcoin_unit,
+                    ))
+                },
+            )),
     )
     .style(theme::card::simple)
     .into()
@@ -701,15 +702,13 @@ pub fn outputs_view<'a>(
                 Container::new(
                     Column::new()
                         .push(
-                            Container::new(
-                                h4_bold(format!(
-                                    "{} payment{}",
-                                    count,
-                                    if count == 1 { "" } else { "s" }
-                                ))
-                            )
+                            Container::new(h4_bold(format!(
+                                "{} payment{}",
+                                count,
+                                if count == 1 { "" } else { "s" }
+                            )))
                             .padding(20)
-                            .width(Length::Fill)
+                            .width(Length::Fill),
                         )
                         .push(
                             tx.output
@@ -735,8 +734,8 @@ pub fn outputs_view<'a>(
                                             bitcoin_unit,
                                         ))
                                     },
-                                )
-                        )
+                                ),
+                        ),
                 )
                 .style(theme::card::simple)
             } else {
@@ -786,7 +785,11 @@ pub fn outputs_view<'a>(
                                 .fold(
                                     Column::new().padding(20),
                                     |col: Column<'a, Message>, (_, output)| {
-                                        col.spacing(10).push(change_view(output, network, bitcoin_unit))
+                                        col.spacing(10).push(change_view(
+                                            output,
+                                            network,
+                                            bitcoin_unit,
+                                        ))
                                     },
                                 )
                                 .into()
@@ -819,7 +822,11 @@ fn input_view<'a>(
                     Container::new(if let Some(label) = labels_editing.get(&outpoint) {
                         label::label_editing(vec![outpoint.clone()], label, text::P1_SIZE)
                     } else {
-                        label::label_editable(vec![outpoint.clone()], labels.get(&outpoint), text::P1_SIZE)
+                        label::label_editable(
+                            vec![outpoint.clone()],
+                            labels.get(&outpoint),
+                            text::P1_SIZE,
+                        )
                     })
                     .width(Length::Fill),
                 )
@@ -908,7 +915,11 @@ fn payment_view<'a>(
                     Container::new(if let Some(label) = labels_editing.get(&outpoint) {
                         label::label_editing(vec![outpoint.clone()], label, text::P1_SIZE)
                     } else {
-                        label::label_editable(vec![outpoint.clone()], labels.get(&outpoint), text::P1_SIZE)
+                        label::label_editable(
+                            vec![outpoint.clone()],
+                            labels.get(&outpoint),
+                            text::P1_SIZE,
+                        )
                     })
                     .width(Length::Fill),
                 )
@@ -953,7 +964,11 @@ fn payment_view<'a>(
         .into()
 }
 
-fn change_view(output: &TxOut, network: Network, bitcoin_unit: BitcoinDisplayUnit) -> Element<Message> {
+fn change_view(
+    output: &TxOut,
+    network: Network,
+    bitcoin_unit: BitcoinDisplayUnit,
+) -> Element<Message> {
     let addr = Address::from_script(&output.script_pubkey, network)
         .unwrap()
         .to_string();

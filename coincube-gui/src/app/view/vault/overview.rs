@@ -303,7 +303,10 @@ fn event_list_view(
         item = item.with_fiat_amount(fiat_amount);
     }
 
-    item.view(Message::Menu(Menu::Vault(VaultSubMenu::Transactions(Some(event.outpoint.txid))))).into()
+    item.view(Message::Menu(Menu::Vault(VaultSubMenu::Transactions(
+        Some(event.outpoint.txid),
+    ))))
+    .into()
 }
 
 pub fn payment_view<'a>(
