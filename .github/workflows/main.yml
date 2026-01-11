@@ -16,11 +16,6 @@ jobs:
         with:
           toolchain: 1.89.0
           components: rustfmt, clippy
-      - name: Show checked out commit
-        run: |
-          git rev-parse HEAD
-          git log -1 --oneline
-          git status --porcelain
       - name: rustfmt
         run: cargo fmt -- --check
       - name: clippy
