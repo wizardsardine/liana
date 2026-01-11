@@ -7,6 +7,15 @@ pub enum BitcoinDisplayUnit {
     Sats,
 }
 
+impl ToString for BitcoinDisplayUnit {
+    fn to_string(&self) -> String {
+        match self {
+            BitcoinDisplayUnit::BTC => "BTC".to_string(),
+            BitcoinDisplayUnit::Sats => "sats".to_string(),
+        }
+    }
+}
+
 impl From<BitcoinDisplayUnit> for coincube_ui::component::amount::BitcoinDisplayUnit {
     fn from(unit: BitcoinDisplayUnit) -> Self {
         match unit {

@@ -10,6 +10,14 @@ pub enum BitcoinDisplayUnit {
     BTC,
     Sats,
 }
+impl ToString for BitcoinDisplayUnit {
+    fn to_string(&self) -> String {
+        match self {
+            BitcoinDisplayUnit::BTC => "BTC".to_string(),
+            BitcoinDisplayUnit::Sats => "sats".to_string(),
+        }
+    }
+}
 
 pub trait DisplayAmount {
     fn to_formatted_string(&self) -> String;
