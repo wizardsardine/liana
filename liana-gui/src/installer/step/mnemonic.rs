@@ -125,7 +125,7 @@ impl Step for RecoverMnemonic {
 
     fn apply(&mut self, ctx: &mut Context) -> bool {
         if self.skip {
-            // If the user click previous, we dont want the skip to be set to true.
+            // If the user clicks previous, we don't want the skip to be set to true.
             self.skip = false;
             return true;
         }

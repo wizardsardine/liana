@@ -7,7 +7,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 // OS-generated randomness. See https://docs.rs/getrandom/latest/getrandom/#supported-targets
 // (basically this calls `getrandom()` or polls `/dev/urandom` on Linux, `BCryptGenRandom` on
-// Windows, and `getentropy()` / `/dev/random` on Mac.
+// Windows, and `getentropy()` / `/dev/random` on Mac).
 fn system_randomness() -> Result<[u8; 32], Box<dyn Error>> {
     let mut buf = [0; 32];
     getrandom::fill(&mut buf).map_err(|e| e.to_string())?;

@@ -104,7 +104,7 @@ pub async fn update_connect_cache(
     };
 
     if let Some(c) = cache.accounts.iter().find(|cred| cred.email == *email) {
-        // An other process updated the tokens
+        // Another process updated the tokens
         if current_tokens.expires_at < c.tokens.expires_at {
             tracing::debug!("Liana-Connect authentication tokens are up to date, nothing to do");
             return Ok(c.tokens.clone());

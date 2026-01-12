@@ -97,8 +97,8 @@ pub fn delete_wallet_mnemonics(
                     (None, None) => {
                         std::fs::remove_file(&path)?;
                     }
-                    //  we delete any mnemonic-fg-sum-tim.txt that matches the descriptor_checksum
-                    //  and timestamp
+                    // we delete any mnemonic-fg-sum-tim.txt that matches the descriptor_checksum
+                    // and timestamp
                     (Some(t), Some(info)) => {
                         if info.0 == descriptor_checksum && t == info.1 {
                             std::fs::remove_file(&path)?;

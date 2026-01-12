@@ -99,8 +99,8 @@ impl AuthClient {
         req
     }
 
-    /// the redirect_to is setup so the supabase html template has the information
-    /// that user is using the desktop to authenticate and will display the token
+    /// The redirect_to is set up so the Supabase HTML template has the information
+    /// that the user is using the desktop to authenticate and will display the token
     /// instead of the confirmation link button.
     pub async fn sign_in_otp(&self) -> Result<(), AuthError> {
         self.request(
@@ -123,7 +123,7 @@ impl AuthClient {
     }
 
     /// Resend method has to trigger a signInWithOTP method instead of using the resend endpoint.
-    /// The resend endpoint is used to resend an existing signup confirmation email, email change email, SMS OTP phone signup)
+    /// The resend endpoint is used to resend an existing signup confirmation email, email change email, SMS OTP phone signup,
     /// or phone change OTP. This method will only resend an email or phone OTP to the user if there was an initial signup,
     /// email change or phone change request being made.
     /// If we want to resend a passwordless sign-in OTP or Magic Link, we have to use the signInWithOtp() method again.

@@ -204,8 +204,8 @@ impl LianaLiteLogin {
                             tracing::warn!("Error while checking email: {}", e);
                             match e {
                                 Error::CredentialsMissing => {
-                                    //  Liana-Connect cache does not exist,
-                                    //  No need to display error
+                                    // Liana-Connect cache does not exist,
+                                    // No need to display error
                                 }
                                 Error::Auth(AuthError { http_status, .. }) => {
                                     if http_status == Some(403) || http_status == Some(401) {
