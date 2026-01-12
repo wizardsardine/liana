@@ -125,6 +125,26 @@ where
         self.input = self.input.size(size);
         self
     }
+
+    /// Sets the message that should be produced when the [`Form`] is
+    /// focused and the enter key is pressed.
+    pub fn on_submit(mut self, message: Message) -> Self {
+        self.input = self.input.on_submit(message);
+        self
+    }
+
+    /// Sets the message that should be produced when the [`Form`] is
+    /// focused and the enter key is pressed, if `Some`.
+    pub fn on_submit_maybe(mut self, on_submit: Option<Message>) -> Self {
+        self.input = self.input.on_submit_maybe(on_submit);
+        self
+    }
+
+    /// Sets the [`Id`] of the [`Form`] input.
+    pub fn id(mut self, id: impl Into<text_input::Id>) -> Self {
+        self.input = self.input.id(id);
+        self
+    }
 }
 
 impl<'a, Message: 'a + Clone> From<Form<'a, Message>> for Element<'a, Message> {
