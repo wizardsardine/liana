@@ -1,6 +1,6 @@
 #![windows_subsystem = "windows"]
 
-use std::{error::Error, io::Write, path::PathBuf, process, str::FromStr};
+use std::{error::Error, fmt::Display, io::Write, path::PathBuf, process, str::FromStr};
 
 #[cfg(target_os = "linux")]
 use iced::window::settings::PlatformSpecific;
@@ -10,7 +10,7 @@ use tracing_subscriber::filter::LevelFilter;
 extern crate serde;
 extern crate serde_json;
 
-use liana::miniscript::bitcoin;
+use liana::miniscript::bitcoin::Network;
 use liana_ui::{component::text, font, image, theme};
 
 use liana_gui::{
@@ -21,36 +21,58 @@ use liana_gui::{
     VERSION,
 };
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 enum Arg {
     DatadirPath(LianaDirectory),
-    Network(bitcoin::Network),
+    Network(Network),
 }
 
-fn parse_args(args: Vec<String>) -> Result<Vec<Arg>, Box<dyn Error>> {
+fn parse_args(
+    args: Vec<String>,
+    version: impl Display,
+    available_networks: &[Network],
+    default_network: Option<Network>,
+) -> Result<Vec<Arg>, Box<dyn Error>> {
     let mut res = Vec::new();
 
+    let app_name = std::path::Path::new(&args[0])
+        .file_name()
+        .and_then(|s| s.to_str())
+        // This should never happen
+        .unwrap_or("liana");
+
     if args.len() > 1 && (args[1] == "--version" || args[1] == "-v") {
-        eprintln!("{}", VERSION);
-        process::exit(1);
+        eprintln!("{}", version);
+        process::exit(0);
     }
 
     if args.len() > 1 && (args[1] == "--help" || args[1] == "-h") {
+        let network_options: String = available_networks
+            .iter()
+            .map(|n| {
+                let name = n.to_string().to_lowercase();
+                let default_marker = if Some(*n) == default_network {
+                    " (default)"
+                } else {
+                    ""
+                };
+                format!("    --{:<15} Use {} network{}", name, name, default_marker)
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+
         eprintln!(
             r#"
-Usage: liana-gui [OPTIONS]
+Usage: {app_name} [OPTIONS]
 
 Options:
     --datadir <PATH>    Path of liana datadir
-    -v, --version       Display liana-gui version
+    -v, --version       Display {app_name} version
     -h, --help          Print help
-    --bitcoin           Use bitcoin network
-    --testnet           Use testnet network
-    --signet            Use signet network
-    --regtest           Use regtest network
+{network_options}
         "#
         );
-        process::exit(1);
+        process::exit(0);
     }
 
     for (i, arg) in args.iter().enumerate() {
@@ -60,8 +82,11 @@ Options:
             } else {
                 return Err("missing arg to --datadir".into());
             }
-        } else if arg.contains("--") {
-            let network = bitcoin::Network::from_str(args[i].trim_start_matches("--"))?;
+        } else if arg.starts_with("--") && arg != "--datadir" {
+            let network = Network::from_str(arg.trim_start_matches("--"))?;
+            if !available_networks.contains(&network) {
+                return Err(format!("network {} is not available", network).into());
+            }
             res.push(Arg::Network(network));
         }
     }
@@ -70,7 +95,13 @@ Options:
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
-    let args = parse_args(std::env::args().collect())?;
+    use Network::{Bitcoin, Regtest, Signet, Testnet};
+    let args = parse_args(
+        std::env::args().collect(),
+        VERSION,
+        &[Bitcoin, Testnet, Signet, Regtest],
+        None,
+    )?;
     let config = match args.as_slice() {
         [] => {
             let datadir_path = LianaDirectory::new_default().unwrap();
@@ -189,38 +220,65 @@ fn setup_panic_hook(liana_directory: &LianaDirectory) {
 mod tests {
     use super::*;
     use liana_gui::dir::LianaDirectory;
+    use Network::{Bitcoin, Regtest, Signet, Testnet};
+
+    const ALL_NETWORKS: &[Network] = &[Bitcoin, Testnet, Signet, Regtest];
 
     #[test]
     fn test_parse_args() {
-        assert!(parse_args(vec!["--meth".into()]).is_err());
-        assert!(parse_args(vec!["--datadir".into()]).is_err());
+        assert!(parse_args(
+            vec!["app".into(), "--meth".into()],
+            VERSION,
+            ALL_NETWORKS,
+            None
+        )
+        .is_err());
+        assert!(parse_args(
+            vec!["app".into(), "--datadir".into()],
+            VERSION,
+            ALL_NETWORKS,
+            None
+        )
+        .is_err());
         assert_eq!(
-            Some(vec![Arg::Network(bitcoin::Network::Regtest)]),
-            parse_args(vec!["--regtest".into()]).ok()
-        );
-        assert_eq!(
-            Some(vec![
-                Arg::DatadirPath(LianaDirectory::new(PathBuf::from("hello"))),
-                Arg::Network(bitcoin::Network::Testnet)
-            ]),
+            Some(vec![Arg::Network(Regtest)]),
             parse_args(
-                "--datadir hello --testnet"
-                    .split(' ')
-                    .map(|a| a.to_string())
-                    .collect()
+                vec!["app".into(), "--regtest".into()],
+                VERSION,
+                ALL_NETWORKS,
+                None
             )
             .ok()
         );
         assert_eq!(
             Some(vec![
-                Arg::Network(bitcoin::Network::Testnet),
+                Arg::DatadirPath(LianaDirectory::new(PathBuf::from("hello"))),
+                Arg::Network(Testnet)
+            ]),
+            parse_args(
+                "app --datadir hello --testnet"
+                    .split(' ')
+                    .map(|a| a.to_string())
+                    .collect(),
+                VERSION,
+                ALL_NETWORKS,
+                None
+            )
+            .ok()
+        );
+        assert_eq!(
+            Some(vec![
+                Arg::Network(Testnet),
                 Arg::DatadirPath(LianaDirectory::new(PathBuf::from("hello"))),
             ]),
             parse_args(
-                "--testnet --datadir hello"
+                "app --testnet --datadir hello"
                     .split(' ')
                     .map(|a| a.to_string())
-                    .collect()
+                    .collect(),
+                VERSION,
+                ALL_NETWORKS,
+                None
             )
             .ok()
         );
