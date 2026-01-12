@@ -4,7 +4,7 @@ use std::{error::Error, fmt::Display, path::PathBuf, process, str::FromStr};
 
 use liana::miniscript::bitcoin::Network;
 
-use crate::dir::LianaDirectory;
+use crate::{dir::LianaDirectory, gui::Config};
 
 /// Parsed command-line argument.
 #[derive(Debug, Clone, PartialEq)]
@@ -85,6 +85,33 @@ Options:
     }
 
     Ok(res)
+}
+
+/// Convert parsed command-line arguments to a Config.
+///
+/// # Arguments
+/// - `args`: Parsed command-line arguments
+/// - `default_network`: Network to use when none is specified in args
+pub fn args_to_config(
+    args: &[Arg],
+    default_network: Option<Network>,
+) -> Result<Config, Box<dyn Error>> {
+    match args {
+        [] => {
+            let datadir_path = LianaDirectory::new_default().unwrap();
+            Ok(Config::new(datadir_path, default_network))
+        }
+        [Arg::Network(network)] => {
+            let datadir_path = LianaDirectory::new_default().unwrap();
+            Ok(Config::new(datadir_path, Some(*network)))
+        }
+        [Arg::DatadirPath(datadir_path)] => Ok(Config::new(datadir_path.clone(), default_network)),
+        [Arg::DatadirPath(datadir_path), Arg::Network(network)]
+        | [Arg::Network(network), Arg::DatadirPath(datadir_path)] => {
+            Ok(Config::new(datadir_path.clone(), Some(*network)))
+        }
+        _ => Err("Unknown args combination".into()),
+    }
 }
 
 #[cfg(test)]

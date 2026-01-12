@@ -1,7 +1,11 @@
-use std::{fs::File, sync::Arc};
-use tracing_subscriber::{filter, fmt::writer::BoxMakeWriter, prelude::*, reload};
-
 use crate::dir::LianaDirectory;
+use std::{error::Error, fs::File, str::FromStr, sync::Arc};
+use tracing_subscriber::{
+    filter::{self, LevelFilter},
+    fmt::writer::BoxMakeWriter,
+    prelude::*,
+    reload,
+};
 
 const GUI_LOG_FILE_NAME: &str = "liana-gui.log";
 
@@ -65,4 +69,13 @@ pub fn setup_logger(
         .init();
 
     Ok(())
+}
+
+/// Parse LOG_LEVEL environment variable.
+pub fn parse_log_level() -> Result<Option<LevelFilter>, Box<dyn Error>> {
+    if let Ok(l) = std::env::var("LOG_LEVEL") {
+        Ok(Some(LevelFilter::from_str(&l)?))
+    } else {
+        Ok(None)
+    }
 }
