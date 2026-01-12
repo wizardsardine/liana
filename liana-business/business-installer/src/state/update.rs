@@ -885,6 +885,15 @@ impl State {
             return;
         }
 
+        // Reset login processing flags so user can retry
+        // This handles errors that bypass the specific InvalidEmail/AuthCodeFail handlers
+        if self.views.login.email.processing {
+            self.views.login.email.processing = false;
+        }
+        if self.views.login.code.processing {
+            self.views.login.code.processing = false;
+        }
+
         if error.show_warning() {
             self.on_warning_show_modal("Backend error", error.to_string());
         }
