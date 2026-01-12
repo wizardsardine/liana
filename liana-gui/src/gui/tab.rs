@@ -26,7 +26,11 @@ use crate::{
     launcher::{self, Launcher},
     loader::{self, Loader},
     services::connect::{
-        client::backend::{api, BackendWalletClient},
+        client::{
+            auth::AuthClient,
+            backend::{api, BackendClient, BackendWalletClient},
+            cache as connect_cache,
+        },
         login,
     },
 };
@@ -56,11 +60,23 @@ where
         directory: LianaDirectory,
         network: Option<bitcoin::Network>,
     ) -> (Self, Task<Message<M>>) {
-        let (launcher, command) = Launcher::new(directory, network);
-        (
-            State::Launcher(Box::new(launcher)),
-            command.map(|msg| Message::Launch(Box::new(msg))),
-        )
+        if I::skip_launcher() {
+            // Start directly with the Installer (e.g., for liana-business where auth is mandatory)
+            let net = network.unwrap_or(bitcoin::Network::Signet);
+            let (install, command) =
+                I::new(directory, net, None, installer::UserFlow::CreateWallet);
+            (
+                State::Installer(*install),
+                command.map(|msg| Message::Install(Box::new(msg))),
+            )
+        } else {
+            // Normal flow: start with Launcher
+            let (launcher, command) = Launcher::new(directory, network);
+            (
+                State::Launcher(Box::new(launcher)),
+                command.map(|msg| Message::Launch(Box::new(msg))),
+            )
+        }
     }
 }
 
@@ -74,6 +90,25 @@ where
     Load(Box<loader::Message>),
     Run(Box<app::Message>),
     Login(Box<login::Message>),
+    /// Result of connecting to backend for RunLianaBusiness flow
+    BusinessConnected(BusinessConnectResult),
+}
+
+/// Result of attempting to connect to backend for liana-business
+#[derive(Debug)]
+pub struct BusinessConnectResult {
+    pub datadir: LianaDirectory,
+    pub network: bitcoin::Network,
+    pub wallet_id: String,
+    pub email: String,
+    pub result: Result<
+        (
+            crate::services::connect::client::backend::BackendWalletClient,
+            crate::services::connect::client::backend::api::Wallet,
+            lianad::commands::ListCoinsResult,
+        ),
+        login::Error,
+    >,
 }
 
 pub struct Tab<I, S, M>
@@ -276,6 +311,37 @@ where
                             self.state = State::Launcher(Box::new(launcher));
                             command.map(|msg| Message::Launch(Box::new(msg)))
                         }
+                        installer::NextState::RunLianaBusiness {
+                            datadir,
+                            network,
+                            wallet_id,
+                            email,
+                        } => {
+                            // Spawn async task to connect using cached tokens
+                            let datadir_clone = datadir.clone();
+                            let wallet_id_clone = wallet_id.clone();
+                            let email_clone = email.clone();
+                            Task::perform(
+                                async move {
+                                    connect_for_business(
+                                        datadir_clone.clone(),
+                                        network,
+                                        wallet_id_clone.clone(),
+                                        email_clone.clone(),
+                                    )
+                                    .await
+                                },
+                                move |result| {
+                                    Message::BusinessConnected(BusinessConnectResult {
+                                        datadir: datadir.clone(),
+                                        network,
+                                        wallet_id: wallet_id.clone(),
+                                        email: email.clone(),
+                                        result,
+                                    })
+                                },
+                            )
+                        }
                     }
                 } else {
                     i.update(*msg).map(|msg| Message::Install(Box::new(msg)))
@@ -358,6 +424,104 @@ where
                     command.map(|msg| Message::Login(Box::new(msg)))
                 } else {
                     i.update(*msg).map(|msg| Message::Run(Box::new(msg)))
+                }
+            }
+            // Handle result of RunLianaBusiness connection attempt
+            (State::Installer(_), Message::BusinessConnected(conn_result)) => {
+                let BusinessConnectResult {
+                    datadir,
+                    network,
+                    wallet_id,
+                    email,
+                    result,
+                } = conn_result;
+
+                match result {
+                    Ok((backend_client, wallet, coins)) => {
+                        // Success! Create App directly
+                        let config_path = datadir
+                            .network_directory(network)
+                            .path()
+                            .join(app::config::DEFAULT_FILE_NAME);
+                        let config = match app::Config::from_file(&config_path) {
+                            Ok(c) => c,
+                            Err(e) => {
+                                tracing::warn!(
+                                    "Failed to load config from {:?}, creating default: {}",
+                                    config_path,
+                                    e
+                                );
+                                // Create a minimal config for remote backend (no bitcoind)
+                                app::Config::new(false)
+                            }
+                        };
+
+                        // Create WalletId for the directory
+                        let directory_wallet_id =
+                            crate::app::settings::WalletId::new(wallet_id.clone(), None);
+
+                        // Use the trait method to create App
+                        let result = S::create_app_for_remote_backend(
+                            directory_wallet_id,
+                            backend_client,
+                            wallet,
+                            coins,
+                            datadir.clone(),
+                            network,
+                            config,
+                        );
+
+                        match result {
+                            Some(Ok((app, command))) => {
+                                self.state = State::App(app);
+                                command.map(|msg| Message::Run(Box::new(msg)))
+                            }
+                            Some(Err(e)) => {
+                                tracing::error!("Failed to create app: {}", e);
+                                // Fall back to login flow
+                                let auth_cfg = crate::app::settings::AuthConfig {
+                                    email,
+                                    wallet_id,
+                                    refresh_token: None,
+                                };
+                                let directory_wallet_id = crate::app::settings::WalletId::new(
+                                    auth_cfg.wallet_id.clone(),
+                                    None,
+                                );
+                                let (login, command) = login::LianaLiteLogin::new(
+                                    datadir,
+                                    network,
+                                    directory_wallet_id,
+                                    auth_cfg,
+                                );
+                                self.state = State::Login(Box::new(login));
+                                command.map(|msg| Message::Login(Box::new(msg)))
+                            }
+                            None => {
+                                tracing::error!("Settings type doesn't support remote backend");
+                                Task::none()
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        // Connection failed, fall back to login flow
+                        tracing::warn!("Business connection failed, falling back to login: {}", e);
+                        let auth_cfg = crate::app::settings::AuthConfig {
+                            email,
+                            wallet_id,
+                            refresh_token: None,
+                        };
+                        let directory_wallet_id =
+                            crate::app::settings::WalletId::new(auth_cfg.wallet_id.clone(), None);
+                        let (login, command) = login::LianaLiteLogin::new(
+                            datadir,
+                            network,
+                            directory_wallet_id,
+                            auth_cfg,
+                        );
+                        self.state = State::Login(Box::new(login));
+                        command.map(|msg| Message::Login(Box::new(msg)))
+                    }
                 }
             }
             _ => Task::none(),
