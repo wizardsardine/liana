@@ -319,9 +319,9 @@ When user arrives at wallet selection, three possible subflows based on status:
 
 ## Known Issues
 
-- [ ] WS Manager role: Org list wallet count includes non-visible wallets
-- [ ] Login page: Wrong email greys out "Send token" button, user stuck (dummy server issue)
-- [ ] Owner role: "Manage Key" button displayed after wallet approved (should be hidden)
+- [x] WS Manager role: Org list wallet count includes non-visible wallets
+- [x] Login page: Wrong email greys out "Send token" button, user stuck (dummy server issue)
+- [x] Owner role: "Manage Key" button displayed after wallet approved (should be hidden)
 
 ## Bugs Fixed
 
@@ -336,6 +336,11 @@ When user arrives at wallet selection, three possible subflows based on status:
   - Resolution: Service abstraction handles runtime requirements
 
 ## Changelog
+
+### 2026-01-12
+- Fixed: WS Manager org list wallet count now respects "Hide finalized wallets" filter
+- Fixed: Login page "Send token" button re-enabled after backend errors
+- Fixed: Owner role "Manage Keys" button hidden after wallet approved (Validated/Finalized)
 
 ### 2026-01-09
 - Separate Backend URL with network-specific endpoints:
