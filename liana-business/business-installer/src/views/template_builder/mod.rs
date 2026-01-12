@@ -38,8 +38,9 @@ pub fn template_builder_view(state: &State) -> Element<'_, Msg> {
     // Action buttons row (fixed at bottom) - role-based and status-based
     let mut buttons_row = Row::new().spacing(20).align_y(Alignment::Center);
 
-    // "Manage Keys" button: WSManager on Draft, or Owner when not locked
-    if (is_ws_manager && is_draft) || (is_owner && !is_locked) {
+    // "Manage Keys" button: WSManager or Owner, only on Draft status
+    // Once the wallet is Locked/Validated/Finalized, keys cannot be managed
+    if (is_ws_manager || is_owner) && is_draft {
         buttons_row = buttons_row.push(
             button::secondary(Some(icon::key_icon()), "Manage Keys").on_press(Msg::NavigateToKeys),
         );
