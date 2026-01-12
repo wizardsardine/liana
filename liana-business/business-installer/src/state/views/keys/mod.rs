@@ -64,4 +64,3 @@ impl KeysViewState {
         self.is_alias_valid() && self.is_email_valid()
     }
 }
-

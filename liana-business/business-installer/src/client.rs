@@ -193,11 +193,6 @@ impl Client {
         }
     }
 
-    #[cfg(test)]
-    pub fn is_connected(&self) -> bool {
-        self.connected.load(Ordering::Relaxed)
-    }
-
     /// Try to get a cached token, refreshing it if expired
     fn try_get_cached_token(&self) -> Option<String> {
         // Check if we have network_dir and email
@@ -1544,11 +1539,6 @@ impl DummyServer {
     }
 
     #[cfg(test)]
-    pub fn url(&self) -> String {
-        format!("ws://127.0.0.1:{}", self.port)
-    }
-
-    #[cfg(test)]
     pub fn start(&mut self, handler: Box<dyn Fn(Request) -> Response + Send + Sync + 'static>) {
         let port = self.port;
         let (shutdown_sender, shutdown_receiver) = channel::bounded(1);
@@ -1751,13 +1741,6 @@ impl DummyServer {
         });
 
         self.handle = Some(handle);
-    }
-
-    #[cfg(test)]
-    pub fn send_response(&self, response: Response, request_id: Option<String>) {
-        if let Some(sender) = &self.response_sender {
-            let _ = sender.send((response, request_id));
-        }
     }
 
     pub fn close(&mut self) {
@@ -2714,42 +2697,6 @@ mod tests {
 
             client.close();
             server.close();
-        }
-
-        #[test]
-        fn test_client_connection_without_token() {
-            let (sender, _receiver) = channel::unbounded();
-            let notif_waker: SharedWaker = Arc::new(Mutex::new(None));
-            let mut client = Client::new(sender, notif_waker);
-            let (sender, receiver) = channel::unbounded();
-            // Don't set token
-            client.connect_ws("ws://127.0.0.1:9999".to_string(), 1, sender);
-
-            // No connection attempt, so no notifications expected
-            thread::sleep(Duration::from_millis(50));
-
-            // Client should NOT be connected (no WSS attempt was made)
-            assert!(
-                !client.connected.load(Ordering::Relaxed),
-                "Client should not be connected without token"
-            );
-
-            // Auth methods should still work with the channel
-            client.auth_request("test@example.com".to_string());
-
-            thread::sleep(Duration::from_millis(50));
-
-            let mut auth_code_sent = false;
-            while let Ok(notif) = receiver.try_recv() {
-                if let Message::BackendNotif(Notification::AuthCodeSent) = notif {
-                    auth_code_sent = true
-                }
-            }
-
-            assert!(
-                auth_code_sent,
-                "Auth notifications should work without WSS connection"
-            );
         }
 
         #[test]

@@ -8,4 +8,3 @@ pub struct EditKeyModalState {
     pub key_type: liana_connect::KeyType,
     pub is_new: bool,
 }
-

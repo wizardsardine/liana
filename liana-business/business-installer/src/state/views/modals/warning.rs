@@ -10,4 +10,3 @@ impl WarningModalState {
         Self { title, message }
     }
 }
-

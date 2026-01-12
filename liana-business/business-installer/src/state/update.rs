@@ -1592,8 +1592,8 @@ impl State {
                     modal.input_source = Some(views::XpubInputSource::File { name: filename });
                 }
                 Err(error) if !error.is_empty() => {
-                    // Only show error if it's not empty (empty means user cancelled)
-                    modal.set_error(format!("Failed to load file: {}", error));
+                    // Log error (user cancelled shows empty string)
+                    debug!(error = %error, "Failed to load xpub file");
                 }
                 Err(_) => {
                     // User cancelled - do nothing
@@ -1723,7 +1723,8 @@ impl State {
                     self.stop_hw();
                 }
                 Err(error) => {
-                    modal.set_error(error);
+                    // Validation errors are shown inline by the view
+                    debug!(error = %error, "Xpub validation failed on save");
                 }
             }
         }

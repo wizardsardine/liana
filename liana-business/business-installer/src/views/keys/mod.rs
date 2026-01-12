@@ -12,13 +12,7 @@ use iced::{
     Alignment, Background, Border, Length,
 };
 use liana_connect::models::UserRole;
-use liana_ui::{
-    color,
-    component::text,
-    icon,
-    theme::Theme,
-    widget::*,
-};
+use liana_ui::{color, component::text, icon, theme::Theme, widget::*};
 
 use super::{format_last_edit_info, layout_with_scrollable_list};
 
@@ -119,9 +113,8 @@ fn key_card(
     let description = (!key.description.is_empty()).then(|| text::p2_regular(&key.description));
 
     // Last edit info (optional)
-    let last_edit = last_edit_info.map(|info| {
-        text::caption(&info).style(liana_ui::theme::text::secondary)
-    });
+    let last_edit =
+        last_edit_info.map(|info| text::caption(&info).style(liana_ui::theme::text::secondary));
 
     let content = Column::new()
         .spacing(5)
@@ -221,11 +214,10 @@ fn keys_visualization(state: &State) -> Element<'static, Msg> {
         .collect();
 
     // "Add a key" card
-    let add_key_content = Container::new(
-        text::p1_regular("+ Add a key").style(liana_ui::theme::text::secondary),
-    )
-    .padding(15)
-    .width(Length::Fill);
+    let add_key_content =
+        Container::new(text::p1_regular("+ Add a key").style(liana_ui::theme::text::secondary))
+            .padding(15)
+            .width(Length::Fill);
 
     let add_key_card = Button::new(add_key_content)
         .width(Length::Fixed(KEY_CARD_WIDTH))

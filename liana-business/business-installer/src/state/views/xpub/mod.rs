@@ -61,8 +61,6 @@ pub struct XpubEntryModalState {
     pub xpub_input: String,
     /// Selected source tab
     pub xpub_source: XpubSource,
-    /// Validation error message
-    pub validation_error: Option<String>,
     /// Processing state (e.g., fetching from HW or saving)
     pub processing: bool,
 
@@ -107,7 +105,6 @@ impl XpubEntryModalState {
             current_xpub,
             xpub_input,
             xpub_source: XpubSource::default(),
-            validation_error: None,
             processing: false,
             selected_device: None,
             selected_account: ChildNumber::from_hardened_idx(0)
@@ -120,22 +117,19 @@ impl XpubEntryModalState {
         }
     }
 
-    /// Update the xpub input and clear any validation errors
+    /// Update the xpub input
     pub fn update_input(&mut self, input: String) {
         self.xpub_input = input;
-        self.validation_error = None;
     }
 
     /// Switch to a different xpub source
     pub fn select_source(&mut self, source: XpubSource) {
         self.xpub_source = source;
-        self.validation_error = None;
     }
 
     /// Select a hardware wallet device and transition to Details step
     pub fn select_device(&mut self, fingerprint: miniscript::bitcoin::bip32::Fingerprint) {
         self.selected_device = Some(fingerprint);
-        self.validation_error = None;
         self.fetch_error = None;
         self.step = ModalStep::Details;
         self.processing = true;
@@ -159,12 +153,6 @@ impl XpubEntryModalState {
         self.processing = processing;
     }
 
-    /// Set validation error
-    pub fn set_error(&mut self, error: String) {
-        self.validation_error = Some(error);
-        self.processing = false;
-    }
-
     /// Set fetch error (shown in details view)
     pub fn set_fetch_error(&mut self, error: String) {
         self.fetch_error = Some(error);
@@ -174,11 +162,6 @@ impl XpubEntryModalState {
     /// Clear fetch error
     pub fn clear_fetch_error(&mut self) {
         self.fetch_error = None;
-    }
-
-    /// Clear validation error
-    pub fn clear_error(&mut self) {
-        self.validation_error = None;
     }
 
     /// Validate and return the parsed xpub if valid (includes network check)
@@ -332,17 +315,13 @@ mod tests {
         assert_eq!(state.key_alias, "Test Key");
         assert_eq!(state.xpub_input, "");
         assert!(!state.processing);
-        assert!(state.validation_error.is_none());
     }
 
     #[test]
     fn test_modal_state_update_input() {
         let mut state = XpubEntryModalState::new(1, "Test".to_string(), None, Network::Bitcoin);
-        state.set_error("Previous error".to_string());
-
         state.update_input("new input".to_string());
         assert_eq!(state.xpub_input, "new input");
-        assert!(state.validation_error.is_none());
     }
 
     #[test]

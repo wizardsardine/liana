@@ -153,11 +153,7 @@ pub fn handle_http_request(
                         );
                         // Look up user UUID from state
                         let users = state.users.lock().unwrap();
-                        log::info!(
-                            "Looking up email '{}' in {} users",
-                            req.email,
-                            users.len()
-                        );
+                        log::info!("Looking up email '{}' in {} users", req.email, users.len());
                         let user_data = users
                             .values()
                             .find(|u| u.email == req.email)

@@ -12,12 +12,7 @@ use std::sync::Arc;
 use iced::{Subscription, Task};
 use liana_gui::{
     app::{
-        cache::Cache,
-        message::Message,
-        settings::SettingsUI,
-        state::State,
-        view,
-        wallet::Wallet,
+        cache::Cache, message::Message, settings::SettingsUI, state::State, view, wallet::Wallet,
         Config,
     },
     daemon::{Daemon, DaemonBackend},
@@ -70,9 +65,7 @@ impl SettingsUI<BusinessSettingsMessage> for BusinessSettingsUI {
         use iced::widget::container;
         use liana_ui::component::text::text;
 
-        container(text("Settings (coming soon)"))
-            .padding(20)
-            .into()
+        container(text("Settings (coming soon)")).padding(20).into()
     }
 
     fn subscription(&self) -> Subscription<BusinessSettingsMessage> {
@@ -103,9 +96,7 @@ impl State for BusinessSettingsUI {
         use iced::widget::container;
         use liana_ui::component::text::text;
 
-        container(text("Settings (coming soon)"))
-            .padding(20)
-            .into()
+        container(text("Settings (coming soon)")).padding(20).into()
     }
 
     fn update(

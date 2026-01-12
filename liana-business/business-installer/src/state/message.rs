@@ -49,7 +49,7 @@ pub enum Msg {
         bool,          /* is_primary */
         Option<usize>, /* secondary_path_index */
     ),
-    TemplateNewPathModal, // Open modal to create a new recovery path
+    TemplateNewPathModal,        // Open modal to create a new recovery path
     TemplateToggleKeyInPath(u8), // Toggle key in/out of the currently edited path
     TemplateSavePath,
     TemplateCancelPathModal,
@@ -75,25 +75,25 @@ pub enum Msg {
     HardwareWallets(async_hwi::service::SigningDeviceMsg),
 
     // Xpub management
-    XpubSelectKey(u8),                     // Open modal for key
-    XpubUpdateInput(String),               // Update xpub text input
-    XpubSelectSource(crate::state::views::XpubSource), // Switch source tab
+    XpubSelectKey(u8),                                         // Open modal for key
+    XpubUpdateInput(String),                                   // Update xpub text input
+    XpubSelectSource(crate::state::views::XpubSource),         // Switch source tab
     XpubSelectDevice(miniscript::bitcoin::bip32::Fingerprint), // Select HW device (opens details step)
-    XpubDeviceBack,                        // Go back from details to device selection
+    XpubDeviceBack, // Go back from details to device selection
     XpubFetchFromDevice(
         miniscript::bitcoin::bip32::Fingerprint,
         miniscript::bitcoin::bip32::ChildNumber,
     ), // Fetch xpub from HW device
-    XpubRetry,                             // Retry fetch after error
-    XpubLoadFromFile,                      // Trigger file picker
+    XpubRetry,      // Retry fetch after error
+    XpubLoadFromFile, // Trigger file picker
     XpubFileLoaded(Result<(String, String), String>), // (content, filename) or error
-    XpubPaste,                             // Trigger paste from clipboard
-    XpubPasted(String),                    // Xpub pasted (with source tracking)
+    XpubPaste,      // Trigger paste from clipboard
+    XpubPasted(String), // Xpub pasted (with source tracking)
     XpubUpdateAccount(miniscript::bitcoin::bip32::ChildNumber), // Change account (triggers re-fetch)
-    XpubSave,                              // Save xpub to backend
-    XpubClear,                             // Clear xpub (send null to backend)
-    XpubCancelModal,                       // Close modal
-    XpubToggleOptions,                     // Toggle "Other options" section
+    XpubSave,                                                   // Save xpub to backend
+    XpubClear,                                                  // Clear xpub (send null to backend)
+    XpubCancelModal,                                            // Close modal
+    XpubToggleOptions,                                          // Toggle "Other options" section
 
     // Warnings
     WarningShowModal(String, String), // title, message

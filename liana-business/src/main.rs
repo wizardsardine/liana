@@ -6,10 +6,9 @@
 
 #![windows_subsystem = "windows"]
 
-use std::{error::Error, io::Write};
+use std::error::Error;
 
 use iced::Size;
-use tracing::error;
 
 use liana::miniscript::bitcoin;
 use liana_ui::theme;

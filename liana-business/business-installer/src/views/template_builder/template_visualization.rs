@@ -328,8 +328,7 @@ pub fn template_visualization(state: &State) -> Element<'static, Msg> {
         wallet_status,
         Some(WalletStatus::Created) | Some(WalletStatus::Drafted)
     );
-    let is_editable =
-        matches!(state.app.current_user_role, Some(UserRole::WSManager)) && is_draft;
+    let is_editable = matches!(state.app.current_user_role, Some(UserRole::WSManager)) && is_draft;
 
     // Total count includes primary + all secondary paths
     let total_count = 1 + secondary_paths.len();

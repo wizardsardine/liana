@@ -1,4 +1,6 @@
-use liana_connect::{Key, KeyType, Org, PolicyTemplate, SpendingPath, Timelock, User, UserRole, Wallet, WalletStatus};
+use liana_connect::{
+    Key, KeyType, Org, PolicyTemplate, SpendingPath, Timelock, User, UserRole, Wallet, WalletStatus,
+};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -201,12 +203,16 @@ fn init_test_data(
     let mut secondary1 = SpendingPath::new(false, 1, vec![2, 1]); // Alice, Bob
     secondary1.last_edited = Some(now_timestamp() - 7200); // 2 hours ago
     secondary1.last_editor = Some(ws_manager.uuid);
-    wallet1_template.secondary_paths.push((secondary1, Timelock::new(8760)));
+    wallet1_template
+        .secondary_paths
+        .push((secondary1, Timelock::new(8760)));
     // Secondary path 2: Owner - After 5 months (21900 blocks)
     let mut secondary2 = SpendingPath::new(false, 1, vec![0]); // Owner
     secondary2.last_edited = Some(now_timestamp() - 86400); // 1 day ago
     secondary2.last_editor = Some(ws_manager.uuid);
-    wallet1_template.secondary_paths.push((secondary2, Timelock::new(21900)));
+    wallet1_template
+        .secondary_paths
+        .push((secondary2, Timelock::new(21900)));
 
     let wallet1 = Wallet {
         alias: "Draft Wallet".to_string(),
@@ -448,4 +454,3 @@ fn init_test_data(
     };
     orgs.insert(org2_id, org2);
 }
-

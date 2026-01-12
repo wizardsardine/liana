@@ -37,15 +37,16 @@ impl PathsViewState {
             let was_enabled = old_count > 1;
             let was_at_max = modal.threshold.parse::<usize>().ok() == Some(old_count);
 
-            let is_adding = if let Some(pos) = modal.selected_key_ids.iter().position(|&id| id == key_id) {
-                // Key is in path - remove it
-                modal.selected_key_ids.remove(pos);
-                false
-            } else {
-                // Key is not in path - add it
-                modal.selected_key_ids.push(key_id);
-                true
-            };
+            let is_adding =
+                if let Some(pos) = modal.selected_key_ids.iter().position(|&id| id == key_id) {
+                    // Key is in path - remove it
+                    modal.selected_key_ids.remove(pos);
+                    false
+                } else {
+                    // Key is not in path - add it
+                    modal.selected_key_ids.push(key_id);
+                    true
+                };
 
             let new_count = modal.selected_key_ids.len();
             let is_enabled = new_count > 1;

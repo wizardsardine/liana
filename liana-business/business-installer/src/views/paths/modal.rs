@@ -187,14 +187,12 @@ pub fn edit_path_modal_view<'a>(
             (false, Some("Timelock cannot be zero"))
         } else {
             // Check for duplicate timelocks
-            let duplicate = state
-                .app
-                .secondary_paths
-                .iter()
-                .enumerate()
-                .any(|(idx, (_, existing_timelock))| {
-                    modal_state.path_index != Some(idx) && existing_timelock.blocks == current_blocks
-                });
+            let duplicate = state.app.secondary_paths.iter().enumerate().any(
+                |(idx, (_, existing_timelock))| {
+                    modal_state.path_index != Some(idx)
+                        && existing_timelock.blocks == current_blocks
+                },
+            );
             if duplicate {
                 (false, Some("Duplicate timelock"))
             } else {
