@@ -457,10 +457,8 @@ where
                         };
 
                         // Create WalletId for the directory
-                        let directory_wallet_id = crate::app::settings::WalletId::new(
-                            wallet_id.clone(),
-                            None,
-                        );
+                        let directory_wallet_id =
+                            crate::app::settings::WalletId::new(wallet_id.clone(), None);
 
                         // Use the trait method to create App
                         let result = S::create_app_for_remote_backend(
@@ -513,10 +511,8 @@ where
                             wallet_id,
                             refresh_token: None,
                         };
-                        let directory_wallet_id = crate::app::settings::WalletId::new(
-                            auth_cfg.wallet_id.clone(),
-                            None,
-                        );
+                        let directory_wallet_id =
+                            crate::app::settings::WalletId::new(auth_cfg.wallet_id.clone(), None);
                         let (login, command) = login::LianaLiteLogin::new(
                             datadir,
                             network,
@@ -681,7 +677,14 @@ async fn connect_for_business(
     network: bitcoin::Network,
     wallet_id: String,
     email: String,
-) -> Result<(BackendWalletClient, api::Wallet, lianad::commands::ListCoinsResult), login::Error> {
+) -> Result<
+    (
+        BackendWalletClient,
+        api::Wallet,
+        lianad::commands::ListCoinsResult,
+    ),
+    login::Error,
+> {
     use crate::app::cache::coins_to_cache;
 
     // Get service config for liana-business (uses LIANA_BUSINESS_* env vars)
@@ -708,19 +711,15 @@ async fn connect_for_business(
 
     // Refresh if expired
     if tokens.expires_at < chrono::Utc::now().timestamp() {
-        tokens = connect_cache::update_connect_cache(&network_dir, &tokens, &auth_client, true)
-            .await?;
+        tokens =
+            connect_cache::update_connect_cache(&network_dir, &tokens, &auth_client, true).await?;
     }
 
     // Connect to backend
-    let client = BackendClient::connect(
-        auth_client,
-        service_config.backend_api_url,
-        tokens,
-        network,
-    )
-    .await
-    .map_err(|e| login::Error::Unexpected(e.to_string()))?;
+    let client =
+        BackendClient::connect(auth_client, service_config.backend_api_url, tokens, network)
+            .await
+            .map_err(|e| login::Error::Unexpected(e.to_string()))?;
 
     // Find the wallet
     let wallet = client

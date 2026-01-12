@@ -61,7 +61,7 @@ pub fn edit_key_modal_view<'a>(
 
     // Alias input - validate (must not be empty)
     // No warning if empty, but Save button will be disabled
-    let alias_valid = !modal_state.alias.trim().is_empty();
+    let alias_valid = state.views.keys.is_alias_valid();
     let alias_value = form::Value {
         value: modal_state.alias.clone(),
         warning: None, // No warning displayed for empty field
@@ -95,15 +95,7 @@ pub fn edit_key_modal_view<'a>(
     // No warning if empty, but Save button will be disabled
     // Only show warning if not empty but invalid format
     let is_empty = modal_state.email.trim().is_empty();
-    let email_valid = if is_empty {
-        false // Empty is invalid (required field)
-    } else {
-        email_address::EmailAddress::parse_with_options(
-            &modal_state.email,
-            email_address::Options::default().with_required_tld(),
-        )
-        .is_ok()
-    };
+    let email_valid = state.views.keys.is_email_valid();
     let email_value = form::Value {
         value: modal_state.email.clone(),
         warning: if is_empty {
@@ -152,7 +144,7 @@ pub fn edit_key_modal_view<'a>(
 
     // Footer - Cancel and Save buttons (aligned right)
     // Save button is disabled if alias or email is invalid
-    let can_save = alias_valid && email_valid;
+    let can_save = state.views.keys.can_save();
     let save_button = if can_save {
         button::primary(None, "Save")
             .on_press(Message::KeySave)
