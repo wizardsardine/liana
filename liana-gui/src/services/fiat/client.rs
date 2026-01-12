@@ -27,22 +27,33 @@ impl<C: Default> PriceClient<C> {
 impl PriceApi for PriceClient<reqwest::Client> {
     async fn get_price(&self, currency: Currency) -> Result<GetPriceResult, PriceApiError> {
         let url = self.source.get_price_url(currency);
-        let data = get_data(&self.inner, &url).await?;
+        let user_agent = self.source.user_agent();
+        let data = get_data(&self.inner, &url, user_agent).await?;
         self.source.parse_price_data(currency, &data)
     }
 
     async fn list_currencies(&self) -> Result<ListCurrenciesResult, PriceApiError> {
         let url = self.source.list_currencies_url();
-        let data = get_data(&self.inner, &url).await?;
+        let user_agent = self.source.user_agent();
+        let data = get_data(&self.inner, &url, user_agent).await?;
         self.source.parse_currencies_data(&data)
     }
 }
 
 // Sends a GET request to the specified URL and returns the parsed JSON response.
 // If the request fails or the response is not successful, it returns an error.
-async fn get_data(client: &reqwest::Client, url: &str) -> Result<serde_json::Value, PriceApiError> {
-    let response = client
-        .get(url)
+async fn get_data(
+    client: &reqwest::Client,
+    url: &str,
+    user_agent: Option<String>,
+) -> Result<serde_json::Value, PriceApiError> {
+    let mut request = client.get(url);
+
+    if let Some(ua) = user_agent {
+        request = request.header(reqwest::header::USER_AGENT, ua);
+    }
+
+    let response = request
         .send()
         .await
         .map_err(|e| PriceApiError::RequestFailed(e.to_string()))?
