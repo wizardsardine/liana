@@ -22,60 +22,68 @@ use liana_gui::{
     VERSION,
 };
 
-fn main() -> Result<(), Box<dyn Error>> {
-    use Network::{Bitcoin, Regtest, Signet, Testnet};
-    let args = parse_args(
-        std::env::args().collect(),
-        VERSION,
-        &[Bitcoin, Testnet, Signet, Regtest],
-        None,
-    )?;
-    let config = match args.as_slice() {
+/// Convert parsed command-line arguments to a Config.
+///
+/// # Arguments
+/// - `args`: Parsed command-line arguments
+/// - `default_network`: Network to use when none is specified in args
+fn args_to_config(
+    args: &[Arg],
+    default_network: Option<Network>,
+) -> Result<Config, Box<dyn Error>> {
+    match args {
         [] => {
             let datadir_path = LianaDirectory::new_default().unwrap();
-            Config::new(datadir_path, None)
+            Ok(Config::new(datadir_path, default_network))
         }
         [Arg::Network(network)] => {
             let datadir_path = LianaDirectory::new_default().unwrap();
-            Config::new(datadir_path, Some(*network))
+            Ok(Config::new(datadir_path, Some(*network)))
         }
-        [Arg::DatadirPath(datadir_path)] => Config::new(datadir_path.clone(), None),
+        [Arg::DatadirPath(datadir_path)] => Ok(Config::new(datadir_path.clone(), default_network)),
         [Arg::DatadirPath(datadir_path), Arg::Network(network)]
         | [Arg::Network(network), Arg::DatadirPath(datadir_path)] => {
-            Config::new(datadir_path.clone(), Some(*network))
+            Ok(Config::new(datadir_path.clone(), Some(*network)))
         }
-        _ => {
-            return Err("Unknown args combination".into());
-        }
-    };
+        _ => Err("Unknown args combination".into()),
+    }
+}
 
-    let log_level = if let Ok(l) = std::env::var("LOG_LEVEL") {
-        Some(LevelFilter::from_str(&l)?)
+/// Parse LOG_LEVEL environment variable.
+fn parse_log_level() -> Result<Option<LevelFilter>, Box<dyn Error>> {
+    if let Ok(l) = std::env::var("LOG_LEVEL") {
+        Ok(Some(LevelFilter::from_str(&l)?))
     } else {
-        None
-    };
+        Ok(None)
+    }
+}
 
-    setup_panic_hook(&config.liana_directory);
-
-    let settings = Settings {
-        id: Some("Liana".to_string()),
+/// Create iced application Settings.
+fn create_app_settings(app_id: &str) -> Settings {
+    Settings {
+        id: Some(app_id.to_string()),
         antialiasing: false,
-
         default_text_size: text::P1_SIZE.into(),
         default_font: liana_ui::font::REGULAR,
         fonts: font::load(),
-    };
+    }
+}
 
-    let global_config_path = GlobalSettings::path(&config.liana_directory);
-    let initial_size = if let Some(WindowConfig { width, height }) =
+/// Load initial window size from global settings, or use default.
+fn load_initial_size(liana_directory: &LianaDirectory, default_size: Option<Size>) -> Size {
+    let global_config_path = GlobalSettings::path(liana_directory);
+    if let Some(WindowConfig { width, height }) =
         GlobalSettings::load_window_config(&global_config_path)
     {
         Size { width, height }
     } else {
-        iced::window::Settings::default().size
-    };
+        default_size.unwrap_or(iced::window::Settings::default().size)
+    }
+}
 
-    #[allow(unused_mut)]
+/// Create iced window Settings.
+#[allow(unused_mut)]
+fn create_window_settings(app_id: &str, initial_size: Size) -> iced::window::Settings {
     let mut window_settings = iced::window::Settings {
         size: initial_size,
         icon: Some(image::liana_app_icon()),
@@ -91,10 +99,32 @@ fn main() -> Result<(), Box<dyn Error>> {
     #[cfg(target_os = "linux")]
     {
         window_settings.platform_specific = PlatformSpecific {
-            application_id: "Liana".to_string(),
+            application_id: app_id.to_string(),
             ..Default::default()
         };
     }
+
+    window_settings
+}
+
+fn main() -> Result<(), Box<dyn Error>> {
+    use Network::{Bitcoin, Regtest, Signet, Testnet};
+
+    let args = parse_args(
+        std::env::args().collect(),
+        VERSION,
+        &[Bitcoin, Testnet, Signet, Regtest],
+        None,
+    )?;
+
+    let config = args_to_config(&args, None)?;
+    let log_level = parse_log_level()?;
+
+    setup_panic_hook(&config.liana_directory);
+
+    let settings = create_app_settings("Liana");
+    let initial_size = load_initial_size(&config.liana_directory, None);
+    let window_settings = create_window_settings("Liana", initial_size);
 
     if let Err(e) = iced::application(LianaGUI::title, LianaGUI::update, LianaGUI::view)
         .theme(|_| theme::Theme::default())
