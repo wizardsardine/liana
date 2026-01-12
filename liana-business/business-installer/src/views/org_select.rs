@@ -209,6 +209,8 @@ pub fn org_select_view(state: &State) -> Element<'_, Msg> {
         let current_user_email_lower = current_user_email.to_lowercase();
         // Use global role from User record for filtering
         let global_role = state.app.global_user_role.clone();
+        // Get hide_finalized setting for WSManager wallet count filtering
+        let hide_finalized = state.views.wallet_select.hide_finalized;
         for (id, org) in &filtered_orgs {
             // Count only wallets accessible to this user
             let wallet_count = org
@@ -217,6 +219,12 @@ pub fn org_select_view(state: &State) -> Element<'_, Msg> {
                 .filter_map(|wallet_id| state.backend.get_wallet(*wallet_id))
                 .filter(|wallet| {
                     is_wallet_accessible(wallet, current_user_email, global_role.clone())
+                })
+                // WSManager: optionally hide finalized wallets (match wallet_select filtering)
+                .filter(|wallet| {
+                    !(is_ws_manager
+                        && hide_finalized
+                        && matches!(wallet.status, WalletStatus::Finalized))
                 })
                 .count();
 

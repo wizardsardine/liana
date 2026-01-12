@@ -309,9 +309,19 @@ When user arrives at wallet selection, three possible subflows based on status:
 - [ ] **Hardware Wallet Testing**
   - [x] Ledger (HID)
   - [x] Coldcard
-  - [ ] BitBox02 (needs pairing code persistence)
+  - [ ] BitBox02
+    - [ ] Cache pairing code
   - [ ] Jade (serial)
   - [ ] Specter
+
+- [ ] **CI Integration**
+  - [ ] Add liana-business to CI pipeline
+
+## Known Issues
+
+- [ ] WS Manager role: Org list wallet count includes non-visible wallets
+- [ ] Login page: Wrong email greys out "Send token" button, user stuck (dummy server issue)
+- [ ] Owner role: "Manage Key" button displayed after wallet approved (should be hidden)
 
 ## Bugs Fixed
 
