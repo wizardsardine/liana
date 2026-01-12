@@ -214,7 +214,7 @@ where
             },
             (State::Installer(i), Message::Install(msg)) => {
                 if let Some(next_state) = i.exit_maybe(&msg) {
-                    return match next_state {
+                    match next_state {
                         installer::NextState::LoginLianaLite {
                             datadir,
                             network,
@@ -261,7 +261,7 @@ where
                             self.state = State::Launcher(Box::new(launcher));
                             command.map(|msg| Message::Launch(Box::new(msg)))
                         }
-                    };
+                    }
                 } else {
                     i.update(*msg).map(|msg| Message::Install(Box::new(msg)))
                 }

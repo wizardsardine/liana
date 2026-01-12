@@ -217,8 +217,8 @@ where
     }
 }
 
-impl<'a, 'b, Message, Theme, Renderer> iced_core::Overlay<Message, Theme, Renderer>
-    for Overlay<'a, 'b, Message, Theme, Renderer>
+impl<Message, Theme, Renderer> iced_core::Overlay<Message, Theme, Renderer>
+    for Overlay<'_, '_, Message, Theme, Renderer>
 where
     Theme: Catalog,
     Renderer: text::Renderer,
@@ -321,8 +321,8 @@ where
     class: &'a <Theme as Catalog>::Class<'b>,
 }
 
-impl<'a, 'b, Message, Theme, Renderer> Widget<Message, Theme, Renderer>
-    for List<'a, 'b, Message, Theme, Renderer>
+impl<Message, Theme, Renderer> Widget<Message, Theme, Renderer>
+    for List<'_, '_, Message, Theme, Renderer>
 where
     Theme: Catalog,
     Renderer: text::Renderer,

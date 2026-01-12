@@ -467,7 +467,7 @@ pub mod global {
                     .map_err(|e| format!("Reading file: {e}"))?;
 
                 if !write {
-                    file.unlock().map_err(|e| format!("Unlocking file: {e}"))?;
+                    fs2::FileExt::unlock(&file).map_err(|e| format!("Unlocking file: {e}"))?;
                 }
 
                 (
@@ -513,7 +513,7 @@ pub mod global {
                     .map_err(|e| format!("Failed to write file: {e}"))?;
                 file.set_len(content.len() as u64)
                     .map_err(|e| format!("Failed to truncate file: {e}"))?;
-                file.unlock().map_err(|e| format!("Unlocking file: {e}"))?;
+                fs2::FileExt::unlock(&file).map_err(|e| format!("Unlocking file: {e}"))?;
             }
 
             Ok(())
