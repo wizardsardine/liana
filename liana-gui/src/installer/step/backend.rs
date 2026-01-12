@@ -84,7 +84,7 @@ impl Step for ChooseBackend {
         _hws: &'a HardwareWallets,
         progress: (usize, usize),
         _email: Option<&'a str>,
-    ) -> Element<Message> {
+    ) -> Element<'a, Message> {
         view::choose_backend(progress)
     }
 }
@@ -378,7 +378,7 @@ impl Step for RemoteBackendLogin {
         _hws: &'a HardwareWallets,
         progress: (usize, usize),
         _email: Option<&'a str>,
-    ) -> Element<Message> {
+    ) -> Element<'a, Message> {
         view::login(
             progress,
             match &self.step {
@@ -741,7 +741,7 @@ impl Step for ImportRemoteWallet {
         _hws: &'a HardwareWallets,
         progress: (usize, usize),
         email: Option<&'a str>,
-    ) -> Element<Message> {
+    ) -> Element<'a, Message> {
         let content = view::import_wallet_or_descriptor(
             progress,
             email,

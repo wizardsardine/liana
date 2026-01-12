@@ -441,7 +441,7 @@ impl CreateRbfModal {
         }
         Task::none()
     }
-    fn view<'a>(&'a self, content: Element<'a, view::Message>) -> Element<view::Message> {
+    fn view<'a>(&'a self, content: Element<'a, view::Message>) -> Element<'a, view::Message> {
         let modal = Modal::new(
             content,
             view::transactions::create_rbf_modal(
