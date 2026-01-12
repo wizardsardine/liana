@@ -364,7 +364,7 @@ impl LianaInstaller {
     }
 }
 
-impl<'a> Installer<'a, Message> for LianaInstaller {
+impl Installer<'_, Message> for LianaInstaller {
     fn new(
         destination_path: LianaDirectory,
         network: bitcoin::Network,
