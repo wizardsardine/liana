@@ -6,7 +6,7 @@
 
 #![windows_subsystem = "windows"]
 
-use std::{error::Error, io::Write, path::PathBuf, process, str::FromStr};
+use std::{error::Error, io::Write, str::FromStr};
 
 #[cfg(target_os = "linux")]
 use iced::window::settings::PlatformSpecific;
@@ -23,6 +23,8 @@ use liana_gui::{
     app::settings::global::{GlobalSettings, WindowConfig},
     dir::LianaDirectory,
     gui::{Config, GUI},
+    utils::args::{parse_args, Arg},
+    VERSION,
 };
 
 /// Type alias for liana-business GUI.
@@ -31,62 +33,18 @@ use liana_gui::{
 /// (wallet configuration without bitcoind) in the standard GUI framework.
 pub type LianaBusiness = GUI<BusinessInstaller, BusinessSettings, Message>;
 
-/// Version of liana-business.
-const VERSION: &str = env!("CARGO_PKG_VERSION");
-
-#[derive(Debug, PartialEq)]
-enum Arg {
-    DatadirPath(LianaDirectory),
-    Network(bitcoin::Network),
-}
-
-fn parse_args(args: Vec<String>) -> Result<Vec<Arg>, Box<dyn Error>> {
-    let mut res = Vec::new();
-
-    if args.len() > 1 && (args[1] == "--version" || args[1] == "-v") {
-        eprintln!("{}", VERSION);
-        process::exit(0);
-    }
-
-    if args.len() > 1 && (args[1] == "--help" || args[1] == "-h") {
-        eprintln!(
-            r#"
-Usage: liana-business [OPTIONS]
-
-Options:
-    --datadir <PATH>    Path of liana datadir
-    -v, --version       Display liana-business version
-    -h, --help          Print help
-    --bitcoin           Use bitcoin network
-    --testnet           Use testnet network
-    --signet            Use signet network (default)
-    --regtest           Use regtest network
-        "#
-        );
-        process::exit(0);
-    }
-
-    for (i, arg) in args.iter().enumerate() {
-        if arg == "--datadir" {
-            if let Some(a) = args.get(i + 1) {
-                res.push(Arg::DatadirPath(LianaDirectory::new(PathBuf::from(a))));
-            } else {
-                return Err("missing arg to --datadir".into());
-            }
-        } else if arg.contains("--") && arg != "--datadir" {
-            let network = bitcoin::Network::from_str(args[i].trim_start_matches("--"))?;
-            res.push(Arg::Network(network));
-        }
-    }
-
-    Ok(res)
-}
-
 fn main() -> Result<(), Box<dyn Error>> {
-    let args = parse_args(std::env::args().collect())?;
+    use bitcoin::Network::{Bitcoin, Signet};
 
-    // Default to Signet for liana-business (unlike liana-gui which shows Launcher for selection)
-    let default_network = bitcoin::Network::Signet;
+    // FIXME: change before release
+    let default_network = Signet;
+
+    let args = parse_args(
+        std::env::args().collect(),
+        VERSION,
+        &[Bitcoin, Signet],
+        Some(default_network),
+    )?;
 
     let config = match args.as_slice() {
         [] => {
@@ -172,47 +130,5 @@ fn main() -> Result<(), Box<dyn Error>> {
         Err(format!("Failed to launch UI: {}", e).into())
     } else {
         Ok(())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use liana_gui::dir::LianaDirectory;
-
-    #[test]
-    fn test_parse_args() {
-        assert!(parse_args(vec!["--meth".into()]).is_err());
-        assert!(parse_args(vec!["--datadir".into()]).is_err());
-        assert_eq!(
-            Some(vec![Arg::Network(bitcoin::Network::Regtest)]),
-            parse_args(vec!["--regtest".into()]).ok()
-        );
-        assert_eq!(
-            Some(vec![
-                Arg::DatadirPath(LianaDirectory::new(PathBuf::from("hello"))),
-                Arg::Network(bitcoin::Network::Testnet)
-            ]),
-            parse_args(
-                "--datadir hello --testnet"
-                    .split(' ')
-                    .map(|a| a.to_string())
-                    .collect()
-            )
-            .ok()
-        );
-        assert_eq!(
-            Some(vec![
-                Arg::Network(bitcoin::Network::Testnet),
-                Arg::DatadirPath(LianaDirectory::new(PathBuf::from("hello"))),
-            ]),
-            parse_args(
-                "--testnet --datadir hello"
-                    .split(' ')
-                    .map(|a| a.to_string())
-                    .collect()
-            )
-            .ok()
-        );
     }
 }
