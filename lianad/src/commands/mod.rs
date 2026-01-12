@@ -186,7 +186,7 @@ impl<'a> DbTxGetter<'a> {
     }
 }
 
-impl<'a> TxGetter for DbTxGetter<'a> {
+impl TxGetter for DbTxGetter<'_> {
     fn get_tx(&mut self, txid: &bitcoin::Txid) -> Option<bitcoin::Transaction> {
         if let hash_map::Entry::Vacant(entry) = self.cache.entry(*txid) {
             let tx = self

@@ -31,8 +31,8 @@ where
     }
 }
 
-impl<'a, Message, Theme, Renderer> Widget<Message, Theme, Renderer>
-    for Manager<'a, Message, Theme, Renderer>
+impl<Message, Theme, Renderer> Widget<Message, Theme, Renderer>
+    for Manager<'_, Message, Theme, Renderer>
 where
     Renderer: iced::advanced::Renderer,
 {
@@ -207,8 +207,8 @@ struct Overlay<'a, 'b, Message, Theme, Renderer> {
     size: Size,
 }
 
-impl<'a, 'b, Message, Theme, Renderer> overlay::Overlay<Message, Theme, Renderer>
-    for Overlay<'a, 'b, Message, Theme, Renderer>
+impl<Message, Theme, Renderer> overlay::Overlay<Message, Theme, Renderer>
+    for Overlay<'_, '_, Message, Theme, Renderer>
 where
     Renderer: iced::advanced::Renderer,
 {
