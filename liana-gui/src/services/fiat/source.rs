@@ -116,4 +116,12 @@ impl PriceSource {
         };
         Ok(ListCurrenciesResult { currencies })
     }
+
+    /// Returns the User-Agent header to use in requests, if any.
+    pub fn user_agent(&self) -> Option<String> {
+        match self {
+            Self::CoinGecko => Some(format!("liana-gui/{}", crate::VERSION)),
+            Self::MempoolSpace => None,
+        }
+    }
 }
