@@ -181,7 +181,7 @@ impl Step for Final {
         _hws: &'a HardwareWallets,
         progress: (usize, usize),
         email: Option<&'a str>,
-    ) -> Element<Message> {
+    ) -> Element<'a, Message> {
         view::install(
             progress,
             email,

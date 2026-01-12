@@ -56,7 +56,7 @@ impl Step for BackupMnemonic {
         _hws: &'a HardwareWallets,
         progress: (usize, usize),
         email: Option<&'a str>,
-    ) -> Element<Message> {
+    ) -> Element<'a, Message> {
         view::backup_mnemonic(progress, email, &self.words, self.done)
     }
 }
@@ -173,7 +173,7 @@ impl Step for RecoverMnemonic {
         _hws: &'a HardwareWallets,
         progress: (usize, usize),
         email: Option<&'a str>,
-    ) -> Element<Message> {
+    ) -> Element<'a, Message> {
         view::recover_mnemonic(
             progress,
             email,

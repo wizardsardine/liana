@@ -8,7 +8,7 @@ use crate::app::cache::Cache;
 use crate::app::error::Error;
 use crate::app::message::{FiatMessage, Message};
 use crate::app::settings::fiat::PriceSetting;
-use crate::app::settings::update_settings_file;
+use crate::app::settings::{update_settings_file, LianaSettings};
 use crate::app::state::State;
 use crate::app::view;
 use crate::app::wallet::Wallet;
@@ -26,7 +26,7 @@ async fn update_price_setting(
     wallet = wallet.with_fiat_price_setting(Some(new_price_setting.clone()));
     let network_dir = data_dir.network_directory(network);
     let wallet_id = wallet.id();
-    update_settings_file(&network_dir, |mut settings| {
+    update_settings_file(&network_dir, |mut settings: LianaSettings| {
         if let Some(wallet_setting) = settings
             .wallets
             .iter_mut()
