@@ -54,7 +54,7 @@ pub struct State {
     /// Dedicated sender for HwiService - messages are bridged to notif_sender with waking
     hw_sender: channel::Sender<Message>,
     /// Handle to the bridge thread (for cleanup)
-    hw_bridge_handle: Option<std::thread::JoinHandle<()>>,
+    _hw_bridge_handle: Option<std::thread::JoinHandle<()>>,
 }
 
 impl State {
@@ -96,19 +96,7 @@ impl State {
             hw_running: false,
             network,
             hw_sender,
-            hw_bridge_handle: Some(hw_bridge_handle),
-        }
-    }
-
-    /// Send a message to the notification channel and wake the stream.
-    /// This ensures the async executor re-polls the stream to receive the message.
-    pub fn send_notif(&self, msg: Message) {
-        if self.notif_sender.send(msg).is_ok() {
-            if let Ok(guard) = self.notif_waker.lock() {
-                if let Some(waker) = guard.as_ref() {
-                    waker.wake_by_ref();
-                }
-            }
+            _hw_bridge_handle: Some(hw_bridge_handle),
         }
     }
 
@@ -127,16 +115,6 @@ impl State {
             self.hw.stop();
             self.hw_running = false;
         }
-    }
-
-    /// Initialize backend connection
-    pub fn connect_backend(
-        &mut self,
-        url: String,
-        version: u8,
-        notif_sender: channel::Sender<Message>,
-    ) {
-        self.backend.connect_ws(url, version, notif_sender);
     }
 
     /// Close the backend connection

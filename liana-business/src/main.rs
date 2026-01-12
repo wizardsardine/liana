@@ -19,7 +19,10 @@ use business_settings::BusinessSettings;
 use liana_gui::{
     gui::GUI,
     utils::{
-        app::{args_to_config, create_app_settings, create_window_settings, load_initial_size, parse_log_level},
+        app::{
+            args_to_config, create_app_settings, create_window_settings, load_initial_size,
+            parse_log_level,
+        },
         args::parse_args,
     },
     VERSION,
@@ -46,8 +49,6 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let config = args_to_config(&args, Some(default_network))?;
     let log_level = parse_log_level()?;
-
-    setup_panic_hook();
 
     let settings = create_app_settings("LianaBusiness");
     let initial_size = load_initial_size(&config.liana_directory, Some(Size::new(1200.0, 800.0)));

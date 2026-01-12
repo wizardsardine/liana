@@ -1,6 +1,7 @@
+#[cfg(test)]
+use std::net::TcpListener;
 use std::{
     collections::BTreeMap,
-    net::TcpListener,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc, Mutex,
@@ -20,16 +21,21 @@ use liana_gui::{
     },
 };
 use miniscript::bitcoin::Network;
+#[cfg(test)]
 use serde_json::json;
 use tracing::error;
-use tungstenite::{accept, Message as WsMessage};
+#[cfg(test)]
+use tungstenite::accept;
+use tungstenite::Message as WsMessage;
 use uuid::Uuid;
 
 use crate::{
     backend::{Backend, Error, Notification, Org, OrgData, User, Wallet},
     Message,
 };
-use liana_connect::{ConnectedPayload, OrgJson, Request, Response, UserJson, WalletJson, XpubJson};
+#[cfg(test)]
+use liana_connect::ConnectedPayload;
+use liana_connect::{OrgJson, Request, Response, UserJson, WalletJson, XpubJson};
 
 /// Default HTTP URL for liana-business backend REST API (mainnet)
 const DEFAULT_MAINNET_API_URL: &str = "https://api.business.lianawallet.com";
@@ -187,6 +193,7 @@ impl Client {
         }
     }
 
+    #[cfg(test)]
     pub fn is_connected(&self) -> bool {
         self.connected.load(Ordering::Relaxed)
     }
@@ -1461,6 +1468,7 @@ impl Backend for Client {
 }
 
 // Helper function to serialize Response to WsMessage for DummyServer
+#[cfg(test)]
 fn response_to_ws_message(response: &Response, request_id: Option<String>) -> WsMessage {
     let (msg_type, payload, error) = match response {
         Response::Connected { version } => (
@@ -1510,28 +1518,37 @@ fn response_to_ws_message(response: &Response, request_id: Option<String>) -> Ws
 /// and manage Request/Response messages for development/testing
 #[derive(Debug)]
 pub struct DummyServer {
+    #[cfg(test)]
     port: u16,
     handle: Option<thread::JoinHandle<()>>,
     shutdown_sender: Option<channel::Sender<()>>,
+    #[cfg(test)]
     request_receiver: Option<channel::Receiver<(Request, String)>>, // Request with request_id
+    #[cfg(test)]
     response_sender: Option<channel::Sender<(Response, Option<String>)>>, // Response with optional request_id
 }
 
 impl DummyServer {
+    #[cfg(test)]
     pub fn new(port: u16) -> Self {
         Self {
+            #[cfg(test)]
             port,
             handle: None,
             shutdown_sender: None,
+            #[cfg(test)]
             request_receiver: None,
+            #[cfg(test)]
             response_sender: None,
         }
     }
 
+    #[cfg(test)]
     pub fn url(&self) -> String {
         format!("ws://127.0.0.1:{}", self.port)
     }
 
+    #[cfg(test)]
     pub fn start(&mut self, handler: Box<dyn Fn(Request) -> Response + Send + Sync + 'static>) {
         let port = self.port;
         let (shutdown_sender, shutdown_receiver) = channel::bounded(1);
@@ -1736,6 +1753,7 @@ impl DummyServer {
         self.handle = Some(handle);
     }
 
+    #[cfg(test)]
     pub fn send_response(&self, response: Response, request_id: Option<String>) {
         if let Some(sender) = &self.response_sender {
             let _ = sender.send((response, request_id));
@@ -2374,7 +2392,8 @@ mod tests {
             thread::sleep(Duration::from_millis(300));
 
             let (sender, _receiver) = channel::unbounded();
-            let mut client = Client::new(sender);
+            let notif_waker: SharedWaker = Arc::new(Mutex::new(None));
+            let mut client = Client::new(sender, notif_waker);
             client.set_token("test-token".to_string());
             let url = format!("ws://127.0.0.1:{}", port);
             let (sender, receiver) = channel::unbounded();
@@ -2435,7 +2454,8 @@ mod tests {
             thread::sleep(Duration::from_millis(200));
 
             let (sender, _receiver) = channel::unbounded();
-            let mut client = Client::new(sender);
+            let notif_waker: SharedWaker = Arc::new(Mutex::new(None));
+            let mut client = Client::new(sender, notif_waker);
             client.set_token("test-token".to_string());
             let url = format!("ws://127.0.0.1:{}", port);
             let (sender, receiver) = channel::unbounded();
@@ -2495,7 +2515,8 @@ mod tests {
             thread::sleep(Duration::from_millis(200));
 
             let (sender, _receiver) = channel::unbounded();
-            let mut client = Client::new(sender);
+            let notif_waker: SharedWaker = Arc::new(Mutex::new(None));
+            let mut client = Client::new(sender, notif_waker);
             client.set_token("test-token".to_string());
             let url = format!("ws://127.0.0.1:{}", port);
             let (sender, receiver) = channel::unbounded();
@@ -2556,7 +2577,8 @@ mod tests {
             thread::sleep(Duration::from_millis(200));
 
             let (sender, _receiver) = channel::unbounded();
-            let mut client = Client::new(sender);
+            let notif_waker: SharedWaker = Arc::new(Mutex::new(None));
+            let mut client = Client::new(sender, notif_waker);
             client.set_token("test-token".to_string());
             let url = format!("ws://127.0.0.1:{}", port);
             let (sender, receiver) = channel::unbounded();
@@ -2617,7 +2639,8 @@ mod tests {
             thread::sleep(Duration::from_millis(200));
 
             let (sender, _receiver) = channel::unbounded();
-            let mut client = Client::new(sender);
+            let notif_waker: SharedWaker = Arc::new(Mutex::new(None));
+            let mut client = Client::new(sender, notif_waker);
             client.set_token("test-token".to_string());
             let url = format!("ws://127.0.0.1:{}", port);
             let (sender, receiver) = channel::unbounded();
@@ -2662,7 +2685,8 @@ mod tests {
             thread::sleep(Duration::from_millis(200));
 
             let (sender, _receiver) = channel::unbounded();
-            let mut client = Client::new(sender);
+            let notif_waker: SharedWaker = Arc::new(Mutex::new(None));
+            let mut client = Client::new(sender, notif_waker);
             client.set_token("test-token".to_string());
             let url = format!("ws://127.0.0.1:{}", port);
             let (sender, receiver) = channel::unbounded();
@@ -2695,7 +2719,8 @@ mod tests {
         #[test]
         fn test_client_connection_without_token() {
             let (sender, _receiver) = channel::unbounded();
-            let mut client = Client::new(sender);
+            let notif_waker: SharedWaker = Arc::new(Mutex::new(None));
+            let mut client = Client::new(sender, notif_waker);
             let (sender, receiver) = channel::unbounded();
             // Don't set token
             client.connect_ws("ws://127.0.0.1:9999".to_string(), 1, sender);
@@ -2740,7 +2765,8 @@ mod tests {
             thread::sleep(Duration::from_millis(200));
 
             let (sender, _receiver) = channel::unbounded();
-            let mut client = Client::new(sender);
+            let notif_waker: SharedWaker = Arc::new(Mutex::new(None));
+            let mut client = Client::new(sender, notif_waker);
             client.set_token("test-token".to_string());
             let url = format!("ws://127.0.0.1:{}", port);
             let (sender, receiver) = channel::unbounded();
@@ -2807,7 +2833,8 @@ mod tests {
             thread::sleep(Duration::from_millis(200));
 
             let (sender, _receiver) = channel::unbounded();
-            let mut client = Client::new(sender);
+            let notif_waker: SharedWaker = Arc::new(Mutex::new(None));
+            let mut client = Client::new(sender, notif_waker);
             client.set_token("test-token".to_string());
             let url = format!("ws://127.0.0.1:{}", port);
             let (sender, receiver) = channel::unbounded();

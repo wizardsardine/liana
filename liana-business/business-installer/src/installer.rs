@@ -67,7 +67,7 @@ impl BusinessInstaller {
     }
 }
 
-impl<'a> Installer<'a, Message> for BusinessInstaller {
+impl Installer<'_, Message> for BusinessInstaller {
     fn new(
         destination_path: LianaDirectory,
         network: bitcoin::Network,

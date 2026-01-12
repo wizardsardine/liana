@@ -4,7 +4,7 @@ use serde_json::json;
 use std::collections::BTreeSet;
 use std::net::TcpStream;
 use std::sync::Arc;
-use tungstenite::{accept, Message as WsMessage, WebSocket};
+use tungstenite::{Message as WsMessage, WebSocket};
 use uuid::Uuid;
 
 use crate::auth::AuthManager;
@@ -29,179 +29,6 @@ pub struct ClientConnection {
 }
 
 impl ClientConnection {
-    /// Create a new client connection from a TCP stream
-    pub fn new(
-        stream: TcpStream,
-        state: &ServerState,
-        auth: Arc<AuthManager>,
-        broadcast_sender: Sender<(ClientId, Notification)>,
-    ) -> Result<Self, String> {
-        let id = Uuid::new_v4();
-        let mut ws_stream =
-            accept(stream).map_err(|e| format!("Failed to accept WebSocket: {}", e))?;
-
-        log::info!("New client connection: {}", id);
-
-        // Read connect request in blocking mode
-        let connect_msg = match ws_stream.read() {
-            Ok(WsMessage::Text(text)) => text,
-            Ok(_) => return Err("Expected text message for connect".to_string()),
-            Err(e) => return Err(format!("Failed to read connect message: {}", e)),
-        };
-
-        log::debug!("Connect request: {}", connect_msg);
-
-        // Parse connect request
-        let protocol_request: serde_json::Value = serde_json::from_str(&connect_msg)
-            .map_err(|e| format!("Failed to parse connect request: {}", e))?;
-
-        let msg_type = protocol_request["type"].as_str().unwrap_or("");
-        if msg_type != "connect" {
-            return Err(format!("Expected 'connect' message, got '{}'", msg_type));
-        }
-
-        // Validate token and get user_id
-        let token = protocol_request["token"].as_str().unwrap_or("");
-        log::debug!("Token received for validation");
-        let user_id = match auth.validate_token(token) {
-            Some(uid) => uid,
-            None => {
-                log::warn!("Token validation failed");
-                let error_response = Response::Error {
-                    error: WssError {
-                        code: "INVALID_TOKEN".to_string(),
-                        message: "Invalid authentication token".to_string(),
-                        request_id: protocol_request["request_id"]
-                            .as_str()
-                            .map(|s| s.to_string()),
-                    },
-                };
-                let ws_msg = response_to_ws_message(
-                    &error_response,
-                    protocol_request["request_id"]
-                        .as_str()
-                        .map(|s| s.to_string()),
-                );
-                let _ = ws_stream.send(ws_msg);
-                return Err("Invalid token".to_string());
-            }
-        };
-
-        let request_id = protocol_request["request_id"]
-            .as_str()
-            .map(|s| s.to_string());
-
-        // Respond with connected
-        let connected = Response::Connected { version: 1 };
-        let ws_msg = response_to_ws_message(&connected, request_id);
-        ws_stream
-            .send(ws_msg)
-            .map_err(|e| format!("Failed to send connected response: {}", e))?;
-
-        // Get user's email, global role, and user data for sending
-        let (user_email, global_role, logged_in_user) = {
-            let users = state.users.lock().unwrap();
-            match users.get(&user_id) {
-                Some(u) => (u.email.clone(), u.role.clone(), Some(u.clone())),
-                None => {
-                    log::warn!("User {} not found, defaulting to Participant", user_id);
-                    (String::new(), UserRole::Participant, None)
-                }
-            }
-        };
-
-        // Send all accessible orgs to the client with filtered wallet lists
-        {
-            let orgs = state.orgs.lock().unwrap();
-            let wallets = state.wallets.lock().unwrap();
-            for org in orgs.values() {
-                // Filter wallet IDs based on user access
-                let filtered_wallet_ids: BTreeSet<Uuid> = org
-                    .wallets
-                    .iter()
-                    .filter(|wallet_id| {
-                        if let Some(wallet) = wallets.get(wallet_id) {
-                            can_user_access_wallet(wallet, &user_email, global_role.clone())
-                        } else {
-                            false
-                        }
-                    })
-                    .copied()
-                    .collect();
-
-                // Create filtered org
-                let filtered_org = Org {
-                    name: org.name.clone(),
-                    id: org.id,
-                    wallets: filtered_wallet_ids,
-                    users: org.users.clone(),
-                    owners: org.owners.clone(),
-                    last_edited: org.last_edited,
-                    last_editor: org.last_editor,
-                };
-
-                let org_response = Response::Org {
-                    org: (&filtered_org).into(),
-                };
-                let ws_msg = response_to_ws_message(&org_response, None);
-                if let Err(e) = ws_stream.send(ws_msg) {
-                    log::warn!("Failed to send initial org to client: {}", e);
-                }
-            }
-        }
-
-        // Send the logged-in user's data so client knows their role
-        if let Some(user) = logged_in_user {
-            let user_response = Response::User { user: (&user).into() };
-            let ws_msg = response_to_ws_message(&user_response, None);
-            if let Err(e) = ws_stream.send(ws_msg) {
-                log::warn!("Failed to send logged-in user data: {}", e);
-            }
-        }
-
-        // Enable non-blocking reads after handshake
-        ws_stream
-            .get_ref()
-            .set_nonblocking(true)
-            .map_err(|e| format!("Failed to set non-blocking: {}", e))?;
-
-        log::info!("Client {} connected successfully", id);
-
-        // Create notification channel for this client
-        // Sender is held by ClientConnection to send notifications TO the thread
-        // Receiver is held by the thread to receive notifications
-        let (notif_sender, notif_receiver) = channel::unbounded();
-        let connected = Arc::new(std::sync::atomic::AtomicBool::new(true));
-
-        // Spawn handler thread for this client
-        let state_clone = ServerState {
-            orgs: Arc::clone(&state.orgs),
-            wallets: Arc::clone(&state.wallets),
-            users: Arc::clone(&state.users),
-        };
-        let auth_clone = Arc::clone(&auth);
-        let client_id = id;
-        let connected_clone = Arc::clone(&connected);
-
-        std::thread::spawn(move || {
-            handle_client_messages(
-                client_id,
-                ws_stream,
-                &state_clone,
-                auth_clone,
-                notif_receiver,
-                broadcast_sender,
-                connected_clone,
-            );
-        });
-
-        Ok(Self {
-            id,
-            notification_sender: notif_sender,
-            connected,
-        })
-    }
-
     /// Create a new client connection from an already-handshaked WebSocket
     pub fn from_websocket(
         mut ws_stream: WebSocket<TcpStream>,
@@ -323,7 +150,9 @@ impl ClientConnection {
 
         // Send the logged-in user's data so client knows their role
         if let Some(user) = logged_in_user {
-            let user_response = Response::User { user: (&user).into() };
+            let user_response = Response::User {
+                user: (&user).into(),
+            };
             let ws_msg = response_to_ws_message(&user_response, None);
             if let Err(e) = ws_stream.send(ws_msg) {
                 log::warn!("Failed to send logged-in user data: {}", e);
@@ -481,9 +310,7 @@ fn handle_client_messages(
 
                         // Determine if we need to broadcast to other clients
                         let notification = match &request {
-                            Request::EditWallet { wallet } => {
-                                Some(Notification::Wallet(wallet.id))
-                            }
+                            Request::EditWallet { wallet } => Some(Notification::Wallet(wallet.id)),
                             Request::CreateWallet { .. } => {
                                 // Extract wallet ID from response
                                 if let Response::Wallet { wallet } = &response {

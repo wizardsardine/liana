@@ -35,11 +35,7 @@ pub fn derive_user_role_for_wallet(
 
 /// Check if a user can access a wallet (has any role)
 /// Participants cannot access Draft/Locked wallets
-pub fn can_user_access_wallet(
-    wallet: &Wallet,
-    user_email: &str,
-    global_role: UserRole,
-) -> bool {
+pub fn can_user_access_wallet(wallet: &Wallet, user_email: &str, global_role: UserRole) -> bool {
     match derive_user_role_for_wallet(wallet, user_email, global_role) {
         None => false, // No access
         Some(UserRole::Participant) => {
@@ -117,7 +113,9 @@ fn handle_fetch_org(state: &ServerState, id: Uuid, editor_id: Uuid) -> Response 
                             // Participants cannot see Draft or Locked wallets
                             !matches!(
                                 wallet.status,
-                                WalletStatus::Created | WalletStatus::Drafted | WalletStatus::Locked
+                                WalletStatus::Created
+                                    | WalletStatus::Drafted
+                                    | WalletStatus::Locked
                             )
                         }
                         Some(_) => true, // WSManager and Owner can see all
@@ -349,7 +347,9 @@ fn handle_edit_wallet(state: &ServerState, mut wallet: Wallet, editor_id: Uuid) 
                         return Response::Error {
                             error: WssError {
                                 code: "ACCESS_DENIED".to_string(),
-                                message: "WSManager can only unlock (revert to Draft) a locked wallet".to_string(),
+                                message:
+                                    "WSManager can only unlock (revert to Draft) a locked wallet"
+                                        .to_string(),
                                 request_id: None,
                             },
                         };
@@ -379,7 +379,8 @@ fn handle_edit_wallet(state: &ServerState, mut wallet: Wallet, editor_id: Uuid) 
                         return Response::Error {
                             error: WssError {
                                 code: "ACCESS_DENIED".to_string(),
-                                message: "Template cannot be modified during validation".to_string(),
+                                message: "Template cannot be modified during validation"
+                                    .to_string(),
                                 request_id: None,
                             },
                         };
@@ -389,7 +390,8 @@ fn handle_edit_wallet(state: &ServerState, mut wallet: Wallet, editor_id: Uuid) 
                     return Response::Error {
                         error: WssError {
                             code: "ACCESS_DENIED".to_string(),
-                            message: "Only WSManager or Owner can modify a locked wallet".to_string(),
+                            message: "Only WSManager or Owner can modify a locked wallet"
+                                .to_string(),
                             request_id: None,
                         },
                     };
@@ -488,11 +490,13 @@ fn handle_edit_wallet(state: &ServerState, mut wallet: Wallet, editor_id: Uuid) 
             let path_changed = match old_template {
                 Some(old) => {
                     // Try to find a matching old path by index
-                    old.secondary_paths.get(i).map_or(true, |(old_path, old_timelock)| {
-                        old_path.key_ids != new_path.key_ids
-                            || old_path.threshold_n != new_path.threshold_n
-                            || old_timelock.blocks != new_timelock.blocks
-                    })
+                    old.secondary_paths
+                        .get(i)
+                        .is_none_or(|(old_path, old_timelock)| {
+                            old_path.key_ids != new_path.key_ids
+                                || old_path.threshold_n != new_path.threshold_n
+                                || old_timelock.blocks != new_timelock.blocks
+                        })
                 }
                 None => true, // New template, path is new
             };
@@ -511,14 +515,12 @@ fn handle_edit_wallet(state: &ServerState, mut wallet: Wallet, editor_id: Uuid) 
         // Check keys - compare ignoring last_edited/last_editor and xpub fields
         for (key_id, new_key) in new_template.keys.iter_mut() {
             let key_changed = match old_template {
-                Some(old) => {
-                    old.keys.get(key_id).map_or(true, |old_key| {
-                        old_key.alias != new_key.alias
-                            || old_key.description != new_key.description
-                            || old_key.email != new_key.email
-                            || old_key.key_type != new_key.key_type
-                    })
-                }
+                Some(old) => old.keys.get(key_id).is_none_or(|old_key| {
+                    old_key.alias != new_key.alias
+                        || old_key.description != new_key.description
+                        || old_key.email != new_key.email
+                        || old_key.key_type != new_key.key_type
+                }),
                 None => true, // New template, key is new
             };
             if key_changed {
@@ -685,11 +687,7 @@ mod tests {
     use super::*;
     use liana_connect::{Key, KeyType, PolicyTemplate};
 
-    fn make_test_wallet(
-        owner_email: &str,
-        key_emails: &[&str],
-        status: WalletStatus,
-    ) -> Wallet {
+    fn make_test_wallet(owner_email: &str, key_emails: &[&str], status: WalletStatus) -> Wallet {
         let mut template = PolicyTemplate::new();
         for (i, email) in key_emails.iter().enumerate() {
             template.keys.insert(
@@ -744,11 +742,17 @@ mod tests {
         ];
 
         for status in statuses {
-            let wallet = make_test_wallet("owner@example.com", &["alice@example.com"], status.clone());
+            let wallet =
+                make_test_wallet("owner@example.com", &["alice@example.com"], status.clone());
 
             // WSManager with global role should have access
             let role = derive_user_role_for_wallet(&wallet, "ws@example.com", UserRole::WSManager);
-            assert_eq!(role, Some(UserRole::WSManager), "WSManager should get WSManager role for {:?}", status);
+            assert_eq!(
+                role,
+                Some(UserRole::WSManager),
+                "WSManager should get WSManager role for {:?}",
+                status
+            );
 
             let can_access = can_user_access_wallet(&wallet, "ws@example.com", UserRole::WSManager);
             assert!(can_access, "WSManager should access {:?} wallet", status);
@@ -758,36 +762,85 @@ mod tests {
     #[test]
     fn test_participant_cannot_access_draft_locked() {
         // Participant cannot access Draft/Locked wallets
-        let draft_wallet = make_test_wallet("owner@example.com", &["participant@example.com"], WalletStatus::Drafted);
-        let locked_wallet = make_test_wallet("owner@example.com", &["participant@example.com"], WalletStatus::Locked);
-        let created_wallet = make_test_wallet("owner@example.com", &["participant@example.com"], WalletStatus::Created);
+        let draft_wallet = make_test_wallet(
+            "owner@example.com",
+            &["participant@example.com"],
+            WalletStatus::Drafted,
+        );
+        let locked_wallet = make_test_wallet(
+            "owner@example.com",
+            &["participant@example.com"],
+            WalletStatus::Locked,
+        );
+        let created_wallet = make_test_wallet(
+            "owner@example.com",
+            &["participant@example.com"],
+            WalletStatus::Created,
+        );
 
         // Participant has key but cannot access draft/locked
-        assert!(!can_user_access_wallet(&draft_wallet, "participant@example.com", UserRole::Participant));
-        assert!(!can_user_access_wallet(&locked_wallet, "participant@example.com", UserRole::Participant));
-        assert!(!can_user_access_wallet(&created_wallet, "participant@example.com", UserRole::Participant));
+        assert!(!can_user_access_wallet(
+            &draft_wallet,
+            "participant@example.com",
+            UserRole::Participant
+        ));
+        assert!(!can_user_access_wallet(
+            &locked_wallet,
+            "participant@example.com",
+            UserRole::Participant
+        ));
+        assert!(!can_user_access_wallet(
+            &created_wallet,
+            "participant@example.com",
+            UserRole::Participant
+        ));
     }
 
     #[test]
     fn test_participant_can_access_validated_finalized() {
         // Participant CAN access Validated/Finalized wallets
-        let validated_wallet = make_test_wallet("owner@example.com", &["participant@example.com"], WalletStatus::Validated);
-        let finalized_wallet = make_test_wallet("owner@example.com", &["participant@example.com"], WalletStatus::Finalized);
+        let validated_wallet = make_test_wallet(
+            "owner@example.com",
+            &["participant@example.com"],
+            WalletStatus::Validated,
+        );
+        let finalized_wallet = make_test_wallet(
+            "owner@example.com",
+            &["participant@example.com"],
+            WalletStatus::Finalized,
+        );
 
-        assert!(can_user_access_wallet(&validated_wallet, "participant@example.com", UserRole::Participant));
-        assert!(can_user_access_wallet(&finalized_wallet, "participant@example.com", UserRole::Participant));
+        assert!(can_user_access_wallet(
+            &validated_wallet,
+            "participant@example.com",
+            UserRole::Participant
+        ));
+        assert!(can_user_access_wallet(
+            &finalized_wallet,
+            "participant@example.com",
+            UserRole::Participant
+        ));
     }
 
     #[test]
     fn test_user_without_access_cannot_see_wallet() {
         // User with no keys and not owner should not access
-        let wallet = make_test_wallet("owner@example.com", &["alice@example.com"], WalletStatus::Validated);
+        let wallet = make_test_wallet(
+            "owner@example.com",
+            &["alice@example.com"],
+            WalletStatus::Validated,
+        );
 
         // User without keys, with Participant global role
-        let role = derive_user_role_for_wallet(&wallet, "random@example.com", UserRole::Participant);
+        let role =
+            derive_user_role_for_wallet(&wallet, "random@example.com", UserRole::Participant);
         assert_eq!(role, None, "User without keys should have no role");
 
-        assert!(!can_user_access_wallet(&wallet, "random@example.com", UserRole::Participant));
+        assert!(!can_user_access_wallet(
+            &wallet,
+            "random@example.com",
+            UserRole::Participant
+        ));
     }
 
     #[test]
@@ -801,15 +854,23 @@ mod tests {
         ];
 
         for status in statuses {
-            let wallet = make_test_wallet("owner@example.com", &["alice@example.com"], status.clone());
+            let wallet =
+                make_test_wallet("owner@example.com", &["alice@example.com"], status.clone());
 
             // Owner (global role Owner, is wallet owner)
             let role = derive_user_role_for_wallet(&wallet, "owner@example.com", UserRole::Owner);
-            assert_eq!(role, Some(UserRole::Owner), "Owner should get Owner role for {:?}", status);
+            assert_eq!(
+                role,
+                Some(UserRole::Owner),
+                "Owner should get Owner role for {:?}",
+                status
+            );
 
-            assert!(can_user_access_wallet(&wallet, "owner@example.com", UserRole::Owner),
-                "Owner should access {:?} wallet", status);
+            assert!(
+                can_user_access_wallet(&wallet, "owner@example.com", UserRole::Owner),
+                "Owner should access {:?} wallet",
+                status
+            );
         }
     }
 }
-
