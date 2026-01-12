@@ -17,7 +17,7 @@ pub mod services;
 pub mod signer;
 pub mod utils;
 
-use lianad::Version;
+pub use lianad::Version;
 
 pub const VERSION: Version = Version {
     major: 13,
