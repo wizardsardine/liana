@@ -39,7 +39,7 @@ use crate::{
         error::Error,
         menu::Menu,
         message::FiatMessage,
-        settings::WalletId,
+        settings::{LianaSettings, SettingsTrait, SettingsUI, WalletId},
         wallet::Wallet,
     },
     daemon::{embedded::EmbeddedDaemon, Daemon, DaemonBackend, DaemonError},
@@ -47,9 +47,7 @@ use crate::{
     node::{bitcoind::Bitcoind, NodeType},
 };
 
-use self::state::SettingsState;
-
-struct Panels {
+struct Panels<S: SettingsTrait> {
     current: Menu,
     home: Home,
     coins: CoinsPanel,
@@ -58,19 +56,21 @@ struct Panels {
     recovery: CreateSpendPanel,
     receive: ReceivePanel,
     create_spend: CreateSpendPanel,
-    settings: SettingsState,
+    settings: S::UI,
 }
 
-impl Panels {
+impl<S: SettingsTrait> Panels<S> {
+    #[allow(clippy::too_many_arguments)]
     fn new(
         cache: &Cache,
         wallet: Arc<Wallet>,
+        daemon: Arc<dyn Daemon + Sync + Send>,
         data_dir: LianaDirectory,
         daemon_backend: DaemonBackend,
         internal_bitcoind: Option<&Bitcoind>,
         config: Arc<Config>,
         restored_from_backup: bool,
-    ) -> Panels {
+    ) -> (Panels<S>, Task<S::Message>) {
         let show_rescan_warning = restored_from_backup
             && daemon_backend.is_lianad()
             && daemon_backend
@@ -78,13 +78,23 @@ impl Panels {
                 .map(|nt| nt == NodeType::Bitcoind)
                 // We don't know the node type for external lianad so assume it's bitcoind.
                 .unwrap_or(true);
-        Self {
+
+        let (settings_ui, settings_task) = S::UI::new(
+            data_dir.clone(),
+            wallet.clone(),
+            daemon,
+            daemon_backend.clone(),
+            internal_bitcoind.is_some(),
+            config.clone(),
+        );
+
+        let panels = Self {
             current: Menu::Home,
             home: Home::new(
                 wallet.clone(),
                 cache.coins(),
                 sync_status(
-                    daemon_backend.clone(),
+                    daemon_backend,
                     cache.blockheight(),
                     cache.sync_progress(),
                     cache.last_poll_timestamp(),
@@ -97,21 +107,17 @@ impl Panels {
             transactions: TransactionsPanel::new(wallet.clone()),
             psbts: PsbtsPanel::new(wallet.clone()),
             recovery: new_recovery_panel(wallet.clone(), cache),
-            receive: ReceivePanel::new(data_dir.clone(), wallet.clone()),
+            receive: ReceivePanel::new(data_dir, wallet.clone()),
             create_spend: CreateSpendPanel::new(
                 wallet.clone(),
                 cache.coins(),
                 cache.blockheight() as u32,
                 cache.network,
             ),
-            settings: state::SettingsState::new(
-                data_dir,
-                wallet.clone(),
-                daemon_backend,
-                internal_bitcoind.is_some(),
-                config.clone(),
-            ),
-        }
+            settings: settings_ui,
+        };
+
+        (panels, settings_task)
     }
 
     fn current(&self) -> &dyn State {
@@ -147,16 +153,23 @@ impl Panels {
     }
 }
 
-pub struct App {
+/// The main application state, generic over settings type.
+///
+/// This allows different applications (liana-gui, liana-business) to use
+/// their own settings UI implementation.
+pub struct App<S: SettingsTrait = LianaSettings> {
     cache: Cache,
     wallet: Arc<Wallet>,
     daemon: Arc<dyn Daemon + Sync + Send>,
     internal_bitcoind: Option<Bitcoind>,
 
-    panels: Panels,
+    panels: Panels<S>,
 }
 
-impl App {
+/// Type alias for the standard Liana application.
+pub type LianaApp = App<LianaSettings>;
+
+impl<S: SettingsTrait> App<S> {
     pub fn new(
         cache: Cache,
         wallet: Arc<Wallet>,
@@ -165,11 +178,28 @@ impl App {
         data_dir: LianaDirectory,
         internal_bitcoind: Option<Bitcoind>,
         restored_from_backup: bool,
-    ) -> (App, Task<Message>) {
+    ) -> (App<S>, Task<Message>) {
         let config = Arc::new(config);
-        let mut panels = Panels::new(
+
+        // TECHNICAL DEBT: Settings initialization task is dropped.
+        //
+        // The SettingsUI::new() method returns Task<S::Message>, but App::new()
+        // returns Task<app::Message>. These are different types and cannot be
+        // directly combined.
+        //
+        // Current impact: None - both LianaSettingsUI and BusinessSettingsUI
+        // return Task::none() from new(), so dropping the task is harmless.
+        //
+        // Future fix (if settings init needs async tasks):
+        // 1. Add message routing: Message::SettingsUI(Box<S::Message>)
+        // 2. Map the task: settings_task.map(|msg| Message::SettingsUI(Box::new(msg)))
+        // 3. Add handler in App::update() to unwrap and forward to settings.update()
+        //
+        // This follows the same pattern used for Installer messages in Tab.
+        let (mut panels, _settings_task) = Panels::new(
             &cache,
             wallet.clone(),
+            daemon.clone(),
             data_dir,
             daemon.backend(),
             internal_bitcoind.as_ref(),

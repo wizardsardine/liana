@@ -5,7 +5,7 @@ mod wallet;
 use std::convert::From;
 use std::sync::Arc;
 
-use iced::Task;
+use iced::{Subscription, Task};
 
 use liana_ui::{component::form, widget::Element};
 
@@ -17,6 +17,7 @@ use crate::{
         cache::Cache,
         error::Error,
         message::Message,
+        settings::SettingsUI,
         state::State,
         view::{self},
         wallet::Wallet,
@@ -29,7 +30,17 @@ use crate::{
 
 use super::export::ExportModal;
 
-pub struct SettingsState {
+/// Liana-specific settings UI implementation.
+///
+/// This implements the `SettingsUI` trait for the standard Liana application,
+/// providing settings panels for:
+/// - General settings (fiat prices)
+/// - Bitcoin node settings (bitcoind/electrum)
+/// - Wallet settings (aliases, metadata)
+/// - Import/Export operations
+/// - Remote backend settings
+/// - About section
+pub struct LianaSettingsUI {
     data_dir: LianaDirectory,
     wallet: Arc<Wallet>,
     setting: Option<Box<dyn State>>,
@@ -38,8 +49,12 @@ pub struct SettingsState {
     config: Arc<Config>,
 }
 
-impl SettingsState {
-    pub fn new(
+impl LianaSettingsUI {
+    /// Create a new Liana settings UI.
+    ///
+    /// Note: This is the legacy constructor. Prefer using `SettingsUI::new()`
+    /// for trait-based construction.
+    pub fn new_legacy(
         data_dir: LianaDirectory,
         wallet: Arc<Wallet>,
         daemon_backend: DaemonBackend,
@@ -57,7 +72,29 @@ impl SettingsState {
     }
 }
 
-impl State for SettingsState {
+/// Backward compatibility type alias.
+pub type SettingsState = LianaSettingsUI;
+
+impl SettingsUI<Message> for LianaSettingsUI {
+    fn new(
+        data_dir: LianaDirectory,
+        wallet: Arc<Wallet>,
+        _daemon: Arc<dyn Daemon + Sync + Send>,
+        daemon_backend: DaemonBackend,
+        internal_bitcoind: bool,
+        config: Arc<Config>,
+    ) -> (Self, Task<Message>) {
+        let ui = Self {
+            data_dir,
+            wallet,
+            setting: None,
+            daemon_backend,
+            internal_bitcoind,
+            config,
+        };
+        (ui, Task::none())
+    }
+
     fn update(
         &mut self,
         daemon: Arc<dyn Daemon + Sync + Send>,
@@ -139,20 +176,21 @@ impl State for SettingsState {
         }
     }
 
-    fn subscription(&self) -> iced::Subscription<Message> {
+    fn subscription(&self) -> Subscription<Message> {
         if let Some(setting) = &self.setting {
             setting.subscription()
         } else {
-            iced::Subscription::none()
+            Subscription::none()
         }
     }
 
-    fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, view::Message> {
-        if let Some(setting) = &self.setting {
+    fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, Message> {
+        let content = if let Some(setting) = &self.setting {
             setting.view(cache)
         } else {
             view::settings::list(cache, self.daemon_backend == DaemonBackend::RemoteBackend)
-        }
+        };
+        content.map(Message::View)
     }
 
     fn reload(
@@ -166,8 +204,41 @@ impl State for SettingsState {
     }
 }
 
-impl From<SettingsState> for Box<dyn State> {
-    fn from(s: SettingsState) -> Box<dyn State> {
+// Keep the State trait implementation for backward compatibility with existing code
+impl State for LianaSettingsUI {
+    fn update(
+        &mut self,
+        daemon: Arc<dyn Daemon + Sync + Send>,
+        cache: &Cache,
+        message: Message,
+    ) -> Task<Message> {
+        <Self as SettingsUI<Message>>::update(self, daemon, cache, message)
+    }
+
+    fn subscription(&self) -> Subscription<Message> {
+        <Self as SettingsUI<Message>>::subscription(self)
+    }
+
+    fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, view::Message> {
+        // For the State trait, return view::Message directly (without mapping)
+        if let Some(setting) = &self.setting {
+            setting.view(cache)
+        } else {
+            view::settings::list(cache, self.daemon_backend == DaemonBackend::RemoteBackend)
+        }
+    }
+
+    fn reload(
+        &mut self,
+        daemon: Arc<dyn Daemon + Sync + Send>,
+        wallet: Arc<Wallet>,
+    ) -> Task<Message> {
+        <Self as SettingsUI<Message>>::reload(self, daemon, wallet)
+    }
+}
+
+impl From<LianaSettingsUI> for Box<dyn State> {
+    fn from(s: LianaSettingsUI) -> Box<dyn State> {
         Box::new(s)
     }
 }

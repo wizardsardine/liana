@@ -2,7 +2,7 @@ use liana::miniscript::bitcoin::Network;
 use std::collections::HashSet;
 
 use crate::{
-    app::settings::{self, SettingsError, WalletSettings},
+    app::settings::{self, LianaSettings, SettingsError, WalletSettings},
     dir::NetworkDirectory,
     services::connect::{
         client::{
@@ -67,7 +67,7 @@ pub async fn delete_failed_install(
     }
 
     let mut remaining_accounts = HashSet::<String>::new();
-    settings::update_settings_file(network_dir, |mut settings| {
+    settings::update_settings_file(network_dir, |mut settings: LianaSettings| {
         settings
             .wallets
             .retain(|settings| settings.wallet_id() != *wallet_id);
@@ -155,7 +155,7 @@ pub async fn delete_wallet(
     }
 
     let mut remaining_accounts = HashSet::<String>::new();
-    settings::update_settings_file(network_dir, |mut settings| {
+    settings::update_settings_file(network_dir, |mut settings: LianaSettings| {
         settings
             .wallets
             .retain(|settings| settings.wallet_id() != wallet_id);

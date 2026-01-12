@@ -1,11 +1,15 @@
 //! Settings is the module to handle the GUI settings file.
 //! The settings file is used by the GUI to store useful information.
 pub mod fiat;
+pub mod ui;
+
+pub use ui::SettingsUI;
 
 use std::collections::HashMap;
 
 use async_fd_lock::LockWrite;
 use liana::descriptors::LianaDescriptor;
+use serde::de::DeserializeOwned;
 use std::io::SeekFrom;
 use tokio::fs::OpenOptions;
 use tokio::io::AsyncSeekExt;
@@ -15,23 +19,108 @@ use liana::miniscript::bitcoin::bip32::Fingerprint;
 use liana_ui::component::form;
 use serde::{Deserialize, Serialize};
 
+use iced::Task;
+use liana::miniscript::bitcoin;
+use lianad::commands::ListCoinsResult;
+
 use crate::{
+    app::{self, state::State},
     backup::{Key, KeyRole, KeyType},
-    dir::NetworkDirectory,
+    dir::{LianaDirectory, NetworkDirectory},
     hw::HardwareWalletConfig,
-    services::{self, connect::client::backend},
+    services::{
+        self,
+        connect::client::backend::{self, api, BackendWalletClient},
+    },
     utils::serde::ok_or_none,
 };
 
 pub const SETTINGS_FILE_NAME: &str = "settings.json";
 
-#[derive(Debug, Clone, Default, Deserialize, Serialize)]
-pub struct Settings {
-    pub wallets: Vec<WalletSettings>,
+/// Trait for application-level settings.
+///
+/// This trait combines data operations with UI abstraction. Each implementation
+/// specifies its own message type and UI component, following the Installer pattern.
+pub trait SettingsTrait: Clone + Default + Serialize + DeserializeOwned + Send + 'static {
+    /// The wallet settings type.
+    type Wallet: WalletSettingsTrait;
+
+    /// The message type used by the settings UI.
+    type Message: Send + 'static;
+
+    /// The settings UI component type.
+    /// Must implement both SettingsUI (for settings-specific logic) and State
+    /// (for the unified panel interface that App uses).
+    type UI: SettingsUI<Self::Message> + State;
+
+    /// Load settings from the network directory.
+    fn from_file(network_dir: &NetworkDirectory) -> Result<Self, SettingsError>;
+
+    /// Get the list of wallet settings.
+    fn wallets(&self) -> &[Self::Wallet];
+
+    /// Get mutable access to wallet settings.
+    fn wallets_mut(&mut self) -> &mut Vec<Self::Wallet>;
+
+    /// Create an App from Liana Connect remote backend data.
+    ///
+    /// Returns `None` if this settings type doesn't support Liana Connect login.
+    /// Only `LianaSettings` implements this; other settings types return `None`.
+    ///
+    /// This method allows the generic `Tab<I, S, M>` to handle the Login -> App
+    /// transition in a type-safe way without unsafe code.
+    #[allow(unused_variables)]
+    #[allow(clippy::type_complexity)]
+    fn create_app_for_remote_backend(
+        wallet_id: WalletId,
+        remote_backend: BackendWalletClient,
+        wallet: api::Wallet,
+        coins: ListCoinsResult,
+        liana_dir: LianaDirectory,
+        network: bitcoin::Network,
+        config: app::Config,
+    ) -> Option<Result<(app::App<Self>, Task<app::message::Message>), SettingsError>>
+    where
+        Self: Sized,
+    {
+        // Default implementation: not supported
+        None
+    }
 }
 
-impl Settings {
-    pub fn from_file(network_dir: &NetworkDirectory) -> Result<Settings, SettingsError> {
+/// Trait for wallet-level settings.
+pub trait WalletSettingsTrait: Clone + Serialize + DeserializeOwned + Send + 'static {
+    /// Get the wallet's display name.
+    fn name(&self) -> &str;
+    /// Get an optional user-defined alias for the wallet.
+    fn alias(&self) -> Option<&str>;
+    /// Get the checksum portion of the wallet's descriptor.
+    fn descriptor_checksum(&self) -> &str;
+    /// Get the Unix timestamp when this wallet was created/pinned (used for wallet identification).
+    fn pinned_at(&self) -> Option<i64>;
+    /// Get the unique identifier for this wallet (combines checksum and timestamp).
+    fn wallet_id(&self) -> WalletId;
+    /// Get the list of key settings (aliases and provider metadata) for this wallet.
+    fn keys(&self) -> &[KeySetting];
+    /// Get the list of hardware wallet configurations registered with this wallet.
+    fn hardware_wallets(&self) -> &[HardwareWalletConfig];
+    /// Get the remote backend authentication config, if this wallet uses a remote backend.
+    fn remote_backend_auth(&self) -> Option<&AuthConfig>;
+    /// Get the fiat price conversion settings for this wallet.
+    fn fiat_price(&self) -> Option<&fiat::PriceSetting>;
+    /// Get a map of key fingerprints to their user-defined aliases.
+    fn keys_aliases(&self) -> HashMap<Fingerprint, String>;
+    /// Get a map of key fingerprints to their third-party provider information.
+    fn provider_keys(&self) -> HashMap<Fingerprint, ProviderKey>;
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct LianaSettings {
+    pub wallets: Vec<LianaWalletSettings>,
+}
+
+impl LianaSettings {
+    pub fn from_file(network_dir: &NetworkDirectory) -> Result<LianaSettings, SettingsError> {
         let mut path = network_dir.path().to_path_buf();
         path.push(SETTINGS_FILE_NAME);
 
@@ -41,19 +130,61 @@ impl Settings {
                 _ => SettingsError::ReadingFile(format!("Reading settings file: {}", e)),
             })
             .and_then(|file_content| {
-                serde_json::from_slice::<Settings>(&file_content).map_err(|e| {
+                serde_json::from_slice::<LianaSettings>(&file_content).map_err(|e| {
                     SettingsError::ReadingFile(format!("Parsing settings file: {}", e))
                 })
             })
     }
 }
 
-pub async fn update_settings_file<F>(
+impl SettingsTrait for LianaSettings {
+    type Wallet = LianaWalletSettings;
+    type Message = crate::app::message::Message;
+    type UI = crate::app::state::LianaSettingsUI;
+
+    fn from_file(network_dir: &NetworkDirectory) -> Result<Self, SettingsError> {
+        LianaSettings::from_file(network_dir)
+    }
+
+    fn wallets(&self) -> &[Self::Wallet] {
+        &self.wallets
+    }
+
+    fn wallets_mut(&mut self) -> &mut Vec<Self::Wallet> {
+        &mut self.wallets
+    }
+
+    fn create_app_for_remote_backend(
+        wallet_id: WalletId,
+        remote_backend: BackendWalletClient,
+        wallet: api::Wallet,
+        coins: ListCoinsResult,
+        liana_dir: LianaDirectory,
+        network: bitcoin::Network,
+        config: app::Config,
+    ) -> Option<Result<(app::App<Self>, Task<app::message::Message>), SettingsError>> {
+        Some(crate::gui::tab::create_app_with_remote_backend(
+            wallet_id,
+            remote_backend,
+            wallet,
+            coins,
+            liana_dir,
+            network,
+            config,
+        ))
+    }
+}
+
+/// Backward compatibility type alias.
+pub type Settings = LianaSettings;
+
+pub async fn update_settings_file<S, F>(
     network_dir: &NetworkDirectory,
     updater: F,
 ) -> Result<(), SettingsError>
 where
-    F: FnOnce(Settings) -> Settings,
+    S: SettingsTrait,
+    F: FnOnce(S) -> S,
 {
     let path = network_dir.path().join(SETTINGS_FILE_NAME);
     let file_exists = tokio::fs::try_exists(&path).await.unwrap_or(false);
@@ -70,21 +201,21 @@ where
         .await
         .map_err(|e| SettingsError::ReadingFile(format!("Locking file: {:?}", e)))?;
 
-    let settings = if file_exists {
+    let settings: S = if file_exists {
         let mut file_content = Vec::new();
         file.read_to_end(&mut file_content)
             .await
             .map_err(|e| SettingsError::ReadingFile(format!("Reading file content: {}", e)))?;
 
-        serde_json::from_slice::<Settings>(&file_content)
+        serde_json::from_slice::<S>(&file_content)
             .map_err(|e| SettingsError::ReadingFile(e.to_string()))?
     } else {
-        Settings::default()
+        S::default()
     };
 
     let settings = updater(settings);
 
-    if settings.wallets.is_empty() {
+    if settings.wallets().is_empty() {
         tokio::fs::remove_file(&path)
             .await
             .map_err(|e| SettingsError::ReadingFile(e.to_string()))?;
@@ -133,7 +264,7 @@ impl AuthConfig {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct WalletSettings {
+pub struct LianaWalletSettings {
     pub name: String,
     pub alias: Option<String>,
     pub descriptor_checksum: String,
@@ -156,15 +287,15 @@ pub struct WalletSettings {
     pub fiat_price: Option<fiat::PriceSetting>,
 }
 
-impl WalletSettings {
+impl LianaWalletSettings {
     pub fn from_file<F>(
         network_dir: &NetworkDirectory,
         selecter: F,
     ) -> Result<Option<Self>, SettingsError>
     where
-        F: FnMut(&WalletSettings) -> bool,
+        F: FnMut(&LianaWalletSettings) -> bool,
     {
-        Settings::from_file(network_dir).map(|cache| cache.wallets.into_iter().find(selecter))
+        LianaSettings::from_file(network_dir).map(|cache| cache.wallets.into_iter().find(selecter))
     }
 
     pub fn keys_aliases(&self) -> HashMap<Fingerprint, String> {
@@ -213,6 +344,55 @@ impl WalletSettings {
         }
     }
 }
+
+impl WalletSettingsTrait for LianaWalletSettings {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn alias(&self) -> Option<&str> {
+        self.alias.as_deref()
+    }
+
+    fn descriptor_checksum(&self) -> &str {
+        &self.descriptor_checksum
+    }
+
+    fn pinned_at(&self) -> Option<i64> {
+        self.pinned_at
+    }
+
+    fn wallet_id(&self) -> WalletId {
+        LianaWalletSettings::wallet_id(self)
+    }
+
+    fn keys(&self) -> &[KeySetting] {
+        &self.keys
+    }
+
+    fn hardware_wallets(&self) -> &[HardwareWalletConfig] {
+        &self.hardware_wallets
+    }
+
+    fn remote_backend_auth(&self) -> Option<&AuthConfig> {
+        self.remote_backend_auth.as_ref()
+    }
+
+    fn fiat_price(&self) -> Option<&fiat::PriceSetting> {
+        self.fiat_price.as_ref()
+    }
+
+    fn keys_aliases(&self) -> HashMap<Fingerprint, String> {
+        LianaWalletSettings::keys_aliases(self)
+    }
+
+    fn provider_keys(&self) -> HashMap<Fingerprint, ProviderKey> {
+        LianaWalletSettings::provider_keys(self)
+    }
+}
+
+/// Backward compatibility type alias.
+pub type WalletSettings = LianaWalletSettings;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WalletId {
@@ -467,7 +647,7 @@ pub mod global {
                     .map_err(|e| format!("Reading file: {e}"))?;
 
                 if !write {
-                    file.unlock().map_err(|e| format!("Unlocking file: {e}"))?;
+                    fs2::FileExt::unlock(&file).map_err(|e| format!("Unlocking file: {e}"))?;
                 }
 
                 (
@@ -513,7 +693,7 @@ pub mod global {
                     .map_err(|e| format!("Failed to write file: {e}"))?;
                 file.set_len(content.len() as u64)
                     .map_err(|e| format!("Failed to truncate file: {e}"))?;
-                file.unlock().map_err(|e| format!("Unlocking file: {e}"))?;
+                fs2::FileExt::unlock(&file).map_err(|e| format!("Unlocking file: {e}"))?;
             }
 
             Ok(())

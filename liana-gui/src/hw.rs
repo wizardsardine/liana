@@ -860,7 +860,7 @@ struct AsRefWrap<'a, T> {
     inner: &'a T,
 }
 
-impl<'a, T> AsRef<T> for AsRefWrap<'a, T> {
+impl<T> AsRef<T> for AsRefWrap<'_, T> {
     fn as_ref(&self) -> &T {
         self.inner
     }
