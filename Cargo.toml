@@ -7,8 +7,16 @@ members = [
     "liana-gui",
     "liana-ui",
     "liana-connect",
+    "liana-business/business-settings",
 ]
-default-members = ["liana", "lianad", "liana-gui", "liana-ui",  "liana-connect"]
+default-members = [
+    "liana",
+    "lianad",
+    "liana-gui",
+    "liana-ui",
+    "liana-connect",
+    "liana-business/business-settings",
+]
 
 [workspace.dependencies]
 # Internal crates
