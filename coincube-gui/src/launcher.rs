@@ -51,7 +51,7 @@ pub enum State {
     PinMigrationRequired {
         cubes_needing_pin: Vec<CubeSettings>,
         all_cubes: Vec<CubeSettings>,
-    }
+    },
 }
 
 pub struct Launcher {
@@ -1097,30 +1097,28 @@ async fn check_network_datadir(path: NetworkDirectory) -> Result<State, String> 
     // Try to load cubes from settings
     match settings::Settings::from_file(&path) {
         Ok(s) => {
-        let cubes_needing_pin: Vec<CubeSettings> = s.cubes.iter()
-        .filter(|c| !c.has_pin())
-        .cloned()
-        .collect();
+            let cubes_needing_pin: Vec<CubeSettings> =
+                s.cubes.iter().filter(|c| !c.has_pin()).cloned().collect();
 
-        if !cubes_needing_pin.is_empty() {
-            // do not touch settings file, show migration UI instead
-            return Ok(State::PinMigrationRequired {
-                cubes_needing_pin,
-                all_cubes: s.cubes,
-            });
-        }
+            if !cubes_needing_pin.is_empty() {
+                // do not touch settings file, show migration UI instead
+                return Ok(State::PinMigrationRequired {
+                    cubes_needing_pin,
+                    all_cubes: s.cubes,
+                });
+            }
 
-        // All cubes have PIN, continue
-        if s.cubes.is_empty() {
-            Ok(State::NoCube)
-        } else {
-            Ok(State::Cubes {
-                cubes: s.cubes,
-                create_cube: false,
-            })
+            // All cubes have PIN, continue
+            if s.cubes.is_empty() {
+                Ok(State::NoCube)
+            } else {
+                Ok(State::Cubes {
+                    cubes: s.cubes,
+                    create_cube: false,
+                })
+            }
         }
-    }
-    Err(settings::SettingsError::NotFound) => Ok(State::NoCube),
-    Err(e) => Err(e.to_string()),
+        Err(settings::SettingsError::NotFound) => Ok(State::NoCube),
+        Err(e) => Err(e.to_string()),
     }
 }

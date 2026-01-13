@@ -13,7 +13,7 @@ use breez_sdk_liquid::prelude::{
     InputType, Payment, PreparePayOnchainResponse, PrepareSendResponse,
 };
 use coincube_core::miniscript::bitcoin::Amount;
-use coincube_core::miniscript::bitcoin::{bip32::Fingerprint, Address, OutPoint, Txid};
+use coincube_core::miniscript::bitcoin::{bip32::Fingerprint, Address, OutPoint};
 use coincube_core::spend::SpendCreationError;
 
 pub trait Close {

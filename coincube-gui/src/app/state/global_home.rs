@@ -524,7 +524,7 @@ impl State for GlobalHome {
                                         labels: HashMap::new(),
                                     });
                                 }
-                                 Err(_) => {
+                                Err(_) => {
                                     log::error!(
                                         "Address {} is not valid for network {:?}",
                                         addr_str,
