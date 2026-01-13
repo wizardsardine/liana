@@ -194,7 +194,7 @@ impl HotSigner {
             // Skip Active wallet mnemonics if requested (they're managed by Breez SDK)
             if skip_active {
                 if let Some(filename) = path.file_name().and_then(|n| n.to_str()) {
-                    if filename.contains("-active-") {
+                    if filename.contains("-active_") {
                         continue;
                     }
                 }
@@ -410,11 +410,11 @@ impl HotSigner {
             .map_err(|e| SignerError::Encryption(e.to_string()))?;
 
         let params = Params::new(
-            65536,  // 64 MiB memory (in KiB)
+            262144, // 256 MiB memory (in KiB)
             3,      // 3 iterations
             4,      // 4 parallel lanes
             Some(32) // 32-byte output for AES-256 key
-        ).map_err(|e| SignerError::Encryption(e.to_string()))?;  
+        ).map_err(|e| SignerError::Encryption(e.to_string()))?;
 
         // Derive key from password using Argon2
         let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
@@ -488,7 +488,7 @@ impl HotSigner {
 
         // Must use same params as encrypt_mnemonic
         let params = Params::new(
-            65536,  // 64 MiB memory (in KiB)
+            262144, // 256 MiB memory (in KiB)
             3,      // 3 iterations
             4,      // 4 parallel lanes
             Some(32) // 32-byte output for AES-256 key
