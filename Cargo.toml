@@ -7,6 +7,8 @@ members = [
     "liana-gui",
     "liana-ui",
     "liana-connect",
+    "liana-business",
+    "liana-business/business-installer",
     "liana-business/business-settings",
 ]
 default-members = [
@@ -15,6 +17,8 @@ default-members = [
     "liana-gui",
     "liana-ui",
     "liana-connect",
+    "liana-business",
+    "liana-business/business-installer",
     "liana-business/business-settings",
 ]
 

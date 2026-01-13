@@ -167,9 +167,13 @@ impl State {
     }
     fn on_login_send_token(&mut self) {
         let email = self.views.login.email.form.value.clone();
+        tracing::debug!("on_login_send_token: email={} valid={}", email, self.views.login.email.form.valid);
         if self.views.login.email.form.valid && !email.is_empty() {
+            tracing::debug!("on_login_send_token: calling auth_request");
             self.views.login.email.processing = true;
             self.backend.auth_request(email);
+        } else {
+            tracing::debug!("on_login_send_token: skipped - invalid or empty");
         }
     }
     fn on_login_resend_token(&mut self) {
@@ -809,6 +813,7 @@ impl State {
     }
 
     fn on_backend_auth_code_sent(&mut self) -> Task<Msg> {
+        tracing::debug!("on_backend_auth_code_sent: transitioning to CodeEntry");
         self.views.login.current = views::LoginState::CodeEntry;
         // Clear any previous errors
         self.views.login.code.form.warning = None;

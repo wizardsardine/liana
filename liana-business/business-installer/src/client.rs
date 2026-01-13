@@ -167,11 +167,23 @@ impl Client {
         notif_waker: &SharedWaker,
         msg: Message,
     ) {
-        if notif_sender.send(msg).is_ok() {
-            if let Ok(guard) = notif_waker.lock() {
-                if let Some(waker) = guard.as_ref() {
-                    waker.wake_by_ref();
+        tracing::debug!("send_notif: sending {:?}", msg);
+        match notif_sender.send(msg) {
+            Ok(()) => {
+                tracing::debug!("send_notif: sent to channel successfully");
+                if let Ok(guard) = notif_waker.lock() {
+                    if let Some(waker) = guard.as_ref() {
+                        tracing::debug!("send_notif: waking stream");
+                        waker.wake_by_ref();
+                    } else {
+                        tracing::debug!("send_notif: no waker available");
+                    }
+                } else {
+                    tracing::debug!("send_notif: failed to lock waker");
                 }
+            }
+            Err(e) => {
+                tracing::debug!("send_notif: failed to send: {:?}", e);
             }
         }
     }
@@ -295,19 +307,33 @@ impl Client {
     ) -> (Vec<crate::state::views::login::CachedAccount>, Vec<String>) {
         use crate::state::views::login::CachedAccount;
 
+        tracing::debug!("validate_all_cached_tokens: starting validation");
+
         let network_dir = match &self.network_dir {
             Some(nd) => nd.clone(),
-            None => return (vec![], vec![]),
+            None => {
+                tracing::debug!("validate_all_cached_tokens: no network_dir configured");
+                return (vec![], vec![]);
+            }
         };
 
         let cache = match ConnectCache::from_file(&network_dir) {
             Ok(c) => c,
-            Err(_) => return (vec![], vec![]),
+            Err(e) => {
+                tracing::debug!("validate_all_cached_tokens: failed to read cache: {:?}", e);
+                return (vec![], vec![]);
+            }
         };
 
         if cache.accounts.is_empty() {
+            tracing::debug!("validate_all_cached_tokens: no cached accounts");
             return (vec![], vec![]);
         }
+
+        tracing::debug!(
+            "validate_all_cached_tokens: validating {} accounts",
+            cache.accounts.len()
+        );
 
         let network = self.network.unwrap_or(Network::Signet);
         let mut valid = vec![];
@@ -327,15 +353,27 @@ impl Client {
 
                 if account.tokens.expires_at > now + 60 {
                     // Token still valid
+                    tracing::debug!(
+                        "validate_all_cached_tokens: token valid for email={}",
+                        account.email
+                    );
                     valid.push(CachedAccount {
                         email: account.email,
                         tokens: account.tokens,
                     });
                 } else {
                     // Token expired, try to refresh
+                    tracing::debug!(
+                        "validate_all_cached_tokens: token expired for email={}, attempting refresh",
+                        account.email
+                    );
                     let config = match &config {
                         Some(cfg) => cfg,
                         None => {
+                            tracing::warn!(
+                                "validate_all_cached_tokens: no config available, removing account email={}",
+                                account.email
+                            );
                             to_remove.push(account.email);
                             continue;
                         }
@@ -352,6 +390,10 @@ impl Client {
                         .await
                     {
                         Ok(new_tokens) => {
+                            tracing::debug!(
+                                "validate_all_cached_tokens: token refreshed for email={}",
+                                account.email
+                            );
                             // Update cache with refreshed tokens
                             let updated = match update_connect_cache(
                                 &network_dir,
@@ -369,13 +411,24 @@ impl Client {
                                 tokens: updated,
                             });
                         }
-                        Err(_) => {
+                        Err(e) => {
+                            tracing::warn!(
+                                "validate_all_cached_tokens: token refresh failed for email={}: {:?}",
+                                account.email,
+                                e
+                            );
                             to_remove.push(account.email);
                         }
                     }
                 }
             }
         });
+
+        tracing::debug!(
+            "validate_all_cached_tokens: completed, valid={} to_remove={}",
+            valid.len(),
+            to_remove.len()
+        );
 
         (valid, to_remove)
     }
@@ -386,9 +439,17 @@ impl Client {
             return;
         }
 
+        tracing::debug!(
+            "clear_invalid_tokens: removing {} invalid tokens",
+            emails_to_remove.len()
+        );
+
         let network_dir = match &self.network_dir {
             Some(nd) => nd.clone(),
-            None => return,
+            None => {
+                tracing::debug!("clear_invalid_tokens: no network_dir configured");
+                return;
+            }
         };
 
         // Get current valid accounts and compute emails to keep
@@ -400,35 +461,52 @@ impl Client {
                     .map(|a| a.email)
                     .filter(|e| !emails_to_remove.contains(e))
                     .collect(),
-                Err(_) => return,
+                Err(e) => {
+                    tracing::debug!("clear_invalid_tokens: failed to read cache: {:?}", e);
+                    return;
+                }
             }
         };
+
+        tracing::debug!(
+            "clear_invalid_tokens: keeping {} valid accounts",
+            valid_emails.len()
+        );
 
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
             let _ = filter_connect_cache(&network_dir, &valid_emails).await;
         });
+
+        tracing::debug!("clear_invalid_tokens: cache updated");
     }
 
     /// Logout: clear token, close connection, remove auth cache, and clear data caches
     pub fn logout(&mut self) {
+        tracing::info!("logout: logging out user");
+
         // Stop token refresh thread
+        tracing::debug!("logout: stopping token refresh thread");
         self.stop_token_refresh_thread();
 
         // Clear token from memory
+        tracing::debug!("logout: clearing token from memory");
         if let Ok(mut token_guard) = self.token.lock() {
             *token_guard = None;
         }
 
         // Clear auth client
+        tracing::debug!("logout: clearing auth client");
         if let Ok(mut auth_client_guard) = self.auth_client.lock() {
             *auth_client_guard = None;
         }
 
         // Close WebSocket connection
+        tracing::debug!("logout: closing WebSocket connection");
         self.close();
 
         // Clear org/wallet/user caches
+        tracing::debug!("logout: clearing data caches");
         if let Ok(mut orgs) = self.orgs.lock() {
             orgs.clear();
         }
@@ -441,6 +519,7 @@ impl Client {
 
         // Remove auth cache from disk if network_dir and email are available
         if let (Some(network_dir), Some(email)) = (self.network_dir.clone(), self.email.clone()) {
+            tracing::debug!("logout: removing auth cache from disk for email={}", email);
             let network_dir_clone = network_dir.clone();
             let email_clone = email.clone();
 
@@ -477,6 +556,8 @@ impl Client {
 
         // Clear email
         self.email = None;
+
+        tracing::info!("logout: logout complete");
     }
 }
 
@@ -492,9 +573,12 @@ pub struct TokenRetrievalData {
 /// Try to get a cached token, refreshing it if expired.
 // NOTE: this function is blocking
 fn try_get_cached_token(data: &TokenRetrievalData) -> Option<String> {
+    tracing::debug!("try_get_cached_token: checking for existing token");
+
     // First check if we already have a token
     if let Ok(token_guard) = data.token.lock() {
         if let Some(t) = token_guard.as_ref() {
+            tracing::debug!("try_get_cached_token: token already in memory");
             return Some(t.clone());
         }
     }
@@ -502,7 +586,10 @@ fn try_get_cached_token(data: &TokenRetrievalData) -> Option<String> {
     // Check if we have network_dir and email
     let (network_dir, email) = match (data.network_dir.clone(), data.email.clone()) {
         (Some(nd), Some(e)) => (nd, e),
-        _ => return None,
+        _ => {
+            tracing::debug!("try_get_cached_token: missing network_dir or email");
+            return None;
+        }
     };
 
     let network = data.network.unwrap_or(Network::Signet);
@@ -529,6 +616,8 @@ fn try_get_cached_token(data: &TokenRetrievalData) -> Option<String> {
 
     let auth_client_for_refresh = existing_auth_client.or(fallback_auth_client);
 
+    tracing::debug!("try_get_cached_token: checking cache for email={}", email);
+
     let result = futures::executor::block_on(async {
         // Try to get cached account
         match Account::from_cache(&network_dir, &email) {
@@ -539,12 +628,21 @@ fn try_get_cached_token(data: &TokenRetrievalData) -> Option<String> {
                 // Check if token is expired (with some buffer time)
                 if tokens.expires_at > now + 60 {
                     // Token is still valid
+                    tracing::debug!(
+                        "try_get_cached_token: token valid, expires in {} seconds",
+                        tokens.expires_at - now
+                    );
                     Ok(tokens.access_token.clone())
                 } else {
                     // Token expired, try to refresh
+                    tracing::debug!(
+                        "try_get_cached_token: token expired {} seconds ago, attempting refresh",
+                        now - tokens.expires_at
+                    );
                     if let Some(client) = auth_client_for_refresh {
                         match client.refresh_token(&tokens.refresh_token).await {
                             Ok(new_tokens) => {
+                                tracing::debug!("try_get_cached_token: token refreshed successfully");
                                 // Update cache
                                 match update_connect_cache(
                                     &network_dir,
@@ -558,16 +656,26 @@ fn try_get_cached_token(data: &TokenRetrievalData) -> Option<String> {
                                     Err(_) => Ok(new_tokens.access_token),
                                 }
                             }
-                            Err(_) => Err(()),
+                            Err(e) => {
+                                tracing::warn!("try_get_cached_token: token refresh failed: {:?}", e);
+                                Err(())
+                            }
                         }
                     } else {
                         // No auth client, can't refresh
+                        tracing::debug!("try_get_cached_token: no auth client available for refresh");
                         Err(())
                     }
                 }
             }
-            Ok(None) => Err(()), // No cached account
-            Err(_) => Err(()),   // Error reading cache
+            Ok(None) => {
+                tracing::debug!("try_get_cached_token: no cached account found");
+                Err(())
+            }
+            Err(e) => {
+                tracing::debug!("try_get_cached_token: error reading cache: {:?}", e);
+                Err(())
+            }
         }
     });
 
@@ -596,7 +704,10 @@ fn ping_thread(
         .name("ping".into())
         .stack_size(POLLING_THREAD_STACK_SIZE)
         .spawn(move || {
+            tracing::debug!("ping_thread: started");
+
             // Send first ping immediately after connection
+            tracing::debug!("ping_thread: sending initial ping");
             let _ = request_sender.send(Request::Ping);
             {
                 let mut ping_time = last_ping.lock().expect("poisoned");
@@ -606,9 +717,11 @@ fn ping_thread(
             loop {
                 thread::sleep(Duration::from_secs(60));
                 if !connected.load(Ordering::Relaxed) {
+                    tracing::debug!("ping_thread: connection closed, stopping");
                     break;
                 }
                 // Send ping
+                tracing::debug!("ping_thread: sending ping");
                 let _ = request_sender.send(Request::Ping);
                 // Record ping time
                 {
@@ -630,9 +743,12 @@ fn ping_timeout_checker_thread(
         .name("ping-timeout".into())
         .stack_size(POLLING_THREAD_STACK_SIZE)
         .spawn(move || {
+            tracing::debug!("ping_timeout_checker_thread: started");
+
             loop {
                 thread::sleep(Duration::from_secs(1));
                 if !connected.load(Ordering::Relaxed) {
+                    tracing::debug!("ping_timeout_checker_thread: connection closed, stopping");
                     break;
                 }
                 let should_disconnect = {
@@ -645,6 +761,9 @@ fn ping_timeout_checker_thread(
                     }
                 };
                 if should_disconnect {
+                    tracing::warn!(
+                        "ping_timeout_checker_thread: ping timeout (30s without pong), disconnecting"
+                    );
                     connected.store(false, Ordering::Relaxed);
                     let _ = notif_sender.send(Notification::Disconnected.into());
                     break;
@@ -732,10 +851,16 @@ fn wss_thread(
     notif_waker: SharedWaker,
     connected: Arc<AtomicBool>,
 ) {
+    tracing::debug!("wss_thread: starting, url={}", url);
+
     // Get token (this may involve network calls to refresh, but we're in a background thread)
     let token = match try_get_cached_token(&token_data) {
-        Some(t) => t,
+        Some(t) => {
+            tracing::debug!("wss_thread: token retrieved successfully");
+            t
+        }
         None => {
+            tracing::error!("wss_thread: failed to get token");
             Client::send_notif(
                 &notif_sender,
                 &notif_waker,
@@ -751,9 +876,15 @@ fn wss_thread(
         format!("wss://{}", url)
     };
 
+    tracing::debug!("wss_thread: connecting to {}", url);
+
     let (mut ws_stream, _) = match tungstenite::connect(&url) {
-        Ok(stream) => stream,
-        Err(_) => {
+        Ok(stream) => {
+            tracing::debug!("wss_thread: WebSocket connection established");
+            stream
+        }
+        Err(e) => {
+            tracing::error!("wss_thread: WebSocket connection failed: {:?}", e);
             Client::send_notif(
                 &notif_sender,
                 &notif_waker,
@@ -764,8 +895,10 @@ fn wss_thread(
     };
 
     // Send connect message
+    tracing::debug!("wss_thread: sending connect message with version={}", version);
     let (msg, _id) = Request::Connect { version }.to_ws_message(&token);
     if ws_stream.send(msg).is_err() {
+        tracing::error!("wss_thread: failed to send connect message");
         Client::send_notif(
             &notif_sender,
             &notif_waker,
@@ -786,9 +919,11 @@ fn wss_thread(
     }
 
     // we expect the server to ACK the connection w/ a Response::Connected
+    tracing::debug!("wss_thread: waiting for Connected response");
     if let Ok(msg) = ws_stream.read() {
         match Response::from_ws_message(msg) {
             Ok((Response::Connected { user, .. }, _)) => {
+                tracing::info!("wss_thread: connected successfully, user_id={}", user);
                 // Store the authenticated user's ID
                 if let Ok(mut id) = user_id.lock() {
                     *id = Some(user);
@@ -796,8 +931,21 @@ fn wss_thread(
                 connected.store(true, Ordering::Relaxed);
                 Client::send_notif(&notif_sender, &notif_waker, Notification::Connected.into());
             }
-            _ => {
-                // NOTE: Handshake fails if we receive everything else than Response::Connected
+            Ok((response, _)) => {
+                // NOTE: Handshake fails if we receive anything other than Response::Connected
+                tracing::error!(
+                    "wss_thread: handshake failed, expected Connected, got {:?}",
+                    response
+                );
+                Client::send_notif(
+                    &notif_sender,
+                    &notif_waker,
+                    Notification::Error(Error::WsConnection).into(),
+                );
+                return;
+            }
+            Err(e) => {
+                tracing::error!("wss_thread: handshake failed, parse error: {:?}", e);
                 Client::send_notif(
                     &notif_sender,
                     &notif_waker,
@@ -807,6 +955,7 @@ fn wss_thread(
             }
         }
     } else {
+        tracing::error!("wss_thread: handshake failed, no response from server");
         Client::send_notif(
             &notif_sender,
             &notif_waker,
@@ -855,6 +1004,8 @@ fn wss_thread(
         notif_waker.clone(),
     );
 
+    tracing::debug!("wss_thread: entering main message loop");
+
     loop {
         channel::select! {
             recv(request_receiver) -> rq => {
@@ -862,11 +1013,13 @@ fn wss_thread(
                     Ok(request) => {
                         // Handle close request specially
                         if matches!(request, Request::Close) {
+                            tracing::debug!("wss_thread: received close request");
                             let _ = ws_stream.close(None);
                             connected.store(false, Ordering::Relaxed);
                             break;
                         }
 
+                        tracing::debug!("wss_thread: sending request {:?}", request);
                         let (ws_msg, request_id) = request.to_ws_message(&token);
                         // Cache sent request for response validation
                         {
@@ -878,12 +1031,13 @@ fn wss_thread(
                             let mut requests = sent_requests2.lock().expect("poisoned");
                             requests.remove(&request_id);
                             Client::send_notif(&notif_sender, &notif_waker, Notification::Error(Error::WsConnection).into());
-                            error!("Failed to send WebSocket request");
+                            error!("wss_thread: failed to send WebSocket request");
                             break;
                         }
                     }
                     Err(_) => {
                         // Channel closed, exit loop
+                        tracing::debug!("wss_thread: request channel closed, exiting");
                         break;
                     }
                 }
@@ -894,6 +1048,7 @@ fn wss_thread(
                 //      configured with .setnonblocking(true)
                 match ws_stream.read() {
                     Ok(WsMessage::Text(text)) => {
+                        tracing::debug!("wss_thread: received text message");
                         // Pass the message directly to the handler
                         let msg = WsMessage::Text(text);
                         if let Err(e) = handle_wss_message(
@@ -913,7 +1068,7 @@ fn wss_thread(
                         }
                     }
                     Ok(WsMessage::Close(_)) => {
-                        tracing::info!("Websockect connection closed.");
+                        tracing::info!("wss_thread: WebSocket connection closed by server");
                         Client::send_notif(&notif_sender, &notif_waker, Notification::Disconnected.into());
                         break;
                     }
@@ -922,18 +1077,20 @@ fn wss_thread(
                         thread::sleep(Duration::from_millis(10));
                     }
                     Err(e) => {
-                        tracing::info!("Websocket error: {e}");
+                        tracing::warn!("wss_thread: WebSocket error: {:?}", e);
                         Client::send_notif(&notif_sender, &notif_waker, Notification::Disconnected.into());
                         break;
                     }
                     Ok(m) => {
                         // Ignore other message types
-                        tracing::warn!("Websocket unexpected: {m}");
+                        tracing::debug!("wss_thread: received unexpected message type: {}", m);
                     }
                 }
             }
         }
     }
+
+    tracing::debug!("wss_thread: exiting");
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -953,6 +1110,12 @@ fn handle_wss_message(
     let (response, request_id) = Response::from_ws_message(msg)
         .map_err(|e| format!("Failed to convert WSS message: {}", e))?;
     let request_id = request_id.and_then(|s| Uuid::try_parse(&s).ok());
+
+    tracing::debug!(
+        "handle_wss_message: received response type={:?} request_id={:?}",
+        std::mem::discriminant(&response),
+        request_id
+    );
 
     // Handle error responses first - they're always valid and we remove from cache
     if let Response::Error { error } = &response {
@@ -976,13 +1139,11 @@ fn handle_wss_message(
 
         if let Some(expected) = expected_response_type {
             if !matches_response_type(&response, expected) {
-                // Remove from cache on mismatch
+                tracing::error!("Response {response:?} do not match request {request:?}");
                 return Err(format!(
-                    "Response type mismatchfor {req_id}: expected {:?}, got {:?}",
+                    "Response type mismatch for {req_id}: expected {:?}, got {:?}",
                     expected, response
                 ));
-            } else {
-                tracing::error!("Response {response:?} do not match request {request:?}")
             }
             // Remove from cache on successful match
             let mut requests = sent_requests.lock().expect("poisoned");
@@ -1071,6 +1232,7 @@ fn handle_connected(
 }
 
 fn handle_pong(last_ping_time: &Arc<Mutex<Option<Instant>>>) -> Result<(), String> {
+    tracing::debug!("handle_pong: received pong, connection healthy");
     // Reset ping tracking on successful pong
     {
         let mut ping_time = last_ping_time.lock().expect("poisoned");
@@ -1102,6 +1264,12 @@ fn handle_org(
 ) -> Result<(), String> {
     let org_id = org.id;
 
+    tracing::debug!(
+        "handle_org: received org update, org_id={} name={}",
+        org_id,
+        org.name
+    );
+
     fetch_user_maybe(org.last_editor, users, request_sender);
 
     // Update cache
@@ -1109,24 +1277,36 @@ fn handle_org(
 
     // If any users are not cached, send fetch_user requests.
     // The responses will be handled automatically by handle_user().
+    let mut missing_users = 0;
     {
         let users_guard = users.lock().expect("poisoned");
         for user_id in &org.users {
             if !users_guard.contains_key(user_id) {
                 let _ = request_sender.send(Request::FetchUser { id: *user_id });
+                missing_users += 1;
             }
         }
     }
 
     // If any wallets are not cached, send fetch_wallet requests.
     // The responses will be handled automatically by handle_wallet().
+    let mut missing_wallets = 0;
     {
         let wallets_guard = wallets.lock().expect("poisoned");
         for wallet_id in &org.wallets {
             if !wallets_guard.contains_key(wallet_id) {
                 let _ = request_sender.send(Request::FetchWallet { id: *wallet_id });
+                missing_wallets += 1;
             }
         }
+    }
+
+    if missing_users > 0 || missing_wallets > 0 {
+        tracing::debug!(
+            "handle_org: fetching {} missing users, {} missing wallets",
+            missing_users,
+            missing_wallets
+        );
     }
 
     // Send response
@@ -1148,6 +1328,13 @@ fn handle_wallet(
 ) -> Result<(), String> {
     let wallet_id = wallet.id;
     let owner_id = wallet.owner;
+
+    tracing::debug!(
+        "handle_wallet: received wallet update, wallet_id={} alias={} status={:?}",
+        wallet_id,
+        wallet.alias,
+        wallet.status
+    );
 
     // Fetch last editors
     fetch_user_maybe(wallet.last_editor, users, request_sender);
@@ -1173,6 +1360,10 @@ fn handle_wallet(
     {
         let users_guard = users.lock().expect("poisoned");
         if !users_guard.contains_key(&owner_id) {
+            tracing::debug!(
+                "handle_wallet: fetching owner user_id={}",
+                owner_id
+            );
             let _ = request_sender.send(Request::FetchUser { id: owner_id });
         }
     }
@@ -1194,6 +1385,13 @@ fn handle_user(
     notification_waker: &SharedWaker,
 ) -> Result<(), String> {
     let user_id = user.uuid;
+
+    tracing::debug!(
+        "handle_user: received user update, user_id={} name={} role={:?}",
+        user_id,
+        user.name,
+        user.role
+    );
 
     fetch_user_maybe(user.last_editor, users, request_sender);
 
@@ -1222,8 +1420,21 @@ pub fn handle_delete_user_org(
 ) {
     if let Some(user) = user {
         if target_user != user {
+            tracing::debug!(
+                "handle_delete_user_org: ignoring deletion for different user, target={} current={}",
+                target_user,
+                user
+            );
             return;
         }
+
+        tracing::info!(
+            "handle_delete_user_org: user removed from org, user_id={} org_id={}",
+            user,
+            org
+        );
+
+        tracing::debug!("handle_delete_user_org: removing org from cache");
         orgs.lock().expect("poisoned").remove(&org);
 
         // Send response
@@ -1250,8 +1461,11 @@ macro_rules! check_connection {
 
 impl Backend for Client {
     fn connect_ws(&mut self, url: String, version: u8, notif_sender: channel::Sender<Message>) {
+        tracing::info!("connect_ws: connecting to WebSocket url={}", url);
+
         // Close existing connection if any
         if self.connected.load(Ordering::Relaxed) {
+            tracing::debug!("connect_ws: closing existing connection");
             self.close();
         }
 
@@ -1276,6 +1490,8 @@ impl Backend for Client {
         self.request_sender = Some(request_sender.clone());
         self.connected = Arc::new(AtomicBool::new(false));
         let connected = self.connected.clone();
+
+        tracing::debug!("connect_ws: spawning WebSocket thread");
 
         let notif_sender = notif_sender.clone();
         let notif_waker = self.notif_waker.clone();
@@ -1410,6 +1626,8 @@ impl Backend for Client {
     }
 
     fn auth_code(&mut self, code: String) {
+        tracing::debug!("auth_code: starting OTP verification");
+
         let notif_sender = self.notif_sender.clone();
         let notif_waker = self.notif_waker.clone();
         let auth_client_shared = Arc::clone(&self.auth_client);
@@ -1426,15 +1644,21 @@ impl Backend for Client {
             let auth_client = match auth_client {
                 Some(client) => client,
                 None => {
+                    tracing::error!("auth_code: no auth client available");
                     Client::send_notif(&notif_sender, &notif_waker, Notification::LoginFail.into());
                     return;
                 }
             };
 
             // Verify OTP
+            tracing::debug!("auth_code: verifying OTP");
             let tokens = match auth_client.verify_otp(code.trim()).await {
-                Ok(tokens) => tokens,
-                Err(_) => {
+                Ok(tokens) => {
+                    tracing::debug!("auth_code: OTP verified successfully");
+                    tokens
+                }
+                Err(e) => {
+                    tracing::warn!("auth_code: OTP verification failed: {:?}", e);
                     Client::send_notif(&notif_sender, &notif_waker, Notification::LoginFail.into());
                     return;
                 }
@@ -1442,22 +1666,26 @@ impl Backend for Client {
 
             // Update cache if network_dir is available
             let access_token = if let Some(ref network_dir) = network_dir {
+                tracing::debug!("auth_code: updating token cache");
                 match update_connect_cache(network_dir, &tokens, &auth_client, false).await {
                     Ok(updated_tokens) => updated_tokens.access_token,
                     Err(e) => {
                         // Cache update failed, but we still have tokens
-                        tracing::error!("Fail to cache token on disk: {e}");
+                        tracing::error!("auth_code: failed to cache token on disk: {e}");
                         tokens.access_token
                     }
                 }
             } else {
                 // No network_dir, just use the token
+                tracing::debug!("auth_code: no network_dir, skipping cache update");
                 tokens.access_token
             };
 
             if let Ok(mut token_guard) = token_shared.lock() {
                 *token_guard = Some(access_token.clone());
             }
+
+            tracing::info!("auth_code: login successful");
 
             Client::send_notif(
                 &notif_sender,
@@ -1505,11 +1733,15 @@ impl Backend for Client {
 
     fn close(&mut self) {
         if !self.connected.load(Ordering::Relaxed) {
+            tracing::debug!("close: already disconnected");
             return;
         }
 
+        tracing::info!("close: closing WebSocket connection");
+
         // Send close message if possible
         if let Some(sender) = &self.request_sender {
+            tracing::debug!("close: sending close request");
             let _ = sender.send(Request::Close);
         }
 
@@ -1517,6 +1749,8 @@ impl Backend for Client {
 
         self.connected.store(false, Ordering::Relaxed);
         self.request_sender = None;
+
+        tracing::debug!("close: connection closed");
     }
 
     #[cfg(test)]
@@ -1530,6 +1764,11 @@ impl Backend for Client {
 
     fn edit_wallet(&mut self, wallet: Wallet) {
         check_connection!(self);
+
+        tracing::debug!(
+            "edit_wallet: sending edit request for wallet_id={}",
+            wallet.id
+        );
 
         if let Some(sender) = &self.request_sender {
             let _ = sender.send(Request::EditWallet { wallet });
@@ -1547,6 +1786,13 @@ impl Backend for Client {
 
     fn edit_xpub(&mut self, wallet_id: Uuid, xpub: Option<ws_business::Xpub>, key_id: u8) {
         check_connection!(self);
+
+        tracing::debug!(
+            "edit_xpub: sending edit request for wallet_id={} key_id={} xpub={}",
+            wallet_id,
+            key_id,
+            if xpub.is_some() { "present" } else { "none" }
+        );
 
         if let Some(sender) = &self.request_sender {
             let _ = sender.send(Request::EditXpub {
