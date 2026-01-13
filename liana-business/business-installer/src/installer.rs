@@ -73,6 +73,7 @@ impl Installer<'_, Message> for BusinessInstaller {
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
+        tracing::debug!("BusinessInstaller::update received {:?}", message);
         self.state.update(message)
     }
 
@@ -138,7 +139,10 @@ impl iced::futures::Stream for NotifListener {
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         // Use non-blocking try_recv to avoid blocking the async executor
         match self.receiver.try_recv() {
-            Ok(msg) => Poll::Ready(Some(msg)),
+            Ok(msg) => {
+                tracing::debug!("NotifListener: received {:?}", msg);
+                Poll::Ready(Some(msg))
+            }
             Err(channel::TryRecvError::Empty) => {
                 // Store the waker so senders can wake us when new messages arrive
                 if let Ok(mut guard) = self.waker.lock() {
