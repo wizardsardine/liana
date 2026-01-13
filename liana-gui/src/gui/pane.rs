@@ -41,7 +41,7 @@ where
 
     // used to generate tabs ids.
     tabs_created: usize,
-    _phantom: PhantomData<M>,
+    _phantom: PhantomData<(S, M)>,
 }
 
 impl<I, S, M> Pane<I, S, M>
