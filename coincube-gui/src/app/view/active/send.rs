@@ -15,8 +15,8 @@ use coincube_ui::{
     widget::*,
 };
 use iced::{
-    widget::{Column, Container, Row, Space},
-    Alignment, Length,
+    widget::{button as iced_button, container, Column, Container, Row, Space},
+    Alignment, Background, Length,
 };
 
 use crate::app::cache::Cache;
@@ -44,6 +44,7 @@ pub struct ActiveSendFlowConfig<'a> {
     pub cache: &'a Cache,
     pub input_type: &'a Option<InputType>,
     pub onchain_limits: Option<(u64, u64)>,
+    pub bitcoin_unit: BitcoinDisplayUnit,
 }
 
 pub fn active_send_with_flow<'a>(config: ActiveSendFlowConfig<'a>) -> Element<'a, Message> {
@@ -73,6 +74,7 @@ pub fn active_send_with_flow<'a>(config: ActiveSendFlowConfig<'a>) -> Element<'a
                         lightning_limits: config.lightning_limits,
                         onchain_limits: config.onchain_limits,
                         input_type: config.input_type,
+                        bitcoin_unit: config.bitcoin_unit,
                     })
                     .map(Message::ActiveSend);
                     coincube_ui::widget::modal::Modal::new(content, modal_content)
@@ -87,9 +89,14 @@ pub fn active_send_with_flow<'a>(config: ActiveSendFlowConfig<'a>) -> Element<'a
                     selected_currency,
                     converters,
                 } => {
-                    let modal_content =
-                        fiat_input_model(fiat_input, currencies, selected_currency, converters)
-                            .map(Message::ActiveSend);
+                    let modal_content = fiat_input_model(
+                        fiat_input,
+                        currencies,
+                        selected_currency,
+                        converters,
+                        config.bitcoin_unit,
+                    )
+                    .map(Message::ActiveSend);
                     coincube_ui::widget::modal::Modal::new(content, modal_content)
                         .on_blur(Some(Message::ActiveSend(ActiveSendMessage::PopupMessage(
                             view::SendPopupMessage::FiatClose,
@@ -107,12 +114,13 @@ pub fn active_send_with_flow<'a>(config: ActiveSendFlowConfig<'a>) -> Element<'a
                 config.fiat_converter.as_ref(),
                 config.prepare_response,
                 config.is_sending,
+                config.bitcoin_unit,
             )
             .map(Message::ActiveSend);
             view::dashboard(config.menu, config.cache, None, content)
         }
         ActiveSendFlowState::Sent => {
-            let content = sent_page(config.amount).map(Message::ActiveSend);
+            let content = sent_page(config.amount, config.bitcoin_unit).map(Message::ActiveSend);
             view::dashboard(config.menu, config.cache, None, content)
         }
     };
@@ -167,16 +175,11 @@ pub fn active_send_view<'a>(
     let input_section = Column::new()
         .spacing(20)
         .width(Length::Fill)
-        .max_width(800)
         .align_x(Alignment::Center)
         .push(
-            Container::new(
-                text("Enter Invoice, Lightning Address, or BTC Address")
-                    .size(16)
-                    .bold(),
-            )
-            .width(Length::Fill)
-            .align_x(Alignment::Center),
+            Container::new(h4_bold("Enter Invoice, Lightning Address, or BTC Address"))
+                .padding(iced::Padding::new(0.0).top(5))
+                .width(Length::Fill),
         )
         .push(
             Row::new()
@@ -240,8 +243,12 @@ pub fn active_send_view<'a>(
                 .fiat_amount
                 .as_ref()
                 .map(|fiat| format!("~{} {}", fiat.to_rounded_string(), fiat.currency()));
+            let mut amount = tx.amount.clone();
+            if !tx.is_incoming {
+                amount = amount + tx.fees_sat;
+            }
 
-            let mut item = TransactionListItem::new(direction, &tx.amount, bitcoin_unit)
+            let mut item = TransactionListItem::new(direction, &amount, bitcoin_unit)
                 .with_type(tx_type)
                 .with_label(tx.description.clone())
                 .with_time_ago(tx.time_ago.clone());
@@ -283,14 +290,59 @@ pub fn active_send_view<'a>(
         }
     }
 
-    // History button - left justified
-    let history_button = button::transparent(Some(icon::history_icon()), "Transaction History")
+    let view_transaction_button = {
+        let icon = icon::history_icon()
+            .size(18)
+            .style(|_theme: &theme::Theme| iced::widget::text::Style {
+                color: Some(color::ORANGE),
+            });
+
+        let label = text("View All Transactions")
+            .size(15)
+            .style(|_theme: &theme::Theme| iced::widget::text::Style {
+                color: Some(color::ORANGE),
+            });
+
+        let button_content = Row::new()
+            .spacing(8)
+            .align_y(iced::alignment::Vertical::Center)
+            .push(icon)
+            .push(label);
+
+        iced_button(Container::new(button_content).padding([10, 20]).style(
+            |_theme: &theme::Theme| container::Style {
+                background: Some(Background::Color(color::TRANSPARENT)),
+                border: iced::Border {
+                    color: color::ORANGE,
+                    width: 1.5,
+                    radius: 20.0.into(),
+                },
+                ..Default::default()
+            },
+        ))
+        .style(|_theme: &theme::Theme, status| iced_button::Style {
+            background: Some(Background::Color(color::TRANSPARENT)),
+            text_color: match status {
+                iced_button::Status::Hovered => iced::color!(0xFF9D42),
+                iced_button::Status::Pressed => color::ORANGE,
+                _ => color::ORANGE,
+            },
+            border: iced::Border {
+                radius: 20.0.into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        })
         .on_press(ActiveSendMessage::History)
-        .width(Length::Fixed(250.0));
+    };
 
     content = content
-        .push(iced::widget::Space::new().height(Length::Fixed(10.0)))
-        .push(history_button);
+        .push(iced::widget::Space::new().height(Length::Fixed(20.0)))
+        .push(
+            Container::new(view_transaction_button)
+                .width(Length::Fill)
+                .center_x(Length::Fill),
+        );
 
     content.into()
 }
@@ -299,6 +351,7 @@ pub struct RecentTransaction {
     pub description: String,
     pub time_ago: String,
     pub amount: Amount,
+    pub fees_sat: Amount,
     pub fiat_amount: Option<FiatAmount>,
     pub is_incoming: bool,
     pub sign: &'static str,
@@ -315,6 +368,7 @@ pub struct AmountInputConfig<'a> {
     pub lightning_limits: Option<(u64, u64)>,
     pub onchain_limits: Option<(u64, u64)>,
     pub input_type: &'a Option<InputType>,
+    pub bitcoin_unit: BitcoinDisplayUnit,
 }
 
 pub fn amount_input_model<'a>(config: AmountInputConfig<'a>) -> Element<'a, ActiveSendMessage> {
@@ -328,9 +382,18 @@ pub fn amount_input_model<'a>(config: AmountInputConfig<'a>) -> Element<'a, Acti
         .push(iced::widget::Space::new().width(Length::Fill))
         .push(text("BALANCE: ").size(16))
         .push(
-            text(format!("{} BTC", config.btc_balance.to_btc()))
-                .size(16)
-                .color(color::ORANGE),
+            text(format!(
+                "{} {}",
+                if matches!(config.bitcoin_unit, BitcoinDisplayUnit::BTC) {
+                    config.btc_balance.to_btc().to_string()
+                } else {
+                    config.btc_balance.to_sat().to_string()
+                },
+                config.bitcoin_unit.to_string()
+            ))
+            .size(16)
+            .bold()
+            .color(color::ORANGE),
         )
         .width(Length::Fill)
         .align_y(Alignment::Center);
@@ -362,7 +425,7 @@ pub fn amount_input_model<'a>(config: AmountInputConfig<'a>) -> Element<'a, Acti
 
     let amount_row = Row::new()
         .spacing(10)
-        .push(text("Amount").size(16))
+        .push(text(format!("Amount ({})", config.bitcoin_unit.to_string())).size(16))
         .push(iced::widget::Space::new().width(Length::Fill))
         .align_y(Alignment::Center);
 
@@ -382,12 +445,18 @@ pub fn amount_input_model<'a>(config: AmountInputConfig<'a>) -> Element<'a, Acti
 
     let mut amount_input_section = Column::new().spacing(5);
 
-    amount_input_section = amount_input_section.push(
-        form::Form::new_amount_btc("Enter amount", config.amount, |v| {
-            ActiveSendMessage::PopupMessage(view::SendPopupMessage::AmountEdited(v))
-        })
-        .padding(10),
-    );
+    amount_input_section =
+        amount_input_section.push(if matches!(config.bitcoin_unit, BitcoinDisplayUnit::BTC) {
+            form::Form::new_amount_btc("Enter amount", config.amount, |v| {
+                ActiveSendMessage::PopupMessage(view::SendPopupMessage::AmountEdited(v))
+            })
+            .padding(10)
+        } else {
+            form::Form::new_amount_sats("Enter amount", config.amount, |v| {
+                ActiveSendMessage::PopupMessage(view::SendPopupMessage::AmountEdited(v))
+            })
+            .padding(10)
+        });
 
     if let Some(input_type) = config.input_type {
         if matches!(input_type, InputType::BitcoinAddress { .. }) {
@@ -403,12 +472,23 @@ pub fn amount_input_model<'a>(config: AmountInputConfig<'a>) -> Element<'a, Acti
                 );
             }
         } else if let Some((min_sat, max_sat)) = config.lightning_limits {
-            let min_btc = Amount::from_sat(min_sat).to_btc();
-            let max_btc = Amount::from_sat(max_sat).to_btc();
+            let min_btc = Amount::from_sat(min_sat);
+            let max_btc = Amount::from_sat(max_sat);
+            let (min_btc, max_btc) = match config.bitcoin_unit {
+                BitcoinDisplayUnit::BTC => {
+                    (min_btc.to_btc().to_string(), max_btc.to_btc().to_string())
+                }
+                BitcoinDisplayUnit::Sats => {
+                    (min_btc.to_sat().to_string(), max_btc.to_sat().to_string())
+                }
+            };
             amount_input_section = amount_input_section.push(
                 text(format!(
-                    "Enter an amount between {} BTC and {} BTC",
-                    min_btc, max_btc
+                    "Enter an amount between {} {} and {} {}",
+                    min_btc,
+                    config.bitcoin_unit.to_string(),
+                    max_btc,
+                    config.bitcoin_unit.to_string()
                 ))
                 .size(12),
             );
@@ -452,6 +532,7 @@ pub fn fiat_input_model<'a>(
     currencies: &'a [crate::services::fiat::Currency; 4],
     selected_currency: &'a crate::services::fiat::Currency,
     converters: &'a std::collections::HashMap<crate::services::fiat::Currency, FiatAmountConverter>,
+    bitcoin_unit: BitcoinDisplayUnit,
 ) -> Element<'a, ActiveSendMessage> {
     use coincube_ui::component::amount::DisplayAmount;
     use coincube_ui::icon::cross_icon;
@@ -546,24 +627,55 @@ pub fn fiat_input_model<'a>(
     );
 
     let (btc_amount_str, rate_str) = if let Some(converter) = converters.get(selected_currency) {
+        let default_string = format!(
+            "{} {}",
+            if matches!(bitcoin_unit, BitcoinDisplayUnit::BTC) {
+                "0.00000000".to_string()
+            } else {
+                "0".to_string()
+            },
+            bitcoin_unit.to_string()
+        );
         let btc_amount = if !fiat_input.value.is_empty() {
             if let Ok(fiat_amount) = FiatAmount::from_str_in(&fiat_input.value, *selected_currency)
             {
                 if let Ok(btc_amt) = converter.convert_to_btc(&fiat_amount) {
-                    format!("{:.8} BTC", btc_amt.to_btc())
+                    format!(
+                        "{} {}",
+                        if matches!(bitcoin_unit, BitcoinDisplayUnit::BTC) {
+                            btc_amt.to_btc().to_string()
+                        } else {
+                            btc_amt.to_sat().to_string()
+                        },
+                        bitcoin_unit.to_string()
+                    )
                 } else {
-                    "0.00000000 BTC".to_string()
+                    default_string
                 }
             } else {
-                "0.00000000 BTC".to_string()
+                default_string
             }
         } else {
-            "0.00000000 BTC".to_string()
+            default_string
+        };
+
+        let amount = if matches!(bitcoin_unit, BitcoinDisplayUnit::BTC) {
+            "1"
+        } else {
+            "1000"
+        };
+
+        let fiat_value = if matches!(bitcoin_unit, BitcoinDisplayUnit::BTC) {
+            converter.to_fiat_amount().to_formatted_string()
+        } else {
+            (converter.price_per_btc() / 100000.0f64).to_string()
         };
 
         let rate = format!(
-            "1 BTC = {} {}",
-            converter.to_fiat_amount().to_formatted_string(),
+            "{} {} = {} {}",
+            amount,
+            bitcoin_unit.to_string(),
+            fiat_value,
             selected_currency
         );
 
@@ -614,6 +726,7 @@ pub fn final_check_page<'a>(
     fiat_converter: Option<&FiatAmountConverter>,
     prepare_response: Option<&'a breez_sdk_liquid::prelude::PrepareSendResponse>,
     is_sending: bool,
+    bitcoin_unit: BitcoinDisplayUnit,
 ) -> Element<'a, ActiveSendMessage> {
     let header = Row::new()
         .push(
@@ -656,10 +769,18 @@ pub fn final_check_page<'a>(
 
     content = content.push(
         Container::new(
-            text(format!("{:.8} BTC", amount.to_btc()))
-                .size(38)
-                .bold()
-                .color(color::ORANGE),
+            text(format!(
+                "{} {}",
+                if matches!(bitcoin_unit, BitcoinDisplayUnit::BTC) {
+                    amount.to_btc().to_string()
+                } else {
+                    amount.to_sat().to_string()
+                },
+                bitcoin_unit.to_string()
+            ))
+            .size(38)
+            .bold()
+            .color(color::ORANGE),
         )
         .width(Length::Fill)
         .align_x(Alignment::Center),
@@ -682,7 +803,19 @@ pub fn final_check_page<'a>(
         Row::new()
             .push(text("Amount:").size(16))
             .push(Space::new().width(Length::Fill))
-            .push(text(format!("{:.8} BTC", amount.to_btc())).size(16).bold())
+            .push(
+                text(format!(
+                    "{} {}",
+                    if matches!(bitcoin_unit, BitcoinDisplayUnit::BTC) {
+                        amount.to_btc().to_string()
+                    } else {
+                        amount.to_sat().to_string()
+                    },
+                    bitcoin_unit.to_string()
+                ))
+                .size(16)
+                .bold(),
+            )
             .width(Length::Fill)
             .align_y(Alignment::Center),
     );
@@ -703,9 +836,17 @@ pub fn final_check_page<'a>(
             .push(text("Fees:").size(16))
             .push(Space::new().width(Length::Fill))
             .push(
-                text(format!("+ {:.8} BTC", fees_amount.to_btc()))
-                    .size(16)
-                    .bold(),
+                text(format!(
+                    "{} {}",
+                    if matches!(bitcoin_unit, BitcoinDisplayUnit::BTC) {
+                        fees_amount.to_btc().to_string()
+                    } else {
+                        fees_amount.to_sat().to_string()
+                    },
+                    bitcoin_unit.to_string()
+                ))
+                .size(16)
+                .bold(),
             )
             .width(Length::Fill)
             .align_y(Alignment::Center),
@@ -727,10 +868,18 @@ pub fn final_check_page<'a>(
             .push(text("Total:").size(18).bold())
             .push(Space::new().width(Length::Fill))
             .push(
-                text(format!("{:.8} BTC", total_amount.to_btc()))
-                    .size(18)
-                    .bold()
-                    .color(color::ORANGE),
+                text(format!(
+                    "{} {}",
+                    if matches!(bitcoin_unit, BitcoinDisplayUnit::BTC) {
+                        total_amount.to_btc().to_string()
+                    } else {
+                        total_amount.to_sat().to_string()
+                    },
+                    bitcoin_unit.to_string()
+                ))
+                .size(18)
+                .bold()
+                .color(color::ORANGE),
             )
             .width(Length::Fill)
             .align_y(Alignment::Center),
@@ -791,7 +940,10 @@ pub fn final_check_page<'a>(
         .into()
 }
 
-pub fn sent_page<'a>(amount: Amount) -> Element<'a, ActiveSendMessage> {
+pub fn sent_page<'a>(
+    amount: Amount,
+    bitcoin_unit: BitcoinDisplayUnit,
+) -> Element<'a, ActiveSendMessage> {
     use coincube_ui::widget::{Column, Row};
     Column::new()
         .spacing(20)
@@ -828,13 +980,21 @@ pub fn sent_page<'a>(amount: Amount) -> Element<'a, ActiveSendMessage> {
                     Row::new()
                         .spacing(5)
                         .push(
-                            text(format!("{:.8} BTC", amount.to_btc()))
-                                .size(20)
-                                .color(color::ORANGE)
-                                .font(iced::Font {
-                                    style: iced::font::Style::Italic,
-                                    ..Default::default()
-                                }),
+                            text(format!(
+                                "{} {}",
+                                if matches!(bitcoin_unit, BitcoinDisplayUnit::BTC) {
+                                    amount.to_btc().to_string()
+                                } else {
+                                    amount.to_sat().to_string()
+                                },
+                                bitcoin_unit.to_string()
+                            ))
+                            .size(20)
+                            .color(color::ORANGE)
+                            .font(iced::Font {
+                                style: iced::font::Style::Italic,
+                                ..Default::default()
+                            }),
                         )
                         .push(
                             text("has been sent successfully.")

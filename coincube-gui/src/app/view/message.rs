@@ -292,6 +292,8 @@ pub enum ActiveReceiveMessage {
     AddressGenerated(ReceiveMethod, Result<String, String>),
     AmountInput(String),
     DescriptionInput(String),
+    Error(String),
+    ClearError,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -334,7 +336,6 @@ pub enum HomeMessage {
     ToggleBalanceMask,
     SelectTransferDirection(TransferDirection),
     AmountEdited(String),
-    ConfirmTransfer,
     NextStep,
     PreviousStep,
     Error(String),
@@ -348,4 +349,20 @@ pub enum HomeMessage {
     BackToHome,
     BreezOnchainAddress(String),
     RefreshActiveBalance,
+    SignVaultToActiveTx,
+    TransferPsbtReady(
+        Result<
+            (
+                coincube_core::miniscript::bitcoin::psbt::Psbt,
+                Option<std::sync::Arc<crate::app::wallet::Wallet>>,
+                (
+                    crate::dir::CoincubeDirectory,
+                    coincube_core::miniscript::bitcoin::Network,
+                ),
+            ),
+            String,
+        >,
+    ),
+    TransferSigningComplete,
+    ConfirmTransfer,
 }

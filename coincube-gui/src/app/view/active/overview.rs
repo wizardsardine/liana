@@ -12,8 +12,8 @@ use coincube_ui::{
     widget::*,
 };
 use iced::{
-    widget::{Column, Container, Row},
-    Length,
+    widget::{button as iced_button, container, Column, Container, Row},
+    Background, Length,
 };
 
 use crate::app::view::{active::RecentTransaction, ActiveOverviewMessage, FiatAmountConverter};
@@ -89,7 +89,11 @@ pub fn active_overview_view<'a>(
                 .as_ref()
                 .map(|fiat| format!("~{} {}", fiat.to_rounded_string(), fiat.currency()));
 
-            let mut item = TransactionListItem::new(direction, &tx.amount, bitcoin_unit)
+            let mut amount = tx.amount.clone();
+            if !tx.is_incoming {
+                amount = amount + tx.fees_sat;
+            }
+            let mut item = TransactionListItem::new(direction, &amount, bitcoin_unit)
                 .with_type(tx_type)
                 .with_label(tx.description.clone())
                 .with_time_ago(tx.time_ago.clone());
@@ -131,13 +135,55 @@ pub fn active_overview_view<'a>(
         }
     }
 
-    let history_button = button::transparent(Some(icon::history_icon()), "Transaction History")
+    let view_transactions_button = {
+        let icon = icon::history_icon()
+            .size(18)
+            .style(|_theme: &theme::Theme| iced::widget::text::Style {
+                color: Some(color::ORANGE),
+            });
+
+        let label = text("View All Transactions")
+            .size(15)
+            .style(|_theme: &theme::Theme| iced::widget::text::Style {
+                color: Some(color::ORANGE),
+            });
+
+        let button_content = Row::new()
+            .spacing(8)
+            .align_y(iced::alignment::Vertical::Center)
+            .push(icon)
+            .push(label);
+
+        iced_button(Container::new(button_content).padding([10, 20]).style(
+            |_theme: &theme::Theme| container::Style {
+                background: Some(Background::Color(color::TRANSPARENT)),
+                border: iced::Border {
+                    color: color::ORANGE,
+                    width: 1.5,
+                    radius: 20.0.into(),
+                },
+                ..Default::default()
+            },
+        ))
+        .style(|_theme: &theme::Theme, _| iced_button::Style {
+            background: Some(Background::Color(color::TRANSPARENT)),
+            text_color: color::ORANGE,
+            border: iced::Border {
+                radius: 20.0.into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        })
         .on_press(ActiveOverviewMessage::History)
-        .width(Length::Fixed(250.0));
+    };
 
     content = content
-        .push(iced::widget::Space::new().height(Length::Fixed(10.0)))
-        .push(Container::new(history_button).width(Length::Fill));
+        .push(iced::widget::Space::new().height(Length::Fixed(20.0)))
+        .push(
+            Container::new(view_transactions_button)
+                .width(Length::Fill)
+                .center_x(Length::Fill),
+        );
 
     if let Some(err) = error {
         content = content.push(
