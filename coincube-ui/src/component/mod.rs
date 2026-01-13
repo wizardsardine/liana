@@ -23,9 +23,10 @@ use crate::{theme, widget::*};
 use self::text::Text;
 
 pub fn separation<'a, T: 'a>() -> Container<'a, T> {
-    Container::new(Column::new().push(text::text(" ")))
+    Container::new(Column::new().push(iced::widget::space()))
         .style(theme::container::border)
         .height(Length::Fixed(1.0))
+        .width(Length::Fill)
 }
 
 pub fn network_banner<'a, T: 'a>(network: Network) -> Container<'a, T> {

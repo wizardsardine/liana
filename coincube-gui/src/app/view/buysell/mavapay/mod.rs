@@ -41,21 +41,3 @@ pub enum MavapayFlowStep {
 pub struct MavapayState {
     pub step: MavapayFlowStep,
 }
-
-impl MavapayState {
-    pub fn new(buy_or_sell: BuyOrSell, country: Country) -> Self {
-        Self {
-            step: MavapayFlowStep::Transaction {
-                buy_or_sell,
-                country,
-                sat_amount: 6000,
-                beneficiary: None,
-                transfer_speed: OnchainTransferSpeed::Fast,
-                banks: None,
-                selected_bank: None,
-                btc_price: None,
-                sending_quote: false,
-            },
-        }
-    }
-}

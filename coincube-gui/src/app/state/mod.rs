@@ -1,9 +1,7 @@
 mod active;
+pub mod buysell;
 mod global_home;
 pub mod vault;
-
-#[cfg(feature = "buysell")]
-pub mod buysell;
 
 use std::convert::TryInto;
 use std::sync::Arc;

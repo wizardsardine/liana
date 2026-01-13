@@ -70,6 +70,7 @@ pub enum BuySellFlowState {
     /// Nigeria, Kenya and South Africa, ie Mavapay supported countries
     Mavapay(super::mavapay::MavapayState),
     /// Utilize Meld for countries not supported by Mavapay
+    #[cfg(feature = "meld")]
     Meld(super::meld::MeldState),
 }
 
@@ -83,6 +84,7 @@ impl BuySellFlowState {
             BuySellFlowState::PasswordReset { .. } => "PasswordReset",
             BuySellFlowState::Initialization { .. } => "Initialization",
             BuySellFlowState::Mavapay(..) => "Mavapay",
+            #[cfg(feature = "meld")]
             BuySellFlowState::Meld { .. } => "Meld",
         }
     }
@@ -99,7 +101,7 @@ pub struct BuySellPanel {
 
     // services used by several buysell providers
     pub coincube_client: crate::services::coincube::CoincubeClient,
-    pub detected_country: Option<crate::services::coincube::Country>,
+    pub detected_country: Option<&'static crate::services::coincube::Country>,
 
     // coincube session information, restored from OS keyring
     pub login: Option<LoginResponse>,
@@ -171,6 +173,7 @@ impl BuySellPanel {
                         BuySellFlowState::Mavapay(state) => super::mavapay::ui::form(state),
 
                         // meld
+                        #[cfg(feature = "meld")]
                         BuySellFlowState::Meld(state) => state.view(&self.network),
                     }
                 });
@@ -704,8 +707,14 @@ impl BuySellPanel {
                 .push(
                     pick_list(
                         crate::services::coincube::get_countries(),
-                        self.detected_country.as_ref(),
-                        |c| BuySellMessage::CountryDetected(Ok(c)),
+                        self.detected_country,
+                        |c| {
+                            let static_country = crate::services::coincube::get_countries()
+                                .into_iter()
+                                .find(|cs| cs.code == c.code)
+                                .unwrap();
+                            BuySellMessage::CountryDetected(Ok(static_country))
+                        },
                     )
                     .padding(10)
                     .placeholder("Select Country: "),

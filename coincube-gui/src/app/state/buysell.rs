@@ -96,46 +96,42 @@ impl State for BuySellPanel {
             BuySellMessage::ResetWidget => {
                 self.error = None;
 
-                if self.detected_country.is_some() {
-                    if self.login.is_none() {
-                        // attempt automatic refresh from os-keyring
-                        match keyring::Entry::new("io.coincube.Vault", &self.wallet.name) {
-                            Ok(entry) => {
-                                if let Ok(user_data) = entry.get_secret() {
-                                    match serde_json::from_slice::<LoginResponse>(&user_data) {
-                                        Ok(login) => {
-                                            self.coincube_client =
-                                                CoincubeClient::new(Some(login.token.clone()));
-                                            self.login = Some(login)
-                                        }
-                                        Err(er) => {
-                                            log::error!("Unable to parse user information found in OS keyring: {:?}", er)
-                                        }
-                                    };
-                                };
-                            }
-                            Err(e) => {
-                                log::error!("Unable to restore login state from OS keyring: {e}");
-                            }
+                // attempt automatic refresh from os-keyring
+                let mut login = None;
+
+                match keyring::Entry::new("io.coincube.Vault", &self.wallet.name) {
+                    Ok(entry) => {
+                        if let Ok(user_data) = entry.get_secret() {
+                            match serde_json::from_slice::<LoginResponse>(&user_data) {
+                                Ok(l) => {
+                                    log::trace!("Found login credentials in OS keyring");
+                                    login = Some(l)
+                                }
+                                Err(er) => {
+                                    log::error!("Unable to parse user information found in OS keyring: {:?}", er)
+                                }
+                            };
                         };
                     }
+                    Err(e) => {
+                        log::error!("Unable to restore login state from OS keyring: {e}");
+                    }
+                };
 
-                    match self.login.as_ref() {
-                        // send user to login screen, to initialize login credentials
+                if self.detected_country.is_some() {
+                    match login {
                         None => {
+                            // send user to login screen, to initialize login credentials
                             self.step = BuySellFlowState::Login {
                                 email: Default::default(),
                                 password: Default::default(),
-                            }
-                        }
-                        Some(_login) => {
-                            // TODO: check if login token is expired
-
-                            self.step = BuySellFlowState::Initialization {
-                                modal: state::vault::receive::Modal::None,
-                                buy_or_sell_selected: None,
-                                buy_or_sell: None,
                             };
+                        }
+                        Some(login) => {
+                            // check if token is valid
+                            return iced::Task::done(Message::View(ViewMessage::BuySell(
+                                BuySellMessage::RefreshLocalLogin(login),
+                            )));
                         }
                     }
                 } else {
@@ -143,9 +139,56 @@ impl State for BuySellPanel {
                     self.step = BuySellFlowState::DetectingLocation(true);
                 }
             }
+
+            // login states
+            BuySellMessage::RefreshLocalLogin(login) => {
+                let client = self.coincube_client.clone();
+
+                return Task::perform(
+                    async move { client.refresh_login(&login.refresh_token).await },
+                    |res| match res {
+                        Ok(l) => {
+                            log::info!("Refresh token still valid, login token regenerated");
+                            BuySellMessage::SetLoginState(l)
+                        }
+                        Err(err) => {
+                            log::info!(
+                                "Refresh token is outdated, forcing user to re-login: {}",
+                                err
+                            );
+                            BuySellMessage::LogOut
+                        }
+                    },
+                )
+                .map(|msg| Message::View(ViewMessage::BuySell(msg)));
+            }
+            BuySellMessage::SetLoginState(login) => {
+                // update token in OS keyring
+                if let Ok(entry) = keyring::Entry::new("io.coincube.Vault", &self.wallet.name) {
+                    if let Err(e) = entry.delete_credential() {
+                        log::warn!("Unable to clear previous entry from keyring: {e}");
+                    };
+
+                    let bytes = serde_json::to_vec(&login).unwrap();
+                    if let Err(e) = entry.set_secret(&bytes) {
+                        log::error!("Unable to store user data in keyring: {e}");
+                    };
+                } else {
+                    self.error = Some("Unable to access OS keyring".to_string());
+                };
+
+                // user is successfully logged in: 🥳
+                self.coincube_client = CoincubeClient::new(Some(login.token.clone()));
+                self.login = Some(login);
+
+                self.step = BuySellFlowState::Initialization {
+                    modal: state::vault::receive::Modal::None,
+                    buy_or_sell_selected: None,
+                    buy_or_sell: None,
+                };
+            }
             BuySellMessage::LogOut => {
                 self.login = None;
-                self.detected_country = None;
 
                 // clear keyring credentials
                 if let Ok(entry) = keyring::Entry::new("io.coincube.Vault", &self.wallet.name) {
@@ -154,9 +197,11 @@ impl State for BuySellPanel {
                     };
                 }
 
-                return Task::done(Message::View(ViewMessage::BuySell(
-                    BuySellMessage::ResetWidget,
-                )));
+                // send user to login screen, to re-initialize login credentials
+                self.step = BuySellFlowState::Login {
+                    email: Default::default(),
+                    password: Default::default(),
+                };
             }
 
             // Forward clipboard action to parent message handler
@@ -207,6 +252,8 @@ impl State for BuySellPanel {
 
             // ip-geolocation logic
             BuySellMessage::CountryDetected(result) => {
+                // TODO: state/region detection for select countries
+
                 let country = match result {
                     Ok(country) => {
                         self.error = None;
@@ -229,7 +276,7 @@ impl State for BuySellPanel {
 
                 // update location information
                 log::info!("Country = {}, ISO = {}", country.name, country.code);
-                self.detected_country = Some(country.clone());
+                self.detected_country = Some(country);
 
                 return Task::done(Message::View(ViewMessage::BuySell(
                     BuySellMessage::ResetWidget,
@@ -243,7 +290,7 @@ impl State for BuySellPanel {
                     return Task::none();
                 };
 
-                let Some(country) = self.detected_country.as_ref() else {
+                let Some(country) = self.detected_country else {
                     unreachable!(
                         "Unable to start session, country detection|selection was unsuccessful"
                     );
@@ -253,11 +300,23 @@ impl State for BuySellPanel {
 
                 match mavapay_supported(country.code) {
                     true => {
-                        log::info!("[BUYSELL] Starting under Mavapay for {}", country.name);
+                        log::info!("[BUYSELL] Starting under Mavapay for {}", country);
 
                         // initialize buysell under Mavapay
-                        let mavapay = MavapayState::new(buy_or_sell, country.clone());
-                        self.step = BuySellFlowState::Mavapay(mavapay);
+                        self.step = BuySellFlowState::Mavapay(MavapayState {
+                            step: MavapayFlowStep::Transaction {
+                                buy_or_sell,
+                                country: country.clone(),
+                                sat_amount: 6000,
+                                beneficiary: None,
+                                transfer_speed: OnchainTransferSpeed::Fast,
+                                banks: None,
+                                selected_bank: None,
+                                btc_price: None,
+                                sending_quote: false,
+                            },
+                            client: MavapayClient::new(),
+                        });
 
                         if country.code != "KE" {
                             return Task::batch([
@@ -275,11 +334,21 @@ impl State for BuySellPanel {
                         };
                     }
                     false => {
-                        log::info!("[BUYSELL] Starting buysell under Meld for {}", country.name);
+                        #[cfg(feature = "meld")]
+                        {
+                            // initialize buysell under meld
+                            let (meld, task) = meld::MeldState::new(
+                                buy_or_sell,
+                                country,
+                                self.coincube_client.clone(),
+                            );
+                            self.step = BuySellFlowState::Meld(meld);
 
-                        // initialize buysell under meld
-                        let meld = meld::MeldState::new(buy_or_sell, country.clone());
-                        self.step = BuySellFlowState::Meld(meld);
+                            return task.map(Message::View);
+                        };
+
+                        #[cfg(not(feature = "meld"))]
+                        log::warn!("[BUYSELL] Unable to start buysell under Meld, cargo feature was disabled");
                     }
                 }
             }
@@ -294,21 +363,22 @@ impl State for BuySellPanel {
                     true => {
                         log::info!("Starting history view under Mavapay");
 
-                        let mut mavapay =
-                            MavapayState::new(panel::BuyOrSell::Sell, country.clone());
-                        mavapay.step = MavapayFlowStep::History {
-                            transactions: None,
-                            loading: true,
-                            error: None,
-                        };
-                        self.step = BuySellFlowState::Mavapay(mavapay);
+                        self.step = BuySellFlowState::Mavapay(MavapayState {
+                            step: MavapayFlowStep::History {
+                                orders: None,
+                                loading: true,
+                                error: None,
+                            },
+                            client: MavapayClient::new(),
+                        });
 
                         return Task::done(Message::View(view::Message::BuySell(
                             BuySellMessage::Mavapay(MavapayMessage::FetchTransactions),
                         )));
                     }
                     false => {
-                        log::info!("Starting history view under Meld for {}", country.name);
+                        // TODO: Implement order history for `meld`
+                        log::info!("Starting history view under Meld for {}", country);
                     }
                 }
             }
@@ -872,32 +942,15 @@ impl State for BuySellPanel {
                         }
 
                         log::info!("Successfully logged in user: {}", &login.user.email);
-
-                        // store token in OS keyring
-                        if let Ok(entry) =
-                            keyring::Entry::new("io.coincube.Vault", &self.wallet.name)
-                        {
-                            if let Err(e) = entry.delete_credential() {
-                                log::warn!("Unable to clear previous entry from keyring: {e}");
-                            };
-
-                            let bytes = serde_json::to_vec(&login).unwrap();
-                            if let Err(e) = entry.set_secret(&bytes) {
-                                log::error!("Unable to store user data in keyring: {e}");
-                            };
-                        } else {
-                            self.error = Some("Unable to access OS keyring".to_string());
-                        };
-
-                        // persist login information in state
-                        self.coincube_client = CoincubeClient::new(Some(login.token.clone()));
-                        self.login = Some(login);
-
                         self.step = BuySellFlowState::Initialization {
                             modal: state::vault::receive::Modal::None,
                             buy_or_sell_selected: None,
                             buy_or_sell: None,
                         };
+
+                        return Task::done(Message::View(ViewMessage::BuySell(
+                            BuySellMessage::SetLoginState(login),
+                        )));
                     }
                     // user registration form
                     (
@@ -1131,8 +1184,11 @@ impl State for BuySellPanel {
                             )
                         }
                     },
+                    #[cfg(feature = "meld")]
                     (BuySellFlowState::Meld(meld), BuySellMessage::Meld(msg)) => {
-                        return meld.update(msg).map(Message::View)
+                        return meld
+                            .update(msg, cache, &self.coincube_client)
+                            .map(Message::View)
                     }
                     (step, msg) => {
                         log::warn!("Current {:?} has ignored message: {:?}", step.name(), msg)
@@ -1164,9 +1220,13 @@ impl State for BuySellPanel {
     }
 
     fn close(&mut self) -> Task<Message> {
+        #[cfg(feature = "meld")]
         if let BuySellFlowState::Meld(meld) = &self.step {
-            if let meld::MeldFlowStep::WebviewRenderer { active } = &meld.step {
-                if let Some(strong) = std::sync::Weak::upgrade(&active.webview) {
+            if let Some(meld::MeldFlowStep::ActiveSession {
+                active: Some(wv), ..
+            }) = meld.steps.last()
+            {
+                if let Some(strong) = std::sync::Weak::upgrade(&wv.webview) {
                     let _ = strong.set_visible(false);
                     let _ = strong.focus_parent();
                 }
@@ -1178,14 +1238,37 @@ impl State for BuySellPanel {
 
     fn subscription(&self) -> iced::Subscription<Message> {
         match &self.step {
-            BuySellFlowState::Meld(meld) => meld
-                .webview_manager
-                .subscription(std::time::Duration::from_millis(25))
-                .map(|m| {
-                    Message::View(ViewMessage::BuySell(BuySellMessage::Meld(
-                        meld::MeldMessage::WebviewManagerUpdate(m),
-                    )))
-                }),
+            #[cfg(feature = "meld")]
+            BuySellFlowState::Meld(meld) => {
+                let mut subs = vec![];
+
+                // SSE subscription
+                if let Some(l) = &self.login {
+                    subs.push(
+                        crate::services::meld::MeldClient::transactions_subscription(
+                            l.token.clone(),
+                        )
+                        .map(|meld| {
+                            Message::View(ViewMessage::BuySell(BuySellMessage::Meld(meld)))
+                        }),
+                    );
+                }
+
+                // webview subscription
+                if let Some(meld::MeldFlowStep::ActiveSession { .. }) = meld.steps.last() {
+                    subs.push(
+                        meld.webview_manager
+                            .subscription(std::time::Duration::from_millis(25))
+                            .map(|m| {
+                                Message::View(ViewMessage::BuySell(BuySellMessage::Meld(
+                                    meld::MeldMessage::WebviewManagerUpdate(m),
+                                )))
+                            }),
+                    );
+                };
+
+                iced::Subscription::batch(subs)
+            }
             // periodically re-fetch the price of BTC
             BuySellFlowState::Mavapay(MavapayState {
                 step: MavapayFlowStep::Transaction { .. },

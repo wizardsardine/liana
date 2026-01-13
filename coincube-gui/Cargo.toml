@@ -10,7 +10,7 @@ edition = "2018"
 resolver = "2"
 
 [features]
-buysell = ["dep:iced_wry"]
+meld = ["dep:iced_wry", "dep:reqwest-sse"]
 
 [package.metadata.winres]
 LegalCopyright = "Copyright © 2026"
@@ -85,7 +85,8 @@ fs4 = { version = "0.13", features = ["sync"] }
 open = "5.3"
 
 # Webview for embedded browser functionality (wry-based)
-iced_wry = { git = "https://github.com/sokorototo/iced_wry", optional = true}
+iced_wry = { git = "https://github.com/sokorototo/iced_wry", optional = true }
+reqwest-sse = { version = "0.1.0", optional = true }
 
 keyring = { version = "3.6.3", features = [
 	"apple-native",
