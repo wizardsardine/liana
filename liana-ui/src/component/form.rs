@@ -1,6 +1,7 @@
 use crate::widget::text_input;
 use bitcoin::Denomination;
 use iced::Length;
+use std::str::FromStr;
 
 use crate::{color, component::text, theme, widget::*};
 
@@ -87,16 +88,38 @@ where
     /// - a function that produces a message when the [`Form`] changes
     pub fn new_amount_btc<F>(placeholder: &str, value: &'a Value<String>, on_change: F) -> Self
     where
-        F: 'static + Fn(String) -> Message,
+        F: 'static + Fn(String) -> Message + Clone,
     {
+        let on_change_clone = on_change.clone();
         Self {
-            input: text_input::TextInput::new(placeholder, &value.value).on_input(move |s| {
-                if bitcoin::Amount::from_str_in(&s, Denomination::Bitcoin).is_ok() || s.is_empty() {
-                    on_change(s)
-                } else {
-                    on_change(value.value.clone())
-                }
-            }),
+            input: text_input::TextInput::new(placeholder, &value.value)
+                .on_input(move |s| {
+                    if bitcoin::Amount::from_str_in(&s, Denomination::Bitcoin).is_ok()
+                        || s.is_empty()
+                        // In order to allow the user to fix an invalid pasted value, we allow deletion
+                        // even if the result is still invalid.
+                        // Note that all invalid characters must be deleted before the user can enter
+                        // new valid values.
+                        || s.chars().count() < value.value.chars().count()
+                    {
+                        on_change(s)
+                    } else {
+                        on_change(value.value.clone())
+                    }
+                })
+                .on_paste(move |pasted| {
+                    if let Ok(f) = f64::from_str(&pasted) {
+                        // Show only up to 8 decimal places, rounding if necessary.
+                        let num_decimals = pasted
+                            .split_once('.')
+                            .map(|(_, dec)| dec.len())
+                            .unwrap_or(0)
+                            .min(8);
+                        on_change_clone(format!("{:.prec$}", f, prec = num_decimals))
+                    } else {
+                        on_change_clone(pasted) // otherwise use the whole pasted content
+                    }
+                }),
             warning: value.warning,
             valid: value.valid,
         }
