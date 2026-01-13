@@ -5849,8 +5849,12 @@ dependencies = [
  "log",
  "rand 0.8.5",
  "sha1",
+ "rustls 0.23.36",
+ "rustls-pki-types",
+ "sha1",
  "thiserror 1.0.69",
  "utf-8",
+ "webpki-roots 0.26.11",
 ]
 
 [[package]]
@@ -6039,6 +6043,7 @@ version = "1.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e2e054861b4bd027cd373e18e8d8d8e6548085000e41290d95ce0c373a654b4a"
 dependencies = [
+ "getrandom 0.3.1",
  "js-sys",
  "serde_core",
  "wasm-bindgen",
