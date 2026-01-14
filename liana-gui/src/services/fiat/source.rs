@@ -5,8 +5,8 @@ use super::currency::Currency;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub enum PriceSource {
-    #[default]
     CoinGecko,
+    #[default]
     MempoolSpace,
 }
 
