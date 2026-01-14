@@ -32,7 +32,7 @@ pub enum Message {
     Previous,
     SelectHardwareWallet(usize),
     CreateRbf(CreateRbfMessage),
-    ShowQrCode(usize),
+    ShowQrCode(usize, Option<String>),
     ImportExport(ImportExportMessage),
     HideRescanWarning,
     ExportPsbt,
