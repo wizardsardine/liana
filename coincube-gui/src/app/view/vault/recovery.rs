@@ -63,13 +63,13 @@ pub fn recovery<'a>(
                             })
                             .width(Length::Fill),
                         )
-                        .push_maybe((!no_recovery_paths).then_some(Space::new().height(20)))
+                        .push((!no_recovery_paths).then_some(Space::new().height(20)))
                         .push(Column::with_children(recovery_paths).spacing(20)),
                 )
                 .style(theme::card::simple)
                 .padding(20),
             )
-            .push_maybe(if no_recovery_paths {
+            .push(if no_recovery_paths {
                 None
             } else {
                 Some(

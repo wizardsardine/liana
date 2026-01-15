@@ -68,13 +68,13 @@ pub fn processing_hardware_wallet<'a, T: 'a, K: Display, V: Display, F: Display>
             column(vec![
                 Row::new()
                     .spacing(5)
-                    .push_maybe(alias.map(text::p1_bold))
+                    .push(alias.map(text::p1_bold))
                     .push(text::p1_regular(format!("#{}", fingerprint)))
                     .into(),
                 Row::new()
                     .spacing(5)
                     .push(text::caption(kind.to_string()))
-                    .push_maybe(version.map(|v| text::caption(v.to_string())))
+                    .push(version.map(|v| text::caption(v.to_string())))
                     .into(),
             ])
             .width(Length::Fill)

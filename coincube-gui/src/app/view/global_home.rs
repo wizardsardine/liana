@@ -98,7 +98,7 @@ fn wallet_card<'a>(
                             } else {
                                 amount_with_size_and_unit(balance, H2_SIZE, bitcoin_unit)
                             })
-                            .push_maybe(if balance_masked {
+                            .push(if balance_masked {
                                 Some(text("********").size(P1_SIZE))
                             } else {
                                 fiat_balance
@@ -518,6 +518,7 @@ fn confirm_transfer_view<'a>(
     address_expanded: bool,
     warning: Option<&'a crate::app::error::Error>,
     is_sending: bool,
+    is_tx_signed: bool,
 ) -> Element<'a, Message> {
     const NUM_ADDR_CHARS: usize = 16;
 
@@ -530,7 +531,7 @@ fn confirm_transfer_view<'a>(
                 .on_press(Message::Home(HomeMessage::PreviousStep)),
         )
         .push(Space::new().height(Length::Fixed(20.0)))
-        .push_maybe(warning.map(|w| warn(Some(w))))
+        .push(warning.map(|w| warn(Some(w))))
         .push(Container::new(
             Column::new()
                 .push(
@@ -547,7 +548,7 @@ fn confirm_transfer_view<'a>(
                         .width(Length::Fill),
                 )
                 .push(Space::new().height(60))
-                .push_maybe(match direction {
+                .push(match direction {
                     TransferDirection::ActiveToVault => Some(
                         Column::new()
                             .spacing(10)
@@ -557,7 +558,7 @@ fn confirm_transfer_view<'a>(
                                     .width(Length::Fill)
                                     .align_x(Alignment::Center),
                             )
-                            .push_maybe(receive_address.map(|addr| -> Element<'a, Message> {
+                            .push(receive_address.map(|addr| -> Element<'a, Message> {
                                 if address_expanded {
                                     Button::new(address_card(0, addr, labels, labels_editing))
                                         .padding(0)
@@ -625,7 +626,7 @@ fn confirm_transfer_view<'a>(
                                     .into()
                                 }
                             }))
-                            .push_maybe(receive_address.is_none().then(|| {
+                            .push(receive_address.is_none().then(|| {
                                 text("No receiving address available. Please generate one first.")
                                     .style(theme::text::secondary)
                             })),
@@ -731,13 +732,29 @@ fn confirm_transfer_view<'a>(
             .style(theme::card::simple),
         )
         .push(Space::new().height(Length::Fixed(60.0)))
-        .push(
-            button::primary(None, "Confirm Transfer").on_press_maybe(if !is_sending {
-                Some(Message::Home(HomeMessage::ConfirmTransfer))
-            } else {
-                None
-            }),
-        );
+        .push(match direction {
+            TransferDirection::VaultToActive => {
+                if is_tx_signed {
+                    button::primary(None, "Confirm & Broadcast").on_press_maybe(if !is_sending {
+                        Some(Message::Home(HomeMessage::ConfirmTransfer))
+                    } else {
+                        None
+                    })
+                } else {
+                    button::primary(None, "Sign Transaction").on_press_maybe(if !is_sending {
+                        Some(Message::Home(HomeMessage::SignVaultToActiveTx))
+                    } else {
+                        None
+                    })
+                }
+            }
+            TransferDirection::ActiveToVault => button::primary(None, "Confirm Transfer")
+                .on_press_maybe(if !is_sending {
+                    Some(Message::Home(HomeMessage::ConfirmTransfer))
+                } else {
+                    None
+                }),
+        });
 
     Container::new(content)
         .width(Length::Fill)
@@ -854,6 +871,7 @@ pub struct GlobalViewConfig<'a> {
     pub onchain_send_limit: Option<(u64, u64)>,
     pub onchain_receive_limit: Option<(u64, u64)>,
     pub is_sending: bool,
+    pub is_tx_signed: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -897,6 +915,7 @@ pub fn global_home_view<'a>(config: GlobalViewConfig<'a>) -> Element<'a, Message
         onchain_send_limit,
         onchain_receive_limit,
         is_sending,
+        is_tx_signed,
     } = config;
 
     match current_view.step {
@@ -928,6 +947,7 @@ pub fn global_home_view<'a>(config: GlobalViewConfig<'a>) -> Element<'a, Message
                     address_expanded,
                     warning,
                     is_sending,
+                    is_tx_signed,
                 );
             }
         }

@@ -182,7 +182,7 @@ impl Pane {
                                 .on_press(ViewMessage::CloseTab(i))
                                 .width(100),
                         )
-                        .push_maybe(if tabs_len > 1 {
+                        .push(if tabs_len > 1 {
                             Some(
                                 Button::new(p1_regular("Split"))
                                     .style(theme::button::secondary)

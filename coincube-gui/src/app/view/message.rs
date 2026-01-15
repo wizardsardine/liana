@@ -13,7 +13,7 @@ use breez_sdk_liquid::prelude::{
     InputType, Payment, PreparePayOnchainResponse, PrepareSendResponse,
 };
 use coincube_core::miniscript::bitcoin::Amount;
-use coincube_core::miniscript::bitcoin::{bip32::Fingerprint, Address, OutPoint, Txid};
+use coincube_core::miniscript::bitcoin::{bip32::Fingerprint, Address, OutPoint};
 use coincube_core::spend::SpendCreationError;
 
 pub trait Close {
@@ -218,6 +218,21 @@ pub enum BuySellMessage {
 
     // Mavapay specific messages
     Mavapay(crate::services::mavapay::MavapayMessage),
+
+    // Meld specific messages
+    Meld(crate::app::view::buysell::meld::MeldMessage),
+
+    // Clipboard action (forwarded to parent Message::Clipboard)
+    Clipboard(String),
+
+    ViewHistory,
+}
+
+#[cfg(feature = "buysell")]
+#[derive(Debug, Clone)]
+pub enum WebviewMessage {
+    WryMessage(iced_wry::IcedWryMessage),
+    InitWryWebviewWithUrl(iced_wry::ExtractedWindowId, String),
 }
 
 #[derive(Debug, Clone)]
@@ -341,6 +356,8 @@ pub enum ActiveReceiveMessage {
     AddressGenerated(ReceiveMethod, Result<String, ReceiveError>),
     AmountInput(String),
     DescriptionInput(String),
+    Error(String),
+    ClearError,
 }
 
 #[derive(Debug, Clone)]
@@ -398,7 +415,6 @@ pub enum HomeMessage {
     ToggleBalanceMask,
     SelectTransferDirection(TransferDirection),
     AmountEdited(String),
-    ConfirmTransfer,
     NextStep,
     PreviousStep,
     Error(String),
@@ -412,4 +428,20 @@ pub enum HomeMessage {
     BackToHome,
     BreezOnchainAddress(String),
     RefreshActiveBalance,
+    SignVaultToActiveTx,
+    TransferPsbtReady(
+        Result<
+            (
+                coincube_core::miniscript::bitcoin::psbt::Psbt,
+                Option<std::sync::Arc<crate::app::wallet::Wallet>>,
+                (
+                    crate::dir::CoincubeDirectory,
+                    coincube_core::miniscript::bitcoin::Network,
+                ),
+            ),
+            String,
+        >,
+    ),
+    TransferSigningComplete,
+    ConfirmTransfer,
 }

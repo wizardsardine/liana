@@ -1,14 +1,22 @@
 pub use bitcoin::Amount;
 use iced::Color;
+use serde::{Deserialize, Serialize};
 
 use crate::{color, component::text::*, widget::*};
 
-// Re-export for convenience - actual definition is in app crate
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum BitcoinDisplayUnit {
     #[default]
     BTC,
     Sats,
+}
+impl std::fmt::Display for BitcoinDisplayUnit {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            BitcoinDisplayUnit::BTC => write!(f, "BTC"),
+            BitcoinDisplayUnit::Sats => write!(f, "sats"),
+        }
+    }
 }
 
 pub trait DisplayAmount {

@@ -21,6 +21,11 @@ pub enum MavapayMessage {
     PriceReceived(GetPriceResponse),
     GetBanks,
     BanksReceived(MavapayBanks),
+    FetchOrders,
+    OrdersReceived(Vec<GetOrderResponse>),
+    OrdersFetchFailed(String),
+    SelectOrder(GetOrderResponse),
+    BackToHistory,
     // checkout
     SimulatePayIn,
     QuoteFulfilled(GetOrderResponse),

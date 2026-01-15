@@ -12,10 +12,7 @@ use aes_gcm::{
 
 use argon2::{
     password_hash::{PasswordHasher, SaltString},
-    Argon2,
-    Algorithm,
-    Version,
-    Params,
+    Algorithm, Argon2, Params, Version,
 };
 
 use zeroize::Zeroizing;
@@ -230,7 +227,7 @@ impl HotSigner {
 
             let mnemonic_str = if Self::is_encrypted(&data) {
                 let Some(pwd) = password else {
-                   continue;
+                    continue;
                 };
                 Self::decrypt_mnemonic(&data, pwd)?.as_str().to_string()
             } else {
@@ -268,18 +265,18 @@ impl HotSigner {
                     // Found a potential match, try to load it
                     let data = fs::read(&path).map_err(SignerError::MnemonicStorage)?;
 
-                        let mnemonic_str = if Self::is_encrypted(&data) {
+                    let mnemonic_str = if Self::is_encrypted(&data) {
                         let pwd = password.ok_or(SignerError::PasswordRequired)?;
-                            Self::decrypt_mnemonic(&data, pwd)?.as_str().to_string()
-                        } else {
-                            // Unencrypted file (backward compatibility)
-                            String::from_utf8(data).map_err(|e| {
-                                SignerError::MnemonicStorage(io::Error::new(
-                                    io::ErrorKind::InvalidData,
-                                    e,
-                                ))
-                            })?
-                        };
+                        Self::decrypt_mnemonic(&data, pwd)?.as_str().to_string()
+                    } else {
+                        // Unencrypted file (backward compatibility)
+                        String::from_utf8(data).map_err(|e| {
+                            SignerError::MnemonicStorage(io::Error::new(
+                                io::ErrorKind::InvalidData,
+                                e,
+                            ))
+                        })?
+                    };
 
                     let signer = Self::from_str(network, &mnemonic_str)?;
 
@@ -428,11 +425,12 @@ impl HotSigner {
             .map_err(|e| SignerError::SaltEncodingError(e.to_string()))?;
 
         let params = Params::new(
-            262144, // 256 MiB memory (in KiB)
-            3,      // 3 iterations
-            4,      // 4 parallel lanes
-            Some(32) // 32-byte output for AES-256 key
-        ).map_err(|e| SignerError::ArgonParamsError(e.to_string()))?;
+            262144,   // 256 MiB memory (in KiB)
+            3,        // 3 iterations
+            4,        // 4 parallel lanes
+            Some(32), // 32-byte output for AES-256 key
+        )
+        .map_err(|e| SignerError::ArgonParamsError(e.to_string()))?;
 
         // Derive key from password using Argon2
         let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
@@ -502,11 +500,12 @@ impl HotSigner {
 
         // Must use same params as encrypt_mnemonic
         let params = Params::new(
-            262144, // 256 MiB memory (in KiB)
-            3,      // 3 iterations
-            4,      // 4 parallel lanes
-            Some(32) // 32-byte output for AES-256 key
-        ).map_err(|e| SignerError::ArgonParamsError(e.to_string()))?;
+            262144,   // 256 MiB memory (in KiB)
+            3,        // 3 iterations
+            4,        // 4 parallel lanes
+            Some(32), // 32-byte output for AES-256 key
+        )
+        .map_err(|e| SignerError::ArgonParamsError(e.to_string()))?;
 
         let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
         let password_hash = argon2
@@ -535,8 +534,9 @@ impl HotSigner {
                 .map_err(|_| SignerError::InvalidPassword)?,
         );
 
-        let result = Zeroizing::new(String::from_utf8(plaintext_bytes.to_vec())
-            .map_err(|e| SignerError::DecryptionFailed(e.to_string()))?,
+        let result = Zeroizing::new(
+            String::from_utf8(plaintext_bytes.to_vec())
+                .map_err(|e| SignerError::DecryptionFailed(e.to_string()))?,
         );
 
         Ok(result)

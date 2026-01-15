@@ -9,6 +9,7 @@ use coincube_ui::{component::form, widget::*};
 use iced::Task;
 
 use crate::app::menu::{ActiveSubMenu, Menu};
+use crate::app::settings::unit::BitcoinDisplayUnit;
 use crate::app::state::{redirect, State};
 use crate::app::view::SendPopupMessage;
 use crate::app::{breez::BreezClient, cache::Cache};
@@ -167,6 +168,7 @@ impl State for ActiveSend {
                 cache,
                 input_type: &self.input_type,
                 onchain_limits: self.onchain_limits,
+                bitcoin_unit: cache.bitcoin_unit.into(),
             })
         }
     }
@@ -263,7 +265,14 @@ impl State for ActiveSend {
                                     ) {
                                         self.amount = amount;
                                         self.amount_input.valid = true;
-                                        self.amount_input.value = amount.to_btc().to_string();
+                                        self.amount_input.value = if matches!(
+                                            cache.bitcoin_unit,
+                                            BitcoinDisplayUnit::BTC
+                                        ) {
+                                            amount.to_btc().to_string()
+                                        } else {
+                                            amount.to_sat().to_string()
+                                        };
                                     }
                                 }
                                 if let Some(description) =
@@ -384,6 +393,8 @@ impl State for ActiveSend {
                                     breez_sdk_liquid::prelude::PaymentType::Receive
                                 );
 
+                                let fees_sat = Amount::from_sat(payment.fees_sat);
+
                                 let details = payment.details.clone();
                                 let sign = if is_incoming { "+" } else { "-" };
                                 view::active::RecentTransaction {
@@ -395,6 +406,7 @@ impl State for ActiveSend {
                                     sign,
                                     status,
                                     details,
+                                    fees_sat,
                                 }
                             })
                             .collect();
@@ -429,7 +441,11 @@ impl State for ActiveSend {
                             self.amount = Amount::from_sat(0);
                         } else if let Ok(amount) = Amount::from_str_in(
                             &v,
-                            coincube_core::miniscript::bitcoin::Denomination::Bitcoin,
+                            if matches!(cache.bitcoin_unit, BitcoinDisplayUnit::BTC) {
+                                coincube_core::miniscript::bitcoin::Denomination::Bitcoin
+                            } else {
+                                coincube_core::miniscript::bitcoin::Denomination::Satoshi
+                            },
                         ) {
                             self.amount = amount;
                             let amount_sats = amount.to_sat();
@@ -663,7 +679,14 @@ impl State for ActiveSend {
                                 ) {
                                     if let Ok(btc_amount) = converter.convert_to_btc(&fiat_amount) {
                                         self.amount = btc_amount;
-                                        let btc_str = btc_amount.to_btc().to_string();
+                                        let btc_str = if matches!(
+                                            cache.bitcoin_unit,
+                                            BitcoinDisplayUnit::BTC
+                                        ) {
+                                            btc_amount.to_btc().to_string()
+                                        } else {
+                                            btc_amount.to_sat().to_string()
+                                        };
                                         let amount_sats = btc_amount.to_sat();
 
                                         // Validate the converted BTC amount

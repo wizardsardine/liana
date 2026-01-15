@@ -18,7 +18,7 @@ use crate::{
     theme::{self, Theme},
 };
 
-use crate::widget::{Button, Column, ColumnExt, Element, Row, RowExt, Text};
+use crate::widget::{Button, Column, Element, Row, Text};
 
 pub const MODAL_WIDTH: u32 = 650;
 pub const BTN_W: u32 = 500;
@@ -46,10 +46,10 @@ where
     let close = close_message
         .map(|m| button::transparent(Some(icon::cross_icon().size(40)), "").on_press(m()));
     Row::new()
-        .push_maybe(back)
-        .push_maybe(title)
+        .push(back)
+        .push(title)
         .push(Space::new().width(Length::Fill))
-        .push_maybe(close)
+        .push(close)
         .align_y(Vertical::Center)
         .into()
 }
@@ -114,7 +114,7 @@ where
     let icon = icon.map(|i| i.color(color::WHITE));
 
     if collapsed {
-        let line = Row::new().push(form).push_maybe(paste).spacing(V_SPACING);
+        let line = Row::new().push(form).push(paste).spacing(V_SPACING);
         let col = Column::new()
             .push(row![
                 text::p1_regular(label).color(color::WHITE),
@@ -122,7 +122,7 @@ where
             ])
             .push(line);
         let row = Row::new()
-            .push_maybe(icon)
+            .push(icon)
             .push(col)
             .align_y(Vertical::Center)
             .spacing(V_SPACING);
@@ -130,7 +130,7 @@ where
         Button::new(row).style(widget_style)
     } else {
         let row = Row::new()
-            .push_maybe(icon)
+            .push(icon)
             .push(text::p1_regular(label))
             .height(BTN_H)
             .spacing(V_SPACING)
@@ -170,14 +170,14 @@ where
     .align_x(Horizontal::Left)
     .width(200);
     let row = Row::new()
-        .push_maybe(icon.as_ref().map(|_| Space::new().width(H_SPACING)))
-        .push_maybe(icon)
+        .push(icon.as_ref().map(|_| Space::new().width(H_SPACING)))
+        .push(icon)
         .push(Space::new().width(H_SPACING))
         .push(designation)
-        .push_maybe(message)
-        .push_maybe(error)
+        .push(message)
+        .push(error)
         .push(Space::new().width(Length::Fill))
-        .push_maybe(tt)
+        .push(tt)
         .align_y(Vertical::Center)
         .spacing(V_SPACING);
     let mut btn = Button::new(row).style(widget_style).width(BTN_W);
@@ -208,15 +208,15 @@ where
     let tt = tooltip_str.map(|s| tooltip(s));
 
     let row = Row::new()
-        .push_maybe(icon)
+        .push(icon)
         .push(text::p1_regular(label))
         .push(Space::new().width(Length::Fill))
-        .push_maybe(tt)
+        .push(tt)
         .spacing(H_SPACING)
         .align_y(Vertical::Center)
         .height(BTN_H);
 
-    let col = Column::new().push(row).push_maybe(error);
+    let col = Column::new().push(row).push(error);
 
     let mut btn = Button::new(container(col)).style(widget_style).width(BTN_W);
     if let Some(msg) = on_press {

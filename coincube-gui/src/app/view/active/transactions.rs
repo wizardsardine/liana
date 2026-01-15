@@ -122,7 +122,10 @@ fn transaction_row<'a>(
         PaymentDetails::Bitcoin { description, .. } => description,
     };
 
-    let btc_amount = Amount::from_sat(payment.amount_sat);
+    let mut btc_amount = Amount::from_sat(payment.amount_sat);
+    if !is_receive {
+        btc_amount = btc_amount + Amount::from_sat(payment.fees_sat);
+    }
     let time_ago = format_time_ago(payment.timestamp.into());
 
     let direction = if is_receive {
@@ -158,9 +161,16 @@ pub fn transaction_detail_view<'a>(
 ) -> Element<'a, Message> {
     let is_receive = matches!(payment.payment_type, PaymentType::Receive);
     let btc_amount = Amount::from_sat(payment.amount_sat);
+    let fees_sat = Amount::from_sat(payment.fees_sat);
+    let mut total_amount = btc_amount.clone();
+
+    if !is_receive {
+        total_amount = total_amount + fees_sat;
+    }
 
     // Format full date/time
-    let date_text = format_timestamp(payment.timestamp as u64).unwrap_or_else(|| "Unknown".to_string());
+    let date_text =
+        format_timestamp(payment.timestamp as u64).unwrap_or_else(|| "Unknown".to_string());
 
     // Extract description from payment details
     let description = match &payment.details {
@@ -203,7 +213,7 @@ pub fn transaction_detail_view<'a>(
                     } else {
                         Container::new(Row::new().spacing(5).push(text("-").size(H1_SIZE)).push(
                             coincube_ui::component::amount::amount_with_size_and_unit(
-                                &btc_amount,
+                                &total_amount,
                                 H1_SIZE,
                                 bitcoin_unit,
                             ),
@@ -283,6 +293,20 @@ pub fn transaction_detail_view<'a>(
                             Column::new()
                                 .width(Length::FillPortion(2))
                                 .push(text(btc_amount.to_formatted_string_with_unit(bitcoin_unit))),
+                        )
+                        .spacing(20),
+                )
+                .push(
+                    Row::new()
+                        .push(
+                            Column::new()
+                                .width(Length::FillPortion(1))
+                                .push(text("Fees").bold()),
+                        )
+                        .push(
+                            Column::new()
+                                .width(Length::FillPortion(2))
+                                .push(text(fees_sat.to_formatted_string_with_unit(bitcoin_unit))),
                         )
                         .spacing(20),
                 )

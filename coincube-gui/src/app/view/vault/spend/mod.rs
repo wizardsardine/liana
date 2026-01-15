@@ -169,6 +169,36 @@ pub fn create_spend_tx<'a>(
     let is_self_send = recipients.is_empty();
     let fiat_balance = fiat_converter.as_ref().map(|c| c.convert(*balance));
     let fiat_unconfirmed = fiat_converter.map(|c| c.convert(*unconfirmed_balance));
+
+    let can_proceed = is_valid
+        && !duplicate
+        && error.is_none()
+        && (is_self_send
+            || recovery_timelock.is_some()
+            || Some(&Amount::from_sat(0)) == amount_left);
+
+    let disabled_hint = if can_proceed {
+        None
+    } else if feerate.value.is_empty() {
+        Some("Please set a feerate.")
+    } else if !feerate.valid {
+        Some("Invalid feerate.")
+    } else if duplicate {
+        Some("Duplicate recipient address.")
+    } else if coins.iter().all(|(_, selected)| !selected) {
+        Some("Please select at least one coin.")
+    } else if !is_self_send && recovery_timelock.is_none() {
+        match amount_left {
+            None => Some("Enter recipient address and amount."),
+            Some(amount) if amount.to_sat() != 0 => Some("Insufficient funds."),
+            _ => None,
+        }
+    } else if error.is_some() {
+        Some("Please correct all the errors.")
+    } else {
+        None
+    };
+
     dashboard(
         menu,
         cache,
@@ -297,7 +327,7 @@ pub fn create_spend_tx<'a>(
                     .push(Column::with_children(recipients).spacing(10))
                     .push(
                         Row::new()
-                            .push_maybe(if duplicate {
+                            .push(if duplicate {
                                 Some(
                                     Container::new(
                                         text("Two payment addresses are the same")
@@ -309,7 +339,7 @@ pub fn create_spend_tx<'a>(
                                 None
                             })
                             .push(Space::new().width(Length::Fill))
-                            .push_maybe(if is_self_send || recovery_timelock.is_some() {
+                            .push(if is_self_send || recovery_timelock.is_some() {
                                 // Recipients cannot be added for self-send (zero recipients) and recovery (exactly one recipient).
                                 None
                             } else {
@@ -362,13 +392,13 @@ pub fn create_spend_tx<'a>(
                         )
                         .width(Length::Fixed(150.0)),
                     )
-                    .push_maybe(fee_amount.map(|fee| {
+                    .push(fee_amount.map(|fee| {
                         Row::new()
                             .spacing(10)
                             .align_y(Alignment::Center)
                             .push(p1_regular("Fee:").style(theme::text::secondary))
                             .push(amount_with_size(fee, P1_SIZE))
-                            .push_maybe(fiat_converter.map(|conv| {
+                            .push(fiat_converter.map(|conv| {
                                 Row::new().spacing(10).align_y(Alignment::Center).push(
                                     conv.convert(*fee)
                                         .to_text()
@@ -470,7 +500,18 @@ pub fn create_spend_tx<'a>(
                 Row::new()
                     .spacing(20)
                     .align_y(Alignment::Center)
-                    .push_maybe(
+                    .push(disabled_hint.map(|hint| {
+                        Container::new(
+                            Row::new()
+                                .spacing(5)
+                                .align_y(Alignment::Center)
+                                .push(icon::warning_icon())
+                                .push(text(hint)),
+                        )
+                        .padding(10)
+                        .style(theme::card::warning)
+                    }))
+                    .push(
                         (!is_first_step).then_some(
                             button::secondary(None, "< Previous")
                                 .width(Length::Fixed(150.0))
@@ -483,21 +524,13 @@ pub fn create_spend_tx<'a>(
                             .on_press(Message::CreateSpend(CreateSpendMessage::Clear))
                             .width(Length::Fixed(100.0)),
                     )
-                    .push(
-                        if is_valid
-                            && !duplicate
-                            && error.is_none()
-                            && (is_self_send
-                                || recovery_timelock.is_some()
-                                || Some(&Amount::from_sat(0)) == amount_left)
-                        {
-                            button::primary(None, "Next")
-                                .on_press(Message::CreateSpend(CreateSpendMessage::Generate))
-                                .width(Length::Fixed(100.0))
-                        } else {
-                            button::secondary(None, "Next").width(Length::Fixed(100.0))
-                        },
-                    ),
+                    .push(if can_proceed {
+                        button::primary(None, "Next")
+                            .on_press(Message::CreateSpend(CreateSpendMessage::Generate))
+                            .width(Length::Fixed(100.0))
+                    } else {
+                        button::secondary(None, "Next").width(Length::Fixed(100.0))
+                    }),
             )
             .push(Space::new().height(Length::Fixed(20.0)))
             .spacing(20),
@@ -520,7 +553,7 @@ pub fn recipient_view<'a>(
     Container::new(
         Column::new()
             .spacing(10)
-            .push_maybe(
+            .push(
                 // Recipient for recovery cannot be deleted.
                 (!is_recovery).then_some(
                     Row::new().push(Space::new().width(Length::Fill)).push(
@@ -602,7 +635,7 @@ pub fn recipient_view<'a>(
                                 .padding(10)
                                 .into_container()
                             })
-                            .push_maybe(fiat_converter.map(|conv| {
+                            .push(fiat_converter.map(|conv| {
                                 Row::new()
                                     .align_y(Alignment::Center)
                                     .spacing(5)
@@ -657,7 +690,7 @@ pub fn recipient_view<'a>(
                                     .push(Space::new().width(Length::Fixed(10.0)))
                             })),
                     )
-                    .push_maybe(
+                    .push(
                         // The MAX option cannot be edited for recovery recipients.
                         (!is_recovery).then_some(tooltip::Tooltip::new(
                             checkbox(is_max_selected).label("MAX")

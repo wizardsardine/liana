@@ -102,6 +102,35 @@ where
         }
     }
 
+    /// Creates a new [`Form`] that restricts input values to valid sats amount (integers only)
+    /// before applying the `on_change` function.
+    /// It expects:
+    /// - a placeholder
+    /// - the current value
+    /// - a function that produces a message when the [`Form`] changes
+    pub fn new_amount_sats<F>(placeholder: &str, value: &'a Value<String>, on_change: F) -> Self
+    where
+        F: 'static + Fn(String) -> Message,
+    {
+        Self {
+            input: text_input::TextInput::new(placeholder, &value.value).on_input(move |s| {
+                // Only allow empty string or valid non-negative integers (no decimals, no negative)
+                let is_valid = s.is_empty() || {
+                    !s.starts_with('-')
+                        && s.chars().all(|c| c.is_ascii_digit())
+                        && s.parse::<u64>().is_ok()
+                };
+                if is_valid {
+                    on_change(s)
+                } else {
+                    on_change(value.value.clone())
+                }
+            }),
+            warning: value.warning,
+            valid: value.valid,
+        }
+    }
+
     /// Creates a new [`Form`] that restricts input values to valid numeric amounts (for fiat)
     /// before applying the `on_change` function.
     /// It expects:
@@ -180,7 +209,7 @@ impl<'a, Message: 'a + Clone> Form<'a, Message> {
                 } else {
                     self.input
                 })
-                .push_maybe(if !self.valid {
+                .push(if !self.valid {
                     self.warning
                         .map(|message| text::caption(message).color(color::RED))
                 } else {

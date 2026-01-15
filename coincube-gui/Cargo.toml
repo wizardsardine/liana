@@ -10,11 +10,10 @@ edition = "2018"
 resolver = "2"
 
 [features]
-default = []
-buysell = []
+buysell = ["dep:iced_wry"]
 
 [package.metadata.winres]
-LegalCopyright = "Copyright © 2025"
+LegalCopyright = "Copyright © 2026"
 
 [[bin]]
 name = "coincube"
@@ -40,11 +39,8 @@ iced = { version = "0.14.0", default-features = false, features = [
 	"qr_code",
 	"image-without-codecs",
 	"advanced",
-	"wgpu",
 	"tiny-skia",
 	"sipper",
-	"x11",
-	"wayland"
 ] }
 image = { version = "*", default-features = false, features = ["png"] }
 iced_aw = { version = "0.13.0", features = ["context_menu"] }
@@ -89,6 +85,10 @@ fs4 = { version = "0.13", features = ["sync"] }
 # Used for opening URLs in browser
 open = "5.3"
 
+
+# Webview for embedded browser functionality (wry-based)
+iced_wry = { git = "https://github.com/sokorototo/iced_wry", optional = true}
+
 keyring = { version = "3.1.0", features = [
 	"apple-native",
 	"windows-native",
@@ -109,6 +109,7 @@ zip = { version = "0.6", default-features = false, features = [
 libc = "0.2"
 tar = { version = "0.4", default-features = false }
 flate2 = { version = "1.0", default-features = false }
+iced = { version = "0.14.0", features = ["x11", "wayland"] }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt", "macros"] }

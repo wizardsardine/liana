@@ -7,6 +7,7 @@ use coincube_core::{
     miniscript::bitcoin::{
         bip32::DerivationPath,
         secp256k1::{All, Secp256k1},
+        Amount,
     },
     signer::HotSigner,
 };
@@ -220,15 +221,15 @@ impl BreezClient {
 
     pub async fn receive_invoice(
         &self,
-        amount_sat: Option<u64>,
+        amount: Amount,
         description: Option<String>,
     ) -> Result<breez::ReceivePaymentResponse, BreezError> {
         let prepare = self
             .sdk
             .prepare_receive_payment(&breez::PrepareReceiveRequest {
                 payment_method: breez::PaymentMethod::Bolt11Invoice,
-                amount: amount_sat.map(|sat| breez::ReceiveAmount::Bitcoin {
-                    payer_amount_sat: sat,
+                amount: Some(breez::ReceiveAmount::Bitcoin {
+                    payer_amount_sat: amount.to_sat(),
                 }),
             })
             .await

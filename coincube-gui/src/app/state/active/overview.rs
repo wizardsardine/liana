@@ -187,6 +187,7 @@ impl State for ActiveOverview {
                                 );
                                 let details = payment.details.clone();
                                 let sign = if is_incoming { "+" } else { "-" };
+                                let fees_sat = Amount::from_sat(payment.fees_sat);
                                 view::active::RecentTransaction {
                                     description: desc.to_owned(),
                                     time_ago,
@@ -196,6 +197,7 @@ impl State for ActiveOverview {
                                     sign,
                                     status,
                                     details,
+                                    fees_sat,
                                 }
                             })
                             .collect();

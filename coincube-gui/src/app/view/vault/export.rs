@@ -4,7 +4,7 @@ use coincube_ui::{
         text::{h4_bold, text},
     },
     icon,
-    widget::{ColumnExt, Element, RowExt},
+    widget::Element,
 };
 use iced::{
     alignment::{self, Horizontal},
@@ -131,7 +131,7 @@ pub fn export_modal<'a, Message: From<ImportExportMessage> + Clone + 'static>(
                     .push(Space::new().width(20))
                     .push(h4_bold(title))
                     .push(Space::new().width(Length::Fill))
-                    .push_maybe(cross)
+                    .push(cross)
                     .align_y(alignment::Vertical::Center),
             )
             .push(Space::new().height(Length::Fill))
@@ -139,7 +139,7 @@ pub fn export_modal<'a, Message: From<ImportExportMessage> + Clone + 'static>(
             .push(Space::new().height(Length::Fill))
             .push(Row::new().push(text(msg)))
             .push(Space::new().height(Length::Fill))
-            .push_maybe(button)
+            .push(button)
             .push(Space::new().height(5)),
     )
     .width(Length::Fixed(500.0))

@@ -65,9 +65,7 @@ pub trait State {
 
 /// redirect to another state with a message menu
 pub fn redirect(menu: Menu) -> Task<Message> {
-    Task::perform(async { menu }, |menu| {
-        Message::View(view::Message::Menu(menu))
-    })
+    Task::done(Message::View(view::Message::Menu(menu)))
 }
 
 /// Returns the confirmed and unconfirmed balances from `coins`, as well

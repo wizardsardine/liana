@@ -9,8 +9,9 @@ use breez_sdk_liquid::model::{
 use coincube_core::miniscript::bitcoin::{bip32::ChildNumber, Address, Amount};
 use coincube_ui::component::form;
 use coincube_ui::widget::*;
-use iced::Task;
+use iced::{Subscription, Task};
 
+use super::vault::psbt::SignModal;
 use super::{Cache, Menu, State};
 use crate::app::breez::BreezClient;
 use crate::app::error::Error;
@@ -19,15 +20,30 @@ use crate::app::state::vault::receive::ShowQrCodeModal;
 use crate::app::view::global_home::{GlobalViewConfig, HomeView, TransferDirection};
 use crate::app::view::HomeMessage;
 use crate::app::{message::Message, view, wallet::Wallet};
-use crate::daemon::model::{CreateSpendResult, LabelItem, Labelled};
+use crate::daemon::model::{CreateSpendResult, LabelItem, Labelled, SpendTx};
 use crate::daemon::Daemon;
 use crate::services::feeestimation::fee_estimation::FeeEstimator;
 
-#[derive(Debug, Default)]
 pub enum Modal {
     ShowQrCode(ShowQrCodeModal),
-    #[default]
+    Sign(Box<SignModal>),
     None,
+}
+
+impl std::fmt::Debug for Modal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ShowQrCode(m) => f.debug_tuple("ShowQrCode").field(m).finish(),
+            Self::Sign(_) => f.debug_tuple("Sign").field(&"<SignModal>").finish(),
+            Self::None => write!(f, "None"),
+        }
+    }
+}
+
+impl Default for Modal {
+    fn default() -> Self {
+        Self::None
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -66,6 +82,8 @@ pub struct GlobalHome {
     onchain_receive_limit: Option<(u64, u64)>,
     prepare_onchain_send_response: Option<PreparePayOnchainResponse>,
     is_sending: bool,
+    transfer_spend_tx: Option<SpendTx>,
+    transfer_signed: bool,
 }
 
 impl GlobalHome {
@@ -88,6 +106,8 @@ impl GlobalHome {
             onchain_receive_limit: None,
             prepare_onchain_send_response: None,
             is_sending: false,
+            transfer_spend_tx: None,
+            transfer_signed: false,
         }
     }
 
@@ -110,6 +130,8 @@ impl GlobalHome {
             onchain_receive_limit: None,
             prepare_onchain_send_response: None,
             is_sending: false,
+            transfer_spend_tx: None,
+            transfer_signed: false,
         }
     }
 }
@@ -154,17 +176,38 @@ impl State for GlobalHome {
                 onchain_send_limit: self.onchain_send_limit,
                 onchain_receive_limit: self.onchain_receive_limit,
                 is_sending: self.is_sending,
+                is_tx_signed: self.transfer_signed,
             }),
         );
 
         let overlay = match &self.modal {
             Modal::ShowQrCode(m) => m.view(),
+            Modal::Sign(sign_modal) => {
+                // Delegate to SignModal's view this will render the signing UI
+                use crate::app::state::vault::psbt::Modal as PsbtModalTrait;
+                if let Some(_) = &self.transfer_spend_tx {
+                    return sign_modal.view(content);
+                } else {
+                    return content;
+                }
+            }
             Modal::None => return content,
         };
 
         coincube_ui::widget::modal::Modal::new(content, overlay)
             .on_blur(Some(view::Message::Close))
             .into()
+    }
+
+    fn subscription(&self) -> Subscription<Message> {
+        match &self.modal {
+            Modal::Sign(sign_modal) => {
+                // To fetch hardware wallets
+                use crate::app::state::vault::psbt::Modal as PsbtModalTrait;
+                sign_modal.subscription()
+            }
+            _ => Subscription::none(),
+        }
     }
 
     fn update(
@@ -341,9 +384,73 @@ impl State for GlobalHome {
 
                         Task::none()
                     }
+                    HomeMessage::SignVaultToActiveTx => {
+                        if let Some(transfer_direction) = self.transfer_direction {
+                            if matches!(transfer_direction, TransferDirection::VaultToActive) {
+                                if let Some(address_info) = self.receive_address_info.clone() {
+                                    if let Some(daemon) = daemon {
+                                        if let Ok(amount) = Amount::from_str_in(
+                                            &self.entered_amount.value,
+                                            coincube_core::miniscript::bitcoin::Denomination::Bitcoin,
+                                        ) {
+                                            let amount_sat = amount.to_sat();
+                                            let mut destinations = std::collections::HashMap::new();
+                                            destinations.insert(
+                                                address_info.address.as_unchecked().clone(),
+                                                amount_sat,
+                                            );
+
+                                            let daemon_clone = daemon.clone();
+                                            let wallet = self.wallet.clone();
+                                            let cache_clone = (cache.datadir_path.clone(), cache.network);
+                                            self.is_sending = true;
+                                            return Task::perform(
+                                                async move {
+                                                    let feerate_vb = FeeEstimator::new()
+                                                        .get_high_priority_rate()
+                                                        .await
+                                                        .map_err(|e| format!("Failed to get fee rate: {}", e))?;
+
+                                                    let psbt = match daemon_clone
+                                                        .create_spend_tx(
+                                                            &[],
+                                                            &destinations,
+                                                            feerate_vb as u64,
+                                                            None,
+                                                        )
+                                                        .await
+                                                    {
+                                                        Ok(CreateSpendResult::Success { psbt, .. }) => psbt,
+                                                        Ok(CreateSpendResult::InsufficientFunds { missing }) => {
+                                                            return Err(format!("Insufficient funds: {} sats missing", missing));
+                                                        }
+                                                        Err(e) => {
+                                                            return Err(format!("Failed to create transaction: {}", e));
+                                                        }
+                                                    };
+
+                                                    daemon_clone.update_spend_tx(&psbt).await
+                                                        .map_err(|e| format!("Failed to save PSBT: {}", e))?;
+
+                                                    Ok((psbt, wallet, cache_clone))
+                                                },
+                                                |result| {
+                                                    Message::View(view::Message::Home(
+                                                        HomeMessage::TransferPsbtReady(result)
+                                                    ))
+                                                },
+                                            );
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        Task::none()
+                    }
                     HomeMessage::ConfirmTransfer => {
                         if let Some(transfer_direction) = self.transfer_direction {
                             if matches!(transfer_direction, TransferDirection::ActiveToVault) {
+                                // ActiveToVault: Direct broadcast (no signing needed)
                                 if let Some(address_info) = self.receive_address_info.clone() {
                                     if let Some(prepare_onchain_send_response) =
                                         self.prepare_onchain_send_response.clone()
@@ -373,98 +480,43 @@ impl State for GlobalHome {
                                 }
                             } else if matches!(transfer_direction, TransferDirection::VaultToActive)
                             {
-                                if let Some(address_info) = self.receive_address_info.clone() {
-                                    if let Some(daemon) = daemon {
-                                        // Parse the amount to send
-                                        if let Ok(amount) = Amount::from_str_in(
-                                        &self.entered_amount.value,
-                                        coincube_core::miniscript::bitcoin::Denomination::Bitcoin,
-                                    ) {
-                                        let amount_sat = amount.to_sat();
+                                if self.transfer_signed {
+                                    if let Some(spend_tx) = &self.transfer_spend_tx {
+                                        if let Some(daemon) = daemon {
+                                            let txid = spend_tx.psbt.unsigned_tx.compute_txid();
+                                            let daemon_clone = daemon.clone();
+                                            self.is_sending = true;
 
-                                        // Create destinations map (Breez address)
-                                        let mut destinations = std::collections::HashMap::new();
-                                        destinations.insert(
-                                            address_info.address.as_unchecked().clone(),
-                                            amount_sat,
-                                        );
-
-                                        // Get wallet for signing
-                                        let wallet = self.wallet.clone();
-
-                                        // Create, sign and broadcast the spend transaction
-                                        let daemon_clone = daemon.clone();
-                                        self.is_sending = true;
-                                        return Task::perform(
-                                            async move {
-                                                let feerate_vb = FeeEstimator::new()
-                                                    .get_high_priority_rate()
-                                                    .await
-                                                    .map_err(|e| format!("Failed to get fee rate: {}", e))?;
-
-                                                // Create the spend transaction
-                                                let mut psbt = match daemon_clone
-                                                    .create_spend_tx(
-                                                        &[], // Empty means auto-select coins
-                                                        &destinations,
-                                                        feerate_vb as u64,
-                                                        None, // No specific change address
-                                                    )
-                                                    .await
-                                                {
-                                                    Ok(CreateSpendResult::Success { psbt, .. }) => {
-                                                        psbt
-                                                    }
-                                                    Ok(CreateSpendResult::InsufficientFunds { missing }) => {
-                                                        return Err(format!("Insufficient funds: {} sats missing", missing));
-                                                    }
+                                            return Task::perform(
+                                                async move {
+                                                    daemon_clone
+                                                        .broadcast_spend_tx(&txid)
+                                                        .await
+                                                        .map_err(|e| {
+                                                            format!("Failed to broadcast: {}", e)
+                                                        })
+                                                },
+                                                |result| match result {
+                                                    Ok(()) => Message::View(view::Message::Home(
+                                                        HomeMessage::TransferSuccessful,
+                                                    )),
                                                     Err(e) => {
-                                                        return Err(format!("Failed to create transaction: {}", e));
-                                                    }
-                                                };
-
-                                                // Sign the PSBT with hot signer if available
-                                                if let Some(wallet) = wallet {
-                                                    if let Some(signer) = &wallet.signer {
-                                                        psbt = signer.sign_psbt(psbt).map_err(|e| {
-                                                            format!("Failed to sign PSBT: {}", e)
-                                                        })?;
-                                                    } else {
-                                                        log::error!("No hot signer available in wallet");
-                                                        return Err("No hot signer available. Please set up a hot signer for automatic signing.".to_string());
-                                                    }
-                                                } else {
-                                                    log::error!("Wallet not available");
-                                                    return Err("Wallet not available".to_string());
-                                                }
-
-                                                // Update the spend in daemon
-                                                if let Err(e) = daemon_clone.update_spend_tx(&psbt).await {
-                                                    return Err(format!("Failed to update spend: {}", e));
-                                                }
-
-                                                // Broadcast the transaction
-                                                let txid = psbt.unsigned_tx.compute_txid();
-                                                if let Err(e) = daemon_clone.broadcast_spend_tx(&txid).await {
-                                                    return Err(format!("Failed to broadcast: {}", e));
-                                                }
-
-                                                Ok(())
-                                            },
-                                            |result| {
-                                                match result {
-                                                Ok(_) => Message::View(view::Message::Home(
-                                                    HomeMessage::TransferSuccessful,
-                                                )),
-                                                Err(error) => {
-                                                        log::error!("ERROR IN SENDING THE TX: {}", error);
+                                                        log::error!(
+                                                            "Failed to broadcast transfer: {}",
+                                                            e
+                                                        );
                                                         Message::View(view::Message::Home(
-                                                    HomeMessage::Error(error),
-                                                ))},
-                                            }},
-                                        );
+                                                            HomeMessage::Error(e),
+                                                        ))
+                                                    }
+                                                },
+                                            );
+                                        }
                                     }
-                                    }
+                                } else {
+                                    self.warning = Some(Error::Unexpected(
+                                        "Please sign the transaction first".to_string(),
+                                    ));
                                 }
                             }
                         }
@@ -504,6 +556,8 @@ impl State for GlobalHome {
                         self.onchain_receive_limit = None;
                         self.prepare_onchain_send_response = None;
                         self.is_sending = false;
+                        self.transfer_spend_tx = None;
+                        self.transfer_signed = false;
                         Task::none()
                     }
                     HomeMessage::BreezOnchainAddress(address) => {
@@ -525,7 +579,7 @@ impl State for GlobalHome {
                                         labels: HashMap::new(),
                                     });
                                 }
-                                 Err(_) => {
+                                Err(_) => {
                                     log::error!(
                                         "Address {} is not valid for network {:?}",
                                         addr_str,
@@ -539,6 +593,78 @@ impl State for GlobalHome {
                         Task::none()
                     }
                     HomeMessage::RefreshActiveBalance => self.load_active_balance(),
+                    HomeMessage::TransferPsbtReady(result) => {
+                        self.is_sending = false;
+                        match result {
+                            Ok((psbt, wallet, (datadir_path, network))) => {
+                                if let Some(wallet) = wallet {
+                                    let sigs =
+                                        match wallet.main_descriptor.partial_spend_info(&psbt) {
+                                            Ok(info) => info,
+                                            Err(e) => {
+                                                self.warning = Some(Error::Unexpected(format!(
+                                                    "Failed to get signature info: {}",
+                                                    e
+                                                )));
+                                                return Task::none();
+                                            }
+                                        };
+
+                                    let spend_amount =
+                                        psbt.unsigned_tx.output.iter().map(|out| out.value).sum();
+
+                                    // Create minimal SpendTx
+                                    let spend_tx = SpendTx {
+                                        network,
+                                        psbt: psbt.clone(),
+                                        coins: std::collections::HashMap::new(), // Empty for transfer
+                                        labels: HashMap::new(),
+                                        sigs,
+                                        change_indexes: vec![],
+                                        spend_amount,
+                                        fee_amount: None,
+                                        max_vbytes: 1000,
+                                        status: crate::daemon::model::SpendStatus::Pending,
+                                        updated_at: Some(
+                                            std::time::SystemTime::now()
+                                                .duration_since(std::time::UNIX_EPOCH)
+                                                .unwrap()
+                                                .as_secs()
+                                                as u32,
+                                        ),
+                                        kind: crate::daemon::model::TransactionKind::SendToSelf,
+                                    };
+
+                                    self.transfer_spend_tx = Some(spend_tx);
+
+                                    // Create the SignModal
+                                    let sign_modal = SignModal::new(
+                                        std::collections::HashSet::new(),
+                                        wallet,
+                                        datadir_path,
+                                        network,
+                                        true,
+                                        None,
+                                    );
+
+                                    self.modal = Modal::Sign(Box::new(sign_modal));
+                                } else {
+                                    self.warning =
+                                        Some(Error::Unexpected("Wallet not available".to_string()));
+                                }
+                            }
+                            Err(e) => {
+                                self.warning = Some(Error::Unexpected(e));
+                            }
+                        }
+                        Task::none()
+                    }
+                    HomeMessage::TransferSigningComplete => {
+                        self.transfer_signed = true;
+                        self.modal = Modal::None;
+                        self.is_sending = false;
+                        Task::none()
+                    }
                 }
             }
             Message::ReceiveAddress(res) => match res {
@@ -595,6 +721,37 @@ impl State for GlobalHome {
             }
             Message::View(view::Message::Close) => {
                 self.modal = Modal::None;
+                self.transfer_spend_tx = None;
+                Task::none()
+            }
+            Message::Updated(_) => {
+                if let Modal::Sign(ref mut sign_modal) = self.modal {
+                    if let Some(ref mut spend_tx) = self.transfer_spend_tx {
+                        use crate::app::state::vault::psbt::Modal as PsbtModalTrait;
+                        let task = sign_modal.update(daemon.unwrap(), message, spend_tx);
+
+                        return Task::batch(vec![
+                            task,
+                            Task::perform(async { () }, |_| {
+                                Message::View(view::Message::Home(
+                                    HomeMessage::TransferSigningComplete,
+                                ))
+                            }),
+                        ]);
+                    }
+                }
+                Task::none()
+            }
+            Message::Signed(_, _)
+            | Message::HardwareWallets(_)
+            | Message::View(view::Message::SelectHardwareWallet(_))
+            | Message::View(view::Message::Spend(_)) => {
+                if let Modal::Sign(ref mut sign_modal) = self.modal {
+                    if let Some(ref mut spend_tx) = self.transfer_spend_tx {
+                        use crate::app::state::vault::psbt::Modal as PsbtModalTrait;
+                        return sign_modal.update(daemon.unwrap(), message, spend_tx);
+                    }
+                }
                 Task::none()
             }
             _ => Task::none(),

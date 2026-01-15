@@ -349,15 +349,42 @@ pub struct BankCustomerInquiry {
 
 #[derive(Debug, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
+pub struct OrderQuote {
+    pub id: String,
+    pub account_id: String,
+    pub exchange_rate: f64,
+    pub usd_to_target_currency_rate: f64,
+    pub usd_amount: u64,
+    pub transaction_fees_in_source_currency: u64,
+    pub transaction_fees_in_target_currency: u64,
+    pub transaction_fees_in_usd_cent: u64,
+    pub payment_btc_detail: String,
+    pub payment_method: MavapayPaymentMethod,
+    pub total_amount: u64,
+    pub equivalent_amount: u64,
+    pub expiry: String,
+    pub source_currency: MavapayUnitCurrency,
+    pub target_currency: MavapayUnitCurrency,
+    pub payment_currency: MavapayUnitCurrency,
+    pub btc_usd_rate: f64,
+    pub customer_internal_fee_in_usd_cent: u64,
+    pub customer_internal_fee: u64,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct GetOrderResponse {
     pub id: String,
     pub amount: u64,
     pub status: TransactionStatus,
     pub currency: MavapayCurrency,
     pub payment_method: MavapayPaymentMethod,
+    pub quote: Option<OrderQuote>,
 
-    pub created_at: Option<String>,
-    pub updated_at: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -368,6 +395,18 @@ pub enum TransactionStatus {
     Expired,
     Failed,
     Paid,
+}
+
+impl std::fmt::Display for TransactionStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TransactionStatus::Pending => write!(f, "PENDING"),
+            TransactionStatus::Success => write!(f, "SUCCESS"),
+            TransactionStatus::Expired => write!(f, "EXPIRED"),
+            TransactionStatus::Failed => write!(f, "FAILED"),
+            TransactionStatus::Paid => write!(f, "PAID"),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

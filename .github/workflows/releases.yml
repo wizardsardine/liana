@@ -66,6 +66,14 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: sudo apt-get update && sudo apt-get install -y libudev-dev pkg-config protobuf-compiler
 
+      - name: Install macOS dependencies
+        if: matrix.os == 'macos-latest'
+        run: brew install protobuf
+
+      - name: Install Windows dependencies
+        if: matrix.os == 'windows-latest'
+        run: choco install protoc
+
       - uses: taiki-e/upload-rust-binary-action@v1
         if: matrix.os == 'ubuntu-latest'
         with:
