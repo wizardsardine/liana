@@ -1580,6 +1580,7 @@ dependencies = [
  "iced_core",
  "iced_runtime",
  "image",
+ "serde",
  "unicode-segmentation",
 ]
 
