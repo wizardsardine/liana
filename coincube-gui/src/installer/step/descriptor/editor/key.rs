@@ -13,7 +13,6 @@ use coincube_core::miniscript::{
     },
     descriptor::{DerivPaths, DescriptorMultiXKey, DescriptorPublicKey, DescriptorXKey, Wildcard},
 };
-use coincube_ui::widget::{ColumnExt, RowExt};
 use iced::{
     alignment::{Horizontal, Vertical},
     clipboard,
@@ -919,9 +918,9 @@ impl SelectKeySource {
         let column = Column::new()
             .spacing(10)
             .push(header)
-            .push_maybe(no_devices)
-            .push_maybe(devices)
-            .push_maybe(keys)
+            .push(no_devices)
+            .push(devices)
+            .push(keys)
             .push(self.view_other_options())
             .align_x(Horizontal::Center)
             .width(modal::MODAL_WIDTH);
@@ -1070,11 +1069,11 @@ impl SelectKeySource {
             .width(modal::BTN_W);
         if collapsed {
             col = col
-                .push_maybe(load_key)
-                .push_maybe(paste_xpub)
-                .push_maybe(hot_signer)
-                .push_maybe(cosigner_token)
-                .push_maybe(safety_net_token);
+                .push(load_key)
+                .push(paste_xpub)
+                .push(hot_signer)
+                .push(cosigner_token)
+                .push(safety_net_token);
         }
         col.into()
     }
@@ -1325,7 +1324,7 @@ impl super::DescriptorEditModal for SelectKeySource {
             Step::Details => self.details_view(),
         };
         let content = Column::new()
-            .push_maybe(self.error.clone().map(|e| card::error("Error", e)))
+            .push(self.error.clone().map(|e| card::error("Error", e)))
             .push(content)
             .into();
         if let Some(modal) = &self.modal {
@@ -1368,8 +1367,8 @@ where
     let btn_row = if error.is_none() {
         Row::new()
             .push(Space::new().width(Length::Fill))
-            .push_maybe(replace_btn)
-            .push_maybe(spacer)
+            .push(replace_btn)
+            .push(spacer)
             .push(button::primary(None, "Apply").on_press_maybe(apply_msg))
     } else if let Some(retry_msg) = retry_msg {
         row![
@@ -1382,8 +1381,8 @@ where
     } else {
         Row::new()
             .push(Space::new().width(Length::Fill))
-            .push_maybe(replace_btn)
-            .push_maybe(spacer)
+            .push(replace_btn)
+            .push(spacer)
             .push(button::primary(None, "Apply"))
     };
     let column = Column::new()
@@ -1402,13 +1401,13 @@ where
                 .width(300),
         )
         .push(Space::new().height(10))
-        .push_maybe(if pick_account.is_some() {
+        .push(if pick_account.is_some() {
             Some(row![p1_bold("Key path account:"), tooltip(info)].align_y(Vertical::Center))
         } else {
             None
         })
-        .push_maybe(pick_account)
-        .push_maybe(error)
+        .push(pick_account)
+        .push(error)
         .push(btn_row)
         .width(410);
     card::modal(column).into()

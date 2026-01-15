@@ -209,7 +209,7 @@ impl<'a, Message: 'a + Clone> Form<'a, Message> {
                 } else {
                     self.input
                 })
-                .push_maybe(if !self.valid {
+                .push(if !self.valid {
                     self.warning
                         .map(|message| text::caption(message).color(color::RED))
                 } else {

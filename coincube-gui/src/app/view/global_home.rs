@@ -98,7 +98,7 @@ fn wallet_card<'a>(
                             } else {
                                 amount_with_size_and_unit(balance, H2_SIZE, bitcoin_unit)
                             })
-                            .push_maybe(if balance_masked {
+                            .push(if balance_masked {
                                 Some(text("********").size(P1_SIZE))
                             } else {
                                 fiat_balance
@@ -531,7 +531,7 @@ fn confirm_transfer_view<'a>(
                 .on_press(Message::Home(HomeMessage::PreviousStep)),
         )
         .push(Space::new().height(Length::Fixed(20.0)))
-        .push_maybe(warning.map(|w| warn(Some(w))))
+        .push(warning.map(|w| warn(Some(w))))
         .push(Container::new(
             Column::new()
                 .push(
@@ -548,7 +548,7 @@ fn confirm_transfer_view<'a>(
                         .width(Length::Fill),
                 )
                 .push(Space::new().height(60))
-                .push_maybe(match direction {
+                .push(match direction {
                     TransferDirection::ActiveToVault => Some(
                         Column::new()
                             .spacing(10)
@@ -558,7 +558,7 @@ fn confirm_transfer_view<'a>(
                                     .width(Length::Fill)
                                     .align_x(Alignment::Center),
                             )
-                            .push_maybe(receive_address.map(|addr| -> Element<'a, Message> {
+                            .push(receive_address.map(|addr| -> Element<'a, Message> {
                                 if address_expanded {
                                     Button::new(address_card(0, addr, labels, labels_editing))
                                         .padding(0)
@@ -626,7 +626,7 @@ fn confirm_transfer_view<'a>(
                                     .into()
                                 }
                             }))
-                            .push_maybe(receive_address.is_none().then(|| {
+                            .push(receive_address.is_none().then(|| {
                                 text("No receiving address available. Please generate one first.")
                                     .style(theme::text::secondary)
                             })),

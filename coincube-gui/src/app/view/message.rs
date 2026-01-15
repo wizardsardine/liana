@@ -215,6 +215,21 @@ pub enum BuySellMessage {
 
     // Mavapay specific messages
     Mavapay(crate::services::mavapay::MavapayMessage),
+
+    // Meld specific messages
+    Meld(crate::app::view::buysell::meld::MeldMessage),
+
+    // Clipboard action (forwarded to parent Message::Clipboard)
+    Clipboard(String),
+
+    ViewHistory,
+}
+
+#[cfg(feature = "buysell")]
+#[derive(Debug, Clone)]
+pub enum WebviewMessage {
+    WryMessage(iced_wry::IcedWryMessage),
+    InitWryWebviewWithUrl(iced_wry::ExtractedWindowId, String),
 }
 
 #[derive(Debug, Clone)]

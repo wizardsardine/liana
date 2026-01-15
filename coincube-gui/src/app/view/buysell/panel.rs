@@ -3,13 +3,10 @@ use iced::{
     Alignment, Length,
 };
 
-use coincube_core::miniscript::bitcoin::{self, Network};
+use coincube_core::miniscript::bitcoin;
 use coincube_ui::{
     color,
-    component::{
-        button, card,
-        text::{self, text},
-    },
+    component::{button, card, text},
     icon::*,
     theme,
     widget::*,
@@ -72,6 +69,8 @@ pub enum BuySellFlowState {
     },
     /// Nigeria, Kenya and South Africa, ie Mavapay supported countries
     Mavapay(super::mavapay::MavapayState),
+    /// Utilize Meld for countries not supported by Mavapay
+    Meld(super::meld::MeldState),
 }
 
 impl BuySellFlowState {
@@ -84,6 +83,7 @@ impl BuySellFlowState {
             BuySellFlowState::PasswordReset { .. } => "PasswordReset",
             BuySellFlowState::Initialization { .. } => "Initialization",
             BuySellFlowState::Mavapay(..) => "Mavapay",
+            BuySellFlowState::Meld { .. } => "Meld",
         }
     }
 }
@@ -95,7 +95,7 @@ pub struct BuySellPanel {
     // Common fields (always present)
     // TODO: Display errors using the globally provided facilities instead
     pub error: Option<String>,
-    pub network: Network,
+    pub network: bitcoin::Network,
 
     // services used by several buysell providers
     pub coincube_client: crate::services::coincube::CoincubeClient,
@@ -120,7 +120,7 @@ impl BuySellPanel {
             wallet,
             network,
             // API state
-            coincube_client: crate::services::coincube::CoincubeClient::new(),
+            coincube_client: crate::services::coincube::CoincubeClient::new(None),
             detected_country: None,
             login: None,
         }
@@ -144,12 +144,12 @@ impl BuySellPanel {
                         .align_y(Alignment::Center),
                 )
                 // error display
-                .push_maybe(self.error.as_ref().map(|err| {
-                    Container::new(text(err).size(12).style(theme::text::error).center())
+                .push(self.error.as_ref().map(|err| {
+                    Container::new(text::text(err).size(12).style(theme::text::error).center())
                         .padding(10)
                         .style(theme::card::invalid)
                 }))
-                .push_maybe(
+                .push(
                     self.error
                         .is_some()
                         .then(|| Space::new().height(Length::Fixed(20.0))),
@@ -163,10 +163,15 @@ impl BuySellPanel {
                         BuySellFlowState::PasswordReset { .. } => self.password_reset_ux(),
                         BuySellFlowState::VerifyEmail { .. } => self.email_verification_ux(),
 
+                        // init
                         BuySellFlowState::DetectingLocation(..) => self.geolocation_ux(),
                         BuySellFlowState::Initialization { .. } => self.initialization_ux(),
 
+                        // mavapay
                         BuySellFlowState::Mavapay(state) => super::mavapay::ui::form(state),
+
+                        // meld
+                        BuySellFlowState::Meld(state) => state.view(&self.network),
                     }
                 });
 
@@ -276,7 +281,7 @@ impl BuySellPanel {
                 container({
                     let el: iced::Element<BuySellMessage, theme::Theme> = match sent {
                         true => container(
-                            text(email)
+                            text::text(email)
                                 .style(theme::text::success)
                                 .size(20)
                                 .center()
@@ -452,7 +457,7 @@ impl BuySellPanel {
                     Row::new()
                         .push(previous_icon().color(color::GREY_2))
                         .push(Space::new().width(Length::Fixed(5.0)))
-                        .push(text("Previous").color(color::GREY_2))
+                        .push(text::text("Previous").color(color::GREY_2))
                         .spacing(5)
                         .align_y(Alignment::Center),
                 )
@@ -649,14 +654,14 @@ impl BuySellPanel {
                         })
                         .width(Length::Fill),
                 )
-                .push_maybe({
+                .push({
                     (matches!(buy_or_sell_selected, Some(true))).then(|| {
                         button::secondary(Some(plus_icon()), "Generate New Address")
                             .on_press(ViewMessage::BuySell(BuySellMessage::CreateNewAddress))
                             .width(iced::Length::Fill)
                     })
                 })
-                .push_maybe({
+                .push({
                     (matches!(buy_or_sell_selected, Some(false))).then(|| {
                         button::secondary(Some(globe_icon()), "Continue")
                             .on_press_maybe(
@@ -667,11 +672,17 @@ impl BuySellPanel {
                             .width(iced::Length::Fill)
                     })
                 })
-                .push_maybe({
+                .push({
                     buy_or_sell_selected.is_none().then(|| {
-                        button::secondary(Some(escape_icon()), "Log Out")
-                            .on_press(ViewMessage::BuySell(BuySellMessage::LogOut))
-                            .width(iced::Length::Fill)
+                        iced::widget::row![
+                            button::secondary(Some(history_icon()), "View Order History")
+                                .on_press(ViewMessage::BuySell(BuySellMessage::ViewHistory))
+                                .width(iced::Length::Fill),
+                            button::secondary(Some(escape_icon()), "Log Out")
+                                .on_press(ViewMessage::BuySell(BuySellMessage::LogOut))
+                                .width(iced::Length::Fill)
+                        ]
+                        .spacing(10)
                     })
                 }),
         }
@@ -705,7 +716,7 @@ impl BuySellPanel {
                 .push(Space::new().height(Length::Fixed(30.0)))
                 .push(text::p1_bold("Detecting your location...").color(color::WHITE))
                 .push(Space::new().height(Length::Fixed(20.0)))
-                .push(text("Please wait...").size(14).color(color::GREY_3))
+                .push(text::text("Please wait...").size(14).color(color::GREY_3))
                 .align_x(Alignment::Center)
                 .spacing(10)
                 .max_width(500)

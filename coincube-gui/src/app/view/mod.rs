@@ -461,7 +461,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<
     // Add Buy/Sell button after submenu items (only if vault exists)
     #[cfg(feature = "buysell")]
     {
-        menu_column = menu_column.push_maybe(has_vault.then_some(buy_sell_button));
+        menu_column = menu_column.push(has_vault.then_some(buy_sell_button));
     }
 
     // Global Settings button (always visible at bottom of main menu)
@@ -487,7 +487,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<
             Container::new(
                 Column::new()
                     .spacing(10)
-                    .push_maybe(cache.rescan_progress().map(|p| {
+                    .push(cache.rescan_progress().map(|p| {
                         Container::new(text(format!("  Rescan...{:.2}%  ", p * 100.0)))
                             .padding(5)
                             .style(theme::pill::simple)
@@ -565,7 +565,7 @@ pub fn modal<'a, T: Into<Element<'a, Message>>, F: Into<Element<'a, Message>>>(
             .style(theme::container::background),
         )
         .push(modal_section(Container::new(scrollable(content))))
-        .push_maybe(fixed_footer)
+        .push(fixed_footer)
         .width(Length::Fill)
         .height(Length::Fill)
         .into()

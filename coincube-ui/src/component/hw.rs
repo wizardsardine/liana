@@ -24,7 +24,7 @@ pub fn locked_hardware_wallet<'a, T: 'a, K: Display>(
                         ""
                     }
                 )))
-                .push_maybe(pairing_code.map(|a| text::p1_bold(a)))
+                .push(pairing_code.map(|a| text::p1_bold(a)))
                 .into(),
             Row::new()
                 .spacing(5)
@@ -46,13 +46,13 @@ pub fn supported_hardware_wallet<'a, T: 'a, K: Display, V: Display, F: Display>(
         column(vec![
             Row::new()
                 .spacing(5)
-                .push_maybe(alias.map(|a| text::p1_bold(a)))
+                .push(alias.map(|a| text::p1_bold(a)))
                 .push(text::p1_regular(format!("#{}", fingerprint)))
                 .into(),
             Row::new()
                 .spacing(5)
                 .push(text::caption(kind.to_string()))
-                .push_maybe(version.map(|v| text::caption(v.to_string())))
+                .push(version.map(|v| text::caption(v.to_string())))
                 .into(),
         ]),
         // No width - let column size naturally to fit button
@@ -121,13 +121,13 @@ pub fn supported_hardware_wallet_with_account<
     let key = column(vec![
         Row::new()
             .spacing(5)
-            .push_maybe(alias.map(|a| text::p1_bold(a)))
+            .push(alias.map(|a| text::p1_bold(a)))
             .push(text::p1_regular(format!("#{}", fingerprint)))
             .into(),
         Row::new()
             .spacing(5)
             .push(text::caption(kind.to_string()))
-            .push_maybe(version.map(|v| text::caption(v.to_string())))
+            .push(version.map(|v| text::caption(v.to_string())))
             .into(),
     ]);
     // No width set - let column size naturally
@@ -135,8 +135,8 @@ pub fn supported_hardware_wallet_with_account<
         Row::new()
             .push(key)
             .push(Space::new().width(Length::Fixed(15.0))) // Fixed spacing instead of Fill
-            .push_maybe(pick_account)
-            .push_maybe(display_account.map(|a| column![Space::new().height(8), a])),
+            .push(pick_account)
+            .push(display_account.map(|a| column![Space::new().height(8), a])),
     )
     .align_y(Alignment::Center)
     .padding(10)
@@ -154,13 +154,13 @@ pub fn warning_hardware_wallet<'a, T: 'static, K: Display, V: Display, F: Displa
             column(vec![
                 Row::new()
                     .spacing(5)
-                    .push_maybe(alias.map(|a| text::p1_bold(a)))
+                    .push(alias.map(|a| text::p1_bold(a)))
                     .push(text::p1_regular(format!("#{}", fingerprint)))
                     .into(),
                 Row::new()
                     .spacing(5)
                     .push(text::caption(kind.to_string()))
-                    .push_maybe(version.map(|v| text::caption(v.to_string())))
+                    .push(version.map(|v| text::caption(v.to_string())))
                     .into(),
             ])
             .width(Length::Fill)
@@ -193,7 +193,7 @@ pub fn unimplemented_method_hardware_wallet<'a, T: 'a, K: Display, V: Display, F
                     Row::new()
                         .spacing(5)
                         .push(text::caption(kind.to_string()))
-                        .push_maybe(version.map(|v| text::caption(v.to_string())))
+                        .push(version.map(|v| text::caption(v.to_string())))
                         .into(),
                 ])
                 .width(Length::Fill),
@@ -219,7 +219,7 @@ pub fn disabled_hardware_wallet<'a, T: 'a, K: Display, V: Display, F: Display>(
         Row::new()
             .spacing(5)
             .push(text::caption(kind.to_string()))
-            .push_maybe(version.map(|v| text::caption(v.to_string())))
+            .push(version.map(|v| text::caption(v.to_string())))
             .into(),
     ]);
     container(
@@ -263,13 +263,13 @@ pub fn processing_hardware_wallet<'a, T: 'a, K: Display, V: Display, F: Display>
             column(vec![
                 Row::new()
                     .spacing(5)
-                    .push_maybe(alias.map(|a| text::p1_bold(a)))
+                    .push(alias.map(|a| text::p1_bold(a)))
                     .push(text::p1_regular(format!("#{}", fingerprint)))
                     .into(),
                 Row::new()
                     .spacing(5)
                     .push(text::caption(kind.to_string()))
-                    .push_maybe(version.map(|v| text::caption(v.to_string())))
+                    .push(version.map(|v| text::caption(v.to_string())))
                     .into(),
             ])
             .into(), // No width - let column size naturally
@@ -307,22 +307,22 @@ pub fn selected_hardware_wallet<'a, T: 'static, K: Display, V: Display, F: Displ
     let key = column(vec![
         Row::new()
             .spacing(5)
-            .push_maybe(alias.map(|a| text::p1_bold(a)))
+            .push(alias.map(|a| text::p1_bold(a)))
             .push(text::p1_regular(format!("#{}", fingerprint)))
             .into(),
         Row::new()
             .spacing(5)
             .push(text::caption(kind.to_string()))
-            .push_maybe(version.map(|v| text::caption(v.to_string())))
+            .push(version.map(|v| text::caption(v.to_string())))
             .into(),
     ]);
     container(
         Row::new()
             .push(key)
             .push(Space::new().width(Length::Fill))
-            .push_maybe(account.map(|a| column![Space::new().height(8), text::p1_bold(a)]))
+            .push(account.map(|a| column![Space::new().height(8), text::p1_bold(a)]))
             .push(Space::new().width(10))
-            .push_maybe(warning.map(|w| {
+            .push(warning.map(|w| {
                 tooltip::Tooltip::new(
                     icon::warning_icon(),
                     iced::widget::text!("{}", w),
@@ -347,13 +347,13 @@ pub fn sign_success_hardware_wallet<'a, T: 'a, K: Display, V: Display, F: Displa
             column(vec![
                 Row::new()
                     .spacing(5)
-                    .push_maybe(alias.map(|a| text::p1_bold(a)))
+                    .push(alias.map(|a| text::p1_bold(a)))
                     .push(text::p1_regular(format!("#{}", fingerprint)))
                     .into(),
                 Row::new()
                     .spacing(5)
                     .push(text::caption(kind.to_string()))
-                    .push_maybe(version.map(|v| text::caption(v.to_string())))
+                    .push(version.map(|v| text::caption(v.to_string())))
                     .into(),
             ])
             .width(Length::Fill)
@@ -382,13 +382,13 @@ pub fn registration_success_hardware_wallet<'a, T: 'a, K: Display, V: Display, F
             column(vec![
                 Row::new()
                     .spacing(5)
-                    .push_maybe(alias.map(|a| text::p1_bold(a)))
+                    .push(alias.map(|a| text::p1_bold(a)))
                     .push(text::p1_regular(format!("#{}", fingerprint)))
                     .into(),
                 Row::new()
                     .spacing(5)
                     .push(text::caption(kind.to_string()))
-                    .push_maybe(version.map(|v| text::caption(v.to_string())))
+                    .push(version.map(|v| text::caption(v.to_string())))
                     .into(),
             ])
             .width(Length::Fill)
@@ -420,7 +420,7 @@ pub fn wrong_network_hardware_wallet<'a, T: 'static, K: Display, V: Display>(
                 Row::new()
                     .spacing(5)
                     .push(text::caption(kind.to_string()))
-                    .push_maybe(version.map(|v| text::caption(v.to_string())))
+                    .push(version.map(|v| text::caption(v.to_string())))
                     .into(),
             ])
             .width(Length::Fill)
@@ -452,7 +452,7 @@ pub fn unsupported_hardware_wallet<'a, T: 'static, K: Display, V: Display>(
                 Row::new()
                     .spacing(5)
                     .push(text::caption(kind.to_string()))
-                    .push_maybe(version.map(|v| text::caption(v.to_string())))
+                    .push(version.map(|v| text::caption(v.to_string())))
                     .into(),
             ])
             .width(Length::Fill)
@@ -483,7 +483,7 @@ pub fn unsupported_version_hardware_wallet<'a, T: 'static, K: Display, V: Displa
                 Row::new()
                     .spacing(5)
                     .push(text::caption(kind.to_string()))
-                    .push_maybe(version.map(|v| text::caption(v.to_string())))
+                    .push(version.map(|v| text::caption(v.to_string())))
                     .into(),
             ])
             .width(Length::Fill)
@@ -510,7 +510,7 @@ pub fn sign_success_hot_signer<'a, T: 'a, F: Display>(
             column(vec![
                 Row::new()
                     .spacing(5)
-                    .push_maybe(alias.map(|a| text::p1_bold(a)))
+                    .push(alias.map(|a| text::p1_bold(a)))
                     .push(text::p1_regular(format!("#{}", fingerprint)))
                     .into(),
                 Row::new()
@@ -542,7 +542,7 @@ pub fn selected_hot_signer<'a, T: 'a, F: Display>(
             column(vec![
                 Row::new()
                     .spacing(5)
-                    .push_maybe(alias.map(|a| text::p1_bold(a)))
+                    .push(alias.map(|a| text::p1_bold(a)))
                     .push(text::p1_regular(format!("#{}", fingerprint)))
                     .into(),
                 Row::new()
@@ -570,7 +570,7 @@ pub fn unselected_hot_signer<'a, T: 'a, F: Display>(
         column(vec![
             Row::new()
                 .spacing(5)
-                .push_maybe(alias.map(|a| text::p1_bold(a)))
+                .push(alias.map(|a| text::p1_bold(a)))
                 .push(text::p1_regular(format!("#{}", fingerprint)))
                 .into(),
             Row::new()
@@ -596,7 +596,7 @@ pub fn hot_signer<'a, T: 'a, F: Display>(
             .push(column(vec![
                 Row::new()
                     .spacing(5)
-                    .push_maybe(alias.map(|a| text::p1_bold(a)))
+                    .push(alias.map(|a| text::p1_bold(a)))
                     .push(text::p1_regular(format!("#{}", fingerprint)))
                     .into(),
                 Row::new()
@@ -605,7 +605,7 @@ pub fn hot_signer<'a, T: 'a, F: Display>(
                     .into(),
             ]))
             .push(Space::new().width(Length::Fixed(20.0)))
-            .push_maybe(if !can_sign {
+            .push(if !can_sign {
                 Some(text::text(
                     "This hot signer is not part of this spending path.",
                 ))

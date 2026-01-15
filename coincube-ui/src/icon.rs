@@ -298,3 +298,7 @@ pub fn phone_icon() -> Text<'static> {
 pub fn chain_icon() -> Text<'static> {
     bootstrap_icon('\u{F470}')
 }
+
+pub fn cash_icon() -> Text<'static> {
+    bootstrap_icon('\u{F247}')
+}

@@ -55,7 +55,7 @@ pub fn fiat_price<'a>(
                             .style(theme::toggler::primary),
                     ),
             )
-            .push_maybe(
+            .push(
                 new_price_setting.is_enabled.then_some(
                     Row::new()
                         .spacing(20)
@@ -73,7 +73,7 @@ pub fn fiat_price<'a>(
                         ),
                 ),
             )
-            .push_maybe(
+            .push(
                 new_price_setting.is_enabled.then_some(
                     Row::new()
                         .spacing(20)
@@ -91,7 +91,7 @@ pub fn fiat_price<'a>(
                         ),
                 ),
             )
-            .push_maybe(
+            .push(
                 new_price_setting
                     .source
                     .attribution()
