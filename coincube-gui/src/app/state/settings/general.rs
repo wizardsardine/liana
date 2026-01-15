@@ -257,9 +257,8 @@ impl State for GeneralSettingsState {
                     } else if let Some(curr) = self.currencies.first() {
                         self.new_price_setting.currency = *curr;
                     } else {
-                        let err = Error::Unexpected(
-                            "No available currencies in the list.".to_string(),
-                        );
+                        let err =
+                            Error::Unexpected("No available currencies in the list.".to_string());
                         let err_msg = err.to_string();
                         self.error = Some(err);
                         return Task::done(Message::View(view::Message::ShowError(err_msg)));

@@ -186,7 +186,9 @@ pub enum BuySellMessage {
     },
 
     // ip geolocation
-    CountryDetected(Result<crate::services::coincube::Country, crate::services::coincube::CoincubeError>),
+    CountryDetected(
+        Result<crate::services::coincube::Country, crate::services::coincube::CoincubeError>,
+    ),
 
     // recipient address generation
     CreateNewAddress,

@@ -1,4 +1,3 @@
-use std::fmt;
 use iced::{
     alignment::Horizontal,
     widget::{
@@ -7,6 +6,7 @@ use iced::{
     },
     Alignment, Length, Subscription, Task,
 };
+use std::fmt;
 
 use coincube_core::miniscript::bitcoin::Network;
 use coincube_ui::{
@@ -261,7 +261,10 @@ impl Launcher {
                     async move {
                         // Generate Active wallet HotSigner
                         let active_signer = HotSigner::generate(network).map_err(|e| {
-                            CubeSettingsError::SaveFailed(format!("Failed to generate Active wallet signer: {}", e))
+                            CubeSettingsError::SaveFailed(format!(
+                                "Failed to generate Active wallet signer: {}",
+                                e
+                            ))
                         })?;
 
                         // Create secp context for fingerprint calculation
@@ -270,9 +273,12 @@ impl Launcher {
 
                         // Store Active wallet mnemonic (encrypted with PIN if provided)
                         let network_dir = datadir_path.network_directory(network);
-                        network_dir
-                            .init()
-                            .map_err(|e| CubeSettingsError::SaveFailed(format!("Failed to create network directory: {}", e)))?;
+                        network_dir.init().map_err(|e| {
+                            CubeSettingsError::SaveFailed(format!(
+                                "Failed to create network directory: {}",
+                                e
+                            ))
+                        })?;
 
                         // Use a timestamp for the Active wallet storage
                         let timestamp = chrono::Utc::now().timestamp();
@@ -288,7 +294,10 @@ impl Launcher {
                                 Some(&pin),
                             )
                             .map_err(|e| {
-                                CubeSettingsError::SaveFailed(format!("Failed to store Active wallet mnemonic: {}", e))
+                                CubeSettingsError::SaveFailed(format!(
+                                    "Failed to store Active wallet mnemonic: {}",
+                                    e
+                                ))
                             })?;
 
                         tracing::info!("Active wallet signer created and stored (encrypted with PIN) with fingerprint: {}", active_fingerprint);
@@ -297,7 +306,9 @@ impl Launcher {
                         let cube = CubeSettings::new(cube_name, network)
                             .with_active_signer(active_fingerprint)
                             .with_pin(&pin)
-                            .map_err(|e| CubeSettingsError::SaveFailed(format!("Failed to hash PIN: {}", e)))?;
+                            .map_err(|e| {
+                                CubeSettingsError::SaveFailed(format!("Failed to hash PIN: {}", e))
+                            })?;
 
                         // Save Cube settings to settings file
                         settings::update_settings_file(&network_dir, |mut settings| {
@@ -1059,7 +1070,11 @@ pub async fn check_membership(
 async fn check_network_datadir(path: NetworkDirectory) -> Result<State, LauncherError> {
     // Ensure the network directory exists
     if let Err(e) = tokio::fs::create_dir_all(path.path()).await {
-        return Err(LauncherError::DirectoryCreation(format!("{}: {}", path.path().to_string_lossy(), e)));
+        return Err(LauncherError::DirectoryCreation(format!(
+            "{}: {}",
+            path.path().to_string_lossy(),
+            e
+        )));
     }
 
     let mut config_path = path.clone().path().to_path_buf();
@@ -1074,7 +1089,9 @@ async fn check_network_datadir(path: NetworkDirectory) -> Result<State, Launcher
             }
             return Ok(State::NoCube);
         } else {
-            return Err(LauncherError::ConfigRead(path.path().to_string_lossy().to_string()));
+            return Err(LauncherError::ConfigRead(
+                path.path().to_string_lossy().to_string(),
+            ));
         }
     };
 
@@ -1082,21 +1099,24 @@ async fn check_network_datadir(path: NetworkDirectory) -> Result<State, Launcher
     daemon_config_path.push("daemon.toml");
 
     if daemon_config_path.exists() {
-        coincubed::config::Config::from_file(Some(daemon_config_path.clone())).map_err(|e| match e {
-        ConfigError::FileNotFound
-        | ConfigError::DatadirNotFound => {
-           LauncherError::DaemonConfigRead(path.path().to_string_lossy().to_string())
-        }
-        ConfigError::ReadingFile(e) => {
-            if e.starts_with("Parsing configuration file: Error parsing descriptor") {
-                LauncherError::DescriptorInvalid
-            } else {
-                LauncherError::DaemonConfigRead(e)
-            }
-        }
-        ConfigError::UnexpectedDescriptor(_) => LauncherError::DescriptorInvalid,
-        ConfigError::Unexpected(e) => LauncherError::DaemonConfigRead(format!("Unexpected: {}", e)),
-    })?;
+        coincubed::config::Config::from_file(Some(daemon_config_path.clone())).map_err(
+            |e| match e {
+                ConfigError::FileNotFound | ConfigError::DatadirNotFound => {
+                    LauncherError::DaemonConfigRead(path.path().to_string_lossy().to_string())
+                }
+                ConfigError::ReadingFile(e) => {
+                    if e.starts_with("Parsing configuration file: Error parsing descriptor") {
+                        LauncherError::DescriptorInvalid
+                    } else {
+                        LauncherError::DaemonConfigRead(e)
+                    }
+                }
+                ConfigError::UnexpectedDescriptor(_) => LauncherError::DescriptorInvalid,
+                ConfigError::Unexpected(e) => {
+                    LauncherError::DaemonConfigRead(format!("Unexpected: {}", e))
+                }
+            },
+        )?;
     }
 
     // Try to load cubes from settings

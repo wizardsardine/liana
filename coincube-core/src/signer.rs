@@ -438,9 +438,7 @@ impl HotSigner {
             .hash_password(password.as_bytes(), &salt)
             .map_err(|e| SignerError::PasswordHashError(e.to_string()))?;
 
-        let hash_output = password_hash
-            .hash
-            .ok_or(SignerError::KeyDerivationFailed)?;
+        let hash_output = password_hash.hash.ok_or(SignerError::KeyDerivationFailed)?;
 
         // Use Zeroizing to automatically clear key_bytes when dropped
         // Take the first 32 bytes for AES-256 (hash output is typically longer)

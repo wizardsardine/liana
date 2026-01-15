@@ -20,9 +20,9 @@ use crate::{
         settings::{self, CubeSettings, ProviderKey},
         view::Close,
     },
-    gui::tab::CubeSettingsError,
     backup::Backup,
     export::ImportExportMessage,
+    gui::tab::CubeSettingsError,
     hw::HardwareWalletMessage,
     installer::{decrypt::Decrypt, descriptor::PathKind},
     node::{
