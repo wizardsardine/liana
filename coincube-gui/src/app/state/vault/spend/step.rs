@@ -521,8 +521,11 @@ impl DefineSpend {
                 }
             }
             Err(e) => {
-                self.warning = Some(e.into());
+                let err: Error = e.into();
+                let err_msg = err.to_string();
+                self.warning = Some(err);
                 self.fee_amount = None;
+                // Note: Cannot return Task here as this is in redraft() which returns ()
             }
         }
     }
@@ -669,7 +672,10 @@ impl Step for DefineSpend {
                         self.loading_fee_estimate = None;
                     }
                     view::CreateSpendMessage::SessionError(error) => {
-                        self.warning = Some(error.into());
+                        let err: Error = error.into();
+                        let err_msg = err.to_string();
+                        self.warning = Some(err);
+                        return Task::done(Message::View(view::Message::ShowError(err_msg)));
                     }
                     view::CreateSpendMessage::FetchFeeEstimate(block_target) => {
                         self.loading_fee_estimate = Some(block_target);
@@ -803,13 +809,21 @@ impl Step for DefineSpend {
                     self.generated = Some(psbt);
                     return Task::perform(async {}, |_| Message::View(view::Message::Next));
                 }
-                Err(e) => self.warning = Some(e),
+                Err(e) => {
+                    let err_msg = e.to_string();
+                    self.warning = Some(e);
+                    return Task::done(Message::View(view::Message::ShowError(err_msg)));
+                }
             },
             Message::Labels(res) => match res {
                 Ok(labels) => {
                     self.coins_labels = labels;
                 }
-                Err(e) => self.warning = Some(e),
+                Err(e) => {
+                    let err_msg = e.to_string();
+                    self.warning = Some(e);
+                    return Task::done(Message::View(view::Message::ShowError(err_msg)));
+                }
             },
             Message::CoinsTipHeight(res_coins, res_tip) => match (res_coins, res_tip) {
                 (Ok(coins), Ok(tip)) => {
@@ -835,7 +849,11 @@ impl Step for DefineSpend {
                     self.redraft(daemon);
                     self.check_valid();
                 }
-                (Err(e), _) | (Ok(_), Err(e)) => self.warning = Some(e),
+                (Err(e), _) | (Ok(_), Err(e)) => {
+                    let err_msg = e.to_string();
+                    self.warning = Some(e);
+                    return Task::done(Message::View(view::Message::ShowError(err_msg)));
+                }
             },
             _ => {}
         };
@@ -912,7 +930,7 @@ impl Step for DefineSpend {
             &self.feerate,
             self.fee_amount.as_ref(),
             &self.sync_status,
-            self.warning.as_ref(),
+            None, // Errors now shown via global toast
             self.is_first_step,
             self.loading_fee_estimate,
             cache.bitcoin_unit.into(),
@@ -1196,7 +1214,7 @@ impl Step for SaveSpend {
             } else {
                 false
             },
-            psbt_state.warning.as_ref(),
+            None, // Errors now shown via global toast
             cache.bitcoin_unit.into(),
         );
         if let Some(modal) = &psbt_state.modal {
@@ -1275,7 +1293,7 @@ impl Step for SelectRecoveryPath {
                 })
                 .collect(),
             self.selected_path,
-            self.warning.as_ref(),
+            None, // Errors now shown via global toast
         )
     }
 
@@ -1291,7 +1309,9 @@ impl Step for SelectRecoveryPath {
                     self.load_from_coins_and_tip_height(&coins, tip);
                 }
                 (Err(e), _) | (Ok(_), Err(e)) => {
+                    let err_msg = e.to_string();
                     self.warning = Some(e);
+                    return Task::done(Message::View(view::Message::ShowError(err_msg)));
                 }
             },
             Message::View(view::Message::CreateSpend(view::CreateSpendMessage::SelectPath(

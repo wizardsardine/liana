@@ -100,9 +100,12 @@ impl ActiveSend {
                     .unwrap_or(Amount::ZERO);
 
                 let error = match (&info, &payments) {
-                    (Err(_), Err(_)) => Some("Couldn't fetch balance or transactions".to_string()),
-                    (Err(_), _) => Some("Couldn't fetch account balance".to_string()),
-                    (_, Err(_)) => Some("Couldn't fetch recent transactions".to_string()),
+                    (Err(e1), Err(e2)) => Some(view::ActiveSendError::BalanceAndTransactionsFetch(
+                        e1.to_string(),
+                        e2.to_string(),
+                    )),
+                    (Err(e), _) => Some(view::ActiveSendError::BalanceFetch(e.to_string())),
+                    (_, Err(e)) => Some(view::ActiveSendError::TransactionsFetch(e.to_string())),
                     _ => None,
                 };
 
@@ -208,9 +211,9 @@ impl State for ActiveSend {
                                     ))
                                 } else {
                                     Message::View(view::Message::ActiveSend(
-                                        view::ActiveSendMessage::Error(String::from(
-                                            "Couldn't fetch lightning limits",
-                                        )),
+                                        view::ActiveSendMessage::Error(
+                                            view::ActiveSendError::LightningLimitsFetch("Unknown error".to_string())
+                                        ),
                                     ))
                                 }
                             },
@@ -228,9 +231,9 @@ impl State for ActiveSend {
                                     ))
                                 } else {
                                     Message::View(view::Message::ActiveSend(
-                                        view::ActiveSendMessage::Error(String::from(
-                                            "Couldn't fetch Onchain limits",
-                                        )),
+                                        view::ActiveSendMessage::Error(
+                                            view::ActiveSendError::OnChainLimitsFetch("Unknown error".to_string())
+                                        ),
                                     ))
                                 }
                             },
@@ -403,17 +406,8 @@ impl State for ActiveSend {
                 view::ActiveSendMessage::Error(err) => {
                     self.error = Some(err.to_string());
                     self.is_sending = false; // Reset sending flag on error
-                                             // Auto-dismiss error after 10 seconds
-                    return Task::perform(
-                        async {
-                            tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
-                        },
-                        |_| {
-                            Message::View(view::Message::ActiveSend(
-                                view::ActiveSendMessage::ClearError,
-                            ))
-                        },
-                    );
+                    // Wire to global toast
+                    return Task::done(Message::View(view::Message::ShowError(err.to_string())));
                 }
                 view::ActiveSendMessage::ClearError => {
                     self.error = None;
@@ -771,10 +765,9 @@ impl State for ActiveSend {
                                         ))
                                     }
                                     Err(e) => Message::View(view::Message::ActiveSend(
-                                        view::ActiveSendMessage::Error(format!(
-                                            "Failed to prepare payment: {}",
-                                            e
-                                        )),
+                                        view::ActiveSendMessage::Error(
+                                            view::ActiveSendError::PrepareSend(e.to_string())
+                                        ),
                                     )),
                                 },
                             );
@@ -802,10 +795,9 @@ impl State for ActiveSend {
                                         ))
                                     }
                                     Err(e) => Message::View(view::Message::ActiveSend(
-                                        view::ActiveSendMessage::Error(format!(
-                                            "Failed to prepare payment: {}",
-                                            e
-                                        )),
+                                        view::ActiveSendMessage::Error(
+                                            view::ActiveSendError::PrepareSend(e.to_string())
+                                        ),
                                     )),
                                 },
                             );
@@ -865,10 +857,9 @@ impl State for ActiveSend {
                                         view::ActiveSendMessage::SendComplete,
                                     )),
                                     Err(e) => Message::View(view::Message::ActiveSend(
-                                        view::ActiveSendMessage::Error(format!(
-                                            "Failed to send payment: {}",
-                                            e
-                                        )),
+                                        view::ActiveSendMessage::Error(
+                                            view::ActiveSendError::Send(e.to_string())
+                                        ),
                                     )),
                                 },
                             );
@@ -898,10 +889,9 @@ impl State for ActiveSend {
                                             ))
                                         }
                                         Err(e) => Message::View(view::Message::ActiveSend(
-                                            view::ActiveSendMessage::Error(format!(
-                                                "Failed to send payment: {}",
-                                                e
-                                            )),
+                                            view::ActiveSendMessage::Error(
+                                                view::ActiveSendError::Send(e.to_string())
+                                            ),
                                         )),
                                     },
                                 );

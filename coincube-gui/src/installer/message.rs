@@ -20,6 +20,7 @@ use crate::{
         settings::{self, CubeSettings, ProviderKey},
         view::Close,
     },
+    gui::tab::CubeSettingsError,
     backup::Backup,
     export::ImportExportMessage,
     hw::HardwareWalletMessage,
@@ -79,11 +80,11 @@ pub enum Message {
     EditKeyAlias(EditKeyAliasMessage),
     Decrypt(Decrypt),
     CubeSaved(
-        Result<CubeSettings, String>,
+        Result<CubeSettings, CubeSettingsError>,
         Box<settings::WalletSettings>,
         Option<Bitcoind>,
     ),
-    CubeSaveFailed(String),
+    CubeSaveFailed(CubeSettingsError),
     RetryCubeSave,
     None,
 }

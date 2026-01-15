@@ -420,8 +420,9 @@ pub struct App {
     cube_settings: settings::CubeSettings,
     config: Arc<Config>,
     datadir: CoincubeDirectory,
-
     panels: Panels,
+    error_toast: Option<String>, // Global error toast message
+    error_toast_id: u64,         // ID for race condition prevention
 }
 
 impl App {
@@ -475,6 +476,8 @@ impl App {
                 cube_settings,
                 config: config_arc,
                 datadir: data_dir,
+                error_toast: None,
+                error_toast_id: 0,
             },
             cmd,
         )
@@ -530,6 +533,8 @@ impl App {
                 cube_settings,
                 config: config_arc,
                 datadir,
+                error_toast: None,
+                error_toast_id: 0,
             },
             cmd,
         )
@@ -537,6 +542,20 @@ impl App {
 
     pub fn wallet_id(&self) -> Option<WalletId> {
         self.wallet.as_ref().map(|w| w.id())
+    }
+
+    /// Sets a global error toast and returns an auto-dismiss timer task (8 seconds)
+    pub fn show_error_toast(&mut self, message: String) -> Task<Message> {
+        self.error_toast_id += 1;
+        let current_id = self.error_toast_id;
+        self.error_toast = Some(message);
+        Task::perform(
+            async move {
+                tokio::time::sleep(Duration::from_secs(8)).await;
+                current_id
+            },
+            |id| Message::View(view::Message::DismissErrorIfId(id)),
+        )
     }
 
     pub fn title(&self) -> &str {
@@ -899,6 +918,20 @@ impl App {
 
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
+            Message::View(view::Message::DismissError) => {
+                self.error_toast = None;
+                return Task::none();
+            }
+            Message::View(view::Message::ShowError(error_msg)) => {
+                return self.show_error_toast(error_msg);
+            }
+            Message::View(view::Message::DismissErrorIfId(id)) => {
+                // Only dismiss if ID matches current toast (prevents race condition)
+                if id == self.error_toast_id {
+                    self.error_toast = None;
+                }
+                return Task::none();
+            }
             Message::SettingsSaved => {
                 // Settings saved - reload unit preference and fiat_price from cube settings
                 let network_dir = self
@@ -1201,13 +1234,16 @@ impl App {
     }
 
     pub fn view(&self) -> Element<'_, Message> {
+        use iced::widget::{container, Stack};
+        use iced::{Alignment, Length};
+
         let view = self
             .panels
             .current()
             .unwrap_or(&self.panels.global_home)
             .view(&self.panels.current, &self.cache);
 
-        if self.cache.network != bitcoin::Network::Bitcoin {
+        let content: Element<'_, Message> = if self.cache.network != bitcoin::Network::Bitcoin {
             Column::with_children([
                 network_banner(self.cache.network).into(),
                 view.map(Message::View),
@@ -1215,6 +1251,51 @@ impl App {
             .into()
         } else {
             view.map(Message::View)
+        };
+
+        // Overlay error toast at bottom if present
+        if let Some(err) = &self.error_toast {
+            use coincube_ui::{color, component::button, component::text, icon::cross_icon, theme};
+            use iced::widget::{Row, Button};
+
+            let close_btn: Element<'_, view::Message> = Button::new(
+                cross_icon().color(color::WHITE).size(18)
+            )
+            .style(theme::button::transparent)
+            .on_press(view::Message::DismissError)
+            .into();
+
+            let error_toast = container(
+                Row::new()
+                    .push(
+                        container(text::p2_regular(err).color(color::WHITE))
+                    )
+                    .push(close_btn)
+                    .align_y(Alignment::Center)
+                    .spacing(15),
+            )
+            .padding(15)
+            .style(theme::notification::error)
+            .max_width(500.0);
+
+            // Bottom-center of content area (offset by sidebar width 190px)
+            let toast_overlay: Element<'_, view::Message> = container(
+                container(error_toast).padding(20)
+            )
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .padding(iced::Padding::new(0.0).left(190.0)) // left padding for sidebar
+            .align_x(Alignment::Center)
+            .align_y(Alignment::End)
+            .into();
+
+            Stack::new()
+                .push(content)
+                .push(toast_overlay.map(Message::View))
+                .into()
+
+        } else {
+            content
         }
     }
 

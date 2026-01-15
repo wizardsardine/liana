@@ -52,9 +52,22 @@ pub enum SignerError {
     MnemonicStorage(io::Error),
     InsanePsbt,
     IncompletePsbt,
-    Encryption(String),
-    Decryption(String),
+    SignerNotFound(Fingerprint),
+    // Encryption specific errors
+    SaltEncodingError(String),
+    ArgonParamsError(String),
+    PasswordHashError(String),
+    KeyDerivationFailed,
+    CipherCreationError(String),
+    EncryptionFailed(String),
+
+    //Decryption specific errors
+    NotEncryptedFile,
+    InvalidFileFormat,
+    DecryptionFailed(String),
     InvalidPassword,
+    // Password requirement
+    PasswordRequired,
 }
 
 impl fmt::Display for SignerError {
@@ -69,9 +82,22 @@ impl fmt::Display for SignerError {
                 f,
                 "The PSBT is missing some information necessary for signing."
             ),
-            Self::Encryption(e) => write!(f, "Encryption error: {}", e),
-            Self::Decryption(e) => write!(f, "Decryption error: {}", e),
+            Self::SignerNotFound(fp) => write!(f, "Signer with fingerprint {} not found", fp),
+            // Encryption Errors
+            Self::SaltEncodingError(e) => write!(f, "Failed to encode salt: {}", e),
+            Self::ArgonParamsError(e) => write!(f, "Invalid Argon2 parameters: {}", e),
+            Self::PasswordHashError(e) => write!(f, "Failed to hash password: {}", e),
+            Self::KeyDerivationFailed => write!(f, "Failed to derive encryption key"),
+            Self::CipherCreationError(e) => write!(f, "Failed to create cipher: {}", e),
+            Self::EncryptionFailed(e) => write!(f, "Failed to encrypt mnemonic: {}", e),
+
+            // Decryption errors
+            Self::NotEncryptedFile => write!(f, "Not an encrypted mnemonic file"),
+            Self::InvalidFileFormat => write!(f, "Invalid encrypted file format"),
+            Self::DecryptionFailed(e) => write!(f, "Failed to decrypt mnemonic: {}", e),
             Self::InvalidPassword => write!(f, "Invalid password for encrypted mnemonic"),
+            // Password required errors
+            Self::PasswordRequired => write!(f, "Password required for encrypted mnemonic"),
         }
     }
 }
@@ -243,12 +269,7 @@ impl HotSigner {
                     let data = fs::read(&path).map_err(SignerError::MnemonicStorage)?;
 
                         let mnemonic_str = if Self::is_encrypted(&data) {
-                        let pwd = password.ok_or_else(|| {
-                                SignerError::MnemonicStorage(io::Error::new(
-                                    io::ErrorKind::InvalidInput,
-                                    "Password required for encrypted mnemonic",
-                                ))
-                            })?;
+                        let pwd = password.ok_or(SignerError::PasswordRequired)?;
                             Self::decrypt_mnemonic(&data, pwd)?.as_str().to_string()
                         } else {
                             // Unencrypted file (backward compatibility)
@@ -270,10 +291,7 @@ impl HotSigner {
                 }
             }
         }
-        Err(SignerError::MnemonicStorage(io::Error::new(
-            io::ErrorKind::NotFound,
-            format!("Signer with fingerprint {} not found", target_fingerprint),
-        )))
+        Err(SignerError::SignerNotFound(target_fingerprint))
     }
 
     /// Legacy method (backward compatible)
@@ -407,39 +425,37 @@ impl HotSigner {
 
         // Create SaltString from the raw bytes for password hashing
         let salt = SaltString::encode_b64(&salt_bytes)
-            .map_err(|e| SignerError::Encryption(e.to_string()))?;
+            .map_err(|e| SignerError::SaltEncodingError(e.to_string()))?;
 
         let params = Params::new(
             262144, // 256 MiB memory (in KiB)
             3,      // 3 iterations
             4,      // 4 parallel lanes
             Some(32) // 32-byte output for AES-256 key
-        ).map_err(|e| SignerError::Encryption(e.to_string()))?;
+        ).map_err(|e| SignerError::ArgonParamsError(e.to_string()))?;
 
         // Derive key from password using Argon2
         let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
         let password_hash = argon2
             .hash_password(password.as_bytes(), &salt)
-            .map_err(|e| SignerError::Encryption(e.to_string()))?;
+            .map_err(|e| SignerError::PasswordHashError(e.to_string()))?;
 
         let hash_output = password_hash
             .hash
-            .ok_or_else(|| SignerError::Encryption("Failed to derive key".to_string()))?;
+            .ok_or(SignerError::KeyDerivationFailed)?;
 
         // Use Zeroizing to automatically clear key_bytes when dropped
         // Take the first 32 bytes for AES-256 (hash output is typically longer)
         let key_bytes = Zeroizing::new({
             let hash_bytes = hash_output.as_bytes();
             if hash_bytes.len() < 32 {
-                return Err(SignerError::Encryption(
-                    "Hash output too short for AES-256 key".to_string(),
-                ));
+                return Err(SignerError::KeyDerivationFailed);
             }
             hash_bytes[..32].to_vec()
         });
 
         let cipher = Aes256Gcm::new_from_slice(&key_bytes)
-            .map_err(|e| SignerError::Encryption(e.to_string()))?;
+            .map_err(|e| SignerError::CipherCreationError(e.to_string()))?;
 
         // Generate nonce
         let mut nonce_bytes = [0u8; NONCE_LEN];
@@ -450,7 +466,7 @@ impl HotSigner {
         let plaintext = Zeroizing::new(self.mnemonic_str());
         let ciphertext = cipher
             .encrypt(nonce, plaintext.as_bytes())
-            .map_err(|e| SignerError::Encryption(e.to_string()))?;
+            .map_err(|e| SignerError::EncryptionFailed(e.to_string()))?;
 
         // Format: MARKER + SALT + NONCE + CIPHERTEXT
         let mut result = Vec::new();
@@ -467,15 +483,13 @@ impl HotSigner {
     fn decrypt_mnemonic(data: &[u8], password: &str) -> Result<Zeroizing<String>, SignerError> {
         // Check marker
         if !data.starts_with(ENCRYPTED_FILE_MARKER) {
-            return Err(SignerError::Decryption(
-                "Not an encrypted mnemonic file".to_string(),
-            ));
+            return Err(SignerError::NotEncryptedFile);
         }
 
         let data = &data[ENCRYPTED_FILE_MARKER_LEN..];
 
         if data.len() < SALT_LEN + NONCE_LEN {
-            return Err(SignerError::Decryption("Invalid file format".to_string()));
+            return Err(SignerError::InvalidFileFormat);
         }
 
         let salt_bytes = &data[..SALT_LEN];
@@ -484,7 +498,7 @@ impl HotSigner {
 
         // Derive key from password
         let salt = SaltString::encode_b64(salt_bytes)
-            .map_err(|e| SignerError::Decryption(e.to_string()))?;
+            .map_err(|e| SignerError::SaltEncodingError(e.to_string()))?;
 
         // Must use same params as encrypt_mnemonic
         let params = Params::new(
@@ -492,7 +506,7 @@ impl HotSigner {
             3,      // 3 iterations
             4,      // 4 parallel lanes
             Some(32) // 32-byte output for AES-256 key
-        ).map_err(|e| SignerError::Decryption(e.to_string()))?;
+        ).map_err(|e| SignerError::ArgonParamsError(e.to_string()))?;
 
         let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
         let password_hash = argon2
@@ -522,7 +536,7 @@ impl HotSigner {
         );
 
         let result = Zeroizing::new(String::from_utf8(plaintext_bytes.to_vec())
-            .map_err(|e| SignerError::Decryption(e.to_string()))?,
+            .map_err(|e| SignerError::DecryptionFailed(e.to_string()))?,
         );
 
         Ok(result)

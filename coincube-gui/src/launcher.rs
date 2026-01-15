@@ -1,3 +1,4 @@
+use std::fmt;
 use coincube_ui::widget::{ColumnExt as _, RowExt as _};
 use iced::{
     alignment::Horizontal,
@@ -24,6 +25,7 @@ use crate::{
     },
     delete::{delete_wallet, DeleteError},
     dir::{CoincubeDirectory, NetworkDirectory},
+    gui::tab::CubeSettingsError,
     installer::UserFlow,
     services::connect::{
         client::{auth::AuthClient, backend::api::UserRole, get_service_config},
@@ -53,6 +55,30 @@ pub enum State {
         all_cubes: Vec<CubeSettings>,
     }
 }
+
+#[derive(Debug, Clone)]
+pub enum LauncherError {
+    DirectoryCreation(String),
+    ConfigRead(String),
+    ConfigWrite(String),
+    DaemonConfigRead(String),
+    DescriptorInvalid,
+    SettingsRead(String),
+}
+
+impl fmt::Display for LauncherError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Self::DirectoryCreation(e) => write!(f, "Failed to create directory {}", e),
+            Self::ConfigRead(e) => write!(f, "Failed to read config: {}", e),
+            Self::ConfigWrite(e) => write!(f, "Failed to write config: {}", e),
+            Self::DaemonConfigRead(e) => write!(f, "Failed to read daemon config: {}", e),
+            Self::DescriptorInvalid => write!(f, "Descriptor is invalid"),
+            Self::SettingsRead(e) => write!(f, "Failed to read settings: {}", e),
+        }
+    }
+}
+impl std::error::Error for LauncherError {}
 
 pub struct Launcher {
     state: State,
@@ -236,7 +262,7 @@ impl Launcher {
                     async move {
                         // Generate Active wallet HotSigner
                         let active_signer = HotSigner::generate(network).map_err(|e| {
-                            format!("Failed to generate Active wallet signer: {}", e)
+                            CubeSettingsError::SaveFailed(format!("Failed to generate Active wallet signer: {}", e))
                         })?;
 
                         // Create secp context for fingerprint calculation
@@ -247,7 +273,7 @@ impl Launcher {
                         let network_dir = datadir_path.network_directory(network);
                         network_dir
                             .init()
-                            .map_err(|e| format!("Failed to create network directory: {}", e))?;
+                            .map_err(|e| CubeSettingsError::SaveFailed(format!("Failed to create network directory: {}", e)))?;
 
                         // Use a timestamp for the Active wallet storage
                         let timestamp = chrono::Utc::now().timestamp();
@@ -263,7 +289,7 @@ impl Launcher {
                                 Some(&pin),
                             )
                             .map_err(|e| {
-                                format!("Failed to store Active wallet mnemonic: {}", e)
+                                CubeSettingsError::SaveFailed(format!("Failed to store Active wallet mnemonic: {}", e))
                             })?;
 
                         tracing::info!("Active wallet signer created and stored (encrypted with PIN) with fingerprint: {}", active_fingerprint);
@@ -272,7 +298,7 @@ impl Launcher {
                         let cube = CubeSettings::new(cube_name, network)
                             .with_active_signer(active_fingerprint)
                             .with_pin(&pin)
-                            .map_err(|e| format!("Failed to hash PIN: {}", e))?;
+                            .map_err(|e| CubeSettingsError::SaveFailed(format!("Failed to hash PIN: {}", e)))?;
 
                         // Save Cube settings to settings file
                         settings::update_settings_file(&network_dir, |mut settings| {
@@ -281,7 +307,7 @@ impl Launcher {
                         })
                         .await
                         .map(|_| cube)
-                        .map_err(|e| e.to_string())
+                        .map_err(|e| CubeSettingsError::SaveFailed(e.to_string()))
                     },
                     Message::CubeCreated,
                 )
@@ -374,7 +400,7 @@ impl Launcher {
             }
             Message::Checked(res) => match res {
                 Err(e) => {
-                    self.error = Some(e);
+                    self.error = Some(e.to_string());
                     Task::none()
                 }
                 Ok(state) => {
@@ -748,14 +774,14 @@ fn has_existing_wallet(data_dir: &CoincubeDirectory, network: Network) -> bool {
 pub enum Message {
     View(ViewMessage),
     Install(CoincubeDirectory, Network, UserFlow),
-    Checked(Result<State, String>),
+    Checked(Result<State, LauncherError>),
     Run(
         CoincubeDirectory,
         app::config::Config,
         Network,
         CubeSettings,
     ),
-    CubeCreated(Result<CubeSettings, String>),
+    CubeCreated(Result<CubeSettings, CubeSettingsError>),
     BreezClientLoaded {
         config: app::config::Config,
         datadir: CoincubeDirectory,
@@ -1031,14 +1057,10 @@ pub async fn check_membership(
     }
 }
 
-async fn check_network_datadir(path: NetworkDirectory) -> Result<State, String> {
+async fn check_network_datadir(path: NetworkDirectory) -> Result<State, LauncherError> {
     // Ensure the network directory exists
     if let Err(e) = tokio::fs::create_dir_all(path.path()).await {
-        return Err(format!(
-            "Failed to create network directory {}: {}",
-            path.path().to_string_lossy(),
-            e
-        ));
+        return Err(LauncherError::DirectoryCreation(format!("{}: {}", path.path().to_string_lossy(), e)));
     }
 
     let mut config_path = path.clone().path().to_path_buf();
@@ -1049,14 +1071,11 @@ async fn check_network_datadir(path: NetworkDirectory) -> Result<State, String> 
             // Create default config file
             let default_config = app::Config::new(false);
             if let Err(e) = default_config.to_file(&config_path) {
-                return Err(format!("Failed to create default GUI config file: {}", e));
+                return Err(LauncherError::ConfigWrite(e.to_string()));
             }
             return Ok(State::NoCube);
         } else {
-            return Err(format!(
-                "Failed to read GUI configuration file in the directory: {}",
-                path.path().to_string_lossy()
-            ));
+            return Err(LauncherError::ConfigRead(path.path().to_string_lossy().to_string()));
         }
     };
 
@@ -1067,30 +1086,17 @@ async fn check_network_datadir(path: NetworkDirectory) -> Result<State, String> 
         coincubed::config::Config::from_file(Some(daemon_config_path.clone())).map_err(|e| match e {
         ConfigError::FileNotFound
         | ConfigError::DatadirNotFound => {
-            format!(
-                "Failed to read daemon configuration file in the directory: {}",
-                daemon_config_path.to_string_lossy()
-            )
+           LauncherError::DaemonConfigRead(path.path().to_string_lossy().to_string())
         }
         ConfigError::ReadingFile(e) => {
             if e.starts_with("Parsing configuration file: Error parsing descriptor") {
-                "There is an issue with the configuration for this network. You most likely use a descriptor containing one or more public key(s) without origin.".to_string()
+                LauncherError::DescriptorInvalid
             } else {
-                format!(
-                    "Failed to read daemon configuration file in the directory: {}",
-                    daemon_config_path.to_string_lossy()
-                )
+                LauncherError::DaemonConfigRead(e)
             }
         }
-        ConfigError::UnexpectedDescriptor(_) => {
-            "There is an issue with the configuration for this network. You most likely use a descriptor containing one or more public key(s) without origin.".to_string()
-        }
-        ConfigError::Unexpected(e) => {
-            format!(
-                "Unexpected {}",
-                e,
-            )
-        }
+        ConfigError::UnexpectedDescriptor(_) => LauncherError::DescriptorInvalid,
+        ConfigError::Unexpected(e) => LauncherError::DaemonConfigRead(format!("Unexpected: {}", e)),
     })?;
     }
 
@@ -1121,6 +1127,6 @@ async fn check_network_datadir(path: NetworkDirectory) -> Result<State, String> 
         }
     }
     Err(settings::SettingsError::NotFound) => Ok(State::NoCube),
-    Err(e) => Err(e.to_string()),
+    Err(e) => Err(LauncherError::SettingsRead(e.to_string())),
     }
 }

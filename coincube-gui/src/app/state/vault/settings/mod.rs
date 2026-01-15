@@ -198,7 +198,7 @@ macro_rules! launch {
 
 impl State for ImportExportSettingsState {
     fn view<'a>(&'a self, menu: &'a Menu, cache: &'a Cache) -> Element<'a, view::Message> {
-        let content = view::vault::settings::import_export(menu, cache, self.warning.as_ref());
+        let content = view::vault::settings::import_export(menu, cache, None); // Errors now shown via global toast
         if let Some(modal) = &self.modal {
             modal.view(content)
         } else {
@@ -340,7 +340,7 @@ impl State for AboutSettingsState {
         view::vault::settings::about_section(
             menu,
             cache,
-            self.warning.as_ref(),
+            None, // Errors now shown via global toast
             self.daemon_version.as_ref(),
         )
     }
@@ -361,7 +361,11 @@ impl State for AboutSettingsState {
                         self.daemon_version = Some(info.version)
                     }
                 }
-                Err(e) => self.warning = Some(e),
+                Err(e) => {
+                    let err_msg = e.to_string();
+                    self.warning = Some(e);
+                    return Task::done(Message::View(view::Message::ShowError(err_msg)));
+                }
             }
         }
 
@@ -414,7 +418,7 @@ impl State for BackendSettingsState {
             &self.email_form,
             self.processing,
             self.success,
-            self.warning.as_ref(),
+            None, // Errors now shown via global toast
         )
     }
 
@@ -461,13 +465,17 @@ impl State for BackendSettingsState {
             Message::Updated(res) => {
                 self.processing = false;
                 match res {
-                    Ok(()) => self.success = true,
+                    Ok(()) => {
+                        self.success = true;
+                        Task::none()
+                    }
                     Err(e) => {
                         self.success = false;
+                        let err_msg = e.to_string();
                         self.warning = Some(e);
+                        Task::done(Message::View(view::Message::ShowError(err_msg)))
                     }
                 }
-                Task::none()
             }
             _ => Task::none(),
         }

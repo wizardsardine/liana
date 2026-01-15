@@ -947,9 +947,7 @@ impl State for BuySellPanel {
                 let client = self.coincube_client.clone();
 
                 Task::perform(async move { client.locate().await }, |result| {
-                    Message::View(ViewMessage::BuySell(BuySellMessage::CountryDetected(
-                        result.map_err(|e| e.to_string()),
-                    )))
+                    Message::View(ViewMessage::BuySell(BuySellMessage::CountryDetected(result)))
                 })
             }
         }

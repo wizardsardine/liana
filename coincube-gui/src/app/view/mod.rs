@@ -44,6 +44,7 @@ pub fn simple_toast(message: &str) -> Container<Message> {
         .max_width(400.0)
 }
 
+
 fn menu_bar_highlight<'a, T: 'a>() -> Container<'a, T> {
     Container::new(Space::new().width(Length::Fixed(5.0)))
         .height(Length::Fixed(50.0))

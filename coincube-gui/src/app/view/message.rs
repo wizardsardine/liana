@@ -58,6 +58,9 @@ pub enum Message {
     ActiveSend(ActiveSendMessage),
     ActiveSettings(ActiveSettingsMessage),
     PreselectPayment(Payment),
+    DismissError,
+    ShowError(String),
+    DismissErrorIfId(u64),
 }
 
 impl Close for Message {
@@ -183,7 +186,7 @@ pub enum BuySellMessage {
     },
 
     // ip geolocation
-    CountryDetected(Result<crate::services::coincube::Country, String>),
+    CountryDetected(Result<crate::services::coincube::Country, crate::services::coincube::CoincubeError>),
 
     // recipient address generation
     CreateNewAddress,
@@ -234,8 +237,27 @@ pub enum ActiveOverviewMessage {
         balance: Amount,
         recent_payment: Vec<Payment>,
     },
-    Error(String),
+    Error(ActiveOverviewError),
     RefreshRequested,
+}
+
+#[derive(Debug, Clone)]
+pub enum ActiveOverviewError {
+    BalanceFetch(String),
+    TransactionsFetch(String),
+    BalanceAndTransactionsFetch(String, String),
+}
+
+impl std::fmt::Display for ActiveOverviewError {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            Self::BalanceFetch(e) => write!(f, "Couldn't fetch account balance: {}", e),
+            Self::TransactionsFetch(e) => write!(f, "Couldn't fetch recent transactions: {}", e),
+            Self::BalanceAndTransactionsFetch(e1, e2) => {
+                write!(f, "Couldn't fetch balance or transactions: {}, {}", e1, e2)
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -249,7 +271,7 @@ pub enum ActiveSendMessage {
         balance: Amount,
         recent_payment: Vec<Payment>,
     },
-    Error(String),
+    Error(ActiveSendError),
     ClearError,
     // Send flow popup messages
     PopupMessage(SendPopupMessage),
@@ -267,6 +289,33 @@ pub enum ActiveSendMessage {
         max_sat: u64,
     },
     RefreshRequested,
+}
+
+#[derive(Debug, Clone)]
+pub enum ActiveSendError {
+    BalanceFetch(String),
+    TransactionsFetch(String),
+    BalanceAndTransactionsFetch(String, String),
+    LightningLimitsFetch(String),
+    OnChainLimitsFetch(String),
+    PrepareSend(String),
+    Send(String),
+}
+
+impl std::fmt::Display for ActiveSendError {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            Self::BalanceFetch(e) => write!(f, "Couldn't fetch account balance: {}", e),
+            Self::TransactionsFetch(e) => write!(f, "Couldn't fetch recent transactions: {}", e),
+            Self::BalanceAndTransactionsFetch(e1, e2) => {
+                write!(f, "Couldn't fetch balance or transactions: {}, {}", e1, e2)
+            }
+            Self::LightningLimitsFetch(e) => write!(f, "Couldn't fetch lightning limits: {}", e),
+            Self::OnChainLimitsFetch(e) => write!(f, "Couldn't fetch on-chain limits: {}", e),
+            Self::PrepareSend(e) => write!(f, "Failed to prepare send: {}", e),
+            Self::Send(e) => write!(f, "Failed to send payment: {}", e),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -289,9 +338,24 @@ pub enum ActiveReceiveMessage {
     Copy,
     ClearToast,
     GenerateAddress,
-    AddressGenerated(ReceiveMethod, Result<String, String>),
+    AddressGenerated(ReceiveMethod, Result<String, ReceiveError>),
     AmountInput(String),
     DescriptionInput(String),
+}
+
+#[derive(Debug, Clone)]
+pub enum ReceiveError {
+    LightningInvoice(String),
+    OnChainAddress(String),
+}
+
+impl std::fmt::Display for ReceiveError {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            Self::LightningInvoice(e) => write!(f, "Failed to generate Lightning invoice: {}", e),
+            Self::OnChainAddress(e) => write!(f, "Failed to generate Bitcoin address: {}", e),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

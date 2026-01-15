@@ -5,6 +5,7 @@ use coincube_ui::component::toast;
 use coincube_ui::widget::*;
 use iced::{clipboard, widget::qr_code, Task};
 
+use crate::app::view::ReceiveError;
 use crate::app::view::{ActiveReceiveMessage, ReceiveMethod};
 use crate::app::{breez::BreezClient, cache::Cache, menu::Menu, state::State};
 use crate::app::{message::Message, view, wallet::Wallet};
@@ -43,20 +44,20 @@ impl ActiveReceive {
         client: Arc<BreezClient>,
         amount_sat: Option<u64>,
         description: Option<String>,
-    ) -> Result<String, String> {
+    ) -> Result<String, ReceiveError> {
         let response = client
             .receive_invoice(amount_sat, description)
             .await
-            .map_err(|e| format!("Failed to generate Lightning invoice: {}", e))?;
+            .map_err(|e| ReceiveError::LightningInvoice(e.to_string()))?;
 
         Ok(response.destination)
     }
 
-    async fn generate_onchain_address(client: Arc<BreezClient>) -> Result<String, String> {
+    async fn generate_onchain_address(client: Arc<BreezClient>) -> Result<String, ReceiveError> {
         let response = client
             .receive_onchain(None)
             .await
-            .map_err(|e| format!("Failed to generate Bitcoin address: {}", e))?;
+            .map_err(|e| ReceiveError::OnChainAddress(e.to_string()))?;
 
         Ok(response.destination)
     }
@@ -184,16 +185,19 @@ impl State for ActiveReceive {
                                 self.description_input.clear();
                             }
                         }
-                        Err(_) => match method {
-                            ReceiveMethod::Lightning => {
-                                self.lightning_address = None;
-                                self.lightning_qr_data = None;
+                        Err(e) => {
+                            match method {
+                                ReceiveMethod::Lightning => {
+                                    self.lightning_address = None;
+                                    self.lightning_qr_data = None;
+                                }
+                                ReceiveMethod::OnChain => {
+                                    self.onchain_address = None;
+                                    self.onchain_qr_data = None;
+                                }
                             }
-                            ReceiveMethod::OnChain => {
-                                self.onchain_address = None;
-                                self.onchain_qr_data = None;
-                            }
-                        },
+                            return Task::done(Message::View(view::Message::ShowError(e.to_string())));
+                        }
                     }
                     return Task::none();
                 }

@@ -54,9 +54,12 @@ impl ActiveOverview {
                     .unwrap_or(Amount::ZERO);
 
                 let error = match (&info, &payments) {
-                    (Err(_), Err(_)) => Some("Couldn't fetch balance or transactions".to_string()),
-                    (Err(_), _) => Some("Couldn't fetch account balance".to_string()),
-                    (_, Err(_)) => Some("Couldn't fetch recent transactions".to_string()),
+                    (Err(e1), Err(e2)) => Some(view::ActiveOverviewError::BalanceAndTransactionsFetch(
+                        e1.to_string(),
+                        e2.to_string(),
+                    )),
+                    (Err(e), _) => Some(view::ActiveOverviewError::BalanceFetch(e.to_string())),
+                    (_, Err(e)) => Some(view::ActiveOverviewError::TransactionsFetch(e.to_string())),
                     _ => None,
                 };
 
@@ -203,6 +206,7 @@ impl State for ActiveOverview {
                 }
                 view::ActiveOverviewMessage::Error(err) => {
                     self.error = Some(err.to_string());
+                    return Task::done(Message::View(view::Message::ShowError(err.to_string())));
                 }
                 view::ActiveOverviewMessage::RefreshRequested => {
                     return self.load_balance();

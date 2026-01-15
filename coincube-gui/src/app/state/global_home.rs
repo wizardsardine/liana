@@ -149,7 +149,7 @@ impl State for GlobalHome {
                     .map_or(&self.empty_labels, |info| &info.labels),
                 labels_editing: self.labels_edited.cache(),
                 address_expanded: self.address_expanded,
-                warning: self.warning.as_ref(),
+                warning: None, // Errors now shown via global toast
                 bitcoin_unit: cache.bitcoin_unit,
                 onchain_send_limit: self.onchain_send_limit,
                 onchain_receive_limit: self.onchain_receive_limit,
@@ -472,8 +472,9 @@ impl State for GlobalHome {
                     }
                     HomeMessage::Error(err) => {
                         self.is_sending = false;
-                        self.warning = Some(Error::Unexpected(err));
-                        Task::none()
+                        let error = Error::Unexpected(err.clone());
+                        self.warning = Some(error);
+                        Task::done(Message::View(view::Message::ShowError(err)))
                     }
                     HomeMessage::ActiveBalanceUpdated(active_balance) => {
                         self.active_balance = active_balance;
@@ -551,9 +552,10 @@ impl State for GlobalHome {
                     Task::none()
                 }
                 Err(e) => {
+                    let err_msg = e.to_string();
                     self.warning = Some(e);
                     self.receive_address_info = None;
-                    Task::none()
+                    Task::done(Message::View(view::Message::ShowError(err_msg)))
                 }
             },
             Message::View(view::Message::SelectAddress(_addr)) => {
@@ -574,8 +576,9 @@ impl State for GlobalHome {
                             cmd
                         }
                         Err(e) => {
+                            let err_msg = e.to_string();
                             self.warning = Some(e);
-                            Task::none()
+                            Task::done(Message::View(view::Message::ShowError(err_msg)))
                         }
                     }
                 } else {

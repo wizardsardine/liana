@@ -234,7 +234,9 @@ impl PsbtState {
                         return cmd;
                     }
                     Err(e) => {
+                        let err_msg = e.to_string();
                         self.warning = Some(e);
+                        return Task::done(Message::View(view::Message::ShowError(err_msg)));
                     }
                 };
             }
@@ -260,7 +262,9 @@ impl PsbtState {
                     }));
                 }
                 Err(e) => {
+                    let err_msg = e.to_string();
                     self.warning = Some(e);
+                    return Task::done(Message::View(view::Message::ShowError(err_msg)));
                 }
             },
             Message::Export(ImportExportMessage::Progress(Progress::Psbt(psbt))) => {
@@ -294,7 +298,7 @@ impl PsbtState {
             } else {
                 false
             },
-            self.warning.as_ref(),
+            None, // Errors now shown via global toast
             cache.bitcoin_unit.into(),
         );
         if let Some(modal) = &self.modal {

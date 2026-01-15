@@ -111,7 +111,7 @@ impl State for WalletSettingsState {
         let content = view::vault::settings::wallet_settings(
             menu,
             cache,
-            self.warning.as_ref(),
+            None, // Errors now shown via global toast
             &self.descriptor,
             &self.wallet_alias,
             &self.keys_aliases,
@@ -165,10 +165,14 @@ impl State for WalletSettingsState {
                             self.keys_aliases = Self::keys_aliases(&wallet);
                             self.wallet = wallet;
                             self.updated = true;
+                            Task::none()
                         }
-                        Err(e) => self.warning = Some(e),
-                    };
-                    Task::none()
+                        Err(e) => {
+                            let err_msg = e.to_string();
+                            self.warning = Some(e);
+                            Task::done(Message::View(view::Message::ShowError(err_msg)))
+                        }
+                    }
                 }
             }
             Message::View(view::Message::Settings(view::SettingsMessage::WalletAliasEdited(
@@ -350,7 +354,7 @@ impl RegisterWalletModal {
 impl RegisterWalletModal {
     fn view(&self) -> Element<'_, view::Message> {
         view::vault::settings::register_wallet_modal(
-            self.warning.as_ref(),
+            None, // Errors now shown via global toast
             &self.hws.list,
             self.processing,
             self.chosen_hw,
@@ -378,8 +382,10 @@ impl RegisterWalletModal {
             Message::HardwareWallets(msg) => match self.hws.update(msg) {
                 Ok(cmd) => cmd.map(Message::HardwareWallets),
                 Err(e) => {
-                    self.warning = Some(e.into());
-                    Task::none()
+                    let err: Error = e.into();
+                    let err_msg = err.to_string();
+                    self.warning = Some(err);
+                    Task::done(Message::View(view::Message::ShowError(err_msg)))
                 }
             },
             Message::WalletUpdated(res) => {
@@ -395,7 +401,9 @@ impl RegisterWalletModal {
                     }
                     Err(e) => {
                         if !matches!(e, Error::HardwareWallet(async_hwi::Error::UserRefused)) {
-                            self.warning = Some(e)
+                            let err_msg = e.to_string();
+                            self.warning = Some(e);
+                            return Task::done(Message::View(view::Message::ShowError(err_msg)));
                         }
                     }
                 }

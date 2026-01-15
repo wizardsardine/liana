@@ -5,7 +5,7 @@
 mod utils;
 
 use crate::{
-    bitcoin::BitcoinInterface,
+    bitcoin::{BitcoinInterface, BitcoinError},
     database::{Coin, DatabaseConnection, DatabaseInterface},
     miniscript::bitcoin::absolute::LockTime,
     poller::PollerMessage,
@@ -60,11 +60,11 @@ pub enum CommandError {
     UnknownSpend(bitcoin::Txid),
     // FIXME: when upgrading Miniscript put the actual error there
     SpendFinalization(String),
-    TxBroadcast(String),
+    TxBroadcast(BitcoinError),
     AlreadyRescanning,
     InsaneRescanTimestamp(u32),
     /// An error that might occur in the racy rescan triggering logic.
-    RescanTrigger(String),
+    RescanTrigger(BitcoinError),
     RecoveryNotAvailable,
     // Include timelock in error as it may not have been set explicitly by the user.
     OutpointNotRecoverable(bitcoin::OutPoint, /* timelock */ u16),
@@ -109,13 +109,13 @@ impl fmt::Display for CommandError {
             Self::SpendFinalization(e) => {
                 write!(f, "Failed to finalize the spend transaction PSBT: '{}'.", e)
             }
-            Self::TxBroadcast(e) => write!(f, "Failed to broadcast transaction: '{}'.", e),
+            Self::TxBroadcast(e) => write!(f, "Failed to broadcast transaction: {}", e),
             Self::AlreadyRescanning => write!(
                 f,
                 "There is already a rescan ongoing. Please wait for it to complete first."
             ),
             Self::InsaneRescanTimestamp(t) => write!(f, "Insane timestamp '{}'.", t),
-            Self::RescanTrigger(s) => write!(f, "Error while starting rescan: '{}'", s),
+            Self::RescanTrigger(e) => write!(f, "Error while starting rescan: '{}'", e),
             Self::RecoveryNotAvailable => write!(
                 f,
                 "No coin currently spendable through this timelocked recovery path."

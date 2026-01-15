@@ -118,7 +118,7 @@ impl State for VaultReceivePanel {
         let content = view::dashboard(
             menu,
             cache,
-            self.warning.as_ref(),
+            None, // Errors now shown via global toast
             view::vault::receive::receive(
                 &self.addresses.list,
                 &self.addresses.labels,
@@ -169,8 +169,9 @@ impl State for VaultReceivePanel {
                 ) {
                     Ok(cmd) => cmd,
                     Err(e) => {
+                        let err_msg = e.to_string();
                         self.warning = Some(e);
-                        Task::none()
+                        return Task::done(Message::View(view::Message::ShowError(err_msg)));
                     }
                 }
             }
@@ -181,7 +182,11 @@ impl State for VaultReceivePanel {
                         self.addresses.list.push(address);
                         self.addresses.derivation_indexes.push(derivation_index);
                     }
-                    Err(e) => self.warning = Some(e),
+                    Err(e) => {
+                        let err_msg = e.to_string();
+                        self.warning = Some(e);
+                        return Task::done(Message::View(view::Message::ShowError(err_msg)));
+                    }
                 }
                 Task::none()
             }
@@ -257,7 +262,9 @@ impl State for VaultReceivePanel {
                         }
                     }
                     Err(e) => {
+                        let err_msg = e.to_string();
                         self.warning = Some(e);
+                        return Task::done(Message::View(view::Message::ShowError(err_msg)));
                     }
                 };
                 Task::none()
@@ -361,7 +368,7 @@ impl VerifyAddressModal {
 impl VerifyAddressModal {
     pub fn view(&self) -> Element<'_, view::Message> {
         view::vault::receive::verify_address_modal(
-            self.warning.as_ref(),
+            None, // Errors now shown via global toast
             &self.hws.list,
             &self.chosen_hws,
             &self.address,
@@ -383,14 +390,18 @@ impl VerifyAddressModal {
             Message::HardwareWallets(msg) => match self.hws.update(msg) {
                 Ok(cmd) => cmd.map(Message::HardwareWallets),
                 Err(e) => {
-                    self.warning = Some(e.into());
-                    Task::none()
+                    let err: Error = e.into();
+                    let err_msg = err.to_string();
+                    self.warning = Some(err);
+                    Task::done(Message::View(view::Message::ShowError(err_msg)))
                 }
             },
             Message::Verified(fg, res) => {
                 self.chosen_hws.remove(&fg);
                 if let Err(e) = res {
+                    let err_msg = e.to_string();
                     self.warning = Some(e);
+                    return Task::done(Message::View(view::Message::ShowError(err_msg)));
                 }
                 Task::none()
             }
