@@ -297,14 +297,14 @@ impl State for BuySellPanel {
                         let mut mavapay =
                             MavapayState::new(panel::BuyOrSell::Sell, country.clone());
                         mavapay.step = MavapayFlowStep::History {
-                            orders: None,
+                            transactions: None,
                             loading: true,
                             error: None,
                         };
                         self.step = BuySellFlowState::Mavapay(mavapay);
 
                         return Task::done(Message::View(view::Message::BuySell(
-                            BuySellMessage::Mavapay(MavapayMessage::FetchOrders),
+                            BuySellMessage::Mavapay(MavapayMessage::FetchTransactions),
                         )));
                     }
                     false => {
@@ -413,13 +413,16 @@ impl State for BuySellPanel {
                                     };
 
                                     // prepare request
-                                    let client = mavapay.client.clone();
                                     let coincube_client = self.coincube_client.clone();
 
                                     return Task::perform(
                                         async move {
                                             // Step 1: Create quote with Mavapay
-                                            let quote = client.create_quote(request).await?;
+                                            let mavapay = MavapayClient(&coincube_client);
+                                            let quote = match mavapay.create_quote(request).await {
+                                                MavapayApiResult::Success(q) => q,
+                                                MavapayApiResult::Error(e) => return Err(e),
+                                            };
 
                                             // Step 2: Save quote to coincube-api
                                             match coincube_client
@@ -438,16 +441,15 @@ impl State for BuySellPanel {
 
                                             Ok(quote)
                                         },
-                                        move |result: Result<GetQuoteResponse, MavapayError>| {
-                                            match result {
-                                                Ok(quote) => BuySellMessage::Mavapay(
-                                                    MavapayMessage::QuoteCreated(quote),
-                                                ),
-                                                Err(e) => BuySellMessage::SessionError(
-                                                    "Unable to create quote",
-                                                    e.to_string(),
-                                                ),
-                                            }
+                                        move |result: Result<GetQuoteResponse, String>| match result
+                                        {
+                                            Ok(quote) => BuySellMessage::Mavapay(
+                                                MavapayMessage::QuoteCreated(quote),
+                                            ),
+                                            Err(e) => BuySellMessage::SessionError(
+                                                "Unable to create quote",
+                                                e,
+                                            ),
                                         },
                                     )
                                     .map(|b| Message::View(ViewMessage::BuySell(b)));
@@ -459,48 +461,17 @@ impl State for BuySellPanel {
                                         quote.order_id
                                     );
 
-                                    // poll mavapay API for the status of the adjacent transaction (quote.hash == transaction.hash)
+                                    // Set up SSE stream for transaction status updates
                                     if let Some(quote_order_id) = quote.order_id.clone() {
-                                        let client = mavapay.client.clone();
-                                        let quote_id = quote.id.clone();
-
-                                        let (transaction_checker, abort) = Task::perform(
-                                            async move {
-                                                loop {
-                                                    let order =
-                                                        client.get_order(&quote_order_id).await;
-
-                                                    match order {
-                                                        Ok(order)
-                                                            if matches!(
-                                                                order.status,
-                                                                TransactionStatus::Paid
-                                                            ) =>
-                                                        {
-                                                            break order
-                                                        }
-                                                        Ok(order) => {
-                                                            log::info!("[MAVAPAY] Quote({}).order = {{ {}: {:?} }}", quote_id, order.id, order.status);
-                                                        }
-                                                        Err(e) => {
-                                                            log::error!("[MAVAPAY] Unable to check Mavapay API for transaction status: {:?}", e)
-                                                        }
-                                                    }
-
-                                                    tokio::time::sleep(
-                                                        std::time::Duration::from_secs(10),
-                                                    )
-                                                    .await
-                                                }
-                                            },
-                                            |res| {
-                                                Message::View(ViewMessage::BuySell(
-                                                    BuySellMessage::Mavapay(
-                                                        MavapayMessage::QuoteFulfilled(res),
-                                                    ),
-                                                ))
-                                            },
-                                        ).abortable();
+                                        let stream_config = TransactionStreamConfig {
+                                            base_url: self.coincube_client.base_url.to_string(),
+                                            auth_token: self
+                                                .login
+                                                .as_ref()
+                                                .map(|l| l.token.clone())
+                                                .unwrap_or_default(),
+                                            order_id: quote_order_id,
+                                        };
 
                                         // switch to checkout
                                         mavapay.step = MavapayFlowStep::Checkout {
@@ -510,10 +481,8 @@ impl State for BuySellPanel {
                                             quote,
                                             fulfilled_order: None,
                                             country: country.clone(),
-                                            abort: abort.abort_on_drop(),
+                                            stream_config: Some(stream_config),
                                         };
-
-                                        return transaction_checker;
                                     } else {
                                         *sending_quote = false;
                                         self.error = Some("Unable to process payment, Mavapay Quote created without `order-id`".to_string())
@@ -521,7 +490,7 @@ impl State for BuySellPanel {
                                 }
 
                                 MavapayMessage::GetPrice => {
-                                    let client = mavapay.client.clone();
+                                    let client = self.coincube_client.clone();
                                     let currency = match country.code {
                                         "KE" => MavapayCurrency::KenyanShilling,
                                         "ZA" => MavapayCurrency::SouthAfricanRand,
@@ -533,33 +502,47 @@ impl State for BuySellPanel {
                                     };
 
                                     return Task::perform(
-                                        async move { client.get_price(currency).await },
+                                        async move {
+                                            let mavapay = MavapayClient(&client);
+                                            mavapay.get_price(currency).await
+                                        },
                                         |result| match result {
-                                            Ok(price) => BuySellMessage::Mavapay(
-                                                MavapayMessage::PriceReceived(price),
-                                            ),
-                                            Err(e) => BuySellMessage::SessionError(
-                                                "Unable to get latest Bitcoin price",
-                                                e.to_string(),
-                                            ),
+                                            MavapayApiResult::Success(price) => {
+                                                BuySellMessage::Mavapay(
+                                                    MavapayMessage::PriceReceived(price),
+                                                )
+                                            }
+                                            MavapayApiResult::Error(e) => {
+                                                BuySellMessage::SessionError(
+                                                    "Unable to get latest Bitcoin price",
+                                                    e,
+                                                )
+                                            }
                                         },
                                     )
                                     .map(|b| Message::View(ViewMessage::BuySell(b)));
                                 }
                                 MavapayMessage::GetBanks => {
                                     let code = country.code;
-                                    let client = mavapay.client.clone();
+                                    let client = self.coincube_client.clone();
 
                                     return Task::perform(
-                                        async move { client.get_banks(code).await },
+                                        async move {
+                                            let mavapay = MavapayClient(&client);
+                                            mavapay.get_banks(code).await
+                                        },
                                         |result| match result {
-                                            Ok(banks) => BuySellMessage::Mavapay(
-                                                MavapayMessage::BanksReceived(banks),
-                                            ),
-                                            Err(e) => BuySellMessage::SessionError(
-                                                "Unable to fetch supported banks for your country",
-                                                e.to_string(),
-                                            ),
+                                            MavapayApiResult::Success(banks) => {
+                                                BuySellMessage::Mavapay(
+                                                    MavapayMessage::BanksReceived(banks),
+                                                )
+                                            }
+                                            MavapayApiResult::Error(e) => {
+                                                BuySellMessage::SessionError(
+                                                    "Unable to fetch supported banks for your country",
+                                                    e,
+                                                )
+                                            }
                                         },
                                     )
                                     .map(|b| Message::View(ViewMessage::BuySell(b)));
@@ -580,10 +563,82 @@ impl State for BuySellPanel {
                             MavapayFlowStep::Checkout {
                                 quote,
                                 fulfilled_order,
+                                stream_config,
                                 ..
                             },
                             msg,
                         ) => match msg {
+                            MavapayMessage::StreamEvent(event) => {
+                                match event {
+                                    TransactionStreamEvent::TransactionUpdated(update) => {
+                                        log::info!(
+                                            "[MAVAPAY SSE] Order {} event={} status={:?}",
+                                            update.order_id,
+                                            update.event_type,
+                                            update.status
+                                        );
+
+                                        if matches!(
+                                            update.status,
+                                            TransactionStatus::Paid | TransactionStatus::Success
+                                        ) {
+                                            log::info!(
+                                                "[MAVAPAY] Quote({}) has been fulfilled via SSE, order_id={}",
+                                                quote.id,
+                                                update.order_id
+                                            );
+                                            let client = self.coincube_client.clone();
+                                            let order_id = update.order_id.clone();
+
+                                            *stream_config = None;
+
+                                            return Task::perform(
+                                                async move {
+                                                    // Small delay to allow backend to finalize order
+                                                    tokio::time::sleep(
+                                                        std::time::Duration::from_secs(1),
+                                                    )
+                                                    .await;
+                                                    let mavapay = MavapayClient(&client);
+                                                    mavapay.get_order(&order_id).await
+                                                },
+                                                |result| match result {
+                                                    MavapayApiResult::Success(order) => {
+                                                        Message::View(ViewMessage::BuySell(
+                                                            BuySellMessage::Mavapay(
+                                                                MavapayMessage::QuoteFulfilled(
+                                                                    order,
+                                                                ),
+                                                            ),
+                                                        ))
+                                                    }
+                                                    MavapayApiResult::Error(e) => {
+                                                        log::error!("[MAVAPAY] Failed to fetch order after SSE success: {}", e);
+                                                        Message::View(ViewMessage::BuySell(
+                                                            BuySellMessage::SessionError(
+                                                                "Failed to fetch order details",
+                                                                e,
+                                                            ),
+                                                        ))
+                                                    }
+                                                },
+                                            );
+                                        }
+                                    }
+                                    TransactionStreamEvent::Connected => {
+                                        log::info!("[MAVAPAY SSE] Connected to transaction stream");
+                                    }
+                                    TransactionStreamEvent::Ping => {
+                                        log::trace!("[MAVAPAY SSE] Ping received");
+                                    }
+                                    TransactionStreamEvent::Error(err) => {
+                                        log::error!("[MAVAPAY SSE] Stream error: {}", err);
+                                    }
+                                    TransactionStreamEvent::Disconnected => {
+                                        log::info!("[MAVAPAY SSE] Stream disconnected");
+                                    }
+                                }
+                            }
                             MavapayMessage::QuoteFulfilled(order) => {
                                 log::info!(
                                     "[MAVAPAY] Quote({}) has been fulfilled: Order = {:?}",
@@ -592,31 +647,46 @@ impl State for BuySellPanel {
                                 );
 
                                 *fulfilled_order = Some(order);
+                                *stream_config = None;
                             }
 
                             #[cfg(debug_assertions)]
                             MavapayMessage::SimulatePayIn => {
+                                let Some(order_id) = quote.order_id.clone() else {
+                                    log::error!(
+                                        "[MAVAPAY] Cannot simulate Pay-In: Quote has no order_id"
+                                    );
+                                    return Task::none();
+                                };
+
                                 log::info!(
-                                    "[MAVAPAY] Simulating Pay-In for Quote({}), Order ID({:?})",
+                                    "[MAVAPAY] Simulating Pay-In for Quote({}), Order ID({})",
                                     quote.id,
-                                    quote.order_id
+                                    order_id
                                 );
 
-                                let client = mavapay.client.clone();
+                                let client = self.coincube_client.clone();
                                 let request = SimulatePayInRequest {
-                                    quote_id: quote.id.clone(),
+                                    order_id,
                                     amount: quote.amount_in_source_currency,
                                     currency: quote.source_currency.clone().into(),
                                 };
 
                                 return Task::perform(
-                                    async move { client.simulate_pay_in(&request).await },
+                                    async move {
+                                        let mavapay = MavapayClient(&client);
+                                        mavapay.simulate_pay_in(&request).await
+                                    },
                                     |s| match s {
-                                        Ok(message) => log::info!("[MAVAPAY] {}", message),
-                                        Err(error) => log::error!(
-                                            "[MAVAPAY] Unable to simulate Pay-In: {}",
-                                            error
-                                        ),
+                                        MavapayApiResult::Success(message) => {
+                                            log::info!("[MAVAPAY] {}", message)
+                                        }
+                                        MavapayApiResult::Error(e) => {
+                                            log::error!(
+                                                "[MAVAPAY] Unable to simulate Pay-In: {}",
+                                                e
+                                            )
+                                        }
                                     },
                                 )
                                 .then(|_| Task::none());
@@ -638,42 +708,76 @@ impl State for BuySellPanel {
                         },
                         (
                             MavapayFlowStep::History {
-                                orders,
+                                transactions,
                                 loading,
                                 error,
                             },
                             msg,
                         ) => match msg {
-                            MavapayMessage::FetchOrders => {
+                            MavapayMessage::FetchTransactions => {
                                 *loading = true;
                                 *error = None;
-                                let client = mavapay.client.clone();
+                                let client = self.coincube_client.clone();
 
                                 return Task::perform(
-                                    async move { client.get_orders().await },
+                                    async move {
+                                        let mavapay = MavapayClient(&client);
+                                        mavapay.get_transactions().await
+                                    },
                                     |result| match result {
-                                        Ok(orders) => BuySellMessage::Mavapay(
-                                            MavapayMessage::OrdersReceived(orders),
-                                        ),
-                                        Err(e) => BuySellMessage::Mavapay(
-                                            MavapayMessage::OrdersFetchFailed(e.to_string()),
+                                        MavapayApiResult::Success(response) => {
+                                            BuySellMessage::Mavapay(
+                                                MavapayMessage::TransactionsReceived(
+                                                    response.transactions,
+                                                ),
+                                            )
+                                        }
+                                        MavapayApiResult::Error(e) => BuySellMessage::Mavapay(
+                                            MavapayMessage::TransactionsFetchFailed(e),
                                         ),
                                     },
                                 )
                                 .map(|b| Message::View(ViewMessage::BuySell(b)));
                             }
-                            MavapayMessage::OrdersReceived(received_orders) => {
-                                log::info!("[MAVAPAY] Received {} orders", received_orders.len());
-                                *orders = Some(received_orders);
+                            MavapayMessage::TransactionsReceived(received_transactions) => {
+                                log::info!(
+                                    "[MAVAPAY] Received {} transactions",
+                                    received_transactions.len()
+                                );
+                                *transactions = Some(received_transactions);
                                 *loading = false;
                             }
-                            MavapayMessage::OrdersFetchFailed(err) => {
-                                log::error!("[MAVAPAY] Failed to fetch orders: {}", err);
+                            MavapayMessage::TransactionsFetchFailed(err) => {
+                                log::error!("[MAVAPAY] Failed to fetch transactions: {}", err);
                                 *loading = false;
                                 *error = Some(err);
                             }
-                            MavapayMessage::SelectOrder(order) => {
-                                mavapay.step = MavapayFlowStep::OrderDetail { order };
+                            MavapayMessage::SelectTransaction(transaction) => {
+                                let order_id = transaction.order_id.clone();
+                                mavapay.step = MavapayFlowStep::OrderDetail {
+                                    transaction,
+                                    order: None,
+                                    loading: true,
+                                };
+
+                                let client = self.coincube_client.clone();
+                                return Task::perform(
+                                    async move {
+                                        let mavapay = MavapayClient(&client);
+                                        mavapay.get_order(&order_id).await
+                                    },
+                                    |result| match result {
+                                        MavapayApiResult::Success(order) => {
+                                            BuySellMessage::Mavapay(MavapayMessage::OrderReceived(
+                                                order,
+                                            ))
+                                        }
+                                        MavapayApiResult::Error(e) => BuySellMessage::Mavapay(
+                                            MavapayMessage::OrderFetchFailed(e),
+                                        ),
+                                    },
+                                )
+                                .map(|b| Message::View(ViewMessage::BuySell(b)));
                             }
                             msg => log::warn!(
                                 "Current {:?} has ignored message: {:?}",
@@ -681,15 +785,23 @@ impl State for BuySellPanel {
                                 msg
                             ),
                         },
-                        (MavapayFlowStep::OrderDetail { .. }, msg) => match msg {
+                        (MavapayFlowStep::OrderDetail { order, loading, .. }, msg) => match msg {
+                            MavapayMessage::OrderReceived(received_order) => {
+                                *order = Some(received_order);
+                                *loading = false;
+                            }
+                            MavapayMessage::OrderFetchFailed(err) => {
+                                log::error!("[MAVAPAY] Failed to fetch order: {}", err);
+                                *loading = false;
+                            }
                             MavapayMessage::BackToHistory => {
                                 mavapay.step = MavapayFlowStep::History {
-                                    orders: None,
+                                    transactions: None,
                                     loading: true,
                                     error: None,
                                 };
                                 return Task::done(Message::View(ViewMessage::BuySell(
-                                    BuySellMessage::Mavapay(MavapayMessage::FetchOrders),
+                                    BuySellMessage::Mavapay(MavapayMessage::FetchTransactions),
                                 )));
                             }
                             msg => log::warn!(
@@ -1096,6 +1208,22 @@ impl State for BuySellPanel {
             }) => iced::time::every(std::time::Duration::from_secs(30)).map(|_| {
                 Message::View(ViewMessage::BuySell(BuySellMessage::Mavapay(
                     MavapayMessage::GetPrice,
+                )))
+            }),
+            // SSE stream for transaction status updates during checkout
+            BuySellFlowState::Mavapay(MavapayState {
+                step:
+                    MavapayFlowStep::Checkout {
+                        stream_config: Some(config),
+                        ..
+                    },
+                ..
+            }) => iced::Subscription::run_with(config.clone(), |config| {
+                transaction_stream(config.clone())
+            })
+            .map(|event| {
+                Message::View(ViewMessage::BuySell(BuySellMessage::Mavapay(
+                    MavapayMessage::StreamEvent(event),
                 )))
             }),
             _ => iced::Subscription::none(),

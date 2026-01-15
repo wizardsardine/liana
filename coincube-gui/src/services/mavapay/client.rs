@@ -1,121 +1,88 @@
-use reqwest::{Method, RequestBuilder};
+use crate::services::{coincube::CoincubeError, http::ResponseExt};
+use reqwest::Method;
 
 use super::api::*;
-use crate::services::http::ResponseExt;
 
-/// Mavapay API client
-#[derive(Debug, Clone)]
-pub struct MavapayClient {
-    http: reqwest::Client,
-    base_url: &'static str,
-}
+pub struct MavapayClient<'client>(pub &'client super::super::coincube::CoincubeClient);
 
-impl MavapayClient {
-    /// Create a new Mavapay client
-    pub fn new() -> Self {
-        let (api_key, base_url) = match option_env!("MAVAPAY_API_KEY") {
-            // staging api key
-            None => {
-                log::info!("[MAVAPAY] Using staging environment");
-                (
-                    "6361fa8e19e150db46d0dc614b9874fd199c95d80a9",
-                    "https://staging.api.mavapay.co/api",
-                )
-            }
-            // use production endpoint if api key is set
-            Some(k) => {
-                log::info!("[MAVAPAY] Using production environment");
-                (k, "https://api.mavapay.co/api")
-            }
-        };
-
-        let mut headers = reqwest::header::HeaderMap::new();
-        headers.append(
-            "X-API-KEY",
-            reqwest::header::HeaderValue::from_str(api_key).unwrap(),
-        );
-
-        Self {
-            http: reqwest::Client::builder()
-                .default_headers(headers)
-                .build()
-                .unwrap(),
-            base_url,
-        }
-    }
-
-    /// Create an authenticated request
-    fn request(&self, method: Method, endpoint: &str) -> RequestBuilder {
-        let url = format!("{}{}", self.base_url, endpoint);
-        self.http.request(method, &url)
-    }
-
+impl<'client> MavapayClient<'client> {
     /// Get current Bitcoin price in specified currency
-    pub async fn get_price(
-        &self,
-        currency: MavapayCurrency,
-    ) -> Result<GetPriceResponse, MavapayError> {
-        let response = self
-            .request(Method::GET, "/v1/price")
-            .query(&[("currency", currency)])
-            .send()
-            .await?
-            .check_success()
-            .await?;
+    pub async fn get_price(&self, currency: MavapayCurrency) -> MavapayApiResult<GetPriceResponse> {
+        let url = format!("{}/api/v1/mavapay/proxy/price", self.0.base_url);
+        let res: Result<_, CoincubeError> = async {
+            let response = self
+                .0
+                .client
+                .request(Method::GET, &url)
+                .query(&[("currency", currency)])
+                .send()
+                .await?;
 
-        match response.json::<MavapayResponse<GetPriceResponse>>().await? {
-            MavapayResponse::Error { message } => Err(MavapayError::ApiError(message)),
-            MavapayResponse::Success { data } => Ok(data),
+            let response = response.check_success().await?;
+            Ok(response.json().await?)
+        }
+        .await;
+
+        match res {
+            Ok(res) => res,
+            Err(err) => err.into(),
         }
     }
 
     pub async fn create_quote(
         &self,
         request: GetQuoteRequest,
-    ) -> Result<GetQuoteResponse, MavapayError> {
-        let response = self
-            .request(Method::POST, "/v1/quote")
-            .json(&request)
-            .send()
-            .await?;
-        let response = response.check_success().await?;
-        let response: MavapayResponse<GetQuoteResponse> = response.json().await?;
+    ) -> MavapayApiResult<GetQuoteResponse> {
+        let url = format!("{}/api/v1/mavapay/proxy/onchain/quote", self.0.base_url);
+        let res: Result<_, CoincubeError> = async {
+            let response = self
+                .0
+                .client
+                .request(Method::POST, &url)
+                .json(&request)
+                .send()
+                .await?;
 
-        // check for errors
-        let quote = match response {
-            MavapayResponse::Error { message } => return Err(MavapayError::ApiError(message)),
-            MavapayResponse::Success { data } => data,
-        };
+            let response = response.check_success().await?;
+            Ok(response.json().await?)
+        }
+        .await;
 
-        Ok(quote)
-    }
-
-    pub async fn get_order(&self, order_id: &str) -> Result<GetOrderResponse, MavapayError> {
-        let response = self
-            .request(Method::GET, "/v1/order")
-            .query(&[("id", order_id)])
-            .send()
-            .await?
-            .check_success()
-            .await?;
-
-        match response.json().await? {
-            MavapayResponse::Error { message } => Err(MavapayError::ApiError(message)),
-            MavapayResponse::Success { data } => Ok(data),
+        match res {
+            Ok(res) => res,
+            Err(err) => err.into(),
         }
     }
 
-    pub async fn get_orders(&self) -> Result<Vec<GetOrderResponse>, MavapayError> {
-        let response = self
-            .request(Method::GET, "/v1/order/all")
-            .send()
-            .await?
-            .check_success()
-            .await?;
+    pub async fn get_order(&self, order_id: &str) -> MavapayApiResult<GetOrderResponse> {
+        let url = format!("{}/api/v1/mavapay/orders/{}", self.0.base_url, order_id);
+        let res: Result<_, CoincubeError> = async {
+            let response = self.0.client.request(Method::GET, &url).send().await?;
 
-        match response.json().await? {
-            MavapayResponse::Error { message } => Err(MavapayError::ApiError(message)),
-            MavapayResponse::Success { data } => Ok(data),
+            let response = response.check_success().await?;
+            Ok(response.json().await?)
+        }
+        .await;
+
+        match res {
+            Ok(res) => res,
+            Err(err) => err.into(),
+        }
+    }
+
+    pub async fn get_transactions(&self) -> MavapayApiResult<GetTransactionsResponse> {
+        let url = format!("{}/api/v1/mavapay/transactions", self.0.base_url);
+        let res: Result<_, CoincubeError> = async {
+            let response = self.0.client.request(Method::GET, &url).send().await?;
+
+            let response = response.check_success().await?;
+            Ok(response.json().await?)
+        }
+        .await;
+
+        match res {
+            Ok(res) => res,
+            Err(err) => err.into(),
         }
     }
 
@@ -123,31 +90,47 @@ impl MavapayClient {
     pub async fn simulate_pay_in(
         &self,
         request: &SimulatePayInRequest,
-    ) -> Result<String, MavapayError> {
-        let response = self
-            .request(Method::POST, "/v1/simulation/pay-in")
-            .json(&request)
-            .send()
-            .await?;
-        let response = response.check_success().await?;
+    ) -> MavapayApiResult<String> {
+        let url = format!("{}/api/v1/mavapay/proxy/simulation/pay-in", self.0.base_url);
+        let res: Result<_, CoincubeError> = async {
+            let response = self
+                .0
+                .client
+                .request(Method::POST, &url)
+                .json(&request)
+                .send()
+                .await?;
 
-        match response.json().await? {
-            MavapayResponse::Error { message } => Err(MavapayError::ApiError(message)),
-            MavapayResponse::Success { data } => Ok(data),
+            let response = response.check_success().await?;
+            Ok(response.json().await?)
+        }
+        .await;
+
+        match res {
+            Ok(res) => res,
+            Err(err) => err.into(),
         }
     }
 
-    pub async fn get_banks(&self, country_code: &str) -> Result<MavapayBanks, MavapayError> {
-        let response = self
-            .request(Method::GET, "/v1/bank/bankcode")
-            .query(&[("country", country_code)])
-            .send()
-            .await?;
-        let response = response.check_success().await?;
+    pub async fn get_banks(&self, country_code: &str) -> MavapayApiResult<MavapayBanks> {
+        let url = format!("{}/api/v1/mavapay/proxy/bank/bankcodes", self.0.base_url);
+        let res: Result<_, CoincubeError> = async {
+            let response = self
+                .0
+                .client
+                .request(Method::GET, &url)
+                .query(&[("country", country_code)])
+                .send()
+                .await?;
 
-        match response.json().await? {
-            MavapayResponse::Success { data } => Ok(data),
-            MavapayResponse::Error { message } => Err(MavapayError::ApiError(message)),
+            let response = response.check_success().await?;
+            Ok(response.json().await?)
+        }
+        .await;
+
+        match res {
+            Ok(res) => res,
+            Err(err) => err.into(),
         }
     }
 }

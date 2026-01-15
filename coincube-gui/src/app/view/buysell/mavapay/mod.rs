@@ -23,21 +23,23 @@ pub enum MavapayFlowStep {
         quote: GetQuoteResponse,
         fulfilled_order: Option<GetOrderResponse>,
         country: Country,
-        abort: iced::task::Handle,
+        /// SSE stream configuration for transaction status updates
+        stream_config: Option<TransactionStreamConfig>,
     },
     History {
-        orders: Option<Vec<GetOrderResponse>>,
+        transactions: Option<Vec<OrderTransaction>>,
         loading: bool,
         error: Option<String>,
     },
     OrderDetail {
-        order: GetOrderResponse,
+        transaction: OrderTransaction,
+        order: Option<GetOrderResponse>,
+        loading: bool,
     },
 }
 
 pub struct MavapayState {
     pub step: MavapayFlowStep,
-    pub client: MavapayClient,
 }
 
 impl MavapayState {
@@ -54,7 +56,6 @@ impl MavapayState {
                 btc_price: None,
                 sending_quote: false,
             },
-            client: MavapayClient::new(),
         }
     }
 }
