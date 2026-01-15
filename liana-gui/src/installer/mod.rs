@@ -76,6 +76,16 @@ pub enum NextState {
         directory_wallet_id: settings::WalletId,
         auth_cfg: settings::AuthConfig,
     },
+    /// Direct transition to App for liana-business, skipping Login and Loader.
+    /// User is already authenticated in the BusinessInstaller with tokens cached.
+    RunLianaBusiness {
+        datadir: LianaDirectory,
+        network: Network,
+        /// The Connect wallet ID (UUID)
+        wallet_id: String,
+        /// User's email for token lookup and re-auth
+        email: String,
+    },
     Loader {
         datadir: LianaDirectory,
         network: bitcoin::Network,
@@ -103,7 +113,9 @@ where
 
     fn update(&mut self, message: Message) -> Task<Message>;
 
-    fn subscription(&self) -> Subscription<Message>;
+    fn subscription(&self) -> Subscription<Message> {
+        Subscription::none()
+    }
 
     fn view(&self) -> Element<Message>;
 
@@ -114,6 +126,13 @@ where
     fn network(&self) -> bitcoin::Network;
 
     fn exit_maybe(&mut self, msg: &Message) -> Option<NextState>;
+
+    /// Whether to skip the Launcher and start directly with Installer.
+    /// Default: false (show Launcher first).
+    /// Override to return `true` for installers that handle auth internally.
+    fn skip_launcher() -> bool {
+        false
+    }
 }
 
 pub struct LianaInstaller {
