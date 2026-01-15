@@ -77,7 +77,7 @@ impl State for ActiveReceive {
             &self.amount_input,
             &self.description_input,
             cache.bitcoin_unit.into(),
-            self.error.as_ref(),
+            None, // Errors now shown via global toast
         )
         .map(view::Message::ActiveReceive);
 

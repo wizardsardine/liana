@@ -342,7 +342,11 @@ impl Modal for SaveModal {
             }
             Message::Updated(res) => match res {
                 Ok(()) => self.saved = true,
-                Err(e) => self.error = Some(e),
+                Err(e) => {
+                    let err_msg = e.to_string();
+                    self.error = Some(e);
+                    return Task::done(Message::View(view::Message::ShowError(err_msg)));
+                }
             },
             _ => {}
         }
@@ -351,7 +355,7 @@ impl Modal for SaveModal {
     fn view<'a>(&'a self, content: Element<'a, view::Message>) -> Element<'a, view::Message> {
         modal::Modal::new(
             content,
-            view::vault::psbt::save_action(self.error.as_ref(), self.saved),
+            view::vault::psbt::save_action(None, self.saved), // Errors shown via global toast
         )
         .on_blur(Some(view::Message::Spend(view::SpendTxMessage::Cancel)))
         .into()
@@ -393,7 +397,11 @@ impl Modal for BroadcastModal {
                     tx.status = SpendStatus::Broadcast;
                     self.broadcast = true;
                 }
-                Err(e) => self.error = Some(e),
+                Err(e) => {
+                    let err_msg = e.to_string();
+                    self.error = Some(e);
+                    return Task::done(Message::View(view::Message::ShowError(err_msg)));
+                }
             },
             _ => {}
         }
@@ -404,7 +412,7 @@ impl Modal for BroadcastModal {
             content,
             view::vault::psbt::broadcast_action(
                 &self.conflicting_txids,
-                self.error.as_ref(),
+                None, // Errors shown via global toast
                 self.broadcast,
             ),
         )
@@ -443,7 +451,11 @@ impl Modal for DeleteModal {
             }
             Message::Updated(res) => match res {
                 Ok(()) => self.deleted = true,
-                Err(e) => self.error = Some(e),
+                Err(e) => {
+                    let err_msg = e.to_string();
+                    self.error = Some(e);
+                    return Task::done(Message::View(view::Message::ShowError(err_msg)));
+                }
             },
             _ => {}
         }
@@ -452,7 +464,7 @@ impl Modal for DeleteModal {
     fn view<'a>(&'a self, content: Element<'a, view::Message>) -> Element<'a, view::Message> {
         modal::Modal::new(
             content,
-            view::vault::psbt::delete_action(self.error.as_ref(), self.deleted),
+            view::vault::psbt::delete_action(None, self.deleted), // Errors shown via global toast
         )
         .on_blur(Some(view::Message::Spend(view::SpendTxMessage::Cancel)))
         .into()
@@ -537,7 +549,9 @@ impl Modal for SignModal {
                     Err(e) => {
                         self.display_modal = true;
                         if !matches!(e, Error::HardwareWallet(async_hwi::Error::UserRefused)) {
-                            self.error = Some(e)
+                            let err_msg = e.to_string();
+                            self.error = Some(e);
+                            return Task::done(Message::View(view::Message::ShowError(err_msg)));
                         }
                     }
                     Ok(psbt) => {
@@ -573,9 +587,17 @@ impl Modal for SignModal {
             Message::Updated(res) => match res {
                 Ok(()) => match self.wallet.main_descriptor.partial_spend_info(&tx.psbt) {
                     Ok(sigs) => tx.sigs = sigs,
-                    Err(e) => self.error = Some(Error::Unexpected(e.to_string())),
+                    Err(e) => {
+                        let err_msg = e.to_string();
+                        self.error = Some(Error::Unexpected(err_msg.clone()));
+                        return Task::done(Message::View(view::Message::ShowError(err_msg)));
+                    }
                 },
-                Err(e) => self.error = Some(e),
+                Err(e) => {
+                    let err_msg = e.to_string();
+                    self.error = Some(e);
+                    return Task::done(Message::View(view::Message::ShowError(err_msg)));
+                }
             },
 
             Message::HardwareWallets(msg) => match self.hws.update(msg) {
@@ -583,7 +605,9 @@ impl Modal for SignModal {
                     return cmd.map(Message::HardwareWallets);
                 }
                 Err(e) => {
+                    let err_msg = e.to_string();
                     self.error = Some(e.into());
+                    return Task::done(Message::View(view::Message::ShowError(err_msg)));
                 }
             },
             _ => {}
@@ -595,7 +619,7 @@ impl Modal for SignModal {
         let content = toast::Manager::new(
             content,
             view::vault::psbt::sign_action_toasts(
-                self.error.as_ref(),
+                None, // Errors shown via global toast
                 &self.hws.list,
                 &self.signing,
             ),
@@ -605,7 +629,7 @@ impl Modal for SignModal {
             modal::Modal::new(
                 content,
                 view::vault::psbt::sign_action(
-                    self.error.as_ref(),
+                    None, // Errors shown via global toast
                     &self.hws.list,
                     &self.wallet.main_descriptor,
                     self.wallet.signer.as_ref().map(|s| s.fingerprint()),

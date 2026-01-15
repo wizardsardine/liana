@@ -171,6 +171,7 @@ impl From<SettingsState> for Box<dyn State> {
 }
 
 pub struct ImportExportSettingsState {
+    #[allow(dead_code)] // Reserved for future error handling
     warning: Option<Error>,
     modal: Option<VaultExportModal>,
     wallet: Arc<Wallet>,

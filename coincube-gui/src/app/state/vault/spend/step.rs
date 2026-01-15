@@ -522,7 +522,7 @@ impl DefineSpend {
             }
             Err(e) => {
                 let err: Error = e.into();
-                let err_msg = err.to_string();
+                let _err_msg = err.to_string(); // For future ShowError integration
                 self.warning = Some(err);
                 self.fee_amount = None;
                 // Note: Cannot return Task here as this is in redraft() which returns ()

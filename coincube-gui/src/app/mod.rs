@@ -1255,7 +1255,7 @@ impl App {
 
         // Overlay error toast at bottom if present
         if let Some(err) = &self.error_toast {
-            use coincube_ui::{color, component::button, component::text, icon::cross_icon, theme};
+            use coincube_ui::{color, component::text, icon::cross_icon, theme};
             use iced::widget::{Row, Button};
 
             let close_btn: Element<'_, view::Message> = Button::new(

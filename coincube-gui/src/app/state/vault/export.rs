@@ -288,7 +288,7 @@ impl VaultExportModal {
             content,
             export_modal(
                 &self.state,
-                self.error.as_ref(),
+                self.error.as_ref(), // Export modal shows error inline
                 self.modal_title(),
                 &self.import_export_type,
             ),

@@ -156,7 +156,7 @@ impl State for ActiveSend {
                 fiat_converter,
                 recent_transaction: &self.recent_transaction,
                 input: &self.input,
-                error: self.error.as_deref(),
+                error: None, // Errors now shown via global toast
                 amount_input: &self.amount_input,
                 comment,
                 description: self.description.as_deref(),

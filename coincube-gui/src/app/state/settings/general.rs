@@ -275,18 +275,17 @@ impl State for GeneralSettingsState {
                     Ok(list) => {
                         self.error = None;
                         self.currencies = list.currencies;
-                        return Task::perform(async move {}, |_| {
+                        Task::perform(async move {}, |_| {
                             FiatMessage::ValidateCurrencySetting.into()
-                        });
+                        })
                     }
                     Err(e) => {
                         let err: Error = e.into();
                         let err_msg = err.to_string();
                         self.error = Some(err);
-                        return Task::done(Message::View(view::Message::ShowError(err_msg)));
+                        Task::done(Message::View(view::Message::ShowError(err_msg)))
                     }
                 }
-                Task::none()
             }
             Message::View(view::Message::Settings(view::SettingsMessage::Fiat(msg))) => {
                 match msg {

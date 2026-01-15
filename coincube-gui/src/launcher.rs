@@ -1,5 +1,4 @@
 use std::fmt;
-use coincube_ui::widget::{ColumnExt as _, RowExt as _};
 use iced::{
     alignment::Horizontal,
     widget::{
