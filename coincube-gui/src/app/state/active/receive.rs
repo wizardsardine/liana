@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use coincube_core::miniscript::bitcoin::Amount;
+use coincube_core::miniscript::bitcoin::{Amount, Denomination};
 use coincube_ui::component::{form, toast};
 use coincube_ui::widget::*;
 use iced::{clipboard, widget::qr_code, Task};
@@ -257,26 +257,37 @@ impl ActiveReceive {
         self.loading = true;
         let client = self.breez_client.clone();
 
-        if let Some(amount) = self.parse_amount(bitcoin_unit) {
-            let description = if self.description_input.is_empty() {
-                None
-            } else {
-                Some(self.description_input.clone())
-            };
-
-            Task::perform(
-                Self::generate_lightning_invoice(client, amount, description),
-                |result| {
-                    Message::View(view::Message::ActiveReceive(
-                        ActiveReceiveMessage::AddressGenerated(ReceiveMethod::Lightning, result),
-                    ))
-                },
-            )
-        } else {
+        // Check for empty input first
+        if self.amount_input.value.is_empty() {
             self.loading = false;
-            Task::done(Message::View(view::Message::ActiveReceive(
-                ActiveReceiveMessage::Error("Error in parsing Amount field".to_string()),
-            )))
+            return Task::done(Message::View(view::Message::ActiveReceive(
+                ActiveReceiveMessage::Error("Please enter an amount".to_string()),
+            )));
+        }
+
+        match self.parse_amount(bitcoin_unit) {
+            Some(amount) => {
+                let description = if self.description_input.is_empty() {
+                    None
+                } else {
+                    Some(self.description_input.clone())
+                };
+
+                Task::perform(
+                    Self::generate_lightning_invoice(client, amount, description),
+                    |result| {
+                        Message::View(view::Message::ActiveReceive(
+                            ActiveReceiveMessage::AddressGenerated(ReceiveMethod::Lightning, result),
+                        ))
+                    },
+                )
+            }
+            None => {
+                self.loading = false;
+                Task::done(Message::View(view::Message::ActiveReceive(
+                    ActiveReceiveMessage::Error("Invalid amount format".to_string()),
+                )))
+            }
         }
     }
 
@@ -292,21 +303,10 @@ impl ActiveReceive {
     }
 
     fn parse_amount(&self, bitcoin_unit: BitcoinDisplayUnit) -> Option<Amount> {
-        if self.amount_input.value.is_empty() {
-            None
-        } else {
-            match bitcoin_unit {
-                BitcoinDisplayUnit::BTC => Amount::from_str_in(
-                    &self.amount_input.value,
-                    breez_sdk_liquid::bitcoin::Denomination::Bitcoin,
-                )
-                .ok(),
-                BitcoinDisplayUnit::Sats => Amount::from_str_in(
-                    &self.amount_input.value,
-                    breez_sdk_liquid::bitcoin::Denomination::Satoshi,
-                )
-                .ok(),
-            }
-        }
+        let denomination = match bitcoin_unit {
+            BitcoinDisplayUnit::BTC => Denomination::Bitcoin,
+            BitcoinDisplayUnit::Sats => Denomination::Satoshi,
+        };
+        Amount::from_str_in(&self.amount_input.value, denomination).ok()
     }
 }
