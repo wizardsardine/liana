@@ -95,9 +95,9 @@ impl State for ActiveTransactions {
                 self.balance = self.calculate_balance();
                 Task::none()
             }
-            Message::PaymentsLoaded(Err(_e)) => {
+            Message::PaymentsLoaded(Err(e)) => {
                 self.loading = false;
-                Task::none()
+                Task::done(Message::View(view::Message::ShowError(e.to_string())))
             }
             Message::View(view::Message::Select(i)) => {
                 self.selected_payment = self.payments.get(i).cloned();

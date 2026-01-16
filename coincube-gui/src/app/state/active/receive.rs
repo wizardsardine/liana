@@ -7,6 +7,7 @@ use coincube_ui::widget::*;
 use iced::{clipboard, widget::qr_code, Task};
 
 use crate::app::settings::unit::BitcoinDisplayUnit;
+use crate::app::view::ReceiveError;
 use crate::app::view::{ActiveReceiveMessage, ReceiveMethod};
 use crate::app::{breez::BreezClient, cache::Cache, menu::Menu, state::State};
 use crate::app::{message::Message, view, wallet::Wallet};
@@ -51,20 +52,20 @@ impl ActiveReceive {
         client: Arc<BreezClient>,
         amount: Amount,
         description: Option<String>,
-    ) -> Result<String, String> {
+    ) -> Result<String, ReceiveError> {
         let response = client
             .receive_invoice(amount, description)
             .await
-            .map_err(|e| format!("Failed to generate Lightning invoice: {}", e))?;
+            .map_err(|e| ReceiveError::LightningInvoice(e.to_string()))?;
 
         Ok(response.destination)
     }
 
-    async fn generate_onchain_address(client: Arc<BreezClient>) -> Result<String, String> {
+    async fn generate_onchain_address(client: Arc<BreezClient>) -> Result<String, ReceiveError> {
         let response = client
             .receive_onchain(None)
             .await
-            .map_err(|e| format!("Failed to generate Bitcoin address: {}", e))?;
+            .map_err(|e| ReceiveError::OnChainAddress(e.to_string()))?;
 
         Ok(response.destination)
     }
@@ -80,6 +81,7 @@ impl State for ActiveReceive {
             &self.amount_input,
             &self.description_input,
             cache.bitcoin_unit.into(),
+            None, // Errors now shown via global toast
             self.error.as_ref(),
             self.lightning_receive_limits,
             self.onchain_receive_limits,
@@ -211,8 +213,9 @@ impl State for ActiveReceive {
                                 self.description_input.clear();
                             }
                         }
-                        Err(error) => {
-                            self.error = Some(error);
+                        Err(e) => {
+                            let err_msg = e.to_string();
+                            self.error = Some(err_msg.clone());
                             match method {
                                 ReceiveMethod::Lightning => {
                                     self.lightning_address = None;
@@ -223,6 +226,7 @@ impl State for ActiveReceive {
                                     self.onchain_qr_data = None;
                                 }
                             }
+                            return Task::done(Message::View(view::Message::ShowError(err_msg)));
                         }
                     }
                     return Task::none();

@@ -1059,7 +1059,7 @@ impl State for BuySellPanel {
 
                 Task::perform(async move { client.locate().await }, |result| {
                     Message::View(ViewMessage::BuySell(BuySellMessage::CountryDetected(
-                        result.map_err(|e| e.to_string()),
+                        result,
                     )))
                 })
             }

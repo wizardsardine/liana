@@ -97,13 +97,13 @@ impl State for VaultOverview {
                 tx,
                 *output_index,
                 self.labels_edited.cache(),
-                self.warning.as_ref(),
+                None, // Errors now shown via global toast
             )
         } else {
             view::dashboard(
                 menu,
                 cache,
-                self.warning.as_ref(),
+                None, // Errors now shown via global toast
                 view::vault::overview::vault_overview_view(
                     &self.balance,
                     &self.unconfirmed_balance,
@@ -141,7 +141,11 @@ impl State for VaultOverview {
                 }
             }
             Message::Coins(res) => match res {
-                Err(e) => self.warning = Some(e),
+                Err(e) => {
+                    let err_msg = e.to_string();
+                    self.warning = Some(e);
+                    return Task::done(Message::View(view::Message::ShowError(err_msg)));
+                }
                 Ok(coins) => {
                     self.warning = None;
                     (
@@ -157,7 +161,11 @@ impl State for VaultOverview {
                 }
             },
             Message::Payments(res) => match res {
-                Err(e) => self.warning = Some(e),
+                Err(e) => {
+                    let err_msg = e.to_string();
+                    self.warning = Some(e);
+                    return Task::done(Message::View(view::Message::ShowError(err_msg)));
+                }
                 Ok(events) => {
                     self.warning = None;
                     self.payments.list = events;
@@ -169,7 +177,9 @@ impl State for VaultOverview {
             Message::PaymentsExtension(res) => match res {
                 Err(e) => {
                     self.processing = false;
+                    let err_msg = e.to_string();
                     self.warning = Some(e);
+                    return Task::done(Message::View(view::Message::ShowError(err_msg)));
                 }
                 Ok((events, actual_limit)) => {
                     self.processing = false;
@@ -217,7 +227,9 @@ impl State for VaultOverview {
                     self.selected_event = Some(event);
                 }
                 Err(e) => {
+                    let err_msg = e.to_string();
                     self.warning = Some(e);
+                    return Task::done(Message::View(view::Message::ShowError(err_msg)));
                 }
             },
             Message::View(view::Message::HideRescanWarning) => {
@@ -256,7 +268,9 @@ impl State for VaultOverview {
                         return cmd;
                     }
                     Err(e) => {
+                        let err_msg = e.to_string();
                         self.warning = Some(e);
+                        return Task::done(Message::View(view::Message::ShowError(err_msg)));
                     }
                 };
             }

@@ -96,7 +96,7 @@ impl State for CoinsPanel {
         view::dashboard(
             menu,
             cache,
-            self.warning.as_ref(),
+            None, // Errors now shown via global toast
             view::vault::coins::coins_view(
                 cache,
                 &self.coins.list,
@@ -118,7 +118,11 @@ impl State for CoinsPanel {
         let daemon = daemon.expect("Daemon required for vault coins panel");
         match message {
             Message::Coins(res) => match res {
-                Err(e) => self.warning = Some(e),
+                Err(e) => {
+                    let err_msg = e.to_string();
+                    self.warning = Some(e);
+                    return Task::done(Message::View(view::Message::ShowError(err_msg)));
+                }
                 Ok(coins) => {
                     self.selected = Vec::new();
                     self.warning = None;
@@ -126,7 +130,11 @@ impl State for CoinsPanel {
                 }
             },
             Message::Labels(res) => match res {
-                Err(e) => self.warning = Some(e),
+                Err(e) => {
+                    let err_msg = e.to_string();
+                    self.warning = Some(e);
+                    return Task::done(Message::View(view::Message::ShowError(err_msg)));
+                }
                 Ok(labels) => {
                     self.coins.labels = labels;
                 }
@@ -139,7 +147,9 @@ impl State for CoinsPanel {
                 ) {
                     Ok(cmd) => return cmd,
                     Err(e) => {
+                        let err_msg = e.to_string();
                         self.warning = Some(e);
+                        return Task::done(Message::View(view::Message::ShowError(err_msg)));
                     }
                 }
             }

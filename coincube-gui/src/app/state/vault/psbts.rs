@@ -46,7 +46,7 @@ impl State for PsbtsPanel {
             let list_view = view::dashboard(
                 menu,
                 cache,
-                self.warning.as_ref(),
+                None, // Errors now shown via global toast
                 view::vault::psbts::psbts_view(&self.spend_txs, cache.bitcoin_unit.into()),
             );
             if let Some(modal) = &self.modal {
@@ -73,7 +73,11 @@ impl State for PsbtsPanel {
                 return self.reload(Some(daemon), Some(self.wallet.clone()));
             }
             Message::SpendTxs(res) => match res {
-                Err(e) => self.warning = Some(e),
+                Err(e) => {
+                    let err_msg = e.to_string();
+                    self.warning = Some(e);
+                    return Task::done(Message::View(view::Message::ShowError(err_msg)));
+                }
                 Ok(txs) => {
                     self.warning = None;
                     self.spend_txs = txs;

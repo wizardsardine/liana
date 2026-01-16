@@ -120,6 +120,7 @@ impl State for BitcoindSettingsState {
                 }
                 Err(e) => {
                     self.config_updated = false;
+                    let err_msg = e.to_string();
                     self.warning = Some(e);
                     if let Some(settings) = &mut self.bitcoind_settings {
                         settings.edited(false);
@@ -127,10 +128,15 @@ impl State for BitcoindSettingsState {
                     if let Some(settings) = &mut self.electrum_settings {
                         settings.edited(false);
                     }
+                    return Task::done(Message::View(view::Message::ShowError(err_msg)));
                 }
             },
             Message::Info(res) => match res {
-                Err(e) => self.warning = Some(e),
+                Err(e) => {
+                    let err_msg = e.to_string();
+                    self.warning = Some(e);
+                    return Task::done(Message::View(view::Message::ShowError(err_msg)));
+                }
                 Ok(info) => {
                     if info.rescan_progress == Some(1.0) {
                         self.rescan_settings.edited(true);
@@ -185,7 +191,7 @@ impl State for BitcoindSettingsState {
         view::vault::settings::bitcoind_settings(
             menu,
             cache,
-            self.warning.as_ref(),
+            None, // Errors now shown via global toast
             if self.bitcoind_settings.is_some() || self.electrum_settings.is_some() {
                 let mut setting_panels = Vec::new();
                 if let Some(settings) = self.bitcoind_settings.as_ref() {

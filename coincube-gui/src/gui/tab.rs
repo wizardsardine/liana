@@ -9,6 +9,21 @@ use coincube_core::miniscript::bitcoin;
 use coincube_ui::widget::Element;
 use coincubed::commands::ListCoinsResult;
 
+#[derive(Debug, Clone)]
+pub enum CubeSettingsError {
+    SaveFailed(String),
+}
+
+impl std::fmt::Display for CubeSettingsError {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            Self::SaveFailed(e) => write!(f, "Failed to save cube configuration: {}", e),
+        }
+    }
+}
+
+impl std::error::Error for CubeSettingsError {}
+
 use crate::{
     app::{
         self, breez,
@@ -806,7 +821,7 @@ async fn save_cube_settings(
     cube: app::settings::CubeSettings,
     network: bitcoin::Network,
     settings_data: app::settings::Settings,
-) -> Result<app::settings::CubeSettings, String> {
+) -> Result<app::settings::CubeSettings, CubeSettingsError> {
     let cube_name = cube.name.clone();
     let settings_path = network_dir.path().join("settings.json");
 
@@ -825,7 +840,7 @@ async fn save_cube_settings(
                 "Failed to save cube '{}' on {} network to {:?}: {}",
                 cube_name, network, settings_path, e
             );
-            Err(format!("Failed to save cube configuration: {}", e))
+            Err(CubeSettingsError::SaveFailed(e.to_string()))
         }
     }
 }
@@ -835,7 +850,7 @@ async fn find_or_create_cube(
     wallet_id: &WalletId,
     wallet_alias: &Option<String>,
     network: bitcoin::Network,
-) -> Result<app::settings::CubeSettings, String> {
+) -> Result<app::settings::CubeSettings, CubeSettingsError> {
     match app::settings::Settings::from_file(network_dir) {
         Ok(mut settings_data) => {
             // First, check if a cube already has this wallet

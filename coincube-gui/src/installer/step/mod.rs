@@ -189,7 +189,7 @@ impl Step for Final {
             Message::CubeSaveFailed(err) => {
                 // Cube save failed after installation
                 self.generating = false;
-                self.warning = Some(err);
+                self.warning = Some(err.to_string());
             }
             Message::Install => {
                 self.generating = true;

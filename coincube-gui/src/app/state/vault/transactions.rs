@@ -86,7 +86,7 @@ impl State for VaultTransactionsPanel {
                 cache,
                 tx,
                 self.labels_edited.cache(),
-                self.warning.as_ref(),
+                None, // Errors now shown via global toast
                 cache.bitcoin_unit.into(),
             );
             match &self.modal {
@@ -98,7 +98,7 @@ impl State for VaultTransactionsPanel {
                 menu,
                 cache,
                 &self.txs,
-                self.warning.as_ref(),
+                None, // Errors now shown via global toast
                 self.is_last_page,
                 self.processing,
             );
@@ -118,7 +118,11 @@ impl State for VaultTransactionsPanel {
         let daemon = daemon.expect("Daemon required for vault transactions panel");
         match message {
             Message::HistoryTransactions(res) => match res {
-                Err(e) => self.warning = Some(e),
+                Err(e) => {
+                    let err_msg = e.to_string();
+                    self.warning = Some(e);
+                    return Task::done(Message::View(view::Message::ShowError(err_msg)));
+                }
                 Ok(txs) => {
                     self.warning = None;
                     self.txs = txs;
@@ -126,7 +130,11 @@ impl State for VaultTransactionsPanel {
                 }
             },
             Message::HistoryTransactionsExtension(res) => match res {
-                Err(e) => self.warning = Some(e),
+                Err(e) => {
+                    let err_msg = e.to_string();
+                    self.warning = Some(e);
+                    return Task::done(Message::View(view::Message::ShowError(err_msg)));
+                }
                 Ok(txs) => {
                     self.processing = false;
                     self.warning = None;
@@ -155,7 +163,10 @@ impl State for VaultTransactionsPanel {
                     self.modal = VaultTransactionsModal::CreateRbf(modal);
                 }
                 Err(e) => {
-                    self.warning = e.into();
+                    let err: Error = e.into();
+                    let err_msg = err.to_string();
+                    self.warning = Some(err);
+                    return Task::done(Message::View(view::Message::ShowError(err_msg)));
                 }
             },
             Message::View(view::Message::Reload) | Message::View(view::Message::Close) => {
@@ -227,7 +238,9 @@ impl State for VaultTransactionsPanel {
                         return cmd;
                     }
                     Err(e) => {
+                        let err_msg = e.to_string();
                         self.warning = Some(e);
+                        return Task::done(Message::View(view::Message::ShowError(err_msg)));
                     }
                 };
             }
@@ -434,7 +447,11 @@ impl CreateRbfModal {
                     Ok(txid) => {
                         self.replacement_txid = Some(txid);
                     }
-                    Err(e) => self.warning = Some(e),
+                    Err(e) => {
+                        let err_msg = e.to_string();
+                        self.warning = Some(e);
+                        return Task::done(Message::View(view::Message::ShowError(err_msg)));
+                    }
                 }
             }
             Message::View(view::Message::CreateRbf(view::CreateRbfMessage::Confirm)) => {
@@ -457,7 +474,7 @@ impl CreateRbfModal {
                 &self.descendant_txids,
                 &self.feerate_val,
                 self.replacement_txid,
-                self.warning.as_ref(),
+                None, // Errors now shown via global toast
             ),
         );
         if self.processing {

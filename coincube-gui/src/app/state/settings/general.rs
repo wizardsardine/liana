@@ -136,7 +136,7 @@ impl State for GeneralSettingsState {
             &self.new_price_setting,
             &self.new_unit_setting,
             &self.currencies,
-            self.error.as_ref(),
+            None, // Errors now shown via global toast
         )
     }
 
@@ -224,7 +224,10 @@ impl State for GeneralSettingsState {
                 Task::none()
             }
             Message::SettingsSaveFailed(e) => {
+                let err_msg = e.to_string();
                 self.error = Some(e);
+                // Show error in global toast
+                let toast_task = Task::done(Message::View(view::Message::ShowError(err_msg)));
                 // Reload settings from disk to revert toggle state to persisted value
                 let network_dir = cache.datadir_path.network_directory(cache.network);
                 if let Ok(settings) = crate::app::settings::Settings::from_file(&network_dir) {
@@ -244,7 +247,7 @@ impl State for GeneralSettingsState {
                 } else {
                     tracing::error!("Could not revert settings: Failed to load settings from disk");
                 }
-                Task::none()
+                toast_task
             }
             Message::Fiat(FiatMessage::ValidateCurrencySetting) => {
                 self.error = None;
@@ -254,10 +257,11 @@ impl State for GeneralSettingsState {
                     } else if let Some(curr) = self.currencies.first() {
                         self.new_price_setting.currency = *curr;
                     } else {
-                        self.error = Some(Error::Unexpected(
-                            "No available currencies in the list.".to_string(),
-                        ));
-                        return Task::none();
+                        let err =
+                            Error::Unexpected("No available currencies in the list.".to_string());
+                        let err_msg = err.to_string();
+                        self.error = Some(err);
+                        return Task::done(Message::View(view::Message::ShowError(err_msg)));
                     }
                 }
                 Task::perform(async move {}, |_| FiatMessage::SaveChanges.into())
@@ -270,15 +274,17 @@ impl State for GeneralSettingsState {
                     Ok(list) => {
                         self.error = None;
                         self.currencies = list.currencies;
-                        return Task::perform(async move {}, |_| {
+                        Task::perform(async move {}, |_| {
                             FiatMessage::ValidateCurrencySetting.into()
-                        });
+                        })
                     }
                     Err(e) => {
-                        self.error = Some(e.into());
+                        let err: Error = e.into();
+                        let err_msg = err.to_string();
+                        self.error = Some(err);
+                        Task::done(Message::View(view::Message::ShowError(err_msg)))
                     }
                 }
-                Task::none()
             }
             Message::View(view::Message::Settings(view::SettingsMessage::Fiat(msg))) => {
                 match msg {
