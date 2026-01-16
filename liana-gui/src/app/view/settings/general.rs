@@ -1,10 +1,12 @@
-use iced::widget::{pick_list, Column, Row, Space, Toggler};
+use iced::widget::{pick_list, tooltip, Column, Row, Space, Toggler};
 use iced::{Alignment, Length};
 
 use super::header;
 
+use liana_ui::color;
 use liana_ui::component::card;
 use liana_ui::component::text::*;
+use liana_ui::icon;
 use liana_ui::theme;
 use liana_ui::widget::*;
 
@@ -49,6 +51,11 @@ pub fn fiat_price<'a>(
                     .align_y(Alignment::Center)
                     .push(text("Fiat price:").bold())
                     .push(Space::with_width(Length::Fill))
+                    .push(tooltip::Tooltip::new(
+                        icon::warning_icon().color(color::ORANGE),
+                        "Fiat price data is provided by third-party services. Availability and accuracy are not guaranteed.   ", // extra spaces to add padding on screen edge
+                        tooltip::Position::Bottom,
+                    ))
                     .push(
                         Toggler::new(new_price_setting.is_enabled)
                             .on_toggle(|new_selection| FiatMessage::Enable(new_selection).into())
