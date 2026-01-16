@@ -24,6 +24,8 @@ pub struct ActiveReceive {
     toast: Option<String>,
     amount_input: form::Value<String>,
     description_input: String,
+    lightning_receive_limits: Option<(u64, u64)>, // (min_sat, max_sat)
+    onchain_receive_limits: Option<(u64, u64)>,   // (min_sat, max_sat)
     error: Option<String>,
 }
 
@@ -40,6 +42,8 @@ impl ActiveReceive {
             toast: None,
             amount_input: form::Value::default(),
             description_input: String::new(),
+            lightning_receive_limits: None,
+            onchain_receive_limits: None,
             error: None,
         }
     }
@@ -78,6 +82,9 @@ impl State for ActiveReceive {
             &self.description_input,
             cache.bitcoin_unit.into(),
             None, // Errors now shown via global toast
+            self.error.as_ref(),
+            self.lightning_receive_limits,
+            self.onchain_receive_limits,
         )
         .map(view::Message::ActiveReceive);
 
@@ -106,7 +113,7 @@ impl State for ActiveReceive {
                         self.receive_method = method.clone();
                         self.toast = None;
                     }
-                    return Task::none();
+                    return self.fetch_limits();
                 }
                 ActiveReceiveMessage::Copy => {
                     if let Some(address) = self.current_address() {
@@ -147,6 +154,25 @@ impl State for ActiveReceive {
                 ActiveReceiveMessage::AmountInput(value) => {
                     self.amount_input.value = value;
                     if self.receive_method == ReceiveMethod::Lightning {
+                        if let Some(amount) = self.parse_amount(cache.bitcoin_unit) {
+                            if let Some((min_sat, max_sat)) = self.lightning_receive_limits {
+                                let min_sat = Amount::from_sat(min_sat);
+                                let max_sat = Amount::from_sat(max_sat);
+                                if amount < min_sat {
+                                    self.amount_input.valid = false;
+                                    self.amount_input.warning = Some("Amount below minimum limits");
+                                } else if amount > max_sat {
+                                    self.amount_input.valid = false;
+                                    self.amount_input.warning = Some("Amount above maximum limits");
+                                } else {
+                                    self.amount_input.valid = true;
+                                    self.amount_input.warning = None;
+                                }
+                            }
+                        } else {
+                            self.amount_input.valid = true;
+                            self.amount_input.warning = None;
+                        }
                         self.lightning_address = None;
                         self.lightning_qr_data = None;
                     }
@@ -223,6 +249,13 @@ impl State for ActiveReceive {
                 ActiveReceiveMessage::ClearError => {
                     self.error = None;
                 }
+
+                ActiveReceiveMessage::LightningLimitsFetched { min_sat, max_sat } => {
+                    self.lightning_receive_limits = Some((min_sat, max_sat));
+                }
+                ActiveReceiveMessage::OnChainLimitsFetched { min_sat, max_sat } => {
+                    self.onchain_receive_limits = Some((min_sat, max_sat));
+                }
             }
         }
         Task::none()
@@ -233,8 +266,7 @@ impl State for ActiveReceive {
         _daemon: Option<Arc<dyn Daemon + Sync + Send>>,
         _wallet: Option<Arc<Wallet>>,
     ) -> Task<Message> {
-        // Don't auto-generate on reload - let user click Generate button
-        Task::none()
+        self.fetch_limits()
     }
 }
 
@@ -307,6 +339,48 @@ impl ActiveReceive {
                 )
                 .ok(),
             }
+        }
+    }
+
+    fn fetch_limits(&mut self) -> Task<Message> {
+        if self.lightning_receive_limits.is_none()
+            && matches!(self.receive_method, ReceiveMethod::Lightning)
+        {
+            let breez_client = self.breez_client.clone();
+            return Task::perform(
+                async move { breez_client.fetch_lightning_limits().await },
+                |response| match response {
+                    Ok(limits) => Message::View(view::Message::ActiveReceive(
+                        ActiveReceiveMessage::LightningLimitsFetched {
+                            min_sat: limits.receive.min_sat,
+                            max_sat: limits.receive.max_sat,
+                        },
+                    )),
+                    Err(error) => Message::View(view::Message::ActiveReceive(
+                        ActiveReceiveMessage::Error(error.to_string()),
+                    )),
+                },
+            );
+        } else if self.onchain_receive_limits.is_none()
+            && matches!(self.receive_method, ReceiveMethod::OnChain)
+        {
+            let breez_client = self.breez_client.clone();
+            return Task::perform(
+                async move { breez_client.fetch_onchain_limits().await },
+                |response| match response {
+                    Ok(limits) => Message::View(view::Message::ActiveReceive(
+                        ActiveReceiveMessage::OnChainLimitsFetched {
+                            min_sat: limits.receive.min_sat,
+                            max_sat: limits.receive.max_sat,
+                        },
+                    )),
+                    Err(error) => Message::View(view::Message::ActiveReceive(
+                        ActiveReceiveMessage::Error(error.to_string()),
+                    )),
+                },
+            );
+        } else {
+            return Task::none();
         }
     }
 }

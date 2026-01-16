@@ -360,6 +360,8 @@ pub enum ActiveReceiveMessage {
     DescriptionInput(String),
     Error(String),
     ClearError,
+    OnChainLimitsFetched { min_sat: u64, max_sat: u64 },
+    LightningLimitsFetched { min_sat: u64, max_sat: u64 },
 }
 
 #[derive(Debug, Clone)]

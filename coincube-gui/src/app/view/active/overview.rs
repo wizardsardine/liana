@@ -8,12 +8,13 @@ use coincube_ui::{
         text::*,
         transaction::{TransactionDirection, TransactionListItem, TransactionType},
     },
-    icon, theme,
+    icon::{self, receipt_icon},
+    theme,
     widget::*,
 };
 use iced::{
     widget::{button as iced_button, container, Column, Container, Row},
-    Background, Length,
+    Alignment, Background, Length,
 };
 
 use crate::app::view::{active::RecentTransaction, ActiveOverviewMessage, FiatAmountConverter};
@@ -133,6 +134,12 @@ pub fn active_overview_view<'a>(
 
             content = content.push(item.view(ActiveOverviewMessage::SelectTransaction(idx)));
         }
+    } else {
+        content = content.push(placeholder(
+            receipt_icon().size(80),
+            "No transactions yet",
+            "Your transaction history will appear here once you send or receive coins.",
+        ));
     }
 
     let view_transactions_button = {
@@ -177,13 +184,15 @@ pub fn active_overview_view<'a>(
         .on_press(ActiveOverviewMessage::History)
     };
 
-    content = content
-        .push(iced::widget::Space::new().height(Length::Fixed(20.0)))
-        .push(
-            Container::new(view_transactions_button)
-                .width(Length::Fill)
-                .center_x(Length::Fill),
-        );
+    if !recent_transaction.is_empty() {
+        content = content
+            .push(iced::widget::Space::new().height(Length::Fixed(20.0)))
+            .push(
+                Container::new(view_transactions_button)
+                    .width(Length::Fill)
+                    .center_x(Length::Fill),
+            );
+    }
 
     if let Some(err) = error {
         content = content.push(
@@ -195,4 +204,36 @@ pub fn active_overview_view<'a>(
         );
     }
     content.into()
+}
+
+pub fn placeholder<'a, T: Into<Element<'a, ActiveOverviewMessage>>>(
+    icon: T,
+    title: &'a str,
+    subtitle: &'a str,
+) -> Element<'a, ActiveOverviewMessage> {
+    let content = Column::new()
+        .push(icon)
+        .push(text(title).style(theme::text::secondary).bold())
+        .push(
+            text(subtitle)
+                .size(P2_SIZE)
+                .style(theme::text::secondary)
+                .align_x(Alignment::Center),
+        )
+        .spacing(16)
+        .align_x(Alignment::Center);
+
+    Container::new(content)
+        .width(Length::Fill)
+        .padding(60)
+        .center_x(Length::Fill)
+        .style(|_| container::Style {
+            background: Some(iced::Background::Color(color::GREY_6)),
+            border: iced::Border {
+                radius: 20.0.into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        })
+        .into()
 }
