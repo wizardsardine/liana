@@ -214,7 +214,9 @@ impl State for ActiveSend {
                                 } else {
                                     Message::View(view::Message::ActiveSend(
                                         view::ActiveSendMessage::Error(
-                                            view::ActiveSendError::LightningLimitsFetch("Unknown error".to_string())
+                                            view::ActiveSendError::LightningLimitsFetch(
+                                                "Unknown error".to_string(),
+                                            ),
                                         ),
                                     ))
                                 }
@@ -234,7 +236,9 @@ impl State for ActiveSend {
                                 } else {
                                     Message::View(view::Message::ActiveSend(
                                         view::ActiveSendMessage::Error(
-                                            view::ActiveSendError::OnChainLimitsFetch("Unknown error".to_string())
+                                            view::ActiveSendError::OnChainLimitsFetch(
+                                                "Unknown error".to_string(),
+                                            ),
                                         ),
                                     ))
                                 }
@@ -418,7 +422,7 @@ impl State for ActiveSend {
                 view::ActiveSendMessage::Error(err) => {
                     self.error = Some(err.to_string());
                     self.is_sending = false; // Reset sending flag on error
-                    // Wire to global toast
+                                             // Wire to global toast
                     return Task::done(Message::View(view::Message::ShowError(err.to_string())));
                 }
                 view::ActiveSendMessage::ClearError => {
@@ -789,7 +793,7 @@ impl State for ActiveSend {
                                     }
                                     Err(e) => Message::View(view::Message::ActiveSend(
                                         view::ActiveSendMessage::Error(
-                                            view::ActiveSendError::PrepareSend(e.to_string())
+                                            view::ActiveSendError::PrepareSend(e.to_string()),
                                         ),
                                     )),
                                 },
@@ -819,7 +823,7 @@ impl State for ActiveSend {
                                     }
                                     Err(e) => Message::View(view::Message::ActiveSend(
                                         view::ActiveSendMessage::Error(
-                                            view::ActiveSendError::PrepareSend(e.to_string())
+                                            view::ActiveSendError::PrepareSend(e.to_string()),
                                         ),
                                     )),
                                 },
@@ -881,7 +885,7 @@ impl State for ActiveSend {
                                     )),
                                     Err(e) => Message::View(view::Message::ActiveSend(
                                         view::ActiveSendMessage::Error(
-                                            view::ActiveSendError::Send(e.to_string())
+                                            view::ActiveSendError::Send(e.to_string()),
                                         ),
                                     )),
                                 },
@@ -913,7 +917,7 @@ impl State for ActiveSend {
                                         }
                                         Err(e) => Message::View(view::Message::ActiveSend(
                                             view::ActiveSendMessage::Error(
-                                                view::ActiveSendError::Send(e.to_string())
+                                                view::ActiveSendError::Send(e.to_string()),
                                             ),
                                         )),
                                     },

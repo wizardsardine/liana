@@ -570,7 +570,9 @@ pub mod global {
             )
         }
 
-        pub fn load_bitbox_settings(path: &PathBuf) -> Result<Option<BitboxSettings>, super::SettingsError> {
+        pub fn load_bitbox_settings(
+            path: &PathBuf,
+        ) -> Result<Option<BitboxSettings>, super::SettingsError> {
             let mut ret = None;
             Self::update(path, |s| ret = s.bitbox.clone(), false)?;
             Ok(ret)
@@ -583,7 +585,11 @@ pub mod global {
             Self::update(path, |s| s.bitbox = Some(bitbox.clone()), true)
         }
 
-        pub fn update<F>(path: &PathBuf, mut update: F, mut write: bool) -> Result<(), super::SettingsError>
+        pub fn update<F>(
+            path: &PathBuf,
+            mut update: F,
+            mut write: bool,
+        ) -> Result<(), super::SettingsError>
         where
             F: FnMut(&mut GlobalSettings),
         {
@@ -606,11 +612,14 @@ pub mod global {
                     .map_err(|e| super::SettingsError::ReadingFile(format!("Reading file: {e}")))?;
 
                 if !write {
-                    File::unlock(&file).map_err(|e| super::SettingsError::ReadingFile(format!("Unlocking file: {e}")))?;
+                    File::unlock(&file).map_err(|e| {
+                        super::SettingsError::ReadingFile(format!("Unlocking file: {e}"))
+                    })?;
                 }
 
                 (
-                    serde_json::from_str::<GlobalSettings>(&content).map_err(|e| super::SettingsError::ReadingFile(e.to_string()))?,
+                    serde_json::from_str::<GlobalSettings>(&content)
+                        .map_err(|e| super::SettingsError::ReadingFile(e.to_string()))?,
                     Some(file),
                 )
             } else {
@@ -636,23 +645,34 @@ pub mod global {
                         .create(true)
                         .truncate(false)
                         .open(path)
-                        .map_err(|e| super::SettingsError::WritingFile(format!("Opening file: {e}")))?;
+                        .map_err(|e| {
+                            super::SettingsError::WritingFile(format!("Opening file: {e}"))
+                        })?;
 
-                    file.lock_exclusive()
-                        .map_err(|e| super::SettingsError::WritingFile(format!("Locking file: {e}")))?;
+                    file.lock_exclusive().map_err(|e| {
+                        super::SettingsError::WritingFile(format!("Locking file: {e}"))
+                    })?;
                     file
                 };
-                let content = serde_json::to_vec_pretty(&global_settings)
-                    .map_err(|e| super::SettingsError::WritingFile(format!("Failed to serialize GlobalSettings: {e}")))?;
+                let content = serde_json::to_vec_pretty(&global_settings).map_err(|e| {
+                    super::SettingsError::WritingFile(format!(
+                        "Failed to serialize GlobalSettings: {e}"
+                    ))
+                })?;
 
-                file.seek(SeekFrom::Start(0))
-                    .map_err(|e| super::SettingsError::WritingFile(format!("Failed to seek file: {e}")))?;
+                file.seek(SeekFrom::Start(0)).map_err(|e| {
+                    super::SettingsError::WritingFile(format!("Failed to seek file: {e}"))
+                })?;
 
-                file.write_all(&content)
-                    .map_err(|e| super::SettingsError::WritingFile(format!("Failed to write file: {e}")))?;
-                file.set_len(content.len() as u64)
-                    .map_err(|e| super::SettingsError::WritingFile(format!("Failed to truncate file: {e}")))?;
-                File::unlock(&file).map_err(|e| super::SettingsError::WritingFile(format!("Unlocking file: {e}")))?;
+                file.write_all(&content).map_err(|e| {
+                    super::SettingsError::WritingFile(format!("Failed to write file: {e}"))
+                })?;
+                file.set_len(content.len() as u64).map_err(|e| {
+                    super::SettingsError::WritingFile(format!("Failed to truncate file: {e}"))
+                })?;
+                File::unlock(&file).map_err(|e| {
+                    super::SettingsError::WritingFile(format!("Unlocking file: {e}"))
+                })?;
             }
 
             Ok(())

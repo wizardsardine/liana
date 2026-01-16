@@ -5,7 +5,7 @@
 mod utils;
 
 use crate::{
-    bitcoin::{BitcoinInterface, BitcoinError},
+    bitcoin::{BitcoinError, BitcoinInterface},
     database::{Coin, DatabaseConnection, DatabaseInterface},
     miniscript::bitcoin::absolute::LockTime,
     poller::PollerMessage,

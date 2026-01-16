@@ -1256,20 +1256,17 @@ impl App {
         // Overlay error toast at bottom if present
         if let Some(err) = &self.error_toast {
             use coincube_ui::{color, component::text, icon::cross_icon, theme};
-            use iced::widget::{Row, Button};
+            use iced::widget::{Button, Row};
 
-            let close_btn: Element<'_, view::Message> = Button::new(
-                cross_icon().color(color::WHITE).size(18)
-            )
-            .style(theme::button::transparent)
-            .on_press(view::Message::DismissError)
-            .into();
+            let close_btn: Element<'_, view::Message> =
+                Button::new(cross_icon().color(color::WHITE).size(18))
+                    .style(theme::button::transparent)
+                    .on_press(view::Message::DismissError)
+                    .into();
 
             let error_toast = container(
                 Row::new()
-                    .push(
-                        container(text::p2_regular(err).color(color::WHITE))
-                    )
+                    .push(container(text::p2_regular(err).color(color::WHITE)))
                     .push(close_btn)
                     .align_y(Alignment::Center)
                     .spacing(15),
@@ -1279,21 +1276,19 @@ impl App {
             .max_width(500.0);
 
             // Bottom-center of content area (offset by sidebar width 190px)
-            let toast_overlay: Element<'_, view::Message> = container(
-                container(error_toast).padding(20)
-            )
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .padding(iced::Padding::new(0.0).left(190.0)) // left padding for sidebar
-            .align_x(Alignment::Center)
-            .align_y(Alignment::End)
-            .into();
+            let toast_overlay: Element<'_, view::Message> =
+                container(container(error_toast).padding(20))
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .padding(iced::Padding::new(0.0).left(190.0)) // left padding for sidebar
+                    .align_x(Alignment::Center)
+                    .align_y(Alignment::End)
+                    .into();
 
             Stack::new()
                 .push(content)
                 .push(toast_overlay.map(Message::View))
                 .into()
-
         } else {
             content
         }
