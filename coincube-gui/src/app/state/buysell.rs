@@ -313,12 +313,27 @@ impl State for BuySellPanel {
                 }
             }
             BuySellMessage::SessionError(description, error) => {
-                self.error = Some(format!("{} ({})", description, error));
+                let error_message = format!("{} ({})", description, error);
+                self.error = Some(error_message.clone());
 
                 // unblock UI retry buttons in step-specific flows
                 if let BuySellFlowState::Mavapay(m) = &mut self.step {
-                    if let MavapayFlowStep::Transaction { sending_quote, .. } = &mut m.step {
-                        *sending_quote = false;
+                    match &mut m.step {
+                        MavapayFlowStep::Transaction { sending_quote, .. } => {
+                            *sending_quote = false;
+                        }
+                        MavapayFlowStep::History {
+                            loading,
+                            error: step_error,
+                            ..
+                        } => {
+                            *loading = false;
+                            *step_error = Some(error_message);
+                        }
+                        MavapayFlowStep::OrderDetail { loading, .. } => {
+                            *loading = false;
+                        }
+                        _ => {}
                     }
                 }
 
@@ -732,8 +747,9 @@ impl State for BuySellPanel {
                                                 ),
                                             )
                                         }
-                                        MavapayApiResult::Error(e) => BuySellMessage::Mavapay(
-                                            MavapayMessage::TransactionsFetchFailed(e),
+                                        MavapayApiResult::Error(e) => BuySellMessage::SessionError(
+                                            "Failed to fetch transactions",
+                                            e,
                                         ),
                                     },
                                 )
@@ -746,11 +762,6 @@ impl State for BuySellPanel {
                                 );
                                 *transactions = Some(received_transactions);
                                 *loading = false;
-                            }
-                            MavapayMessage::TransactionsFetchFailed(err) => {
-                                log::error!("[MAVAPAY] Failed to fetch transactions: {}", err);
-                                *loading = false;
-                                *error = Some(err);
                             }
                             MavapayMessage::SelectTransaction(transaction) => {
                                 let order_id = transaction.order_id.clone();
@@ -772,8 +783,9 @@ impl State for BuySellPanel {
                                                 order,
                                             ))
                                         }
-                                        MavapayApiResult::Error(e) => BuySellMessage::Mavapay(
-                                            MavapayMessage::OrderFetchFailed(e),
+                                        MavapayApiResult::Error(e) => BuySellMessage::SessionError(
+                                            "Failed to fetch order details",
+                                            e.to_string(),
                                         ),
                                     },
                                 )
@@ -788,10 +800,6 @@ impl State for BuySellPanel {
                         (MavapayFlowStep::OrderDetail { order, loading, .. }, msg) => match msg {
                             MavapayMessage::OrderReceived(received_order) => {
                                 *order = Some(received_order);
-                                *loading = false;
-                            }
-                            MavapayMessage::OrderFetchFailed(err) => {
-                                log::error!("[MAVAPAY] Failed to fetch order: {}", err);
                                 *loading = false;
                             }
                             MavapayMessage::BackToHistory => {
