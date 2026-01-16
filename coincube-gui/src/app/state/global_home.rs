@@ -7,6 +7,7 @@ use breez_sdk_liquid::model::{
     PayOnchainRequest, PreparePayOnchainRequest, PreparePayOnchainResponse,
 };
 use coincube_core::miniscript::bitcoin::{bip32::ChildNumber, Address, Amount};
+use coincube_ui::component::amount::BitcoinDisplayUnit;
 use coincube_ui::component::form;
 use coincube_ui::widget::*;
 use iced::{Subscription, Task};
@@ -264,7 +265,11 @@ impl State for GlobalHome {
                                     ));
                                     if let Ok(amount) = Amount::from_str_in(
                                         &self.entered_amount.value,
-                                        breez_sdk_liquid::bitcoin::Denomination::Bitcoin,
+                                        if matches!(cache.bitcoin_unit, BitcoinDisplayUnit::BTC) {
+                                            breez_sdk_liquid::bitcoin::Denomination::Bitcoin
+                                        } else {
+                                            breez_sdk_liquid::bitcoin::Denomination::Satoshi
+                                        },
                                     ) {
                                         let breez_client = self.breez_client.clone();
                                         tasks.push(Task::perform(
@@ -330,7 +335,11 @@ impl State for GlobalHome {
                             self.entered_amount.warning = None;
                         } else if let Ok(entered_amt) = Amount::from_str_in(
                             &amount,
-                            coincube_core::miniscript::bitcoin::Denomination::Bitcoin,
+                            if matches!(cache.bitcoin_unit, BitcoinDisplayUnit::BTC) {
+                                coincube_core::miniscript::bitcoin::Denomination::Bitcoin
+                            } else {
+                                coincube_core::miniscript::bitcoin::Denomination::Satoshi
+                            },
                         ) {
                             let entered_sat = entered_amt.to_sat();
                             let mut valid = true;
@@ -351,10 +360,12 @@ impl State for GlobalHome {
                                         } else if let Some((min_sat, max_sat)) =
                                             self.onchain_send_limit
                                         {
-                                            if entered_sat < min_sat || entered_sat > max_sat {
+                                            if entered_sat < min_sat {
                                                 valid = false;
-                                                warning =
-                                                    Some("Amount outside onchain send limits");
+                                                warning = Some("Amount below minimum limits");
+                                            } else if entered_sat > max_sat {
+                                                valid = false;
+                                                warning = Some("Amount above maximum limits");
                                             }
                                         }
                                     }
@@ -365,10 +376,12 @@ impl State for GlobalHome {
                                         } else if let Some((min_sat, max_sat)) =
                                             self.onchain_receive_limit
                                         {
-                                            if entered_sat < min_sat || entered_sat > max_sat {
+                                            if entered_sat < min_sat {
                                                 valid = false;
-                                                warning =
-                                                    Some("Amount outside onchain receive limits");
+                                                warning = Some("Amount below minimum limits");
+                                            } else if entered_sat > max_sat {
+                                                valid = false;
+                                                warning = Some("Amount above maximum limits");
                                             }
                                         }
                                     }

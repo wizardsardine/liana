@@ -11,7 +11,8 @@ use coincube_ui::{
         text::*,
         transaction::{TransactionDirection, TransactionListItem, TransactionType},
     },
-    icon, theme,
+    icon::{self, receipt_icon},
+    theme,
     widget::*,
 };
 use iced::{
@@ -288,6 +289,12 @@ pub fn active_send_view<'a>(
 
             content = content.push(item.view(ActiveSendMessage::SelectTransaction(idx)));
         }
+    } else {
+        content = content.push(empty_tx_placeholder(
+            receipt_icon().size(80),
+            "No transactions yet",
+            "Your transaction history will appear here once you send or receive coins.",
+        ));
     }
 
     let view_transaction_button = {
@@ -336,13 +343,15 @@ pub fn active_send_view<'a>(
         .on_press(ActiveSendMessage::History)
     };
 
-    content = content
-        .push(iced::widget::Space::new().height(Length::Fixed(20.0)))
-        .push(
-            Container::new(view_transaction_button)
-                .width(Length::Fill)
-                .center_x(Length::Fill),
-        );
+    if !recent_transaction.is_empty() {
+        content = content
+            .push(iced::widget::Space::new().height(Length::Fixed(20.0)))
+            .push(
+                Container::new(view_transaction_button)
+                    .width(Length::Fill)
+                    .center_x(Length::Fill),
+            );
+    }
 
     content.into()
 }
@@ -461,12 +470,15 @@ pub fn amount_input_model<'a>(config: AmountInputConfig<'a>) -> Element<'a, Acti
     if let Some(input_type) = config.input_type {
         if matches!(input_type, InputType::BitcoinAddress { .. }) {
             if let Some((min_sat, max_sat)) = config.onchain_limits {
-                let min_btc = Amount::from_sat(min_sat).to_btc();
-                let max_btc = Amount::from_sat(max_sat).to_btc();
+                let min_btc = Amount::from_sat(min_sat);
+                let max_btc = Amount::from_sat(max_sat);
                 amount_input_section = amount_input_section.push(
                     text(format!(
-                        "Enter an amount between {} BTC and {} BTC",
-                        min_btc, max_btc
+                        "Enter an amount between {} {} and {} {}",
+                        min_btc.to_formatted_string_with_unit(config.bitcoin_unit),
+                        config.bitcoin_unit.to_string(),
+                        max_btc.to_formatted_string_with_unit(config.bitcoin_unit),
+                        config.bitcoin_unit.to_string()
                     ))
                     .size(12),
                 );
@@ -474,20 +486,12 @@ pub fn amount_input_model<'a>(config: AmountInputConfig<'a>) -> Element<'a, Acti
         } else if let Some((min_sat, max_sat)) = config.lightning_limits {
             let min_btc = Amount::from_sat(min_sat);
             let max_btc = Amount::from_sat(max_sat);
-            let (min_btc, max_btc) = match config.bitcoin_unit {
-                BitcoinDisplayUnit::BTC => {
-                    (min_btc.to_btc().to_string(), max_btc.to_btc().to_string())
-                }
-                BitcoinDisplayUnit::Sats => {
-                    (min_btc.to_sat().to_string(), max_btc.to_sat().to_string())
-                }
-            };
             amount_input_section = amount_input_section.push(
                 text(format!(
                     "Enter an amount between {} {} and {} {}",
-                    min_btc,
+                    min_btc.to_formatted_string_with_unit(config.bitcoin_unit),
                     config.bitcoin_unit.to_string(),
-                    max_btc,
+                    max_btc.to_formatted_string_with_unit(config.bitcoin_unit),
                     config.bitcoin_unit.to_string()
                 ))
                 .size(12),
@@ -1020,5 +1024,37 @@ pub fn sent_page<'a>(
                 )
                 .push(Space::new().width(Length::Fill)),
         )
+        .into()
+}
+
+pub fn empty_tx_placeholder<'a, T: Into<Element<'a, ActiveSendMessage>>>(
+    icon: T,
+    title: &'a str,
+    subtitle: &'a str,
+) -> Element<'a, ActiveSendMessage> {
+    let content = Column::new()
+        .push(icon)
+        .push(text(title).style(theme::text::secondary).bold())
+        .push(
+            text(subtitle)
+                .size(P2_SIZE)
+                .style(theme::text::secondary)
+                .align_x(Alignment::Center),
+        )
+        .spacing(16)
+        .align_x(Alignment::Center);
+
+    Container::new(content)
+        .width(Length::Fill)
+        .padding(60)
+        .center_x(Length::Fill)
+        .style(|_| container::Style {
+            background: Some(iced::Background::Color(color::GREY_6)),
+            border: iced::Border {
+                radius: 20.0.into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        })
         .into()
 }

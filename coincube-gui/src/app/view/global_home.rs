@@ -1,3 +1,4 @@
+use breez_sdk_liquid::bitcoin::Denomination;
 use coincube_ui::{
     color,
     component::{amount::*, button, form, text::*},
@@ -326,6 +327,7 @@ fn enter_amount_card<'a>(
     amount: &'a form::Value<String>,
     onchain_send_limit: Option<(u64, u64)>,
     onchain_receive_limit: Option<(u64, u64)>,
+    bitcoin_unit: BitcoinDisplayUnit,
 ) -> Element<'a, Message> {
     let content = Column::new()
         .push(text("Enter Amount").bold().size(H2_SIZE))
@@ -342,9 +344,18 @@ fn enter_amount_card<'a>(
                 .push(
                     Column::new()
                         .push(Container::new(
-                            form::Form::new_amount_btc("Amount in BTC", amount, |msg| {
-                                Message::Home(HomeMessage::AmountEdited(msg))
-                            })
+                            match bitcoin_unit {
+                                BitcoinDisplayUnit::BTC => {
+                                    form::Form::new_amount_btc("Amount in BTC", amount, |msg| {
+                                        Message::Home(HomeMessage::AmountEdited(msg))
+                                    })
+                                }
+                                BitcoinDisplayUnit::Sats => {
+                                    form::Form::new_amount_sats("Amount in sats", amount, |msg| {
+                                        Message::Home(HomeMessage::AmountEdited(msg))
+                                    })
+                                }
+                            }
                             .size(20)
                             .padding(10),
                         ))
@@ -357,9 +368,13 @@ fn enter_amount_card<'a>(
                                 Some(
                                     Container::new(
                                         text(format!(
-                                            "Enter an amount between {} BTC and {} BTC",
-                                            Amount::from_sat(limits.0).to_btc().to_string(),
-                                            Amount::from_sat(limits.1).to_btc().to_string(),
+                                            "Enter an amount between {} {} and {} {}",
+                                            Amount::from_sat(limits.0)
+                                                .to_formatted_string_with_unit(bitcoin_unit),
+                                            bitcoin_unit.to_string(),
+                                            Amount::from_sat(limits.1)
+                                                .to_formatted_string_with_unit(bitcoin_unit),
+                                            bitcoin_unit.to_string()
                                         ))
                                         .size(12),
                                     )
@@ -498,6 +513,7 @@ fn enter_amount_view<'a>(
             entered_amount,
             onchain_send_limit,
             onchain_receive_limit,
+            bitcoin_unit,
         ))
         .padding(20)
         .width(Length::Fill)
@@ -519,6 +535,7 @@ fn confirm_transfer_view<'a>(
     warning: Option<&'a crate::app::error::Error>,
     is_sending: bool,
     is_tx_signed: bool,
+    bitcoin_unit: BitcoinDisplayUnit,
 ) -> Element<'a, Message> {
     const NUM_ADDR_CHARS: usize = 16;
 
@@ -718,19 +735,40 @@ fn confirm_transfer_view<'a>(
                 }),
         ))
         .push(Space::new().height(Length::Fixed(20.0)))
-        .push(
+        .push({
+            let amount = Amount::from_str_in(
+                &amount.value,
+                if matches!(bitcoin_unit, BitcoinDisplayUnit::BTC) {
+                    Denomination::Bitcoin
+                } else {
+                    Denomination::Satoshi
+                },
+            );
             Container::new(
                 Row::new()
                     .padding(20)
                     .push(text("Amount:"))
                     .push(Space::new().width(Length::Fill))
-                    .push(text(&amount.value))
+                    .push_maybe(if amount.is_ok() {
+                        Some(text(
+                            amount
+                                .clone()
+                                .unwrap()
+                                .to_formatted_string_with_unit(bitcoin_unit),
+                        ))
+                    } else {
+                        None
+                    })
                     .push(Space::new().width(4))
-                    .push(text("BTC")),
+                    .push_maybe(if amount.is_ok() {
+                        Some(text(format!("{}", bitcoin_unit.to_string())))
+                    } else {
+                        None
+                    }),
             )
             .width(Length::Fill)
-            .style(theme::card::simple),
-        )
+            .style(theme::card::simple)
+        })
         .push(Space::new().height(Length::Fixed(60.0)))
         .push(match direction {
             TransferDirection::VaultToActive => {
@@ -948,6 +986,7 @@ pub fn global_home_view<'a>(config: GlobalViewConfig<'a>) -> Element<'a, Message
                     warning,
                     is_sending,
                     is_tx_signed,
+                    bitcoin_unit,
                 );
             }
         }

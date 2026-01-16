@@ -2,14 +2,14 @@ use coincube_core::miniscript::bitcoin::Amount;
 
 use coincube_ui::{
     color,
-    component::{button, form, text::*},
+    component::{amount::DisplayAmount, button, form, text::*},
     icon, theme,
     widget::*,
 };
 use iced::{
     widget::{
         button as iced_button, container, qr_code, text::Wrapping, Column, Container, QRCode, Row,
-        TextInput,
+        Space, TextInput,
     },
     Alignment, Background, Length,
 };
@@ -28,6 +28,8 @@ pub fn active_receive_view<'a>(
     description_input: &'a str,
     bitcoin_unit: BitcoinDisplayUnit,
     error: Option<&'a String>,
+    lightning_limits: Option<(u64, u64)>,
+    onchain_limits: Option<(u64, u64)>,
 ) -> Element<'a, ActiveReceiveMessage> {
     let mut content = Column::new()
         .spacing(40)
@@ -39,7 +41,12 @@ pub fn active_receive_view<'a>(
 
     // Show input fields only for Lightning
     if *receive_method == ReceiveMethod::Lightning {
-        content = content.push(input_fields(amount_input, description_input, bitcoin_unit));
+        content = content.push(input_fields(
+            amount_input,
+            description_input,
+            bitcoin_unit,
+            lightning_limits,
+        ));
     } else {
         // For on-chain, only show generate button if no address is displayed
         if address.is_none() && !loading {
@@ -95,7 +102,7 @@ pub fn active_receive_view<'a>(
                     .padding(10)
                     .center_x(Length::Fill),
                 )
-                .push(action_buttons(receive_method)),
+                .push(action_buttons(receive_method, onchain_limits, bitcoin_unit)),
         );
 
         // Add generate new address button for on-chain
@@ -293,9 +300,10 @@ fn input_fields<'a>(
     amount_input: &'a form::Value<String>,
     description_input: &'a str,
     bitcoin_unit: BitcoinDisplayUnit,
+    lightning_limits: Option<(u64, u64)>,
 ) -> Element<'a, ActiveReceiveMessage> {
-    let amount_field = Column::new()
-        .spacing(8)
+    let mut amount_field = Column::new()
+        .spacing(5)
         .push(
             text(format!("Amount ({})", bitcoin_unit.to_string()))
                 .size(14)
@@ -312,6 +320,21 @@ fn input_fields<'a>(
             })
             .padding(10)
         });
+
+    if let Some((min_sat, max_sat)) = lightning_limits {
+        let min_btc = Amount::from_sat(min_sat);
+        let max_btc = Amount::from_sat(max_sat);
+        amount_field = amount_field.push(
+            text(format!(
+                "Enter an amount between {} {} and {} {}",
+                min_btc.to_formatted_string_with_unit(bitcoin_unit),
+                bitcoin_unit.to_string(),
+                max_btc.to_formatted_string_with_unit(bitcoin_unit),
+                bitcoin_unit.to_string()
+            ))
+            .size(12),
+        );
+    }
 
     let description_field = Column::new()
         .spacing(8)
@@ -332,10 +355,16 @@ fn input_fields<'a>(
         },
     ) {
         Ok(amount) => {
-            if amount.eq(&Amount::ZERO) {
-                false
+            if let Some((min_sat, max_sat)) = lightning_limits {
+                let min_sat = Amount::from_sat(min_sat);
+                let max_sat = Amount::from_sat(max_sat);
+                if amount >= min_sat && amount <= max_sat {
+                    true
+                } else {
+                    false
+                }
             } else {
-                true
+                false
             }
         }
         Err(_) => false,
@@ -351,6 +380,7 @@ fn input_fields<'a>(
             .spacing(15)
             .max_width(500)
             .push(amount_field)
+            .push(Space::new().width(3))
             .push(description_field)
             .push(generate_btn),
     )
@@ -371,11 +401,86 @@ fn generate_button<'a>() -> Element<'a, ActiveReceiveMessage> {
     .into()
 }
 
-fn action_buttons(_receive_method: &ReceiveMethod) -> Element<ActiveReceiveMessage> {
+fn action_buttons<'a>(
+    receive_method: &ReceiveMethod,
+    onchain_limits: Option<(u64, u64)>,
+    bitcoin_unit: BitcoinDisplayUnit,
+) -> Element<'a, ActiveReceiveMessage> {
     let copy_button = button::primary(Some(icon::clipboard_icon()), "Copy")
         .on_press(ActiveReceiveMessage::Copy)
         .width(Length::Fixed(150.0))
         .padding(15);
 
-    Row::new().spacing(15).push(copy_button).into()
+    let mut column = Column::new()
+        .spacing(15)
+        .align_x(Alignment::Center)
+        .push(Row::new().spacing(15).push(copy_button));
+
+    if *receive_method == ReceiveMethod::OnChain {
+        let mut warning_content = Column::new().spacing(8).push(
+            Row::new()
+                .spacing(8)
+                .push(icon::warning_icon().size(16).color(color::ORANGE))
+                .push(
+                    text("Important")
+                        .size(14)
+                        .bold()
+                        .style(|_theme: &theme::Theme| iced::widget::text::Style {
+                            color: Some(color::ORANGE),
+                        }),
+                ),
+        );
+
+        if let Some((min_sat, max_sat)) = onchain_limits {
+            let min_btc = Amount::from_sat(min_sat);
+            let max_btc = Amount::from_sat(max_sat);
+            warning_content = warning_content.push(
+                text(format!(
+                    "- Receive amount must be between {} {} and {} {}",
+                    min_btc.to_formatted_string_with_unit(bitcoin_unit),
+                    bitcoin_unit.to_string(),
+                    max_btc.to_formatted_string_with_unit(bitcoin_unit),
+                    bitcoin_unit.to_string()
+                ))
+                .size(14)
+                .style(theme::text::secondary),
+            );
+        } else {
+            warning_content = warning_content.push(
+                text("- Receive amount must be within the specified limits")
+                    .size(14)
+                    .style(theme::text::secondary),
+            );
+        }
+
+        warning_content = warning_content
+            .push(
+                text("- Use this address for ONE transaction only")
+                    .size(14)
+                    .style(theme::text::secondary),
+            )
+            .push(
+                text("- For multiple transactions, generate new addresses")
+                    .size(14)
+                    .style(theme::text::secondary),
+            );
+
+        let warning_box = Container::new(warning_content)
+            .padding(15)
+            .width(Length::Fill)
+            .max_width(600)
+            .style(|_theme: &theme::Theme| container::Style {
+                background: Some(Background::Color(iced::color!(0x2A2520))),
+                border: iced::Border {
+                    color: color::ORANGE,
+                    width: 1.0,
+                    radius: 8.0.into(),
+                },
+                ..Default::default()
+            });
+
+        column = column.push(warning_box);
+    }
+
+    column.into()
 }
