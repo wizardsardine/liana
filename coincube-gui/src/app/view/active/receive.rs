@@ -1,4 +1,4 @@
-use coincube_core::miniscript::bitcoin::Amount;
+use coincube_core::miniscript::bitcoin::{Amount, Denomination};
 
 use coincube_ui::{
     color,
@@ -349,9 +349,9 @@ fn input_fields<'a>(
     let is_amount_valid = match Amount::from_str_in(
         &amount_input.value,
         if matches!(bitcoin_unit, BitcoinDisplayUnit::BTC) {
-            breez_sdk_liquid::bitcoin::Denomination::Bitcoin
+            Denomination::Bitcoin
         } else {
-            breez_sdk_liquid::bitcoin::Denomination::Satoshi
+            Denomination::Satoshi
         },
     ) {
         Ok(amount) => {

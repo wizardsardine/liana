@@ -738,10 +738,10 @@ impl State for GlobalHome {
                 Task::none()
             }
             Message::Updated(_) => {
-                if let Modal::Sign(ref mut sign_modal) = self.modal {
+                if let (Modal::Sign(ref mut sign_modal), Some(daemon)) = (&mut self.modal, daemon) {
                     if let Some(ref mut spend_tx) = self.transfer_spend_tx {
                         use crate::app::state::vault::psbt::Modal as PsbtModalTrait;
-                        let task = sign_modal.update(daemon.unwrap(), message, spend_tx);
+                        let task = sign_modal.update(daemon, message, spend_tx);
 
                         return Task::batch(vec![
                             task,
@@ -759,10 +759,10 @@ impl State for GlobalHome {
             | Message::HardwareWallets(_)
             | Message::View(view::Message::SelectHardwareWallet(_))
             | Message::View(view::Message::Spend(_)) => {
-                if let Modal::Sign(ref mut sign_modal) = self.modal {
+                if let (Modal::Sign(ref mut sign_modal), Some(daemon)) = (&mut self.modal, daemon) {
                     if let Some(ref mut spend_tx) = self.transfer_spend_tx {
                         use crate::app::state::vault::psbt::Modal as PsbtModalTrait;
-                        return sign_modal.update(daemon.unwrap(), message, spend_tx);
+                        return sign_modal.update(daemon, message, spend_tx);
                     }
                 }
                 Task::none()
