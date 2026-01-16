@@ -6,8 +6,9 @@ members = [
     "lianad",
     "liana-gui",
     "liana-ui",
+    "liana-connect",
 ]
-default-members = ["liana", "lianad", "liana-gui", "liana-ui"]
+default-members = ["liana", "lianad", "liana-gui", "liana-ui",  "liana-connect"]
 
 [workspace.dependencies]
 # Common dependencies
@@ -34,6 +35,10 @@ rusqlite = "0.30"
 # feature and avoid the default aws-ls-rs provider from rustls, which would break the reproducible build
 # (see https://github.com/aws/aws-lc-rs/issues/409).
 bdk_electrum = { git = "https://github.com/wizardsardine/bdk", branch = "release/1.0.0-alpha.13", default-features = false }
+
+# liana-connect WebSocket protocol
+uuid = "1.19.0"
+tungstenite = "0.24"
 
 # Other dependencies
 bdk_coin_select = "0.4"

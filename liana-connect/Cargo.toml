@@ -1,0 +1,20 @@
+[package]
+name = "liana-connect"
+version = "0.1.0"
+authors = ["Pyth <pythcoiner@proton.me>"]
+edition = "2021"
+repository = "https://github.com/wizardsardine/liana"
+license-file = "LICENCE"
+keywords = ["bitcoin", "wallet", "miniscript", "inheritance", "recovery"]
+description = "Liana Connect shared types"
+
+[lib]
+name = "liana_connect"
+path = "src/lib.rs"
+
+[dependencies]
+miniscript = { workspace = true, features = ["serde"]}
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+tungstenite = { workspace = true }
+uuid = { workspace = true , features = ["serde"]}
