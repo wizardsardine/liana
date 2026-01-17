@@ -309,7 +309,10 @@ impl ActiveReceive {
                     Self::generate_lightning_invoice(client, amount, description),
                     |result| {
                         Message::View(view::Message::ActiveReceive(
-                            ActiveReceiveMessage::AddressGenerated(ReceiveMethod::Lightning, result),
+                            ActiveReceiveMessage::AddressGenerated(
+                                ReceiveMethod::Lightning,
+                                result,
+                            ),
                         ))
                     },
                 )
