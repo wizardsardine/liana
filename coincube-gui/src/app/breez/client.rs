@@ -67,28 +67,22 @@ impl breez::Signer for HotSignerAdapter {
     }
 
     fn sign_ecdsa_recoverable(&self, msg: Vec<u8>) -> Result<Vec<u8>, breez::SignerError> {
+        let secp = Secp256k1::new();
         let signer = self.signer.lock().unwrap();
+        let keypair = signer.master_xpriv().to_keypair(&secp);
+        let s = msg.as_slice();
 
-        // Use master key for recoverable signature (common in Lightning)
-        let master_path = DerivationPath::master();
-        let xpriv = signer.xpriv_at(&master_path, &self.secp);
-        let privkey = xpriv.to_priv();
-
-        // Sign the message hash (recoverable ECDSA)
-        let msg_hash =
-            coincube_core::miniscript::bitcoin::secp256k1::Message::from_digest_slice(&msg)
+        let msg: coincube_core::miniscript::bitcoin::secp256k1::Message =
+            coincube_core::miniscript::bitcoin::secp256k1::Message::from_digest_slice(s)
                 .map_err(|e| breez::SignerError::Generic {
-                    err: format!("Invalid message hash: {}", e),
+                    err: e.to_string(),
                 })?;
 
-        let sig = self.secp.sign_ecdsa_recoverable(&msg_hash, &privkey.inner);
-        let (recovery_id, sig_bytes) = sig.serialize_compact();
-
-        // Format: recovery_id (1 byte) + signature (64 bytes)
-        let mut result = Vec::with_capacity(65);
-        result.push(recovery_id.to_i32() as u8);
-        result.extend_from_slice(&sig_bytes);
-        Ok(result)
+        let recoverable_sig = secp.sign_ecdsa_recoverable(&msg, &keypair.secret_key());
+        let (recovery_id, sig) = recoverable_sig.serialize_compact();
+        let mut complete_signature = vec![31 + recovery_id.to_i32() as u8];
+        complete_signature.extend_from_slice(&sig);
+        Ok(complete_signature)
     }
 
     fn derive_xpub(&self, derivation_path: String) -> Result<Vec<u8>, breez::SignerError> {
