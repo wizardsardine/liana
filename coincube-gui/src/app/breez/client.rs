@@ -74,9 +74,7 @@ impl breez::Signer for HotSignerAdapter {
 
         let msg: coincube_core::miniscript::bitcoin::secp256k1::Message =
             coincube_core::miniscript::bitcoin::secp256k1::Message::from_digest_slice(s)
-                .map_err(|e| breez::SignerError::Generic {
-                    err: e.to_string(),
-                })?;
+                .map_err(|e| breez::SignerError::Generic { err: e.to_string() })?;
 
         let recoverable_sig = secp.sign_ecdsa_recoverable(&msg, &keypair.secret_key());
         let (recovery_id, sig) = recoverable_sig.serialize_compact();
