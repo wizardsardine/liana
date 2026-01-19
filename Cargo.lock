@@ -5848,7 +5848,6 @@ dependencies = [
  "httparse",
  "log",
  "rand 0.8.5",
- "sha1",
  "rustls 0.23.36",
  "rustls-pki-types",
  "sha1",
