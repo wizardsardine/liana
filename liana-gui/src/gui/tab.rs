@@ -505,3 +505,77 @@ pub fn create_app_with_remote_backend(
         false,
     ))
 }
+
+/// Connect to backend for liana-business using cached tokens.
+/// This is similar to `login::connect_with_credentials` but uses the liana-business API URLs.
+async fn connect_for_business(
+    datadir: LianaDirectory,
+    network: bitcoin::Network,
+    wallet_id: String,
+    email: String,
+) -> Result<
+    (
+        BackendWalletClient,
+        api::Wallet,
+        lianad::commands::ListCoinsResult,
+    ),
+    login::Error,
+> {
+    use crate::app::cache::coins_to_cache;
+
+    // Get service config for liana-business
+    let service_config = crate::services::connect::client::get_service_config(
+        network,
+        crate::services::connect::client::BackendType::LianaBusiness,
+    )
+    .await
+    .map_err(|e| login::Error::Unexpected(e.to_string()))?;
+
+    // Create auth client
+    let auth_client = AuthClient::new(
+        service_config.auth_api_url,
+        service_config.auth_api_public_key,
+        email.clone(),
+    );
+
+    // Get tokens from cache
+    let network_dir = datadir.network_directory(network);
+    let mut tokens = connect_cache::Account::from_cache(&network_dir, &email)
+        .map_err(|e| match e {
+            connect_cache::ConnectCacheError::NotFound => login::Error::CredentialsMissing,
+            _ => e.into(),
+        })?
+        .ok_or(login::Error::CredentialsMissing)?
+        .tokens;
+
+    // Refresh if expired
+    if tokens.expires_at < chrono::Utc::now().timestamp() {
+        tokens =
+            connect_cache::update_connect_cache(&network_dir, &tokens, &auth_client, true).await?;
+    }
+
+    // Connect to backend
+    let client =
+        BackendClient::connect(auth_client, service_config.backend_api_url, tokens, network)
+            .await
+            .map_err(|e| login::Error::Unexpected(e.to_string()))?;
+
+    // Find the wallet
+    let wallet = client
+        .list_wallets()
+        .await
+        .map_err(|e| login::Error::Unexpected(e.to_string()))?
+        .into_iter()
+        .find(|w| w.id == wallet_id)
+        .ok_or_else(|| login::Error::Unexpected(format!("Wallet {} not found", wallet_id)))?;
+
+    // Create wallet client
+    let (wallet_client, wallet) = client.connect_wallet(wallet);
+
+    // Get coins
+    let coins = coins_to_cache(std::sync::Arc::new(wallet_client.clone()))
+        .await
+        .map_err(|e| login::Error::Unexpected(e.to_string()))?;
+
+    Ok((wallet_client, wallet, coins))
+}
