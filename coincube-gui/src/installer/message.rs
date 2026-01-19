@@ -22,7 +22,6 @@ use crate::{
     },
     backup::Backup,
     export::ImportExportMessage,
-    gui::tab::CubeSettingsError,
     hw::HardwareWalletMessage,
     installer::{decrypt::Decrypt, descriptor::PathKind},
     node::{
@@ -80,11 +79,11 @@ pub enum Message {
     EditKeyAlias(EditKeyAliasMessage),
     Decrypt(Decrypt),
     CubeSaved(
-        Result<CubeSettings, CubeSettingsError>,
+        Result<CubeSettings, String>,
         Box<settings::WalletSettings>,
         Option<Bitcoind>,
     ),
-    CubeSaveFailed(CubeSettingsError),
+    CubeSaveFailed(String),
     RetryCubeSave,
     None,
 }

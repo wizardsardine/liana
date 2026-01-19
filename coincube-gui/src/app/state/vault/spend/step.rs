@@ -521,11 +521,8 @@ impl DefineSpend {
                 }
             }
             Err(e) => {
-                let err: Error = e.into();
-                let _err_msg = err.to_string(); // For future ShowError integration
-                self.warning = Some(err);
+                self.warning = Some(e.into());
                 self.fee_amount = None;
-                // Note: Cannot return Task here as this is in redraft() which returns ()
             }
         }
     }
@@ -930,7 +927,6 @@ impl Step for DefineSpend {
             &self.feerate,
             self.fee_amount.as_ref(),
             &self.sync_status,
-            None, // Errors now shown via global toast
             self.is_first_step,
             self.loading_fee_estimate,
             cache.bitcoin_unit.into(),
@@ -1214,7 +1210,6 @@ impl Step for SaveSpend {
             } else {
                 false
             },
-            None, // Errors now shown via global toast
             cache.bitcoin_unit.into(),
         );
         if let Some(modal) = &psbt_state.modal {
@@ -1293,7 +1288,6 @@ impl Step for SelectRecoveryPath {
                 })
                 .collect(),
             self.selected_path,
-            None, // Errors now shown via global toast
         )
     }
 

@@ -54,16 +54,9 @@ impl ActiveOverview {
                     .unwrap_or(Amount::ZERO);
 
                 let error = match (&info, &payments) {
-                    (Err(e1), Err(e2)) => {
-                        Some(view::ActiveOverviewError::BalanceAndTransactionsFetch(
-                            e1.to_string(),
-                            e2.to_string(),
-                        ))
-                    }
-                    (Err(e), _) => Some(view::ActiveOverviewError::BalanceFetch(e.to_string())),
-                    (_, Err(e)) => {
-                        Some(view::ActiveOverviewError::TransactionsFetch(e.to_string()))
-                    }
+                    (Err(_), Err(_)) => Some("Couldn't fetch balance or transactions".to_string()),
+                    (Err(_), _) => Some("Couldn't fetch account balance".to_string()),
+                    (_, Err(_)) => Some("Couldn't fetch recent transactions".to_string()),
                     _ => None,
                 };
 
@@ -97,7 +90,6 @@ impl State for ActiveOverview {
             view::dashboard(
                 menu,
                 cache,
-                None,
                 view::active::transaction_detail_view(
                     payment,
                     fiat_converter,
@@ -114,7 +106,7 @@ impl State for ActiveOverview {
             )
             .map(view::Message::ActiveOverview);
 
-            view::dashboard(menu, cache, None, send_view)
+            view::dashboard(menu, cache, send_view)
         }
     }
 
@@ -148,6 +140,7 @@ impl State for ActiveOverview {
                     balance,
                     recent_payment,
                 } => {
+                    self.error = None;
                     self.btc_balance = *balance;
                     self.recent_payments = recent_payment.clone();
 

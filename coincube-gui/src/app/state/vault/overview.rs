@@ -97,13 +97,11 @@ impl State for VaultOverview {
                 tx,
                 *output_index,
                 self.labels_edited.cache(),
-                None, // Errors now shown via global toast
             )
         } else {
             view::dashboard(
                 menu,
                 cache,
-                None, // Errors now shown via global toast
                 view::vault::overview::vault_overview_view(
                     &self.balance,
                     &self.unconfirmed_balance,

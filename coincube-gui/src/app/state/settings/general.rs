@@ -136,7 +136,6 @@ impl State for GeneralSettingsState {
             &self.new_price_setting,
             &self.new_unit_setting,
             &self.currencies,
-            None, // Errors now shown via global toast
         )
     }
 
@@ -162,27 +161,24 @@ impl State for GeneralSettingsState {
     ) -> Task<Message> {
         match message {
             Message::Fiat(FiatMessage::SaveChanges) => {
-                if self.error.is_none() {
-                    tracing::info!(
-                        "Saving cube fiat price setting: {:?}",
-                        self.new_price_setting
-                    );
-                    let price_setting = self.new_price_setting.clone();
-                    let network = cache.network;
-                    let datadir_path = cache.datadir_path.clone();
-                    let cube_id = self.cube_id.clone();
-                    return Task::perform(
-                        async move {
-                            update_price_setting(datadir_path, network, cube_id, price_setting)
-                                .await
-                        },
-                        |res| match res {
-                            Ok(()) => Message::SettingsSaved,
-                            Err(e) => Message::SettingsSaveFailed(e),
-                        },
-                    );
-                }
-                Task::none()
+                self.error = None;
+                tracing::info!(
+                    "Saving cube fiat price setting: {:?}",
+                    self.new_price_setting
+                );
+                let price_setting = self.new_price_setting.clone();
+                let network = cache.network;
+                let datadir_path = cache.datadir_path.clone();
+                let cube_id = self.cube_id.clone();
+                Task::perform(
+                    async move {
+                        update_price_setting(datadir_path, network, cube_id, price_setting).await
+                    },
+                    |res| match res {
+                        Ok(()) => Message::SettingsSaved,
+                        Err(e) => Message::SettingsSaveFailed(e),
+                    },
+                )
             }
             Message::SettingsSaved => {
                 tracing::info!("GeneralSettingsState: SettingsSaved received");

@@ -27,7 +27,6 @@ use coincube_ui::{
 use crate::{
     app::{
         cache::Cache,
-        error::Error,
         menu::{self, Menu, VaultSubMenu},
         view::{dashboard, message::Message, vault::coins, vault::label, FiatAmountConverter},
         wallet::SyncStatus,
@@ -314,7 +313,6 @@ pub fn payment_view<'a>(
     tx: &'a HistoryTransaction,
     output_index: usize,
     labels_editing: &'a HashMap<String, form::Value<String>>,
-    warning: Option<&'a Error>,
 ) -> Element<'a, Message> {
     let txid = tx.tx.compute_txid().to_string();
     let outpoint = bitcoin::OutPoint {
@@ -325,7 +323,6 @@ pub fn payment_view<'a>(
     dashboard(
         &Menu::Home,
         cache,
-        warning,
         Column::new()
             .push(match tx.kind {
                 TransactionKind::OutgoingSinglePayment(_)

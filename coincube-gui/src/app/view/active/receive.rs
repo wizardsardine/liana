@@ -326,11 +326,9 @@ fn input_fields<'a>(
         let max_btc = Amount::from_sat(max_sat);
         amount_field = amount_field.push(
             text(format!(
-                "Enter an amount between {} {} and {} {}",
+                "Enter an amount between {} and {}",
                 min_btc.to_formatted_string_with_unit(bitcoin_unit),
-                bitcoin_unit.to_string(),
                 max_btc.to_formatted_string_with_unit(bitcoin_unit),
-                bitcoin_unit.to_string()
             ))
             .size(12),
         );
@@ -436,11 +434,9 @@ fn action_buttons<'a>(
             let max_btc = Amount::from_sat(max_sat);
             warning_content = warning_content.push(
                 text(format!(
-                    "- Receive amount must be between {} {} and {} {}",
+                    "- Receive amount must be between {} and {}",
                     min_btc.to_formatted_string_with_unit(bitcoin_unit),
-                    bitcoin_unit.to_string(),
                     max_btc.to_formatted_string_with_unit(bitcoin_unit),
-                    bitcoin_unit.to_string()
                 ))
                 .size(14)
                 .style(theme::text::secondary),

@@ -30,11 +30,8 @@ use coincube_ui::{
 use crate::{
     app::{
         cache::Cache,
-        error::Error,
         menu::{Menu, VaultSubMenu},
-        view::{
-            dashboard, message::*, vault::hw::hw_list_view, vault::label, vault::warning::warn,
-        },
+        view::{dashboard, message::*, vault::hw::hw_list_view, vault::label},
     },
     daemon::model::{Coin, SpendStatus, SpendTx},
     hw::HardwareWallet,
@@ -50,13 +47,11 @@ pub fn psbt_view<'a>(
     labels_editing: &'a HashMap<String, form::Value<String>>,
     network: Network,
     currently_signing: bool,
-    warning: Option<&Error>,
     bitcoin_unit: BitcoinDisplayUnit,
 ) -> Element<'a, Message> {
     dashboard(
         &Menu::Vault(VaultSubMenu::PSBTs(None)),
         cache,
-        warning,
         Column::new()
             .spacing(20)
             .push(
@@ -133,7 +128,7 @@ pub fn psbt_view<'a>(
     )
 }
 
-pub fn save_action<'a>(warning: Option<&Error>, saved: bool) -> Element<'a, Message> {
+pub fn save_action<'a>(saved: bool) -> Element<'a, Message> {
     if saved {
         card::simple(text("Transaction is saved"))
             .width(Length::Fixed(400.0))
@@ -143,7 +138,6 @@ pub fn save_action<'a>(warning: Option<&Error>, saved: bool) -> Element<'a, Mess
         card::simple(
             Column::new()
                 .spacing(10)
-                .push(warning.map(|w| warn(Some(w))))
                 .push(text("Save this transaction"))
                 .push(
                     Row::new()
@@ -167,7 +161,6 @@ pub fn save_action<'a>(warning: Option<&Error>, saved: bool) -> Element<'a, Mess
 /// of the transaction to be broadcast.
 pub fn broadcast_action<'a>(
     conflicting_txids: &HashSet<Txid>,
-    warning: Option<&Error>,
     saved: bool,
 ) -> Element<'a, Message> {
     if saved {
@@ -179,7 +172,6 @@ pub fn broadcast_action<'a>(
         card::simple(
             Column::new()
                 .spacing(10)
-                .push(warning.map(|w| warn(Some(w))))
                 .push(Container::new(h4_bold("Broadcast the transaction")).width(Length::Fill))
                 .push(if conflicting_txids.is_empty() {
                     None
@@ -250,7 +242,7 @@ pub fn broadcast_action<'a>(
     }
 }
 
-pub fn delete_action<'a>(warning: Option<&Error>, deleted: bool) -> Element<'a, Message> {
+pub fn delete_action<'a>(deleted: bool) -> Element<'a, Message> {
     if deleted {
         card::simple(
             Column::new()
@@ -266,7 +258,6 @@ pub fn delete_action<'a>(warning: Option<&Error>, deleted: bool) -> Element<'a, 
         card::simple(
             Column::new()
                 .spacing(10)
-                .push(warning.map(|w| warn(Some(w))))
                 .push(text("Delete this PSBT"))
                 .push(
                     Row::new()
@@ -1016,7 +1007,6 @@ fn change_view(
 
 #[allow(clippy::too_many_arguments)]
 pub fn sign_action<'a>(
-    warning: Option<&Error>,
     hws: &'a [HardwareWallet],
     descriptor: &CoincubeDescriptor,
     signer: Option<Fingerprint>,
@@ -1025,21 +1015,20 @@ pub fn sign_action<'a>(
     signing: &HashSet<Fingerprint>,
     recovery_timelock: Option<u16>,
 ) -> Element<'a, Message> {
-    Column::new()
-        .push(warning.map(|w| warn(Some(w))))
-        .push(card::simple(
-            Column::new()
-                .push(
-                    Column::new()
-                        .push(
-                            text("Select signing device to sign with:")
-                                .bold()
-                                .width(Length::Fill),
-                        )
-                        .spacing(10)
-                        .push(hws.iter().enumerate().fold(
-                            Column::new().spacing(10),
-                            |col, (i, hw)| {
+    card::simple(
+        Column::new()
+            .push(
+                Column::new()
+                    .push(
+                        text("Select signing device to sign with:")
+                            .bold()
+                            .width(Length::Fill),
+                    )
+                    .spacing(10)
+                    .push(
+                        hws.iter()
+                            .enumerate()
+                            .fold(Column::new().spacing(10), |col, (i, hw)| {
                                 let (signed, signing, can_sign) =
                                     hw.fingerprint().map_or((false, false, false), |f| {
                                         (
@@ -1050,43 +1039,42 @@ pub fn sign_action<'a>(
                                         )
                                     });
                                 col.push(hw_list_view(i, hw, signed, signing, can_sign))
-                            },
-                        ))
-                        .push({
-                            signer.map(|fingerprint| {
-                                let can_sign = descriptor
-                                    .contains_fingerprint_in_path(fingerprint, recovery_timelock);
-                                let btn = Button::new(if signed.contains(&fingerprint) {
-                                    hw::sign_success_hot_signer(fingerprint, signer_alias)
-                                } else {
-                                    hw::hot_signer(fingerprint, signer_alias, can_sign)
-                                })
-                                .padding(10)
-                                .style(theme::button::secondary)
-                                .width(Length::Fill);
-                                if can_sign {
-                                    btn.on_press(Message::Spend(SpendTxMessage::SelectHotSigner))
-                                } else {
-                                    btn
-                                }
+                            }),
+                    )
+                    .push({
+                        signer.map(|fingerprint| {
+                            let can_sign = descriptor
+                                .contains_fingerprint_in_path(fingerprint, recovery_timelock);
+                            let btn = Button::new(if signed.contains(&fingerprint) {
+                                hw::sign_success_hot_signer(fingerprint, signer_alias)
+                            } else {
+                                hw::hot_signer(fingerprint, signer_alias, can_sign)
                             })
+                            .padding(10)
+                            .style(theme::button::secondary)
+                            .width(Length::Fill);
+                            if can_sign {
+                                btn.on_press(Message::Spend(SpendTxMessage::SelectHotSigner))
+                            } else {
+                                btn
+                            }
                         })
-                        .width(Length::Fill),
-                )
-                .spacing(20)
-                .width(Length::Fill)
-                .align_x(Alignment::Center),
-        ))
-        .width(Length::Fixed(500.0))
-        .into()
+                    })
+                    .width(Length::Fill),
+            )
+            .spacing(20)
+            .width(Length::Fill)
+            .align_x(Alignment::Center),
+    )
+    .width(Length::Fixed(500.0))
+    .into()
 }
 
 pub fn sign_action_toasts<'a>(
-    error: Option<&Error>,
     hws: &'a [HardwareWallet],
     signing: &HashSet<Fingerprint>,
 ) -> Vec<Element<'a, Message>> {
-    let mut vec: Vec<Element<'a, Message>> = hws
+    let vec: Vec<Element<'a, Message>> = hws
         .iter()
         .filter_map(|hw| {
             if let HardwareWallet::Supported {
@@ -1116,16 +1104,6 @@ pub fn sign_action_toasts<'a>(
             }
         })
         .collect();
-    if let Some(e) = error {
-        vec.push(
-            coincube_ui::component::notification::processing_hardware_wallet_error(
-                "Device failed to sign".to_string(),
-                e.to_string(),
-            )
-            .max_width(400.0)
-            .into(),
-        )
-    }
 
     vec
 }
@@ -1133,11 +1111,9 @@ pub fn sign_action_toasts<'a>(
 pub fn update_spend_view<'a>(
     psbt: String,
     updated: &form::Value<String>,
-    error: Option<&Error>,
     processing: bool,
 ) -> Element<'a, Message> {
     Column::new()
-        .push(warn(error))
         .push(card::simple(
             Column::new()
                 .spacing(20)

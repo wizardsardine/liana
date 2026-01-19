@@ -96,7 +96,6 @@ impl State for CoinsPanel {
         view::dashboard(
             menu,
             cache,
-            None, // Errors now shown via global toast
             view::vault::coins::coins_view(
                 cache,
                 &self.coins.list,

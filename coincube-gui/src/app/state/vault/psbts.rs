@@ -46,7 +46,6 @@ impl State for PsbtsPanel {
             let list_view = view::dashboard(
                 menu,
                 cache,
-                None, // Errors now shown via global toast
                 view::vault::psbts::psbts_view(&self.spend_txs, cache.bitcoin_unit.into()),
             );
             if let Some(modal) = &self.modal {

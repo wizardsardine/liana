@@ -86,7 +86,6 @@ impl State for VaultTransactionsPanel {
                 cache,
                 tx,
                 self.labels_edited.cache(),
-                None, // Errors now shown via global toast
                 cache.bitcoin_unit.into(),
             );
             match &self.modal {
@@ -98,7 +97,6 @@ impl State for VaultTransactionsPanel {
                 menu,
                 cache,
                 &self.txs,
-                None, // Errors now shown via global toast
                 self.is_last_page,
                 self.processing,
             );
@@ -474,7 +472,6 @@ impl CreateRbfModal {
                 &self.descendant_txids,
                 &self.feerate_val,
                 self.replacement_txid,
-                None, // Errors now shown via global toast
             ),
         );
         if self.processing {

@@ -25,13 +25,12 @@ use coincube_ui::{
 use crate::{
     app::{
         cache::Cache,
-        error::Error,
         menu::{Menu, VaultSubMenu},
         view::{
             dashboard,
             message::{CreateRbfMessage, Message},
             placeholder,
-            vault::{label, warning::warn},
+            vault::label,
             FiatAmountConverter,
         },
     },
@@ -43,7 +42,6 @@ pub fn transactions_view<'a>(
     menu: &'a Menu,
     cache: &'a Cache,
     txs: &'a [HistoryTransaction],
-    warning: Option<&'a Error>,
     is_last_page: bool,
     processing: bool,
 ) -> Element<'a, Message> {
@@ -52,7 +50,6 @@ pub fn transactions_view<'a>(
     dashboard(
         menu,
         cache,
-        warning,
         Column::new()
             .push(
                 Row::new()
@@ -80,7 +77,7 @@ pub fn transactions_view<'a>(
                                 col.push(tx_list_view(
                                     i,
                                     tx,
-                                    cache.bitcoin_unit.into(),
+                                    cache.bitcoin_unit,
                                     fiat_converter,
                                 ))
                             }),
@@ -187,7 +184,6 @@ pub fn create_rbf_modal<'a>(
     descendant_txids: &HashSet<Txid>,
     feerate: &form::Value<String>,
     replacement_txid: Option<Txid>,
-    warning: Option<&'a Error>,
 ) -> Element<'a, Message> {
     let mut confirm_button = button::secondary(None, "Confirm").width(Length::Fixed(200.0));
     if feerate.valid || is_cancel {
@@ -286,7 +282,6 @@ pub fn create_rbf_modal<'a>(
             } else {
                 None
             })
-            .push(warn(warning))
             .push(Row::new().push(if replacement_txid.is_none() {
                 Row::new().push(confirm_button)
             } else {
@@ -316,14 +311,12 @@ pub fn transaction_detail_view<'a>(
     cache: &'a Cache,
     tx: &'a HistoryTransaction,
     labels_editing: &'a HashMap<String, form::Value<String>>,
-    warning: Option<&'a Error>,
     bitcoin_unit: BitcoinDisplayUnit,
 ) -> Element<'a, Message> {
     let txid = tx.tx.compute_txid().to_string();
     dashboard(
         menu,
         cache,
-        warning,
         Column::new()
             .push(if tx.is_send_to_self() {
                 Container::new(h3("Transaction")).width(Length::Fill)

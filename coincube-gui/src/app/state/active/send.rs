@@ -101,12 +101,9 @@ impl ActiveSend {
                     .unwrap_or(Amount::ZERO);
 
                 let error = match (&info, &payments) {
-                    (Err(e1), Err(e2)) => Some(view::ActiveSendError::BalanceAndTransactionsFetch(
-                        e1.to_string(),
-                        e2.to_string(),
-                    )),
-                    (Err(e), _) => Some(view::ActiveSendError::BalanceFetch(e.to_string())),
-                    (_, Err(e)) => Some(view::ActiveSendError::TransactionsFetch(e.to_string())),
+                    (Err(_), Err(_)) => Some("Couldn't fetch balance or transactions".to_string()),
+                    (Err(_), _) => Some("Couldn't fetch account balance".to_string()),
+                    (_, Err(_)) => Some("Couldn't fetch recent transactions".to_string()),
                     _ => None,
                 };
 
@@ -140,7 +137,6 @@ impl State for ActiveSend {
             view::dashboard(
                 menu,
                 cache,
-                None,
                 view::active::transaction_detail_view(
                     payment,
                     fiat_converter,
@@ -156,7 +152,6 @@ impl State for ActiveSend {
                 fiat_converter,
                 recent_transaction: &self.recent_transaction,
                 input: &self.input,
-                error: None, // Errors now shown via global toast
                 amount_input: &self.amount_input,
                 comment,
                 description: self.description.as_deref(),
@@ -168,7 +163,7 @@ impl State for ActiveSend {
                 cache,
                 input_type: &self.input_type,
                 onchain_limits: self.onchain_limits,
-                bitcoin_unit: cache.bitcoin_unit.into(),
+                bitcoin_unit: cache.bitcoin_unit,
             })
         }
     }
@@ -203,45 +198,37 @@ impl State for ActiveSend {
                     if self.lightning_limits.is_none() || self.onchain_limits.is_none() {
                         let fetch_lightning_limits = Task::perform(
                             async move { breez_clone.fetch_lightning_limits().await },
-                            |limits| {
-                                if let Ok(limits) = limits {
-                                    Message::View(view::Message::ActiveSend(
-                                        view::ActiveSendMessage::LightningLimitsFetched {
-                                            min_sat: limits.send.min_sat,
-                                            max_sat: limits.send.max_sat,
-                                        },
-                                    ))
-                                } else {
-                                    Message::View(view::Message::ActiveSend(
-                                        view::ActiveSendMessage::Error(
-                                            view::ActiveSendError::LightningLimitsFetch(
-                                                "Unknown error".to_string(),
-                                            ),
-                                        ),
-                                    ))
-                                }
+                            |limits| match limits {
+                                Ok(limits) => Message::View(view::Message::ActiveSend(
+                                    view::ActiveSendMessage::LightningLimitsFetched {
+                                        min_sat: limits.send.min_sat,
+                                        max_sat: limits.send.max_sat,
+                                    },
+                                )),
+                                Err(e) => Message::View(view::Message::ActiveSend(
+                                    view::ActiveSendMessage::Error(format!(
+                                        "Couldn't fetch lightning limits: {}",
+                                        e
+                                    )),
+                                )),
                             },
                         );
 
                         let fetch_onchain_limits = Task::perform(
                             async move { breez_client.fetch_onchain_limits().await },
-                            |limits| {
-                                if let Ok(limits) = limits {
-                                    Message::View(view::Message::ActiveSend(
-                                        view::ActiveSendMessage::OnChainLimitsFetched {
-                                            min_sat: limits.send.min_sat,
-                                            max_sat: limits.send.max_sat,
-                                        },
-                                    ))
-                                } else {
-                                    Message::View(view::Message::ActiveSend(
-                                        view::ActiveSendMessage::Error(
-                                            view::ActiveSendError::OnChainLimitsFetch(
-                                                "Unknown error".to_string(),
-                                            ),
-                                        ),
-                                    ))
-                                }
+                            |limits| match limits {
+                                Ok(limits) => Message::View(view::Message::ActiveSend(
+                                    view::ActiveSendMessage::OnChainLimitsFetched {
+                                        min_sat: limits.send.min_sat,
+                                        max_sat: limits.send.max_sat,
+                                    },
+                                )),
+                                Err(e) => Message::View(view::Message::ActiveSend(
+                                    view::ActiveSendMessage::Error(format!(
+                                        "Couldn't fetch onchain limits: {}",
+                                        e
+                                    )),
+                                )),
                             },
                         );
                         return Task::batch(vec![
@@ -792,9 +779,10 @@ impl State for ActiveSend {
                                         ))
                                     }
                                     Err(e) => Message::View(view::Message::ActiveSend(
-                                        view::ActiveSendMessage::Error(
-                                            view::ActiveSendError::PrepareSend(e.to_string()),
-                                        ),
+                                        view::ActiveSendMessage::Error(format!(
+                                            "Failed to prepare payment: {}",
+                                            e
+                                        )),
                                     )),
                                 },
                             );
@@ -822,9 +810,10 @@ impl State for ActiveSend {
                                         ))
                                     }
                                     Err(e) => Message::View(view::Message::ActiveSend(
-                                        view::ActiveSendMessage::Error(
-                                            view::ActiveSendError::PrepareSend(e.to_string()),
-                                        ),
+                                        view::ActiveSendMessage::Error(format!(
+                                            "Failed to prepare payment: {}",
+                                            e
+                                        )),
                                     )),
                                 },
                             );
@@ -884,9 +873,10 @@ impl State for ActiveSend {
                                         view::ActiveSendMessage::SendComplete,
                                     )),
                                     Err(e) => Message::View(view::Message::ActiveSend(
-                                        view::ActiveSendMessage::Error(
-                                            view::ActiveSendError::Send(e.to_string()),
-                                        ),
+                                        view::ActiveSendMessage::Error(format!(
+                                            "Failed to send payment: {}",
+                                            e
+                                        )),
                                     )),
                                 },
                             );
@@ -916,9 +906,10 @@ impl State for ActiveSend {
                                             ))
                                         }
                                         Err(e) => Message::View(view::Message::ActiveSend(
-                                            view::ActiveSendMessage::Error(
-                                                view::ActiveSendError::Send(e.to_string()),
-                                            ),
+                                            view::ActiveSendMessage::Error(format!(
+                                                "Failed to send payment: {}",
+                                                e
+                                            )),
                                         )),
                                     },
                                 );

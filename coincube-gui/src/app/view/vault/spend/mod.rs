@@ -23,7 +23,6 @@ use coincube_ui::{
 use crate::{
     app::{
         cache::Cache,
-        error::Error,
         menu::Menu,
         view::{dashboard, message::*, vault::coins, vault::psbt, FiatAmountConverter},
         wallet::SyncStatus,
@@ -43,7 +42,6 @@ pub fn spend_view<'a>(
     labels_editing: &'a HashMap<String, form::Value<String>>,
     network: Network,
     currently_signing: bool,
-    warning: Option<&Error>,
     bitcoin_unit: BitcoinDisplayUnit,
 ) -> Element<'a, Message> {
     let is_recovery = tx
@@ -55,7 +53,6 @@ pub fn spend_view<'a>(
     dashboard(
         menu,
         cache,
-        warning,
         Column::new()
             .spacing(20)
             .push(
@@ -161,7 +158,6 @@ pub fn create_spend_tx<'a>(
     feerate: &form::Value<String>,
     fee_amount: Option<&Amount>,
     sync_status: &SyncStatus,
-    error: Option<&Error>,
     is_first_step: bool,
     loading_fee_estimate: Option<usize>,
     bitcoin_unit: BitcoinDisplayUnit,
@@ -172,7 +168,6 @@ pub fn create_spend_tx<'a>(
 
     let can_proceed = is_valid
         && !duplicate
-        && error.is_none()
         && (is_self_send
             || recovery_timelock.is_some()
             || Some(&Amount::from_sat(0)) == amount_left);
@@ -193,8 +188,6 @@ pub fn create_spend_tx<'a>(
             Some(amount) if amount.to_sat() != 0 => Some("Insufficient funds."),
             _ => None,
         }
-    } else if error.is_some() {
-        Some("Please correct all the errors.")
     } else {
         None
     };
@@ -202,7 +195,6 @@ pub fn create_spend_tx<'a>(
     dashboard(
         menu,
         cache,
-        error,
         Column::new()
             .push(h3("Balance"))
             .push(

@@ -199,7 +199,7 @@ macro_rules! launch {
 
 impl State for ImportExportSettingsState {
     fn view<'a>(&'a self, menu: &'a Menu, cache: &'a Cache) -> Element<'a, view::Message> {
-        let content = view::vault::settings::import_export(menu, cache, None); // Errors now shown via global toast
+        let content = view::vault::settings::import_export(menu, cache);
         if let Some(modal) = &self.modal {
             modal.view(content)
         } else {
@@ -338,12 +338,7 @@ pub struct AboutSettingsState {
 
 impl State for AboutSettingsState {
     fn view<'a>(&'a self, menu: &'a Menu, cache: &'a Cache) -> Element<'a, view::Message> {
-        view::vault::settings::about_section(
-            menu,
-            cache,
-            None, // Errors now shown via global toast
-            self.daemon_version.as_ref(),
-        )
+        view::vault::settings::about_section(menu, cache, self.daemon_version.as_ref())
     }
 
     fn update(
@@ -419,7 +414,6 @@ impl State for BackendSettingsState {
             &self.email_form,
             self.processing,
             self.success,
-            None, // Errors now shown via global toast
         )
     }
 
