@@ -25,10 +25,7 @@ use coincube_ui::{
 };
 
 use crate::{
-    app::{
-        error::Error,
-        view::{placeholder, vault::hw, vault::label, vault::warning::warn},
-    },
+    app::view::{placeholder, vault::hw, vault::label},
     hw::HardwareWallet,
 };
 
@@ -272,66 +269,59 @@ pub fn receive<'a>(
 }
 
 pub fn verify_address_modal<'a>(
-    warning: Option<&Error>,
     hws: &'a [HardwareWallet],
     chosen_hws: &HashSet<Fingerprint>,
     address: &Address,
     derivation_index: &ChildNumber,
 ) -> Element<'a, Message> {
-    Column::new()
-        .push(warning.map(|w| warn(Some(w))))
-        .push(card::simple(
-            Column::new()
-                .push(
-                    Column::new()
-                        .push(
-                            Column::new()
-                                .push(
-                                    Row::new()
-                                        .width(Length::Fill)
-                                        .align_y(Alignment::Center)
-                                        .push(
-                                            Container::new(text("Address:").bold())
-                                                .width(Length::Fill),
-                                        )
-                                        .push(
-                                            Row::new()
-                                                .align_y(Alignment::Center)
-                                                .push(Container::new(
-                                                    text(address.to_string()).small(),
-                                                ))
-                                                .push(
-                                                    Button::new(icon::clipboard_icon())
-                                                        .on_press(Message::Clipboard(
-                                                            address.to_string(),
-                                                        ))
-                                                        .style(theme::button::transparent_border),
-                                                )
-                                                .width(Length::Shrink),
-                                        ),
-                                )
-                                .push(
-                                    Row::new()
-                                        .width(Length::Fill)
-                                        .align_y(Alignment::Center)
-                                        .push(
-                                            Container::new(text("Derivation index:").bold())
-                                                .width(Length::Fill),
-                                        )
-                                        .push(
-                                            Container::new(
-                                                text(derivation_index.to_string()).small(),
+    card::simple(
+        Column::new()
+            .push(
+                Column::new()
+                    .push(
+                        Column::new()
+                            .push(
+                                Row::new()
+                                    .width(Length::Fill)
+                                    .align_y(Alignment::Center)
+                                    .push(
+                                        Container::new(text("Address:").bold()).width(Length::Fill),
+                                    )
+                                    .push(
+                                        Row::new()
+                                            .align_y(Alignment::Center)
+                                            .push(Container::new(text(address.to_string()).small()))
+                                            .push(
+                                                Button::new(icon::clipboard_icon())
+                                                    .on_press(Message::Clipboard(
+                                                        address.to_string(),
+                                                    ))
+                                                    .style(theme::button::transparent_border),
                                             )
                                             .width(Length::Shrink),
-                                        ),
-                                )
-                                .spacing(5),
-                        )
-                        .push(text("Select device to verify address on:").width(Length::Fill))
-                        .spacing(10)
-                        .push(hws.iter().enumerate().fold(
-                            Column::new().spacing(10),
-                            |col, (i, hw)| {
+                                    ),
+                            )
+                            .push(
+                                Row::new()
+                                    .width(Length::Fill)
+                                    .align_y(Alignment::Center)
+                                    .push(
+                                        Container::new(text("Derivation index:").bold())
+                                            .width(Length::Fill),
+                                    )
+                                    .push(
+                                        Container::new(text(derivation_index.to_string()).small())
+                                            .width(Length::Shrink),
+                                    ),
+                            )
+                            .spacing(5),
+                    )
+                    .push(text("Select device to verify address on:").width(Length::Fill))
+                    .spacing(10)
+                    .push(
+                        hws.iter()
+                            .enumerate()
+                            .fold(Column::new().spacing(10), |col, (i, hw)| {
                                 col.push(hw::hw_list_view_verify_address(
                                     i,
                                     hw,
@@ -341,17 +331,17 @@ pub fn verify_address_modal<'a>(
                                         false
                                     },
                                 ))
-                            },
-                        ))
-                        .width(Length::Fill),
-                )
-                .spacing(20)
-                .width(Length::Fill)
-                .align_x(Alignment::Center),
-        ))
-        .width(Length::Fill)
-        .max_width(750)
-        .into()
+                            }),
+                    )
+                    .width(Length::Fill),
+            )
+            .spacing(20)
+            .width(Length::Fill)
+            .align_x(Alignment::Center),
+    )
+    .width(Length::Fill)
+    .max_width(750)
+    .into()
 }
 
 pub fn qr_modal<'a>(qr: &'a qr_code::Data, address: &'a String) -> Element<'a, Message> {

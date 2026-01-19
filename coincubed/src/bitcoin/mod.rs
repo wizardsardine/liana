@@ -40,25 +40,6 @@ impl fmt::Display for BlockChainTip {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum BitcoinError {
-    Sync(String),
-    Broadcast(String),
-    Rescan(String),
-}
-
-impl fmt::Display for BitcoinError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            Self::Sync(e) => write!(f, "Wallet sync failed: {}", e),
-            Self::Broadcast(e) => write!(f, "Transaction broadcast failed: {}", e),
-            Self::Rescan(e) => write!(f, "Rescan failed: {}", e),
-        }
-    }
-}
-
-impl std::error::Error for BitcoinError {}
-
 /// Our Bitcoin backend.
 pub trait BitcoinInterface: Send {
     fn genesis_block_timestamp(&self) -> u32;
@@ -88,7 +69,7 @@ pub trait BitcoinInterface: Send {
         &mut self,
         receive_index: ChildNumber,
         change_index: ChildNumber,
-    ) -> Result<Option<BlockChainTip>, BitcoinError>;
+    ) -> Result<Option<BlockChainTip>, String>;
 
     /// Get coins received since the specified tip.
     fn received_coins(
@@ -122,7 +103,7 @@ pub trait BitcoinInterface: Send {
     fn common_ancestor(&self, tip: &BlockChainTip) -> Option<BlockChainTip>;
 
     /// Broadcast this transaction to the Bitcoin P2P network
-    fn broadcast_tx(&self, tx: &bitcoin::Transaction) -> Result<(), BitcoinError>;
+    fn broadcast_tx(&self, tx: &bitcoin::Transaction) -> Result<(), String>;
 
     /// Trigger a rescan of the block chain for transactions related to this descriptor since
     /// the given date.
@@ -130,7 +111,7 @@ pub trait BitcoinInterface: Send {
         &mut self,
         desc: &descriptors::CoincubeDescriptor,
         timestamp: u32,
-    ) -> Result<(), BitcoinError>;
+    ) -> Result<(), String>;
 
     /// Rescan progress percentage. Between 0 and 1.
     fn rescan_progress(&self) -> Option<f64>;
@@ -191,7 +172,7 @@ impl BitcoinInterface for d::BitcoinD {
         &mut self,
         _receive_index: ChildNumber,
         _change_index: ChildNumber,
-    ) -> Result<Option<BlockChainTip>, BitcoinError> {
+    ) -> Result<Option<BlockChainTip>, String> {
         Ok(None)
     }
 
@@ -369,12 +350,15 @@ impl BitcoinInterface for d::BitcoinD {
         Some(ancestor)
     }
 
-    fn broadcast_tx(&self, tx: &bitcoin::Transaction) -> Result<(), BitcoinError> {
+    fn broadcast_tx(&self, tx: &bitcoin::Transaction) -> Result<(), String> {
         match self.broadcast_tx(tx) {
             Ok(()) => Ok(()),
-            Err(BitcoindError::Server(e)) => Err(BitcoinError::Broadcast(e.to_string())),
+            Err(BitcoindError::Server(e)) => Err(e.to_string()),
             // We assume the Bitcoin backend doesn't fail, so it must be a JSONRPC error.
-            Err(e) => Err(BitcoinError::Broadcast(e.to_string())),
+            Err(e) => panic!(
+                "Unexpected Bitcoin error when broadcasting transaction: {}",
+                e
+            ),
         }
     }
 
@@ -382,10 +366,10 @@ impl BitcoinInterface for d::BitcoinD {
         &mut self,
         desc: &descriptors::CoincubeDescriptor,
         timestamp: u32,
-    ) -> Result<(), BitcoinError> {
+    ) -> Result<(), String> {
         // FIXME: in theory i think this could potentially fail to actually start the rescan.
         self.start_rescan(desc, timestamp)
-            .map_err(|e| BitcoinError::Rescan(e.to_string()))
+            .map_err(|e| e.to_string())
     }
 
     fn rescan_progress(&self) -> Option<f64> {
@@ -425,9 +409,9 @@ impl BitcoinInterface for electrum::Electrum {
         &mut self,
         receive_index: ChildNumber,
         change_index: ChildNumber,
-    ) -> Result<Option<BlockChainTip>, BitcoinError> {
+    ) -> Result<Option<BlockChainTip>, String> {
         self.sync_wallet(receive_index, change_index)
-            .map_err(|e| BitcoinError::Sync(e.to_string()))
+            .map_err(|e| e.to_string())
     }
 
     fn received_coins(
@@ -552,10 +536,10 @@ impl BitcoinInterface for electrum::Electrum {
         unreachable!("The common ancestor is returned in `sync_wallet()`. If no reorg was detected then, this method will never be called on an Electrum backend.")
     }
 
-    fn broadcast_tx(&self, tx: &bitcoin::Transaction) -> Result<(), BitcoinError> {
+    fn broadcast_tx(&self, tx: &bitcoin::Transaction) -> Result<(), String> {
         match self.client().broadcast_tx(tx) {
             Ok(_txid) => Ok(()),
-            Err(e) => Err(BitcoinError::Broadcast(e.to_string())),
+            Err(e) => Err(e.to_string()),
         }
     }
 
@@ -588,7 +572,7 @@ impl BitcoinInterface for electrum::Electrum {
         &mut self,
         _desc: &descriptors::CoincubeDescriptor,
         _timestamp: u32,
-    ) -> Result<(), BitcoinError> {
+    ) -> Result<(), String> {
         self.trigger_rescan();
         Ok(())
     }
@@ -633,7 +617,7 @@ impl BitcoinInterface for sync::Arc<sync::Mutex<dyn BitcoinInterface + 'static>>
         &mut self,
         receive_index: ChildNumber,
         change_index: ChildNumber,
-    ) -> Result<Option<BlockChainTip>, BitcoinError> {
+    ) -> Result<Option<BlockChainTip>, String> {
         self.lock()
             .unwrap()
             .sync_wallet(receive_index, change_index)
@@ -672,7 +656,7 @@ impl BitcoinInterface for sync::Arc<sync::Mutex<dyn BitcoinInterface + 'static>>
         self.lock().unwrap().common_ancestor(tip)
     }
 
-    fn broadcast_tx(&self, tx: &bitcoin::Transaction) -> Result<(), BitcoinError> {
+    fn broadcast_tx(&self, tx: &bitcoin::Transaction) -> Result<(), String> {
         self.lock().unwrap().broadcast_tx(tx)
     }
 
@@ -680,7 +664,7 @@ impl BitcoinInterface for sync::Arc<sync::Mutex<dyn BitcoinInterface + 'static>>
         &mut self,
         desc: &descriptors::CoincubeDescriptor,
         timestamp: u32,
-    ) -> Result<(), BitcoinError> {
+    ) -> Result<(), String> {
         self.lock().unwrap().start_rescan(desc, timestamp)
     }
 

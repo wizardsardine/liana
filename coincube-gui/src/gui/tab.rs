@@ -9,21 +9,6 @@ use coincube_core::miniscript::bitcoin;
 use coincube_ui::widget::Element;
 use coincubed::commands::ListCoinsResult;
 
-#[derive(Debug, Clone)]
-pub enum CubeSettingsError {
-    SaveFailed(String),
-}
-
-impl std::fmt::Display for CubeSettingsError {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        match self {
-            Self::SaveFailed(e) => write!(f, "Failed to save cube configuration: {}", e),
-        }
-    }
-}
-
-impl std::error::Error for CubeSettingsError {}
-
 use crate::{
     app::{
         self, breez,
@@ -668,18 +653,27 @@ impl Tab {
             ) => {
                 match breez_client {
                     Ok(breez) => {
-                        let (app, command) = create_app_with_remote_backend(
+                        match create_app_with_remote_backend(
                             wallet_settings,
                             backend_client,
                             wallet,
                             coins,
-                            datadir,
+                            datadir.clone(),
                             network,
                             config,
                             breez,
-                        );
-                        self.state = State::App(app);
-                        command.map(|msg| Message::Run(Box::new(msg)))
+                        ) {
+                            Ok((app, command)) => {
+                                self.state = State::App(app);
+                                command.map(|msg| Message::Run(Box::new(msg)))
+                            }
+                            Err(e) => {
+                                tracing::error!("Failed to create app with remote backend: {}", e);
+                                let (launcher, command) = Launcher::new(datadir, Some(network));
+                                self.state = State::Launcher(Box::new(launcher));
+                                command.map(|msg| Message::Launch(Box::new(msg)))
+                            }
+                        }
                     }
                     Err(e) => {
                         // Failed to load BreezClient - return to launcher with error
@@ -821,7 +815,7 @@ async fn save_cube_settings(
     cube: app::settings::CubeSettings,
     network: bitcoin::Network,
     settings_data: app::settings::Settings,
-) -> Result<app::settings::CubeSettings, CubeSettingsError> {
+) -> Result<app::settings::CubeSettings, String> {
     let cube_name = cube.name.clone();
     let settings_path = network_dir.path().join("settings.json");
 
@@ -840,7 +834,7 @@ async fn save_cube_settings(
                 "Failed to save cube '{}' on {} network to {:?}: {}",
                 cube_name, network, settings_path, e
             );
-            Err(CubeSettingsError::SaveFailed(e.to_string()))
+            Err(e.to_string())
         }
     }
 }
@@ -850,7 +844,7 @@ async fn find_or_create_cube(
     wallet_id: &WalletId,
     wallet_alias: &Option<String>,
     network: bitcoin::Network,
-) -> Result<app::settings::CubeSettings, CubeSettingsError> {
+) -> Result<app::settings::CubeSettings, String> {
     match app::settings::Settings::from_file(network_dir) {
         Ok(mut settings_data) => {
             // First, check if a cube already has this wallet
@@ -932,7 +926,7 @@ pub fn create_app_with_remote_backend(
     network: bitcoin::Network,
     config: app::Config,
     breez_client: Arc<app::breez::BreezClient>,
-) -> (app::App, iced::Task<app::Message>) {
+) -> Result<(app::App, iced::Task<app::Message>), String> {
     // If someone modified the wallet_alias on Liana-Connect,
     // then the new alias is imported and stored in the settings file.
     if wallet.metadata.wallet_alias != wallet_settings.alias {
@@ -987,7 +981,6 @@ pub fn create_app_with_remote_backend(
     // Load cube settings for this wallet
     let network_dir = coincube_dir.network_directory(network);
     let wallet_id = wallet_settings.wallet_id();
-    let wallet_alias_for_cube = wallet.metadata.wallet_alias.clone();
 
     let cube_settings = match app::settings::Settings::from_file(&network_dir) {
         Ok(settings) => {
@@ -998,48 +991,23 @@ pub fn create_app_with_remote_backend(
             {
                 found_cube.clone()
             } else {
-                tracing::warn!("No cube found for vault wallet, creating and persisting new cube");
-                let new_cube = app::settings::CubeSettings::new(
-                    wallet_alias_for_cube.unwrap_or_else(|| "My Cube".to_string()),
-                    network,
-                )
-                .with_vault(wallet_id);
-
-                if let Err(e) = tokio::runtime::Handle::current().block_on(async {
-                    update_settings_file(&network_dir, |mut fresh_settings| {
-                        fresh_settings.cubes.push(new_cube.clone());
-                        Some(fresh_settings)
-                    })
-                    .await
-                }) {
-                    tracing::error!("Failed to persist new cube for remote backend: {}", e);
-                }
-
-                new_cube
+                tracing::error!("No cube found for vault wallet in settings file");
+                return Err(
+                    "No cube found for this wallet. Please ensure your settings are properly configured."
+                        .to_string(),
+                );
             }
         }
         Err(_) => {
-            tracing::warn!("No settings file found, creating new cube and settings file");
-            let new_cube = app::settings::CubeSettings::new(
-                wallet_alias_for_cube.unwrap_or_else(|| "My Cube".to_string()),
-                network,
-            )
-            .with_vault(wallet_id);
-
-            let mut new_settings = app::settings::Settings::default();
-            new_settings.cubes.push(new_cube.clone());
-
-            if let Err(e) = tokio::runtime::Handle::current().block_on(async {
-                update_settings_file(&network_dir, |_| Some(new_settings)).await
-            }) {
-                tracing::error!("Failed to create settings file for remote backend: {}", e);
-            }
-
-            new_cube
+            tracing::error!("No settings file found for remote backend");
+            return Err(
+                "No settings file found. Please ensure your wallet is properly set up with a PIN."
+                    .to_string(),
+            );
         }
     };
 
-    App::new(
+    Ok(App::new(
         Cache {
             network,
             datadir_path: coincube_dir.clone(),
@@ -1078,5 +1046,5 @@ pub fn create_app_with_remote_backend(
         None,
         false,
         cube_settings,
-    )
+    ))
 }

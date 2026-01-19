@@ -58,7 +58,6 @@ impl State for ActiveSettings {
         view::dashboard(
             menu,
             cache,
-            None,
             view::active::active_settings_view(self.breez_client.active_signer(), &self.flow_state),
         )
     }

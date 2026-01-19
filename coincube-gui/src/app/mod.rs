@@ -225,7 +225,7 @@ impl Panels {
                         cache.last_poll_timestamp(),
                         cache.last_poll_at_startup,
                     ),
-                    cache.bitcoin_unit.into(),
+                    cache.bitcoin_unit,
                 )
             }),
             settings: Some(VaultSettingsState::new(
@@ -305,7 +305,7 @@ impl Panels {
                     cache.last_poll_timestamp(),
                     cache.last_poll_at_startup,
                 ),
-                cache.bitcoin_unit.into(),
+                cache.bitcoin_unit,
             )
         });
         self.settings = Some(VaultSettingsState::new(

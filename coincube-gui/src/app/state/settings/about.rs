@@ -4,7 +4,6 @@ use coincube_ui::widget::Element;
 use iced::Task;
 
 use crate::app::cache::Cache;
-use crate::app::error::Error;
 use crate::app::menu::Menu;
 use crate::app::message::Message;
 use crate::app::state::State;
@@ -15,17 +14,11 @@ use crate::daemon::{Daemon, DaemonBackend};
 #[derive(Default)]
 pub struct AboutSettingsState {
     daemon_version: Option<String>,
-    warning: Option<Error>,
 }
 
 impl State for AboutSettingsState {
     fn view<'a>(&'a self, menu: &'a Menu, cache: &'a Cache) -> Element<'a, view::Message> {
-        crate::app::view::settings::about::about_section(
-            menu,
-            cache,
-            None, // Errors now shown via global toast
-            self.daemon_version.as_ref(),
-        )
+        crate::app::view::settings::about::about_section(menu, cache, self.daemon_version.as_ref())
     }
 
     fn update(
@@ -48,9 +41,7 @@ impl State for AboutSettingsState {
                     }
                 }
                 Err(e) => {
-                    let err_msg = e.to_string();
-                    self.warning = Some(e);
-                    return Task::done(Message::View(view::Message::ShowError(err_msg)));
+                    return Task::done(Message::View(view::Message::ShowError(e.to_string())));
                 }
             }
         }

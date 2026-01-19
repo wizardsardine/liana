@@ -150,7 +150,6 @@ impl State for GlobalHome {
         let content = view::dashboard(
             menu,
             cache,
-            None,
             view::global_home::global_home_view(GlobalViewConfig {
                 active_balance,
                 vault_balance,
@@ -168,7 +167,6 @@ impl State for GlobalHome {
                     .map_or(&self.empty_labels, |info| &info.labels),
                 labels_editing: self.labels_edited.cache(),
                 address_expanded: self.address_expanded,
-                warning: None, // Errors now shown via global toast
                 bitcoin_unit: cache.bitcoin_unit,
                 onchain_send_limit: self.onchain_send_limit,
                 onchain_receive_limit: self.onchain_receive_limit,
@@ -398,9 +396,17 @@ impl State for GlobalHome {
                             if matches!(transfer_direction, TransferDirection::VaultToActive) {
                                 if let Some(address_info) = self.receive_address_info.clone() {
                                     if let Some(daemon) = daemon {
+                                        let denomination = if matches!(
+                                            cache.bitcoin_unit,
+                                            crate::app::settings::unit::BitcoinDisplayUnit::BTC
+                                        ) {
+                                            coincube_core::miniscript::bitcoin::Denomination::Bitcoin
+                                        } else {
+                                            coincube_core::miniscript::bitcoin::Denomination::Satoshi
+                                        };
                                         if let Ok(amount) = Amount::from_str_in(
                                             &self.entered_amount.value,
-                                            coincube_core::miniscript::bitcoin::Denomination::Bitcoin,
+                                            denomination,
                                         ) {
                                             let amount_sat = amount.to_sat();
                                             let mut destinations = std::collections::HashMap::new();
@@ -608,17 +614,27 @@ impl State for GlobalHome {
                                         match wallet.main_descriptor.partial_spend_info(&psbt) {
                                             Ok(info) => info,
                                             Err(e) => {
+                                                let err_msg =
+                                                    format!("Failed to get signature info: {}", e);
                                                 return Task::done(Message::View(
-                                                    view::Message::ShowError(format!(
-                                                        "Failed to get signature info: {}",
-                                                        e
-                                                    )),
+                                                    view::Message::ShowError(err_msg),
                                                 ));
                                             }
                                         };
 
                                     let spend_amount =
                                         psbt.unsigned_tx.output.iter().map(|out| out.value).sum();
+
+                                    // Use primary path if no inputs are using a relative locktime
+                                    let use_primary_path = !psbt
+                                        .unsigned_tx
+                                        .input
+                                        .iter()
+                                        .map(|txin| txin.sequence)
+                                        .any(|seq| seq.is_relative_lock_time());
+                                    let max_vbytes = wallet
+                                        .main_descriptor
+                                        .unsigned_tx_max_vbytes(&psbt.unsigned_tx, use_primary_path);
 
                                     // Create minimal SpendTx
                                     let spend_tx = SpendTx {
@@ -630,7 +646,7 @@ impl State for GlobalHome {
                                         change_indexes: vec![],
                                         spend_amount,
                                         fee_amount: None,
-                                        max_vbytes: 1000,
+                                        max_vbytes,
                                         status: crate::daemon::model::SpendStatus::Pending,
                                         updated_at: Some(
                                             std::time::SystemTime::now()

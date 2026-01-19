@@ -118,7 +118,6 @@ impl State for VaultReceivePanel {
         let content = view::dashboard(
             menu,
             cache,
-            None, // Errors now shown via global toast
             view::vault::receive::receive(
                 &self.addresses.list,
                 &self.addresses.labels,
@@ -368,7 +367,6 @@ impl VerifyAddressModal {
 impl VerifyAddressModal {
     pub fn view(&self) -> Element<'_, view::Message> {
         view::vault::receive::verify_address_modal(
-            None, // Errors now shown via global toast
             &self.hws.list,
             &self.chosen_hws,
             &self.address,

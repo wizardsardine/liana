@@ -7,7 +7,6 @@ use coincube_ui::widget::*;
 use iced::{clipboard, widget::qr_code, Task};
 
 use crate::app::settings::unit::BitcoinDisplayUnit;
-use crate::app::view::ReceiveError;
 use crate::app::view::{ActiveReceiveMessage, ReceiveMethod};
 use crate::app::{breez::BreezClient, cache::Cache, menu::Menu, state::State};
 use crate::app::{message::Message, view, wallet::Wallet};
@@ -52,20 +51,20 @@ impl ActiveReceive {
         client: Arc<BreezClient>,
         amount: Amount,
         description: Option<String>,
-    ) -> Result<String, ReceiveError> {
+    ) -> Result<String, String> {
         let response = client
             .receive_invoice(amount, description)
             .await
-            .map_err(|e| ReceiveError::LightningInvoice(e.to_string()))?;
+            .map_err(|e| e.to_string())?;
 
         Ok(response.destination)
     }
 
-    async fn generate_onchain_address(client: Arc<BreezClient>) -> Result<String, ReceiveError> {
+    async fn generate_onchain_address(client: Arc<BreezClient>) -> Result<String, String> {
         let response = client
             .receive_onchain(None)
             .await
-            .map_err(|e| ReceiveError::OnChainAddress(e.to_string()))?;
+            .map_err(|e| e.to_string())?;
 
         Ok(response.destination)
     }
@@ -80,14 +79,14 @@ impl State for ActiveReceive {
             self.loading,
             &self.amount_input,
             &self.description_input,
-            cache.bitcoin_unit.into(),
-            None, // Errors now shown via global toast
+            cache.bitcoin_unit,
+            self.error.as_ref(),
             self.lightning_receive_limits,
             self.onchain_receive_limits,
         )
         .map(view::Message::ActiveReceive);
 
-        let content = view::dashboard(menu, cache, None, receive_view);
+        let content = view::dashboard(menu, cache, receive_view);
 
         // Add toast notification for clipboard copy
         let toasts = if let Some(message) = &self.toast {
@@ -225,15 +224,32 @@ impl State for ActiveReceive {
                                     self.onchain_qr_data = None;
                                 }
                             }
-                            return Task::done(Message::View(view::Message::ShowError(err_msg)));
+                            // Show error toast and schedule local error clearing
+                            let show_error =
+                                Task::done(Message::View(view::Message::ShowError(err_msg)));
+                            let clear_error = Task::perform(
+                                async {
+                                    tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
+                                },
+                                |_| {
+                                    Message::View(view::Message::ActiveReceive(
+                                        view::ActiveReceiveMessage::ClearError,
+                                    ))
+                                },
+                            );
+                            return Task::batch(vec![show_error, clear_error]);
                         }
                     }
                     return Task::none();
                 }
 
                 ActiveReceiveMessage::Error(err) => {
-                    self.error = Some(err.to_string());
-                    return Task::perform(
+                    let err_msg = err.to_string();
+                    self.error = Some(err_msg.clone());
+                    // Show error toast and schedule local error clearing
+                    let show_error =
+                        Task::done(Message::View(view::Message::ShowError(err_msg)));
+                    let clear_error = Task::perform(
                         async {
                             tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
                         },
@@ -243,6 +259,7 @@ impl State for ActiveReceive {
                             ))
                         },
                     );
+                    return Task::batch(vec![show_error, clear_error]);
                 }
 
                 ActiveReceiveMessage::ClearError => {

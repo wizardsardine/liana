@@ -59,7 +59,6 @@ impl State for ActiveTransactions {
             view::dashboard(
                 menu,
                 cache,
-                None,
                 view::active::transaction_detail_view(
                     payment,
                     fiat_converter,
@@ -70,7 +69,6 @@ impl State for ActiveTransactions {
             view::dashboard(
                 menu,
                 cache,
-                None,
                 view::active::active_transactions_view(
                     &self.payments,
                     &self.balance,
@@ -103,7 +101,10 @@ impl State for ActiveTransactions {
                 self.selected_payment = self.payments.get(i).cloned();
                 Task::none()
             }
-            Message::View(view::Message::Reload) | Message::View(view::Message::Close) => {
+            Message::View(view::Message::Reload) => {
+                self.reload(None, None)
+            }
+            Message::View(view::Message::Close) => {
                 self.selected_payment = None;
                 Task::none()
             }

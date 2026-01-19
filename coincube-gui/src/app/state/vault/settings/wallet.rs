@@ -111,7 +111,6 @@ impl State for WalletSettingsState {
         let content = view::vault::settings::wallet_settings(
             menu,
             cache,
-            None, // Errors now shown via global toast
             &self.descriptor,
             &self.wallet_alias,
             &self.keys_aliases,
@@ -354,7 +353,6 @@ impl RegisterWalletModal {
 impl RegisterWalletModal {
     fn view(&self) -> Element<'_, view::Message> {
         view::vault::settings::register_wallet_modal(
-            None, // Errors now shown via global toast
             &self.hws.list,
             self.processing,
             self.chosen_hw,

@@ -191,7 +191,6 @@ impl State for BitcoindSettingsState {
         view::vault::settings::bitcoind_settings(
             menu,
             cache,
-            None, // Errors now shown via global toast
             if self.bitcoind_settings.is_some() || self.electrum_settings.is_some() {
                 let mut setting_panels = Vec::new();
                 if let Some(settings) = self.bitcoind_settings.as_ref() {

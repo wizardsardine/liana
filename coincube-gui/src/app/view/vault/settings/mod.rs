@@ -29,10 +29,9 @@ use coincube_ui::{
 use crate::{
     app::{
         cache::Cache,
-        error::Error,
         menu::{Menu, VaultSubMenu},
         settings::ProviderKey,
-        view::{vault::hw, vault::warning::warn},
+        view::vault::hw,
     },
     help,
     hw::HardwareWallet,
@@ -149,7 +148,6 @@ pub fn list<'a>(menu: &'a Menu, cache: &'a Cache, is_remote_backend: bool) -> El
     dashboard(
         menu,
         cache,
-        None,
         Column::new()
             .spacing(20)
             .width(Length::Fill)
@@ -175,7 +173,6 @@ pub fn link<'a>(url: &str, link_text: &'static str) -> Element<'a, Message> {
 pub fn bitcoind_settings<'a>(
     menu: &'a Menu,
     cache: &'a Cache,
-    warning: Option<&Error>,
     settings: Vec<Element<'a, Message>>,
 ) -> Element<'a, Message> {
     let header = header("Node", SettingsMessage::EditBitcoindSettings);
@@ -183,7 +180,6 @@ pub fn bitcoind_settings<'a>(
     dashboard(
         menu,
         cache,
-        warning,
         Column::new()
             .spacing(20)
             .push(header)
@@ -191,11 +187,7 @@ pub fn bitcoind_settings<'a>(
     )
 }
 
-pub fn import_export<'a>(
-    menu: &'a Menu,
-    cache: &'a Cache,
-    warning: Option<&Error>,
-) -> Element<'a, Message> {
+pub fn import_export<'a>(menu: &'a Menu, cache: &'a Cache) -> Element<'a, Message> {
     let header = header("Import/Export", SettingsMessage::ImportExportSection);
 
     let description = Row::new()
@@ -258,7 +250,6 @@ pub fn import_export<'a>(
     dashboard(
         menu,
         cache,
-        warning,
         Column::new()
             .spacing(20)
             .push(header)
@@ -277,7 +268,6 @@ pub fn import_export<'a>(
 pub fn about_section<'a>(
     menu: &'a Menu,
     cache: &'a Cache,
-    warning: Option<&Error>,
     coincubed_version: Option<&String>,
 ) -> Element<'a, Message> {
     let header = header("About", SettingsMessage::AboutSection);
@@ -310,7 +300,6 @@ pub fn about_section<'a>(
     dashboard(
         menu,
         cache,
-        warning,
         Column::new()
             .spacing(20)
             .push(header)
@@ -325,7 +314,6 @@ pub fn remote_backend_section<'a>(
     email_form: &form::Value<String>,
     processing: bool,
     success: bool,
-    warning: Option<&Error>,
 ) -> Element<'a, Message> {
     let header = header("Backend", SettingsMessage::EditRemoteBackendSettings);
 
@@ -367,7 +355,6 @@ pub fn remote_backend_section<'a>(
     dashboard(
         menu,
         cache,
-        warning,
         Column::new()
             .spacing(20)
             .push(header)
@@ -1001,7 +988,6 @@ fn is_ok_and<T, E>(res: &Result<T, E>, f: impl FnOnce(&T) -> bool) -> bool {
 pub fn wallet_settings<'a>(
     menu: &'a Menu,
     cache: &'a Cache,
-    warning: Option<&Error>,
     descriptor: &'a CoincubeDescriptor,
     wallet_alias: &'a form::Value<String>,
     keys_aliases: &'a [(Fingerprint, form::Value<String>)],
@@ -1124,7 +1110,6 @@ pub fn wallet_settings<'a>(
     dashboard(
         menu,
         cache,
-        warning,
         Column::new()
             .spacing(20)
             .push(header)
@@ -1323,23 +1308,21 @@ fn expire_message_units(sequence: u32) -> Vec<String> {
 }
 
 pub fn register_wallet_modal<'a>(
-    warning: Option<&Error>,
     hws: &'a [HardwareWallet],
     processing: bool,
     chosen_hw: Option<usize>,
     registered: &HashSet<Fingerprint>,
 ) -> Element<'a, Message> {
-    Column::new()
-        .push(warning.map(|w| warn(Some(w))))
-        .push(card::simple(
-            Column::new()
-                .push(
-                    Column::new()
-                        .push(text("Select device:").bold().width(Length::Fill))
-                        .spacing(10)
-                        .push(hws.iter().enumerate().fold(
-                            Column::new().spacing(10),
-                            |col, (i, hw)| {
+    card::simple(
+        Column::new()
+            .push(
+                Column::new()
+                    .push(text("Select device:").bold().width(Length::Fill))
+                    .spacing(10)
+                    .push(
+                        hws.iter()
+                            .enumerate()
+                            .fold(Column::new().spacing(10), |col, (i, hw)| {
                                 col.push(hw::hw_list_view_for_registration(
                                     i,
                                     hw,
@@ -1355,14 +1338,14 @@ pub fn register_wallet_modal<'a>(
                                             false
                                         },
                                 ))
-                            },
-                        ))
-                        .width(Length::Fill),
-                )
-                .spacing(20)
-                .width(Length::Fill)
-                .align_x(Alignment::Center),
-        ))
-        .width(Length::Fixed(500.0))
-        .into()
+                            }),
+                    )
+                    .width(Length::Fill),
+            )
+            .spacing(20)
+            .width(Length::Fill)
+            .align_x(Alignment::Center),
+    )
+    .width(Length::Fixed(500.0))
+    .into()
 }
