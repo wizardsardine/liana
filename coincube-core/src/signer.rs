@@ -476,7 +476,7 @@ impl HotSigner {
 
         // Derive key from password
         let salt = SaltString::encode_b64(salt_bytes)
-            .map_err(|e| SignerError::Encryption(e.to_string()))?;
+            .map_err(|e| SignerError::Decryption(e.to_string()))?;
 
         // Must use same params as encrypt_mnemonic
         let params = Params::new(
@@ -485,7 +485,7 @@ impl HotSigner {
             4,        // 4 parallel lanes
             Some(32), // 32-byte output for AES-256 key
         )
-        .map_err(|e| SignerError::Encryption(e.to_string()))?;
+        .map_err(|e| SignerError::Decryption(e.to_string()))?;
 
         let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
         let password_hash = argon2
