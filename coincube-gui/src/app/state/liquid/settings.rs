@@ -58,7 +58,6 @@ impl State for LiquidSettings {
         view::dashboard(
             menu,
             cache,
-            None,
             view::liquid::liquid_settings_view(self.breez_client.liquid_signer(), &self.flow_state),
         )
     }

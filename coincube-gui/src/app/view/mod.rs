@@ -34,7 +34,7 @@ use coincube_ui::{
 #[cfg(feature = "buysell")]
 use coincube_ui::icon::bitcoin_icon;
 
-use crate::app::{cache::Cache, error::Error, menu::Menu};
+use crate::app::{cache::Cache, menu::Menu};
 
 /// Simple toast notification for clipboard copy and other success messages
 pub fn simple_toast(message: &str) -> Container<Message> {
@@ -503,7 +503,6 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<
 pub fn dashboard<'a, T: Into<Element<'a, Message>>>(
     menu: &'a Menu,
     cache: &'a Cache,
-    warning: Option<&Error>,
     content: T,
 ) -> Element<'a, Message> {
     let has_vault = cache.has_vault; // Copy the bool value before moving into closure
@@ -515,7 +514,7 @@ pub fn dashboard<'a, T: Into<Element<'a, Message>>>(
         )
         .push(
             Column::new()
-                .push(warn(warning))
+                .push(warn(None))
                 .push(
                     Container::new(
                         scrollable(row!(
@@ -540,12 +539,10 @@ pub fn dashboard<'a, T: Into<Element<'a, Message>>>(
 
 pub fn modal<'a, T: Into<Element<'a, Message>>, F: Into<Element<'a, Message>>>(
     is_previous: bool,
-    warning: Option<&Error>,
     content: T,
     fixed_footer: Option<F>,
 ) -> Element<'a, Message> {
     Column::new()
-        .push(warn(warning))
         .push(
             Container::new(
                 Row::new()

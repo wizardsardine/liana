@@ -16,7 +16,7 @@ use iced::{
 
 use crate::app::{
     menu::Menu,
-    view::{vault::receive::address_card, vault::warning::warn, FiatAmountConverter, HomeMessage},
+    view::{vault::receive::address_card, FiatAmountConverter, HomeMessage},
 };
 use crate::app::{
     menu::{LiquidSubMenu, VaultSubMenu},
@@ -293,7 +293,7 @@ fn balance_summary_card<'a>(
                     .push(amount_with_size_and_unit(
                         balance,
                         H2_SIZE,
-                        bitcoin_unit.into(),
+                        bitcoin_unit,
                     ))
                     .push_maybe(
                         fiat_balance.map(|fiat| fiat.to_text().size(P1_SIZE).color(color::GREY_2)),
@@ -368,13 +368,11 @@ fn enter_amount_card<'a>(
                                 Some(
                                     Container::new(
                                         text(format!(
-                                            "Enter an amount between {} {} and {} {}",
+                                            "Enter an amount between {} and {}",
                                             Amount::from_sat(limits.0)
                                                 .to_formatted_string_with_unit(bitcoin_unit),
-                                            bitcoin_unit.to_string(),
                                             Amount::from_sat(limits.1)
                                                 .to_formatted_string_with_unit(bitcoin_unit),
-                                            bitcoin_unit.to_string()
                                         ))
                                         .size(12),
                                     )
@@ -532,7 +530,6 @@ fn confirm_transfer_view<'a>(
     labels: &'a std::collections::HashMap<String, String>,
     labels_editing: &'a std::collections::HashMap<String, form::Value<String>>,
     address_expanded: bool,
-    warning: Option<&'a crate::app::error::Error>,
     is_sending: bool,
     is_tx_signed: bool,
     bitcoin_unit: BitcoinDisplayUnit,
@@ -548,7 +545,6 @@ fn confirm_transfer_view<'a>(
                 .on_press(Message::Home(HomeMessage::PreviousStep)),
         )
         .push(Space::new().height(Length::Fixed(20.0)))
-        .push(warning.map(|w| warn(Some(w))))
         .push(Container::new(
             Column::new()
                 .push(
@@ -758,12 +754,6 @@ fn confirm_transfer_view<'a>(
                         ))
                     } else {
                         None
-                    })
-                    .push(Space::new().width(4))
-                    .push_maybe(if amount.is_ok() {
-                        Some(text(format!("{}", bitcoin_unit.to_string())))
-                    } else {
-                        None
                     }),
             )
             .width(Length::Fill)
@@ -904,7 +894,6 @@ pub struct GlobalViewConfig<'a> {
     pub labels: &'a std::collections::HashMap<String, String>,
     pub labels_editing: &'a std::collections::HashMap<String, form::Value<String>>,
     pub address_expanded: bool,
-    pub warning: Option<&'a crate::app::error::Error>,
     pub bitcoin_unit: crate::app::settings::unit::BitcoinDisplayUnit,
     pub onchain_send_limit: Option<(u64, u64)>,
     pub onchain_receive_limit: Option<(u64, u64)>,
@@ -948,7 +937,6 @@ pub fn global_home_view<'a>(config: GlobalViewConfig<'a>) -> Element<'a, Message
         labels,
         labels_editing,
         address_expanded,
-        warning,
         bitcoin_unit,
         onchain_send_limit,
         onchain_receive_limit,
@@ -983,7 +971,6 @@ pub fn global_home_view<'a>(config: GlobalViewConfig<'a>) -> Element<'a, Message
                     labels,
                     labels_editing,
                     address_expanded,
-                    warning,
                     is_sending,
                     is_tx_signed,
                     bitcoin_unit,

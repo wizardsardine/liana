@@ -5,7 +5,6 @@ use coincube_ui::component::{badge, card, separation, text::*};
 use coincube_ui::{icon, widget::*};
 
 use crate::app::cache;
-use crate::app::error::Error;
 use crate::app::menu::Menu;
 use crate::app::view::dashboard;
 use crate::app::view::message::{Message, SettingsMessage};
@@ -13,7 +12,6 @@ use crate::app::view::message::{Message, SettingsMessage};
 pub fn about_section<'a>(
     menu: &'a Menu,
     cache: &'a cache::Cache,
-    warning: Option<&Error>,
     coincubed_version: Option<&String>,
 ) -> Element<'a, Message> {
     let content = card::simple(
@@ -44,7 +42,6 @@ pub fn about_section<'a>(
     dashboard(
         menu,
         cache,
-        warning,
         Column::new()
             .spacing(20)
             .push(super::header("About", SettingsMessage::AboutSection))

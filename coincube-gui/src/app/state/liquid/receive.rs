@@ -7,7 +7,6 @@ use coincube_ui::widget::*;
 use iced::{clipboard, widget::qr_code, Task};
 
 use crate::app::settings::unit::BitcoinDisplayUnit;
-use crate::app::view::ReceiveError;
 use crate::app::view::{LiquidReceiveMessage, ReceiveMethod};
 use crate::app::{breez::BreezClient, cache::Cache, menu::Menu, state::State};
 use crate::app::{message::Message, view, wallet::Wallet};
@@ -52,20 +51,20 @@ impl LiquidReceive {
         client: Arc<BreezClient>,
         amount: Amount,
         description: Option<String>,
-    ) -> Result<String, ReceiveError> {
+    ) -> Result<String, String> {
         let response = client
             .receive_invoice(amount, description)
             .await
-            .map_err(|e| ReceiveError::LightningInvoice(e.to_string()))?;
+            .map_err(|e| e.to_string())?;
 
         Ok(response.destination)
     }
 
-    async fn generate_onchain_address(client: Arc<BreezClient>) -> Result<String, ReceiveError> {
+    async fn generate_onchain_address(client: Arc<BreezClient>) -> Result<String, String> {
         let response = client
             .receive_onchain(None)
             .await
-            .map_err(|e| ReceiveError::OnChainAddress(e.to_string()))?;
+            .map_err(|e| e.to_string())?;
 
         Ok(response.destination)
     }
@@ -87,7 +86,7 @@ impl State for LiquidReceive {
         )
         .map(view::Message::LiquidReceive);
 
-        let content = view::dashboard(menu, cache, None, receive_view);
+        let content = view::dashboard(menu, cache, receive_view);
 
         // Add toast notification for clipboard copy
         let toasts = if let Some(message) = &self.toast {

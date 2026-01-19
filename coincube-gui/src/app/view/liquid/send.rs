@@ -33,7 +33,6 @@ pub struct LiquidSendFlowConfig<'a> {
     pub fiat_converter: Option<FiatAmountConverter>,
     pub recent_transaction: &'a Vec<RecentTransaction>,
     pub input: &'a form::Value<String>,
-    pub error: Option<&'a str>,
     pub amount_input: &'a form::Value<String>,
     pub comment: String,
     pub description: Option<&'a str>,
@@ -61,7 +60,7 @@ pub fn liquid_send_with_flow<'a>(config: LiquidSendFlowConfig<'a>) -> Element<'a
             )
             .map(Message::LiquidSend);
 
-            let content = view::dashboard(config.menu, config.cache, None, send_view);
+            let content = view::dashboard(config.menu, config.cache, send_view);
 
             // Show modal if needed
             match modal {
@@ -118,34 +117,15 @@ pub fn liquid_send_with_flow<'a>(config: LiquidSendFlowConfig<'a>) -> Element<'a
                 config.bitcoin_unit,
             )
             .map(Message::LiquidSend);
-            view::dashboard(config.menu, config.cache, None, content)
+            view::dashboard(config.menu, config.cache, content)
         }
         LiquidSendFlowState::Sent => {
             let content = sent_page(config.amount, config.bitcoin_unit).map(Message::LiquidSend);
-            view::dashboard(config.menu, config.cache, None, content)
+            view::dashboard(config.menu, config.cache, content)
         }
     };
 
-    if let Some(err) = config.error {
-        Column::new()
-            .push(
-                Container::new(
-                    Container::new(text(err).size(14).color(color::RED))
-                        .padding(10)
-                        .center_x(Length::Fill)
-                        .style(theme::card::error)
-                        .width(Length::Fill)
-                        .max_width(800),
-                )
-                .width(Length::Fill)
-                .padding([20, 40])
-                .align_x(Alignment::Center),
-            )
-            .push(base_content)
-            .into()
-    } else {
-        base_content
-    }
+    base_content
 }
 
 pub fn liquid_send_view<'a>(
@@ -474,11 +454,9 @@ pub fn amount_input_model<'a>(config: AmountInputConfig<'a>) -> Element<'a, Liqu
                 let max_btc = Amount::from_sat(max_sat);
                 amount_input_section = amount_input_section.push(
                     text(format!(
-                        "Enter an amount between {} {} and {} {}",
+                        "Enter an amount between {} and {}",
                         min_btc.to_formatted_string_with_unit(config.bitcoin_unit),
-                        config.bitcoin_unit.to_string(),
                         max_btc.to_formatted_string_with_unit(config.bitcoin_unit),
-                        config.bitcoin_unit.to_string()
                     ))
                     .size(12),
                 );
@@ -488,11 +466,9 @@ pub fn amount_input_model<'a>(config: AmountInputConfig<'a>) -> Element<'a, Liqu
             let max_btc = Amount::from_sat(max_sat);
             amount_input_section = amount_input_section.push(
                 text(format!(
-                    "Enter an amount between {} {} and {} {}",
+                    "Enter an amount between {} and {}",
                     min_btc.to_formatted_string_with_unit(config.bitcoin_unit),
-                    config.bitcoin_unit.to_string(),
                     max_btc.to_formatted_string_with_unit(config.bitcoin_unit),
-                    config.bitcoin_unit.to_string()
                 ))
                 .size(12),
             );

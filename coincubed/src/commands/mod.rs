@@ -5,7 +5,7 @@
 mod utils;
 
 use crate::{
-    bitcoin::{BitcoinError, BitcoinInterface},
+    bitcoin::BitcoinInterface,
     database::{Coin, DatabaseConnection, DatabaseInterface},
     miniscript::bitcoin::absolute::LockTime,
     poller::PollerMessage,
@@ -60,11 +60,11 @@ pub enum CommandError {
     UnknownSpend(bitcoin::Txid),
     // FIXME: when upgrading Miniscript put the actual error there
     SpendFinalization(String),
-    TxBroadcast(BitcoinError),
+    TxBroadcast(String),
     AlreadyRescanning,
     InsaneRescanTimestamp(u32),
     /// An error that might occur in the racy rescan triggering logic.
-    RescanTrigger(BitcoinError),
+    RescanTrigger(String),
     RecoveryNotAvailable,
     // Include timelock in error as it may not have been set explicitly by the user.
     OutpointNotRecoverable(bitcoin::OutPoint, /* timelock */ u16),

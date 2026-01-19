@@ -64,7 +64,6 @@ pub fn list<'a>(menu: &'a Menu, cache: &'a Cache) -> Element<'a, Message> {
     dashboard(
         menu,
         cache,
-        None,
         Column::new()
             .spacing(20)
             .push(header)

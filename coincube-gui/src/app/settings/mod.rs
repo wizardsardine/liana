@@ -135,7 +135,7 @@ pub struct CubeSettings {
     /// Optional security PIN (stored as Argon2id hash with salt in PHC format)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub security_pin_hash: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub liquid_wallet_signer_fingerprint: Option<Fingerprint>,
     /// Bitcoin display unit preference for this cube
     #[serde(default)]

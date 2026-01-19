@@ -298,7 +298,6 @@ impl PsbtState {
             } else {
                 false
             },
-            None, // Errors now shown via global toast
             cache.bitcoin_unit.into(),
         );
         if let Some(modal) = &self.modal {
@@ -353,12 +352,9 @@ impl Modal for SaveModal {
         Task::none()
     }
     fn view<'a>(&'a self, content: Element<'a, view::Message>) -> Element<'a, view::Message> {
-        modal::Modal::new(
-            content,
-            view::vault::psbt::save_action(None, self.saved), // Errors shown via global toast
-        )
-        .on_blur(Some(view::Message::Spend(view::SpendTxMessage::Cancel)))
-        .into()
+        modal::Modal::new(content, view::vault::psbt::save_action(self.saved))
+            .on_blur(Some(view::Message::Spend(view::SpendTxMessage::Cancel)))
+            .into()
     }
 }
 
@@ -410,11 +406,7 @@ impl Modal for BroadcastModal {
     fn view<'a>(&'a self, content: Element<'a, view::Message>) -> Element<'a, view::Message> {
         modal::Modal::new(
             content,
-            view::vault::psbt::broadcast_action(
-                &self.conflicting_txids,
-                None, // Errors shown via global toast
-                self.broadcast,
-            ),
+            view::vault::psbt::broadcast_action(&self.conflicting_txids, self.broadcast),
         )
         .on_blur(Some(view::Message::Spend(view::SpendTxMessage::Cancel)))
         .into()
@@ -462,12 +454,9 @@ impl Modal for DeleteModal {
         Task::none()
     }
     fn view<'a>(&'a self, content: Element<'a, view::Message>) -> Element<'a, view::Message> {
-        modal::Modal::new(
-            content,
-            view::vault::psbt::delete_action(None, self.deleted), // Errors shown via global toast
-        )
-        .on_blur(Some(view::Message::Spend(view::SpendTxMessage::Cancel)))
-        .into()
+        modal::Modal::new(content, view::vault::psbt::delete_action(self.deleted))
+            .on_blur(Some(view::Message::Spend(view::SpendTxMessage::Cancel)))
+            .into()
     }
 }
 
@@ -618,18 +607,13 @@ impl Modal for SignModal {
     fn view<'a>(&'a self, content: Element<'a, view::Message>) -> Element<'a, view::Message> {
         let content = toast::Manager::new(
             content,
-            view::vault::psbt::sign_action_toasts(
-                None, // Errors shown via global toast
-                &self.hws.list,
-                &self.signing,
-            ),
+            view::vault::psbt::sign_action_toasts(&self.hws.list, &self.signing),
         )
         .into();
         if self.display_modal {
             modal::Modal::new(
                 content,
                 view::vault::psbt::sign_action(
-                    None, // Errors shown via global toast
                     &self.hws.list,
                     &self.wallet.main_descriptor,
                     self.wallet.signer.as_ref().map(|s| s.fingerprint()),

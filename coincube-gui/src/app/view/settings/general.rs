@@ -7,7 +7,6 @@ use coincube_ui::theme;
 use coincube_ui::widget::*;
 
 use crate::app::cache;
-use crate::app::error::Error;
 use crate::app::menu::Menu;
 use crate::app::settings::fiat::PriceSetting;
 use crate::app::settings::unit::{BitcoinDisplayUnit, UnitSetting};
@@ -21,12 +20,10 @@ pub fn general_section<'a>(
     new_price_setting: &'a PriceSetting,
     new_unit_setting: &'a UnitSetting,
     currencies_list: &'a [Currency],
-    warning: Option<&Error>,
 ) -> Element<'a, Message> {
     dashboard(
         menu,
         cache,
-        warning,
         Column::new()
             .spacing(20)
             .push(super::header("General", SettingsMessage::GeneralSection))
