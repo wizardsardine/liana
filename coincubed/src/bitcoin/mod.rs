@@ -42,17 +42,17 @@ impl fmt::Display for BlockChainTip {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BitcoinError {
-    SyncFailed(String),
-    BroadcastFailed(String),
-    RescanFailed(String),
+    Sync(String),
+    Broadcast(String),
+    Rescan(String),
 }
 
 impl fmt::Display for BitcoinError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            Self::SyncFailed(e) => write!(f, "Wallet sync failed: {}", e),
-            Self::BroadcastFailed(e) => write!(f, "Transaction broadcast failed: {}", e),
-            Self::RescanFailed(e) => write!(f, "Rescan failed: {}", e),
+            Self::Sync(e) => write!(f, "Wallet sync failed: {}", e),
+            Self::Broadcast(e) => write!(f, "Transaction broadcast failed: {}", e),
+            Self::Rescan(e) => write!(f, "Rescan failed: {}", e),
         }
     }
 }
@@ -372,9 +372,9 @@ impl BitcoinInterface for d::BitcoinD {
     fn broadcast_tx(&self, tx: &bitcoin::Transaction) -> Result<(), BitcoinError> {
         match self.broadcast_tx(tx) {
             Ok(()) => Ok(()),
-            Err(BitcoindError::Server(e)) => Err(BitcoinError::BroadcastFailed(e.to_string())),
+            Err(BitcoindError::Server(e)) => Err(BitcoinError::Broadcast(e.to_string())),
             // We assume the Bitcoin backend doesn't fail, so it must be a JSONRPC error.
-            Err(e) => Err(BitcoinError::BroadcastFailed(e.to_string())),
+            Err(e) => Err(BitcoinError::Broadcast(e.to_string())),
         }
     }
 
@@ -385,7 +385,7 @@ impl BitcoinInterface for d::BitcoinD {
     ) -> Result<(), BitcoinError> {
         // FIXME: in theory i think this could potentially fail to actually start the rescan.
         self.start_rescan(desc, timestamp)
-            .map_err(|e| BitcoinError::RescanFailed(e.to_string()))
+            .map_err(|e| BitcoinError::Rescan(e.to_string()))
     }
 
     fn rescan_progress(&self) -> Option<f64> {
@@ -427,7 +427,7 @@ impl BitcoinInterface for electrum::Electrum {
         change_index: ChildNumber,
     ) -> Result<Option<BlockChainTip>, BitcoinError> {
         self.sync_wallet(receive_index, change_index)
-            .map_err(|e| BitcoinError::SyncFailed(e.to_string()))
+            .map_err(|e| BitcoinError::Sync(e.to_string()))
     }
 
     fn received_coins(
@@ -555,7 +555,7 @@ impl BitcoinInterface for electrum::Electrum {
     fn broadcast_tx(&self, tx: &bitcoin::Transaction) -> Result<(), BitcoinError> {
         match self.client().broadcast_tx(tx) {
             Ok(_txid) => Ok(()),
-            Err(e) => Err(BitcoinError::BroadcastFailed(e.to_string())),
+            Err(e) => Err(BitcoinError::Broadcast(e.to_string())),
         }
     }
 
