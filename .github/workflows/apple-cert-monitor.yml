@@ -1,0 +1,47 @@
+name: Apple Certificate Expiration Monitor
+
+on:
+  schedule:
+    - cron: "0 9 * * 1" # Every Monday at 09:00 UTC
+  workflow_dispatch:
+
+jobs:
+  check-cert:
+    runs-on: macos-latest
+
+    steps:
+      - name: Import Developer ID certificate
+        env:
+          P12_BASE64: ${{ secrets.CERTIFICATE_P12_BASE64 }}
+          P12_PASSWORD: ${{ secrets.CERTIFICATE_P12_PASSWORD }}
+        run: |
+          echo "$P12_BASE64" | base64 --decode > cert.p12
+          echo "$P12_PASSWORD" > cert.pass
+
+          security create-keychain -p "" temp.keychain
+          security default-keychain -s temp.keychain
+          security unlock-keychain -p "" temp.keychain
+
+          security import cert.p12 \
+            -k temp.keychain \
+            -P "$(cat cert.pass)" \
+            -T /usr/bin/codesign
+
+          rm cert.p12 cert.pass
+
+      - name: Check certificate expiration
+        run: |
+          EXPIRY=$(security find-certificate \
+            -c "Developer ID Application: COINCUBE TECHNOLOGY LLC" \
+            -p | openssl x509 -noout -enddate | cut -d= -f2)
+
+          EXPIRY_TS=$(date -j -f "%b %d %T %Y %Z" "$EXPIRY" "+%s")
+          NOW_TS=$(date "+%s")
+          DAYS_LEFT=$(( (EXPIRY_TS - NOW_TS) / 86400 ))
+
+          echo "Apple Developer ID certificate expires in $DAYS_LEFT days"
+
+          if [ "$DAYS_LEFT" -lt 30 ]; then
+            echo "::error ::Apple Developer ID certificate expires in $DAYS_LEFT days"
+            exit 1
+          fi
