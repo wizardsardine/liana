@@ -366,8 +366,18 @@ impl Request {
     }
 
     /// Convert application-level request to WebSocket message with protocol details
-    pub fn to_ws_message(&self, token: &str, request_id: &str) -> WsMessage {
+    pub fn to_ws_message_with_id(&self, token: &str, request_id: &str) -> WsMessage {
         create_ws_request(self.method(), token, request_id, self.payload())
+    }
+
+    /// Convert application-level request to WebSocket message with protocol details
+    pub fn to_ws_message(&self, token: &str) -> (WsMessage, Uuid) {
+        let id = Uuid::new_v4();
+        let request_id = id.to_string();
+        (
+            create_ws_request(self.method(), token, &request_id, self.payload()),
+            id,
+        )
     }
 }
 
@@ -532,7 +542,7 @@ mod protocol_tests {
         }"#;
 
         let request = Request::Connect { version: 1 };
-        let ws_msg = request.to_ws_message("test-token", "req-001");
+        let ws_msg = request.to_ws_message_with_id("test-token", "req-001");
 
         let actual: serde_json::Value = ws_msg_to_json(ws_msg);
         let expected: serde_json::Value = serde_json::from_str(expected_json).unwrap();
@@ -550,7 +560,7 @@ mod protocol_tests {
         }"#;
 
         let request = Request::Ping;
-        let ws_msg = request.to_ws_message("test-token", "req-002");
+        let ws_msg = request.to_ws_message_with_id("test-token", "req-002");
 
         let actual: serde_json::Value = ws_msg_to_json(ws_msg);
         let expected: serde_json::Value = serde_json::from_str(expected_json).unwrap();
@@ -568,7 +578,7 @@ mod protocol_tests {
         }"#;
 
         let request = Request::Close;
-        let ws_msg = request.to_ws_message("test-token", "req-003");
+        let ws_msg = request.to_ws_message_with_id("test-token", "req-003");
 
         let actual: serde_json::Value = ws_msg_to_json(ws_msg);
         let expected: serde_json::Value = serde_json::from_str(expected_json).unwrap();
@@ -587,7 +597,7 @@ mod protocol_tests {
         }"#;
 
         let request = Request::FetchOrg { id: test_uuid(1) };
-        let ws_msg = request.to_ws_message("test-token", "req-005");
+        let ws_msg = request.to_ws_message_with_id("test-token", "req-005");
 
         let actual: serde_json::Value = ws_msg_to_json(ws_msg);
         let expected: serde_json::Value = serde_json::from_str(expected_json).unwrap();
@@ -606,7 +616,7 @@ mod protocol_tests {
         }"#;
 
         let request = Request::FetchWallet { id: test_uuid(2) };
-        let ws_msg = request.to_ws_message("test-token", "req-006");
+        let ws_msg = request.to_ws_message_with_id("test-token", "req-006");
 
         let actual: serde_json::Value = ws_msg_to_json(ws_msg);
         let expected: serde_json::Value = serde_json::from_str(expected_json).unwrap();
@@ -625,7 +635,7 @@ mod protocol_tests {
         }"#;
 
         let request = Request::FetchUser { id: test_uuid(3) };
-        let ws_msg = request.to_ws_message("test-token", "req-007");
+        let ws_msg = request.to_ws_message_with_id("test-token", "req-007");
 
         let actual: serde_json::Value = ws_msg_to_json(ws_msg);
         let expected: serde_json::Value = serde_json::from_str(expected_json).unwrap();
@@ -662,7 +672,7 @@ mod protocol_tests {
             last_editor: None,
         };
         let request = Request::EditWallet { wallet };
-        let ws_msg = request.to_ws_message("test-token", "req-008");
+        let ws_msg = request.to_ws_message_with_id("test-token", "req-008");
 
         let actual: serde_json::Value = ws_msg_to_json(ws_msg);
         let expected: serde_json::Value = serde_json::from_str(expected_json).unwrap();
@@ -701,7 +711,7 @@ mod protocol_tests {
             last_editor: Some(test_uuid(4)),
         };
         let request = Request::EditWallet { wallet };
-        let ws_msg = request.to_ws_message("test-token", "req-008");
+        let ws_msg = request.to_ws_message_with_id("test-token", "req-008");
 
         let actual: serde_json::Value = ws_msg_to_json(ws_msg);
         let expected: serde_json::Value = serde_json::from_str(expected_json).unwrap();
@@ -804,7 +814,7 @@ mod protocol_tests {
             last_editor: None,
         };
         let request = Request::EditWallet { wallet };
-        let ws_msg = request.to_ws_message("test-token", "req-008");
+        let ws_msg = request.to_ws_message_with_id("test-token", "req-008");
 
         let actual: serde_json::Value = ws_msg_to_json(ws_msg);
         let expected: serde_json::Value = serde_json::from_str(expected_json).unwrap();
@@ -919,7 +929,7 @@ mod protocol_tests {
             last_editor: Some(test_uuid(4)),
         };
         let request = Request::EditWallet { wallet };
-        let ws_msg = request.to_ws_message("test-token", "req-008");
+        let ws_msg = request.to_ws_message_with_id("test-token", "req-008");
 
         let actual: serde_json::Value = ws_msg_to_json(ws_msg);
         let expected: serde_json::Value = serde_json::from_str(expected_json).unwrap();
@@ -956,7 +966,7 @@ mod protocol_tests {
             key_id: 0,
             xpub: Some(xpub),
         };
-        let ws_msg = request.to_ws_message("test-token", "req-009");
+        let ws_msg = request.to_ws_message_with_id("test-token", "req-009");
 
         let actual: serde_json::Value = ws_msg_to_json(ws_msg);
         let expected: serde_json::Value = serde_json::from_str(expected_json).unwrap();
@@ -982,7 +992,7 @@ mod protocol_tests {
             key_id: 0,
             xpub: None,
         };
-        let ws_msg = request.to_ws_message("test-token", "req-010");
+        let ws_msg = request.to_ws_message_with_id("test-token", "req-010");
 
         let actual: serde_json::Value = ws_msg_to_json(ws_msg);
         let expected: serde_json::Value = serde_json::from_str(expected_json).unwrap();
@@ -1021,7 +1031,7 @@ mod protocol_tests {
             key_id: 0,
             xpub: Some(xpub),
         };
-        let ws_msg = request.to_ws_message("test-token", "req-009");
+        let ws_msg = request.to_ws_message_with_id("test-token", "req-009");
 
         let actual: serde_json::Value = ws_msg_to_json(ws_msg);
         let expected: serde_json::Value = serde_json::from_str(expected_json).unwrap();
@@ -1059,7 +1069,7 @@ mod protocol_tests {
             key_id: 0,
             xpub: Some(xpub),
         };
-        let ws_msg = request.to_ws_message("test-token", "req-009");
+        let ws_msg = request.to_ws_message_with_id("test-token", "req-009");
 
         let actual: serde_json::Value = ws_msg_to_json(ws_msg);
         let expected: serde_json::Value = serde_json::from_str(expected_json).unwrap();
@@ -1894,7 +1904,7 @@ mod protocol_tests {
     #[test]
     fn test_request_from_ws_message_connect() {
         let request = Request::Connect { version: 1 };
-        let ws_msg = request.to_ws_message("test-token", "req-001");
+        let ws_msg = request.to_ws_message_with_id("test-token", "req-001");
         let (parsed, token, request_id) = Request::from_ws_message(ws_msg).unwrap();
 
         assert!(matches!(parsed, Request::Connect { version: 1 }));
@@ -1905,7 +1915,7 @@ mod protocol_tests {
     #[test]
     fn test_request_from_ws_message_ping() {
         let request = Request::Ping;
-        let ws_msg = request.to_ws_message("test-token", "req-002");
+        let ws_msg = request.to_ws_message_with_id("test-token", "req-002");
         let (parsed, token, request_id) = Request::from_ws_message(ws_msg).unwrap();
 
         assert!(matches!(parsed, Request::Ping));
@@ -1916,7 +1926,7 @@ mod protocol_tests {
     #[test]
     fn test_request_from_ws_message_close() {
         let request = Request::Close;
-        let ws_msg = request.to_ws_message("test-token", "req-003");
+        let ws_msg = request.to_ws_message_with_id("test-token", "req-003");
         let (parsed, token, request_id) = Request::from_ws_message(ws_msg).unwrap();
 
         assert!(matches!(parsed, Request::Close));
@@ -1927,7 +1937,7 @@ mod protocol_tests {
     #[test]
     fn test_request_from_ws_message_fetch_org() {
         let request = Request::FetchOrg { id: test_uuid(1) };
-        let ws_msg = request.to_ws_message("test-token", "req-004");
+        let ws_msg = request.to_ws_message_with_id("test-token", "req-004");
         let (parsed, token, request_id) = Request::from_ws_message(ws_msg).unwrap();
 
         match parsed {
@@ -1941,7 +1951,7 @@ mod protocol_tests {
     #[test]
     fn test_request_from_ws_message_fetch_wallet() {
         let request = Request::FetchWallet { id: test_uuid(2) };
-        let ws_msg = request.to_ws_message("test-token", "req-005");
+        let ws_msg = request.to_ws_message_with_id("test-token", "req-005");
         let (parsed, token, request_id) = Request::from_ws_message(ws_msg).unwrap();
 
         match parsed {
@@ -1955,7 +1965,7 @@ mod protocol_tests {
     #[test]
     fn test_request_from_ws_message_fetch_user() {
         let request = Request::FetchUser { id: test_uuid(3) };
-        let ws_msg = request.to_ws_message("test-token", "req-006");
+        let ws_msg = request.to_ws_message_with_id("test-token", "req-006");
         let (parsed, token, request_id) = Request::from_ws_message(ws_msg).unwrap();
 
         match parsed {
@@ -1981,7 +1991,7 @@ mod protocol_tests {
         let request = Request::EditWallet {
             wallet: wallet.clone(),
         };
-        let ws_msg = request.to_ws_message("test-token", "req-007");
+        let ws_msg = request.to_ws_message_with_id("test-token", "req-007");
         let (parsed, token, request_id) = Request::from_ws_message(ws_msg).unwrap();
 
         match parsed {
@@ -2006,7 +2016,7 @@ mod protocol_tests {
             key_id: 0,
             xpub: Some(xpub.clone()),
         };
-        let ws_msg = request.to_ws_message("test-token", "req-008");
+        let ws_msg = request.to_ws_message_with_id("test-token", "req-008");
         let (parsed, token, request_id) = Request::from_ws_message(ws_msg).unwrap();
 
         match parsed {
@@ -2032,7 +2042,7 @@ mod protocol_tests {
             key_id: 0,
             xpub: None,
         };
-        let ws_msg = request.to_ws_message("test-token", "req-009");
+        let ws_msg = request.to_ws_message_with_id("test-token", "req-009");
         let (parsed, token, request_id) = Request::from_ws_message(ws_msg).unwrap();
 
         match parsed {
