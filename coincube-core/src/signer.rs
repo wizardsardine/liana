@@ -314,6 +314,11 @@ impl HotSigner {
         self.master_xpriv.fingerprint(secp)
     }
 
+    /// Get the master extended private key.
+    pub fn master_xpriv(&self) -> &bip32::Xpriv {
+        &self.master_xpriv
+    }
+
     /// Derive the SLIP-0077 master blinding key for Liquid/Elements confidential transactions.
     /// Returns the 32-byte master blinding key derived from the BIP39 seed.
     pub fn slip77_master_blinding_key(&self) -> [u8; 32] {

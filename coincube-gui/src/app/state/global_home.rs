@@ -15,7 +15,6 @@ use iced::{Subscription, Task};
 use super::vault::psbt::SignModal;
 use super::{Cache, Menu, State};
 use crate::app::breez::BreezClient;
-use crate::app::error::Error;
 use crate::app::state::vault::label::LabelsEdited;
 use crate::app::state::vault::receive::ShowQrCodeModal;
 use crate::app::view::global_home::{GlobalViewConfig, HomeView, TransferDirection};
@@ -78,7 +77,6 @@ pub struct GlobalHome {
     address_expanded: bool,
     modal: Modal,
     empty_labels: HashMap<String, String>,
-    warning: Option<Error>,
     onchain_send_limit: Option<(u64, u64)>,
     onchain_receive_limit: Option<(u64, u64)>,
     prepare_onchain_send_response: Option<PreparePayOnchainResponse>,
@@ -102,7 +100,6 @@ impl GlobalHome {
             address_expanded: false,
             modal: Modal::default(),
             empty_labels: HashMap::default(),
-            warning: None,
             onchain_send_limit: None,
             onchain_receive_limit: None,
             prepare_onchain_send_response: None,
@@ -126,7 +123,6 @@ impl GlobalHome {
             address_expanded: false,
             modal: Modal::default(),
             empty_labels: HashMap::default(),
-            warning: None,
             onchain_send_limit: None,
             onchain_receive_limit: None,
             prepare_onchain_send_response: None,
@@ -543,8 +539,6 @@ impl State for GlobalHome {
                     }
                     HomeMessage::Error(err) => {
                         self.is_sending = false;
-                        let error = Error::Unexpected(err.clone());
-                        self.warning = Some(error);
                         Task::done(Message::View(view::Message::ShowError(err)))
                     }
                     HomeMessage::ActiveBalanceUpdated(active_balance) => {
@@ -570,7 +564,6 @@ impl State for GlobalHome {
                         self.transfer_direction = None;
                         self.entered_amount = form::Value::default();
                         self.receive_address_info = None;
-                        self.warning = None;
                         self.onchain_send_limit = None;
                         self.onchain_receive_limit = None;
                         self.prepare_onchain_send_response = None;
@@ -700,7 +693,6 @@ impl State for GlobalHome {
             }
             Message::ReceiveAddress(res) => match res {
                 Ok((address, index)) => {
-                    self.warning = None;
                     self.receive_address_info = Some(ReceiveAddressInfo {
                         address,
                         index,
@@ -710,7 +702,6 @@ impl State for GlobalHome {
                 }
                 Err(e) => {
                     let err_msg = e.to_string();
-                    self.warning = Some(e);
                     self.receive_address_info = None;
                     Task::done(Message::View(view::Message::ShowError(err_msg)))
                 }
@@ -728,13 +719,9 @@ impl State for GlobalHome {
                             .iter_mut()
                             .map(|info| info as &mut dyn crate::daemon::model::LabelsLoader),
                     ) {
-                        Ok(cmd) => {
-                            self.warning = None;
-                            cmd
-                        }
+                        Ok(cmd) => cmd,
                         Err(e) => {
                             let err_msg = e.to_string();
-                            self.warning = Some(e);
                             Task::done(Message::View(view::Message::ShowError(err_msg)))
                         }
                     }
