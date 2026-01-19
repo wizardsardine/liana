@@ -139,7 +139,7 @@ impl Wallet {
         datadir_path: &CoincubeDirectory,
         network: bitcoin::Network,
     ) -> Result<Self, WalletError> {
-        // Load only Vault mnemonics, skip Active wallet mnemonics (managed by Breez SDK)
+        // Load only Vault mnemonics, skip Liquid wallet mnemonics (managed by Breez SDK)
         let hot_signers = match HotSigner::from_datadir_vault_only(datadir_path.path(), network) {
             Ok(signers) => signers,
             Err(e) => match e {

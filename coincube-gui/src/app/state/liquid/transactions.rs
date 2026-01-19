@@ -10,7 +10,7 @@ use crate::app::{breez::BreezClient, cache::Cache, menu::Menu, state::State};
 use crate::app::{message::Message, view, wallet::Wallet};
 use crate::daemon::Daemon;
 
-pub struct ActiveTransactions {
+pub struct LiquidTransactions {
     breez_client: Arc<BreezClient>,
     payments: Vec<Payment>,
     selected_payment: Option<Payment>,
@@ -18,7 +18,7 @@ pub struct ActiveTransactions {
     balance: Amount,
 }
 
-impl ActiveTransactions {
+impl LiquidTransactions {
     pub fn new(breez_client: Arc<BreezClient>) -> Self {
         Self {
             breez_client,
@@ -52,14 +52,14 @@ impl ActiveTransactions {
     }
 }
 
-impl State for ActiveTransactions {
+impl State for LiquidTransactions {
     fn view<'a>(&'a self, menu: &'a Menu, cache: &'a Cache) -> Element<'a, view::Message> {
         let fiat_converter = cache.fiat_price.as_ref().and_then(|p| p.try_into().ok());
         if let Some(payment) = &self.selected_payment {
             view::dashboard(
                 menu,
                 cache,
-                view::active::transaction_detail_view(
+                view::liquid::transaction_detail_view(
                     payment,
                     fiat_converter,
                     cache.bitcoin_unit.into(),
@@ -69,7 +69,7 @@ impl State for ActiveTransactions {
             view::dashboard(
                 menu,
                 cache,
-                view::active::active_transactions_view(
+                view::liquid::liquid_transactions_view(
                     &self.payments,
                     &self.balance,
                     fiat_converter,

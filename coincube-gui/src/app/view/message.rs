@@ -27,7 +27,7 @@ pub enum Message {
     Clipboard(String),
     Menu(Menu),
     ToggleVault,
-    ToggleActive,
+    ToggleLiquid,
     SetupVault,
     Close,
     Select(usize),
@@ -53,10 +53,10 @@ pub enum Message {
     ImportPsbt,
     OpenUrl(String),
     Home(HomeMessage),
-    ActiveOverview(ActiveOverviewMessage),
-    ActiveReceive(ActiveReceiveMessage),
-    ActiveSend(ActiveSendMessage),
-    ActiveSettings(ActiveSettingsMessage),
+    LiquidOverview(LiquidOverviewMessage),
+    LiquidReceive(LiquidReceiveMessage),
+    LiquidSend(LiquidSendMessage),
+    LiquidSettings(LiquidSettingsMessage),
     PreselectPayment(Payment),
     DismissError,
     ShowError(String),
@@ -245,7 +245,7 @@ pub enum FiatMessage {
 }
 
 #[derive(Debug, Clone)]
-pub enum ActiveOverviewMessage {
+pub enum LiquidOverviewMessage {
     Send,
     Receive,
     History,
@@ -259,7 +259,7 @@ pub enum ActiveOverviewMessage {
 }
 
 #[derive(Debug, Clone)]
-pub enum ActiveSendMessage {
+pub enum LiquidSendMessage {
     InputEdited(String),
     InputValidated(Option<InputType>),
     Send,
@@ -304,7 +304,7 @@ pub enum SendPopupMessage {
 }
 
 #[derive(Debug, Clone)]
-pub enum ActiveReceiveMessage {
+pub enum LiquidReceiveMessage {
     ToggleMethod(ReceiveMethod),
     Copy,
     ClearToast,
@@ -325,7 +325,7 @@ pub enum ReceiveMethod {
 }
 
 #[derive(Debug, Clone)]
-pub enum ActiveSettingsMessage {
+pub enum LiquidSettingsMessage {
     BackupWallet(BackupWalletMessage),
     SettingsUpdated,
 }
@@ -361,7 +361,7 @@ pub enum HomeMessage {
     NextStep,
     PreviousStep,
     Error(String),
-    ActiveBalanceUpdated(Amount),
+    LiquidBalanceUpdated(Amount),
     OnChainLimitsFetched {
         send: (u64, u64),    // (min_sat, max_sat)
         receive: (u64, u64), // (min_sat, max_sat)
@@ -370,8 +370,8 @@ pub enum HomeMessage {
     TransferSuccessful,
     BackToHome,
     BreezOnchainAddress(String),
-    RefreshActiveBalance,
-    SignVaultToActiveTx,
+    RefreshLiquidBalance,
+    SignVaultToLiquidTx,
     TransferPsbtReady(
         Result<
             (

@@ -1068,8 +1068,8 @@ impl State for BuySellPanel {
 
     fn close(&mut self) -> Task<Message> {
         if let BuySellFlowState::Meld(meld) = &self.step {
-            if let meld::MeldFlowStep::WebviewRenderer { active } = &meld.step {
-                if let Some(strong) = std::sync::Weak::upgrade(&active.webview) {
+            if let meld::MeldFlowStep::WebviewRenderer { liquid } = &meld.step {
+                if let Some(strong) = std::sync::Weak::upgrade(&liquid.webview) {
                     let _ = strong.set_visible(false);
                     let _ = strong.focus_parent();
                 }

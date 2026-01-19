@@ -15,7 +15,7 @@ pub enum MeldMessage {
 
 pub enum MeldFlowStep {
     Initialization,
-    WebviewRenderer { active: iced_wry::IcedWebview },
+    WebviewRenderer { liquid: iced_wry::IcedWebview },
 }
 
 pub struct MeldState {
@@ -42,7 +42,7 @@ impl MeldState {
     ) -> coincube_ui::widget::Element<'a, view::Message> {
         match &self.step {
             MeldFlowStep::Initialization => todo!(),
-            MeldFlowStep::WebviewRenderer { active } => ui::webview_ux(active, network),
+            MeldFlowStep::WebviewRenderer { liquid } => ui::webview_ux(liquid, network),
         }
     }
 
@@ -66,7 +66,7 @@ impl MeldState {
                 };
 
                 match self.webview_manager.new_webview(attrs, id) {
-                    Some(active) => self.step = MeldFlowStep::WebviewRenderer { active },
+                    Some(liquid) => self.step = MeldFlowStep::WebviewRenderer { liquid },
                     None => tracing::error!("Unable to instantiate wry webview"),
                 }
             }

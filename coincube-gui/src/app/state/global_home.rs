@@ -66,7 +66,7 @@ impl Labelled for ReceiveAddressInfo {
 #[derive(Debug)]
 pub struct GlobalHome {
     breez_client: Arc<BreezClient>,
-    active_balance: Amount,
+    liquid_balance: Amount,
     wallet: Option<Arc<Wallet>>,
     balance_masked: bool,
     transfer_direction: Option<TransferDirection>,
@@ -89,7 +89,7 @@ impl GlobalHome {
     pub fn new(wallet: Arc<Wallet>, breez_client: Arc<BreezClient>) -> Self {
         Self {
             wallet: Some(wallet),
-            active_balance: Amount::ZERO,
+            liquid_balance: Amount::ZERO,
             breez_client,
             balance_masked: false,
             transfer_direction: None,
@@ -112,7 +112,7 @@ impl GlobalHome {
     pub fn new_without_wallet(breez_client: Arc<BreezClient>) -> Self {
         Self {
             wallet: None,
-            active_balance: Amount::from_sat(0),
+            liquid_balance: Amount::from_sat(0),
             breez_client,
             balance_masked: false,
             transfer_direction: None,
@@ -141,7 +141,7 @@ impl State for GlobalHome {
             .filter(|coin| coin.spend_info.is_none())
             .fold(Amount::from_sat(0), |acc, coin| acc + coin.amount);
 
-        let active_balance = self.active_balance;
+        let liquid_balance = self.liquid_balance;
 
         // Fiat price is cube-level, not wallet-level, so get it directly from cache
         let fiat_converter: Option<view::FiatAmountConverter> =
@@ -151,7 +151,7 @@ impl State for GlobalHome {
             menu,
             cache,
             view::global_home::global_home_view(GlobalViewConfig {
-                active_balance,
+                liquid_balance,
                 vault_balance,
                 fiat_converter,
                 balance_masked: self.balance_masked,
@@ -245,7 +245,7 @@ impl State for GlobalHome {
                                 let mut tasks = Vec::new();
                                 if matches!(
                                     self.transfer_direction,
-                                    Some(TransferDirection::ActiveToVault)
+                                    Some(TransferDirection::LiquidToVault)
                                 ) {
                                     self.current_view.next();
                                     tasks.push(Task::perform(
@@ -285,7 +285,7 @@ impl State for GlobalHome {
                                     }
                                 } else if matches!(
                                     self.transfer_direction,
-                                    Some(TransferDirection::VaultToActive)
+                                    Some(TransferDirection::VaultToLiquid)
                                 ) {
                                     self.current_view.next();
                                     let breez_client = self.breez_client.clone();
@@ -347,10 +347,10 @@ impl State for GlobalHome {
 
                             if let Some(direction) = self.transfer_direction {
                                 match direction {
-                                    TransferDirection::ActiveToVault => {
-                                        if entered_amt > self.active_balance {
+                                    TransferDirection::LiquidToVault => {
+                                        if entered_amt > self.liquid_balance {
                                             valid = false;
-                                            warning = Some("Amount exceeds Active balance");
+                                            warning = Some("Amount exceeds Liquid balance");
                                         } else if let Some((min_sat, max_sat)) =
                                             self.onchain_send_limit
                                         {
@@ -363,7 +363,7 @@ impl State for GlobalHome {
                                             }
                                         }
                                     }
-                                    TransferDirection::VaultToActive => {
+                                    TransferDirection::VaultToLiquid => {
                                         if entered_amt > vault_balance {
                                             valid = false;
                                             warning = Some("Amount exceeds Vault balance");
@@ -391,9 +391,9 @@ impl State for GlobalHome {
 
                         Task::none()
                     }
-                    HomeMessage::SignVaultToActiveTx => {
+                    HomeMessage::SignVaultToLiquidTx => {
                         if let Some(transfer_direction) = self.transfer_direction {
-                            if matches!(transfer_direction, TransferDirection::VaultToActive) {
+                            if matches!(transfer_direction, TransferDirection::VaultToLiquid) {
                                 if let Some(address_info) = self.receive_address_info.clone() {
                                     if let Some(daemon) = daemon {
                                         let denomination = if matches!(
@@ -464,8 +464,8 @@ impl State for GlobalHome {
                     }
                     HomeMessage::ConfirmTransfer => {
                         if let Some(transfer_direction) = self.transfer_direction {
-                            if matches!(transfer_direction, TransferDirection::ActiveToVault) {
-                                // ActiveToVault: Direct broadcast (no signing needed)
+                            if matches!(transfer_direction, TransferDirection::LiquidToVault) {
+                                // LiquidToVault: Direct broadcast (no signing needed)
                                 if let Some(address_info) = self.receive_address_info.clone() {
                                     if let Some(prepare_onchain_send_response) =
                                         self.prepare_onchain_send_response.clone()
@@ -493,7 +493,7 @@ impl State for GlobalHome {
                                         );
                                     }
                                 }
-                            } else if matches!(transfer_direction, TransferDirection::VaultToActive)
+                            } else if matches!(transfer_direction, TransferDirection::VaultToLiquid)
                             {
                                 if self.transfer_signed {
                                     if let Some(spend_tx) = &self.transfer_spend_tx {
@@ -541,8 +541,8 @@ impl State for GlobalHome {
                         self.is_sending = false;
                         Task::done(Message::View(view::Message::ShowError(err)))
                     }
-                    HomeMessage::ActiveBalanceUpdated(active_balance) => {
-                        self.active_balance = active_balance;
+                    HomeMessage::LiquidBalanceUpdated(liquid_balance) => {
+                        self.liquid_balance = liquid_balance;
                         Task::none()
                     }
                     HomeMessage::OnChainLimitsFetched { send, receive } => {
@@ -604,7 +604,7 @@ impl State for GlobalHome {
                         }
                         Task::none()
                     }
-                    HomeMessage::RefreshActiveBalance => self.load_active_balance(),
+                    HomeMessage::RefreshLiquidBalance => self.load_liquid_balance(),
                     HomeMessage::TransferPsbtReady(result) => {
                         self.is_sending = false;
                         match result {
@@ -782,24 +782,24 @@ impl State for GlobalHome {
         wallet: Option<Arc<Wallet>>,
     ) -> Task<Message> {
         self.wallet = wallet;
-        self.load_active_balance()
+        self.load_liquid_balance()
     }
 }
 
 impl GlobalHome {
-    fn load_active_balance(&self) -> Task<Message> {
+    fn load_liquid_balance(&self) -> Task<Message> {
         let breez_client = self.breez_client.clone();
         Task::perform(async move { breez_client.info().await }, |info| {
             if let Ok(info) = info {
                 let balance = Amount::from_sat(
                     info.wallet_info.balance_sat + info.wallet_info.pending_receive_sat,
                 );
-                Message::View(view::Message::Home(HomeMessage::ActiveBalanceUpdated(
+                Message::View(view::Message::Home(HomeMessage::LiquidBalanceUpdated(
                     balance,
                 )))
             } else {
                 Message::View(view::Message::Home(HomeMessage::Error(
-                    "Couldn't fetch Active Wallet Balance".to_string(),
+                    "Couldn't fetch Liquid Wallet Balance".to_string(),
                 )))
             }
         })

@@ -572,7 +572,7 @@ impl BitcoinD {
                 serde_json::json!({
                     "desc": desc.to_string(),
                     "timestamp": "now",
-                    "active": false,
+                    "liquid": false,
                 })
             })
             .collect();
@@ -1123,7 +1123,7 @@ impl BitcoinD {
                 serde_json::json!({
                     "desc": desc.to_string(),
                     "timestamp": timestamp,
-                    "active": false,
+                    "liquid": false,
                     "range": max_range,
                 })
             })

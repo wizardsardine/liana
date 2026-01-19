@@ -5,7 +5,7 @@ authors = ["Antoine Poinsot <darosior@protonmail.com>", "Coincube Team"]
 edition = "2018"
 repository = "https://github.com/coincubetech/coincube"
 license-file = "LICENCE"
-keywords = ["bitcoin", "wallet", "vault", "multisig", "active"]
+keywords = ["bitcoin", "wallet", "vault", "multisig", "liquid"]
 description = "COINCUBE Vault wallet daemon - Secure Bitcoin multisig with inheritance"
 exclude = [
 	".github/",

@@ -26,8 +26,8 @@ pub use config::Config;
 pub use message::Message;
 
 use state::{
-    ActiveOverview, ActiveReceive, ActiveSend, ActiveSettings, ActiveTransactions, CoinsPanel,
-    CreateSpendPanel, GlobalHome, PsbtsPanel, State, VaultOverview, VaultReceivePanel,
+    CoinsPanel, CreateSpendPanel, GlobalHome, LiquidOverview, LiquidReceive, LiquidSend,
+    LiquidSettings, LiquidTransactions, PsbtsPanel, State, VaultOverview, VaultReceivePanel,
     VaultTransactionsPanel,
 };
 use wallet::{sync_status, SyncStatus};
@@ -53,14 +53,14 @@ use self::state::vault::settings::SettingsState as VaultSettingsState;
 struct Panels {
     current: Menu,
     vault_expanded: bool,
-    active_expanded: bool,
+    liquid_expanded: bool,
     // Always available panels
     global_home: GlobalHome,
-    active_overview: ActiveOverview,
-    active_send: ActiveSend,
-    active_receive: ActiveReceive,
-    active_transactions: ActiveTransactions,
-    active_settings: ActiveSettings,
+    liquid_overview: LiquidOverview,
+    liquid_send: LiquidSend,
+    liquid_receive: LiquidReceive,
+    liquid_transactions: LiquidTransactions,
+    liquid_settings: LiquidSettings,
     global_settings: GeneralSettingsState,
     // Vault-only panels - None when no vault exists
     vault_overview: Option<VaultOverview>,
@@ -83,24 +83,24 @@ impl Panels {
         network: bitcoin::Network,
         cube_id: String,
     ) -> Panels {
-        // NO VAULT - All vault panels are None, but Active panels always work
+        // NO VAULT - All vault panels are None, but Liquid panels always work
         // The UI layer prevents navigation to vault panels when has_vault=false
 
         Self {
             current: Menu::Home,
             vault_expanded: false,
-            active_expanded: false,
-            // Active panels always available (use BreezClient, not Vault wallet)
+            liquid_expanded: false,
+            // Liquid panels always available (use BreezClient, not Vault wallet)
             global_home: if let Some(w) = &wallet {
                 GlobalHome::new(w.clone(), breez_client.clone())
             } else {
                 GlobalHome::new_without_wallet(breez_client.clone())
             },
-            active_overview: ActiveOverview::new(breez_client.clone()),
-            active_send: ActiveSend::new(breez_client.clone()),
-            active_receive: ActiveReceive::new(breez_client.clone()),
-            active_transactions: ActiveTransactions::new(breez_client.clone()),
-            active_settings: ActiveSettings::new(breez_client),
+            liquid_overview: LiquidOverview::new(breez_client.clone()),
+            liquid_send: LiquidSend::new(breez_client.clone()),
+            liquid_receive: LiquidReceive::new(breez_client.clone()),
+            liquid_transactions: LiquidTransactions::new(breez_client.clone()),
+            liquid_settings: LiquidSettings::new(breez_client),
             global_settings: {
                 let network_dir = datadir.network_directory(network);
                 let settings_file = settings::Settings::from_file(&network_dir).ok();
@@ -152,7 +152,7 @@ impl Panels {
         Self {
             current: Menu::Home,
             vault_expanded: false,
-            active_expanded: false,
+            liquid_expanded: false,
             global_home: GlobalHome::new(wallet.clone(), breez_client.clone()),
             vault_overview: Some(VaultOverview::new(
                 wallet.clone(),
@@ -167,11 +167,11 @@ impl Panels {
                 cache.blockheight(),
                 show_rescan_warning,
             )),
-            active_overview: ActiveOverview::new(breez_client.clone()),
-            active_send: ActiveSend::new(breez_client.clone()),
-            active_receive: ActiveReceive::new(breez_client.clone()),
-            active_transactions: ActiveTransactions::new(breez_client.clone()),
-            active_settings: ActiveSettings::new(breez_client),
+            liquid_overview: LiquidOverview::new(breez_client.clone()),
+            liquid_send: LiquidSend::new(breez_client.clone()),
+            liquid_receive: LiquidReceive::new(breez_client.clone()),
+            liquid_transactions: LiquidTransactions::new(breez_client.clone()),
+            liquid_settings: LiquidSettings::new(breez_client),
             global_settings: {
                 let network_dir = data_dir.network_directory(cache.network);
                 let settings_file = settings::Settings::from_file(&network_dir).ok();
@@ -327,12 +327,12 @@ impl Panels {
     fn current(&self) -> Option<&dyn State> {
         match &self.current {
             Menu::Home => Some(&self.global_home),
-            Menu::Active(submenu) => match submenu {
-                crate::app::menu::ActiveSubMenu::Overview => Some(&self.active_overview),
-                crate::app::menu::ActiveSubMenu::Send => Some(&self.active_send),
-                crate::app::menu::ActiveSubMenu::Receive => Some(&self.active_receive),
-                crate::app::menu::ActiveSubMenu::Transactions(_) => Some(&self.active_transactions),
-                crate::app::menu::ActiveSubMenu::Settings(_) => Some(&self.active_settings),
+            Menu::Liquid(submenu) => match submenu {
+                crate::app::menu::LiquidSubMenu::Overview => Some(&self.liquid_overview),
+                crate::app::menu::LiquidSubMenu::Send => Some(&self.liquid_send),
+                crate::app::menu::LiquidSubMenu::Receive => Some(&self.liquid_receive),
+                crate::app::menu::LiquidSubMenu::Transactions(_) => Some(&self.liquid_transactions),
+                crate::app::menu::LiquidSubMenu::Settings(_) => Some(&self.liquid_settings),
             },
             Menu::Vault(submenu) => match submenu {
                 crate::app::menu::VaultSubMenu::Overview => {
@@ -369,14 +369,14 @@ impl Panels {
     fn current_mut(&mut self) -> Option<&mut dyn State> {
         match &self.current {
             Menu::Home => Some(&mut self.global_home),
-            Menu::Active(submenu) => match submenu {
-                crate::app::menu::ActiveSubMenu::Overview => Some(&mut self.active_overview),
-                crate::app::menu::ActiveSubMenu::Send => Some(&mut self.active_send),
-                crate::app::menu::ActiveSubMenu::Receive => Some(&mut self.active_receive),
-                crate::app::menu::ActiveSubMenu::Transactions(_) => {
-                    Some(&mut self.active_transactions)
+            Menu::Liquid(submenu) => match submenu {
+                crate::app::menu::LiquidSubMenu::Overview => Some(&mut self.liquid_overview),
+                crate::app::menu::LiquidSubMenu::Send => Some(&mut self.liquid_send),
+                crate::app::menu::LiquidSubMenu::Receive => Some(&mut self.liquid_receive),
+                crate::app::menu::LiquidSubMenu::Transactions(_) => {
+                    Some(&mut self.liquid_transactions)
                 }
-                crate::app::menu::ActiveSubMenu::Settings(_) => Some(&mut self.active_settings),
+                crate::app::menu::LiquidSubMenu::Settings(_) => Some(&mut self.liquid_settings),
             },
             Menu::Vault(submenu) => match submenu {
                 crate::app::menu::VaultSubMenu::Overview => {
@@ -745,8 +745,8 @@ impl App {
                     }
                 }
             }
-            menu::Menu::Active(_submenu) => {
-                // Active transaction preselection is handled via PreselectPayment message
+            menu::Menu::Liquid(_submenu) => {
+                // Liquid transaction preselection is handled via PreselectPayment message
                 // since Payment objects are passed directly instead of fetching by ID
             }
             _ => {
@@ -760,7 +760,7 @@ impl App {
         self.panels.current = menu.clone();
 
         // Call reload with optional daemon/wallet
-        // Active panels don't need them (use BreezClient), Vault panels do
+        // Liquid panels don't need them (use BreezClient), Vault panels do
         if let Some(panel) = self.panels.current_mut() {
             panel.reload(self.daemon.clone(), self.wallet.clone())
         } else {
@@ -965,7 +965,7 @@ impl App {
                 return Task::done(Message::CacheUpdated);
             }
             Message::Fiat(FiatMessage::GetPriceResult(fiat_price)) => {
-                // Check if fiat price is relevant based on cube settings (applies to both Active and Vault)
+                // Check if fiat price is relevant based on cube settings (applies to both Liquid and Vault)
                 let is_relevant = self.cube_settings.fiat_price.as_ref().is_some_and(|sett| {
                     sett.is_enabled
                         && sett.source == fiat_price.source()
@@ -1087,17 +1087,17 @@ impl App {
             Message::View(view::Message::ToggleVault) => {
                 self.panels.vault_expanded = !self.panels.vault_expanded;
                 self.cache.vault_expanded = self.panels.vault_expanded;
-                // If we're expanding Vault, collapse Active
+                // If we're expanding Vault, collapse Liquid
                 if self.panels.vault_expanded {
-                    self.panels.active_expanded = false;
-                    self.cache.active_expanded = false;
+                    self.panels.liquid_expanded = false;
+                    self.cache.liquid_expanded = false;
                 }
             }
-            Message::View(view::Message::ToggleActive) => {
-                self.panels.active_expanded = !self.panels.active_expanded;
-                self.cache.active_expanded = self.panels.active_expanded;
-                // If we're expanding Active, collapse Vault
-                if self.panels.active_expanded {
+            Message::View(view::Message::ToggleLiquid) => {
+                self.panels.liquid_expanded = !self.panels.liquid_expanded;
+                self.cache.liquid_expanded = self.panels.liquid_expanded;
+                // If we're expanding Liquid, collapse Vault
+                if self.panels.liquid_expanded {
                     self.panels.vault_expanded = false;
                     self.cache.vault_expanded = false;
                 }
@@ -1168,14 +1168,14 @@ impl App {
                         // Payment state changed - trigger cache update
                         return Task::batch(vec![
                             Task::done(Message::Tick),
-                            Task::done(Message::View(view::Message::ActiveSend(
-                                view::ActiveSendMessage::RefreshRequested,
+                            Task::done(Message::View(view::Message::LiquidSend(
+                                view::LiquidSendMessage::RefreshRequested,
                             ))),
-                            Task::done(Message::View(view::Message::ActiveOverview(
-                                view::ActiveOverviewMessage::RefreshRequested,
+                            Task::done(Message::View(view::Message::LiquidOverview(
+                                view::LiquidOverviewMessage::RefreshRequested,
                             ))),
                             Task::done(Message::View(view::Message::Home(
-                                view::HomeMessage::RefreshActiveBalance,
+                                view::HomeMessage::RefreshLiquidBalance,
                             ))),
                         ]);
                     }

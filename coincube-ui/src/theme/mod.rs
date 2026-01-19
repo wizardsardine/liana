@@ -64,15 +64,15 @@ impl iced_aw::style::number_input::Catalog for Theme {
     ) -> iced_aw::number_input::Style {
         let (background, icon) = match status {
             iced_aw::card::Status::Active => (
-                self.colors.text_inputs.primary.active.background,
-                self.colors.text_inputs.primary.active.icon,
+                self.colors.text_inputs.primary.liquid.background,
+                self.colors.text_inputs.primary.liquid.icon,
             ),
             iced_aw::card::Status::Disabled => (
                 self.colors.text_inputs.primary.disabled.background,
                 self.colors.text_inputs.primary.disabled.icon,
             ),
             iced_aw::card::Status::Selected => (
-                self.colors.text_inputs.primary.active.selection,
+                self.colors.text_inputs.primary.liquid.selection,
                 self.colors.text_inputs.primary.disabled.icon,
             ),
             iced_aw::card::Status::Hovered => (
@@ -94,8 +94,8 @@ impl iced_aw::style::number_input::Catalog for Theme {
                     .unwrap_or(crate::color::ORANGE),
             ),
             iced_aw::card::Status::Focused => (
-                self.colors.text_inputs.primary.active.background,
-                self.colors.text_inputs.primary.active.icon,
+                self.colors.text_inputs.primary.liquid.background,
+                self.colors.text_inputs.primary.liquid.icon,
             ),
         };
 

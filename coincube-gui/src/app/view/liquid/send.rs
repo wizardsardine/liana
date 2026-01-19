@@ -22,13 +22,13 @@ use iced::{
 
 use crate::app::cache::Cache;
 use crate::app::menu::Menu;
-use crate::app::state::active::send::{ActiveSendFlowState, Modal};
+use crate::app::state::liquid::send::{LiquidSendFlowState, Modal};
 use crate::app::view::{
-    self, vault::fiat::FiatAmount, ActiveSendMessage, FiatAmountConverter, Message,
+    self, vault::fiat::FiatAmount, FiatAmountConverter, LiquidSendMessage, Message,
 };
 
-pub struct ActiveSendFlowConfig<'a> {
-    pub flow_state: &'a ActiveSendFlowState,
+pub struct LiquidSendFlowConfig<'a> {
+    pub flow_state: &'a LiquidSendFlowState,
     pub btc_balance: Amount,
     pub fiat_converter: Option<FiatAmountConverter>,
     pub recent_transaction: &'a Vec<RecentTransaction>,
@@ -47,10 +47,10 @@ pub struct ActiveSendFlowConfig<'a> {
     pub bitcoin_unit: BitcoinDisplayUnit,
 }
 
-pub fn active_send_with_flow<'a>(config: ActiveSendFlowConfig<'a>) -> Element<'a, Message> {
+pub fn liquid_send_with_flow<'a>(config: LiquidSendFlowConfig<'a>) -> Element<'a, Message> {
     let base_content = match config.flow_state {
-        ActiveSendFlowState::Main { modal } => {
-            let send_view = active_send_view(
+        LiquidSendFlowState::Main { modal } => {
+            let send_view = liquid_send_view(
                 config.btc_balance,
                 config.fiat_converter,
                 config.recent_transaction,
@@ -58,7 +58,7 @@ pub fn active_send_with_flow<'a>(config: ActiveSendFlowConfig<'a>) -> Element<'a
                 config.input_type,
                 config.cache.bitcoin_unit.into(),
             )
-            .map(Message::ActiveSend);
+            .map(Message::LiquidSend);
 
             let content = view::dashboard(config.menu, config.cache, send_view);
 
@@ -76,9 +76,9 @@ pub fn active_send_with_flow<'a>(config: ActiveSendFlowConfig<'a>) -> Element<'a
                         input_type: config.input_type,
                         bitcoin_unit: config.bitcoin_unit,
                     })
-                    .map(Message::ActiveSend);
+                    .map(Message::LiquidSend);
                     coincube_ui::widget::modal::Modal::new(content, modal_content)
-                        .on_blur(Some(Message::ActiveSend(ActiveSendMessage::PopupMessage(
+                        .on_blur(Some(Message::LiquidSend(LiquidSendMessage::PopupMessage(
                             view::SendPopupMessage::Close,
                         ))))
                         .into()
@@ -96,9 +96,9 @@ pub fn active_send_with_flow<'a>(config: ActiveSendFlowConfig<'a>) -> Element<'a
                         converters,
                         config.bitcoin_unit,
                     )
-                    .map(Message::ActiveSend);
+                    .map(Message::LiquidSend);
                     coincube_ui::widget::modal::Modal::new(content, modal_content)
-                        .on_blur(Some(Message::ActiveSend(ActiveSendMessage::PopupMessage(
+                        .on_blur(Some(Message::LiquidSend(LiquidSendMessage::PopupMessage(
                             view::SendPopupMessage::FiatClose,
                         ))))
                         .into()
@@ -106,7 +106,7 @@ pub fn active_send_with_flow<'a>(config: ActiveSendFlowConfig<'a>) -> Element<'a
                 Modal::None => content,
             }
         }
-        ActiveSendFlowState::FinalCheck => {
+        LiquidSendFlowState::FinalCheck => {
             let content = final_check_page(
                 config.amount,
                 config.comment,
@@ -116,11 +116,11 @@ pub fn active_send_with_flow<'a>(config: ActiveSendFlowConfig<'a>) -> Element<'a
                 config.is_sending,
                 config.bitcoin_unit,
             )
-            .map(Message::ActiveSend);
+            .map(Message::LiquidSend);
             view::dashboard(config.menu, config.cache, content)
         }
-        ActiveSendFlowState::Sent => {
-            let content = sent_page(config.amount, config.bitcoin_unit).map(Message::ActiveSend);
+        LiquidSendFlowState::Sent => {
+            let content = sent_page(config.amount, config.bitcoin_unit).map(Message::LiquidSend);
             view::dashboard(config.menu, config.cache, content)
         }
     };
@@ -128,14 +128,14 @@ pub fn active_send_with_flow<'a>(config: ActiveSendFlowConfig<'a>) -> Element<'a
     base_content
 }
 
-pub fn active_send_view<'a>(
+pub fn liquid_send_view<'a>(
     btc_balance: Amount,
     fiat_converter: Option<FiatAmountConverter>,
     recent_transaction: &Vec<RecentTransaction>,
     input: &'a form::Value<String>,
     input_type: &'a Option<InputType>,
     bitcoin_unit: BitcoinDisplayUnit,
-) -> Element<'a, ActiveSendMessage> {
+) -> Element<'a, LiquidSendMessage> {
     let mut content = Column::new().spacing(20);
 
     // Balance section - left justified
@@ -170,7 +170,7 @@ pub fn active_send_view<'a>(
                     form::Form::new(
                         "e.g. satoshi@nakamoto.com",
                         input,
-                        ActiveSendMessage::InputEdited,
+                        LiquidSendMessage::InputEdited,
                     )
                     .size(16)
                     .padding(15),
@@ -187,7 +187,7 @@ pub fn active_send_view<'a>(
                         .on_press_maybe(
                             if input.valid && !input.value.trim().is_empty() && input_type.is_some()
                             {
-                                Some(ActiveSendMessage::Send)
+                                Some(LiquidSendMessage::Send)
                             } else {
                                 None
                             },
@@ -267,7 +267,7 @@ pub fn active_send_view<'a>(
                 item = item.with_fiat_amount(fiat);
             }
 
-            content = content.push(item.view(ActiveSendMessage::SelectTransaction(idx)));
+            content = content.push(item.view(LiquidSendMessage::SelectTransaction(idx)));
         }
     } else {
         content = content.push(empty_tx_placeholder(
@@ -320,7 +320,7 @@ pub fn active_send_view<'a>(
             },
             ..Default::default()
         })
-        .on_press(ActiveSendMessage::History)
+        .on_press(LiquidSendMessage::History)
     };
 
     if !recent_transaction.is_empty() {
@@ -360,7 +360,7 @@ pub struct AmountInputConfig<'a> {
     pub bitcoin_unit: BitcoinDisplayUnit,
 }
 
-pub fn amount_input_model<'a>(config: AmountInputConfig<'a>) -> Element<'a, ActiveSendMessage> {
+pub fn amount_input_model<'a>(config: AmountInputConfig<'a>) -> Element<'a, LiquidSendMessage> {
     let mut content = Column::new()
         .spacing(20)
         .padding(30)
@@ -421,7 +421,7 @@ pub fn amount_input_model<'a>(config: AmountInputConfig<'a>) -> Element<'a, Acti
     let amount_row = if config.has_fiat_converter {
         amount_row.push(
             button::transparent(None, "⇄")
-                .on_press(ActiveSendMessage::PopupMessage(
+                .on_press(LiquidSendMessage::PopupMessage(
                     view::SendPopupMessage::FiatConvert,
                 ))
                 .width(Length::Shrink),
@@ -437,12 +437,12 @@ pub fn amount_input_model<'a>(config: AmountInputConfig<'a>) -> Element<'a, Acti
     amount_input_section =
         amount_input_section.push(if matches!(config.bitcoin_unit, BitcoinDisplayUnit::BTC) {
             form::Form::new_amount_btc("Enter amount", config.amount, |v| {
-                ActiveSendMessage::PopupMessage(view::SendPopupMessage::AmountEdited(v))
+                LiquidSendMessage::PopupMessage(view::SendPopupMessage::AmountEdited(v))
             })
             .padding(10)
         } else {
             form::Form::new_amount_sats("Enter amount", config.amount, |v| {
-                ActiveSendMessage::PopupMessage(view::SendPopupMessage::AmountEdited(v))
+                LiquidSendMessage::PopupMessage(view::SendPopupMessage::AmountEdited(v))
             })
             .padding(10)
         });
@@ -484,7 +484,7 @@ pub fn amount_input_model<'a>(config: AmountInputConfig<'a>) -> Element<'a, Acti
     comment_section = comment_section.push(text("Comment").size(16));
     comment_section = comment_section.push(
         iced::widget::text_input("Comment (Optional)", &config.comment)
-            .on_input(|v| ActiveSendMessage::PopupMessage(view::SendPopupMessage::CommentEdited(v)))
+            .on_input(|v| LiquidSendMessage::PopupMessage(view::SendPopupMessage::CommentEdited(v)))
             .padding(10),
     );
 
@@ -494,7 +494,7 @@ pub fn amount_input_model<'a>(config: AmountInputConfig<'a>) -> Element<'a, Acti
     let next_button = if !config.amount.valid || config.amount.value.is_empty() {
         next_button
     } else {
-        next_button.on_press(ActiveSendMessage::PopupMessage(
+        next_button.on_press(LiquidSendMessage::PopupMessage(
             view::SendPopupMessage::Done,
         ))
     };
@@ -513,7 +513,7 @@ pub fn fiat_input_model<'a>(
     selected_currency: &'a crate::services::fiat::Currency,
     converters: &'a std::collections::HashMap<crate::services::fiat::Currency, FiatAmountConverter>,
     bitcoin_unit: BitcoinDisplayUnit,
-) -> Element<'a, ActiveSendMessage> {
+) -> Element<'a, LiquidSendMessage> {
     use coincube_ui::component::amount::DisplayAmount;
     use coincube_ui::icon::cross_icon;
 
@@ -528,7 +528,7 @@ pub fn fiat_input_model<'a>(
         .push(iced::widget::Space::new().width(Length::Fill))
         .push(
             button::transparent(Some(cross_icon()), "")
-                .on_press(ActiveSendMessage::PopupMessage(
+                .on_press(LiquidSendMessage::PopupMessage(
                     view::SendPopupMessage::FiatClose,
                 ))
                 .width(Length::Shrink),
@@ -545,7 +545,7 @@ pub fn fiat_input_model<'a>(
         let currency_str = &currency.to_static_str();
 
         let capsule = button::primary(None, currency_str)
-            .on_press(ActiveSendMessage::PopupMessage(
+            .on_press(LiquidSendMessage::PopupMessage(
                 view::SendPopupMessage::FiatCurrencySelected(*currency),
             ))
             .width(Length::Shrink)
@@ -601,7 +601,7 @@ pub fn fiat_input_model<'a>(
 
     content = content.push(
         form::Form::new_amount_numeric(&format!("{} amount", selected_currency), fiat_input, |v| {
-            ActiveSendMessage::PopupMessage(view::SendPopupMessage::FiatInputEdited(v))
+            LiquidSendMessage::PopupMessage(view::SendPopupMessage::FiatInputEdited(v))
         })
         .padding(10),
     );
@@ -686,7 +686,7 @@ pub fn fiat_input_model<'a>(
     let done_button = if !fiat_input.valid || fiat_input.value.is_empty() {
         done_button
     } else {
-        done_button.on_press(ActiveSendMessage::PopupMessage(
+        done_button.on_press(LiquidSendMessage::PopupMessage(
             view::SendPopupMessage::FiatDone,
         ))
     };
@@ -707,11 +707,11 @@ pub fn final_check_page<'a>(
     prepare_response: Option<&'a breez_sdk_liquid::prelude::PrepareSendResponse>,
     is_sending: bool,
     bitcoin_unit: BitcoinDisplayUnit,
-) -> Element<'a, ActiveSendMessage> {
+) -> Element<'a, LiquidSendMessage> {
     let header = Row::new()
         .push(
             button::transparent(Some(icon::previous_icon()), "Previous").on_press(
-                ActiveSendMessage::PopupMessage(view::SendPopupMessage::Close),
+                LiquidSendMessage::PopupMessage(view::SendPopupMessage::Close),
             ),
         )
         .push(Space::new().width(Length::Fill))
@@ -906,7 +906,7 @@ pub fn final_check_page<'a>(
     content = content.push(if is_sending {
         send_button
     } else {
-        send_button.on_press(ActiveSendMessage::ConfirmSend)
+        send_button.on_press(LiquidSendMessage::ConfirmSend)
     });
 
     Column::new()
@@ -923,7 +923,7 @@ pub fn final_check_page<'a>(
 pub fn sent_page<'a>(
     amount: Amount,
     bitcoin_unit: BitcoinDisplayUnit,
-) -> Element<'a, ActiveSendMessage> {
+) -> Element<'a, LiquidSendMessage> {
     use coincube_ui::widget::{Column, Row};
     Column::new()
         .spacing(20)
@@ -996,18 +996,18 @@ pub fn sent_page<'a>(
                 .push(
                     button::primary(None, "Back")
                         .width(Length::Fixed(150.0))
-                        .on_press(ActiveSendMessage::BackToHome),
+                        .on_press(LiquidSendMessage::BackToHome),
                 )
                 .push(Space::new().width(Length::Fill)),
         )
         .into()
 }
 
-pub fn empty_tx_placeholder<'a, T: Into<Element<'a, ActiveSendMessage>>>(
+pub fn empty_tx_placeholder<'a, T: Into<Element<'a, LiquidSendMessage>>>(
     icon: T,
     title: &'a str,
     subtitle: &'a str,
-) -> Element<'a, ActiveSendMessage> {
+) -> Element<'a, LiquidSendMessage> {
     let content = Column::new()
         .push(icon)
         .push(text(title).style(theme::text::secondary).bold())

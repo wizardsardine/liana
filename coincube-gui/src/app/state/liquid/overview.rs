@@ -7,24 +7,24 @@ use coincube_core::miniscript::bitcoin::Amount;
 use coincube_ui::widget::*;
 use iced::Task;
 
-use crate::app::menu::{ActiveSubMenu, Menu};
+use crate::app::menu::{LiquidSubMenu, Menu};
 use crate::app::state::{redirect, State};
 use crate::app::{breez::BreezClient, cache::Cache};
 use crate::app::{message::Message, view, wallet::Wallet};
 use crate::daemon::Daemon;
 use crate::utils::format_time_ago;
 
-/// ActiveOverview
-pub struct ActiveOverview {
+/// LiquidOverview
+pub struct LiquidOverview {
     breez_client: Arc<BreezClient>,
     btc_balance: Amount,
-    recent_transaction: Vec<view::active::RecentTransaction>,
+    recent_transaction: Vec<view::liquid::RecentTransaction>,
     recent_payments: Vec<Payment>,
     selected_payment: Option<Payment>,
     error: Option<String>,
 }
 
-impl ActiveOverview {
+impl LiquidOverview {
     pub fn new(breez_client: Arc<BreezClient>) -> Self {
         Self {
             breez_client,
@@ -66,12 +66,12 @@ impl ActiveOverview {
             },
             |(balance, recent_payment, error)| {
                 if let Some(err) = error {
-                    Message::View(view::Message::ActiveOverview(
-                        view::ActiveOverviewMessage::Error(err),
+                    Message::View(view::Message::LiquidOverview(
+                        view::LiquidOverviewMessage::Error(err),
                     ))
                 } else {
-                    Message::View(view::Message::ActiveOverview(
-                        view::ActiveOverviewMessage::DataLoaded {
+                    Message::View(view::Message::LiquidOverview(
+                        view::LiquidOverviewMessage::DataLoaded {
                             balance,
                             recent_payment,
                         },
@@ -82,7 +82,7 @@ impl ActiveOverview {
     }
 }
 
-impl State for ActiveOverview {
+impl State for LiquidOverview {
     fn view<'a>(&'a self, menu: &'a Menu, cache: &'a Cache) -> Element<'a, view::Message> {
         let fiat_converter = cache.fiat_price.as_ref().and_then(|p| p.try_into().ok());
 
@@ -90,21 +90,21 @@ impl State for ActiveOverview {
             view::dashboard(
                 menu,
                 cache,
-                view::active::transaction_detail_view(
+                view::liquid::transaction_detail_view(
                     payment,
                     fiat_converter,
                     cache.bitcoin_unit.into(),
                 ),
             )
         } else {
-            let send_view = view::active::active_overview_view(
+            let send_view = view::liquid::liquid_overview_view(
                 self.btc_balance,
                 fiat_converter,
                 &self.recent_transaction,
                 self.error.as_deref(),
                 cache.bitcoin_unit.into(),
             )
-            .map(view::Message::ActiveOverview);
+            .map(view::Message::LiquidOverview);
 
             view::dashboard(menu, cache, send_view)
         }
@@ -116,27 +116,27 @@ impl State for ActiveOverview {
         cache: &Cache,
         message: Message,
     ) -> Task<Message> {
-        if let Message::View(view::Message::ActiveOverview(ref msg)) = message {
+        if let Message::View(view::Message::LiquidOverview(ref msg)) = message {
             match msg {
-                view::ActiveOverviewMessage::Send => {
-                    return redirect(Menu::Active(ActiveSubMenu::Send));
+                view::LiquidOverviewMessage::Send => {
+                    return redirect(Menu::Liquid(LiquidSubMenu::Send));
                 }
-                view::ActiveOverviewMessage::Receive => {
-                    return redirect(Menu::Active(ActiveSubMenu::Receive));
+                view::LiquidOverviewMessage::Receive => {
+                    return redirect(Menu::Liquid(LiquidSubMenu::Receive));
                 }
-                view::ActiveOverviewMessage::History => {
-                    return redirect(Menu::Active(ActiveSubMenu::Transactions(None)));
+                view::LiquidOverviewMessage::History => {
+                    return redirect(Menu::Liquid(LiquidSubMenu::Transactions(None)));
                 }
-                view::ActiveOverviewMessage::SelectTransaction(idx) => {
+                view::LiquidOverviewMessage::SelectTransaction(idx) => {
                     if let Some(payment) = self.recent_payments.get(*idx).cloned() {
                         self.selected_payment = Some(payment.clone());
                         return Task::batch(vec![
-                            redirect(Menu::Active(ActiveSubMenu::Transactions(None))),
+                            redirect(Menu::Liquid(LiquidSubMenu::Transactions(None))),
                             Task::done(Message::View(view::Message::PreselectPayment(payment))),
                         ]);
                     }
                 }
-                view::ActiveOverviewMessage::DataLoaded {
+                view::LiquidOverviewMessage::DataLoaded {
                     balance,
                     recent_payment,
                 } => {
@@ -185,7 +185,7 @@ impl State for ActiveOverview {
                                 let details = payment.details.clone();
                                 let sign = if is_incoming { "+" } else { "-" };
                                 let fees_sat = Amount::from_sat(payment.fees_sat);
-                                view::active::RecentTransaction {
+                                view::liquid::RecentTransaction {
                                     description: desc.to_owned(),
                                     time_ago,
                                     amount,
@@ -203,11 +203,11 @@ impl State for ActiveOverview {
                         self.recent_transaction = Vec::new();
                     }
                 }
-                view::ActiveOverviewMessage::Error(err) => {
+                view::LiquidOverviewMessage::Error(err) => {
                     self.error = Some(err.to_string());
                     return Task::done(Message::View(view::Message::ShowError(err.to_string())));
                 }
-                view::ActiveOverviewMessage::RefreshRequested => {
+                view::LiquidOverviewMessage::RefreshRequested => {
                     return self.load_balance();
                 }
             }

@@ -42,7 +42,7 @@ reading your code in the future, so explain the reasoning for your decisions. Fo
 more guidelines about writing commit messages, see this [blog post](https://cbea.ms/git-commit/).
 
 If your pull request contains fixup commits (commits that change the same line of code repeatedly) or too fine-grained
-commits, you may be asked to [squash](https://git-scm.com/docs/git-rebase#_interactive_mode) your commits
+commits, you may be asked to [squash](https://git-scm.com/docs/git-rebase#_interliquid_mode) your commits
 before it will be merged.
 
 Patchsets should always be focused. For example, a pull request could add a

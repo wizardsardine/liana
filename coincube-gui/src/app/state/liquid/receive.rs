@@ -7,7 +7,6 @@ use coincube_ui::widget::*;
 use iced::{clipboard, widget::qr_code, Task};
 
 use crate::app::settings::unit::BitcoinDisplayUnit;
-use crate::app::view::ReceiveError;
 use crate::app::view::{LiquidReceiveMessage, ReceiveMethod};
 use crate::app::{breez::BreezClient, cache::Cache, menu::Menu, state::State};
 use crate::app::{message::Message, view, wallet::Wallet};
@@ -80,7 +79,7 @@ impl State for LiquidReceive {
             self.loading,
             &self.amount_input,
             &self.description_input,
-            cache.bitcoin_unit,
+            cache.bitcoin_unit.into(),
             self.error.as_ref(),
             self.lightning_receive_limits,
             self.onchain_receive_limits,
@@ -225,31 +224,15 @@ impl State for LiquidReceive {
                                     self.onchain_qr_data = None;
                                 }
                             }
-                            // Show error toast and schedule local error clearing
-                            let show_error =
-                                Task::done(Message::View(view::Message::ShowError(err_msg)));
-                            let clear_error = Task::perform(
-                                async {
-                                    tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
-                                },
-                                |_| {
-                                    Message::View(view::Message::ActiveReceive(
-                                        view::ActiveReceiveMessage::ClearError,
-                                    ))
-                                },
-                            );
-                            return Task::batch(vec![show_error, clear_error]);
+                            return Task::done(Message::View(view::Message::ShowError(err_msg)));
                         }
                     }
                     return Task::none();
                 }
+
                 LiquidReceiveMessage::Error(err) => {
-                    let err_msg = err.to_string();
-                    self.error = Some(err_msg.clone());
-                    // Show error toast and schedule local error clearing
-                    let show_error =
-                        Task::done(Message::View(view::Message::ShowError(err_msg)));
-                    let clear_error = Task::perform(
+                    self.error = Some(err.to_string());
+                    return Task::perform(
                         async {
                             tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
                         },
@@ -259,7 +242,6 @@ impl State for LiquidReceive {
                             ))
                         },
                     );
-                    return Task::batch(vec![show_error, clear_error]);
                 }
 
                 LiquidReceiveMessage::ClearError => {

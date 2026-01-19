@@ -28,7 +28,7 @@ impl std::fmt::Display for BreezError {
             BreezError::Connection(msg) => write!(f, "failed to connect Breez SDK: {}", msg),
             BreezError::Sdk(msg) => write!(f, "SDK request failed: {}", msg),
             BreezError::SignerNotFound(fp) => {
-                write!(f, "Active wallet signer not found for fingerprint: {}", fp)
+                write!(f, "Liquid wallet signer not found for fingerprint: {}", fp)
             }
             BreezError::SignerError(msg) => write!(f, "Signer error: {}", msg),
         }
@@ -37,25 +37,25 @@ impl std::fmt::Display for BreezError {
 
 impl std::error::Error for BreezError {}
 
-/// Load BreezClient from datadir using the Active wallet signer fingerprint
+/// Load BreezClient from datadir using the Liquid wallet signer fingerprint
 pub async fn load_breez_client(
     datadir: &Path,
     network: Network,
-    active_signer_fingerprint: Fingerprint,
+    liquid_signer_fingerprint: Fingerprint,
     password: &str,
 ) -> Result<Arc<BreezClient>, BreezError> {
     // Load only the specific signer by fingerprint (more efficient and secure)
-    let active_signer = HotSigner::from_datadir_by_fingerprint(
+    let liquid_signer = HotSigner::from_datadir_by_fingerprint(
         datadir,
         network,
-        active_signer_fingerprint,
+        liquid_signer_fingerprint,
         Some(password),
     )
     .map_err(|e| match e {
         coincube_core::signer::SignerError::MnemonicStorage(io_err)
             if io_err.kind() == std::io::ErrorKind::NotFound =>
         {
-            BreezError::SignerNotFound(active_signer_fingerprint)
+            BreezError::SignerNotFound(liquid_signer_fingerprint)
         }
         _ => BreezError::SignerError(e.to_string()),
     })?;
@@ -65,7 +65,7 @@ pub async fn load_breez_client(
 
     // Connect to Breez SDK with the signer
     let breez_client =
-        BreezClient::connect_with_signer(breez_config, Arc::new(Mutex::new(active_signer))).await?;
+        BreezClient::connect_with_signer(breez_config, Arc::new(Mutex::new(liquid_signer))).await?;
 
     Ok(Arc::new(breez_client))
 }

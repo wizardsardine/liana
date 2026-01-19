@@ -1,7 +1,7 @@
 mod message;
 
-pub mod active;
 pub mod global_home;
+pub mod liquid;
 pub mod settings;
 
 #[cfg(feature = "buysell")]
@@ -9,7 +9,7 @@ pub mod buysell;
 
 pub mod vault;
 
-pub use active::*;
+pub use liquid::*;
 pub use message::*;
 pub use vault::fiat::FiatAmountConverter;
 pub use vault::warning::warn;
@@ -54,7 +54,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<
     // Top-level Home button
     let home_button = if *menu == Menu::Home {
         row!(
-            button::menu_active(Some(cube_icon()), "Home")
+            button::menu_liquid(Some(cube_icon()), "Home")
                 .on_press(Message::Reload)
                 .width(iced::Length::Fill),
             menu_bar_highlight(),
@@ -69,7 +69,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<
     let buy_sell_button = {
         if *menu == Menu::BuySell {
             row!(
-                button::menu_active(Some(bitcoin_icon()), "Buy/Sell")
+                button::menu_liquid(Some(bitcoin_icon()), "Buy/Sell")
                     .on_press(Message::Reload)
                     .width(iced::Length::Fill),
                 menu_bar_highlight()
@@ -93,40 +93,40 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<
         )
         .push(home_button);
 
-    // Check if Active submenu is expanded from cache
-    let is_active_expanded = cache.active_expanded;
+    // Check if Liquid submenu is expanded from cache
+    let is_liquid_expanded = cache.liquid_expanded;
 
-    // Active menu button with expand/collapse chevron
-    let active_chevron = if is_active_expanded {
+    // Liquid menu button with expand/collapse chevron
+    let liquid_chevron = if is_liquid_expanded {
         up_icon()
     } else {
         down_icon()
     };
-    let active_button = Button::new(
+    let liquid_button = Button::new(
         Row::new()
             .spacing(10)
             .align_y(iced::alignment::Vertical::Center)
             .push(lightning_icon().style(theme::text::secondary))
-            .push(text("Active").size(15))
+            .push(text("Liquid").size(15))
             .push(Space::new().width(Length::Fill))
-            .push(active_chevron.style(theme::text::secondary))
+            .push(liquid_chevron.style(theme::text::secondary))
             .padding(10),
     )
     .width(iced::Length::Fill)
     .style(theme::button::menu)
-    .on_press(Message::ToggleActive);
+    .on_press(Message::ToggleLiquid);
 
-    menu_column = menu_column.push(active_button);
+    menu_column = menu_column.push(liquid_button);
 
-    // Add Active submenu items if expanded
-    if is_active_expanded {
-        use crate::app::menu::ActiveSubMenu;
+    // Add Liquid submenu items if expanded
+    if is_liquid_expanded {
+        use crate::app::menu::LiquidSubMenu;
 
-        // Active Overview
-        let active_overview_button = if matches!(menu, Menu::Active(ActiveSubMenu::Overview)) {
+        // Liquid Overview
+        let liquid_overview_button = if matches!(menu, Menu::Liquid(LiquidSubMenu::Overview)) {
             row!(
                 Space::new().width(Length::Fixed(20.0)),
-                button::menu_active(Some(home_icon()), "Overview")
+                button::menu_liquid(Some(home_icon()), "Overview")
                     .on_press(Message::Reload)
                     .width(iced::Length::Fill),
                 menu_bar_highlight()
@@ -136,17 +136,17 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<
             row!(
                 Space::new().width(Length::Fixed(20.0)),
                 button::menu(Some(home_icon()), "Overview")
-                    .on_press(Message::Menu(Menu::Active(ActiveSubMenu::Overview)))
+                    .on_press(Message::Menu(Menu::Liquid(LiquidSubMenu::Overview)))
                     .width(iced::Length::Fill),
             )
             .width(Length::Fill)
         };
 
-        // Active Send
-        let active_send_button = if matches!(menu, Menu::Active(ActiveSubMenu::Send)) {
+        // Liquid Send
+        let liquid_send_button = if matches!(menu, Menu::Liquid(LiquidSubMenu::Send)) {
             row!(
                 Space::new().width(Length::Fixed(20.0)),
-                button::menu_active(Some(send_icon()), "Send")
+                button::menu_liquid(Some(send_icon()), "Send")
                     .on_press(Message::Reload)
                     .width(iced::Length::Fill),
                 menu_bar_highlight()
@@ -156,17 +156,17 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<
             row!(
                 Space::new().width(Length::Fixed(20.0)),
                 button::menu(Some(send_icon()), "Send")
-                    .on_press(Message::Menu(Menu::Active(ActiveSubMenu::Send)))
+                    .on_press(Message::Menu(Menu::Liquid(LiquidSubMenu::Send)))
                     .width(iced::Length::Fill),
             )
             .width(Length::Fill)
         };
 
-        // Active Receive
-        let active_receive_button = if matches!(menu, Menu::Active(ActiveSubMenu::Receive)) {
+        // Liquid Receive
+        let liquid_receive_button = if matches!(menu, Menu::Liquid(LiquidSubMenu::Receive)) {
             row!(
                 Space::new().width(Length::Fixed(20.0)),
-                button::menu_active(Some(receive_icon()), "Receive")
+                button::menu_liquid(Some(receive_icon()), "Receive")
                     .on_press(Message::Reload)
                     .width(iced::Length::Fill),
                 menu_bar_highlight()
@@ -176,18 +176,18 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<
             row!(
                 Space::new().width(Length::Fixed(20.0)),
                 button::menu(Some(receive_icon()), "Receive")
-                    .on_press(Message::Menu(Menu::Active(ActiveSubMenu::Receive)))
+                    .on_press(Message::Menu(Menu::Liquid(LiquidSubMenu::Receive)))
                     .width(iced::Length::Fill),
             )
             .width(Length::Fill)
         };
 
-        // Active Transactions
-        let active_transactions_button =
-            if matches!(menu, Menu::Active(ActiveSubMenu::Transactions(_))) {
+        // Liquid Transactions
+        let liquid_transactions_button =
+            if matches!(menu, Menu::Liquid(LiquidSubMenu::Transactions(_))) {
                 row!(
                     Space::new().width(Length::Fixed(20.0)),
-                    button::menu_active(Some(receipt_icon()), "Transactions")
+                    button::menu_liquid(Some(receipt_icon()), "Transactions")
                         .on_press(Message::Reload)
                         .width(iced::Length::Fill),
                     menu_bar_highlight()
@@ -197,7 +197,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<
                 row!(
                     Space::new().width(Length::Fixed(20.0)),
                     button::menu(Some(receipt_icon()), "Transactions")
-                        .on_press(Message::Menu(Menu::Active(ActiveSubMenu::Transactions(
+                        .on_press(Message::Menu(Menu::Liquid(LiquidSubMenu::Transactions(
                             None
                         ))))
                         .width(iced::Length::Fill),
@@ -205,11 +205,11 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<
                 .width(Length::Fill)
             };
 
-        // Active Settings
-        let active_settings_button = if matches!(menu, Menu::Active(ActiveSubMenu::Settings(_))) {
+        // Liquid Settings
+        let liquid_settings_button = if matches!(menu, Menu::Liquid(LiquidSubMenu::Settings(_))) {
             row!(
                 Space::new().width(Length::Fixed(20.0)),
-                button::menu_active(Some(settings_icon()), "Settings")
+                button::menu_liquid(Some(settings_icon()), "Settings")
                     .on_press(Message::Reload)
                     .width(iced::Length::Fill),
                 menu_bar_highlight()
@@ -219,18 +219,18 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<
             row!(
                 Space::new().width(Length::Fixed(20.0)),
                 button::menu(Some(settings_icon()), "Settings")
-                    .on_press(Message::Menu(Menu::Active(ActiveSubMenu::Settings(None))))
+                    .on_press(Message::Menu(Menu::Liquid(LiquidSubMenu::Settings(None))))
                     .width(iced::Length::Fill),
             )
             .width(Length::Fill)
         };
 
         menu_column = menu_column
-            .push(active_overview_button)
-            .push(active_send_button)
-            .push(active_receive_button)
-            .push(active_transactions_button)
-            .push(active_settings_button);
+            .push(liquid_overview_button)
+            .push(liquid_send_button)
+            .push(liquid_receive_button)
+            .push(liquid_transactions_button)
+            .push(liquid_settings_button);
     }
 
     // Check if Vault submenu is expanded from cache
@@ -290,7 +290,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<
         let vault_overview_button = if matches!(menu, Menu::Vault(VaultSubMenu::Overview)) {
             row!(
                 Space::new().width(Length::Fixed(20.0)),
-                button::menu_active(Some(home_icon()), "Overview")
+                button::menu_liquid(Some(home_icon()), "Overview")
                     .on_press(Message::Reload)
                     .width(iced::Length::Fill),
                 menu_bar_highlight(),
@@ -310,7 +310,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<
         let vault_send_button = if matches!(menu, Menu::Vault(VaultSubMenu::Send)) {
             row!(
                 Space::new().width(Length::Fixed(20.0)),
-                button::menu_active(Some(send_icon()), "Send")
+                button::menu_liquid(Some(send_icon()), "Send")
                     .on_press(Message::Reload)
                     .width(iced::Length::Fill),
                 menu_bar_highlight()
@@ -330,7 +330,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<
         let vault_receive_button = if matches!(menu, Menu::Vault(VaultSubMenu::Receive)) {
             row!(
                 Space::new().width(Length::Fixed(20.0)),
-                button::menu_active(Some(receive_icon()), "Receive")
+                button::menu_liquid(Some(receive_icon()), "Receive")
                     .on_press(Message::Reload)
                     .width(iced::Length::Fill),
                 menu_bar_highlight()
@@ -350,7 +350,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<
         let vault_coins_button = if matches!(menu, Menu::Vault(VaultSubMenu::Coins(_))) {
             row!(
                 Space::new().width(Length::Fixed(20.0)),
-                button::menu_active(Some(coins_icon()), "Coins")
+                button::menu_liquid(Some(coins_icon()), "Coins")
                     .on_press(Message::Reload)
                     .width(iced::Length::Fill),
                 menu_bar_highlight()
@@ -371,7 +371,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<
             if matches!(menu, Menu::Vault(VaultSubMenu::Transactions(_))) {
                 row!(
                     Space::new().width(Length::Fixed(20.0)),
-                    button::menu_active(Some(receipt_icon()), "Transactions")
+                    button::menu_liquid(Some(receipt_icon()), "Transactions")
                         .on_press(Message::Reload)
                         .width(iced::Length::Fill),
                     menu_bar_highlight()
@@ -391,7 +391,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<
         let vault_psbts_button = if matches!(menu, Menu::Vault(VaultSubMenu::PSBTs(_))) {
             row!(
                 Space::new().width(Length::Fixed(20.0)),
-                button::menu_active(Some(receipt_icon()), "PSBTs")
+                button::menu_liquid(Some(receipt_icon()), "PSBTs")
                     .on_press(Message::Reload)
                     .width(iced::Length::Fill),
                 menu_bar_highlight()
@@ -411,7 +411,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<
         let vault_recovery_button = if matches!(menu, Menu::Vault(VaultSubMenu::Recovery)) {
             row!(
                 Space::new().width(Length::Fixed(20.0)),
-                button::menu_active(Some(recovery_icon()), "Recovery")
+                button::menu_liquid(Some(recovery_icon()), "Recovery")
                     .on_press(Message::Reload)
                     .width(iced::Length::Fill),
                 menu_bar_highlight()
@@ -431,7 +431,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<
         let vault_settings_button = if matches!(menu, Menu::Vault(VaultSubMenu::Settings(_))) {
             row!(
                 Space::new().width(Length::Fixed(20.0)),
-                button::menu_active(Some(settings_icon()), "Settings")
+                button::menu_liquid(Some(settings_icon()), "Settings")
                     .on_press(Message::Reload)
                     .width(iced::Length::Fill),
                 menu_bar_highlight()
@@ -467,7 +467,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<
     // Global Settings button (always visible at bottom of main menu)
     let global_settings_button = if matches!(menu, Menu::Settings(_)) {
         row!(
-            button::menu_active(Some(settings_icon()), "Settings")
+            button::menu_liquid(Some(settings_icon()), "Settings")
                 .on_press(Message::Reload)
                 .width(iced::Length::Fill),
             menu_bar_highlight(),

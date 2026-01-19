@@ -233,43 +233,43 @@ impl Launcher {
 
                 Task::perform(
                     async move {
-                        // Generate Active wallet HotSigner
-                        let active_signer = HotSigner::generate(network).map_err(|e| {
+                        // Generate Liquid wallet HotSigner
+                        let liquid_signer = HotSigner::generate(network).map_err(|e| {
                             format!("Failed to generate Active wallet signer: {}", e)
                         })?;
 
                         // Create secp context for fingerprint calculation
                         let secp = coincube_core::miniscript::bitcoin::secp256k1::Secp256k1::new();
-                        let active_fingerprint = active_signer.fingerprint(&secp);
+                        let liquid_fingerprint = liquid_signer.fingerprint(&secp);
 
-                        // Store Active wallet mnemonic (encrypted with PIN if provided)
+                        // Store Liquid wallet mnemonic (encrypted with PIN if provided)
                         let network_dir = datadir_path.network_directory(network);
                         network_dir
                             .init()
                             .map_err(|e| format!("Failed to create network directory: {}", e))?;
 
-                        // Use a timestamp for the Active wallet storage
+                        // Use a timestamp for the Liquid wallet storage
                         let timestamp = chrono::Utc::now().timestamp();
-                        let active_checksum = format!("active_{}", timestamp);
+                        let liquid_checksum = format!("liquid_{}", timestamp);
 
-                        // Store Active wallet mnemonic encrypted with PIN (always required)
-                        active_signer
+                        // Store Liquid wallet mnemonic encrypted with PIN (always required)
+                        liquid_signer
                             .store_encrypted(
                                 datadir_path.path(),
                                 network,
                                 &secp,
-                                Some((active_checksum, timestamp)),
+                                Some((liquid_checksum, timestamp)),
                                 Some(&pin),
                             )
                             .map_err(|e| {
                                 format!("Failed to store Active wallet mnemonic: {}", e)
                             })?;
 
-                        tracing::info!("Active wallet signer created and stored (encrypted with PIN) with fingerprint: {}", active_fingerprint);
+                        tracing::info!("Liquid wallet signer created and stored (encrypted with PIN) with fingerprint: {}", liquid_fingerprint);
 
-                        // Create Cube settings with Active wallet signer reference and PIN
+                        // Create Cube settings with Liquid wallet signer reference and PIN
                         let cube = CubeSettings::new(cube_name, network)
-                            .with_active_signer(active_fingerprint)
+                            .with_liquid_signer(liquid_fingerprint)
                             .with_pin(&pin)
                             .map_err(|e| format!("Failed to hash PIN: {}", e))?;
 
@@ -563,7 +563,7 @@ fn create_cube_form<'a>(
         .push(h4_bold("Create a new Cube"))
         .push(
             p1_regular(
-                "A Cube is your account which can contain an Active wallet, a Vault wallet and other features.",
+                "A Cube is your account which can contain an Liquid wallet, a Vault wallet and other features.",
             )
             .style(theme::text::secondary),
         )

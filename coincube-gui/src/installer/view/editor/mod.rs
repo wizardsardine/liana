@@ -216,7 +216,7 @@ pub fn defined_key<'a>(
 pub fn undefined_key<'a>(
     color: iced::Color,
     title: impl Into<Cow<'a, str>> + std::fmt::Display,
-    active: bool,
+    liquid: bool,
     fixed: bool,
 ) -> Element<'a, message::DefineKey> {
     card::simple(
@@ -231,7 +231,7 @@ pub fn undefined_key<'a>(
                     .spacing(5)
                     .push(p1_bold(title)),
             )
-            .push(if active {
+            .push(if liquid {
                 Some(
                     button::primary(Some(icon::pencil_icon()), "Set")
                         .on_press(message::DefineKey::Edit),

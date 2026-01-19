@@ -26,9 +26,9 @@ pub fn invalid(theme: &Theme, status: Status) -> Style {
 }
 
 fn text_input(c: &TextInput, status: Status) -> Style {
-    let active = Style {
-        background: Background::Color(c.active.background),
-        border: if let Some(color) = c.active.border {
+    let liquid = Style {
+        background: Background::Color(c.liquid.background),
+        border: if let Some(color) = c.liquid.border {
             Border {
                 radius: 25.0.into(),
                 width: 1.0,
@@ -37,14 +37,14 @@ fn text_input(c: &TextInput, status: Status) -> Style {
         } else {
             Border::default()
         },
-        icon: c.active.icon,
-        placeholder: c.active.placeholder,
-        value: c.active.value,
-        selection: c.active.selection,
+        icon: c.liquid.icon,
+        placeholder: c.liquid.placeholder,
+        value: c.liquid.value,
+        selection: c.liquid.selection,
     };
 
     match status {
-        Status::Active | Status::Hovered | Status::Focused { .. } => active,
+        Status::Active | Status::Hovered | Status::Focused { .. } => liquid,
         Status::Disabled => Style {
             background: Background::Color(c.disabled.background),
             border: if let Some(color) = c.disabled.border {

@@ -17,15 +17,15 @@ use iced::{
     Alignment, Background, Length,
 };
 
-use crate::app::view::{active::RecentTransaction, ActiveOverviewMessage, FiatAmountConverter};
+use crate::app::view::{liquid::RecentTransaction, FiatAmountConverter, LiquidOverviewMessage};
 
-pub fn active_overview_view<'a>(
+pub fn liquid_overview_view<'a>(
     btc_balance: Amount,
     fiat_converter: Option<FiatAmountConverter>,
     recent_transaction: &Vec<RecentTransaction>,
     error: Option<&'a str>,
     bitcoin_unit: BitcoinDisplayUnit,
-) -> Element<'a, ActiveOverviewMessage> {
+) -> Element<'a, LiquidOverviewMessage> {
     let mut content = Column::new().spacing(20);
 
     let fiat_balance = fiat_converter.as_ref().map(|c| c.convert(btc_balance));
@@ -46,12 +46,12 @@ pub fn active_overview_view<'a>(
         .width(Length::Fill)
         .push(
             button::primary(None, "Send")
-                .on_press(ActiveOverviewMessage::Send)
+                .on_press(LiquidOverviewMessage::Send)
                 .width(Length::Fill),
         )
         .push(
             button::secondary(None, "Receive")
-                .on_press(ActiveOverviewMessage::Receive)
+                .on_press(LiquidOverviewMessage::Receive)
                 .width(Length::Fill)
                 .style(|_, _| iced::widget::button::Style {
                     background: Some(iced::Background::Color(iced::Color::TRANSPARENT)),
@@ -132,7 +132,7 @@ pub fn active_overview_view<'a>(
                 item = item.with_fiat_amount(fiat);
             }
 
-            content = content.push(item.view(ActiveOverviewMessage::SelectTransaction(idx)));
+            content = content.push(item.view(LiquidOverviewMessage::SelectTransaction(idx)));
         }
     } else {
         content = content.push(placeholder(
@@ -181,7 +181,7 @@ pub fn active_overview_view<'a>(
             },
             ..Default::default()
         })
-        .on_press(ActiveOverviewMessage::History)
+        .on_press(LiquidOverviewMessage::History)
     };
 
     if !recent_transaction.is_empty() {
@@ -206,11 +206,11 @@ pub fn active_overview_view<'a>(
     content.into()
 }
 
-pub fn placeholder<'a, T: Into<Element<'a, ActiveOverviewMessage>>>(
+pub fn placeholder<'a, T: Into<Element<'a, LiquidOverviewMessage>>>(
     icon: T,
     title: &'a str,
     subtitle: &'a str,
-) -> Element<'a, ActiveOverviewMessage> {
+) -> Element<'a, LiquidOverviewMessage> {
     let content = Column::new()
         .push(icon)
         .push(text(title).style(theme::text::secondary).bold())

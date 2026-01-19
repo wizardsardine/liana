@@ -4,7 +4,7 @@
     <img src="coincube-ui/static/logos/coincube-logo.svg" width="440px" />
   </a>
 
-_Secure Bitcoin wallet with Vault, Active spending, and inheritance_.
+_Secure Bitcoin wallet with Vault, Liquid spending, and inheritance_.
 
 </div>
 
@@ -29,7 +29,7 @@ Example VAULT configuration:
 
 **KEYCHAIN** - Remote keychain-based signers for enhanced flexibility.
 
-COINCUBE is designed for **trustless inheritance**, **loss protection**, **active spending**, and
+COINCUBE is designed for **trustless inheritance**, **loss protection**, **liquid spending**, and
 **user-friendly Bitcoin custody**.
 
 ## Usage
@@ -60,7 +60,7 @@ built with the [`iced`](https://github.com/iced-rs/iced/) library.
 
 The code for the GUI can be found in the [`coincube-gui`](coincube-gui) folder.
 
-#### Active Wallet
+#### Liquid Wallet
 
 Lightning-enabled spending wallet integration with Breez SDK (under development).
 
