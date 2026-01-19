@@ -81,7 +81,7 @@ impl State for ActiveReceive {
             &self.amount_input,
             &self.description_input,
             cache.bitcoin_unit.into(),
-            self.error.as_ref(),
+            None, // Errors now shown via global toast
             self.lightning_receive_limits,
             self.onchain_receive_limits,
         )
