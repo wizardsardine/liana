@@ -3,7 +3,7 @@ use coincube_core::miniscript::bitcoin::{OutPoint, Txid};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Menu {
     Home,
-    Active(ActiveSubMenu),
+    Liquid(LiquidSubMenu),
     Vault(VaultSubMenu),
     Settings(SettingsSubMenu),
 
@@ -12,7 +12,7 @@ pub enum Menu {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ActiveSubMenu {
+pub enum LiquidSubMenu {
     Overview,
     Send,
     Receive,

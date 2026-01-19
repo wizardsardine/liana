@@ -8,7 +8,7 @@ use coincube_core::miniscript::bitcoin::Amount;
 use coincube_ui::{component::form, widget::*};
 use iced::Task;
 
-use crate::app::menu::{ActiveSubMenu, Menu};
+use crate::app::menu::{LiquidSubMenu, Menu};
 use crate::app::settings::unit::BitcoinDisplayUnit;
 use crate::app::state::{redirect, State};
 use crate::app::view::SendPopupMessage;
@@ -31,26 +31,26 @@ pub enum Modal {
 }
 
 #[derive(Debug)]
-pub enum ActiveSendFlowState {
+pub enum LiquidSendFlowState {
     Main { modal: Modal },
     FinalCheck,
     Sent,
 }
 
-/// ActiveSend manages the Lightning Network send interface
-pub struct ActiveSend {
+/// LiquidSend manages the Lightning Network send interface
+pub struct LiquidSend {
     breez_client: Arc<BreezClient>,
     btc_balance: Amount,
     amount: Amount,
     amount_input: form::Value<String>,
-    recent_transaction: Vec<view::active::RecentTransaction>,
+    recent_transaction: Vec<view::liquid::RecentTransaction>,
     recent_payments: Vec<Payment>,
     selected_payment: Option<Payment>,
     input: form::Value<String>,
     input_type: Option<InputType>,
     lightning_limits: Option<(u64, u64)>, // (min_sats, max_sats)
     onchain_limits: Option<(u64, u64)>,   // (min_sats, max_sats)
-    flow_state: ActiveSendFlowState,
+    flow_state: LiquidSendFlowState,
     description: Option<String>,
     comment: Option<String>,
     error: Option<String>,
@@ -59,7 +59,7 @@ pub struct ActiveSend {
     is_sending: bool,
 }
 
-impl ActiveSend {
+impl LiquidSend {
     pub fn new(breez_client: Arc<BreezClient>) -> Self {
         Self {
             breez_client,
@@ -71,7 +71,7 @@ impl ActiveSend {
             selected_payment: None,
             input: form::Value::default(),
             error: None,
-            flow_state: ActiveSendFlowState::Main { modal: Modal::None },
+            flow_state: LiquidSendFlowState::Main { modal: Modal::None },
             input_type: None,
             lightning_limits: None,
             onchain_limits: None,
@@ -101,12 +101,12 @@ impl ActiveSend {
                     .unwrap_or(Amount::ZERO);
 
                 let error = match (&info, &payments) {
-                    (Err(e1), Err(e2)) => Some(view::ActiveSendError::BalanceAndTransactionsFetch(
+                    (Err(e1), Err(e2)) => Some(view::LiquidSendError::BalanceAndTransactionsFetch(
                         e1.to_string(),
                         e2.to_string(),
                     )),
-                    (Err(e), _) => Some(view::ActiveSendError::BalanceFetch(e.to_string())),
-                    (_, Err(e)) => Some(view::ActiveSendError::TransactionsFetch(e.to_string())),
+                    (Err(e), _) => Some(view::LiquidSendError::BalanceFetch(e.to_string())),
+                    (_, Err(e)) => Some(view::LiquidSendError::TransactionsFetch(e.to_string())),
                     _ => None,
                 };
 
@@ -116,12 +116,12 @@ impl ActiveSend {
             },
             |(balance, recent_payment, error)| {
                 if let Some(err) = error {
-                    Message::View(view::Message::ActiveSend(view::ActiveSendMessage::Error(
+                    Message::View(view::Message::LiquidSend(view::LiquidSendMessage::Error(
                         err,
                     )))
                 } else {
-                    Message::View(view::Message::ActiveSend(
-                        view::ActiveSendMessage::DataLoaded {
+                    Message::View(view::Message::LiquidSend(
+                        view::LiquidSendMessage::DataLoaded {
                             balance,
                             recent_payment,
                         },
@@ -132,7 +132,7 @@ impl ActiveSend {
     }
 }
 
-impl State for ActiveSend {
+impl State for LiquidSend {
     fn view<'a>(&'a self, menu: &'a Menu, cache: &'a Cache) -> Element<'a, view::Message> {
         let fiat_converter = cache.fiat_price.as_ref().and_then(|p| p.try_into().ok());
 
@@ -141,7 +141,7 @@ impl State for ActiveSend {
                 menu,
                 cache,
                 None,
-                view::active::transaction_detail_view(
+                view::liquid::transaction_detail_view(
                     payment,
                     fiat_converter,
                     cache.bitcoin_unit.into(),
@@ -150,7 +150,7 @@ impl State for ActiveSend {
         } else {
             let comment = self.comment.clone().unwrap_or("".to_string());
 
-            view::active_send_with_flow(view::ActiveSendFlowConfig {
+            view::active_send_with_flow(view::LiquidSendFlowConfig {
                 flow_state: &self.flow_state,
                 btc_balance: self.btc_balance,
                 fiat_converter,
@@ -179,9 +179,9 @@ impl State for ActiveSend {
         cache: &Cache,
         message: Message,
     ) -> Task<Message> {
-        if let Message::View(view::Message::ActiveSend(ref msg)) = message {
+        if let Message::View(view::Message::LiquidSend(ref msg)) = message {
             match msg {
-                view::ActiveSendMessage::InputEdited(value) => {
+                view::LiquidSendMessage::InputEdited(value) => {
                     self.input.value = value.clone();
                     self.error = None;
                     let breez = self.breez_client.clone();
@@ -193,8 +193,8 @@ impl State for ActiveSend {
                     let validate_input = Task::perform(
                         async move { breez.validate_input(value_owned).await },
                         |input| {
-                            Message::View(view::Message::ActiveSend(
-                                view::ActiveSendMessage::InputValidated(input),
+                            Message::View(view::Message::LiquidSend(
+                                view::LiquidSendMessage::InputValidated(input),
                             ))
                         },
                     );
@@ -205,16 +205,16 @@ impl State for ActiveSend {
                             async move { breez_clone.fetch_lightning_limits().await },
                             |limits| {
                                 if let Ok(limits) = limits {
-                                    Message::View(view::Message::ActiveSend(
-                                        view::ActiveSendMessage::LightningLimitsFetched {
+                                    Message::View(view::Message::LiquidSend(
+                                        view::LiquidSendMessage::LightningLimitsFetched {
                                             min_sat: limits.send.min_sat,
                                             max_sat: limits.send.max_sat,
                                         },
                                     ))
                                 } else {
-                                    Message::View(view::Message::ActiveSend(
-                                        view::ActiveSendMessage::Error(
-                                            view::ActiveSendError::LightningLimitsFetch(
+                                    Message::View(view::Message::LiquidSend(
+                                        view::LiquidSendMessage::Error(
+                                            view::LiquidSendError::LightningLimitsFetch(
                                                 "Unknown error".to_string(),
                                             ),
                                         ),
@@ -227,16 +227,16 @@ impl State for ActiveSend {
                             async move { breez_client.fetch_onchain_limits().await },
                             |limits| {
                                 if let Ok(limits) = limits {
-                                    Message::View(view::Message::ActiveSend(
-                                        view::ActiveSendMessage::OnChainLimitsFetched {
+                                    Message::View(view::Message::LiquidSend(
+                                        view::LiquidSendMessage::OnChainLimitsFetched {
                                             min_sat: limits.send.min_sat,
                                             max_sat: limits.send.max_sat,
                                         },
                                     ))
                                 } else {
-                                    Message::View(view::Message::ActiveSend(
-                                        view::ActiveSendMessage::Error(
-                                            view::ActiveSendError::OnChainLimitsFetch(
+                                    Message::View(view::Message::LiquidSend(
+                                        view::LiquidSendMessage::Error(
+                                            view::LiquidSendError::OnChainLimitsFetch(
                                                 "Unknown error".to_string(),
                                             ),
                                         ),
@@ -252,7 +252,7 @@ impl State for ActiveSend {
                     }
                     return validate_input;
                 }
-                view::ActiveSendMessage::Send => {
+                view::LiquidSendMessage::Send => {
                     let description = if let Some(input_type) = &self.input_type {
                         match input_type {
                             InputType::BitcoinAddress { address } => {
@@ -335,23 +335,23 @@ impl State for ActiveSend {
                     } else {
                         Some(description)
                     };
-                    self.flow_state = ActiveSendFlowState::Main {
+                    self.flow_state = LiquidSendFlowState::Main {
                         modal: Modal::AmountInput,
                     };
                 }
-                view::ActiveSendMessage::History => {
-                    return redirect(Menu::Active(ActiveSubMenu::Transactions(None)));
+                view::LiquidSendMessage::History => {
+                    return redirect(Menu::Liquid(LiquidSubMenu::Transactions(None)));
                 }
-                view::ActiveSendMessage::SelectTransaction(idx) => {
+                view::LiquidSendMessage::SelectTransaction(idx) => {
                     if let Some(payment) = self.recent_payments.get(*idx).cloned() {
                         self.selected_payment = Some(payment.clone());
                         return Task::batch(vec![
-                            redirect(Menu::Active(ActiveSubMenu::Transactions(None))),
+                            redirect(Menu::Liquid(LiquidSubMenu::Transactions(None))),
                             Task::done(Message::View(view::Message::PreselectPayment(payment))),
                         ]);
                     }
                 }
-                view::ActiveSendMessage::DataLoaded {
+                view::LiquidSendMessage::DataLoaded {
                     balance,
                     recent_payment,
                 } => {
@@ -401,7 +401,7 @@ impl State for ActiveSend {
 
                                 let details = payment.details.clone();
                                 let sign = if is_incoming { "+" } else { "-" };
-                                view::active::RecentTransaction {
+                                view::liquid::RecentTransaction {
                                     description: desc.to_owned(),
                                     time_ago,
                                     amount,
@@ -419,21 +419,21 @@ impl State for ActiveSend {
                         self.recent_transaction = Vec::new();
                     }
                 }
-                view::ActiveSendMessage::Error(err) => {
+                view::LiquidSendMessage::Error(err) => {
                     self.error = Some(err.to_string());
                     self.is_sending = false; // Reset sending flag on error
                                              // Wire to global toast
                     return Task::done(Message::View(view::Message::ShowError(err.to_string())));
                 }
-                view::ActiveSendMessage::ClearError => {
+                view::LiquidSendMessage::ClearError => {
                     self.error = None;
                 }
-                view::ActiveSendMessage::InputValidated(input_type) => {
+                view::LiquidSendMessage::InputValidated(input_type) => {
                     self.input.valid = input_type.is_some();
                     self.input_type = input_type.clone();
                 }
-                view::ActiveSendMessage::PopupMessage(SendPopupMessage::AmountEdited(v)) => {
-                    if let ActiveSendFlowState::Main {
+                view::LiquidSendMessage::PopupMessage(SendPopupMessage::AmountEdited(v)) => {
+                    if let LiquidSendFlowState::Main {
                         modal: Modal::AmountInput,
                     } = &mut self.flow_state
                     {
@@ -481,16 +481,16 @@ impl State for ActiveSend {
                         }
                     }
                 }
-                view::ActiveSendMessage::PopupMessage(SendPopupMessage::CommentEdited(comment)) => {
-                    if let ActiveSendFlowState::Main {
+                view::LiquidSendMessage::PopupMessage(SendPopupMessage::CommentEdited(comment)) => {
+                    if let LiquidSendFlowState::Main {
                         modal: Modal::AmountInput,
                     } = &mut self.flow_state
                     {
                         self.comment = Some(comment.clone());
                     }
                 }
-                view::ActiveSendMessage::PopupMessage(SendPopupMessage::FiatConvert) => {
-                    if let ActiveSendFlowState::Main {
+                view::LiquidSendMessage::PopupMessage(SendPopupMessage::FiatConvert) => {
+                    if let LiquidSendFlowState::Main {
                         modal: Modal::AmountInput,
                     } = &self.flow_state
                     {
@@ -514,7 +514,7 @@ impl State for ActiveSend {
                         };
 
                         // Transition to Fiat Input with empty converters initially
-                        self.flow_state = ActiveSendFlowState::Main {
+                        self.flow_state = LiquidSendFlowState::Main {
                             modal: Modal::FiatInput {
                                 fiat_input: form::Value::default(),
                                 currencies,
@@ -556,8 +556,8 @@ impl State for ActiveSend {
                                 converters
                             },
                             |converters| {
-                                Message::View(view::Message::ActiveSend(
-                                    view::ActiveSendMessage::PopupMessage(
+                                Message::View(view::Message::LiquidSend(
+                                    view::LiquidSendMessage::PopupMessage(
                                         SendPopupMessage::FiatPricesLoaded(converters),
                                     ),
                                 ))
@@ -565,10 +565,10 @@ impl State for ActiveSend {
                         );
                     }
                 }
-                view::ActiveSendMessage::PopupMessage(SendPopupMessage::FiatInputEdited(
+                view::LiquidSendMessage::PopupMessage(SendPopupMessage::FiatInputEdited(
                     fiat_input,
                 )) => {
-                    if let ActiveSendFlowState::Main {
+                    if let LiquidSendFlowState::Main {
                         modal:
                             Modal::FiatInput {
                                 fiat_input: current_input,
@@ -635,10 +635,10 @@ impl State for ActiveSend {
                         }
                     }
                 }
-                view::ActiveSendMessage::PopupMessage(SendPopupMessage::FiatCurrencySelected(
+                view::LiquidSendMessage::PopupMessage(SendPopupMessage::FiatCurrencySelected(
                     currency,
                 )) => {
-                    if let ActiveSendFlowState::Main {
+                    if let LiquidSendFlowState::Main {
                         modal:
                             Modal::FiatInput {
                                 selected_currency, ..
@@ -648,10 +648,10 @@ impl State for ActiveSend {
                         *selected_currency = *currency;
                     }
                 }
-                view::ActiveSendMessage::PopupMessage(SendPopupMessage::FiatPricesLoaded(
+                view::LiquidSendMessage::PopupMessage(SendPopupMessage::FiatPricesLoaded(
                     converters,
                 )) => {
-                    if let ActiveSendFlowState::Main {
+                    if let LiquidSendFlowState::Main {
                         modal:
                             Modal::FiatInput {
                                 converters: modal_converters,
@@ -662,8 +662,8 @@ impl State for ActiveSend {
                         *modal_converters = converters.clone();
                     }
                 }
-                view::ActiveSendMessage::PopupMessage(SendPopupMessage::FiatDone) => {
-                    if let ActiveSendFlowState::Main {
+                view::LiquidSendMessage::PopupMessage(SendPopupMessage::FiatDone) => {
+                    if let LiquidSendFlowState::Main {
                         modal:
                             Modal::FiatInput {
                                 fiat_input,
@@ -726,7 +726,7 @@ impl State for ActiveSend {
                                         };
 
                                         // Only close modal on successful conversion
-                                        self.flow_state = ActiveSendFlowState::Main {
+                                        self.flow_state = LiquidSendFlowState::Main {
                                             modal: Modal::AmountInput,
                                         };
                                     } else {
@@ -747,8 +747,8 @@ impl State for ActiveSend {
                         }
                     }
                 }
-                view::ActiveSendMessage::PopupMessage(SendPopupMessage::Done) => {
-                    if let ActiveSendFlowState::Main {
+                view::LiquidSendMessage::PopupMessage(SendPopupMessage::Done) => {
+                    if let LiquidSendFlowState::Main {
                         modal: Modal::AmountInput,
                     } = &self.flow_state
                     {
@@ -785,15 +785,15 @@ impl State for ActiveSend {
                                 },
                                 |result| match result {
                                     Ok(prepare_response) => {
-                                        Message::View(view::Message::ActiveSend(
-                                            view::ActiveSendMessage::PrepareResponseReceived(
+                                        Message::View(view::Message::LiquidSend(
+                                            view::LiquidSendMessage::PrepareResponseReceived(
                                                 prepare_response,
                                             ),
                                         ))
                                     }
-                                    Err(e) => Message::View(view::Message::ActiveSend(
-                                        view::ActiveSendMessage::Error(
-                                            view::ActiveSendError::PrepareSend(e.to_string()),
+                                    Err(e) => Message::View(view::Message::LiquidSend(
+                                        view::LiquidSendMessage::Error(
+                                            view::LiquidSendError::PrepareSend(e.to_string()),
                                         ),
                                     )),
                                 },
@@ -815,15 +815,15 @@ impl State for ActiveSend {
                                 },
                                 |result| match result {
                                     Ok(prepare_response) => {
-                                        Message::View(view::Message::ActiveSend(
-                                            view::ActiveSendMessage::PrepareOnChainResponseReceived(
+                                        Message::View(view::Message::LiquidSend(
+                                            view::LiquidSendMessage::PrepareOnChainResponseReceived(
                                                 prepare_response,
                                             ),
                                         ))
                                     }
-                                    Err(e) => Message::View(view::Message::ActiveSend(
-                                        view::ActiveSendMessage::Error(
-                                            view::ActiveSendError::PrepareSend(e.to_string()),
+                                    Err(e) => Message::View(view::Message::LiquidSend(
+                                        view::LiquidSendMessage::Error(
+                                            view::LiquidSendError::PrepareSend(e.to_string()),
                                         ),
                                     )),
                                 },
@@ -837,16 +837,16 @@ impl State for ActiveSend {
                         }
                     }
                 }
-                view::ActiveSendMessage::PrepareResponseReceived(prepare_response) => {
+                view::LiquidSendMessage::PrepareResponseReceived(prepare_response) => {
                     self.prepare_response = Some(prepare_response.clone());
-                    self.flow_state = ActiveSendFlowState::FinalCheck;
+                    self.flow_state = LiquidSendFlowState::FinalCheck;
                 }
-                view::ActiveSendMessage::PrepareOnChainResponseReceived(prepare_response) => {
+                view::LiquidSendMessage::PrepareOnChainResponseReceived(prepare_response) => {
                     self.prepare_onchain_response = Some(prepare_response.clone());
-                    self.flow_state = ActiveSendFlowState::FinalCheck;
+                    self.flow_state = LiquidSendFlowState::FinalCheck;
                 }
-                view::ActiveSendMessage::PopupMessage(SendPopupMessage::Close) => {
-                    self.flow_state = ActiveSendFlowState::Main { modal: Modal::None };
+                view::LiquidSendMessage::PopupMessage(SendPopupMessage::Close) => {
+                    self.flow_state = LiquidSendFlowState::Main { modal: Modal::None };
                     self.amount = Amount::ZERO;
                     self.lightning_limits = None;
                     self.description = None;
@@ -855,8 +855,8 @@ impl State for ActiveSend {
                     self.input = form::Value::default();
                     self.input_type = None;
                 }
-                view::ActiveSendMessage::ConfirmSend => {
-                    if let ActiveSendFlowState::FinalCheck = &self.flow_state {
+                view::LiquidSendMessage::ConfirmSend => {
+                    if let LiquidSendFlowState::FinalCheck = &self.flow_state {
                         if self.is_sending {
                             return Task::none();
                         }
@@ -880,12 +880,12 @@ impl State for ActiveSend {
                                         .await
                                 },
                                 |result| match result {
-                                    Ok(_send_response) => Message::View(view::Message::ActiveSend(
-                                        view::ActiveSendMessage::SendComplete,
+                                    Ok(_send_response) => Message::View(view::Message::LiquidSend(
+                                        view::LiquidSendMessage::SendComplete,
                                     )),
-                                    Err(e) => Message::View(view::Message::ActiveSend(
-                                        view::ActiveSendMessage::Error(
-                                            view::ActiveSendError::Send(e.to_string()),
+                                    Err(e) => Message::View(view::Message::LiquidSend(
+                                        view::LiquidSendMessage::Error(
+                                            view::LiquidSendError::Send(e.to_string()),
                                         ),
                                     )),
                                 },
@@ -911,13 +911,13 @@ impl State for ActiveSend {
                                     },
                                     |result| match result {
                                         Ok(_send_response) => {
-                                            Message::View(view::Message::ActiveSend(
-                                                view::ActiveSendMessage::SendComplete,
+                                            Message::View(view::Message::LiquidSend(
+                                                view::LiquidSendMessage::SendComplete,
                                             ))
                                         }
-                                        Err(e) => Message::View(view::Message::ActiveSend(
-                                            view::ActiveSendMessage::Error(
-                                                view::ActiveSendError::Send(e.to_string()),
+                                        Err(e) => Message::View(view::Message::LiquidSend(
+                                            view::LiquidSendMessage::Error(
+                                                view::LiquidSendError::Send(e.to_string()),
                                             ),
                                         )),
                                     },
@@ -929,12 +929,12 @@ impl State for ActiveSend {
                         }
                     }
                 }
-                view::ActiveSendMessage::SendComplete => {
-                    self.flow_state = ActiveSendFlowState::Sent;
+                view::LiquidSendMessage::SendComplete => {
+                    self.flow_state = LiquidSendFlowState::Sent;
                     self.prepare_response = None;
                     self.is_sending = false;
                 }
-                view::ActiveSendMessage::BackToHome => {
+                view::LiquidSendMessage::BackToHome => {
                     self.input = form::Value::default();
                     self.amount = Amount::ZERO;
                     self.amount_input = form::Value::default();
@@ -944,20 +944,20 @@ impl State for ActiveSend {
                     self.lightning_limits = None;
                     self.prepare_response = None;
                     self.is_sending = false;
-                    self.flow_state = ActiveSendFlowState::Main { modal: Modal::None };
+                    self.flow_state = LiquidSendFlowState::Main { modal: Modal::None };
                 }
-                view::ActiveSendMessage::LightningLimitsFetched { min_sat, max_sat } => {
+                view::LiquidSendMessage::LightningLimitsFetched { min_sat, max_sat } => {
                     self.lightning_limits = Some((*min_sat, *max_sat));
                 }
-                view::ActiveSendMessage::OnChainLimitsFetched { min_sat, max_sat } => {
+                view::LiquidSendMessage::OnChainLimitsFetched { min_sat, max_sat } => {
                     self.onchain_limits = Some((*min_sat, *max_sat));
                 }
-                view::ActiveSendMessage::PopupMessage(SendPopupMessage::FiatClose) => {
-                    self.flow_state = ActiveSendFlowState::Main {
+                view::LiquidSendMessage::PopupMessage(SendPopupMessage::FiatClose) => {
+                    self.flow_state = LiquidSendFlowState::Main {
                         modal: Modal::AmountInput,
                     }
                 }
-                view::ActiveSendMessage::RefreshRequested => {
+                view::LiquidSendMessage::RefreshRequested => {
                     return self.load_balance();
                 }
             }

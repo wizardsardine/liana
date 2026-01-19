@@ -16,10 +16,10 @@ use iced::{
 
 use crate::app::{
     settings::unit::BitcoinDisplayUnit,
-    view::{ActiveReceiveMessage, ReceiveMethod},
+    view::{LiquidReceiveMessage, ReceiveMethod},
 };
 
-pub fn active_receive_view<'a>(
+pub fn liquid_receive_view<'a>(
     receive_method: &'a ReceiveMethod,
     address: Option<&'a String>,
     qr_data: Option<&'a qr_code::Data>,
@@ -30,7 +30,7 @@ pub fn active_receive_view<'a>(
     error: Option<&'a String>,
     lightning_limits: Option<(u64, u64)>,
     onchain_limits: Option<(u64, u64)>,
-) -> Element<'a, ActiveReceiveMessage> {
+) -> Element<'a, LiquidReceiveMessage> {
     let mut content = Column::new()
         .spacing(40)
         .width(Length::Fill)
@@ -110,7 +110,7 @@ pub fn active_receive_view<'a>(
             content = content.push(
                 Container::new(
                     button::secondary(None, "Generate New Address")
-                        .on_press(ActiveReceiveMessage::GenerateAddress)
+                        .on_press(LiquidReceiveMessage::GenerateAddress)
                         .width(Length::Fixed(200.0))
                         .padding(10),
                 )
@@ -143,7 +143,7 @@ pub fn active_receive_view<'a>(
     }
 }
 
-fn method_toggle(current_method: &ReceiveMethod) -> Element<ActiveReceiveMessage> {
+fn method_toggle(current_method: &ReceiveMethod) -> Element<LiquidReceiveMessage> {
     let lightning_active = *current_method == ReceiveMethod::Lightning;
     let onchain_active = *current_method == ReceiveMethod::OnChain;
 
@@ -193,7 +193,7 @@ fn method_toggle(current_method: &ReceiveMethod) -> Element<ActiveReceiveMessage
                     },
                     ..Default::default()
                 })
-                .on_press(ActiveReceiveMessage::ToggleMethod(ReceiveMethod::Lightning)),
+                .on_press(LiquidReceiveMessage::ToggleMethod(ReceiveMethod::Lightning)),
         )
         .style(move |_theme: &theme::Theme| container::Style {
             background: Some(Background::Color(if lightning_active {
@@ -260,7 +260,7 @@ fn method_toggle(current_method: &ReceiveMethod) -> Element<ActiveReceiveMessage
                     },
                     ..Default::default()
                 })
-                .on_press(ActiveReceiveMessage::ToggleMethod(ReceiveMethod::OnChain)),
+                .on_press(LiquidReceiveMessage::ToggleMethod(ReceiveMethod::OnChain)),
         )
         .style(move |_theme: &theme::Theme| container::Style {
             background: Some(Background::Color(if onchain_active {
@@ -301,7 +301,7 @@ fn input_fields<'a>(
     description_input: &'a str,
     bitcoin_unit: BitcoinDisplayUnit,
     lightning_limits: Option<(u64, u64)>,
-) -> Element<'a, ActiveReceiveMessage> {
+) -> Element<'a, LiquidReceiveMessage> {
     let mut amount_field = Column::new()
         .spacing(5)
         .push(
@@ -311,12 +311,12 @@ fn input_fields<'a>(
         )
         .push(if matches!(bitcoin_unit, BitcoinDisplayUnit::BTC) {
             form::Form::new_amount_btc("Enter amount", amount_input, |v| {
-                ActiveReceiveMessage::AmountInput(v)
+                LiquidReceiveMessage::AmountInput(v)
             })
             .padding(10)
         } else {
             form::Form::new_amount_sats("Enter amount", amount_input, |v| {
-                ActiveReceiveMessage::AmountInput(v)
+                LiquidReceiveMessage::AmountInput(v)
             })
             .padding(10)
         });
@@ -341,7 +341,7 @@ fn input_fields<'a>(
         .push(text("Description").size(14).style(theme::text::secondary))
         .push(
             TextInput::new("Optional", description_input)
-                .on_input(ActiveReceiveMessage::DescriptionInput)
+                .on_input(LiquidReceiveMessage::DescriptionInput)
                 .padding(12)
                 .width(Length::Fill),
         );
@@ -371,7 +371,7 @@ fn input_fields<'a>(
     };
 
     let generate_btn = button::primary(None, "Generate Invoice")
-        .on_press_maybe(is_amount_valid.then_some(ActiveReceiveMessage::GenerateAddress))
+        .on_press_maybe(is_amount_valid.then_some(LiquidReceiveMessage::GenerateAddress))
         .width(Length::Fill)
         .padding(5);
 
@@ -389,10 +389,10 @@ fn input_fields<'a>(
     .into()
 }
 
-fn generate_button<'a>() -> Element<'a, ActiveReceiveMessage> {
+fn generate_button<'a>() -> Element<'a, LiquidReceiveMessage> {
     Container::new(
         button::primary(None, "Generate Address")
-            .on_press(ActiveReceiveMessage::GenerateAddress)
+            .on_press(LiquidReceiveMessage::GenerateAddress)
             .width(Length::Fixed(200.0))
             .padding(15),
     )
@@ -405,9 +405,9 @@ fn action_buttons<'a>(
     receive_method: &ReceiveMethod,
     onchain_limits: Option<(u64, u64)>,
     bitcoin_unit: BitcoinDisplayUnit,
-) -> Element<'a, ActiveReceiveMessage> {
+) -> Element<'a, LiquidReceiveMessage> {
     let copy_button = button::primary(Some(icon::clipboard_icon()), "Copy")
-        .on_press(ActiveReceiveMessage::Copy)
+        .on_press(LiquidReceiveMessage::Copy)
         .width(Length::Fixed(150.0))
         .padding(15);
 

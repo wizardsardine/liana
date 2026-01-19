@@ -8,12 +8,12 @@ use iced::{clipboard, widget::qr_code, Task};
 
 use crate::app::settings::unit::BitcoinDisplayUnit;
 use crate::app::view::ReceiveError;
-use crate::app::view::{ActiveReceiveMessage, ReceiveMethod};
+use crate::app::view::{LiquidReceiveMessage, ReceiveMethod};
 use crate::app::{breez::BreezClient, cache::Cache, menu::Menu, state::State};
 use crate::app::{message::Message, view, wallet::Wallet};
 use crate::daemon::Daemon;
 
-pub struct ActiveReceive {
+pub struct LiquidReceive {
     breez_client: Arc<BreezClient>,
     receive_method: ReceiveMethod,
     lightning_address: Option<String>,
@@ -29,7 +29,7 @@ pub struct ActiveReceive {
     error: Option<String>,
 }
 
-impl ActiveReceive {
+impl LiquidReceive {
     pub fn new(breez_client: Arc<BreezClient>) -> Self {
         Self {
             breez_client,
@@ -71,9 +71,9 @@ impl ActiveReceive {
     }
 }
 
-impl State for ActiveReceive {
+impl State for LiquidReceive {
     fn view<'a>(&'a self, menu: &'a Menu, cache: &'a Cache) -> Element<'a, view::Message> {
-        let receive_view = view::active::active_receive_view(
+        let receive_view = view::liquid::liquid_receive_view(
             &self.receive_method,
             self.current_address(),
             self.current_qr_data(),
@@ -85,7 +85,7 @@ impl State for ActiveReceive {
             self.lightning_receive_limits,
             self.onchain_receive_limits,
         )
-        .map(view::Message::ActiveReceive);
+        .map(view::Message::LiquidReceive);
 
         let content = view::dashboard(menu, cache, None, receive_view);
 
@@ -105,16 +105,16 @@ impl State for ActiveReceive {
         cache: &Cache,
         message: Message,
     ) -> Task<Message> {
-        if let Message::View(view::Message::ActiveReceive(msg)) = message {
+        if let Message::View(view::Message::LiquidReceive(msg)) = message {
             match msg {
-                ActiveReceiveMessage::ToggleMethod(method) => {
+                LiquidReceiveMessage::ToggleMethod(method) => {
                     if self.receive_method != method {
                         self.receive_method = method.clone();
                         self.toast = None;
                     }
                     return self.fetch_limits();
                 }
-                ActiveReceiveMessage::Copy => {
+                LiquidReceiveMessage::Copy => {
                     if let Some(address) = self.current_address() {
                         // Clean up address for clipboard
                         let address_copy = if self.receive_method == ReceiveMethod::OnChain {
@@ -137,8 +137,8 @@ impl State for ActiveReceive {
                         // Auto-dismiss toast after 3 seconds
                         let clear_toast_task = Task::future(async {
                             tokio::time::sleep(Duration::from_secs(3)).await;
-                            Message::View(view::Message::ActiveReceive(
-                                ActiveReceiveMessage::ClearToast,
+                            Message::View(view::Message::LiquidReceive(
+                                LiquidReceiveMessage::ClearToast,
                             ))
                         });
 
@@ -146,11 +146,11 @@ impl State for ActiveReceive {
                     }
                     return Task::none();
                 }
-                ActiveReceiveMessage::ClearToast => {
+                LiquidReceiveMessage::ClearToast => {
                     self.toast = None;
                     return Task::none();
                 }
-                ActiveReceiveMessage::AmountInput(value) => {
+                LiquidReceiveMessage::AmountInput(value) => {
                     self.amount_input.value = value;
                     if self.receive_method == ReceiveMethod::Lightning {
                         if let Some(amount) = self.parse_amount(cache.bitcoin_unit) {
@@ -177,7 +177,7 @@ impl State for ActiveReceive {
                     }
                     return Task::none();
                 }
-                ActiveReceiveMessage::DescriptionInput(value) => {
+                LiquidReceiveMessage::DescriptionInput(value) => {
                     self.description_input = value;
                     // Clear current Lightning address so user knows they need to regenerate
                     if self.receive_method == ReceiveMethod::Lightning {
@@ -186,13 +186,13 @@ impl State for ActiveReceive {
                     }
                     return Task::none();
                 }
-                ActiveReceiveMessage::GenerateAddress => {
+                LiquidReceiveMessage::GenerateAddress => {
                     return match self.receive_method {
                         ReceiveMethod::Lightning => self.generate_lightning(cache.bitcoin_unit),
                         ReceiveMethod::OnChain => self.generate_onchain(),
                     };
                 }
-                ActiveReceiveMessage::AddressGenerated(method, result) => {
+                LiquidReceiveMessage::AddressGenerated(method, result) => {
                     self.loading = false;
                     match result {
                         Ok(address) => {
@@ -231,28 +231,28 @@ impl State for ActiveReceive {
                     return Task::none();
                 }
 
-                ActiveReceiveMessage::Error(err) => {
+                LiquidReceiveMessage::Error(err) => {
                     self.error = Some(err.to_string());
                     return Task::perform(
                         async {
                             tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
                         },
                         |_| {
-                            Message::View(view::Message::ActiveReceive(
-                                view::ActiveReceiveMessage::ClearError,
+                            Message::View(view::Message::LiquidReceive(
+                                view::LiquidReceiveMessage::ClearError,
                             ))
                         },
                     );
                 }
 
-                ActiveReceiveMessage::ClearError => {
+                LiquidReceiveMessage::ClearError => {
                     self.error = None;
                 }
 
-                ActiveReceiveMessage::LightningLimitsFetched { min_sat, max_sat } => {
+                LiquidReceiveMessage::LightningLimitsFetched { min_sat, max_sat } => {
                     self.lightning_receive_limits = Some((min_sat, max_sat));
                 }
-                ActiveReceiveMessage::OnChainLimitsFetched { min_sat, max_sat } => {
+                LiquidReceiveMessage::OnChainLimitsFetched { min_sat, max_sat } => {
                     self.onchain_receive_limits = Some((min_sat, max_sat));
                 }
             }
@@ -269,7 +269,7 @@ impl State for ActiveReceive {
     }
 }
 
-impl ActiveReceive {
+impl LiquidReceive {
     fn current_address(&self) -> Option<&String> {
         match self.receive_method {
             ReceiveMethod::Lightning => self.lightning_address.as_ref(),
@@ -291,8 +291,8 @@ impl ActiveReceive {
         // Check for empty input first
         if self.amount_input.value.is_empty() {
             self.loading = false;
-            return Task::done(Message::View(view::Message::ActiveReceive(
-                ActiveReceiveMessage::Error("Please enter an amount".to_string()),
+            return Task::done(Message::View(view::Message::LiquidReceive(
+                LiquidReceiveMessage::Error("Please enter an amount".to_string()),
             )));
         }
 
@@ -307,8 +307,8 @@ impl ActiveReceive {
                 Task::perform(
                     Self::generate_lightning_invoice(client, amount, description),
                     |result| {
-                        Message::View(view::Message::ActiveReceive(
-                            ActiveReceiveMessage::AddressGenerated(
+                        Message::View(view::Message::LiquidReceive(
+                            LiquidReceiveMessage::AddressGenerated(
                                 ReceiveMethod::Lightning,
                                 result,
                             ),
@@ -318,8 +318,8 @@ impl ActiveReceive {
             }
             None => {
                 self.loading = false;
-                Task::done(Message::View(view::Message::ActiveReceive(
-                    ActiveReceiveMessage::Error("Invalid amount format".to_string()),
+                Task::done(Message::View(view::Message::LiquidReceive(
+                    LiquidReceiveMessage::Error("Invalid amount format".to_string()),
                 )))
             }
         }
@@ -330,8 +330,8 @@ impl ActiveReceive {
         let client = self.breez_client.clone();
 
         Task::perform(Self::generate_onchain_address(client), |result| {
-            Message::View(view::Message::ActiveReceive(
-                ActiveReceiveMessage::AddressGenerated(ReceiveMethod::OnChain, result),
+            Message::View(view::Message::LiquidReceive(
+                LiquidReceiveMessage::AddressGenerated(ReceiveMethod::OnChain, result),
             ))
         })
     }
@@ -352,14 +352,14 @@ impl ActiveReceive {
             return Task::perform(
                 async move { breez_client.fetch_lightning_limits().await },
                 |response| match response {
-                    Ok(limits) => Message::View(view::Message::ActiveReceive(
-                        ActiveReceiveMessage::LightningLimitsFetched {
+                    Ok(limits) => Message::View(view::Message::LiquidReceive(
+                        LiquidReceiveMessage::LightningLimitsFetched {
                             min_sat: limits.receive.min_sat,
                             max_sat: limits.receive.max_sat,
                         },
                     )),
-                    Err(error) => Message::View(view::Message::ActiveReceive(
-                        ActiveReceiveMessage::Error(error.to_string()),
+                    Err(error) => Message::View(view::Message::LiquidReceive(
+                        LiquidReceiveMessage::Error(error.to_string()),
                     )),
                 },
             );
@@ -370,14 +370,14 @@ impl ActiveReceive {
             return Task::perform(
                 async move { breez_client.fetch_onchain_limits().await },
                 |response| match response {
-                    Ok(limits) => Message::View(view::Message::ActiveReceive(
-                        ActiveReceiveMessage::OnChainLimitsFetched {
+                    Ok(limits) => Message::View(view::Message::LiquidReceive(
+                        LiquidReceiveMessage::OnChainLimitsFetched {
                             min_sat: limits.receive.min_sat,
                             max_sat: limits.receive.max_sat,
                         },
                     )),
-                    Err(error) => Message::View(view::Message::ActiveReceive(
-                        ActiveReceiveMessage::Error(error.to_string()),
+                    Err(error) => Message::View(view::Message::LiquidReceive(
+                        LiquidReceiveMessage::Error(error.to_string()),
                     )),
                 },
             );

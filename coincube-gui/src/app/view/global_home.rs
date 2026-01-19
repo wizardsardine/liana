@@ -19,7 +19,7 @@ use crate::app::{
     view::{vault::receive::address_card, vault::warning::warn, FiatAmountConverter, HomeMessage},
 };
 use crate::app::{
-    menu::{ActiveSubMenu, VaultSubMenu},
+    menu::{LiquidSubMenu, VaultSubMenu},
     view::message::Message,
 };
 use coincube_core::miniscript::bitcoin::Amount;
@@ -43,10 +43,10 @@ fn wallet_card<'a>(
     let (icon, title, title_color, send_action, receive_action) = match wallet_type {
         WalletType::Active => (
             lightning_icon().color(color::ORANGE),
-            "Active",
+            "Liquid",
             Some(color::ORANGE),
-            Message::Menu(Menu::Active(ActiveSubMenu::Send)),
-            Message::Menu(Menu::Active(ActiveSubMenu::Receive)),
+            Message::Menu(Menu::Liquid(LiquidSubMenu::Send)),
+            Message::Menu(Menu::Liquid(LiquidSubMenu::Receive)),
         ),
         WalletType::Vault => (
             vault_icon(),
@@ -229,14 +229,14 @@ fn select_transfer_direction_view<'a>(
                                 .push(transfer_direction_card(
                                     "From Active to Vault",
                                     "Move funds into your secure Vault Wallet.",
-                                    TransferDirection::ActiveToVault,
-                                    matches!(direction, Some(TransferDirection::ActiveToVault)),
+                                    TransferDirection::LiquidToVault,
+                                    matches!(direction, Some(TransferDirection::LiquidToVault)),
                                 ))
                                 .push(transfer_direction_card(
                                     "From Vault to Active",
                                     "Move funds back into your Active Wallet.",
-                                    TransferDirection::VaultToActive,
-                                    matches!(direction, Some(TransferDirection::VaultToActive)),
+                                    TransferDirection::VaultToLiquid,
+                                    matches!(direction, Some(TransferDirection::VaultToLiquid)),
                                 ))
                                 .width(Length::Fill),
                         )
@@ -360,7 +360,7 @@ fn enter_amount_card<'a>(
                             .padding(10),
                         ))
                         .push_maybe(
-                            if let Some(limits) = if direction == TransferDirection::ActiveToVault {
+                            if let Some(limits) = if direction == TransferDirection::LiquidToVault {
                                 onchain_send_limit
                             } else {
                                 onchain_receive_limit
@@ -408,7 +408,7 @@ fn enter_amount_card<'a>(
 
 fn enter_amount_view<'a>(
     direction: TransferDirection,
-    active_balance: &Amount,
+    liquid_balance: &Amount,
     vault_balance: &Amount,
     fiat_converter: Option<FiatAmountConverter>,
     entered_amount: &'a form::Value<String>,
@@ -417,12 +417,12 @@ fn enter_amount_view<'a>(
     onchain_receive_limit: Option<(u64, u64)>,
 ) -> Element<'a, Message> {
     let (from_balance, to_balance, from_name, to_name) = match direction {
-        TransferDirection::ActiveToVault => (active_balance, vault_balance, "Active", "Vault"),
-        TransferDirection::VaultToActive => (vault_balance, active_balance, "Vault", "Active"),
+        TransferDirection::LiquidToVault => (liquid_balance, vault_balance, "Liquid", "Vault"),
+        TransferDirection::VaultToLiquid => (vault_balance, liquid_balance, "Vault", "Liquid"),
     };
 
     let cards_row = match direction {
-        TransferDirection::ActiveToVault => Row::new()
+        TransferDirection::LiquidToVault => Row::new()
             .spacing(20)
             .push(balance_summary_card(
                 from_name,
@@ -438,7 +438,7 @@ fn enter_amount_view<'a>(
                 fiat_converter,
                 bitcoin_unit,
             )),
-        TransferDirection::VaultToActive => Row::new()
+        TransferDirection::VaultToLiquid => Row::new()
             .spacing(20)
             .push(balance_summary_card(
                 from_name,
@@ -566,7 +566,7 @@ fn confirm_transfer_view<'a>(
                 )
                 .push(Space::new().height(60))
                 .push(match direction {
-                    TransferDirection::ActiveToVault => Some(
+                    TransferDirection::LiquidToVault => Some(
                         Column::new()
                             .spacing(10)
                             .push(
@@ -648,7 +648,7 @@ fn confirm_transfer_view<'a>(
                                     .style(theme::text::secondary)
                             })),
                     ),
-                    TransferDirection::VaultToActive => {
+                    TransferDirection::VaultToLiquid => {
                         // TODO: This should be implemented once Active Wallet is done
                         Some(
                             Column::new()
@@ -771,7 +771,7 @@ fn confirm_transfer_view<'a>(
         })
         .push(Space::new().height(Length::Fixed(60.0)))
         .push(match direction {
-            TransferDirection::VaultToActive => {
+            TransferDirection::VaultToLiquid => {
                 if is_tx_signed {
                     button::primary(None, "Confirm & Broadcast").on_press_maybe(if !is_sending {
                         Some(Message::Home(HomeMessage::ConfirmTransfer))
@@ -780,13 +780,13 @@ fn confirm_transfer_view<'a>(
                     })
                 } else {
                     button::primary(None, "Sign Transaction").on_press_maybe(if !is_sending {
-                        Some(Message::Home(HomeMessage::SignVaultToActiveTx))
+                        Some(Message::Home(HomeMessage::SignVaultToLiquidTx))
                     } else {
                         None
                     })
                 }
             }
-            TransferDirection::ActiveToVault => button::primary(None, "Confirm Transfer")
+            TransferDirection::LiquidToVault => button::primary(None, "Confirm Transfer")
                 .on_press_maybe(if !is_sending {
                     Some(Message::Home(HomeMessage::ConfirmTransfer))
                 } else {
@@ -837,10 +837,10 @@ pub fn transfer_successful_view<'a>(direction: TransferDirection) -> Element<'a,
                     Row::new().spacing(5).push(
                         text(format!(
                             "Your funds have been moved to your {} Wallet",
-                            if matches!(direction, TransferDirection::ActiveToVault) {
+                            if matches!(direction, TransferDirection::LiquidToVault) {
                                 "Vault"
                             } else {
-                                "Active"
+                                "Liquid"
                             }
                         ))
                         .size(20),
@@ -866,22 +866,22 @@ pub fn transfer_successful_view<'a>(direction: TransferDirection) -> Element<'a,
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum TransferDirection {
-    ActiveToVault,
-    VaultToActive,
+    LiquidToVault,
+    VaultToLiquid,
 }
 
 impl TransferDirection {
     pub fn from_wallet(&self) -> &'static str {
         match self {
-            Self::ActiveToVault => "Active",
-            Self::VaultToActive => "Vault",
+            Self::LiquidToVault => "Liquid",
+            Self::VaultToLiquid => "Vault",
         }
     }
 
     pub fn to_wallet(&self) -> &'static str {
         match self {
-            Self::ActiveToVault => "Vault",
-            Self::VaultToActive => "Active",
+            Self::LiquidToVault => "Vault",
+            Self::VaultToLiquid => "Liquid",
         }
     }
 
@@ -891,7 +891,7 @@ impl TransferDirection {
 }
 
 pub struct GlobalViewConfig<'a> {
-    pub active_balance: Amount,
+    pub liquid_balance: Amount,
     pub vault_balance: Amount,
     pub fiat_converter: Option<FiatAmountConverter>,
     pub balance_masked: bool,
@@ -935,7 +935,7 @@ impl HomeView {
 
 pub fn global_home_view<'a>(config: GlobalViewConfig<'a>) -> Element<'a, Message> {
     let GlobalViewConfig {
-        active_balance,
+        liquid_balance,
         vault_balance,
         fiat_converter,
         balance_masked,
@@ -964,7 +964,7 @@ pub fn global_home_view<'a>(config: GlobalViewConfig<'a>) -> Element<'a, Message
             if let Some(direction) = transfer_direction {
                 return enter_amount_view(
                     direction,
-                    &active_balance,
+                    &liquid_balance,
                     &vault_balance,
                     fiat_converter,
                     entered_amount,
@@ -1001,7 +1001,7 @@ pub fn global_home_view<'a>(config: GlobalViewConfig<'a>) -> Element<'a, Message
 
     let active_card = wallet_card(
         WalletType::Active,
-        &active_balance,
+        &liquid_balance,
         fiat_converter,
         balance_masked,
         false,

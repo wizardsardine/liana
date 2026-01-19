@@ -9,9 +9,9 @@ use coincube_ui::{
 use iced::Alignment;
 use iced::{widget::container, widget::Column, widget::Row, widget::Space, Length};
 
-use crate::app::state::{ActiveSettingsFlowState, BackupWalletState};
+use crate::app::state::{LiquidSettingsFlowState, BackupWalletState};
 use crate::app::view::message::{BackupWalletMessage, Message};
-use crate::app::view::ActiveSettingsMessage;
+use crate::app::view::LiquidSettingsMessage;
 
 fn header(title: &str) -> Element<'static, Message> {
     Row::new()
@@ -20,39 +20,39 @@ fn header(title: &str) -> Element<'static, Message> {
         .push(
             Button::new(text("Settings").size(30).bold())
                 .style(theme::button::transparent)
-                .on_press(Message::Menu(crate::app::menu::Menu::Active(
-                    crate::app::menu::ActiveSubMenu::Settings(None),
+                .on_press(Message::Menu(crate::app::menu::Menu::Liquid(
+                    crate::app::menu::LiquidSubMenu::Settings(None),
                 ))),
         )
         .push(icon::chevron_right().size(30))
         .push(
             Button::new(text(title).size(30).bold())
                 .style(theme::button::transparent)
-                .on_press(Message::Menu(crate::app::menu::Menu::Active(
-                    crate::app::menu::ActiveSubMenu::Settings(None),
+                .on_press(Message::Menu(crate::app::menu::Menu::Liquid(
+                    crate::app::menu::LiquidSubMenu::Settings(None),
                 ))),
         )
         .into()
 }
 
-pub fn active_settings_view<'a>(
+pub fn liquid_settings_view<'a>(
     active_signer: Arc<Mutex<HotSigner>>,
-    flow_state: &'a ActiveSettingsFlowState,
+    flow_state: &'a LiquidSettingsFlowState,
 ) -> Element<'a, Message> {
     match flow_state {
-        ActiveSettingsFlowState::MainMenu { backed_up, mfa } => main_menu_view(*backed_up, *mfa),
-        ActiveSettingsFlowState::BackupWallet(BackupWalletState::Intro(checked)) => {
+        LiquidSettingsFlowState::MainMenu { backed_up, mfa } => main_menu_view(*backed_up, *mfa),
+        LiquidSettingsFlowState::BackupWallet(BackupWalletState::Intro(checked)) => {
             backup_intro_view(*checked)
         }
-        ActiveSettingsFlowState::BackupWallet(BackupWalletState::RecoveryPhrase) => {
+        LiquidSettingsFlowState::BackupWallet(BackupWalletState::RecoveryPhrase) => {
             recovery_phrase_view(active_signer.lock().expect("Mutex Lock Poisoned").words())
         }
-        ActiveSettingsFlowState::BackupWallet(BackupWalletState::Verification {
+        LiquidSettingsFlowState::BackupWallet(BackupWalletState::Verification {
             word_indices,
             word_inputs,
             error,
         }) => verification_view(word_indices, word_inputs, error.as_deref()),
-        ActiveSettingsFlowState::BackupWallet(BackupWalletState::Completed) => completed_view(),
+        LiquidSettingsFlowState::BackupWallet(BackupWalletState::Completed) => completed_view(),
     }
 }
 
@@ -77,7 +77,7 @@ fn main_menu_view(backed_up: bool, mfa: bool) -> Element<'static, Message> {
         } else {
             "Completed"
         },
-        Message::ActiveSettings(ActiveSettingsMessage::BackupWallet(
+        Message::LiquidSettings(LiquidSettingsMessage::BackupWallet(
             BackupWalletMessage::Start,
         )),
     );
@@ -103,8 +103,8 @@ fn main_menu_view(backed_up: bool, mfa: bool) -> Element<'static, Message> {
 
     let header = Button::new(text("Settings").size(30).bold())
         .style(theme::button::transparent)
-        .on_press(Message::Menu(crate::app::menu::Menu::Active(
-            crate::app::menu::ActiveSubMenu::Settings(None),
+        .on_press(Message::Menu(crate::app::menu::Menu::Liquid(
+            crate::app::menu::LiquidSubMenu::Settings(None),
         )));
 
     Column::new()
@@ -171,7 +171,7 @@ fn backup_intro_view(checked: bool) -> Element<'static, Message> {
                 .push(Space::new().width(Length::Fill))
                 .push(
                     CheckBox::new(checked).label("I UNDERSTAND THAT IF I LOSE THESE WORDS, MY FUNDS CANNOT BE RECOVERED")
-                    .on_toggle(|_| Message::ActiveSettings(ActiveSettingsMessage::BackupWallet(BackupWalletMessage::ToggleBackupIntroCheck)))
+                    .on_toggle(|_| Message::LiquidSettings(LiquidSettingsMessage::BackupWallet(BackupWalletMessage::ToggleBackupIntroCheck)))
                     .style(theme::checkbox::primary).size(20)
                 )
                 .push(Space::new().width(Length::Fill))
@@ -185,7 +185,7 @@ fn backup_intro_view(checked: bool) -> Element<'static, Message> {
                 .push({
                     let btn: Element<'static, Message> = if checked {
                         coincube_ui::component::button::primary(None, "Show My Recovery Phrase")
-                            .on_press(Message::ActiveSettings(ActiveSettingsMessage::BackupWallet(BackupWalletMessage::NextStep)))
+                            .on_press(Message::LiquidSettings(LiquidSettingsMessage::BackupWallet(BackupWalletMessage::NextStep)))
                             .padding([8, 16])
                             .width(Length::Fixed(300.0))
                             .into()
@@ -275,7 +275,7 @@ fn recovery_phrase_view(mnemonic: [&'static str; 12]) -> Element<'static, Messag
                 .push(Space::new().width(Length::Fill))
                 .push(
                     coincube_ui::component::button::primary(None, "I've Written It Down")
-                        .on_press(Message::ActiveSettings(ActiveSettingsMessage::BackupWallet(BackupWalletMessage::NextStep)))
+                        .on_press(Message::LiquidSettings(LiquidSettingsMessage::BackupWallet(BackupWalletMessage::NextStep)))
                         .padding([8, 16])
                         .width(Length::Fixed(300.0))
                 )
@@ -412,7 +412,7 @@ fn verification_view<'a>(
             &word_inputs[i],
             no_border_style,
             move |input| {
-                Message::ActiveSettings(ActiveSettingsMessage::BackupWallet(
+                Message::LiquidSettings(LiquidSettingsMessage::BackupWallet(
                     BackupWalletMessage::WordInput {
                         index: word_idx as u8,
                         input,
@@ -441,8 +441,8 @@ fn verification_view<'a>(
             .push(Space::new().width(Length::Fill))
             .push(if all_filled {
                 coincube_ui::component::button::primary(None, "Verify")
-                    .on_press(Message::ActiveSettings(
-                        ActiveSettingsMessage::BackupWallet(BackupWalletMessage::VerifyPhrase),
+                    .on_press(Message::LiquidSettings(
+                        LiquidSettingsMessage::BackupWallet(BackupWalletMessage::VerifyPhrase),
                     ))
                     .padding([8, 16])
                     .width(Length::Fixed(300.0))
@@ -499,7 +499,7 @@ fn completed_view() -> Element<'static, Message> {
                 .push(Space::new().width(Length::Fill))
                 .push(
                     coincube_ui::component::button::primary(None, "Back to Settings")
-                        .on_press(Message::ActiveSettings(ActiveSettingsMessage::BackupWallet(BackupWalletMessage::Complete)))
+                        .on_press(Message::LiquidSettings(LiquidSettingsMessage::BackupWallet(BackupWalletMessage::Complete)))
                         .padding([8, 16])
                         .width(Length::Fixed(300.0))
                 )

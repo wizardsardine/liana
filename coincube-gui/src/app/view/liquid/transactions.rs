@@ -22,7 +22,7 @@ use crate::app::view::FiatAmountConverter;
 use crate::export::ImportExportMessage;
 use crate::utils::{format_time_ago, format_timestamp};
 
-pub fn active_transactions_view<'a>(
+pub fn liquid_transactions_view<'a>(
     payments: &'a [Payment],
     _balance: &'a Amount,
     fiat_converter: Option<FiatAmountConverter>,
@@ -64,13 +64,13 @@ pub fn active_transactions_view<'a>(
                         .spacing(15)
                         .push(
                             button::primary(None, "Send sats")
-                                .on_press(Message::Menu(Menu::Active(crate::app::menu::ActiveSubMenu::Send)))
+                                .on_press(Message::Menu(Menu::Liquid(crate::app::menu::LiquidSubMenu::Send)))
                                 .padding(15)
                                 .width(Length::Fixed(150.0)),
                         )
                         .push(
                             button::transparent_border(None, "Receive sats")
-                                .on_press(Message::Menu(Menu::Active(crate::app::menu::ActiveSubMenu::Receive)))
+                                .on_press(Message::Menu(Menu::Liquid(crate::app::menu::LiquidSubMenu::Receive)))
                                 .padding(15)
                                 .width(Length::Fixed(150.0)),
                         ),

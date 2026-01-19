@@ -1,4 +1,4 @@
-pub mod active;
+pub mod liquid;
 mod global_home;
 pub mod settings;
 pub mod vault;
@@ -21,11 +21,11 @@ use crate::daemon::{
     model::{remaining_sequence, Coin},
     Daemon,
 };
-pub use active::overview::ActiveOverview;
-pub use active::receive::ActiveReceive;
-pub use active::send::ActiveSend;
-pub use active::settings::{ActiveSettings, ActiveSettingsFlowState, BackupWalletState};
-pub use active::transactions::ActiveTransactions;
+pub use liquid::overview::LiquidOverview;
+pub use liquid::receive::LiquidReceive;
+pub use liquid::send::LiquidSend;
+pub use liquid::settings::{LiquidSettings, LiquidSettingsFlowState, BackupWalletState};
+pub use liquid::transactions::LiquidTransactions;
 pub use global_home::GlobalHome;
 pub use vault::coins::CoinsPanel;
 pub use vault::label::LabelsEdited;

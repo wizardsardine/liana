@@ -53,10 +53,10 @@ pub enum Message {
     ImportPsbt,
     OpenUrl(String),
     Home(HomeMessage),
-    ActiveOverview(ActiveOverviewMessage),
-    ActiveReceive(ActiveReceiveMessage),
-    ActiveSend(ActiveSendMessage),
-    ActiveSettings(ActiveSettingsMessage),
+    LiquidOverview(LiquidOverviewMessage),
+    LiquidReceive(LiquidReceiveMessage),
+    LiquidSend(LiquidSendMessage),
+    LiquidSettings(LiquidSettingsMessage),
     PreselectPayment(Payment),
     DismissError,
     ShowError(String),
@@ -245,7 +245,7 @@ pub enum FiatMessage {
 }
 
 #[derive(Debug, Clone)]
-pub enum ActiveOverviewMessage {
+pub enum LiquidOverviewMessage {
     Send,
     Receive,
     History,
@@ -254,18 +254,18 @@ pub enum ActiveOverviewMessage {
         balance: Amount,
         recent_payment: Vec<Payment>,
     },
-    Error(ActiveOverviewError),
+    Error(LiquidOverviewError),
     RefreshRequested,
 }
 
 #[derive(Debug, Clone)]
-pub enum ActiveOverviewError {
+pub enum LiquidOverviewError {
     BalanceFetch(String),
     TransactionsFetch(String),
     BalanceAndTransactionsFetch(String, String),
 }
 
-impl std::fmt::Display for ActiveOverviewError {
+impl std::fmt::Display for LiquidOverviewError {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
             Self::BalanceFetch(e) => write!(f, "Couldn't fetch account balance: {}", e),
@@ -278,7 +278,7 @@ impl std::fmt::Display for ActiveOverviewError {
 }
 
 #[derive(Debug, Clone)]
-pub enum ActiveSendMessage {
+pub enum LiquidSendMessage {
     InputEdited(String),
     InputValidated(Option<InputType>),
     Send,
@@ -288,7 +288,7 @@ pub enum ActiveSendMessage {
         balance: Amount,
         recent_payment: Vec<Payment>,
     },
-    Error(ActiveSendError),
+    Error(LiquidSendError),
     ClearError,
     // Send flow popup messages
     PopupMessage(SendPopupMessage),
@@ -309,7 +309,7 @@ pub enum ActiveSendMessage {
 }
 
 #[derive(Debug, Clone)]
-pub enum ActiveSendError {
+pub enum LiquidSendError {
     BalanceFetch(String),
     TransactionsFetch(String),
     BalanceAndTransactionsFetch(String, String),
@@ -319,7 +319,7 @@ pub enum ActiveSendError {
     Send(String),
 }
 
-impl std::fmt::Display for ActiveSendError {
+impl std::fmt::Display for LiquidSendError {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
             Self::BalanceFetch(e) => write!(f, "Couldn't fetch account balance: {}", e),
@@ -350,7 +350,7 @@ pub enum SendPopupMessage {
 }
 
 #[derive(Debug, Clone)]
-pub enum ActiveReceiveMessage {
+pub enum LiquidReceiveMessage {
     ToggleMethod(ReceiveMethod),
     Copy,
     ClearToast,
@@ -386,7 +386,7 @@ pub enum ReceiveMethod {
 }
 
 #[derive(Debug, Clone)]
-pub enum ActiveSettingsMessage {
+pub enum LiquidSettingsMessage {
     BackupWallet(BackupWalletMessage),
     SettingsUpdated,
 }
@@ -422,7 +422,7 @@ pub enum HomeMessage {
     NextStep,
     PreviousStep,
     Error(String),
-    ActiveBalanceUpdated(Amount),
+    LiquidBalanceUpdated(Amount),
     OnChainLimitsFetched {
         send: (u64, u64),    // (min_sat, max_sat)
         receive: (u64, u64), // (min_sat, max_sat)
@@ -431,8 +431,8 @@ pub enum HomeMessage {
     TransferSuccessful,
     BackToHome,
     BreezOnchainAddress(String),
-    RefreshActiveBalance,
-    SignVaultToActiveTx,
+    RefreshLiquidBalance,
+    SignVaultToLiquidTx,
     TransferPsbtReady(
         Result<
             (

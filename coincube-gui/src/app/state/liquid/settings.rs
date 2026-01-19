@@ -5,7 +5,7 @@ use iced::Task;
 use rand::seq::SliceRandom;
 
 use crate::app::settings::{update_settings_file, Settings};
-use crate::app::view::ActiveSettingsMessage;
+use crate::app::view::LiquidSettingsMessage;
 use crate::app::{breez::BreezClient, cache::Cache, menu::Menu, state::State};
 use crate::app::{message::Message, view, wallet::Wallet};
 use crate::daemon::Daemon;
@@ -24,15 +24,15 @@ pub enum BackupWalletState {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum ActiveSettingsFlowState {
+pub enum LiquidSettingsFlowState {
     MainMenu { backed_up: bool, mfa: bool },
     BackupWallet(BackupWalletState),
 }
 
-/// ActiveSettings is a placeholder panel for the Active Settings page
-pub struct ActiveSettings {
+/// LiquidSettings is a placeholder panel for the Active Settings page
+pub struct LiquidSettings {
     breez_client: Arc<BreezClient>,
-    flow_state: ActiveSettingsFlowState,
+    flow_state: LiquidSettingsFlowState,
 }
 
 /// Generate 3 random unique word indices from 1-12
@@ -43,23 +43,23 @@ fn generate_random_word_indices() -> [usize; 3] {
     [indices[0], indices[1], indices[2]]
 }
 
-impl ActiveSettings {
+impl LiquidSettings {
     pub fn new(breez_client: Arc<BreezClient>) -> Self {
         let (backed_up, mfa) = fetch_main_menu_state(breez_client.clone());
         Self {
             breez_client,
-            flow_state: ActiveSettingsFlowState::MainMenu { backed_up, mfa },
+            flow_state: LiquidSettingsFlowState::MainMenu { backed_up, mfa },
         }
     }
 }
 
-impl State for ActiveSettings {
+impl State for LiquidSettings {
     fn view<'a>(&'a self, menu: &'a Menu, cache: &'a Cache) -> Element<'a, view::Message> {
         view::dashboard(
             menu,
             cache,
             None,
-            view::active::active_settings_view(self.breez_client.active_signer(), &self.flow_state),
+            view::liquid::liquid_settings_view(self.breez_client.active_signer(), &self.flow_state),
         )
     }
 
@@ -70,34 +70,34 @@ impl State for ActiveSettings {
         message: Message,
     ) -> Task<Message> {
         match message {
-            Message::View(view::Message::ActiveSettings(ActiveSettingsMessage::BackupWallet(
+            Message::View(view::Message::LiquidSettings(LiquidSettingsMessage::BackupWallet(
                 backup_msg,
             ))) => {
                 match backup_msg {
                     view::BackupWalletMessage::ToggleBackupIntroCheck => {
-                        if let ActiveSettingsFlowState::BackupWallet(BackupWalletState::Intro(
+                        if let LiquidSettingsFlowState::BackupWallet(BackupWalletState::Intro(
                             checked,
                         )) = self.flow_state
                         {
-                            self.flow_state = ActiveSettingsFlowState::BackupWallet(
+                            self.flow_state = LiquidSettingsFlowState::BackupWallet(
                                 BackupWalletState::Intro(!checked),
                             );
                         }
                     }
                     view::BackupWalletMessage::Start => {
                         self.flow_state =
-                            ActiveSettingsFlowState::BackupWallet(BackupWalletState::Intro(false));
+                            LiquidSettingsFlowState::BackupWallet(BackupWalletState::Intro(false));
                     }
                     view::BackupWalletMessage::NextStep => {
                         self.flow_state = match &self.flow_state {
-                            ActiveSettingsFlowState::BackupWallet(BackupWalletState::Intro(
+                            LiquidSettingsFlowState::BackupWallet(BackupWalletState::Intro(
                                 true,
-                            )) => ActiveSettingsFlowState::BackupWallet(
+                            )) => LiquidSettingsFlowState::BackupWallet(
                                 BackupWalletState::RecoveryPhrase,
                             ),
-                            ActiveSettingsFlowState::BackupWallet(
+                            LiquidSettingsFlowState::BackupWallet(
                                 BackupWalletState::RecoveryPhrase,
-                            ) => ActiveSettingsFlowState::BackupWallet(
+                            ) => LiquidSettingsFlowState::BackupWallet(
                                 BackupWalletState::Verification {
                                     word_indices: generate_random_word_indices(),
                                     word_inputs: [String::new(), String::new(), String::new()],
@@ -110,24 +110,24 @@ impl State for ActiveSettings {
                     view::BackupWalletMessage::PreviousStep => {
                         let (backed_up, mfa) = fetch_main_menu_state(self.breez_client.clone());
                         self.flow_state = match &self.flow_state {
-                            ActiveSettingsFlowState::BackupWallet(BackupWalletState::Intro(_)) => {
-                                ActiveSettingsFlowState::MainMenu { backed_up, mfa }
+                            LiquidSettingsFlowState::BackupWallet(BackupWalletState::Intro(_)) => {
+                                LiquidSettingsFlowState::MainMenu { backed_up, mfa }
                             }
-                            ActiveSettingsFlowState::BackupWallet(
+                            LiquidSettingsFlowState::BackupWallet(
                                 BackupWalletState::RecoveryPhrase,
-                            ) => ActiveSettingsFlowState::BackupWallet(BackupWalletState::Intro(
+                            ) => LiquidSettingsFlowState::BackupWallet(BackupWalletState::Intro(
                                 false,
                             )),
-                            ActiveSettingsFlowState::BackupWallet(
+                            LiquidSettingsFlowState::BackupWallet(
                                 BackupWalletState::Verification { .. },
-                            ) => ActiveSettingsFlowState::BackupWallet(
+                            ) => LiquidSettingsFlowState::BackupWallet(
                                 BackupWalletState::RecoveryPhrase,
                             ),
-                            ActiveSettingsFlowState::BackupWallet(BackupWalletState::Completed) => {
-                                ActiveSettingsFlowState::MainMenu { backed_up, mfa }
+                            LiquidSettingsFlowState::BackupWallet(BackupWalletState::Completed) => {
+                                LiquidSettingsFlowState::MainMenu { backed_up, mfa }
                             }
-                            ActiveSettingsFlowState::MainMenu { backed_up, mfa } => {
-                                ActiveSettingsFlowState::MainMenu {
+                            LiquidSettingsFlowState::MainMenu { backed_up, mfa } => {
+                                LiquidSettingsFlowState::MainMenu {
                                     backed_up: *backed_up,
                                     mfa: *mfa,
                                 }
@@ -135,7 +135,7 @@ impl State for ActiveSettings {
                         };
                     }
                     view::BackupWalletMessage::WordInput { index, input } => {
-                        if let ActiveSettingsFlowState::BackupWallet(
+                        if let LiquidSettingsFlowState::BackupWallet(
                             BackupWalletState::Verification {
                                 word_indices,
                                 word_inputs,
@@ -151,7 +151,7 @@ impl State for ActiveSettings {
                                 new_inputs[pos] = input;
                             }
 
-                            self.flow_state = ActiveSettingsFlowState::BackupWallet(
+                            self.flow_state = LiquidSettingsFlowState::BackupWallet(
                                 BackupWalletState::Verification {
                                     word_indices: *word_indices,
                                     word_inputs: new_inputs,
@@ -161,7 +161,7 @@ impl State for ActiveSettings {
                         }
                     }
                     view::BackupWalletMessage::VerifyPhrase => {
-                        if let ActiveSettingsFlowState::BackupWallet(
+                        if let LiquidSettingsFlowState::BackupWallet(
                             BackupWalletState::Verification {
                                 word_indices,
                                 word_inputs,
@@ -186,12 +186,12 @@ impl State for ActiveSettings {
 
                             if all_correct {
                                 // Verification successful
-                                self.flow_state = ActiveSettingsFlowState::BackupWallet(
+                                self.flow_state = LiquidSettingsFlowState::BackupWallet(
                                     BackupWalletState::Completed,
                                 );
                             } else {
                                 // Verification failed
-                                self.flow_state = ActiveSettingsFlowState::BackupWallet(
+                                self.flow_state = LiquidSettingsFlowState::BackupWallet(
                                     BackupWalletState::Verification {
                                         word_indices: *word_indices,
                                         word_inputs: word_inputs.clone(),
@@ -241,20 +241,20 @@ impl State for ActiveSettings {
                                 }
                             },
                             |_| {
-                                Message::View(view::Message::ActiveSettings(
-                                    view::ActiveSettingsMessage::SettingsUpdated,
+                                Message::View(view::Message::LiquidSettings(
+                                    view::LiquidSettingsMessage::SettingsUpdated,
                                 ))
                             },
                         );
                     }
                 }
             }
-            Message::View(view::Message::ActiveSettings(
-                ActiveSettingsMessage::SettingsUpdated,
+            Message::View(view::Message::LiquidSettings(
+                LiquidSettingsMessage::SettingsUpdated,
             )) => {
                 // Settings file was updated, refresh the state
                 let (backed_up, mfa) = fetch_main_menu_state(self.breez_client.clone());
-                self.flow_state = ActiveSettingsFlowState::MainMenu { backed_up, mfa };
+                self.flow_state = LiquidSettingsFlowState::MainMenu { backed_up, mfa };
             }
             _ => {}
         }
@@ -268,7 +268,7 @@ impl State for ActiveSettings {
     ) -> Task<Message> {
         // Reset to main menu when reloading (e.g., clicking Settings in breadcrumb)
         let (backed_up, mfa) = fetch_main_menu_state(self.breez_client.clone());
-        self.flow_state = ActiveSettingsFlowState::MainMenu { backed_up, mfa };
+        self.flow_state = LiquidSettingsFlowState::MainMenu { backed_up, mfa };
         Task::none()
     }
 }
