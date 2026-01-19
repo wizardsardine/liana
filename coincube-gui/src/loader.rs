@@ -509,7 +509,7 @@ pub async fn load_application(
         fiat_price: None,
         bitcoin_unit,
         vault_expanded: false,
-        active_expanded: false,
+        liquid_expanded: false,
         has_vault: true,
     };
 

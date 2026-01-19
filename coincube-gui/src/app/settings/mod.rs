@@ -118,7 +118,7 @@ where
     Ok(())
 }
 
-/// Cubes represent user accounts that can contain multiple features (Vault, Active wallet, etc.)
+/// Cubes represent user accounts that can contain multiple features (Vault, Liquid wallet, etc.)
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct CubeSettings {
     pub id: String,
@@ -136,7 +136,7 @@ pub struct CubeSettings {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub security_pin_hash: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub active_wallet_signer_fingerprint: Option<Fingerprint>,
+    pub liquid_wallet_signer_fingerprint: Option<Fingerprint>,
     /// Bitcoin display unit preference for this cube
     #[serde(default)]
     pub unit_setting: unit::UnitSetting,
@@ -154,7 +154,7 @@ impl CubeSettings {
             created_at: chrono::Utc::now().timestamp(),
             vault_wallet_id: None,
             security_pin_hash: None,
-            active_wallet_signer_fingerprint: None,
+            liquid_wallet_signer_fingerprint: None,
             backed_up: false,
             mfa_done: false,
             unit_setting: unit::UnitSetting::default(),
@@ -167,8 +167,8 @@ impl CubeSettings {
         self
     }
 
-    pub fn with_active_signer(mut self, fingerprint: Fingerprint) -> Self {
-        self.active_wallet_signer_fingerprint = Some(fingerprint);
+    pub fn with_liquid_signer(mut self, fingerprint: Fingerprint) -> Self {
+        self.liquid_wallet_signer_fingerprint = Some(fingerprint);
         self
     }
 

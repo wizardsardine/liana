@@ -17,7 +17,7 @@ use iced::{
     Alignment, Background, Length,
 };
 
-use crate::app::view::{liquid::RecentTransaction, LiquidOverviewMessage, FiatAmountConverter};
+use crate::app::view::{liquid::RecentTransaction, FiatAmountConverter, LiquidOverviewMessage};
 
 pub fn liquid_overview_view<'a>(
     btc_balance: Amount,

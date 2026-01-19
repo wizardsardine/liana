@@ -356,7 +356,7 @@ impl State for GlobalHome {
                                     TransferDirection::LiquidToVault => {
                                         if entered_amt > self.liquid_balance {
                                             valid = false;
-                                            warning = Some("Amount exceeds Active balance");
+                                            warning = Some("Amount exceeds Liquid balance");
                                         } else if let Some((min_sat, max_sat)) =
                                             self.onchain_send_limit
                                         {
@@ -794,7 +794,7 @@ impl GlobalHome {
                 )))
             } else {
                 Message::View(view::Message::Home(HomeMessage::Error(
-                    "Couldn't fetch Active Wallet Balance".to_string(),
+                    "Couldn't fetch Liquid Wallet Balance".to_string(),
                 )))
             }
         })

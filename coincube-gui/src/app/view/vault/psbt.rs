@@ -743,7 +743,7 @@ pub fn outputs_view<'a>(
                 .style(theme::card::simple)
             } else {
                 Container::new(h4_bold("0 payment").style(|t| {
-                    theme::text::custom(t.colors.buttons.transparent_border.active.text)
+                    theme::text::custom(t.colors.buttons.transparent_border.liquid.text)
                 }))
                 .padding(20)
                 .width(Length::Fill)

@@ -5,11 +5,11 @@ use iced::{widget, Alignment, Length};
 use crate::app::view;
 
 pub(super) fn webview_ux<'a>(
-    active: &'a iced_wry::IcedWebview,
+    liquid: &'a iced_wry::IcedWebview,
     network: &'a bitcoin::Network,
 ) -> coincube_ui::widget::Element<'a, view::Message> {
     let col = iced::widget::column![
-        active.view(Length::Fixed(640.0), Length::Fixed(600.0)),
+        liquid.view(Length::Fixed(640.0), Length::Fixed(600.0)),
         // Network display banner
         widget::Space::new().height(Length::Fixed(15.0)),
         {

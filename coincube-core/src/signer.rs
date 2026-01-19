@@ -189,7 +189,7 @@ impl HotSigner {
     }
 
     /// Read mnemonics from datadir (with optional password for encrypted files)
-    /// If `skip_active` is true, skip files containing "-active-" in the filename (Active wallet mnemonics)
+    /// If `skip_liquid` is true, skip files containing "-liquid-" in the filename (Liquid wallet mnemonics)
     pub fn from_datadir_with_password(
         datadir_root: &path::Path,
         network: bitcoin::Network,
@@ -198,12 +198,12 @@ impl HotSigner {
         Self::from_datadir_with_password_filtered(datadir_root, network, password, false)
     }
 
-    /// Read mnemonics from datadir, optionally filtering out Active wallet mnemonics
+    /// Read mnemonics from datadir, optionally filtering out Liquid wallet mnemonics
     pub fn from_datadir_with_password_filtered(
         datadir_root: &path::Path,
         network: bitcoin::Network,
         password: Option<&str>,
-        skip_active: bool,
+        skip_liquid: bool,
     ) -> Result<Vec<Self>, SignerError> {
         let mut signers = Vec::new();
 
@@ -214,10 +214,10 @@ impl HotSigner {
         for entry in mnemonic_paths {
             let path = entry.map_err(SignerError::MnemonicStorage)?.path();
 
-            // Skip Active wallet mnemonics if requested (they're managed by Breez SDK)
-            if skip_active {
+            // Skip Liquid wallet mnemonics if requested (they're managed by Breez SDK)
+            if skip_liquid {
                 if let Some(filename) = path.file_name().and_then(|n| n.to_str()) {
-                    if filename.contains("-active_") {
+                    if filename.contains("-liquid_") {
                         continue;
                     }
                 }
@@ -300,7 +300,7 @@ impl HotSigner {
         Self::from_datadir_with_password_filtered(datadir_root, network, None, false)
     }
 
-    /// Load only Vault mnemonics (skip Active wallet mnemonics)
+    /// Load only Vault mnemonics (skip Liquid wallet mnemonics)
     pub fn from_datadir_vault_only(
         datadir_root: &path::Path,
         network: bitcoin::Network,

@@ -280,7 +280,7 @@ impl Tab {
                         config,
                         breez_client: Err(breez::BreezError::SignerError(
                             "BreezClient missing - should have been pre-loaded after PIN entry. \
-                             Active wallet is encrypted and cannot be loaded without PIN."
+                             Liquid wallet is encrypted and cannot be loaded without PIN."
                                 .to_string(),
                         )),
                     })
@@ -467,7 +467,7 @@ impl Tab {
                         Task::done(Message::Load(Box::new(loader::Message::App(
                             Err(loader::Error::Unexpected(
                                 "BreezClient missing - should have been pre-loaded after PIN entry. \
-                                 Active wallet is encrypted and cannot be loaded without PIN.".to_string()
+                                 Liquid wallet is encrypted and cannot be loaded without PIN.".to_string()
                             )),
                             false,
                         ))))
@@ -499,7 +499,7 @@ impl Tab {
                     Task::done(Message::Load(Box::new(loader::Message::App(
                         Err(loader::Error::Unexpected(
                             "BreezClient missing - should have been pre-loaded after PIN entry. \
-                             Active wallet is encrypted and cannot be loaded without PIN."
+                             Liquid wallet is encrypted and cannot be loaded without PIN."
                                 .to_string(),
                         )),
                         restored_from_backup,
@@ -572,7 +572,7 @@ impl Tab {
                             let cube = pin_entry.cube().clone();
                             let pin = pin_entry.pin();
 
-                            // ALWAYS load BreezClient (Active wallet) with PIN first
+                            // ALWAYS load BreezClient (Liquid wallet) with PIN first
                             let config_clone = config.clone();
                             let datadir_clone = datadir.clone();
                             let network_val = *network;
@@ -582,9 +582,9 @@ impl Tab {
 
                             Task::perform(
                                 async move {
-                                    // Load BreezClient for Active wallet with PIN
+                                    // Load BreezClient for Liquid wallet with PIN
                                     let breez_result = if let Some(fingerprint) =
-                                        cube.active_wallet_signer_fingerprint
+                                        cube.liquid_wallet_signer_fingerprint
                                     {
                                         breez::load_breez_client(
                                             datadir_clone.path(),
@@ -595,7 +595,7 @@ impl Tab {
                                         .await
                                     } else {
                                         Err(breez::BreezError::SignerError(
-                                            "No Active wallet configured".to_string(),
+                                            "No Liquid wallet configured".to_string(),
                                         ))
                                     };
 
@@ -1057,7 +1057,7 @@ pub fn create_app_with_remote_backend(
             fiat_price: None,
             bitcoin_unit: cube_settings.unit_setting.display_unit,
             vault_expanded: false,
-            active_expanded: false,
+            liquid_expanded: false,
             has_vault: true,
         },
         Arc::new(

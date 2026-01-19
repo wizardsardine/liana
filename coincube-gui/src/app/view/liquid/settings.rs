@@ -9,7 +9,7 @@ use coincube_ui::{
 use iced::Alignment;
 use iced::{widget::container, widget::Column, widget::Row, widget::Space, Length};
 
-use crate::app::state::{LiquidSettingsFlowState, BackupWalletState};
+use crate::app::state::{BackupWalletState, LiquidSettingsFlowState};
 use crate::app::view::message::{BackupWalletMessage, Message};
 use crate::app::view::LiquidSettingsMessage;
 
@@ -36,7 +36,7 @@ fn header(title: &str) -> Element<'static, Message> {
 }
 
 pub fn liquid_settings_view<'a>(
-    active_signer: Arc<Mutex<HotSigner>>,
+    liquid_signer: Arc<Mutex<HotSigner>>,
     flow_state: &'a LiquidSettingsFlowState,
 ) -> Element<'a, Message> {
     match flow_state {
@@ -45,7 +45,7 @@ pub fn liquid_settings_view<'a>(
             backup_intro_view(*checked)
         }
         LiquidSettingsFlowState::BackupWallet(BackupWalletState::RecoveryPhrase) => {
-            recovery_phrase_view(active_signer.lock().expect("Mutex Lock Poisoned").words())
+            recovery_phrase_view(liquid_signer.lock().expect("Mutex Lock Poisoned").words())
         }
         LiquidSettingsFlowState::BackupWallet(BackupWalletState::Verification {
             word_indices,

@@ -29,7 +29,7 @@ pub enum LiquidSettingsFlowState {
     BackupWallet(BackupWalletState),
 }
 
-/// LiquidSettings is a placeholder panel for the Active Settings page
+/// LiquidSettings is a placeholder panel for the Liquid Settings page
 pub struct LiquidSettings {
     breez_client: Arc<BreezClient>,
     flow_state: LiquidSettingsFlowState,
@@ -59,7 +59,7 @@ impl State for LiquidSettings {
             menu,
             cache,
             None,
-            view::liquid::liquid_settings_view(self.breez_client.active_signer(), &self.flow_state),
+            view::liquid::liquid_settings_view(self.breez_client.liquid_signer(), &self.flow_state),
         )
     }
 
@@ -172,7 +172,7 @@ impl State for LiquidSettings {
                             // Get the actual mnemonic words
                             let mnemonic = self
                                 .breez_client
-                                .active_signer()
+                                .liquid_signer()
                                 .lock()
                                 .expect("Mutex Lock Poisoned")
                                 .words();
@@ -211,7 +211,7 @@ impl State for LiquidSettings {
                                 let secp =
                                     coincube_core::miniscript::bitcoin::secp256k1::Secp256k1::new();
                                 let fingerprint = breez_client
-                                    .active_signer()
+                                    .liquid_signer()
                                     .lock()
                                     .expect("Mutex Lock Poisoned")
                                     .fingerprint(&secp);
@@ -228,7 +228,7 @@ impl State for LiquidSettings {
                                 if let Err(e) =
                                     update_settings_file(&network_dir, |mut settings| {
                                         if let Some(cube) = settings.cubes.iter_mut().find(|cube| {
-                                            cube.active_wallet_signer_fingerprint.as_ref()
+                                            cube.liquid_wallet_signer_fingerprint.as_ref()
                                                 == Some(&fingerprint)
                                         }) {
                                             cube.backed_up = true;
@@ -282,7 +282,7 @@ fn fetch_main_menu_state(breez_client: Arc<BreezClient>) -> (bool, bool) {
         let mut mfa = false;
         let secp = coincube_core::miniscript::bitcoin::secp256k1::Secp256k1::new();
         let fingerprint = breez_client
-            .active_signer()
+            .liquid_signer()
             .lock()
             .expect("Mutex Lock Poisoned")
             .fingerprint(&secp);
@@ -293,7 +293,7 @@ fn fetch_main_menu_state(breez_client: Arc<BreezClient>) -> (bool, bool) {
                 match Settings::from_file(&network_dir) {
                     Ok(settings) => {
                         let cube = settings.cubes.into_iter().find(|cube| {
-                            cube.active_wallet_signer_fingerprint.as_ref() == Some(&fingerprint)
+                            cube.liquid_wallet_signer_fingerprint.as_ref() == Some(&fingerprint)
                         });
                         if let Some(cube) = cube {
                             backed_up = cube.backed_up;

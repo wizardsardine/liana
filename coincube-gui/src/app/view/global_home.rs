@@ -26,7 +26,7 @@ use coincube_core::miniscript::bitcoin::Amount;
 
 #[derive(Clone, Copy, Debug)]
 enum WalletType {
-    Active,
+    Liquid,
     Vault,
 }
 
@@ -41,7 +41,7 @@ fn wallet_card<'a>(
     let fiat_balance = fiat_converter.as_ref().map(|c| c.convert(*balance));
 
     let (icon, title, title_color, send_action, receive_action) = match wallet_type {
-        WalletType::Active => (
+        WalletType::Liquid => (
             lightning_icon().color(color::ORANGE),
             "Liquid",
             Some(color::ORANGE),
@@ -133,7 +133,7 @@ fn wallet_card<'a>(
     Container::new(content)
         .padding(20)
         .style(move |t| match wallet_type {
-            WalletType::Active => iced::widget::container::Style {
+            WalletType::Liquid => iced::widget::container::Style {
                 border: iced::Border {
                     color: color::ORANGE,
                     width: 0.2,
@@ -227,14 +227,14 @@ fn select_transfer_direction_view<'a>(
                             Column::new()
                                 .spacing(20)
                                 .push(transfer_direction_card(
-                                    "From Active to Vault",
+                                    "From Liquid to Vault",
                                     "Move funds into your secure Vault Wallet.",
                                     TransferDirection::LiquidToVault,
                                     matches!(direction, Some(TransferDirection::LiquidToVault)),
                                 ))
                                 .push(transfer_direction_card(
-                                    "From Vault to Active",
-                                    "Move funds back into your Active Wallet.",
+                                    "From Vault to Liquid",
+                                    "Move funds back into your Liquid Wallet.",
                                     TransferDirection::VaultToLiquid,
                                     matches!(direction, Some(TransferDirection::VaultToLiquid)),
                                 ))
@@ -260,14 +260,14 @@ fn select_transfer_direction_view<'a>(
 
 fn balance_summary_card<'a>(
     wallet_name: &str,
-    is_active: bool,
+    is_liquid: bool,
     balance: &Amount,
     fiat_converter: Option<FiatAmountConverter>,
     bitcoin_unit: crate::app::settings::unit::BitcoinDisplayUnit,
 ) -> Element<'a, Message> {
     let fiat_balance = fiat_converter.as_ref().map(|c| c.convert(*balance));
 
-    let (icon, title_color) = if is_active {
+    let (icon, title_color) = if is_liquid {
         (lightning_icon().color(color::ORANGE), Some(color::ORANGE))
     } else {
         (vault_icon(), None)
@@ -305,7 +305,7 @@ fn balance_summary_card<'a>(
         .padding(20)
         .width(Length::Fill)
         .style(move |t| {
-            if is_active {
+            if is_liquid {
                 iced::widget::container::Style {
                     border: iced::Border {
                         color: color::ORANGE,
@@ -649,13 +649,13 @@ fn confirm_transfer_view<'a>(
                             })),
                     ),
                     TransferDirection::VaultToLiquid => {
-                        // TODO: This should be implemented once Active Wallet is done
+                        // TODO: This should be implemented once Liquid Wallet is done
                         Some(
                             Column::new()
                                 .spacing(10)
                                 .push(text("Receiving Wallet").bold())
                                 .push(
-                                    text("Transferring to Active wallet")
+                                    text("Transferring to Liquid wallet")
                                         .style(theme::text::secondary),
                                 )
                                 .push_maybe(receive_address.map(|addr| -> Element<'a, Message> {
@@ -999,8 +999,8 @@ pub fn global_home_view<'a>(config: GlobalViewConfig<'a>) -> Element<'a, Message
         _ => {}
     }
 
-    let active_card = wallet_card(
-        WalletType::Active,
+    let liquid_card = wallet_card(
+        WalletType::Liquid,
         &liquid_balance,
         fiat_converter,
         balance_masked,
@@ -1040,7 +1040,7 @@ pub fn global_home_view<'a>(config: GlobalViewConfig<'a>) -> Element<'a, Message
                 .push(
                     Column::new()
                         .spacing(40)
-                        .push(active_card)
+                        .push(liquid_card)
                         .push(vault_card_element),
                 )
                 .push(

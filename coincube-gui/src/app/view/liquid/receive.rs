@@ -144,14 +144,14 @@ pub fn liquid_receive_view<'a>(
 }
 
 fn method_toggle(current_method: &ReceiveMethod) -> Element<LiquidReceiveMessage> {
-    let lightning_active = *current_method == ReceiveMethod::Lightning;
-    let onchain_active = *current_method == ReceiveMethod::OnChain;
+    let lightning_liquid = *current_method == ReceiveMethod::Lightning;
+    let onchain_liquid = *current_method == ReceiveMethod::OnChain;
 
     let lightning_button = {
         let icon = icon::lightning_icon()
             .size(18)
             .style(move |_theme: &theme::Theme| iced::widget::text::Style {
-                color: Some(if lightning_active {
+                color: Some(if lightning_liquid {
                     color::WHITE
                 } else {
                     color::GREY_2
@@ -161,7 +161,7 @@ fn method_toggle(current_method: &ReceiveMethod) -> Element<LiquidReceiveMessage
         let label = text("Lightning")
             .size(16)
             .style(move |_theme: &theme::Theme| iced::widget::text::Style {
-                color: Some(if lightning_active {
+                color: Some(if lightning_liquid {
                     color::WHITE
                 } else {
                     color::GREY_2
@@ -182,7 +182,7 @@ fn method_toggle(current_method: &ReceiveMethod) -> Element<LiquidReceiveMessage
             iced_button(Container::new(button_content).padding([10, 30]))
                 .style(move |_theme: &theme::Theme, _status| iced_button::Style {
                     background: Some(Background::Color(color::TRANSPARENT)),
-                    text_color: if lightning_active {
+                    text_color: if lightning_liquid {
                         color::WHITE
                     } else {
                         color::GREY_2
@@ -196,19 +196,19 @@ fn method_toggle(current_method: &ReceiveMethod) -> Element<LiquidReceiveMessage
                 .on_press(LiquidReceiveMessage::ToggleMethod(ReceiveMethod::Lightning)),
         )
         .style(move |_theme: &theme::Theme| container::Style {
-            background: Some(Background::Color(if lightning_active {
+            background: Some(Background::Color(if lightning_liquid {
                 iced::color!(0x161716)
             } else {
                 color::TRANSPARENT
             })),
             border: iced::Border {
                 radius: 50.0.into(),
-                color: if lightning_active {
+                color: if lightning_liquid {
                     color::ORANGE
                 } else {
                     color::TRANSPARENT
                 },
-                width: if lightning_active { 0.7 } else { 0.0 },
+                width: if lightning_liquid { 0.7 } else { 0.0 },
             },
             ..Default::default()
         })
@@ -218,7 +218,7 @@ fn method_toggle(current_method: &ReceiveMethod) -> Element<LiquidReceiveMessage
         let icon = icon::bitcoin_icon()
             .size(18)
             .style(move |_theme: &theme::Theme| iced::widget::text::Style {
-                color: Some(if onchain_active {
+                color: Some(if onchain_liquid {
                     color::WHITE
                 } else {
                     color::GREY_2
@@ -228,7 +228,7 @@ fn method_toggle(current_method: &ReceiveMethod) -> Element<LiquidReceiveMessage
         let label = text("On-chain")
             .size(16)
             .style(move |_theme: &theme::Theme| iced::widget::text::Style {
-                color: Some(if onchain_active {
+                color: Some(if onchain_liquid {
                     color::WHITE
                 } else {
                     color::GREY_2
@@ -249,7 +249,7 @@ fn method_toggle(current_method: &ReceiveMethod) -> Element<LiquidReceiveMessage
             iced_button(Container::new(button_content).padding([10, 30]))
                 .style(move |_theme: &theme::Theme, _status| iced_button::Style {
                     background: Some(Background::Color(color::TRANSPARENT)),
-                    text_color: if onchain_active {
+                    text_color: if onchain_liquid {
                         color::WHITE
                     } else {
                         color::GREY_2
@@ -263,19 +263,19 @@ fn method_toggle(current_method: &ReceiveMethod) -> Element<LiquidReceiveMessage
                 .on_press(LiquidReceiveMessage::ToggleMethod(ReceiveMethod::OnChain)),
         )
         .style(move |_theme: &theme::Theme| container::Style {
-            background: Some(Background::Color(if onchain_active {
+            background: Some(Background::Color(if onchain_liquid {
                 iced::color!(0x161716)
             } else {
                 color::TRANSPARENT
             })),
             border: iced::Border {
                 radius: 50.0.into(),
-                color: if onchain_active {
+                color: if onchain_liquid {
                     color::ORANGE
                 } else {
                     color::TRANSPARENT
                 },
-                width: if onchain_active { 0.7 } else { 0.0 },
+                width: if onchain_liquid { 0.7 } else { 0.0 },
             },
             ..Default::default()
         })

@@ -399,7 +399,7 @@ impl BreezClient {
             .map_err(|e| BreezError::Sdk(e.to_string()))
     }
 
-    pub fn active_signer(&self) -> std::sync::Arc<std::sync::Mutex<HotSigner>> {
+    pub fn liquid_signer(&self) -> std::sync::Arc<std::sync::Mutex<HotSigner>> {
         self.signer.clone()
     }
 

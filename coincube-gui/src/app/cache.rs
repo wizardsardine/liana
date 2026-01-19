@@ -28,8 +28,8 @@ pub struct Cache {
     pub bitcoin_unit: BitcoinDisplayUnit,
     /// UI state: whether the Vault submenu is expanded
     pub vault_expanded: bool,
-    /// UI state: whether the Active submenu is expanded
-    pub active_expanded: bool,
+    /// UI state: whether the Liquid submenu is expanded
+    pub liquid_expanded: bool,
     /// Whether this cube has a vault wallet configured
     pub has_vault: bool,
 }
@@ -45,7 +45,7 @@ impl std::default::Default for Cache {
             fiat_price: None,
             bitcoin_unit: BitcoinDisplayUnit::default(),
             vault_expanded: true,
-            active_expanded: false,
+            liquid_expanded: false,
             has_vault: false,
         }
     }

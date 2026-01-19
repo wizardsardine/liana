@@ -27,7 +27,7 @@ pub enum Message {
     Clipboard(String),
     Menu(Menu),
     ToggleVault,
-    ToggleActive,
+    ToggleLiquid,
     SetupVault,
     Close,
     Select(usize),

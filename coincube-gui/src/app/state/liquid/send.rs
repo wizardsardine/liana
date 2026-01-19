@@ -150,7 +150,7 @@ impl State for LiquidSend {
         } else {
             let comment = self.comment.clone().unwrap_or("".to_string());
 
-            view::active_send_with_flow(view::LiquidSendFlowConfig {
+            view::liquid_send_with_flow(view::LiquidSendFlowConfig {
                 flow_state: &self.flow_state,
                 btc_balance: self.btc_balance,
                 fiat_converter,

@@ -24,7 +24,7 @@ use crate::app::cache::Cache;
 use crate::app::menu::Menu;
 use crate::app::state::liquid::send::{LiquidSendFlowState, Modal};
 use crate::app::view::{
-    self, vault::fiat::FiatAmount, LiquidSendMessage, FiatAmountConverter, Message,
+    self, vault::fiat::FiatAmount, FiatAmountConverter, LiquidSendMessage, Message,
 };
 
 pub struct LiquidSendFlowConfig<'a> {
@@ -48,7 +48,7 @@ pub struct LiquidSendFlowConfig<'a> {
     pub bitcoin_unit: BitcoinDisplayUnit,
 }
 
-pub fn active_send_with_flow<'a>(config: LiquidSendFlowConfig<'a>) -> Element<'a, Message> {
+pub fn liquid_send_with_flow<'a>(config: LiquidSendFlowConfig<'a>) -> Element<'a, Message> {
     let base_content = match config.flow_state {
         LiquidSendFlowState::Main { modal } => {
             let send_view = liquid_send_view(
