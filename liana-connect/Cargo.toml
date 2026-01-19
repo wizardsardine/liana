@@ -17,4 +17,4 @@ miniscript = { workspace = true, features = ["serde"]}
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 tungstenite = { workspace = true }
-uuid = { workspace = true , features = ["serde"]}
+uuid = { workspace = true , features = ["serde", "v4"]}
