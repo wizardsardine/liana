@@ -1,6 +1,6 @@
-# Recover your Coincube wallet using Bitcoin Core
+# Recover your Coincube Vault wallet using Bitcoin Core
 
-This document walks you through the step of recovering a Coincube wallet using `bitcoind` and
+This document walks you through the step of recovering a Coincube Vault wallet using `bitcoind` and
 `bitcoin-cli`. You will need a couple things in order to follow this guide:
 
 - Your Coincube wallet descriptor.
