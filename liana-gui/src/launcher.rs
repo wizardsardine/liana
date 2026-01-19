@@ -642,9 +642,12 @@ pub async fn check_membership(
     network_dir: &NetworkDirectory,
     auth: &AuthConfig,
 ) -> Result<Option<UserRole>, DeleteError> {
-    let service_config = get_service_config(network)
-        .await
-        .map_err(|e| DeleteError::Connect(e.to_string()))?;
+    let service_config = get_service_config(
+        network,
+        crate::services::connect::client::BackendType::LianaConnect,
+    )
+    .await
+    .map_err(|e| DeleteError::Connect(e.to_string()))?;
 
     if let BackendState::WalletExists(client, _, _) = connect_with_credentials(
         AuthClient::new(
