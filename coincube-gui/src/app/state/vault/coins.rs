@@ -103,7 +103,7 @@ impl State for CoinsPanel {
                 &self.selected,
                 &self.coins.labels,
                 self.labels_edited.cache(),
-                cache.bitcoin_unit.into(),
+                cache.bitcoin_unit,
             ),
         )
     }

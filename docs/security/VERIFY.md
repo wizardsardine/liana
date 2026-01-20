@@ -143,7 +143,7 @@ Install GPG:
 This is normal on first import. The warning means you haven't explicitly marked the key as trusted. You can verify the key fingerprint matches:
 
 ```
-67F9 701B F0D2 DAF4
+ED4D 0D71 0103 D625 2854  6813 6F97 01BF 0D2D AF4
 ```
 
 To mark as trusted:

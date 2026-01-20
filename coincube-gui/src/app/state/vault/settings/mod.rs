@@ -64,7 +64,10 @@ impl State for SettingsState {
         cache: &Cache,
         message: Message,
     ) -> Task<Message> {
-        let daemon = daemon.expect("Daemon required for vault settings");
+        let Some(daemon) = daemon else {
+            tracing::warn!("SettingsState::update called without daemon");
+            return Task::none();
+        };
         match &message {
             Message::View(view::Message::Settings(view::SettingsMessage::EditBitcoindSettings)) => {
                 self.setting = Some(
@@ -157,7 +160,10 @@ impl State for SettingsState {
         _daemon: Option<Arc<dyn Daemon + Sync + Send>>,
         wallet: Option<Arc<Wallet>>,
     ) -> Task<Message> {
-        let wallet = wallet.expect("Vault panels require wallet");
+        let Some(wallet) = wallet else {
+            tracing::warn!("SettingsState::reload called without wallet");
+            return Task::none();
+        };
         self.setting = None;
         self.wallet = wallet;
         Task::none()
@@ -226,7 +232,10 @@ impl State for ImportExportSettingsState {
         cache: &Cache,
         message: Message,
     ) -> Task<Message> {
-        let daemon = daemon.expect("Daemon required for vault import/export settings");
+        let Some(daemon) = daemon else {
+            tracing::warn!("ImportExportSettingsState::update called without daemon");
+            return Task::none();
+        };
         match message {
             Message::View(view::Message::ImportExport(ImportExportMessage::Close)) => {
                 self.modal = None;
@@ -347,7 +356,10 @@ impl State for AboutSettingsState {
         _cache: &Cache,
         message: Message,
     ) -> Task<Message> {
-        let daemon = daemon.expect("Daemon required for vault about settings");
+        let Some(daemon) = daemon else {
+            tracing::warn!("AboutSettingsState::update called without daemon");
+            return Task::none();
+        };
         if let Message::Info(res) = message {
             match res {
                 Ok(info) => {
@@ -373,7 +385,10 @@ impl State for AboutSettingsState {
         daemon: Option<Arc<dyn Daemon + Sync + Send>>,
         _wallet: Option<Arc<Wallet>>,
     ) -> Task<Message> {
-        let daemon = daemon.expect("Vault panels require daemon");
+        let Some(daemon) = daemon else {
+            tracing::warn!("AboutSettingsState::reload called without daemon");
+            return Task::none();
+        };
         Task::perform(
             async move { daemon.get_info().await.map_err(|e| e.into()) },
             Message::Info,
@@ -423,7 +438,10 @@ impl State for BackendSettingsState {
         _cache: &Cache,
         message: Message,
     ) -> Task<Message> {
-        let daemon = daemon.expect("Daemon required for vault backend settings");
+        let Some(daemon) = daemon else {
+            tracing::warn!("BackendSettingsState::update called without daemon");
+            return Task::none();
+        };
         match message {
             Message::View(view::Message::Settings(
                 view::SettingsMessage::RemoteBackendSettings(message),

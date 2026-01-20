@@ -79,7 +79,7 @@ impl State for LiquidReceive {
             self.loading,
             &self.amount_input,
             &self.description_input,
-            cache.bitcoin_unit.into(),
+            cache.bitcoin_unit,
             self.error.as_ref(),
             self.lightning_receive_limits,
             self.onchain_receive_limits,
@@ -362,7 +362,7 @@ impl LiquidReceive {
             && matches!(self.receive_method, ReceiveMethod::Lightning)
         {
             let breez_client = self.breez_client.clone();
-            return Task::perform(
+            Task::perform(
                 async move { breez_client.fetch_lightning_limits().await },
                 |response| match response {
                     Ok(limits) => Message::View(view::Message::LiquidReceive(
@@ -375,12 +375,12 @@ impl LiquidReceive {
                         LiquidReceiveMessage::Error(error.to_string()),
                     )),
                 },
-            );
+            )
         } else if self.onchain_receive_limits.is_none()
             && matches!(self.receive_method, ReceiveMethod::OnChain)
         {
             let breez_client = self.breez_client.clone();
-            return Task::perform(
+            Task::perform(
                 async move { breez_client.fetch_onchain_limits().await },
                 |response| match response {
                     Ok(limits) => Message::View(view::Message::LiquidReceive(
@@ -393,9 +393,9 @@ impl LiquidReceive {
                         LiquidReceiveMessage::Error(error.to_string()),
                     )),
                 },
-            );
+            )
         } else {
-            return Task::none();
+            Task::none()
         }
     }
 }

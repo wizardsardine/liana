@@ -19,6 +19,7 @@ use crate::app::{
     view::{LiquidReceiveMessage, ReceiveMethod},
 };
 
+#[allow(clippy::too_many_arguments)]
 pub fn liquid_receive_view<'a>(
     receive_method: &'a ReceiveMethod,
     address: Option<&'a String>,
@@ -289,7 +290,7 @@ fn method_toggle(current_method: &ReceiveMethod) -> Element<LiquidReceiveMessage
             border: iced::Border {
                 color: iced::color!(0x202020),
                 radius: 50.0.into(),
-                width: 50.0.into(),
+                width: 50.0,
             },
             ..Default::default()
         })
@@ -305,7 +306,7 @@ fn input_fields<'a>(
     let mut amount_field = Column::new()
         .spacing(5)
         .push(
-            text(format!("Amount ({})", bitcoin_unit.to_string()))
+            text(format!("Amount ({})", bitcoin_unit))
                 .size(14)
                 .style(theme::text::secondary),
         )
@@ -356,11 +357,7 @@ fn input_fields<'a>(
             if let Some((min_sat, max_sat)) = lightning_limits {
                 let min_sat = Amount::from_sat(min_sat);
                 let max_sat = Amount::from_sat(max_sat);
-                if amount >= min_sat && amount <= max_sat {
-                    true
-                } else {
-                    false
-                }
+                amount >= min_sat && amount <= max_sat
             } else {
                 false
             }

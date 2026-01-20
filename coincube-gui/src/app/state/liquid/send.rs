@@ -137,11 +137,7 @@ impl State for LiquidSend {
             view::dashboard(
                 menu,
                 cache,
-                view::liquid::transaction_detail_view(
-                    payment,
-                    fiat_converter,
-                    cache.bitcoin_unit.into(),
-                ),
+                view::liquid::transaction_detail_view(payment, fiat_converter, cache.bitcoin_unit),
             )
         } else {
             let comment = self.comment.clone().unwrap_or("".to_string());
@@ -349,7 +345,7 @@ impl State for LiquidSend {
                         let fiat_converter: Option<view::FiatAmountConverter> =
                             cache.fiat_price.as_ref().and_then(|p| p.try_into().ok());
                         let txns = recent_payment
-                            .into_iter()
+                            .iter()
                             .map(|payment| {
                                 let amount = Amount::from_sat(payment.amount_sat);
                                 let status = payment.status;
@@ -431,7 +427,7 @@ impl State for LiquidSend {
                             self.amount_input.warning = None;
                             self.amount = Amount::from_sat(0);
                         } else if let Ok(amount) = Amount::from_str_in(
-                            &v,
+                            v,
                             if matches!(cache.bitcoin_unit, BitcoinDisplayUnit::BTC) {
                                 coincube_core::miniscript::bitcoin::Denomination::Bitcoin
                             } else {
@@ -575,7 +571,7 @@ impl State for LiquidSend {
                             // Check if converted BTC amount exceeds limits
                             if let Some(converter) = converters.get(selected_currency) {
                                 if let Ok(fiat_amount) = view::vault::fiat::FiatAmount::from_str_in(
-                                    &fiat_input,
+                                    fiat_input,
                                     *selected_currency,
                                 ) {
                                     if let Ok(btc_amount) = converter.convert_to_btc(&fiat_amount) {

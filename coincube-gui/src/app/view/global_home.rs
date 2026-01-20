@@ -356,27 +356,24 @@ fn enter_amount_card<'a>(
                             .padding(10),
                         ))
                         .push_maybe(
-                            if let Some(limits) = if direction == TransferDirection::LiquidToVault {
+                            if direction == TransferDirection::LiquidToVault {
                                 onchain_send_limit
                             } else {
                                 onchain_receive_limit
-                            } {
-                                Some(
-                                    Container::new(
-                                        text(format!(
-                                            "Enter an amount between {} and {}",
-                                            Amount::from_sat(limits.0)
-                                                .to_formatted_string_with_unit(bitcoin_unit),
-                                            Amount::from_sat(limits.1)
-                                                .to_formatted_string_with_unit(bitcoin_unit),
-                                        ))
-                                        .size(12),
-                                    )
-                                    .padding(7),
+                            }
+                            .map(|limits| {
+                                Container::new(
+                                    text(format!(
+                                        "Enter an amount between {} and {}",
+                                        Amount::from_sat(limits.0)
+                                            .to_formatted_string_with_unit(bitcoin_unit),
+                                        Amount::from_sat(limits.1)
+                                            .to_formatted_string_with_unit(bitcoin_unit),
+                                    ))
+                                    .size(12),
                                 )
-                            } else {
-                                None
-                            },
+                                .padding(7)
+                            }),
                         ),
                 )
                 .push(button::primary(None, "Next").on_press_maybe(
@@ -400,6 +397,7 @@ fn enter_amount_card<'a>(
         .into()
 }
 
+#[allow(clippy::too_many_arguments)]
 fn enter_amount_view<'a>(
     direction: TransferDirection,
     liquid_balance: &Amount,
@@ -519,6 +517,7 @@ fn enter_amount_view<'a>(
         .into()
 }
 
+#[allow(clippy::too_many_arguments)]
 fn confirm_transfer_view<'a>(
     direction: TransferDirection,
     amount: &'a form::Value<String>,
@@ -988,7 +987,7 @@ pub fn global_home_view<'a>(config: GlobalViewConfig<'a>) -> Element<'a, Message
         fiat_converter,
         balance_masked,
         false,
-        bitcoin_unit.into(),
+        bitcoin_unit,
     );
 
     let vault_card_element = wallet_card(
@@ -997,7 +996,7 @@ pub fn global_home_view<'a>(config: GlobalViewConfig<'a>) -> Element<'a, Message
         fiat_converter,
         balance_masked,
         has_vault,
-        bitcoin_unit.into(),
+        bitcoin_unit,
     );
 
     Column::new()

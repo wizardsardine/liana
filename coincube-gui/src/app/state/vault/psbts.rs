@@ -46,7 +46,7 @@ impl State for PsbtsPanel {
             let list_view = view::dashboard(
                 menu,
                 cache,
-                view::vault::psbts::psbts_view(&self.spend_txs, cache.bitcoin_unit.into()),
+                view::vault::psbts::psbts_view(&self.spend_txs, cache.bitcoin_unit),
             );
             if let Some(modal) = &self.modal {
                 modal.view(list_view)

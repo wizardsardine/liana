@@ -124,7 +124,7 @@ fn transaction_row<'a>(
 
     let mut btc_amount = Amount::from_sat(payment.amount_sat);
     if !is_receive {
-        btc_amount = btc_amount + Amount::from_sat(payment.fees_sat);
+        btc_amount += Amount::from_sat(payment.fees_sat);
     }
     let time_ago = format_time_ago(payment.timestamp.into());
 
@@ -162,10 +162,10 @@ pub fn transaction_detail_view<'a>(
     let is_receive = matches!(payment.payment_type, PaymentType::Receive);
     let btc_amount = Amount::from_sat(payment.amount_sat);
     let fees_sat = Amount::from_sat(payment.fees_sat);
-    let mut total_amount = btc_amount.clone();
+    let mut total_amount = btc_amount;
 
     if !is_receive {
-        total_amount = total_amount + fees_sat;
+        total_amount += fees_sat;
     }
 
     // Format full date/time

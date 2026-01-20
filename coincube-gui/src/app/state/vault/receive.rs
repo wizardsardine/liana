@@ -170,7 +170,7 @@ impl State for VaultReceivePanel {
                     Err(e) => {
                         let err_msg = e.to_string();
                         self.warning = Some(e);
-                        return Task::done(Message::View(view::Message::ShowError(err_msg)));
+                        Task::done(Message::View(view::Message::ShowError(err_msg)))
                     }
                 }
             }
@@ -184,7 +184,7 @@ impl State for VaultReceivePanel {
                     Err(e) => {
                         let err_msg = e.to_string();
                         self.warning = Some(e);
-                        return Task::done(Message::View(view::Message::ShowError(err_msg)));
+                        Task::done(Message::View(view::Message::ShowError(err_msg)))
                     }
                 }
                 Task::none()

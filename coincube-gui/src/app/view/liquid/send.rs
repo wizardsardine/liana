@@ -56,7 +56,7 @@ pub fn liquid_send_with_flow<'a>(config: LiquidSendFlowConfig<'a>) -> Element<'a
                 config.recent_transaction,
                 config.input,
                 config.input_type,
-                config.cache.bitcoin_unit.into(),
+                config.cache.bitcoin_unit,
             )
             .map(Message::LiquidSend);
 
@@ -131,7 +131,7 @@ pub fn liquid_send_with_flow<'a>(config: LiquidSendFlowConfig<'a>) -> Element<'a
 pub fn liquid_send_view<'a>(
     btc_balance: Amount,
     fiat_converter: Option<FiatAmountConverter>,
-    recent_transaction: &Vec<RecentTransaction>,
+    recent_transaction: &[RecentTransaction],
     input: &'a form::Value<String>,
     input_type: &'a Option<InputType>,
     bitcoin_unit: BitcoinDisplayUnit,
@@ -224,9 +224,9 @@ pub fn liquid_send_view<'a>(
                 .fiat_amount
                 .as_ref()
                 .map(|fiat| format!("~{} {}", fiat.to_rounded_string(), fiat.currency()));
-            let mut amount = tx.amount.clone();
+            let mut amount = tx.amount;
             if !tx.is_incoming {
-                amount = amount + tx.fees_sat;
+                amount += tx.fees_sat;
             }
 
             let mut item = TransactionListItem::new(direction, &amount, bitcoin_unit)
@@ -378,7 +378,7 @@ pub fn amount_input_model<'a>(config: AmountInputConfig<'a>) -> Element<'a, Liqu
                 } else {
                     config.btc_balance.to_sat().to_string()
                 },
-                config.bitcoin_unit.to_string()
+                config.bitcoin_unit
             ))
             .size(16)
             .bold()
@@ -414,7 +414,7 @@ pub fn amount_input_model<'a>(config: AmountInputConfig<'a>) -> Element<'a, Liqu
 
     let amount_row = Row::new()
         .spacing(10)
-        .push(text(format!("Amount ({})", config.bitcoin_unit.to_string())).size(16))
+        .push(text(format!("Amount ({})", config.bitcoin_unit)).size(16))
         .push(iced::widget::Space::new().width(Length::Fill))
         .align_y(Alignment::Center);
 
@@ -614,7 +614,7 @@ pub fn fiat_input_model<'a>(
             } else {
                 "0".to_string()
             },
-            bitcoin_unit.to_string()
+            bitcoin_unit
         );
         let btc_amount = if !fiat_input.value.is_empty() {
             if let Ok(fiat_amount) = FiatAmount::from_str_in(&fiat_input.value, *selected_currency)
@@ -627,7 +627,7 @@ pub fn fiat_input_model<'a>(
                         } else {
                             btc_amt.to_sat().to_string()
                         },
-                        bitcoin_unit.to_string()
+                        bitcoin_unit
                     )
                 } else {
                     default_string
@@ -653,10 +653,7 @@ pub fn fiat_input_model<'a>(
 
         let rate = format!(
             "{} {} = {} {}",
-            amount,
-            bitcoin_unit.to_string(),
-            fiat_value,
-            selected_currency
+            amount, bitcoin_unit, fiat_value, selected_currency
         );
 
         (btc_amount, rate)
@@ -756,7 +753,7 @@ pub fn final_check_page<'a>(
                 } else {
                     amount.to_sat().to_string()
                 },
-                bitcoin_unit.to_string()
+                bitcoin_unit
             ))
             .size(38)
             .bold()
@@ -791,7 +788,7 @@ pub fn final_check_page<'a>(
                     } else {
                         amount.to_sat().to_string()
                     },
-                    bitcoin_unit.to_string()
+                    bitcoin_unit
                 ))
                 .size(16)
                 .bold(),
@@ -823,7 +820,7 @@ pub fn final_check_page<'a>(
                     } else {
                         fees_amount.to_sat().to_string()
                     },
-                    bitcoin_unit.to_string()
+                    bitcoin_unit
                 ))
                 .size(16)
                 .bold(),
@@ -855,7 +852,7 @@ pub fn final_check_page<'a>(
                     } else {
                         total_amount.to_sat().to_string()
                     },
-                    bitcoin_unit.to_string()
+                    bitcoin_unit
                 ))
                 .size(18)
                 .bold()
@@ -967,7 +964,7 @@ pub fn sent_page<'a>(
                                 } else {
                                     amount.to_sat().to_string()
                                 },
-                                bitcoin_unit.to_string()
+                                bitcoin_unit
                             ))
                             .size(20)
                             .color(color::ORANGE)

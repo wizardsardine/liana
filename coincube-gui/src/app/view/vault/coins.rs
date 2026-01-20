@@ -62,6 +62,7 @@ pub fn coins_view<'a>(
 }
 
 #[allow(clippy::collapsible_else_if)]
+#[allow(clippy::too_many_arguments)]
 fn coin_list_view<'a>(
     coin: &'a Coin,
     timelock: u16,

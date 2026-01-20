@@ -86,7 +86,7 @@ impl State for VaultTransactionsPanel {
                 cache,
                 tx,
                 self.labels_edited.cache(),
-                cache.bitcoin_unit.into(),
+                cache.bitcoin_unit,
             );
             match &self.modal {
                 VaultTransactionsModal::CreateRbf(rbf) => rbf.view(content),
@@ -164,7 +164,7 @@ impl State for VaultTransactionsPanel {
                     self.modal = VaultTransactionsModal::CreateRbf(modal);
                 }
                 Err(e) => {
-                    let err: Error = e.into();
+                    let err: Error = e;
                     let err_msg = err.to_string();
                     self.warning = Some(err);
                     return Task::done(Message::View(view::Message::ShowError(err_msg)));

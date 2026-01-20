@@ -22,7 +22,7 @@ use crate::app::view::{liquid::RecentTransaction, FiatAmountConverter, LiquidOve
 pub fn liquid_overview_view<'a>(
     btc_balance: Amount,
     fiat_converter: Option<FiatAmountConverter>,
-    recent_transaction: &Vec<RecentTransaction>,
+    recent_transaction: &[RecentTransaction],
     error: Option<&'a str>,
     bitcoin_unit: BitcoinDisplayUnit,
 ) -> Element<'a, LiquidOverviewMessage> {
@@ -90,9 +90,9 @@ pub fn liquid_overview_view<'a>(
                 .as_ref()
                 .map(|fiat| format!("~{} {}", fiat.to_rounded_string(), fiat.currency()));
 
-            let mut amount = tx.amount.clone();
+            let mut amount = tx.amount;
             if !tx.is_incoming {
-                amount = amount + tx.fees_sat;
+                amount += tx.fees_sat;
             }
             let mut item = TransactionListItem::new(direction, &amount, bitcoin_unit)
                 .with_type(tx_type)

@@ -24,9 +24,11 @@ use crate::daemon::model::{CreateSpendResult, LabelItem, Labelled, SpendTx};
 use crate::daemon::Daemon;
 use crate::services::feeestimation::fee_estimation::FeeEstimator;
 
+#[derive(Default)]
 pub enum Modal {
     ShowQrCode(ShowQrCodeModal),
     Sign(Box<SignModal>),
+    #[default]
     None,
 }
 
@@ -37,12 +39,6 @@ impl std::fmt::Debug for Modal {
             Self::Sign(_) => f.debug_tuple("Sign").field(&"<SignModal>").finish(),
             Self::None => write!(f, "None"),
         }
-    }
-}
-
-impl Default for Modal {
-    fn default() -> Self {
-        Self::None
     }
 }
 
@@ -180,7 +176,7 @@ impl State for GlobalHome {
             Modal::Sign(sign_modal) => {
                 // Delegate to SignModal's view this will render the signing UI
                 use crate::app::state::vault::psbt::Modal as PsbtModalTrait;
-                if let Some(_) = &self.transfer_spend_tx {
+                if self.transfer_spend_tx.is_some() {
                     return sign_modal.view(content);
                 } else {
                     return content;
@@ -768,7 +764,7 @@ impl State for GlobalHome {
 
                         return Task::batch(vec![
                             task,
-                            Task::perform(async { () }, |_| {
+                            Task::perform(async {}, |_| {
                                 Message::View(view::Message::Home(
                                     HomeMessage::TransferSigningComplete,
                                 ))

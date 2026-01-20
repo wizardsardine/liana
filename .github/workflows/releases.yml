@@ -232,7 +232,8 @@ jobs:
       - name: Generate checksums file
         run: |
           cd artifacts
-          sha256sum * > ../coincube-${{ env.COINCUBE_VERSION }}-SHA256SUMS.txt
+          # Exclude checksum and signature files from being checksummed
+          find . -type f ! -name '*SHA256SUMS*' ! -name '*.asc' ! -name '*.sig' -exec sha256sum {} \; | sed 's|\./||' > ../coincube-${{ env.COINCUBE_VERSION }}-SHA256SUMS.txt
           cd ..
           cat coincube-${{ env.COINCUBE_VERSION }}-SHA256SUMS.txt
 

@@ -59,11 +59,7 @@ impl State for LiquidTransactions {
             view::dashboard(
                 menu,
                 cache,
-                view::liquid::transaction_detail_view(
-                    payment,
-                    fiat_converter,
-                    cache.bitcoin_unit.into(),
-                ),
+                view::liquid::transaction_detail_view(payment, fiat_converter, cache.bitcoin_unit),
             )
         } else {
             view::dashboard(
@@ -74,7 +70,7 @@ impl State for LiquidTransactions {
                     &self.balance,
                     fiat_converter,
                     self.loading,
-                    cache.bitcoin_unit.into(),
+                    cache.bitcoin_unit,
                 ),
             )
         }

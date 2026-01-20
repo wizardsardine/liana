@@ -16,6 +16,19 @@ use coincube_core::miniscript::bitcoin::Amount;
 use coincube_core::miniscript::bitcoin::{bip32::Fingerprint, Address, OutPoint};
 use coincube_core::spend::SpendCreationError;
 
+// Type alias for complex transfer PSBT result
+type TransferPsbtResult = Result<
+    (
+        coincube_core::miniscript::bitcoin::psbt::Psbt,
+        Option<std::sync::Arc<crate::app::wallet::Wallet>>,
+        (
+            crate::dir::CoincubeDirectory,
+            coincube_core::miniscript::bitcoin::Network,
+        ),
+    ),
+    String,
+>;
+
 pub trait Close {
     fn close() -> Self;
 }
@@ -372,19 +385,7 @@ pub enum HomeMessage {
     BreezOnchainAddress(String),
     RefreshLiquidBalance,
     SignVaultToLiquidTx,
-    TransferPsbtReady(
-        Result<
-            (
-                coincube_core::miniscript::bitcoin::psbt::Psbt,
-                Option<std::sync::Arc<crate::app::wallet::Wallet>>,
-                (
-                    crate::dir::CoincubeDirectory,
-                    coincube_core::miniscript::bitcoin::Network,
-                ),
-            ),
-            String,
-        >,
-    ),
+    TransferPsbtReady(TransferPsbtResult),
     TransferSigningComplete,
     ConfirmTransfer,
 }

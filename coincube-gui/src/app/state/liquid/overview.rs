@@ -90,11 +90,7 @@ impl State for LiquidOverview {
             view::dashboard(
                 menu,
                 cache,
-                view::liquid::transaction_detail_view(
-                    payment,
-                    fiat_converter,
-                    cache.bitcoin_unit.into(),
-                ),
+                view::liquid::transaction_detail_view(payment, fiat_converter, cache.bitcoin_unit),
             )
         } else {
             let send_view = view::liquid::liquid_overview_view(
@@ -102,7 +98,7 @@ impl State for LiquidOverview {
                 fiat_converter,
                 &self.recent_transaction,
                 self.error.as_deref(),
-                cache.bitcoin_unit.into(),
+                cache.bitcoin_unit,
             )
             .map(view::Message::LiquidOverview);
 
@@ -148,7 +144,7 @@ impl State for LiquidOverview {
                         let fiat_converter: Option<view::FiatAmountConverter> =
                             cache.fiat_price.as_ref().and_then(|p| p.try_into().ok());
                         let txns = recent_payment
-                            .into_iter()
+                            .iter()
                             .map(|payment| {
                                 let amount = Amount::from_sat(payment.amount_sat);
                                 let status = payment.status;

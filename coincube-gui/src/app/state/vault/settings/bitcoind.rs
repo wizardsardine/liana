@@ -95,7 +95,10 @@ impl State for BitcoindSettingsState {
         cache: &Cache,
         message: Message,
     ) -> Task<Message> {
-        let daemon = daemon.expect("Daemon required for vault bitcoind settings");
+        let Some(daemon) = daemon else {
+            tracing::warn!("BitcoindSettingsState::update called without daemon");
+            return Task::none();
+        };
         match message {
             Message::DaemonConfigLoaded(res) => match res {
                 Ok(()) => {

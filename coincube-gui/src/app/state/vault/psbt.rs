@@ -298,7 +298,7 @@ impl PsbtState {
             } else {
                 false
             },
-            cache.bitcoin_unit.into(),
+            cache.bitcoin_unit,
         );
         if let Some(modal) = &self.modal {
             modal.as_ref().view(content)

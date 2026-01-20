@@ -113,7 +113,7 @@ impl State for VaultOverview {
                     self.processing,
                     &self.sync_status,
                     self.show_rescan_warning,
-                    cache.bitcoin_unit.into(),
+                    cache.bitcoin_unit,
                 ),
             )
         }

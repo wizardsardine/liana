@@ -930,7 +930,7 @@ impl Step for DefineSpend {
             &self.sync_status,
             self.is_first_step,
             self.loading_fee_estimate,
-            self.bitcoin_unit.into(),
+            self.bitcoin_unit,
         )
     }
 
@@ -1211,7 +1211,7 @@ impl Step for SaveSpend {
             } else {
                 false
             },
-            cache.bitcoin_unit.into(),
+            cache.bitcoin_unit,
         );
         if let Some(modal) = &psbt_state.modal {
             modal.as_ref().view(content)

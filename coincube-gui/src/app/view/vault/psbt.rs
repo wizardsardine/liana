@@ -881,6 +881,7 @@ fn input_view<'a>(
         .into()
 }
 
+#[allow(clippy::too_many_arguments)]
 fn payment_view<'a>(
     i: usize,
     txid: Txid,

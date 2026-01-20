@@ -685,7 +685,7 @@ impl App {
                                     self.cache.last_poll_timestamp(),
                                     self.cache.last_poll_at_startup,
                                 ),
-                                self.cache.bitcoin_unit.into(),
+                                self.cache.bitcoin_unit,
                             ));
                         }
                         menu::VaultSubMenu::Send => {
@@ -716,7 +716,7 @@ impl App {
                                             self.cache.last_poll_timestamp(),
                                             self.cache.last_poll_at_startup,
                                         ),
-                                        self.cache.bitcoin_unit.into(),
+                                        self.cache.bitcoin_unit,
                                     )
                                 });
                             }
@@ -1317,6 +1317,6 @@ fn new_recovery_panel(
         balance,
         unconfirmed_balance,
         sync_status,
-        cache.bitcoin_unit.into(),
+        cache.bitcoin_unit,
     )
 }

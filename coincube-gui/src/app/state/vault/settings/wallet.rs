@@ -152,7 +152,10 @@ impl State for WalletSettingsState {
         cache: &Cache,
         message: Message,
     ) -> Task<Message> {
-        let daemon = daemon.expect("Daemon required for vault wallet settings");
+        let Some(daemon) = daemon else {
+            tracing::warn!("WalletSettingsState::update called without daemon");
+            return Task::none();
+        };
         match message {
             Message::WalletUpdated(res) => {
                 self.processing = false;
@@ -304,8 +307,14 @@ impl State for WalletSettingsState {
         daemon: Option<Arc<dyn Daemon + Sync + Send>>,
         wallet: Option<Arc<Wallet>>,
     ) -> Task<Message> {
-        let daemon = daemon.expect("Vault panels require daemon");
-        let wallet = wallet.expect("Vault panels require wallet");
+        let Some(daemon) = daemon else {
+            tracing::warn!("WalletSettingsState::reload called without daemon");
+            return Task::none();
+        };
+        let Some(wallet) = wallet else {
+            tracing::warn!("WalletSettingsState::reload called without wallet");
+            return Task::none();
+        };
         self.descriptor = wallet.main_descriptor.clone();
         self.keys_aliases = Self::keys_aliases(&wallet);
         self.wallet = wallet;
@@ -370,7 +379,10 @@ impl RegisterWalletModal {
         cache: &Cache,
         message: Message,
     ) -> Task<Message> {
-        let daemon = daemon.expect("Daemon required for register wallet modal");
+        let Some(daemon) = daemon else {
+            tracing::warn!("RegisterWalletModal::update called without daemon");
+            return Task::none();
+        };
         match message {
             Message::View(view::Message::Reload) => {
                 self.chosen_hw = None;
