@@ -7,8 +7,9 @@ use crate::{
         xpub_view,
     },
 };
-use async_hwi::service::HwiService;
+use async_hwi::{bitbox::NoiseConfig, service::HwiService};
 use crossbeam::channel;
+use liana_gui::{app::settings::global::PersistedBitboxNoiseConfig, dir::LianaDirectory};
 use liana_ui::widget::{modal::Modal, Element};
 pub use message::{Message, Msg};
 use miniscript::bitcoin::Network;
@@ -57,10 +58,13 @@ pub struct State {
     hw_sender: channel::Sender<Message>,
     /// Handle to the bridge thread (kept alive until State is dropped)
     _hw_bridge_handle: Option<std::thread::JoinHandle<()>>,
+    /// Shared BitBox noise config for pairing persistence (kept for potential future use)
+    #[allow(dead_code)]
+    bitbox_config: Arc<dyn NoiseConfig>,
 }
 
 impl State {
-    pub fn new(network: Network) -> Self {
+    pub fn new(network: Network, datadir: LianaDirectory) -> Self {
         let (notif_sender, notif_receiver) = channel::unbounded();
         let notif_waker: SharedWaker = Arc::new(Mutex::new(None));
 
@@ -86,6 +90,14 @@ impl State {
 
         let rt = tokio::runtime::Handle::current().clone();
 
+        // Create shared BitBox noise config for pairing persistence
+        let bitbox_config: Arc<dyn NoiseConfig> =
+            Arc::new(PersistedBitboxNoiseConfig::new(&datadir));
+
+        // Create HwiService and set BitBox noise config for pairing persistence
+        let hw = HwiService::new(network, Some(rt));
+        hw.set_bitbox_noise_config(bitbox_config.clone());
+
         Self {
             app: AppState::new(),
             views: views::ViewsState::new(),
@@ -94,11 +106,12 @@ impl State {
             notif_sender,
             notif_receiver,
             notif_waker,
-            hw: HwiService::new(network, Some(rt)),
+            hw,
             hw_running: false,
             network,
             hw_sender,
             _hw_bridge_handle: Some(hw_bridge_handle),
+            bitbox_config,
         }
     }
 
