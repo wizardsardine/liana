@@ -179,7 +179,6 @@ impl State for LiquidOverview {
                                     breez_sdk_liquid::prelude::PaymentType::Receive
                                 );
                                 let details = payment.details.clone();
-                                let sign = if is_incoming { "+" } else { "-" };
                                 let fees_sat = Amount::from_sat(payment.fees_sat);
                                 view::liquid::RecentTransaction {
                                     description: desc.to_owned(),
@@ -187,7 +186,6 @@ impl State for LiquidOverview {
                                     amount,
                                     fiat_amount,
                                     is_incoming,
-                                    sign,
                                     status,
                                     details,
                                     fees_sat,

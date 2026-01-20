@@ -152,6 +152,13 @@ jobs:
             --profile app-release \
             --target ${{ matrix.target }}
 
+      - name: Generate Icons for Installers
+        if: matrix.platform == 'macos'
+        run: |
+          pip3 install pillow icnsutil
+          mkdir -p contrib/icons
+          python3 contrib/release/macos/icns-creator.py
+
       - name: Assemble .app bundle
         if: matrix.platform == 'macos'
         run: |

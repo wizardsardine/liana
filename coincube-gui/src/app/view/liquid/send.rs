@@ -344,7 +344,6 @@ pub struct RecentTransaction {
     pub fees_sat: Amount,
     pub fiat_amount: Option<FiatAmount>,
     pub is_incoming: bool,
-    pub sign: &'static str,
     pub status: PaymentState,
     pub details: PaymentDetails,
 }
