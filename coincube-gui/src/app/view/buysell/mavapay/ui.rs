@@ -45,11 +45,61 @@ fn status_color(status: &TransactionStatus) -> iced::Color {
     }
 }
 
-fn order_type_info(order: &GetOrderResponse) -> (&'static str, iced::Color) {
-    if matches!(order.currency, MavapayCurrency::Bitcoin) {
-        ("BUY", color::GREEN)
-    } else {
-        ("SELL", color::RED)
+/// Determine order type based on payment method.
+/// - BankTransfer/USDT = BUY (user paying fiat to receive BTC)
+/// - Lightning/Onchain = SELL (user paying BTC to receive fiat)
+fn order_type_from_payment(payment_method: &MavapayPaymentMethod) -> (&'static str, iced::Color) {
+    match payment_method {
+        MavapayPaymentMethod::BankTransfer | MavapayPaymentMethod::USDT => ("BUY", color::GREEN),
+        MavapayPaymentMethod::Lightning | MavapayPaymentMethod::Onchain => ("SELL", color::RED),
+    }
+}
+
+/// Translate order status to user-friendly display text
+fn order_status_text(status: &TransactionStatus) -> &'static str {
+    match status {
+        TransactionStatus::Success | TransactionStatus::Paid => "Complete",
+        TransactionStatus::Pending => "Processing",
+        TransactionStatus::Expired => "Expired",
+        TransactionStatus::Failed => "Failed",
+    }
+}
+
+/// Translate transaction status to user-friendly display text and color.
+/// For DEPOSIT transactions, even SUCCESS means "Processing" since the order
+/// isn't complete until the WITHDRAWAL succeeds.
+fn transaction_status_info(transaction: &OrderTransaction) -> (&'static str, iced::Color) {
+    match transaction.transaction_type {
+        // DEPOSIT success just means payment received, order still processing
+        TransactionType::Deposit => match transaction.status {
+            TransactionStatus::Pending => ("Processing", color::ORANGE),
+            TransactionStatus::Success | TransactionStatus::Paid => ("Processing", color::ORANGE),
+            TransactionStatus::Expired => ("Expired", color::RED),
+            TransactionStatus::Failed => ("Failed", color::RED),
+        },
+        // WITHDRAWAL success means order is actually complete
+        TransactionType::Withdrawal => match transaction.status {
+            TransactionStatus::Pending => ("Processing", color::ORANGE),
+            TransactionStatus::Success | TransactionStatus::Paid => ("Complete", color::GREEN),
+            TransactionStatus::Expired => ("Expired", color::RED),
+            TransactionStatus::Failed => ("Failed", color::RED),
+        },
+    }
+}
+
+fn format_amount(amount: u64, currency: &MavapayCurrency) -> String {
+    match currency {
+        MavapayCurrency::Bitcoin => format!("{:.8} BTC", amount as f64 / 100_000_000.0),
+        MavapayCurrency::KenyanShilling => format!("{:.2} KSh", amount as f64 / 100.0),
+        MavapayCurrency::SouthAfricanRand => format!("{:.2} ZAR", amount as f64 / 100.0),
+        MavapayCurrency::NigerianNaira => format!("{:.2} NGN", amount as f64 / 100.0),
+    }
+}
+
+fn format_fees(fees: u64, currency: &MavapayCurrency) -> String {
+    match currency {
+        MavapayCurrency::Bitcoin => format!("{} sats", fees),
+        _ => format_amount(fees, currency),
     }
 }
 
@@ -528,7 +578,7 @@ fn order_success_view<'a>(
                 iced::widget::column![
                     text::p1_bold("Order Details"),
                     Space::new().height(15),
-                    detail_row(details.reference_label, order.id.clone(), None),
+                    detail_row(details.reference_label, order.order_id.clone(), None),
                     Space::new().height(15),
                     iced::widget::row![
                         iced::widget::column![
@@ -549,7 +599,8 @@ fn order_success_view<'a>(
                     iced::widget::row![
                         iced::widget::column![
                             text::p2_medium("Order Status").color(color::GREY_2),
-                            text::p2_bold(&order.status).color(status_color(&order.status))
+                            text::p2_bold(order_status_text(&order.status))
+                                .color(status_color(&order.status))
                         ]
                         .width(Length::Fill),
                         iced::widget::column![
@@ -591,7 +642,7 @@ fn order_success_view<'a>(
 
 fn history_view<'a>(state: &'a MavapayState) -> Column<'a, BuySellMessage> {
     let MavapayFlowStep::History {
-        orders,
+        transactions,
         loading,
         error,
     } = &state.step
@@ -599,63 +650,66 @@ fn history_view<'a>(state: &'a MavapayState) -> Column<'a, BuySellMessage> {
         unreachable!()
     };
 
-    let content: iced::Element<'a, BuySellMessage, theme::Theme> = match (loading, orders, error) {
-        (true, _, _) => container(
-            iced::widget::column![
-                reload_icon().size(24).style(theme::text::secondary),
-                Space::new().height(10),
-                text::p2_medium("Loading order history...").color(color::GREY_2)
-            ]
-            .align_x(Alignment::Center),
-        )
-        .padding(40)
-        .width(Length::Fill)
-        .align_x(Alignment::Center)
-        .into(),
-        (false, _, Some(err)) => card::simple(
-            iced::widget::column![
-                iced::widget::row![
-                    warning_icon().size(20).style(theme::text::warning),
-                    Space::new().width(10),
-                    text::p1_bold("Failed to load order history")
+    let content: iced::Element<'a, BuySellMessage, theme::Theme> =
+        match (loading, transactions, error) {
+            (true, _, _) => container(
+                iced::widget::column![
+                    reload_icon().size(24).style(theme::text::secondary),
+                    Space::new().height(10),
+                    text::p2_medium("Loading transaction history...").color(color::GREY_2)
                 ]
-                .align_y(Alignment::Center),
-                Space::new().height(10),
-                text::p2_medium(err).color(color::GREY_2),
-                Space::new().height(15),
-                button::primary(Some(reload_icon()), "Retry")
-                    .on_press(BuySellMessage::Mavapay(MavapayMessage::FetchOrders))
-            ]
-            .padding(20)
-            .align_x(Alignment::Center)
-            .width(Length::Fill),
-        )
-        .width(Length::Fill)
-        .into(),
-        (false, Some(order_list), None) if order_list.is_empty() => card::simple(
-            iced::widget::column![
-                history_icon().size(48).style(theme::text::secondary),
-                Space::new().height(15),
-                text::p1_bold("No orders found"),
-                Space::new().height(5),
-                text::p2_medium("Your orders will appear here once you buy or sell bitcoin.")
-                    .color(color::GREY_2)
-            ]
+                .align_x(Alignment::Center),
+            )
             .padding(40)
+            .width(Length::Fill)
             .align_x(Alignment::Center)
-            .width(Length::Fill),
-        )
-        .width(Length::Fill)
-        .into(),
-        (false, Some(order_list), None) => order_list
-            .iter()
-            .fold(iced::widget::column![].spacing(10), |col, order| {
-                col.push(order_row(order))
-            })
+            .into(),
+            (false, _, Some(err)) => card::simple(
+                iced::widget::column![
+                    iced::widget::row![
+                        warning_icon().size(20).style(theme::text::warning),
+                        Space::new().width(10),
+                        text::p1_bold("Failed to load transaction history")
+                    ]
+                    .align_y(Alignment::Center),
+                    Space::new().height(10),
+                    text::p2_medium(err).color(color::GREY_2),
+                    Space::new().height(15),
+                    button::primary(Some(reload_icon()), "Retry")
+                        .on_press(BuySellMessage::Mavapay(MavapayMessage::FetchTransactions))
+                ]
+                .padding(20)
+                .align_x(Alignment::Center)
+                .width(Length::Fill),
+            )
             .width(Length::Fill)
             .into(),
-        (false, None, None) => container(text::p2_medium("Unexpected state")).into(),
-    };
+            (false, Some(transaction_list), None) if transaction_list.is_empty() => card::simple(
+                iced::widget::column![
+                    history_icon().size(48).style(theme::text::secondary),
+                    Space::new().height(15),
+                    text::p1_bold("No transactions found"),
+                    Space::new().height(5),
+                    text::p2_medium(
+                        "Your transactions will appear here once you buy or sell bitcoin."
+                    )
+                    .color(color::GREY_2)
+                ]
+                .padding(40)
+                .align_x(Alignment::Center)
+                .width(Length::Fill),
+            )
+            .width(Length::Fill)
+            .into(),
+            (false, Some(transaction_list), None) => transaction_list
+                .iter()
+                .fold(iced::widget::column![].spacing(10), |col, transaction| {
+                    col.push(transaction_row(transaction))
+                })
+                .width(Length::Fill)
+                .into(),
+            (false, None, None) => container(text::p2_medium("Unexpected state")).into(),
+        };
 
     iced::widget::column![
         iced::widget::button(
@@ -688,54 +742,45 @@ fn pretty_timestamp(ts: &str) -> String {
         .unwrap_or_else(|| "unknown".into())
 }
 
-fn format_order_amount(order: &GetOrderResponse) -> String {
-    match order.currency {
-        MavapayCurrency::Bitcoin => format!("{:.8} BTC", order.amount as f64 / 100_000_000.0),
-        MavapayCurrency::KenyanShilling => format!("{:.2} KSh", order.amount as f64 / 100.0),
-        MavapayCurrency::SouthAfricanRand => format!("{:.2} ZAR", order.amount as f64 / 100.0),
-        MavapayCurrency::NigerianNaira => format!("{:.2} NGN", order.amount as f64 / 100.0),
-    }
-}
-
-fn order_row<'a>(
-    order: &'a GetOrderResponse,
+fn transaction_row<'a>(
+    transaction: &'a OrderTransaction,
 ) -> iced::widget::Container<'a, BuySellMessage, theme::Theme> {
-    let (order_type, order_type_color) = order_type_info(order);
-    let order_status_color = status_color(&order.status);
+    let (order_type, order_type_color) = order_type_from_payment(&transaction.payment_method);
+    let (tx_status_text, tx_status_color) = transaction_status_info(transaction);
 
     card::simple(
         iced::widget::column![
             iced::widget::row![
                 iced::widget::column![
                     text::p2_medium("Order ID").color(color::GREY_2),
-                    text::p2_bold(&order.id)
+                    text::p2_bold(&transaction.order_id)
                 ]
                 .width(Length::Fill),
                 badge(order_type, order_type_color),
                 Space::new().width(8),
-                badge(&order.status, order_status_color)
+                badge(tx_status_text, tx_status_color)
             ]
             .align_y(Alignment::Center),
             Space::new().height(12),
             iced::widget::row![
                 iced::widget::column![
                     text::p2_medium("Amount").color(color::GREY_2),
-                    text::p2_bold(format_order_amount(order))
+                    text::p2_bold(format_amount(transaction.amount, &transaction.currency))
                 ]
                 .width(Length::Fill),
                 iced::widget::column![
                     text::p2_medium("Payment").color(color::GREY_2),
-                    text::p2_bold(&order.payment_method)
+                    text::p2_bold(&transaction.payment_method)
                 ]
                 .width(Length::Fill),
                 iced::widget::column![
-                    text::p2_medium("Order Date").color(color::GREY_2),
-                    text::p2_bold(pretty_timestamp(&order.created_at))
+                    text::p2_medium("Date").color(color::GREY_2),
+                    text::p2_bold(pretty_timestamp(&transaction.created_at))
                 ]
                 .width(Length::Fill),
                 button::secondary(None, "View")
-                    .on_press(BuySellMessage::Mavapay(MavapayMessage::SelectOrder(
-                        order.clone()
+                    .on_press(BuySellMessage::Mavapay(MavapayMessage::SelectTransaction(
+                        transaction.clone()
                     )))
                     .width(80)
             ]
@@ -768,20 +813,17 @@ fn format_currency_amount(amount: u64, currency: &MavapayUnitCurrency) -> String
 }
 
 fn order_detail_view<'a>(state: &'a MavapayState) -> Column<'a, BuySellMessage> {
-    let MavapayFlowStep::OrderDetail { order } = &state.step else {
+    let MavapayFlowStep::OrderDetail {
+        transaction,
+        order,
+        loading,
+    } = &state.step
+    else {
         unreachable!()
     };
 
-    let (order_type, order_type_color) = order_type_info(order);
-    let order_status_color = status_color(&order.status);
-
-    let Some(quote) = &order.quote else {
-        unreachable!()
-    };
-    let (paid_amount, received_amount) = (
-        format_currency_amount(quote.total_amount, &quote.source_currency),
-        format_currency_amount(quote.equivalent_amount, &quote.target_currency),
-    );
+    let (order_type, order_type_color) = order_type_from_payment(&transaction.payment_method);
+    let (tx_status_text, tx_status_color) = transaction_status_info(transaction);
 
     let back_button = iced::widget::button(
         iced::widget::row![
@@ -799,24 +841,52 @@ fn order_detail_view<'a>(state: &'a MavapayState) -> Column<'a, BuySellMessage> 
         Space::new().width(Length::Fill),
         badge(order_type, order_type_color),
         Space::new().width(8),
-        badge(&order.status, order_status_color)
+        badge(tx_status_text, tx_status_color)
     ]
     .align_y(Alignment::Center);
 
-    let summary_card = card::simple(
+    // Get total fees from all quotes if available, otherwise use transaction fees
+    let fees_display = order
+        .as_ref()
+        .map(|o| {
+            let quotes = o.quotes();
+            if quotes.is_empty() {
+                return format_fees(transaction.fees, &transaction.currency);
+            }
+            // Sum up fees from all quotes (use target currency fees)
+            let total_fees: u64 = quotes
+                .iter()
+                .map(|q| q.transaction_fees_in_target_currency)
+                .sum();
+            // Use the target currency from the first quote for formatting
+            if let Some(first_quote) = quotes.first() {
+                format_currency_amount(total_fees, &first_quote.target_currency)
+            } else {
+                format_fees(transaction.fees, &transaction.currency)
+            }
+        })
+        .unwrap_or_else(|| format_fees(transaction.fees, &transaction.currency));
+
+    // Transaction summary card (always shown)
+    let transaction_card = card::simple(
         iced::widget::column![
             text::p1_bold("Transaction Summary"),
             Space::new().height(15),
-            detail_row("Order ID", order.id.clone(), None),
+            detail_row("Transaction ID", transaction.transaction_id.clone(), None),
+            Space::new().height(8),
+            detail_row("Order ID", transaction.order_id.clone(), None),
             Space::new().height(8),
             iced::widget::row![
-                info_field("Amount Paid", &paid_amount),
-                info_field("Amount Received", &received_amount),
+                info_field(
+                    "Amount",
+                    format_amount(transaction.amount, &transaction.currency)
+                ),
+                info_field("Fees", fees_display),
             ],
             Space::new().height(8),
             iced::widget::row![
-                info_field("Payment Method", &order.payment_method),
-                info_field("Order Date", pretty_timestamp(&order.created_at)),
+                info_field("Payment Method", &transaction.payment_method),
+                info_field("Date", pretty_timestamp(&transaction.created_at)),
             ]
         ]
         .padding(20)
@@ -824,93 +894,147 @@ fn order_detail_view<'a>(state: &'a MavapayState) -> Column<'a, BuySellMessage> 
     )
     .width(Length::Fill);
 
-    let fee_card = card::simple(
-        iced::widget::column![
-            text::p1_bold("Fee Breakdown"),
-            Space::new().height(15),
-            iced::widget::row![
-                info_field(
-                    "Source Currency Fee",
-                    format_currency_amount(
-                        quote.transaction_fees_in_source_currency,
-                        &quote.source_currency
-                    )
-                ),
-                info_field(
-                    "Target Currency Fee",
-                    format_currency_amount(
-                        quote.transaction_fees_in_target_currency,
-                        &quote.target_currency
-                    ),
-                ),
-                info_field(
-                    "Fee (USD)",
-                    format!("{:.2}", quote.transaction_fees_in_usd_cent as f64 / 100.0)
-                ),
-            ],
-        ]
-        .padding(20)
-        .width(Length::Fill),
-    )
-    .width(Length::Fill);
-
-    let rate_card = card::simple(
-        iced::widget::column![
-            text::p1_bold("Exchange Rates"),
-            Space::new().height(15),
-            iced::widget::row![
-                info_field("BTC/USD Rate", quote.btc_usd_rate),
-                info_field(
-                    "USD Equivalent",
-                    format!("{:.2}", quote.usd_amount as f64 / 100.0)
-                ),
+    // Order details (shown when order is loaded)
+    let order_details: iced::Element<'a, BuySellMessage, theme::Theme> = if *loading {
+        container(
+            iced::widget::column![
+                reload_icon().size(24).style(theme::text::secondary),
+                Space::new().height(10),
+                text::p2_medium("Loading order details...").color(color::GREY_2)
             ]
-        ]
-        .padding(20)
-        .width(Length::Fill),
-    )
-    .width(Length::Fill);
+            .align_x(Alignment::Center),
+        )
+        .padding(40)
+        .width(Length::Fill)
+        .align_x(Alignment::Center)
+        .into()
+    } else if let Some(order) = order {
+        let quotes = order.quotes();
 
-    let payment_card = card::simple(
-        iced::widget::column![
-            text::p1_bold("Payment Details"),
-            Space::new().height(15),
-            detail_row("Bitcoin Address", quote.payment_btc_detail.clone(), None),
-        ]
-        .padding(20)
-        .width(Length::Fill),
-    )
-    .width(Length::Fill);
-
-    let timestamp_card = card::simple(
-        iced::widget::column![
-            text::p1_bold("Timestamps"),
-            Space::new().height(15),
-            iced::widget::row![
-                info_field("Created At", pretty_timestamp(&quote.created_at)),
-                info_field("Updated At", pretty_timestamp(&quote.updated_at)),
-                info_field("Expiry", pretty_timestamp(&quote.expiry)),
+        if quotes.is_empty() {
+            return iced::widget::column![
+                back_button,
+                Space::new().height(15),
+                header,
+                Space::new().height(20),
+                transaction_card,
+                Space::new().height(10),
+                card::simple(
+                    iced::widget::column![
+                        text::p1_bold("Order Information"),
+                        Space::new().height(15),
+                        detail_row("Order ID", order.order_id.clone(), None),
+                        Space::new().height(8),
+                        iced::widget::row![
+                            info_field("Amount", format_amount(order.amount, &order.currency)),
+                            info_field("Status", order_status_text(&order.status)),
+                        ],
+                        Space::new().height(8),
+                        iced::widget::row![
+                            info_field("Currency", &order.currency),
+                            info_field("Payment Method", &order.payment_method),
+                        ],
+                    ]
+                    .padding(20)
+                    .width(Length::Fill),
+                )
+                .width(Length::Fill)
             ]
-        ]
-        .padding(20)
-        .width(Length::Fill),
-    )
-    .width(Length::Fill);
+            .padding(20)
+            .width(Length::Fill);
+        }
+
+        // Build quote cards for all quotes
+        let quote_cards: Vec<iced::Element<'a, BuySellMessage, theme::Theme>> = quotes
+            .iter()
+            .enumerate()
+            .map(|(idx, quote)| {
+                let (paid_amount, received_amount) = (
+                    format_currency_amount(quote.total_amount, &quote.source_currency),
+                    format_currency_amount(quote.equivalent_amount, &quote.target_currency),
+                );
+
+                let title = if quotes.len() > 1 {
+                    format!("Quote #{}", idx + 1)
+                } else {
+                    "Quote Details".to_string()
+                };
+
+                card::simple(
+                    iced::widget::column![
+                        text::p1_bold(title),
+                        Space::new().height(15),
+                        iced::widget::row![
+                            info_field("Amount Paid", &paid_amount),
+                            info_field("Amount Received", &received_amount),
+                        ],
+                        Space::new().height(8),
+                        iced::widget::row![
+                            info_field(
+                                "Source Fee",
+                                format_currency_amount(
+                                    quote.transaction_fees_in_source_currency,
+                                    &quote.source_currency
+                                )
+                            ),
+                            info_field(
+                                "Target Fee",
+                                format_currency_amount(
+                                    quote.transaction_fees_in_target_currency,
+                                    &quote.target_currency
+                                )
+                            ),
+                            info_field(
+                                "Fee (USD)",
+                                format!(
+                                    "${:.2}",
+                                    quote.transaction_fees_in_usd_cent as f64 / 100.0
+                                )
+                            ),
+                        ],
+                        Space::new().height(8),
+                        detail_row("Bitcoin Address", quote.payment_btc_detail.clone(), None),
+                    ]
+                    .padding(20)
+                    .width(Length::Fill),
+                )
+                .width(Length::Fill)
+                .into()
+            })
+            .collect();
+
+        let mut content = iced::widget::column![].width(Length::Fill);
+        for (i, card) in quote_cards.into_iter().enumerate() {
+            if i > 0 {
+                content = content.push(Space::new().height(10));
+            }
+            content = content.push(card);
+        }
+
+        content.into()
+    } else {
+        card::simple(
+            iced::widget::column![iced::widget::row![
+                warning_icon().size(20).style(theme::text::warning),
+                Space::new().width(10),
+                text::p1_bold("Failed to load order details")
+            ]
+            .align_y(Alignment::Center),]
+            .padding(20)
+            .width(Length::Fill),
+        )
+        .width(Length::Fill)
+        .into()
+    };
 
     iced::widget::column![
         back_button,
         Space::new().height(15),
         header,
         Space::new().height(20),
-        summary_card,
+        transaction_card,
         Space::new().height(10),
-        fee_card,
-        Space::new().height(10),
-        rate_card,
-        Space::new().height(10),
-        payment_card,
-        Space::new().height(10),
-        timestamp_card,
+        order_details,
     ]
     .padding(20)
     .width(Length::Fill)

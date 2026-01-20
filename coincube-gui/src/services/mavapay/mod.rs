@@ -1,8 +1,10 @@
 pub mod api;
 pub mod client;
+pub mod stream;
 
 pub use api::*;
 pub use client::MavapayClient;
+pub use stream::TransactionUpdate;
 
 #[derive(Debug, Clone)]
 pub enum MavapayMessage {
@@ -21,14 +23,19 @@ pub enum MavapayMessage {
     PriceReceived(GetPriceResponse),
     GetBanks,
     BanksReceived(MavapayBanks),
-    FetchOrders,
-    OrdersReceived(Vec<GetOrderResponse>),
-    OrdersFetchFailed(String),
-    SelectOrder(GetOrderResponse),
+    FetchTransactions,
+    TransactionsReceived(Vec<OrderTransaction>),
+    SelectTransaction(OrderTransaction),
+    OrderReceived(GetOrderResponse),
     BackToHistory,
     // checkout
     SimulatePayIn,
     QuoteFulfilled(GetOrderResponse),
+    // SSE stream events
+    TransactionUpdated(TransactionUpdate),
+    StreamConnected,
+    EventSourceDisconnected(String),
+    StreamError(String),
 }
 
 /// Checks if a country ISO code is in the African region (Mavapay supported)
