@@ -642,7 +642,9 @@ fn try_get_cached_token(data: &TokenRetrievalData) -> Option<String> {
                     if let Some(client) = auth_client_for_refresh {
                         match client.refresh_token(&tokens.refresh_token).await {
                             Ok(new_tokens) => {
-                                tracing::debug!("try_get_cached_token: token refreshed successfully");
+                                tracing::debug!(
+                                    "try_get_cached_token: token refreshed successfully"
+                                );
                                 // Update cache
                                 match update_connect_cache(
                                     &network_dir,
@@ -657,13 +659,18 @@ fn try_get_cached_token(data: &TokenRetrievalData) -> Option<String> {
                                 }
                             }
                             Err(e) => {
-                                tracing::warn!("try_get_cached_token: token refresh failed: {:?}", e);
+                                tracing::warn!(
+                                    "try_get_cached_token: token refresh failed: {:?}",
+                                    e
+                                );
                                 Err(())
                             }
                         }
                     } else {
                         // No auth client, can't refresh
-                        tracing::debug!("try_get_cached_token: no auth client available for refresh");
+                        tracing::debug!(
+                            "try_get_cached_token: no auth client available for refresh"
+                        );
                         Err(())
                     }
                 }
@@ -895,7 +902,10 @@ fn wss_thread(
     };
 
     // Send connect message
-    tracing::debug!("wss_thread: sending connect message with version={}", version);
+    tracing::debug!(
+        "wss_thread: sending connect message with version={}",
+        version
+    );
     let (msg, _id) = Request::Connect { version }.to_ws_message(&token);
     if ws_stream.send(msg).is_err() {
         tracing::error!("wss_thread: failed to send connect message");
@@ -1360,10 +1370,7 @@ fn handle_wallet(
     {
         let users_guard = users.lock().expect("poisoned");
         if !users_guard.contains_key(&owner_id) {
-            tracing::debug!(
-                "handle_wallet: fetching owner user_id={}",
-                owner_id
-            );
+            tracing::debug!("handle_wallet: fetching owner user_id={}", owner_id);
             let _ = request_sender.send(Request::FetchUser { id: owner_id });
         }
     }
