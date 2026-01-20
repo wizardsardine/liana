@@ -48,7 +48,11 @@ jobs:
         run: cargo test --no-default-features
       - name: Test on Rust ${{ matrix.toolchain }} (Unix)
         if: matrix.os == 'macOS-latest'
-        run: cargo test --color always -- --nocapture
+        env:
+          PROTOC: /opt/homebrew/bin/protoc
+        run: |
+          brew install protobuf
+          cargo test --color always -- --nocapture
       - name: Test on Rust ${{ matrix.toolchain }} (Unix)
         if: matrix.os == 'ubuntu-latest'
         run: |

@@ -264,6 +264,25 @@ impl State for LiquidReceive {
 
                 LiquidReceiveMessage::LightningLimitsFetched { min_sat, max_sat } => {
                     self.lightning_receive_limits = Some((min_sat, max_sat));
+                    // Re-validate current amount input against new limits
+                    if self.receive_method == ReceiveMethod::Lightning
+                        && !self.amount_input.value.is_empty()
+                    {
+                        if let Some(amount) = self.parse_amount(cache.bitcoin_unit) {
+                            let min_amount = Amount::from_sat(min_sat);
+                            let max_amount = Amount::from_sat(max_sat);
+                            if amount < min_amount {
+                                self.amount_input.valid = false;
+                                self.amount_input.warning = Some("Amount below minimum limits");
+                            } else if amount > max_amount {
+                                self.amount_input.valid = false;
+                                self.amount_input.warning = Some("Amount above maximum limits");
+                            } else {
+                                self.amount_input.valid = true;
+                                self.amount_input.warning = None;
+                            }
+                        }
+                    }
                 }
                 LiquidReceiveMessage::OnChainLimitsFetched { min_sat, max_sat } => {
                     self.onchain_receive_limits = Some((min_sat, max_sat));
@@ -311,6 +330,29 @@ impl LiquidReceive {
 
         match self.parse_amount(bitcoin_unit) {
             Some(amount) => {
+                // Guard: re-check limits before proceeding
+                if let Some((min_sat, max_sat)) = self.lightning_receive_limits {
+                    let min_amount = Amount::from_sat(min_sat);
+                    let max_amount = Amount::from_sat(max_sat);
+                    if amount < min_amount {
+                        self.loading = false;
+                        return Task::done(Message::View(view::Message::LiquidReceive(
+                            LiquidReceiveMessage::Error(format!(
+                                "Amount below minimum limit of {}",
+                                min_amount
+                            )),
+                        )));
+                    } else if amount > max_amount {
+                        self.loading = false;
+                        return Task::done(Message::View(view::Message::LiquidReceive(
+                            LiquidReceiveMessage::Error(format!(
+                                "Amount above maximum limit of {}",
+                                max_amount
+                            )),
+                        )));
+                    }
+                }
+
                 let description = if self.description_input.is_empty() {
                     None
                 } else {

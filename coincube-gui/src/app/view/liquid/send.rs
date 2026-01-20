@@ -214,10 +214,11 @@ pub fn liquid_send_view<'a>(
                 TransactionDirection::Outgoing
             };
 
-            let tx_type = if let PaymentDetails::Bitcoin { .. } = tx.details {
-                TransactionType::Bitcoin
-            } else {
-                TransactionType::Lightning
+            let tx_type = match &tx.details {
+                PaymentDetails::Lightning { .. } => TransactionType::Lightning,
+                PaymentDetails::Liquid { .. } | PaymentDetails::Bitcoin { .. } => {
+                    TransactionType::Bitcoin
+                }
             };
 
             let fiat_str = tx

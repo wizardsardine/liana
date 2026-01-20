@@ -142,8 +142,8 @@ Install GPG:
 
 This is normal on first import. The warning means you haven't explicitly marked the key as trusted. You can verify the key fingerprint matches:
 
-```
-ED4D 0D71 0103 D625 2854  6813 6F97 01BF 0D2D AF4
+```text
+ED4D 0D71 0103 D625 2854  6813 67F9 701B F0D2 DAF4
 ```
 
 To mark as trusted:
@@ -163,7 +163,7 @@ Ensure you're in the directory containing the downloaded files, or provide full 
 | Property | Value |
 |----------|-------|
 | Key ID | `67F9701BF0D2DAF4` |
-| Email | releases@coincube.io |
+| Email | [releases@coincube.io](mailto:releases@coincube.io) |
 | Name | Coincube Release Signing |
 | Type | RSA 4096 |
 | Usage | Sign only |
@@ -173,7 +173,7 @@ Ensure you're in the directory containing the downloaded files, or provide full 
 - Always verify both the GPG signature AND the checksum
 - Download the public key from the official repository or website
 - Never skip verification, especially for financial software
-- Report any verification failures to security@coincube.io
+- Report any verification failures to [security@coincube.io](mailto:security@coincube.io)
 
 ## Additional Resources
 
