@@ -303,19 +303,16 @@ impl State for BuySellPanel {
                         log::info!("[BUYSELL] Starting under Mavapay for {}", country);
 
                         // initialize buysell under Mavapay
-                        self.step = BuySellFlowState::Mavapay(MavapayState {
-                            step: MavapayFlowStep::Transaction {
-                                buy_or_sell,
-                                country: country.clone(),
-                                sat_amount: 6000,
-                                beneficiary: None,
-                                transfer_speed: OnchainTransferSpeed::Fast,
-                                banks: None,
-                                selected_bank: None,
-                                btc_price: None,
-                                sending_quote: false,
-                            },
-                            client: MavapayClient::new(),
+                        self.step = BuySellFlowState::Mavapay(MavapayFlowStep::Transaction {
+                            buy_or_sell,
+                            country: country.clone(),
+                            sat_amount: 6000,
+                            beneficiary: None,
+                            transfer_speed: OnchainTransferSpeed::Fast,
+                            banks: None,
+                            selected_bank: None,
+                            btc_price: None,
+                            sending_quote: false,
                         });
 
                         if country.code != "KE" {
@@ -363,13 +360,10 @@ impl State for BuySellPanel {
                     true => {
                         log::info!("Starting history view under Mavapay");
 
-                        self.step = BuySellFlowState::Mavapay(MavapayState {
-                            step: MavapayFlowStep::History {
-                                orders: None,
-                                loading: true,
-                                error: None,
-                            },
-                            client: MavapayClient::new(),
+                        self.step = BuySellFlowState::Mavapay(MavapayFlowStep::History {
+                            loading: true,
+                            error: None,
+                            transactions: None,
                         });
 
                         return Task::done(Message::View(view::Message::BuySell(
@@ -388,7 +382,7 @@ impl State for BuySellPanel {
 
                 // unblock UI retry buttons in step-specific flows
                 if let BuySellFlowState::Mavapay(m) = &mut self.step {
-                    match &mut m.step {
+                    match m {
                         MavapayFlowStep::Transaction { sending_quote, .. } => {
                             *sending_quote = false;
                         }
@@ -414,8 +408,8 @@ impl State for BuySellPanel {
 
             // mavapay session logic
             BuySellMessage::Mavapay(msg) => {
-                if let BuySellFlowState::Mavapay(mavapay) = &mut self.step {
-                    match (&mut mavapay.step, msg) {
+                if let BuySellFlowState::Mavapay(state) = &mut self.step {
+                    match (state, msg) {
                         // transactions form
                         (
                             MavapayFlowStep::Transaction {
@@ -549,7 +543,7 @@ impl State for BuySellPanel {
                                     // Set up SSE stream for transaction status updates
                                     if let Some(order_id) = quote.order_id.clone() {
                                         // switch to checkout
-                                        mavapay.step = MavapayFlowStep::Checkout {
+                                        *state = MavapayFlowStep::Checkout {
                                             sat_amount: *sat_amount,
                                             buy_or_sell: buy_or_sell.clone(),
                                             beneficiary: beneficiary.clone(),
@@ -628,7 +622,7 @@ impl State for BuySellPanel {
 
                                 msg => log::warn!(
                                     "Current {:?} has ignored message: {:?}",
-                                    &mavapay.step,
+                                    state,
                                     msg
                                 ),
                             }
@@ -762,11 +756,9 @@ impl State for BuySellPanel {
                                 );
                             }
 
-                            msg => log::warn!(
-                                "Current {:?} has ignored message: {:?}",
-                                &mavapay.step,
-                                msg
-                            ),
+                            msg => {
+                                log::warn!("Current {:?} has ignored message: {:?}", state, msg)
+                            }
                         },
                         (
                             MavapayFlowStep::History {
@@ -812,7 +804,7 @@ impl State for BuySellPanel {
                             }
                             MavapayMessage::SelectTransaction(transaction) => {
                                 let order_id = transaction.order_id.clone();
-                                mavapay.step = MavapayFlowStep::OrderDetail {
+                                *state = MavapayFlowStep::OrderDetail {
                                     transaction,
                                     order: None,
                                     loading: true,
@@ -838,11 +830,9 @@ impl State for BuySellPanel {
                                 )
                                 .map(|b| Message::View(ViewMessage::BuySell(b)));
                             }
-                            msg => log::warn!(
-                                "Current {:?} has ignored message: {:?}",
-                                &mavapay.step,
-                                msg
-                            ),
+                            msg => {
+                                log::warn!("Current {:?} has ignored message: {:?}", state, msg)
+                            }
                         },
                         (MavapayFlowStep::OrderDetail { order, loading, .. }, msg) => match msg {
                             MavapayMessage::OrderReceived(received_order) => {
@@ -850,7 +840,7 @@ impl State for BuySellPanel {
                                 *loading = false;
                             }
                             MavapayMessage::BackToHistory => {
-                                mavapay.step = MavapayFlowStep::History {
+                                *state = MavapayFlowStep::History {
                                     transactions: None,
                                     loading: true,
                                     error: None,
@@ -859,11 +849,9 @@ impl State for BuySellPanel {
                                     BuySellMessage::Mavapay(MavapayMessage::FetchTransactions),
                                 )));
                             }
-                            msg => log::warn!(
-                                "Current {:?} has ignored message: {:?}",
-                                &mavapay.step,
-                                msg
-                            ),
+                            msg => {
+                                log::warn!("Current {:?} has ignored message: {:?}", state, msg)
+                            }
                         },
                     }
                 } else {
@@ -1270,21 +1258,16 @@ impl State for BuySellPanel {
                 iced::Subscription::batch(subs)
             }
             // periodically re-fetch the price of BTC
-            BuySellFlowState::Mavapay(MavapayState {
-                step: MavapayFlowStep::Transaction { .. },
-                ..
-            }) => iced::time::every(std::time::Duration::from_secs(30)).map(|_| {
-                Message::View(ViewMessage::BuySell(BuySellMessage::Mavapay(
-                    MavapayMessage::GetPrice,
-                )))
-            }),
+            BuySellFlowState::Mavapay(MavapayFlowStep::Transaction { .. }) => {
+                iced::time::every(std::time::Duration::from_secs(30)).map(|_| {
+                    Message::View(ViewMessage::BuySell(BuySellMessage::Mavapay(
+                        MavapayMessage::GetPrice,
+                    )))
+                })
+            }
             // SSE stream for transaction status updates during checkout
-            BuySellFlowState::Mavapay(MavapayState {
-                step:
-                    MavapayFlowStep::Checkout {
-                        stream_order_id: Some(order_id),
-                        ..
-                    },
+            BuySellFlowState::Mavapay(MavapayFlowStep::Checkout {
+                stream_order_id: Some(order_id),
                 ..
             }) => {
                 if let Some(login) = &self.login {

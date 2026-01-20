@@ -37,7 +37,3 @@ pub enum MavapayFlowStep {
         loading: bool,
     },
 }
-
-pub struct MavapayState {
-    pub step: MavapayFlowStep,
-}

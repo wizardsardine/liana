@@ -1,6 +1,6 @@
 use crate::{
     app::view::{
-        buysell::{panel::BuyOrSell, MavapayFlowStep, MavapayState},
+        buysell::{panel::BuyOrSell, MavapayFlowStep},
         BuySellMessage, Message as ViewMessage,
     },
     services::{coincube::Country, mavapay::*},
@@ -135,8 +135,8 @@ fn success_icon_badge() -> iced::widget::Container<'static, BuySellMessage, them
         })
 }
 
-pub fn form<'a>(state: &'a MavapayState) -> iced::Element<'a, ViewMessage, theme::Theme> {
-    let form = match &state.step {
+pub fn form<'a>(state: &'a MavapayFlowStep) -> iced::Element<'a, ViewMessage, theme::Theme> {
+    let form = match state {
         MavapayFlowStep::Transaction { .. } => transactions_form,
         MavapayFlowStep::Checkout { .. } => checkout_form,
         MavapayFlowStep::History { .. } => history_view,
@@ -147,7 +147,7 @@ pub fn form<'a>(state: &'a MavapayState) -> iced::Element<'a, ViewMessage, theme
     element.map(ViewMessage::BuySell)
 }
 
-fn checkout_form<'a>(state: &'a MavapayState) -> Column<'a, BuySellMessage> {
+fn checkout_form<'a>(state: &'a MavapayFlowStep) -> Column<'a, BuySellMessage> {
     let MavapayFlowStep::Checkout {
         buy_or_sell,
         fulfilled_order,
@@ -155,7 +155,7 @@ fn checkout_form<'a>(state: &'a MavapayState) -> Column<'a, BuySellMessage> {
         sat_amount,
         country,
         ..
-    } = &state.step
+    } = state
     else {
         unreachable!()
     };
@@ -221,7 +221,7 @@ fn checkout_form<'a>(state: &'a MavapayState) -> Column<'a, BuySellMessage> {
     .width(600)
 }
 
-fn transactions_form<'a>(state: &'a MavapayState) -> Column<'a, BuySellMessage> {
+fn transactions_form<'a>(state: &'a MavapayFlowStep) -> Column<'a, BuySellMessage> {
     let MavapayFlowStep::Transaction {
         sat_amount,
         btc_price: current_price,
@@ -230,7 +230,7 @@ fn transactions_form<'a>(state: &'a MavapayState) -> Column<'a, BuySellMessage> 
         transfer_speed,
         sending_quote,
         ..
-    } = &state.step
+    } = state
     else {
         unreachable!()
     };
@@ -640,12 +640,12 @@ fn order_success_view<'a>(
     ]
 }
 
-fn history_view<'a>(state: &'a MavapayState) -> Column<'a, BuySellMessage> {
+fn history_view<'a>(state: &'a MavapayFlowStep) -> Column<'a, BuySellMessage> {
     let MavapayFlowStep::History {
         transactions,
         loading,
         error,
-    } = &state.step
+    } = state
     else {
         unreachable!()
     };
@@ -812,12 +812,12 @@ fn format_currency_amount(amount: u64, currency: &MavapayUnitCurrency) -> String
     }
 }
 
-fn order_detail_view<'a>(state: &'a MavapayState) -> Column<'a, BuySellMessage> {
+fn order_detail_view<'a>(state: &'a MavapayFlowStep) -> Column<'a, BuySellMessage> {
     let MavapayFlowStep::OrderDetail {
         transaction,
         order,
         loading,
-    } = &state.step
+    } = state
     else {
         unreachable!()
     };
