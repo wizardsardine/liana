@@ -167,7 +167,11 @@ impl State {
     }
     fn on_login_send_token(&mut self) {
         let email = self.views.login.email.form.value.clone();
-        tracing::debug!("on_login_send_token: email={} valid={}", email, self.views.login.email.form.valid);
+        tracing::debug!(
+            "on_login_send_token: email={} valid={}",
+            email,
+            self.views.login.email.form.valid
+        );
         if self.views.login.email.form.valid && !email.is_empty() {
             tracing::debug!("on_login_send_token: calling auth_request");
             self.views.login.email.processing = true;
