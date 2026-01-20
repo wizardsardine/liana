@@ -2,6 +2,8 @@ use crate::services::{coincube::CoincubeError, http::ResponseExt};
 use reqwest::Method;
 
 use super::api::*;
+use super::stream::transaction_stream;
+use super::MavapayMessage;
 
 pub struct MavapayClient<'client>(pub &'client super::super::coincube::CoincubeClient);
 
@@ -132,5 +134,13 @@ impl<'client> MavapayClient<'client> {
             Ok(res) => res,
             Err(err) => err.into(),
         }
+    }
+
+    pub fn transaction_subscription(
+        &self,
+        order_id: String,
+        user_jwt: String,
+    ) -> iced::Subscription<MavapayMessage> {
+        iced::Subscription::run_with((order_id, user_jwt), transaction_stream)
     }
 }

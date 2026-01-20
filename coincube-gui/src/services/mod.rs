@@ -4,7 +4,6 @@ pub mod fiat;
 
 pub mod http;
 pub mod keys;
-pub mod sse;
 
 #[cfg(feature = "buysell")]
 pub mod coincube;

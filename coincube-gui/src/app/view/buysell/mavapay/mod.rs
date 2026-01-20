@@ -1,7 +1,7 @@
 pub mod ui;
 
 use crate::app::view::buysell::panel::BuyOrSell;
-use crate::services::{coincube::*, mavapay::*};
+use crate::services::{coincube::*, mavapay::api::*};
 
 #[derive(Debug)]
 pub enum MavapayFlowStep {
@@ -23,8 +23,8 @@ pub enum MavapayFlowStep {
         quote: GetQuoteResponse,
         fulfilled_order: Option<GetOrderResponse>,
         country: Country,
-        /// SSE stream configuration for transaction status updates
-        stream_config: Option<TransactionStreamConfig>,
+        /// Order ID for SSE transaction status updates
+        stream_order_id: Option<String>,
     },
     History {
         transactions: Option<Vec<OrderTransaction>>,

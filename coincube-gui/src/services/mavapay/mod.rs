@@ -4,9 +4,7 @@ pub mod stream;
 
 pub use api::*;
 pub use client::MavapayClient;
-pub use stream::{
-    transaction_stream, TransactionStreamConfig, TransactionStreamEvent, TransactionUpdate,
-};
+pub use stream::TransactionUpdate;
 
 #[derive(Debug, Clone)]
 pub enum MavapayMessage {
@@ -34,7 +32,10 @@ pub enum MavapayMessage {
     SimulatePayIn,
     QuoteFulfilled(GetOrderResponse),
     // SSE stream events
-    StreamEvent(TransactionStreamEvent),
+    TransactionUpdated(TransactionUpdate),
+    StreamConnected,
+    EventSourceDisconnected(String),
+    StreamError(String),
 }
 
 /// Checks if a country ISO code is in the African region (Mavapay supported)

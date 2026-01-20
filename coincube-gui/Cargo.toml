@@ -76,6 +76,7 @@ reqwest = { version = "0.12", default-features = false, features = [
 	"rustls-tls",
 	"stream",
 ] }
+reqwest-sse = "0.1"
 rust-ini = "0.21"
 rfd = "0.15.1"
 fs4 = { version = "0.13", features = ["sync"] }
