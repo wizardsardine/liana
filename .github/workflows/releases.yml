@@ -108,7 +108,8 @@ jobs:
       - name: Install Windows dependencies
         if: matrix.platform == 'windows'
         run: |
-          choco install protoc wixtoolset --version=3.14.1 --yes
+          choco install protoc --yes
+          choco install wixtoolset --version=3.14.1 --yes
 
       - name: Build Windows MSI
         if: matrix.platform == 'windows'

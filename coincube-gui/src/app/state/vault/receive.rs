@@ -174,21 +174,19 @@ impl State for VaultReceivePanel {
                     }
                 }
             }
-            Message::ReceiveAddress(res) => {
-                match res {
-                    Ok((address, derivation_index)) => {
-                        self.warning = None;
-                        self.addresses.list.push(address);
-                        self.addresses.derivation_indexes.push(derivation_index);
-                    }
-                    Err(e) => {
-                        let err_msg = e.to_string();
-                        self.warning = Some(e);
-                        Task::done(Message::View(view::Message::ShowError(err_msg)))
-                    }
+            Message::ReceiveAddress(res) => match res {
+                Ok((address, derivation_index)) => {
+                    self.warning = None;
+                    self.addresses.list.push(address);
+                    self.addresses.derivation_indexes.push(derivation_index);
+                    Task::none()
                 }
-                Task::none()
-            }
+                Err(e) => {
+                    let err_msg = e.to_string();
+                    self.warning = Some(e);
+                    Task::done(Message::View(view::Message::ShowError(err_msg)))
+                }
+            },
             Message::View(view::Message::Close) => {
                 self.modal = Modal::None;
                 Task::none()
