@@ -56,7 +56,7 @@ pub fn liquid_send_with_flow<'a>(config: LiquidSendFlowConfig<'a>) -> Element<'a
                 config.recent_transaction,
                 config.input,
                 config.input_type,
-                config.cache.bitcoin_unit,
+                config.bitcoin_unit,
             )
             .map(Message::LiquidSend);
 

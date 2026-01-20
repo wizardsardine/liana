@@ -132,6 +132,7 @@ impl State for VaultTransactionsPanel {
             },
             Message::HistoryTransactionsExtension(res) => match res {
                 Err(e) => {
+                    self.processing = false;
                     let err_msg = e.to_string();
                     self.warning = Some(e);
                     return Task::done(Message::View(view::Message::ShowError(err_msg)));

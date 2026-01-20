@@ -209,21 +209,42 @@ impl State for LiquidReceive {
                     self.loading = false;
                     match result {
                         Ok(address) => {
-                            if let Ok(qr_data) = qr_code::Data::new(&address) {
-                                match method {
+                            // Always store the address first
+                            match method {
+                                ReceiveMethod::Lightning => {
+                                    self.lightning_address = Some(address.clone());
+                                }
+                                ReceiveMethod::OnChain => {
+                                    self.onchain_address = Some(address.clone());
+                                }
+                            }
+
+                            // Attempt QR generation, but keep address even if QR fails
+                            match qr_code::Data::new(&address) {
+                                Ok(qr_data) => match method {
                                     ReceiveMethod::Lightning => {
-                                        self.lightning_address = Some(address);
                                         self.lightning_qr_data = Some(qr_data);
                                     }
                                     ReceiveMethod::OnChain => {
-                                        self.onchain_address = Some(address);
                                         self.onchain_qr_data = Some(qr_data);
                                     }
+                                },
+                                Err(_) => {
+                                    // QR generation failed, but address is still stored
+                                    match method {
+                                        ReceiveMethod::Lightning => {
+                                            self.lightning_qr_data = None;
+                                        }
+                                        ReceiveMethod::OnChain => {
+                                            self.onchain_qr_data = None;
+                                        }
+                                    }
                                 }
-                                // Clear inputs after successful generation
-                                self.amount_input = form::Value::default();
-                                self.description_input.clear();
                             }
+
+                            // Clear inputs after successful address generation
+                            self.amount_input = form::Value::default();
+                            self.description_input.clear();
                         }
                         Err(e) => {
                             let err_msg = e.to_string();

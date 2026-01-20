@@ -159,7 +159,7 @@ impl State for VaultReceivePanel {
         let daemon = daemon.expect("Daemon required for vault receive panel");
         match message {
             Message::View(view::Message::Label(_, _)) | Message::LabelsUpdated(_) => {
-                return match self.labels_edited.update(
+                match self.labels_edited.update(
                     daemon.clone(),
                     message,
                     std::iter::once(&mut self.addresses)
@@ -172,7 +172,7 @@ impl State for VaultReceivePanel {
                         self.warning = Some(e);
                         Task::done(Message::View(view::Message::ShowError(err_msg)))
                     }
-                };
+                }
             }
             Message::ReceiveAddress(res) => match res {
                 Ok((address, derivation_index)) => {
