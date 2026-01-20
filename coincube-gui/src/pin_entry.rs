@@ -62,15 +62,13 @@ impl PinEntry {
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::DigitChanged(index, value) => {
-                let old_value = self.pin_digits[index].clone();
-
                 // Only allow single digit (0-9)
                 if value.is_empty() {
                     self.pin_digits[index] = value.clone();
                     self.error = None;
 
-                    // If we deleted the digit and field is now empty, move to previous input
-                    if !old_value.is_empty() && index > 0 {
+                    // Move to previous input when deleting (either from filled or empty field)
+                    if index > 0 {
                         return focus_previous();
                     }
                 } else if value.len() == 1 && value.chars().all(|c| c.is_ascii_digit()) {
