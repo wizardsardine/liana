@@ -26,7 +26,7 @@ pub struct BusinessInstaller {
 
 impl BusinessInstaller {
     fn new(datadir: LianaDirectory, network: bitcoin::Network) -> (Self, Task<Message>) {
-        let mut state = State::new(network);
+        let mut state = State::new(network, datadir.clone());
         state.backend.set_network(network, datadir.clone());
 
         // Validate cached tokens before showing UI
