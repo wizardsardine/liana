@@ -24,7 +24,7 @@ gpg --import coincube-release-public.asc
 ```
 
 Expected output should include:
-```
+```bash
 gpg: key 67F9701BF0D2DAF4: public key "Coincube Release Signing <releases@coincube.io>" imported
 ```
 
@@ -46,7 +46,7 @@ gpg --verify coincube-1.5.0-SHA256SUMS.txt.asc
 ```
 
 Expected output:
-```
+```bash
 gpg: assuming signed data in 'coincube-1.5.0-SHA256SUMS.txt'
 gpg: Signature made [DATE]
 gpg:                using RSA key 67F9701BF0D2DAF4
@@ -62,7 +62,7 @@ sha256sum --check coincube-1.5.0-SHA256SUMS.txt --ignore-missing
 ```
 
 Expected output:
-```
+```bash
 Coincube-1.5.0-macos-arm64.dmg: OK
 ```
 
@@ -177,5 +177,4 @@ Ensure you're in the directory containing the downloaded files, or provide full 
 
 ## Additional Resources
 
-- [GPG Key Rotation Playbook](../docs/security/GPG_KEY_ROTATION.md)
-- [Coincube Security Policy](../SECURITY.md)
+- [GPG Key Rotation Playbook](./GPG_KEY_ROTATION.md)

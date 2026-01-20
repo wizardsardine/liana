@@ -45,7 +45,13 @@ pub fn liquid_settings_view<'a>(
             backup_intro_view(*checked)
         }
         LiquidSettingsFlowState::BackupWallet(BackupWalletState::RecoveryPhrase) => {
-            recovery_phrase_view(liquid_signer.lock().expect("Mutex Lock Poisoned").words())
+            match liquid_signer.lock() {
+                Ok(guard) => recovery_phrase_view(guard.words()),
+                Err(_) => {
+                    // Mutex is poisoned, show error view
+                    error_view()
+                }
+            }
         }
         LiquidSettingsFlowState::BackupWallet(BackupWalletState::Verification {
             word_indices,
@@ -455,6 +461,58 @@ fn verification_view<'a>(
     );
 
     content.into()
+}
+
+fn error_view() -> Element<'static, Message> {
+    use coincube_ui::widget::{Column, Row, Text};
+
+    Column::new()
+        .spacing(20)
+        .width(Length::Fill)
+        .push(header("Error"))
+        .push(Space::new().height(Length::Fixed(20.0)))
+        .push(
+            Row::new()
+                .width(Length::Fill)
+                .align_y(Alignment::Center)
+                .push(Space::new().width(Length::Fill))
+                .push(
+                    icon::warning_icon()
+                        .size(100)
+                        .color(coincube_ui::color::RED),
+                )
+                .push(Space::new().width(Length::Fill)),
+        )
+        .push(Space::new().height(Length::Fixed(16.0)))
+        .push(
+            Row::new()
+                .width(Length::Fill)
+                .align_y(Alignment::Center)
+                .push(Space::new().width(Length::Fill))
+                .push(
+                    Text::new("Unable to access wallet data. Please restart the application.")
+                        .size(20)
+                        .align_x(iced::alignment::Horizontal::Center)
+                        .width(Length::Fixed(700.0)),
+                )
+                .push(Space::new().width(Length::Fill)),
+        )
+        .push(Space::new().height(Length::Fixed(24.0)))
+        .push(
+            Row::new()
+                .width(Length::Fill)
+                .align_y(Alignment::Center)
+                .push(Space::new().width(Length::Fill))
+                .push(
+                    coincube_ui::component::button::primary(None, "Back to Settings")
+                        .on_press(Message::LiquidSettings(
+                            LiquidSettingsMessage::BackupWallet(BackupWalletMessage::PreviousStep),
+                        ))
+                        .padding([8, 16]),
+                )
+                .push(Space::new().width(Length::Fill)),
+        )
+        .into()
 }
 
 fn completed_view() -> Element<'static, Message> {

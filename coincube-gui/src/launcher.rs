@@ -47,10 +47,6 @@ pub enum State {
         create_cube: bool,
     },
     NoCube,
-    PinMigrationRequired {
-        cubes_needing_pin: Vec<CubeSettings>,
-        all_cubes: Vec<CubeSettings>,
-    },
 }
 
 pub struct Launcher {
@@ -235,7 +231,7 @@ impl Launcher {
                     async move {
                         // Generate Liquid wallet HotSigner
                         let liquid_signer = HotSigner::generate(network).map_err(|e| {
-                            format!("Failed to generate Active wallet signer: {}", e)
+                            format!("Failed to generate Liquid wallet signer: {}", e)
                         })?;
 
                         // Create secp context for fingerprint calculation
@@ -262,7 +258,7 @@ impl Launcher {
                                 Some(&pin),
                             )
                             .map_err(|e| {
-                                format!("Failed to store Active wallet mnemonic: {}", e)
+                                format!("Failed to store Liquid wallet mnemonic: {}", e)
                             })?;
 
                         tracing::info!("Liquid wallet signer created and stored (encrypted with PIN) with fingerprint: {}", liquid_fingerprint);
@@ -512,7 +508,7 @@ impl Launcher {
                                         col.into()
                                     }
                                 }
-                                State::NoCube => create_cube_form(
+                                State::NoCube | State::Unchecked => create_cube_form(
                                     &self.create_cube_name,
                                     &self.create_cube_pin,
                                     &self.create_cube_pin_confirm,
@@ -520,7 +516,6 @@ impl Launcher {
                                     self.show_pin_confirm,
                                     &self.error,
                                 ),
-                                _ => Column::new().into(),
                             })
                             .align_x(Alignment::Center),
                     )
@@ -563,7 +558,7 @@ fn create_cube_form<'a>(
         .push(h4_bold("Create a new Cube"))
         .push(
             p1_regular(
-                "A Cube is your account which can contain an Liquid wallet, a Vault wallet and other features.",
+                "A Cube is your account which can contain a Liquid wallet, a Vault wallet and other features.",
             )
             .style(theme::text::secondary),
         )
@@ -1094,18 +1089,7 @@ async fn check_network_datadir(path: NetworkDirectory) -> Result<State, String> 
     // Try to load cubes from settings
     match settings::Settings::from_file(&path) {
         Ok(s) => {
-            let cubes_needing_pin: Vec<CubeSettings> =
-                s.cubes.iter().filter(|c| !c.has_pin()).cloned().collect();
-
-            if !cubes_needing_pin.is_empty() {
-                // do not touch settings file, show migration UI instead
-                return Ok(State::PinMigrationRequired {
-                    cubes_needing_pin,
-                    all_cubes: s.cubes,
-                });
-            }
-
-            // All cubes have PIN, continue
+            // All cubes are required to have PINs
             if s.cubes.is_empty() {
                 Ok(State::NoCube)
             } else {

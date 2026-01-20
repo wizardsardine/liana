@@ -23,7 +23,7 @@ Example VAULT configuration:
 - Any 2 keys from trusted parties (after 1 year)
 - Emergency recovery key (after 1 year and 3 months)
 
-**ACTIVE Wallet** - Lightning-enabled spending wallet powered by Breez SDK for instant, low-fee payments.
+**LIQUID WALLET** - Lightning-enabled spending wallet powered by Breez SDK for instant, low-fee payments. [Liquid](https://liquid.net/) is a sidechain of Bitcoin that provides low cost payments and confidential transactions.
 
 **BUY/SELL** - Integrated Bitcoin on/off-ramp functionality.
 

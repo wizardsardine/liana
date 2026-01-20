@@ -15,7 +15,7 @@ jobs:
           P12_BASE64: ${{ secrets.CERTIFICATE_P12_BASE64 }}
           P12_PASSWORD: ${{ secrets.CERTIFICATE_P12_PASSWORD }}
         run: |
-          echo "$P12_BASE64" | base64 --decode > cert.p12
+          echo "$P12_BASE64" | openssl base64 -d -A > cert.p12
           echo "$P12_PASSWORD" > cert.pass
 
           security create-keychain -p "" temp.keychain

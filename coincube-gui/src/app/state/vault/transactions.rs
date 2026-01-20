@@ -113,7 +113,10 @@ impl State for VaultTransactionsPanel {
         _cache: &Cache,
         message: Message,
     ) -> Task<Message> {
-        let daemon = daemon.expect("Daemon required for vault transactions panel");
+        let Some(daemon) = daemon else {
+            tracing::warn!("VaultTransactionsPanel update called without daemon");
+            return Task::none();
+        };
         match message {
             Message::HistoryTransactions(res) => match res {
                 Err(e) => {
@@ -322,7 +325,10 @@ impl State for VaultTransactionsPanel {
         daemon: Option<Arc<dyn Daemon + Sync + Send>>,
         _wallet: Option<Arc<Wallet>>,
     ) -> Task<Message> {
-        let daemon = daemon.expect("Vault panels require daemon");
+        let Some(daemon) = daemon else {
+            tracing::warn!("VaultTransactionsPanel reload called without daemon");
+            return Task::none();
+        };
         self.selected_tx = None;
         let now: u32 = now().as_secs().try_into().unwrap();
         Task::batch(vec![Task::perform(

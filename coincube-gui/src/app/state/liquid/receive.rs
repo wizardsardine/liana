@@ -152,24 +152,38 @@ impl State for LiquidReceive {
                 LiquidReceiveMessage::AmountInput(value) => {
                     self.amount_input.value = value;
                     if self.receive_method == ReceiveMethod::Lightning {
-                        if let Some(amount) = self.parse_amount(cache.bitcoin_unit) {
-                            if let Some((min_sat, max_sat)) = self.lightning_receive_limits {
-                                let min_sat = Amount::from_sat(min_sat);
-                                let max_sat = Amount::from_sat(max_sat);
-                                if amount < min_sat {
-                                    self.amount_input.valid = false;
-                                    self.amount_input.warning = Some("Amount below minimum limits");
-                                } else if amount > max_sat {
-                                    self.amount_input.valid = false;
-                                    self.amount_input.warning = Some("Amount above maximum limits");
+                        match self.parse_amount(cache.bitcoin_unit) {
+                            Some(amount) => {
+                                if let Some((min_sat, max_sat)) = self.lightning_receive_limits {
+                                    let min_sat = Amount::from_sat(min_sat);
+                                    let max_sat = Amount::from_sat(max_sat);
+                                    if amount < min_sat {
+                                        self.amount_input.valid = false;
+                                        self.amount_input.warning =
+                                            Some("Amount below minimum limits");
+                                    } else if amount > max_sat {
+                                        self.amount_input.valid = false;
+                                        self.amount_input.warning =
+                                            Some("Amount above maximum limits");
+                                    } else {
+                                        self.amount_input.valid = true;
+                                        self.amount_input.warning = None;
+                                    }
                                 } else {
                                     self.amount_input.valid = true;
                                     self.amount_input.warning = None;
                                 }
                             }
-                        } else {
-                            self.amount_input.valid = true;
-                            self.amount_input.warning = None;
+                            None => {
+                                // Distinguish empty input from malformed input
+                                if self.amount_input.value.trim().is_empty() {
+                                    self.amount_input.valid = true;
+                                    self.amount_input.warning = None;
+                                } else {
+                                    self.amount_input.valid = false;
+                                    self.amount_input.warning = Some("Invalid amount format");
+                                }
+                            }
                         }
                         self.lightning_address = None;
                         self.lightning_qr_data = None;

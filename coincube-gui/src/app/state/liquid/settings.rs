@@ -35,12 +35,16 @@ pub struct LiquidSettings {
     flow_state: LiquidSettingsFlowState,
 }
 
-/// Generate 3 random unique word indices from 1-12
-fn generate_random_word_indices() -> [usize; 3] {
-    let mut indices: Vec<usize> = (1..=12).collect();
+/// Generate 3 random unique word indices from 1 to mnemonic_len
+/// Returns None if mnemonic_len < 3
+fn generate_random_word_indices(mnemonic_len: usize) -> Option<[usize; 3]> {
+    if mnemonic_len < 3 {
+        return None;
+    }
+    let mut indices: Vec<usize> = (1..=mnemonic_len).collect();
     let mut rng = rand::thread_rng();
     indices.shuffle(&mut rng);
-    [indices[0], indices[1], indices[2]]
+    Some([indices[0], indices[1], indices[2]])
 }
 
 impl LiquidSettings {
@@ -96,13 +100,32 @@ impl State for LiquidSettings {
                             ),
                             LiquidSettingsFlowState::BackupWallet(
                                 BackupWalletState::RecoveryPhrase,
-                            ) => LiquidSettingsFlowState::BackupWallet(
-                                BackupWalletState::Verification {
-                                    word_indices: generate_random_word_indices(),
-                                    word_inputs: [String::new(), String::new(), String::new()],
-                                    error: None,
-                                },
-                            ),
+                            ) => {
+                                let mnemonic = self
+                                    .breez_client
+                                    .liquid_signer()
+                                    .lock()
+                                    .expect("Mutex Lock Poisoned")
+                                    .words();
+
+                                match generate_random_word_indices(mnemonic.len()) {
+                                    Some(word_indices) => LiquidSettingsFlowState::BackupWallet(
+                                        BackupWalletState::Verification {
+                                            word_indices,
+                                            word_inputs: [
+                                                String::new(),
+                                                String::new(),
+                                                String::new(),
+                                            ],
+                                            error: None,
+                                        },
+                                    ),
+                                    None => {
+                                        tracing::error!("Mnemonic has fewer than 3 words");
+                                        self.flow_state.clone()
+                                    }
+                                }
+                            }
                             _ => self.flow_state.clone(),
                         };
                     }
@@ -180,6 +203,10 @@ impl State for LiquidSettings {
                             // word_indices are 1-based, mnemonic array is 0-based
                             let all_correct =
                                 word_indices.iter().enumerate().all(|(i, &word_idx)| {
+                                    if word_idx == 0 || word_idx > mnemonic.len() {
+                                        tracing::error!("Invalid word index: {}", word_idx);
+                                        return false;
+                                    }
                                     word_inputs[i].trim() == mnemonic[word_idx - 1]
                                 });
 
@@ -215,34 +242,30 @@ impl State for LiquidSettings {
                                     .expect("Mutex Lock Poisoned")
                                     .fingerprint(&secp);
 
-                                let dir = match CoincubeDirectory::new_default() {
-                                    Ok(d) => d,
-                                    Err(e) => {
-                                        tracing::error!("Failed to get CoincubeDirectory: {}", e);
-                                        return;
-                                    }
-                                };
+                                let dir = CoincubeDirectory::new_default().map_err(|e| {
+                                    format!("Failed to get CoincubeDirectory: {}", e)
+                                })?;
 
                                 let network_dir = dir.network_directory(breez_client.network());
-                                if let Err(e) =
-                                    update_settings_file(&network_dir, |mut settings| {
-                                        if let Some(cube) = settings.cubes.iter_mut().find(|cube| {
-                                            cube.liquid_wallet_signer_fingerprint.as_ref()
-                                                == Some(&fingerprint)
-                                        }) {
-                                            cube.backed_up = true;
-                                        }
-                                        Some(settings)
-                                    })
-                                    .await
-                                {
-                                    tracing::error!("Failed to update settings file: {}", e);
-                                }
+                                update_settings_file(&network_dir, |mut settings| {
+                                    if let Some(cube) = settings.cubes.iter_mut().find(|cube| {
+                                        cube.liquid_wallet_signer_fingerprint.as_ref()
+                                            == Some(&fingerprint)
+                                    }) {
+                                        cube.backed_up = true;
+                                    }
+                                    Some(settings)
+                                })
+                                .await
+                                .map_err(|e| format!("Failed to update settings file: {}", e))?;
+
+                                Ok(())
                             },
-                            |_| {
-                                Message::View(view::Message::LiquidSettings(
+                            |res| match res {
+                                Ok(_) => Message::View(view::Message::LiquidSettings(
                                     view::LiquidSettingsMessage::SettingsUpdated,
-                                ))
+                                )),
+                                Err(e) => Message::View(view::Message::ShowError(e)),
                             },
                         );
                     }

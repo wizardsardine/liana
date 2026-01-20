@@ -101,9 +101,7 @@ impl State for LiquidTransactions {
                 self.selected_payment = self.payments.get(i).cloned();
                 Task::none()
             }
-            Message::View(view::Message::Reload) => {
-                self.reload(None, None)
-            }
+            Message::View(view::Message::Reload) => self.reload(None, None),
             Message::View(view::Message::Close) => {
                 self.selected_payment = None;
                 Task::none()

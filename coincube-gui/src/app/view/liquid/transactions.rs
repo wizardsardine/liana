@@ -220,7 +220,10 @@ pub fn transaction_detail_view<'a>(
                         ))
                     })
                     .push_maybe(fiat_converter.map(|converter| {
-                        let fiat = converter.convert(btc_amount);
+                        // Use total_amount for outgoing payments to match headline (includes fees)
+                        let amount_for_conversion =
+                            if is_receive { btc_amount } else { total_amount };
+                        let fiat = converter.convert(amount_for_conversion);
                         Row::new().align_y(Alignment::Center).push(
                             fiat.to_text()
                                 .size(H2_SIZE)

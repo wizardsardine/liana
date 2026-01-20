@@ -1,5 +1,5 @@
 # Apple Developer Certificate Rotation Playbook  
-**COINCUBE TECHNOLOGY LLC**
+## COINCUBE TECHNOLOGY LLC
 
 ## Purpose
 This document describes the safe, repeatable process for rotating Apple Developer certificates used for macOS app signing and notarization in Coincube’s CI/CD pipeline.

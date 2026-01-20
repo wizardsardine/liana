@@ -598,6 +598,7 @@ impl Step for DefineSpend {
                 );
                 self.balance = balance;
                 self.unconfirmed_balance = unconfirmed_balance;
+                self.bitcoin_unit = cache.bitcoin_unit;
             }
             Message::View(view::Message::CreateSpend(msg)) => {
                 match msg {
@@ -929,7 +930,7 @@ impl Step for DefineSpend {
             &self.sync_status,
             self.is_first_step,
             self.loading_fee_estimate,
-            cache.bitcoin_unit.into(),
+            self.bitcoin_unit.into(),
         )
     }
 

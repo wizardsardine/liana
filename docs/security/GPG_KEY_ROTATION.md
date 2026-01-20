@@ -1,5 +1,5 @@
 # GPG Release Key Rotation Playbook  
-**COINCUBE TECHNOLOGY LLC**
+## COINCUBE TECHNOLOGY LLC
 
 ## Purpose
 
@@ -64,7 +64,7 @@ Recommended settings:
 - Usage: Sign only
 - Name: Coincube Release Signing
 - Email: releases@coincube.io
-- Expiration: 1 year
+- Expiration: 2 years
 - Passphrase: Strong and unique
 
 List key ID:

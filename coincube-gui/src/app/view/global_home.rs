@@ -290,11 +290,7 @@ fn balance_summary_card<'a>(
             Row::new().align_y(Alignment::Center).push(
                 Column::new()
                     .spacing(4)
-                    .push(amount_with_size_and_unit(
-                        balance,
-                        H2_SIZE,
-                        bitcoin_unit,
-                    ))
+                    .push(amount_with_size_and_unit(balance, H2_SIZE, bitcoin_unit))
                     .push_maybe(
                         fiat_balance.map(|fiat| fiat.to_text().size(P1_SIZE).color(color::GREY_2)),
                     ),

@@ -74,25 +74,12 @@ jobs:
           path: target
 
       - name: Create GitHub Release
+        if: matrix.platform == 'linux'
         uses: taiki-e/create-gh-release-action@v1
         with:
           title: v${{ env.COINCUBE_VERSION }}
           ref: ${{ github.ref }}
           branch: master
-
-# --------------------------------------------------
-# Import GPG key
-# --------------------------------------------------
-
-      - name: Import GPG signing key
-        run: |
-          mkdir -p ~/.gnupg
-          chmod 700 ~/.gnupg
-          echo "use-agent" >> ~/.gnupg/gpg.conf
-          echo "pinentry-mode loopback" >> ~/.gnupg/gpg.conf
-          echo "${GPG_PRIVATE_KEY}" | gpg --batch --import
-        env:
-          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
 
 # --------------------------------------------------
 # Linux
@@ -110,7 +97,7 @@ jobs:
           bin: coincube
           archive: coincube-${{ matrix.target }}
           target: ${{ matrix.target }}
-          include: LICENSE,README.md,lib
+          include: LICENCE,README.md,lib
           profile: app-release
           locked: true
 
@@ -149,7 +136,7 @@ jobs:
         if: matrix.platform == 'macos'
         run: brew install protobuf create-dmg
 
-      - name: Import Apple Developer ID certificate
+      - name: Prepare Apple Developer ID certificate
         if: matrix.platform == 'macos'
         env:
           P12_BASE64: ${{ secrets.CERTIFICATE_P12_BASE64 }}
@@ -157,8 +144,6 @@ jobs:
         run: |
           echo "$P12_BASE64" | base64 --decode > cert.p12
           echo "$P12_PASSWORD" > cert.pass
-          rcodesign import-p12 cert.p12 cert.pass
-          rm cert.p12 cert.pass
 
       - name: Build Coincube (macOS ${{ matrix.arch }})
         if: matrix.platform == 'macos'
@@ -183,8 +168,11 @@ jobs:
         if: matrix.platform == 'macos'
         run: |
           rcodesign sign \
+            --p12-file cert.p12 \
+            --p12-password-file cert.pass \
             --code-signature-flags runtime \
             Coincube.app
+          rm cert.p12 cert.pass
 
       - name: Notarize and staple app
         if: matrix.platform == 'macos'
@@ -272,8 +260,7 @@ jobs:
         uses: svenstaro/upload-release-action@v2
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: |
-            coincube-${{ env.COINCUBE_VERSION }}-SHA256SUMS.txt
-            coincube-${{ env.COINCUBE_VERSION }}-SHA256SUMS.txt.asc
+          file: coincube-${{ env.COINCUBE_VERSION }}-SHA256SUMS.txt*
+          file_glob: true
           tag: ${{ github.ref }}
           overwrite: true

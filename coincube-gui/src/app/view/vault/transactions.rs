@@ -74,12 +74,7 @@ pub fn transactions_view<'a>(
                         txs.iter()
                             .enumerate()
                             .fold(Column::new().spacing(10), |col, (i, tx)| {
-                                col.push(tx_list_view(
-                                    i,
-                                    tx,
-                                    cache.bitcoin_unit,
-                                    fiat_converter,
-                                ))
+                                col.push(tx_list_view(i, tx, cache.bitcoin_unit, fiat_converter))
                             }),
                     )
                     .push(if !is_last_page && !txs.is_empty() {

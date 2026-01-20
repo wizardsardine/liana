@@ -417,14 +417,17 @@ impl State for GlobalHome {
 
                                             let daemon_clone = daemon.clone();
                                             let wallet = self.wallet.clone();
-                                            let cache_clone = (cache.datadir_path.clone(), cache.network);
+                                            let cache_clone =
+                                                (cache.datadir_path.clone(), cache.network);
                                             self.is_sending = true;
                                             return Task::perform(
                                                 async move {
                                                     let feerate_vb = FeeEstimator::new()
                                                         .get_high_priority_rate()
                                                         .await
-                                                        .map_err(|e| format!("Failed to get fee rate: {}", e))?;
+                                                        .map_err(|e| {
+                                                            format!("Failed to get fee rate: {}", e)
+                                                        })?;
 
                                                     let psbt = match daemon_clone
                                                         .create_spend_tx(
@@ -435,23 +438,37 @@ impl State for GlobalHome {
                                                         )
                                                         .await
                                                     {
-                                                        Ok(CreateSpendResult::Success { psbt, .. }) => psbt,
-                                                        Ok(CreateSpendResult::InsufficientFunds { missing }) => {
+                                                        Ok(CreateSpendResult::Success {
+                                                            psbt,
+                                                            ..
+                                                        }) => psbt,
+                                                        Ok(
+                                                            CreateSpendResult::InsufficientFunds {
+                                                                missing,
+                                                            },
+                                                        ) => {
                                                             return Err(format!("Insufficient funds: {} sats missing", missing));
                                                         }
                                                         Err(e) => {
-                                                            return Err(format!("Failed to create transaction: {}", e));
+                                                            return Err(format!(
+                                                                "Failed to create transaction: {}",
+                                                                e
+                                                            ));
                                                         }
                                                     };
 
-                                                    daemon_clone.update_spend_tx(&psbt).await
-                                                        .map_err(|e| format!("Failed to save PSBT: {}", e))?;
+                                                    daemon_clone
+                                                        .update_spend_tx(&psbt)
+                                                        .await
+                                                        .map_err(|e| {
+                                                            format!("Failed to save PSBT: {}", e)
+                                                        })?;
 
                                                     Ok((psbt, wallet, cache_clone))
                                                 },
                                                 |result| {
                                                     Message::View(view::Message::Home(
-                                                        HomeMessage::TransferPsbtReady(result)
+                                                        HomeMessage::TransferPsbtReady(result),
                                                     ))
                                                 },
                                             );
@@ -632,9 +649,10 @@ impl State for GlobalHome {
                                         .iter()
                                         .map(|txin| txin.sequence)
                                         .any(|seq| seq.is_relative_lock_time());
-                                    let max_vbytes = wallet
-                                        .main_descriptor
-                                        .unsigned_tx_max_vbytes(&psbt.unsigned_tx, use_primary_path);
+                                    let max_vbytes = wallet.main_descriptor.unsigned_tx_max_vbytes(
+                                        &psbt.unsigned_tx,
+                                        use_primary_path,
+                                    );
 
                                     // Create minimal SpendTx
                                     let spend_tx = SpendTx {

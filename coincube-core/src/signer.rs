@@ -240,7 +240,9 @@ impl HotSigner {
                     let data = fs::read(&path).map_err(SignerError::MnemonicStorage)?;
 
                     let mnemonic_str: Zeroizing<String> = if Self::is_encrypted(&data) {
-                        let pwd = password.ok_or(SignerError::Decryption("Password required for encrypted mnemonic".to_string()))?;
+                        let pwd = password.ok_or(SignerError::Decryption(
+                            "Password required for encrypted mnemonic".to_string(),
+                        ))?;
                         Self::decrypt_mnemonic(&data, pwd)?
                     } else {
                         // Unencrypted file (backward compatibility)
@@ -420,7 +422,9 @@ impl HotSigner {
             .hash_password(password.as_bytes(), &salt)
             .map_err(|e| SignerError::Encryption(e.to_string()))?;
 
-        let hash_output = password_hash.hash.ok_or_else(|| SignerError::Encryption("Failed to derive key".to_string()))?;
+        let hash_output = password_hash
+            .hash
+            .ok_or_else(|| SignerError::Encryption("Failed to derive key".to_string()))?;
 
         // Use Zeroizing to automatically clear key_bytes when dropped
         // Take the first 32 bytes for AES-256 (hash output is typically longer)
@@ -461,7 +465,9 @@ impl HotSigner {
     fn decrypt_mnemonic(data: &[u8], password: &str) -> Result<Zeroizing<String>, SignerError> {
         // Check marker
         if !data.starts_with(ENCRYPTED_FILE_MARKER) {
-            return Err(SignerError::Decryption("Not an encrypted mnemonic file".to_string()));
+            return Err(SignerError::Decryption(
+                "Not an encrypted mnemonic file".to_string(),
+            ));
         }
 
         let data = &data[ENCRYPTED_FILE_MARKER_LEN..];
