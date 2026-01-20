@@ -6,7 +6,6 @@ use crate::{
     services::{coincube::*, meld},
 };
 use coincube_core::miniscript::bitcoin;
-use iced::Task;
 
 #[derive(Debug, Clone)]
 pub enum MeldMessage {
@@ -160,7 +159,7 @@ impl MeldState {
         msg: MeldMessage,
         cache: &Cache,
         client: &'a CoincubeClient,
-    ) -> iced::Task<view::Message> {
+    ) -> Option<iced::Task<view::Message>> {
         match msg {
             MeldMessage::NavigateBack => {
                 self.steps.pop();
@@ -220,7 +219,7 @@ impl MeldState {
                     let country = self.country;
                     let client = client.clone();
 
-                    return iced::Task::perform(
+                    let task = iced::Task::perform(
                         async move {
                             // TODO: include us state-code input (if in the US)
                             let request = match buy_or_sell.clone() {
@@ -273,6 +272,8 @@ impl MeldState {
                         },
                     )
                     .map(|msg| view::Message::BuySell(view::BuySellMessage::Meld(msg)));
+
+                    return Some(task);
                 }
             }
             MeldMessage::ReceivedQuotes(mut quotes, r) => {
@@ -297,16 +298,18 @@ impl MeldState {
                                 self.country, amount
                             );
 
-                            return iced::Task::done(view::Message::BuySell(
+                            return Some(iced::Task::done(view::Message::BuySell(
                                 view::BuySellMessage::Meld(MeldMessage::SessionError(
                                     msg,
                                     "Please set your transaction amount within reasonable limits",
                                 )),
-                            ));
+                            )));
                         }
                         [q] => {
-                            return Task::done(view::Message::BuySell(view::BuySellMessage::Meld(
-                                MeldMessage::CreateWebviewSession(q.clone()),
+                            return Some(iced::Task::done(view::Message::BuySell(
+                                view::BuySellMessage::Meld(MeldMessage::CreateWebviewSession(
+                                    q.clone(),
+                                )),
                             )));
                         }
                         _ => {
@@ -335,11 +338,11 @@ impl MeldState {
             MeldMessage::StartSessionPressed(selected) => {
                 if let Some(MeldFlowStep::QuoteSelection { quotes, .. }) = self.steps.last() {
                     if let Some(quote) = quotes.get(selected) {
-                        return iced::Task::done(view::Message::BuySell(
+                        return Some(iced::Task::done(view::Message::BuySell(
                             view::BuySellMessage::Meld(MeldMessage::CreateWebviewSession(
                                 quote.clone(),
                             )),
-                        ));
+                        )));
                     }
                 }
             }
@@ -354,7 +357,7 @@ impl MeldState {
                 let country = self.country;
                 let buy_or_sell = self.buy_or_sell.clone();
 
-                return iced::Task::perform(
+                let task = iced::Task::perform(
                     async move {
                         let req = meld::api::CreateSessionRequest {
                             quote_provider: &pick.service_provider,
@@ -383,6 +386,8 @@ impl MeldState {
                     },
                 )
                 .map(|msg| view::Message::BuySell(view::BuySellMessage::Meld(msg)));
+
+                return Some(task);
             }
             // webview session
             MeldMessage::SessionCreated(session) => {
@@ -398,11 +403,11 @@ impl MeldState {
                 });
 
                 // extract the main window's raw_window_handle, to instantiate a webview with
-                return iced_wry::extract_window_id(None).map(move |w| {
+                return Some(iced_wry::extract_window_id(None).map(move |w| {
                     view::Message::BuySell(view::BuySellMessage::Meld(
                         MeldMessage::ExtractWindowId(w),
                     ))
-                });
+                }));
             }
             MeldMessage::ExtractWindowId(id) => {
                 if let Some(MeldFlowStep::ActiveSession { active, session }) = self.steps.last_mut()
@@ -435,6 +440,6 @@ impl MeldState {
             }
         };
 
-        iced::Task::none()
+        None
     }
 }

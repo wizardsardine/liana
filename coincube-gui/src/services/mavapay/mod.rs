@@ -25,7 +25,7 @@ pub enum MavapayMessage {
     BanksReceived(MavapayBanks),
     FetchTransactions,
     TransactionsReceived(Vec<OrderTransaction>),
-    SelectTransaction(OrderTransaction),
+    SelectTransaction(usize),
     OrderReceived(GetOrderResponse),
     BackToHistory,
     // checkout

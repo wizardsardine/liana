@@ -68,7 +68,7 @@ pub enum BuySellFlowState {
         buy_or_sell: Option<BuyOrSell>, // `buy` mode always has an address included for deposit
     },
     /// Nigeria, Kenya and South Africa, ie Mavapay supported countries
-    Mavapay(super::mavapay::MavapayFlowStep),
+    Mavapay(super::mavapay::MavapayState),
     /// Utilize Meld for countries not supported by Mavapay
     #[cfg(feature = "meld")]
     Meld(super::meld::MeldState),

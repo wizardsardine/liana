@@ -1,6 +1,6 @@
 use crate::{
     app::view::{
-        buysell::{panel::BuyOrSell, MavapayFlowStep},
+        buysell::{panel::BuyOrSell, MavapayState},
         BuySellMessage, Message as ViewMessage,
     },
     services::{coincube::Country, mavapay::*},
@@ -135,20 +135,20 @@ fn success_icon_badge() -> iced::widget::Container<'static, BuySellMessage, them
         })
 }
 
-pub fn form<'a>(state: &'a MavapayFlowStep) -> iced::Element<'a, ViewMessage, theme::Theme> {
+pub fn form<'a>(state: &'a MavapayState) -> iced::Element<'a, ViewMessage, theme::Theme> {
     let form = match state {
-        MavapayFlowStep::Transaction { .. } => transactions_form,
-        MavapayFlowStep::Checkout { .. } => checkout_form,
-        MavapayFlowStep::History { .. } => history_view,
-        MavapayFlowStep::OrderDetail { .. } => order_detail_view,
+        MavapayState::Transaction { .. } => transactions_form,
+        MavapayState::Checkout { .. } => checkout_form,
+        MavapayState::History { .. } => history_view,
+        MavapayState::OrderDetail { .. } => order_detail_view,
     };
 
     let element: iced::Element<'a, BuySellMessage, theme::Theme> = form(state).into();
     element.map(ViewMessage::BuySell)
 }
 
-fn checkout_form<'a>(state: &'a MavapayFlowStep) -> Column<'a, BuySellMessage> {
-    let MavapayFlowStep::Checkout {
+fn checkout_form<'a>(state: &'a MavapayState) -> Column<'a, BuySellMessage> {
+    let MavapayState::Checkout {
         buy_or_sell,
         fulfilled_order,
         quote,
@@ -221,8 +221,8 @@ fn checkout_form<'a>(state: &'a MavapayFlowStep) -> Column<'a, BuySellMessage> {
     .width(600)
 }
 
-fn transactions_form<'a>(state: &'a MavapayFlowStep) -> Column<'a, BuySellMessage> {
-    let MavapayFlowStep::Transaction {
+fn transactions_form<'a>(state: &'a MavapayState) -> Column<'a, BuySellMessage> {
+    let MavapayState::Transaction {
         sat_amount,
         btc_price: current_price,
         buy_or_sell,
@@ -640,8 +640,8 @@ fn order_success_view<'a>(
     ]
 }
 
-fn history_view<'a>(state: &'a MavapayFlowStep) -> Column<'a, BuySellMessage> {
-    let MavapayFlowStep::History {
+fn history_view<'a>(state: &'a MavapayState) -> Column<'a, BuySellMessage> {
+    let MavapayState::History {
         transactions,
         loading,
         error,
@@ -703,9 +703,11 @@ fn history_view<'a>(state: &'a MavapayFlowStep) -> Column<'a, BuySellMessage> {
             .into(),
             (false, Some(transaction_list), None) => transaction_list
                 .iter()
-                .fold(iced::widget::column![].spacing(10), |col, transaction| {
-                    col.push(transaction_row(transaction))
-                })
+                .enumerate()
+                .fold(
+                    iced::widget::column![].spacing(10),
+                    |col, (idx, transaction)| col.push(transaction_row(idx, transaction)),
+                )
                 .width(Length::Fill)
                 .into(),
             (false, None, None) => container(text::p2_medium("Unexpected state")).into(),
@@ -743,6 +745,7 @@ fn pretty_timestamp(ts: &str) -> String {
 }
 
 fn transaction_row<'a>(
+    idx: usize,
     transaction: &'a OrderTransaction,
 ) -> iced::widget::Container<'a, BuySellMessage, theme::Theme> {
     let (order_type, order_type_color) = order_type_from_payment(&transaction.payment_method);
@@ -780,7 +783,7 @@ fn transaction_row<'a>(
                 .width(Length::Fill),
                 button::secondary(None, "View")
                     .on_press(BuySellMessage::Mavapay(MavapayMessage::SelectTransaction(
-                        transaction.clone()
+                        idx
                     )))
                     .width(80)
             ]
@@ -812,8 +815,8 @@ fn format_currency_amount(amount: u64, currency: &MavapayUnitCurrency) -> String
     }
 }
 
-fn order_detail_view<'a>(state: &'a MavapayFlowStep) -> Column<'a, BuySellMessage> {
-    let MavapayFlowStep::OrderDetail {
+fn order_detail_view<'a>(state: &'a MavapayState) -> Column<'a, BuySellMessage> {
+    let MavapayState::OrderDetail {
         transaction,
         order,
         loading,
