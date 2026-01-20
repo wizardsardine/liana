@@ -333,7 +333,7 @@ dependencies = [
 [[package]]
 name = "async-hwi"
 version = "0.0.29"
-source = "git+https://github.com/pythcoiner/async-hwi.git?rev=f0fdfa7#f0fdfa77626a2695fa7aaf5e8fb9a09b492b43d7"
+source = "git+https://github.com/pythcoiner/async-hwi.git?rev=d60b63c#d60b63cf096989c2f07478bb4b6b6d773ce907df"
 dependencies = [
  "async-trait",
  "bitbox-api",
