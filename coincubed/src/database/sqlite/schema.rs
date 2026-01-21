@@ -244,7 +244,8 @@ impl TryFrom<&rusqlite::Row<'_>> for DbCoin {
         let outpoint = bitcoin::OutPoint { txid, vout };
 
         let amount: i64 = row.get(6)?;
-        let amount = bitcoin::Amount::from_sat(amount as u64);
+        let amount_u64 = u64::try_from(amount).expect("Insane database: negative amount_sat");
+        let amount = bitcoin::Amount::from_sat(amount_u64);
         let der_idx: u32 = row.get(7)?;
         let derivation_index = bip32::ChildNumber::from(der_idx);
         let is_change: bool = row.get(8)?;

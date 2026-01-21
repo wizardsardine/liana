@@ -224,6 +224,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
       - name: Set Coincube version from Cargo
         run: |
           sudo apt-get update && sudo apt-get install -y jq
