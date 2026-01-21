@@ -1,6 +1,6 @@
 [package]
 name = "coincube-core"
-version = "13.0.0"
+version = "0.9.0"
 authors = ["Antoine Poinsot <darosior@protonmail.com>", "Coincube Team"]
 edition = "2018"
 repository = "https://github.com/coincubetech/coincube"
