@@ -45,6 +45,7 @@ pub struct LiquidSendFlowConfig<'a> {
     pub input_type: &'a Option<InputType>,
     pub onchain_limits: Option<(u64, u64)>,
     pub bitcoin_unit: BitcoinDisplayUnit,
+    pub prepare_onchain_response: Option<&'a breez_sdk_liquid::prelude::PreparePayOnchainResponse>,
 }
 
 pub fn liquid_send_with_flow<'a>(config: LiquidSendFlowConfig<'a>) -> Element<'a, Message> {
@@ -115,6 +116,8 @@ pub fn liquid_send_with_flow<'a>(config: LiquidSendFlowConfig<'a>) -> Element<'a
                 config.prepare_response,
                 config.is_sending,
                 config.bitcoin_unit,
+                config.input_type,
+                config.prepare_onchain_response,
             )
             .map(Message::LiquidSend);
             view::dashboard(config.menu, config.cache, content)
@@ -704,6 +707,8 @@ pub fn final_check_page<'a>(
     prepare_response: Option<&'a breez_sdk_liquid::prelude::PrepareSendResponse>,
     is_sending: bool,
     bitcoin_unit: BitcoinDisplayUnit,
+    input_type: &'a Option<InputType>,
+    prepare_onchain_response: Option<&'a breez_sdk_liquid::prelude::PreparePayOnchainResponse>,
 ) -> Element<'a, LiquidSendMessage> {
     let header = Row::new()
         .push(
@@ -733,10 +738,27 @@ pub fn final_check_page<'a>(
 
     content = content.push(Space::new().height(Length::Fixed(2.0)));
 
-    let (fees_sat, total_sat) = if let Some(prepare) = prepare_response {
-        let fees = prepare.fees_sat.unwrap_or(0);
-        let total = amount.to_sat() + fees;
-        (fees, total)
+    let (fees_sat, total_sat) = if let Some(input_type) = input_type {
+        match input_type {
+            InputType::BitcoinAddress { .. } => {
+                if let Some(prepare) = prepare_onchain_response {
+                    let fees = prepare.total_fees_sat;
+                    let total = amount.to_sat() + fees;
+                    (fees, total)
+                } else {
+                    (0, amount.to_sat())
+                }
+            }
+            _ => {
+                if let Some(prepare) = prepare_response {
+                    let fees = prepare.fees_sat.unwrap_or(0);
+                    let total = amount.to_sat() + fees;
+                    (fees, total)
+                } else {
+                    (0, amount.to_sat())
+                }
+            }
+        }
     } else {
         (0, amount.to_sat())
     };

@@ -160,6 +160,7 @@ impl State for LiquidSend {
                 input_type: &self.input_type,
                 onchain_limits: self.onchain_limits,
                 bitcoin_unit: cache.bitcoin_unit,
+                prepare_onchain_response: self.prepare_onchain_response.as_ref(),
             })
         }
     }
