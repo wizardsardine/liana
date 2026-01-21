@@ -3,7 +3,7 @@
 //! This module contains the core domain types used by Liana Connect
 //! for representing organizations, wallets, users, and policy templates.
 
-use miniscript::DescriptorPublicKey;
+use miniscript::{bitcoin::bip32::Fingerprint, DescriptorPublicKey};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -15,13 +15,20 @@ const BLOCKS_PER_DAY: u64 = 144; // 24 * 60 / 10
 const BLOCKS_PER_MONTH: u64 = 4380; // ~30.4 days
 const BLOCKS_PER_YEAR: u64 = 52560; // ~365 days
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum WalletStatus {
-    Created,   // Empty
-    Drafted,   // Draft by WS manager
-    Locked,    // Locked by WS manager, ready for owner validation
-    Validated, // Policy validated by owner, keys metadata not yet completed
-    Finalized, // All key metadata filled, ready for prod
+    /// Empty
+    Created,
+    /// Draft by WS manager
+    Drafted,
+    /// Locked by WS manager, ready for owner validation
+    Locked,
+    /// Policy validated by owner, keys metadata not yet completed
+    Validated,
+    /// Descriptor generated, ready to register on signing device
+    Registration,
+    /// All key metadata filled, ready for prod
+    Finalized,
 }
 
 impl Display for WalletStatus {
@@ -426,8 +433,29 @@ impl User {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RegistrationInfos {
+    pub user: Uuid,
+    pub fingerprint: Fingerprint,
+    pub registered: bool,
+    pub registered_alias: Option<String>,
+    pub proof_of_registration: Option<Vec<u8>>,
+}
+
+impl RegistrationInfos {
+    pub fn new(user: Uuid, fingerprint: Fingerprint) -> Self {
+        Self {
+            user,
+            fingerprint,
+            registered: false,
+            registered_alias: None,
+            proof_of_registration: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Wallet {
-    pub alias: String,
+    pub alias: String, // MAX 64 chars
     pub org: Uuid,
     pub owner: Uuid,
     pub id: Uuid,
@@ -438,6 +466,12 @@ pub struct Wallet {
     pub last_edited: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_editor: Option<Uuid>,
+    /// Descriptor string - set during registration phase (status == Registration)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub descriptor: Option<String>,
+    /// Device fingerprints pending registration - only set during registration phase
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub devices: Option<Vec<Fingerprint>>,
 }
 
 #[cfg(test)]
@@ -484,7 +518,7 @@ mod wire_format_tests {
             (WalletStatus::Finalized, "Finalized"),
         ];
         for (status, expected) in cases {
-            let json = serde_json::to_value(status).unwrap();
+            let json = serde_json::to_value(&status).unwrap();
             assert_eq!(json, expected, "WalletStatus::{:?}", status);
         }
     }
@@ -692,6 +726,8 @@ mod wire_format_tests {
             template: None,
             last_edited: Some(12345),
             last_editor: Some(test_uuid(4)),
+            descriptor: None,
+            devices: None,
         };
         let json = serde_json::to_string(&wallet).expect("serialize");
         let parsed: Wallet = serde_json::from_str(&json).expect("deserialize");
@@ -887,6 +923,8 @@ mod wire_format_tests {
             template: None,
             last_edited: None,
             last_editor: None,
+            descriptor: None,
+            devices: None,
         };
 
         assert_eq!(parsed, expected);
@@ -985,6 +1023,8 @@ mod wire_format_tests {
             }),
             last_edited: None,
             last_editor: None,
+            descriptor: None,
+            devices: None,
         };
 
         assert_eq!(parsed, expected);
@@ -1342,11 +1382,12 @@ mod wire_format_tests {
             (r#""Drafted""#, WalletStatus::Drafted),
             (r#""Locked""#, WalletStatus::Locked),
             (r#""Validated""#, WalletStatus::Validated),
+            (r#""Registration""#, WalletStatus::Registration),
             (r#""Finalized""#, WalletStatus::Finalized),
         ];
 
         // Verify count matches enum variant count (catches new variants)
-        assert_eq!(cases.len(), 5, "test must cover all WalletStatus variants");
+        assert_eq!(cases.len(), 6, "test must cover all WalletStatus variants");
 
         for (json_str, expected) in cases {
             // Test deserialization

@@ -788,6 +788,7 @@ dependencies = [
  "email_address",
  "futures",
  "futures-timer",
+ "hex",
  "iced",
  "liana",
  "liana-connect",

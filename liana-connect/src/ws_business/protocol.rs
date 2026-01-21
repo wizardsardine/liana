@@ -10,6 +10,8 @@ use std::fmt::Display;
 use tungstenite::Message as WsMessage;
 use uuid::Uuid;
 
+use super::RegistrationInfos;
+
 /// Protocol-level request structure for serialization
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProtocolRequest {
@@ -133,6 +135,13 @@ fn edit_xpub_payload(wallet_id: &Uuid, key_id: u8, xpub: &Option<Xpub>) -> Value
     payload
 }
 
+fn device_registered_payload(wallet_id: &Uuid, infos: &RegistrationInfos) -> Value {
+    serde_json::json!({
+        "wallet_id": wallet_id.to_string(),
+        "infos": infos,
+    })
+}
+
 fn parse_connected(payload: Option<Value>) -> Result<Response, WssConversionError> {
     let payload = payload
         .ok_or_else(|| WssConversionError::DeserializationFailed("Missing payload".to_string()))?;
@@ -246,6 +255,19 @@ fn parse_edit_xpub_request(payload: Option<Value>) -> Result<Request, WssConvers
     })
 }
 
+fn parse_device_registered_request(payload: Option<Value>) -> Result<Request, WssConversionError> {
+    let payload = payload
+        .ok_or_else(|| WssConversionError::DeserializationFailed("Missing payload".to_string()))?;
+    let wallet_id_str = payload["wallet_id"].as_str().ok_or_else(|| {
+        WssConversionError::DeserializationFailed("Missing wallet_id".to_string())
+    })?;
+    let wallet_id = Uuid::parse_str(wallet_id_str)
+        .map_err(|e| WssConversionError::DeserializationFailed(format!("Invalid UUID: {}", e)))?;
+    let infos: RegistrationInfos = serde_json::from_value(payload["infos"].clone())
+        .map_err(|e| WssConversionError::DeserializationFailed(e.to_string()))?;
+    Ok(Request::DeviceRegistered { wallet_id, infos })
+}
+
 /// Application-level request enum for WSS protocol operations
 #[derive(Debug, Clone)]
 pub enum Request {
@@ -272,6 +294,10 @@ pub enum Request {
     FetchUser {
         id: Uuid,
     },
+    DeviceRegistered {
+        wallet_id: Uuid,
+        infos: RegistrationInfos,
+    },
 }
 
 /// Application-level response enum for WSS protocol operations
@@ -295,6 +321,7 @@ impl Request {
     pub const METHOD_FETCH_USER: &'static str = "fetch_user";
     pub const METHOD_EDIT_WALLET: &'static str = "edit_wallet";
     pub const METHOD_EDIT_XPUB: &'static str = "edit_xpub";
+    pub const METHOD_DEVICE_REGISTERED: &'static str = "device_registered";
 
     /// Returns the protocol message type for this request.
     pub fn method(&self) -> &'static str {
@@ -307,6 +334,7 @@ impl Request {
             Request::FetchWallet { .. } => Self::METHOD_FETCH_WALLET,
             Request::EditXpub { .. } => Self::METHOD_EDIT_XPUB,
             Request::FetchUser { .. } => Self::METHOD_FETCH_USER,
+            Request::DeviceRegistered { .. } => Self::METHOD_DEVICE_REGISTERED,
         }
     }
 
@@ -325,6 +353,9 @@ impl Request {
                 key_id,
                 xpub,
             } => Some(edit_xpub_payload(wallet_id, *key_id, xpub)),
+            Request::DeviceRegistered { wallet_id, infos } => {
+                Some(device_registered_payload(wallet_id, infos))
+            }
         }
     }
 
@@ -354,6 +385,9 @@ impl Request {
             }
             Self::METHOD_EDIT_WALLET => parse_edit_wallet_request(protocol_request.payload)?,
             Self::METHOD_EDIT_XPUB => parse_edit_xpub_request(protocol_request.payload)?,
+            Self::METHOD_DEVICE_REGISTERED => {
+                parse_device_registered_request(protocol_request.payload)?
+            }
             _ => {
                 return Err(WssConversionError::DeserializationFailed(format!(
                     "Unknown message type: {}",
@@ -670,6 +704,8 @@ mod protocol_tests {
             template: None,
             last_edited: None,
             last_editor: None,
+            descriptor: None,
+            devices: None,
         };
         let request = Request::EditWallet { wallet };
         let ws_msg = request.to_ws_message_with_id("test-token", "req-008");
@@ -709,6 +745,8 @@ mod protocol_tests {
             template: None,
             last_edited: Some(1700000000),
             last_editor: Some(test_uuid(4)),
+            descriptor: None,
+            devices: None,
         };
         let request = Request::EditWallet { wallet };
         let ws_msg = request.to_ws_message_with_id("test-token", "req-008");
@@ -812,6 +850,8 @@ mod protocol_tests {
             template: Some(template),
             last_edited: None,
             last_editor: None,
+            descriptor: None,
+            devices: None,
         };
         let request = Request::EditWallet { wallet };
         let ws_msg = request.to_ws_message_with_id("test-token", "req-008");
@@ -927,6 +967,8 @@ mod protocol_tests {
             template: Some(template),
             last_edited: Some(1700000000),
             last_editor: Some(test_uuid(4)),
+            descriptor: None,
+            devices: None,
         };
         let request = Request::EditWallet { wallet };
         let ws_msg = request.to_ws_message_with_id("test-token", "req-008");
@@ -1075,6 +1117,128 @@ mod protocol_tests {
         let expected: serde_json::Value = serde_json::from_str(expected_json).unwrap();
         assert_eq!(actual, expected);
         roundtrip_request(expected_json);
+    }
+
+    #[test]
+    fn test_request_device_registered_wire_format() {
+        use crate::ws_business::RegistrationInfos;
+        use miniscript::bitcoin::bip32::Fingerprint;
+
+        // Documentation: DeviceRegistered request wire format
+        let expected_json = r#"{
+            "type": "device_registered",
+            "token": "test-token",
+            "request_id": "req-011",
+            "payload": {
+                "wallet_id": "12345678-1234-1234-1234-123456789001",
+                "infos": {
+                    "user": "12345678-1234-1234-1234-123456789002",
+                    "fingerprint": "d34db33f",
+                    "registered": true,
+                    "registered_alias": null,
+                    "proof_of_registration": [161, 178, 195, 212, 229, 246]
+                }
+            }
+        }"#;
+
+        let fingerprint = Fingerprint::from_hex("d34db33f").unwrap();
+        let mut infos = RegistrationInfos::new(test_uuid(2), fingerprint);
+        infos.registered = true;
+        infos.proof_of_registration = Some(vec![0xa1, 0xb2, 0xc3, 0xd4, 0xe5, 0xf6]);
+
+        let request = Request::DeviceRegistered {
+            wallet_id: test_uuid(1),
+            infos,
+        };
+        let ws_msg = request.to_ws_message_with_id("test-token", "req-011");
+
+        let actual: serde_json::Value = ws_msg_to_json(ws_msg);
+        let expected: serde_json::Value = serde_json::from_str(expected_json).unwrap();
+        assert_eq!(actual, expected);
+        roundtrip_request(expected_json);
+    }
+
+    #[test]
+    fn test_request_device_registered_no_proof_wire_format() {
+        use crate::ws_business::RegistrationInfos;
+        use miniscript::bitcoin::bip32::Fingerprint;
+
+        // Documentation: DeviceRegistered without proof_of_registration (non-Ledger device)
+        let expected_json = r#"{
+            "type": "device_registered",
+            "token": "test-token",
+            "request_id": "req-012",
+            "payload": {
+                "wallet_id": "12345678-1234-1234-1234-123456789001",
+                "infos": {
+                    "user": "12345678-1234-1234-1234-123456789002",
+                    "fingerprint": "cafebabe",
+                    "registered": true,
+                    "registered_alias": null,
+                    "proof_of_registration": null
+                }
+            }
+        }"#;
+
+        let fingerprint = Fingerprint::from_hex("cafebabe").unwrap();
+        let mut infos = RegistrationInfos::new(test_uuid(2), fingerprint);
+        infos.registered = true;
+        // proof_of_registration is None for non-Ledger devices
+
+        let request = Request::DeviceRegistered {
+            wallet_id: test_uuid(1),
+            infos,
+        };
+        let ws_msg = request.to_ws_message_with_id("test-token", "req-012");
+
+        let actual: serde_json::Value = ws_msg_to_json(ws_msg);
+        let expected: serde_json::Value = serde_json::from_str(expected_json).unwrap();
+        assert_eq!(actual, expected);
+        roundtrip_request(expected_json);
+    }
+
+    #[test]
+    fn test_request_from_ws_message_device_registered() {
+        use miniscript::bitcoin::bip32::Fingerprint;
+
+        let json = r#"{
+            "type": "device_registered",
+            "token": "test-token",
+            "request_id": "req-011",
+            "payload": {
+                "wallet_id": "12345678-1234-1234-1234-123456789001",
+                "infos": {
+                    "user": "12345678-1234-1234-1234-123456789002",
+                    "fingerprint": "d34db33f",
+                    "registered": true,
+                    "registered_alias": null,
+                    "proof_of_registration": [161, 178, 195, 212, 229, 246]
+                }
+            }
+        }"#;
+
+        let ws_msg = WsMessage::Text(json.to_string());
+        let (request, token, request_id) = Request::from_ws_message(ws_msg).unwrap();
+
+        assert_eq!(token, "test-token");
+        assert_eq!(request_id, "req-011");
+
+        match request {
+            Request::DeviceRegistered { wallet_id, infos } => {
+                assert_eq!(wallet_id, test_uuid(1));
+                assert_eq!(infos.user, test_uuid(2));
+                assert_eq!(
+                    infos.fingerprint,
+                    Fingerprint::from_hex("d34db33f").unwrap()
+                );
+                assert!(infos.registered);
+                assert_eq!(
+                    infos.proof_of_registration,
+                    Some(vec![0xa1, 0xb2, 0xc3, 0xd4, 0xe5, 0xf6])
+                );
+            }
+            _ => panic!("Expected DeviceRegistered request"),
+        }
     }
 
     // ==================== RESPONSE WIRE FORMAT TESTS ====================
@@ -1247,6 +1411,8 @@ mod protocol_tests {
             template: None,
             last_edited: None,
             last_editor: None,
+            descriptor: None,
+            devices: None,
         };
         let response = Response::Wallet {
             wallet: wallet.clone(),
@@ -1333,6 +1499,8 @@ mod protocol_tests {
             }),
             last_edited: None,
             last_editor: None,
+            descriptor: None,
+            devices: None,
         };
         let response = Response::Wallet {
             wallet: wallet.clone(),
@@ -1804,6 +1972,8 @@ mod protocol_tests {
                     template: None,
                     last_edited: None,
                     last_editor: None,
+                    descriptor: None,
+                    devices: None,
                 }
             }
             .method(),
@@ -1859,6 +2029,8 @@ mod protocol_tests {
                     template: None,
                     last_edited: None,
                     last_editor: None,
+                    descriptor: None,
+                    devices: None,
                 }
             }
             .method(),
@@ -1987,6 +2159,8 @@ mod protocol_tests {
             template: None,
             last_edited: None,
             last_editor: None,
+            descriptor: None,
+            devices: None,
         };
         let request = Request::EditWallet {
             wallet: wallet.clone(),
@@ -2122,6 +2296,8 @@ mod protocol_tests {
             template: None,
             last_edited: Some(1700000000),
             last_editor: Some(test_uuid(4)),
+            descriptor: None,
+            devices: None,
         };
         let response = Response::Wallet {
             wallet: wallet.clone(),

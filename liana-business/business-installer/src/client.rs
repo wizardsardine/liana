@@ -1230,9 +1230,10 @@ fn get_expected_response_type(request: &Request) -> ExpectedResponseType {
         Request::Ping => ExpectedResponseType::Pong,
         Request::Close => ExpectedResponseType::None, // No response expected
         Request::FetchOrg { .. } => ExpectedResponseType::Org,
-        Request::EditWallet { .. } | Request::FetchWallet { .. } | Request::EditXpub { .. } => {
-            ExpectedResponseType::Wallet
-        }
+        Request::EditWallet { .. }
+        | Request::FetchWallet { .. }
+        | Request::EditXpub { .. }
+        | Request::DeviceRegistered { .. } => ExpectedResponseType::Wallet,
         Request::FetchUser { .. } => ExpectedResponseType::User,
     }
 }
@@ -1846,6 +1847,20 @@ impl Backend for Client {
                 key_id,
                 xpub,
             });
+        }
+    }
+
+    fn device_registered(&mut self, wallet_id: Uuid, infos: ws_business::RegistrationInfos) {
+        check_connection!(self);
+
+        tracing::debug!(
+            "device_registered: sending registration for wallet_id={} fingerprint={}",
+            wallet_id,
+            infos.fingerprint
+        );
+
+        if let Some(sender) = &self.request_sender {
+            let _ = sender.send(Request::DeviceRegistered { wallet_id, infos });
         }
     }
 
@@ -2529,6 +2544,8 @@ mod tests {
                 template: None,
                 last_edited: None,
                 last_editor: None,
+                descriptor: None,
+                devices: None,
             }
         }
 

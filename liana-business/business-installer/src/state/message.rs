@@ -95,6 +95,16 @@ pub enum Msg {
     XpubCancelModal,                                            // Close modal
     XpubToggleOptions,                                          // Toggle "Other options" section
 
+    // Registration (device descriptor registration)
+    RegistrationSelectDevice(miniscript::bitcoin::bip32::Fingerprint), // Click on connected device to register
+    RegistrationResult(Result<(miniscript::bitcoin::bip32::Fingerprint, Option<[u8; 32]>, String), String>), // async-hwi result (fp, hmac, alias)
+    RegistrationCancelModal,                                           // Close registration modal
+    RegistrationRetry,                                                 // Retry after error
+    RegistrationConfirmYes,                                            // User confirms Coldcard registration succeeded
+    RegistrationConfirmNo,                                             // User says Coldcard registration failed
+    RegistrationSkip(miniscript::bitcoin::bip32::Fingerprint),         // Skip device registration
+    RegistrationSkipAll,                                                   // Skip all remaining devices
+
     // Warnings
     WarningShowModal(String, String), // Show warning modal (title, message)
     WarningCloseModal,                // Close warning modal
