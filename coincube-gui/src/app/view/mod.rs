@@ -2,12 +2,12 @@ mod message;
 
 pub mod buysell;
 pub mod global_home;
-pub mod active;
+pub mod liquid;
 pub mod settings;
 
 pub mod vault;
 
-pub use active::*;
+pub use liquid::*;
 pub use message::*;
 pub use vault::fiat::FiatAmountConverter;
 pub use vault::warning::warn;
@@ -89,36 +89,36 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<
         .push(home_button);
 
     // Check if Liquid submenu is expanded from cache
-    let is_active_expanded = cache.active_expanded;
+    let is_liquid_expanded = cache.liquid_expanded;
 
     // Liquid menu button with expand/collapse chevron
-    let active_chevron = if is_active_expanded {
+    let liquid_chevron = if is_liquid_expanded {
         up_icon()
     } else {
         down_icon()
     };
-    let active_button = Button::new(
+    let liquid_button = Button::new(
         Row::new()
             .spacing(10)
             .align_y(iced::alignment::Vertical::Center)
             .push(lightning_icon().style(theme::text::secondary))
             .push(text("Liquid").size(15))
             .push(Space::new().width(Length::Fill))
-            .push(active_chevron.style(theme::text::secondary))
+            .push(liquid_chevron.style(theme::text::secondary))
             .padding(10),
     )
     .width(iced::Length::Fill)
     .style(theme::button::menu)
     .on_press(Message::ToggleLiquid);
 
-    menu_column = menu_column.push(active_button);
+    menu_column = menu_column.push(liquid_button);
 
     // Add Liquid submenu items if expanded
-    if is_active_expanded {
+    if is_liquid_expanded {
         use crate::app::menu::LiquidSubMenu;
 
         // Liquid Overview
-        let active_overview_button = if matches!(menu, Menu::Liquid(LiquidSubMenu::Overview)) {
+        let liquid_overview_button = if matches!(menu, Menu::Liquid(LiquidSubMenu::Overview)) {
             row!(
                 Space::new().width(Length::Fixed(20.0)),
                 button::menu_active(Some(home_icon()), "Overview")
@@ -138,7 +138,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<
         };
 
         // Liquid Send
-        let active_send_button = if matches!(menu, Menu::Liquid(LiquidSubMenu::Send)) {
+        let liquid_send_button = if matches!(menu, Menu::Liquid(LiquidSubMenu::Send)) {
             row!(
                 Space::new().width(Length::Fixed(20.0)),
                 button::menu_active(Some(send_icon()), "Send")
@@ -158,7 +158,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<
         };
 
         // Liquid Receive
-        let active_receive_button = if matches!(menu, Menu::Liquid(LiquidSubMenu::Receive)) {
+        let liquid_receive_button = if matches!(menu, Menu::Liquid(LiquidSubMenu::Receive)) {
             row!(
                 Space::new().width(Length::Fixed(20.0)),
                 button::menu_active(Some(receive_icon()), "Receive")
@@ -178,7 +178,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<
         };
 
         // Liquid Transactions
-        let active_transactions_button =
+        let liquid_transactions_button =
             if matches!(menu, Menu::Liquid(LiquidSubMenu::Transactions(_))) {
                 row!(
                     Space::new().width(Length::Fixed(20.0)),
@@ -201,7 +201,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<
             };
 
         // Liquid Settings
-        let active_settings_button = if matches!(menu, Menu::Liquid(LiquidSubMenu::Settings(_))) {
+        let liquid_settings_button = if matches!(menu, Menu::Liquid(LiquidSubMenu::Settings(_))) {
             row!(
                 Space::new().width(Length::Fixed(20.0)),
                 button::menu_active(Some(settings_icon()), "Settings")
@@ -221,11 +221,11 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<
         };
 
         menu_column = menu_column
-            .push(active_overview_button)
-            .push(active_send_button)
-            .push(active_receive_button)
-            .push(active_transactions_button)
-            .push(active_settings_button);
+            .push(liquid_overview_button)
+            .push(liquid_send_button)
+            .push(liquid_receive_button)
+            .push(liquid_transactions_button)
+            .push(liquid_settings_button);
     }
 
     // Check if Vault submenu is expanded from cache
