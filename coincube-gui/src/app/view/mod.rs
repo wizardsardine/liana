@@ -2,12 +2,12 @@ mod message;
 
 pub mod buysell;
 pub mod global_home;
-pub mod active;
+pub mod liquid;
 pub mod settings;
 
 pub mod vault;
 
-pub use active::*;
+pub use liquid::*;
 pub use message::*;
 pub use vault::fiat::FiatAmountConverter;
 pub use vault::warning::warn;
@@ -89,7 +89,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<
         .push(home_button);
 
     // Check if Liquid submenu is expanded from cache
-    let is_active_expanded = cache.active_expanded;
+    let is_active_expanded = cache.liquid_expanded;
 
     // Liquid menu button with expand/collapse chevron
     let active_chevron = if is_active_expanded {

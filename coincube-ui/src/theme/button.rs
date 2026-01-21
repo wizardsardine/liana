@@ -157,6 +157,6 @@ pub fn tab(theme: &Theme, status: Status) -> Style {
     style
 }
 
-pub fn tab_active(theme: &Theme, _status: Status) -> Style {
+pub fn tab_liquid(theme: &Theme, _status: Status) -> Style {
     tab(theme, Status::Pressed)
 }
