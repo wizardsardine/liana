@@ -699,6 +699,7 @@ pub fn fiat_input_model<'a>(
         .into()
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn final_check_page<'a>(
     amount: Amount,
     comment: String,

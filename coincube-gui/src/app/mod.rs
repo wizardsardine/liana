@@ -27,8 +27,8 @@ pub use message::Message;
 
 use state::{
     CoinsPanel, CreateSpendPanel, GlobalHome, LiquidOverview, LiquidReceive, LiquidSend,
-    LiquidSettings, LiquidTransactions, PsbtsPanel, SettingsState, State, VaultOverview,
-    VaultReceivePanel, VaultTransactionsPanel,
+    LiquidSettings, LiquidTransactions, PsbtsPanel, State, VaultOverview, VaultReceivePanel,
+    VaultTransactionsPanel,
 };
 use wallet::{sync_status, SyncStatus};
 
@@ -73,7 +73,6 @@ struct Panels {
     vault_settings: Option<VaultSettingsState>,
     // remaining panels
     buy_sell: Option<crate::app::view::buysell::BuySellPanel>,
-    settings: Option<SettingsState>,
 }
 
 impl Panels {
@@ -127,7 +126,6 @@ impl Panels {
             create_spend: None,
             vault_settings: None,
             buy_sell: None,
-            settings: None,
         }
     }
 
@@ -240,7 +238,6 @@ impl Panels {
                 cache.network,
                 wallet,
             )),
-            settings: None,
         }
     }
 
