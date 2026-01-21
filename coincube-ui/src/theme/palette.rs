@@ -52,7 +52,7 @@ pub struct Buttons {
 
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub struct Button {
-    pub liquid: ButtonPalette,
+    pub active: ButtonPalette,
     pub hovered: ButtonPalette,
     pub pressed: Option<ButtonPalette>,
     pub disabled: Option<ButtonPalette>,
@@ -122,7 +122,7 @@ pub struct TextInputs {
 
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub struct TextInput {
-    pub liquid: TextInputPalette,
+    pub active: TextInputPalette,
     pub disabled: TextInputPalette,
 }
 
@@ -206,7 +206,7 @@ impl std::default::Default for Palette {
             },
             buttons: Buttons {
                 primary: Button {
-                    liquid: ButtonPalette {
+                    active: ButtonPalette {
                         background: color::ORANGE,
                         text: color::LIGHT_BLACK,
                         border: Some(color::ORANGE),
@@ -228,7 +228,7 @@ impl std::default::Default for Palette {
                     }),
                 },
                 secondary: Button {
-                    liquid: ButtonPalette {
+                    active: ButtonPalette {
                         background: color::GREY_6,
                         text: color::GREY_2,
                         border: Some(color::GREY_7),
@@ -250,7 +250,7 @@ impl std::default::Default for Palette {
                     }),
                 },
                 destructive: Button {
-                    liquid: ButtonPalette {
+                    active: ButtonPalette {
                         background: color::GREY_6,
                         text: color::RED,
                         border: Some(color::RED),
@@ -272,7 +272,7 @@ impl std::default::Default for Palette {
                     }),
                 },
                 transparent: Button {
-                    liquid: ButtonPalette {
+                    active: ButtonPalette {
                         background: color::TRANSPARENT,
                         text: color::GREY_2,
                         border: None,
@@ -294,7 +294,7 @@ impl std::default::Default for Palette {
                     }),
                 },
                 transparent_border: Button {
-                    liquid: ButtonPalette {
+                    active: ButtonPalette {
                         background: color::TRANSPARENT,
                         text: color::GREY_2,
                         border: color::TRANSPARENT.into(),
@@ -316,7 +316,7 @@ impl std::default::Default for Palette {
                     }),
                 },
                 container: Button {
-                    liquid: ButtonPalette {
+                    active: ButtonPalette {
                         background: color::TRANSPARENT,
                         text: color::GREY_2,
                         border: None,
@@ -338,7 +338,7 @@ impl std::default::Default for Palette {
                     }),
                 },
                 container_border: Button {
-                    liquid: ButtonPalette {
+                    active: ButtonPalette {
                         background: color::TRANSPARENT,
                         text: color::GREY_2,
                         border: color::TRANSPARENT.into(),
@@ -360,7 +360,7 @@ impl std::default::Default for Palette {
                     }),
                 },
                 menu: Button {
-                    liquid: ButtonPalette {
+                    active: ButtonPalette {
                         background: color::TRANSPARENT,
                         text: color::WHITE,
                         border: color::TRANSPARENT.into(),
@@ -382,7 +382,7 @@ impl std::default::Default for Palette {
                     }),
                 },
                 tab: Button {
-                    liquid: ButtonPalette {
+                    active: ButtonPalette {
                         background: color::GREY_6,
                         text: color::GREY_2,
                         border: Some(color::GREY_7),
@@ -404,7 +404,7 @@ impl std::default::Default for Palette {
                     }),
                 },
                 link: Button {
-                    liquid: ButtonPalette {
+                    active: ButtonPalette {
                         background: color::TRANSPARENT,
                         text: color::GREY_2,
                         border: Some(color::TRANSPARENT),
@@ -523,7 +523,7 @@ impl std::default::Default for Palette {
             },
             text_inputs: TextInputs {
                 primary: TextInput {
-                    liquid: TextInputPalette {
+                    active: TextInputPalette {
                         background: color::TRANSPARENT,
                         icon: color::TRANSPARENT,
                         placeholder: color::GREY_7,
@@ -541,7 +541,7 @@ impl std::default::Default for Palette {
                     },
                 },
                 invalid: TextInput {
-                    liquid: TextInputPalette {
+                    active: TextInputPalette {
                         background: color::TRANSPARENT,
                         icon: color::TRANSPARENT,
                         placeholder: color::GREY_7,
