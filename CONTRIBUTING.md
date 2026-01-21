@@ -9,8 +9,7 @@ time (and backs and forths) to polish a contribution before it's ready for merge
 
 ## Communication
 
-Most of the communication is done on GitHub or on the [`#revault` IRC channel on
-Libera](https://web.libera.chat/?channels=#revault).
+Most of the communication is done on GitHub.
 
 If you plan to contribute a non-trivial change, consider discussing it in the IRC channel or in a
 Github issue before going forward with the implementation.
@@ -19,7 +18,7 @@ Github issue before going forward with the implementation.
 ## Looking for contributions
 
 If you are looking for first time contributions, you can `git grep` for `FIXME`s and `TODO`s
-as well as checking out the [good first issues](https://github.com/wizardsardine/liana/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22)
+as well as checking out the [good first issues](https://github.com/coincubetech/coincube/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22)
 on the issue tracker.
 
 
@@ -42,7 +41,7 @@ reading your code in the future, so explain the reasoning for your decisions. Fo
 more guidelines about writing commit messages, see this [blog post](https://cbea.ms/git-commit/).
 
 If your pull request contains fixup commits (commits that change the same line of code repeatedly) or too fine-grained
-commits, you may be asked to [squash](https://git-scm.com/docs/git-rebase#_interliquid_mode) your commits
+commits, you may be asked to [squash](https://git-scm.com/docs/git-rebase#_interactive_mode) your commits
 before it will be merged.
 
 Patchsets should always be focused. For example, a pull request could add a
