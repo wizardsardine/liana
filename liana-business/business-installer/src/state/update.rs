@@ -3,6 +3,7 @@ use crate::{
     backend::{Backend, Error, Notification},
     client::{ws_url, PROTOCOL_VERSION},
     state::views::modals::{ConflictModalState, ConflictType},
+    state::views::registration::RegistrationModalStep,
 };
 use iced::Task;
 use liana_connect::ws_business::{
@@ -10,7 +11,8 @@ use liana_connect::ws_business::{
     Wallet, WalletStatus,
 };
 use liana_ui::widget::text_input;
-use tracing::debug;
+use miniscript::bitcoin::bip32::Fingerprint;
+use tracing::{debug, error, trace};
 use uuid::Uuid;
 
 // Update routing logic
@@ -107,6 +109,16 @@ impl State {
             Msg::XpubClear => return self.on_xpub_clear(),
             Msg::XpubCancelModal => self.on_xpub_cancel_modal(),
             Msg::XpubToggleOptions => self.on_xpub_toggle_options(),
+
+            // Registration
+            Msg::RegistrationSelectDevice(fingerprint) => return self.on_registration_select_device(fingerprint),
+            Msg::RegistrationResult(result) => return self.on_registration_result(result),
+            Msg::RegistrationCancelModal => self.on_registration_cancel_modal(),
+            Msg::RegistrationRetry => return self.on_registration_retry(),
+            Msg::RegistrationConfirmYes => return self.on_registration_confirm_yes(),
+            Msg::RegistrationConfirmNo => self.on_registration_confirm_no(),
+            Msg::RegistrationSkip(fingerprint) => return self.on_registration_skip(fingerprint),
+            Msg::RegistrationSkipAll => return self.on_registration_skip_all(),
 
             // Warnings
             Msg::WarningShowModal(title, message) => self.on_warning_show_modal(title, message),
@@ -298,8 +310,29 @@ impl State {
             self.app.next_key_id = app_state.next_key_id;
         }
 
+        // Check if wallet is in registration
+        if let Some(wallet) = self.backend.get_wallet(wallet_id) {
+            if wallet.status == WalletStatus::Registration {
+                // Registration -> Device Registration view
+                self.current_view = View::Registration;
+
+                // Start hardware wallet listening
+                self.start_hw();
+
+                // Populate registration state from wallet data
+                self.views.registration.descriptor = wallet.descriptor.clone();
+                self.views.registration.user_devices =
+                    wallet.devices.clone().unwrap_or_default();
+                return;
+            }
+        }
+
         // Route based on wallet status
         match wallet_status {
+            Some(WalletStatus::Registration) => {
+                // Registration handled above with early return
+                unreachable!();
+            }
             Some(WalletStatus::Validated) => {
                 // Validated -> Add Key Information (xpub entry)
                 self.current_view = View::Xpub;
@@ -446,6 +479,8 @@ impl State {
             template: Some(template),
             last_edited: None,
             last_editor: None,
+            descriptor: wallet.descriptor.clone(),
+            devices: wallet.devices.clone(),
         })
     }
     fn on_template_add_key_to_primary(&mut self, key_id: u8) {
@@ -759,6 +794,10 @@ impl State {
 
     fn on_navigate_to_wallet_select(&mut self) {
         if self.app.selected_org.is_some() {
+            // Stop HW listening if leaving Registration view
+            if self.current_view == View::Registration {
+                self.stop_hw();
+            }
             self.current_view = View::WalletSelect;
         }
     }
@@ -795,6 +834,11 @@ impl State {
                 } else {
                     Task::none()
                 }
+            }
+            View::Registration => {
+                self.stop_hw();
+                self.current_view = View::WalletSelect;
+                Task::none()
             }
         }
     }
@@ -874,6 +918,8 @@ impl State {
     }
 
     fn on_backend_error(&mut self, error: Error) {
+        error!("on_backend_error: received error={:?}", error);
+
         // Check if error occurred during cached token connection
         if self.views.login.account_select.processing {
             self.handle_cached_token_connection_failure();
@@ -1023,15 +1069,30 @@ impl State {
 impl State {
     /// Handle wallet notification - check for modal conflicts and refresh state
     fn on_backend_wallet(&mut self, wallet_id: Uuid) -> Task<Msg> {
+        debug!(
+            "on_backend_wallet: received wallet update for wallet_id={}",
+            wallet_id
+        );
+
         // Only relevant if this is the currently selected wallet
         if self.app.selected_wallet != Some(wallet_id) {
+            debug!(
+                "on_backend_wallet: ignoring - not selected wallet (selected={:?})",
+                self.app.selected_wallet
+            );
             return Task::none();
         }
 
         // Get the updated wallet from cache
         let Some(wallet) = self.backend.get_wallet(wallet_id) else {
+            debug!("on_backend_wallet: wallet not found in cache");
             return Task::none();
         };
+
+        debug!(
+            "on_backend_wallet: wallet '{}' status={:?}, current_view={:?}",
+            wallet.alias, wallet.status, self.current_view
+        );
 
         // Check for conflicts with open modals before updating state
         self.check_modal_conflicts(&wallet, wallet_id);
@@ -1039,6 +1100,37 @@ impl State {
         // If no conflict modal was shown, refresh local state
         if self.views.modals.conflict.is_none() {
             self.load_wallet_into_app_state(&wallet);
+        }
+
+        // Update registration state if on Registration view
+        if self.current_view == View::Registration {
+            debug!("on_backend_wallet: on Registration view, checking status");
+            if wallet.status == WalletStatus::Registration {
+                let devices = wallet.devices.clone().unwrap_or_default();
+                let descriptor_len = wallet.descriptor.as_ref().map(|d| d.len()).unwrap_or(0);
+                debug!(
+                    "on_backend_wallet: Registration with {} devices, descriptor_len={}",
+                    devices.len(),
+                    descriptor_len
+                );
+                self.views.registration.descriptor = wallet.descriptor.clone();
+                self.views.registration.user_devices = devices;
+                debug!(
+                    "on_backend_wallet: user_devices: {:?}",
+                    self.views.registration.user_devices
+                );
+            } else if wallet.status == WalletStatus::Finalized {
+                debug!("on_backend_wallet: wallet is now Finalized, navigating to wallet list");
+                // All devices registered/skipped, go back to wallet selection
+                self.current_view = View::WalletSelect;
+                self.app.selected_wallet = None;
+                self.stop_hw();
+            } else {
+                debug!(
+                    "on_backend_wallet: wallet not in Registration status: {:?}",
+                    wallet.status
+                );
+            }
         }
 
         // Close xpub modal if open (edit was successful and wallet updated)
@@ -1754,5 +1846,358 @@ impl State {
         if let Some(modal) = self.views.xpub.modal_mut() {
             modal.options_collapsed = !modal.options_collapsed;
         }
+    }
+
+    // ========================================================================
+    // Registration handlers
+    // ========================================================================
+
+    /// User clicked on a connected device to register descriptor
+    fn on_registration_select_device(
+        &mut self,
+        fingerprint: miniscript::bitcoin::bip32::Fingerprint,
+    ) -> Task<Msg> {
+        use async_hwi::service::SigningDevice;
+
+        debug!("on_registration_select_device: fingerprint={}", fingerprint);
+
+        // Find the device in HwiService
+        let devices = self.hw.list();
+        trace!(
+            "on_registration_select_device: found {} devices",
+            devices.len()
+        );
+
+        let device = devices.values().find(|d| {
+            if let SigningDevice::Supported(hw) = d {
+                hw.fingerprint() == &fingerprint
+            } else {
+                false
+            }
+        });
+
+        let Some(SigningDevice::Supported(hw)) = device else {
+            error!(
+                "on_registration_select_device: device not found or not supported for fingerprint={}",
+                fingerprint
+            );
+            return Task::none();
+        };
+
+        let device_kind = hw.kind();
+        debug!(
+            "on_registration_select_device: found device kind={:?}, fingerprint={}",
+            device_kind, fingerprint
+        );
+
+        // Open modal with device kind
+        self.views
+            .registration
+            .open_modal(fingerprint, Some(*device_kind));
+
+        // Get descriptor from registration status
+        let Some(descriptor) = self.views.registration.descriptor.clone() else {
+            error!("on_registration_select_device: no descriptor available");
+            self.views
+                .registration
+                .set_modal_error("No descriptor available".to_string());
+            return Task::none();
+        };
+
+        trace!(
+            "on_registration_select_device: descriptor length={}, first 100 chars: {}",
+            descriptor.len(),
+            &descriptor[..descriptor.len().min(100)]
+        );
+
+        // Get wallet name from backend
+        let wallet_name = self
+            .app
+            .selected_wallet
+            .and_then(|id| self.backend.get_wallet(id))
+            .map(|w| w.alias.clone())
+            .unwrap_or_else(|| "Liana".to_string());
+
+        debug!(
+            "on_registration_select_device: wallet_name='{}', starting registration on {:?}",
+            wallet_name, device_kind
+        );
+
+        // Clone device handle for async task
+        let hw_arc = hw.device().clone();
+
+        // Start registration via async-hwi
+        Task::perform(
+            async move {
+                trace!(
+                    "register_wallet: calling hw.register_wallet(name='{}', descriptor_len={})",
+                    wallet_name,
+                    descriptor.len()
+                );
+                match hw_arc.register_wallet(&wallet_name, &descriptor).await {
+                    Ok(hmac) => {
+                        debug!(
+                            "register_wallet: success for fingerprint={}, hmac={:?}",
+                            fingerprint,
+                            hmac.map(hex::encode)
+                        );
+                        Ok((fingerprint, hmac, wallet_name))
+                    }
+                    Err(e) => {
+                        error!(
+                            "register_wallet: failed for fingerprint={}, error={}",
+                            fingerprint, e
+                        );
+                        Err(e.to_string())
+                    }
+                }
+            },
+            Msg::RegistrationResult,
+        )
+    }
+
+    /// Handle registration result from async-hwi
+    fn on_registration_result(
+        &mut self,
+        result: Result<
+            (
+                miniscript::bitcoin::bip32::Fingerprint,
+                Option<[u8; 32]>,
+                String,
+            ),
+            String,
+        >,
+    ) -> Task<Msg> {
+        debug!("on_registration_result: received result");
+
+        match result {
+            Ok((fingerprint, hmac, registered_alias)) => {
+                debug!(
+                    "on_registration_result: success for fingerprint={}, alias='{}', hmac={:?}",
+                    fingerprint,
+                    registered_alias,
+                    hmac.map(hex::encode)
+                );
+
+                // Check if device is Coldcard - it doesn't block during registration
+                // so we need user confirmation before sending to server
+                let is_coldcard = self
+                    .views
+                    .registration
+                    .modal
+                    .as_ref()
+                    .and_then(|m| m.device_kind)
+                    .map(|k| matches!(k, async_hwi::DeviceKind::Coldcard))
+                    .unwrap_or(false);
+
+                if is_coldcard {
+                    debug!(
+                        "on_registration_result: Coldcard detected, showing confirmation dialog"
+                    );
+                    // Show confirmation dialog - Coldcard returns immediately without blocking
+                    if let Some(modal) = &mut self.views.registration.modal {
+                        modal.step = RegistrationModalStep::ConfirmColdcard {
+                            hmac,
+                            wallet_name: registered_alias,
+                        };
+                    }
+                    return Task::none();
+                }
+
+                // For other devices, send immediately
+                self.send_device_registered(fingerprint, hmac, registered_alias);
+            }
+            Err(error) => {
+                error!("on_registration_result: registration failed - {}", error);
+                // Show error in modal
+                self.views.registration.set_modal_error(error);
+            }
+        }
+        Task::none()
+    }
+
+    /// Send DeviceRegistered to server and close modal
+    fn send_device_registered(
+        &mut self,
+        fingerprint: miniscript::bitcoin::bip32::Fingerprint,
+        hmac: Option<[u8; 32]>,
+        registered_alias: String,
+    ) {
+        // Convert HMAC to Vec<u8> for proof
+        let proof = hmac.map(|h| h.to_vec());
+
+        // Get wallet ID
+        let Some(wallet_id) = self.app.selected_wallet else {
+            error!("send_device_registered: no wallet selected");
+            self.views
+                .registration
+                .set_modal_error("No wallet selected".to_string());
+            return;
+        };
+
+        // Get current user ID
+        let Some(user_id) = *self.backend.user_id.lock().expect("poisoned") else {
+            error!("send_device_registered: no user ID available");
+            self.views
+                .registration
+                .set_modal_error("No user ID available".to_string());
+            return;
+        };
+
+        // Build RegistrationInfos
+        let infos = liana_connect::ws_business::RegistrationInfos {
+            user: user_id,
+            fingerprint,
+            registered: true,
+            registered_alias: Some(registered_alias.clone()),
+            proof_of_registration: proof.clone(),
+        };
+
+        debug!(
+            "send_device_registered: sending DeviceRegistered to server - wallet_id={}, user={}, fingerprint={}, alias='{}', proof_len={:?}",
+            wallet_id,
+            user_id,
+            fingerprint,
+            registered_alias,
+            proof.as_ref().map(|p| p.len())
+        );
+
+        // Send DeviceRegistered request to server
+        self.backend.device_registered(wallet_id, infos);
+
+        // Close modal (keep HW listening for next device)
+        self.views.registration.close_modal();
+    }
+
+    /// Close registration modal (keep HW listening for next device)
+    fn on_registration_cancel_modal(&mut self) {
+        self.views.registration.close_modal();
+    }
+
+    /// Retry registration after error
+    fn on_registration_retry(&mut self) -> Task<Msg> {
+        if let Some(modal) = &self.views.registration.modal {
+            let fingerprint = modal.fingerprint;
+            self.views.registration.close_modal();
+            return self.on_registration_select_device(fingerprint);
+        }
+        Task::none()
+    }
+
+    /// User confirms Coldcard registration succeeded
+    fn on_registration_confirm_yes(&mut self) -> Task<Msg> {
+        if let Some(modal) = &self.views.registration.modal {
+            let fingerprint = modal.fingerprint;
+            if let RegistrationModalStep::ConfirmColdcard { hmac, wallet_name } = &modal.step {
+                debug!(
+                    "on_registration_confirm_yes: user confirmed Coldcard registration for fingerprint={}",
+                    fingerprint
+                );
+                let hmac = *hmac;
+                let wallet_name = wallet_name.clone();
+                self.send_device_registered(fingerprint, hmac, wallet_name);
+            }
+        }
+        Task::none()
+    }
+
+    /// User says Coldcard registration failed
+    fn on_registration_confirm_no(&mut self) {
+        debug!("on_registration_confirm_no: user says Coldcard registration failed");
+        // Close modal - user can retry if they want
+        self.views.registration.close_modal();
+    }
+
+    /// User skips device registration
+    fn on_registration_skip(&mut self, fingerprint: Fingerprint) -> Task<Msg> {
+        debug!("on_registration_skip: user skipping device {}", fingerprint);
+
+        let Some(wallet_id) = self.app.selected_wallet else {
+            error!("on_registration_skip: no wallet selected");
+            return Task::none();
+        };
+
+        let Some(user_id) = *self.backend.user_id.lock().expect("poisoned") else {
+            error!("on_registration_skip: no user_id");
+            return Task::none();
+        };
+
+        // Send DeviceRegistered with registered=false (skipped)
+        let infos = liana_connect::ws_business::RegistrationInfos {
+            user: user_id,
+            fingerprint,
+            registered: false, // Skipped
+            registered_alias: None,
+            proof_of_registration: None,
+        };
+
+        self.backend.device_registered(wallet_id, infos);
+
+        // Remove device from local list (server will update us)
+        self.views
+            .registration
+            .user_devices
+            .retain(|fp| *fp != fingerprint);
+
+        Task::none()
+    }
+
+    /// Skip all remaining devices (only disconnected ones - connected devices can still be registered)
+    fn on_registration_skip_all(&mut self) -> Task<Msg> {
+        debug!("on_registration_skip_all: skipping disconnected devices");
+
+        let Some(wallet_id) = self.app.selected_wallet else {
+            error!("on_registration_skip_all: no wallet selected");
+            return Task::none();
+        };
+
+        let Some(user_id) = *self.backend.user_id.lock().expect("poisoned") else {
+            error!("on_registration_skip_all: no user_id");
+            return Task::none();
+        };
+
+        // Get connected device fingerprints
+        let connected_fps: std::collections::HashSet<Fingerprint> = self
+            .hw
+            .list()
+            .values()
+            .filter_map(|d| {
+                if let async_hwi::service::SigningDevice::Supported(hw) = d {
+                    Some(*hw.fingerprint())
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        // Only skip devices that are NOT connected
+        let devices_to_skip: Vec<Fingerprint> = self
+            .views
+            .registration
+            .user_devices
+            .iter()
+            .filter(|fp| !connected_fps.contains(*fp))
+            .copied()
+            .collect();
+
+        // Send DeviceRegistered with registered=false for each disconnected device
+        for fingerprint in &devices_to_skip {
+            debug!("on_registration_skip_all: skipping device {}", fingerprint);
+            let infos = liana_connect::ws_business::RegistrationInfos {
+                user: user_id,
+                fingerprint: *fingerprint,
+                registered: false, // Skipped
+                registered_alias: None,
+                proof_of_registration: None,
+            };
+            self.backend.device_registered(wallet_id, infos);
+        }
+
+        // Remove skipped devices from local list (server will update us too)
+        for fp in &devices_to_skip {
+            self.views.registration.user_devices.retain(|f| f != fp);
+        }
+
+        Task::none()
     }
 }

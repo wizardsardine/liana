@@ -13,8 +13,6 @@ use liana_ui::{
     widget::*,
 };
 
-use uuid::Uuid;
-
 use super::{format_last_edit_info, layout_with_scrollable_list, menu_entry};
 
 /// Derive the user's role for a specific wallet based on wallet data and global role
@@ -55,8 +53,18 @@ fn derive_user_role(
 const STATUS_BADGE_WIDTH: f32 = 80.0;
 
 /// Render a colored status badge for wallet status
-fn status_badge(status: &WalletStatus) -> Element<'static, Msg> {
-    match status {
+fn status_badge(wallet: &Wallet) -> Element<'static, Msg> {
+    if wallet.status == WalletStatus::Registration {
+        return Container::new(text::caption("Register"))
+            .padding([4, 12])
+            .width(STATUS_BADGE_WIDTH)
+            .center_x(STATUS_BADGE_WIDTH)
+            .style(theme::pill::warning)
+            .into();
+    }
+
+    match wallet.status {
+        WalletStatus::Registration => unreachable!(), // Handled above
         WalletStatus::Created | WalletStatus::Drafted => Container::new(text::caption("Draft"))
             .padding([4, 12])
             .width(STATUS_BADGE_WIDTH)
@@ -94,24 +102,23 @@ fn role_label(role: &UserRole) -> &'static str {
 }
 
 /// Get sort priority for wallet status (lower = shown first)
-/// Order: Draft (0) -> Locked (1) -> Validated (2) -> Finalized (3)
-fn status_sort_priority(status: &WalletStatus) -> u8 {
-    match status {
+/// Order: Draft (0) -> Locked (1) -> Validated (2) -> Registration (3) -> Finalized (4)
+fn status_sort_priority(wallet: &Wallet) -> u8 {
+    match wallet.status {
         WalletStatus::Created | WalletStatus::Drafted => 0,
         WalletStatus::Locked => 1,
         WalletStatus::Validated => 2,
-        WalletStatus::Finalized => 3,
+        WalletStatus::Registration => 3,
+        WalletStatus::Finalized => 4,
     }
 }
 
 pub fn wallet_card<'a>(
-    alias: String,
-    key_count: usize,
-    status: &WalletStatus,
+    wallet: &Wallet,
     role: &UserRole,
-    id: Uuid,
     last_edit_info: Option<String>,
 ) -> Element<'a, Msg> {
+    let key_count = wallet.template.as_ref().map(|t| t.keys.len()).unwrap_or(0);
     let keys = match key_count {
         0 => "".to_string(),
         1 => "(1 key)".to_string(),
@@ -120,7 +127,7 @@ pub fn wallet_card<'a>(
 
     // Left side: wallet name, key count, and edit info
     let mut left_col = Column::new()
-        .push(text::h3(alias))
+        .push(text::h3(wallet.alias.clone()))
         .push(text::p1_regular(keys))
         .spacing(4);
 
@@ -131,7 +138,7 @@ pub fn wallet_card<'a>(
     // Right side: status badge and role label
     // Don't show "Manager" role - it's already in the header for WSManager users
     let mut right_col = Column::new()
-        .push(status_badge(status))
+        .push(status_badge(wallet))
         .spacing(4)
         .width(STATUS_BADGE_WIDTH)
         .align_x(Alignment::Center);
@@ -149,7 +156,7 @@ pub fn wallet_card<'a>(
         .width(Length::Fill)
         .into();
 
-    let message = Some(Msg::OrgWalletSelected(id));
+    let message = Some(Msg::OrgWalletSelected(wallet.id));
 
     menu_entry(content, message)
 }
@@ -325,8 +332,7 @@ pub fn wallet_select_view(state: &State) -> Element<'_, Msg> {
                     .collect();
 
                 // Sort by status: Draft first, Finalized last
-                wallets_to_display
-                    .sort_by_key(|(_, wallet, _)| status_sort_priority(&wallet.status));
+                wallets_to_display.sort_by_key(|(_, wallet, _)| status_sort_priority(wallet));
 
                 // Show message when search filter returns no results
                 if wallets_to_display.is_empty() && !search_filter.is_empty() {
@@ -335,9 +341,7 @@ pub fn wallet_select_view(state: &State) -> Element<'_, Msg> {
                 } else {
                     let current_user_email_lower = current_user_email.to_lowercase();
                     // Render sorted wallets
-                    for (id, wallet, role) in wallets_to_display {
-                        let key_count = wallet.template.as_ref().map(|t| t.keys.len()).unwrap_or(0);
-
+                    for (_id, wallet, role) in wallets_to_display {
                         let last_edit_info = format_last_edit_info(
                             wallet.last_edited,
                             wallet.last_editor,
@@ -345,14 +349,7 @@ pub fn wallet_select_view(state: &State) -> Element<'_, Msg> {
                             &current_user_email_lower,
                         );
 
-                        let card = wallet_card(
-                            wallet.alias.clone(),
-                            key_count,
-                            &wallet.status,
-                            &role,
-                            id,
-                            last_edit_info,
-                        );
+                        let card = wallet_card(&wallet, &role, last_edit_info);
                         list_content = list_content.push(card);
                     }
                 }

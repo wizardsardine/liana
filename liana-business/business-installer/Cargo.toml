@@ -31,4 +31,5 @@ tracing = { workspace = true }
 rfd = { workspace = true }
 futures = "0.3"
 futures-timer = "3.0"
+hex = "0.4"
 

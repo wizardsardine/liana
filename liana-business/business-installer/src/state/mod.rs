@@ -3,8 +3,8 @@ use crate::{
     client::Client,
     state::app::AppState,
     views::{
-        keys_view, login_view, modals, org_select_view, template_builder_view, wallet_select_view,
-        xpub_view,
+        keys_view, login_view, modals, org_select_view, registration_view, template_builder_view,
+        wallet_select_view, xpub_view,
     },
 };
 use async_hwi::{bitbox::NoiseConfig, service::HwiService};
@@ -37,6 +37,7 @@ pub enum View {
     WalletEdit,
     Xpub,
     Keys,
+    Registration,
 }
 
 /// Main application state
@@ -158,6 +159,7 @@ impl State {
             View::WalletEdit => template_builder_view(self),
             View::Xpub => xpub_view(self),
             View::Keys => keys_view(self),
+            View::Registration => registration_view(self),
         };
 
         // Overlay modals if any are open
@@ -173,6 +175,8 @@ impl State {
                 Message::TemplateCancelPathModal
             } else if self.views.xpub.modal.is_some() {
                 Message::XpubCancelModal
+            } else if self.views.registration.modal.is_some() {
+                Message::RegistrationCancelModal
             } else {
                 Message::WarningCloseModal
             };

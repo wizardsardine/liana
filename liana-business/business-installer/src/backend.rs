@@ -1,7 +1,7 @@
 use crate::Message;
 use crossbeam::channel;
 use iced::futures::Stream;
-use liana_connect::ws_business::{Org, User, Wallet, WssError, Xpub};
+use liana_connect::ws_business::{Org, RegistrationInfos, User, Wallet, WssError, Xpub};
 use std::{
     collections::BTreeMap,
     pin::Pin,
@@ -84,6 +84,10 @@ pub trait Backend {
         wallet_id: Uuid,
         xpub: Option<Xpub>,
         key_id: u8);
+    fn device_registered(
+        &mut self,
+        wallet_id: Uuid,
+        infos: RegistrationInfos);
 
     #[cfg(test)]
     fn fetch_user(&mut self, id: Uuid);

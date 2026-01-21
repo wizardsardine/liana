@@ -283,6 +283,35 @@ field can be:
 - An [Xpub Object](#xpub-object) when setting/updating the key
 - `null` when clearing/removing the xpub
 
+#### `device_registered`
+Report that a device has registered the wallet descriptor.
+
+**Request:**
+```json
+{
+  "type": "device_registered",
+  "token": "<auth_token>",
+  "request_id": "<uuid>",
+  "payload": {
+    "wallet_id": "<uuid>",
+    "infos": <RegistrationInfos>
+  }
+}
+```
+
+**Response:** [`wallet`](#wallet-notification)
+
+**Maps to:** `Response::Wallet { wallet: Wallet }`
+
+**Note:** The `infos.registered` field should be `true`. The `infos.proof_of_registration`
+field should contain the HMAC (hex-encoded) for Ledger devices, or `null` for other
+devices. See [RegistrationInfos Object](#registrationinfos-object) for the structure.
+
+**Note:** This request is only valid when the wallet is in `Registration(Pending)` status
+and the user owns the device being registered (the `infos.user` must match the
+authenticated user, and the `infos.fingerprint` must be assigned to that user in the
+`registered_devices` map).
+
 ### User Management
 
 #### `fetch_user`
@@ -365,7 +394,13 @@ Clients should fetch and cache User objects separately.
 - `"Drafted"`: Draft by WS manager
 - `"Locked"`: Locked by WS manager, ready for owner validation
 - `"Validated"`: Policy validated by owner, keys metadata not yet completed
+- `{"Registration": {"Pending": {...}}}`: Descriptor generated, awaiting device registration
+- `{"Registration": "Registered"}`: All devices have registered the descriptor
 - `"Finalized"`: All key metadata filled, ready for production
+
+**Note:** The `Registration` status has two sub-states:
+- `Pending`: Contains the generated `descriptor` string and `registered_devices` map
+- `Registered`: All devices have successfully registered the descriptor
 
 **Note:** The `template` field is optional and may be `null` for newly created wallets.
 
@@ -439,6 +474,30 @@ Used in `edit_xpub` request payloads:
 
 **Note:** When `source` is `"file"`:
 - `file_name` optionally contains the original filename
+
+### RegistrationInfos Object
+
+Used in `device_registered` request payloads and in wallet registration status:
+
+```json
+{
+  "user": "<uuid>",
+  "fingerprint": "<fingerprint>",
+  "registered": <boolean>,
+  "registered_alias": "<string>" | null,
+  "proof_of_registration": [<number>, ...] | null
+}
+```
+
+**Note:** The `registered_alias` field contains the wallet name/alias used when registering
+the descriptor on the hardware device. This is populated after successful device registration.
+
+**Note:** The `proof_of_registration` field contains the HMAC as an array of bytes for Ledger
+devices, or `null` for other device types. This field is only populated after successful
+device registration.
+
+**Note:** The `fingerprint` field is the hardware wallet master key fingerprint in
+hex format (e.g., "d34db33f").
 
 ### SpendingPath Object
 
@@ -592,6 +651,8 @@ user modifies the wallet).
 - `"Drafted"`: Draft by WS manager
 - `"Locked"`: Locked by WS manager, ready for owner validation
 - `"Validated"`: Policy validated by owner, keys metadata not yet completed
+- `{"Registration": {"Pending": {...}}}`: Descriptor generated, awaiting device registration
+- `{"Registration": "Registered"}`: All devices have registered the descriptor
 - `"Finalized"`: All key metadata filled, ready for production
 
 ### `user` Notification
@@ -1189,6 +1250,104 @@ Client -> Server: Request::EditXpub {
 Server -> Client: Response::Wallet { wallet: Wallet { /* key 0 xpub is now None */ } }
 ```
 
+### Device Registration Flow
+
+After the owner validates the wallet, the server transitions the wallet to
+`Registration(Pending)` status with a generated descriptor. Each participant with
+Internal keys must register the descriptor on their hardware devices.
+
+**Actor:** Participant with Internal keys
+
+**Precondition:** Wallet is in `Registration(Pending)` status, user has devices to register
+
+```
+// Step 1: Receive wallet with Registration status (after validation)
+Server -> Client: Response::Wallet {
+    wallet: Wallet {
+        id: "wallet-uuid-001",
+        status: WalletStatus::Registration(RegistrationStatus::Pending {
+            descriptor: "wsh(or_d(multi(2,[d34db33f/48'/0'/0'/2']xpub.../0/*,...),and_v(...)))",
+            registered_devices: {
+                "d34db33f": RegistrationInfos {
+                    user: "user-uuid-001",
+                    fingerprint: "d34db33f",
+                    registered: false,
+                    registered_alias: None,
+                    proof_of_registration: None,
+                },
+                "cafebabe": RegistrationInfos {
+                    user: "user-uuid-002",
+                    fingerprint: "cafebabe",
+                    registered: false,
+                    registered_alias: None,
+                    proof_of_registration: None,
+                },
+            },
+        }),
+        ...
+    }
+}
+
+// Step 2: User connects hardware device (fingerprint: d34db33f)
+// Client detects device via HwiService, matches fingerprint to registered_devices
+
+// Step 3: User initiates registration on device
+// Client calls async-hwi register_wallet() which prompts user to confirm on device
+
+// Step 4: After successful registration, client reports to server
+Client -> Server: Request::DeviceRegistered {
+    wallet_id: "wallet-uuid-001",
+    infos: RegistrationInfos {
+        user: "user-uuid-001",
+        fingerprint: "d34db33f",
+        registered: true,
+        registered_alias: Some("My Wallet"),  // Alias used for registration
+        proof_of_registration: Some("a1b2c3d4..."),  // HMAC for Ledger, None for others
+    },
+}
+
+// Step 5: Server updates registration status and responds
+Server -> Client: Response::Wallet {
+    wallet: Wallet {
+        id: "wallet-uuid-001",
+        status: WalletStatus::Registration(RegistrationStatus::Pending {
+            descriptor: "wsh(...)",
+            registered_devices: {
+                "d34db33f": RegistrationInfos {
+                    user: "user-uuid-001",
+                    fingerprint: "d34db33f",
+                    registered: true,  // Now registered
+                    registered_alias: Some("My Wallet"),
+                    proof_of_registration: Some("a1b2c3d4..."),
+                },
+                "cafebabe": RegistrationInfos {
+                    user: "user-uuid-002",
+                    fingerprint: "cafebabe",
+                    registered: false,  // Still waiting
+                    registered_alias: None,
+                    proof_of_registration: None,
+                },
+            },
+        }),
+        ...
+    }
+}
+
+// Step 6: When ALL devices are registered, server transitions to Registered
+// (After user-uuid-002 also registers their device)
+Server -> Client: Response::Wallet {
+    wallet: Wallet {
+        id: "wallet-uuid-001",
+        status: WalletStatus::Registration(RegistrationStatus::Registered),
+        ...
+    }
+}
+```
+
+**Note:** The `proof_of_registration` field is only populated for Ledger devices (HMAC
+hex string). For other device types (BitBox02, Coldcard, Jade, Specter), this field
+should be `null`.
+
 ### Notification Flows (Unsolicited)
 
 When another user modifies a wallet, organization, or user that you have access to,
@@ -1477,6 +1636,10 @@ pub enum Request {
         xpub: Option<Xpub>,
     },
     FetchUser { id: Uuid },
+    DeviceRegistered {
+        wallet_id: Uuid,
+        infos: RegistrationInfos,
+    },
 }
 ```
 

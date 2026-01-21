@@ -222,6 +222,129 @@ When user arrives at wallet selection, three possible subflows based on status:
 
 ## In Progress
 
+- [ ] **Device Registration Flow (8)** - See [REGISTRATION_STEP.md](REGISTRATION_STEP.md) for detailed plan
+  - After wallet validation, participants must register the wallet descriptor on their hardware devices
+  - Uses `async-hwi::register_wallet` for device registration
+  - Proof of registration: HMAC (hex string) for Ledger only, `None` for others
+
+  - [ ] **8.1 Protocol (liana-connect)**
+    - [x] 8.1.1 `models.rs`: Make `RegistrationInfos` fields public (`user`, `fingerprint`, `registered`, `proof_of_registration`)
+    - [x] 8.1.2 `models.rs`: Add `RegistrationInfos::new(user, fingerprint)` constructor
+    - [x] 8.1.3 `protocol.rs`: Add `METHOD_DEVICE_REGISTERED` constant
+    - [x] 8.1.4 `protocol.rs`: Add `DeviceRegistered` arm to `method()` match
+    - [x] 8.1.5 `protocol.rs`: Add `DeviceRegistered` arm to `payload()` match
+    - [x] 8.1.6 `protocol.rs`: Add `device_registered_payload()` helper function
+    - [x] 8.1.7 `protocol.rs`: Add `parse_device_registered_request()` parser function
+    - [x] 8.1.8 `protocol.rs`: Add `DeviceRegistered` arm to `from_ws_message()` match
+
+  - [x] **8.2 Server (liana-business-server)**
+    - [x] 8.2.1 `handler.rs`: Add `DeviceRegistered` match arm in `handle_request()`
+    - [x] 8.2.2 `handler.rs`: Implement `handle_device_registered()` function
+      - [x] Validate wallet is in `Registration(Pending)` status
+      - [x] Verify user owns this fingerprint (`infos.user == editor_id`)
+      - [x] Update `registered_devices[fingerprint]` with new `infos`
+      - [x] Check if ALL devices are registered
+      - [x] If all registered, transition to `RegistrationStatus::Registered`
+      - [x] Return `Response::Wallet { wallet }`
+
+  - [x] **8.3 Client State (business-installer)**
+    - [x] 8.3.1 `state/mod.rs`: Add `Registration` variant to `View` enum
+    - [x] 8.3.2 `state/mod.rs`: Add `registration_view` to imports
+    - [x] 8.3.3 `state/mod.rs`: Update `view()` method to handle `View::Registration`
+    - [x] 8.3.4 `state/views/mod.rs`: Add `pub mod registration;`
+    - [x] 8.3.5 `state/views/mod.rs`: Add `registration: RegistrationViewState` to `ViewsState`
+    - [x] 8.3.6 Create `state/views/registration.rs`:
+      - [x] `RegistrationModalStep` enum (`Registering`, `Error`)
+      - [x] `RegistrationModalState` struct (fingerprint, device_kind, step, error)
+      - [x] `RegistrationViewState` struct (descriptor, user_devices, modal)
+
+  - [x] **8.4 Client Messages (business-installer)**
+    - [x] 8.4.1 `state/message.rs`: Add `RegistrationSelectDevice(Fingerprint)` message
+    - [x] 8.4.2 `state/message.rs`: Add `RegistrationResult(Result<(Fingerprint, Option<[u8; 32]>), String>)` message
+    - [x] 8.4.3 `state/message.rs`: Add `RegistrationCancelModal` message
+    - [x] 8.4.4 `state/message.rs`: Add `RegistrationRetry` message
+
+  - [x] **8.5 Client Update Handlers (business-installer)**
+    - [x] 8.5.1 `state/update.rs`: Add match arms for Registration messages
+    - [x] 8.5.2 `state/update.rs`: Implement `on_registration_select_device(fp)`
+      - [x] Find device in HwiService by fingerprint
+      - [x] Open modal with `Registering` step
+      - [x] Start `hw.register_wallet()` via `Task::perform`
+    - [x] 8.5.3 `state/update.rs`: Implement `on_registration_result(result)`
+      - [x] On success: build `RegistrationInfos`, send `DeviceRegistered` request
+      - [x] On error: show error in modal
+    - [x] 8.5.4 `state/update.rs`: Implement `on_registration_cancel_modal()`
+    - [x] 8.5.5 `state/update.rs`: Update wallet routing to go to `View::Registration` when status is `Registration(Pending)`
+
+  - [x] **8.6 Client Backend (business-installer)**
+    - [x] 8.6.1 `backend.rs`: Add `device_registered(&mut self, wallet_id, infos)` to `Backend` trait
+    - [x] 8.6.2 `client.rs`: Implement `device_registered()` to send `Request::DeviceRegistered` over WebSocket
+
+  - [x] **8.7 Client Views (business-installer)**
+    - [x] 8.7.1 `views/mod.rs`: Add `pub mod registration;` and export `registration_view`
+    - [x] 8.7.2 Create `views/registration/mod.rs`:
+      - [x] Main `registration_view()` function
+      - [x] `waiting_for_others_view()` - when user has no devices to register
+      - [x] `user_complete_waiting_view()` - when all user's devices are registered
+      - [x] `device_list_view()` - show devices to register
+      - [x] `clickable_device_card()` - connected + supported device
+      - [x] `disabled_device_card()` - greyed out (not connected or locked/unsupported)
+      - [x] `registered_device_card()` - already registered with checkmark
+    - [x] 8.7.3 Create `views/registration/modal.rs`:
+      - [x] `registration_modal_view()` function
+      - [x] `registering_view()` - "Please confirm on your device..." with Cancel
+      - [x] `error_view()` - Error message with Cancel and Retry buttons
+    - [x] 8.7.4 `views/modals/mod.rs`: Add registration modal to stacking
+
+  - [x] **8.8 Documentation (liana-connect)**
+    - [x] 8.8.1 `WSS_BUSINESS.md`: Update Wallet Object status documentation with `Registration` states
+    - [x] 8.8.2 `WSS_BUSINESS.md`: Add `RegistrationInfos Object` section
+    - [x] 8.8.3 `WSS_BUSINESS.md`: Add `device_registered` message type documentation
+    - [x] 8.8.4 `WSS_BUSINESS.md`: Add Device Registration Flow example
+    - [x] 8.8.5 `WSS_BUSINESS.md`: Update Request enum in Appendix with `DeviceRegistered`
+
+  - [ ] **8.9 Testing**
+    - [x] 8.9.1 Test protocol serialization/deserialization for `DeviceRegistered`
+    - [x] 8.9.2 Test server handler with mock state
+    - [ ] 8.9.3 Test UI rendering for registration view
+    - [ ] 8.9.4 End-to-end test with hardware wallet (Ledger, others)
+
+  - [x] **8.10 Registration Simplification** - Simplify flow, add Skip functionality
+    - New specs: `WalletStatus::Registration { descriptor, devices }`, user can register or skip each device
+    - Skip sends `RegistrationInfos.registered = false`
+    - Server transitions to `Finalized` when ALL fingerprints have registration info
+
+    - [x] **8.10.1 Protocol Changes (liana-connect)**
+      - [x] `models.rs`: Change `WalletStatus::Registration` to struct variant with `descriptor: String` and `devices: Vec<Fingerprint>`
+
+    - [x] **8.10.2 Server Changes (liana-business-server)**
+      - [x] `handler.rs`: Remove `RegistrationStatus` import
+      - [x] `handler.rs`: Update `handle_edit_wallet()` to match `WalletStatus::Registration { .. }`
+      - [x] `handler.rs`: Update `handle_device_registered()` to check all fingerprints have info → `Finalized`
+      - [x] `state.rs`: Remove `RegistrationStatus` import
+      - [x] `state.rs`: Add `registration_infos` storage to `ServerState`
+      - [x] `state.rs`: Update `init_test_data()` to use new struct variant
+      - [x] `tests.rs`: Update tests for new struct variant and `Finalized` assertions
+
+    - [x] **8.10.3 Client State Changes (business-installer)**
+      - [x] `state/views/registration.rs`: Remove `wallet_fully_registered` field
+      - [x] `state/views/registration.rs`: Change `user_devices` to `Vec<Fingerprint>`
+      - [x] `state/views/registration.rs`: Remove `all_user_devices_registered()` and `pending_devices()` methods
+      - [x] `state/message.rs`: Add `RegistrationSkip(Fingerprint)` message
+      - [x] `state/update.rs`: Update handlers for new `WalletStatus::Registration { descriptor, devices }` struct
+      - [x] `state/update.rs`: Add `on_registration_skip(fingerprint)` handler
+      - [x] `state/update.rs`: Handle `WalletStatus::Finalized` → trigger exit
+
+    - [x] **8.10.4 Client View Changes (business-installer)**
+      - [x] `views/registration/mod.rs`: Delete `waiting_for_others_view()`
+      - [x] `views/registration/mod.rs`: Delete `user_complete_waiting_view()`
+      - [x] `views/registration/mod.rs`: Delete `all_complete_view()`
+      - [x] `views/registration/mod.rs`: Simplify `registration_view()` logic
+      - [x] `views/registration/mod.rs`: Add Skip button to disconnected device cards
+
+    - [x] **8.10.5 Documentation**
+      - [x] `ROADMAP.md`: Update completed items in section 8 to reflect changes
+
 - [ ] **WS Manager Flow (3.1)**
   - [x] Full template editing for Draft wallets
   - [ ] Wallet loading for Final wallets
@@ -319,6 +442,7 @@ When user arrives at wallet selection, three possible subflows based on status:
 
 ## Known Issues
 
+- [ ] Registration: Multiple devices with same fingerprint - currently picks arbitrary one (should warn or let user choose)
 - [x] WS Manager role: Org list wallet count includes non-visible wallets
 - [x] Login page: Wrong email greys out "Send token" button, user stuck (dummy server issue)
 - [x] Owner role: "Manage Key" button displayed after wallet approved (should be hidden)

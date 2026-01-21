@@ -828,6 +828,36 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1628fb46dfa0b37568d12e5edd512553eccf6a22a78e8bde00bb4aed84d5bdbf"
 
 [[package]]
+name = "business-installer"
+version = "0.1.0"
+dependencies = [
+ "async-hwi",
+ "chrono",
+ "crossbeam",
+ "email_address",
+ "futures",
+ "futures-timer",
+ "hex",
+ "iced",
+ "liana",
+ "liana-connect",
+ "liana-gui",
+ "liana-ui",
+ "miniscript",
+ "reqwest",
+ "rfd",
+ "rustls 0.23.36",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.17",
+ "tokio",
+ "tracing",
+ "tungstenite",
+ "url",
+ "uuid",
+]
+
+[[package]]
 name = "business-settings"
 version = "0.1.0"
 dependencies = [
