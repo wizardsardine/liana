@@ -168,7 +168,7 @@ impl Pane {
                             .push(p1_regular("..."))
                     })
                     .style(if i == self.focused_tab {
-                        theme::button::tab_active
+                        theme::button::tab_liquid
                     } else {
                         theme::button::tab
                     })
