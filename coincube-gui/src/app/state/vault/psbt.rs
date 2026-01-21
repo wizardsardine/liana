@@ -234,7 +234,9 @@ impl PsbtState {
                         return cmd;
                     }
                     Err(e) => {
+                        let err_msg = e.to_string();
                         self.warning = Some(e);
+                        return Task::done(Message::View(view::Message::ShowError(err_msg)));
                     }
                 };
             }
@@ -260,7 +262,9 @@ impl PsbtState {
                     }));
                 }
                 Err(e) => {
+                    let err_msg = e.to_string();
                     self.warning = Some(e);
+                    return Task::done(Message::View(view::Message::ShowError(err_msg)));
                 }
             },
             Message::Export(ImportExportMessage::Progress(Progress::Psbt(psbt))) => {
@@ -294,7 +298,7 @@ impl PsbtState {
             } else {
                 false
             },
-            self.warning.as_ref(),
+            cache.bitcoin_unit,
         );
         if let Some(modal) = &self.modal {
             modal.as_ref().view(content)
@@ -337,19 +341,20 @@ impl Modal for SaveModal {
             }
             Message::Updated(res) => match res {
                 Ok(()) => self.saved = true,
-                Err(e) => self.error = Some(e),
+                Err(e) => {
+                    let err_msg = e.to_string();
+                    self.error = Some(e);
+                    return Task::done(Message::View(view::Message::ShowError(err_msg)));
+                }
             },
             _ => {}
         }
         Task::none()
     }
     fn view<'a>(&'a self, content: Element<'a, view::Message>) -> Element<'a, view::Message> {
-        modal::Modal::new(
-            content,
-            view::vault::psbt::save_action(self.error.as_ref(), self.saved),
-        )
-        .on_blur(Some(view::Message::Spend(view::SpendTxMessage::Cancel)))
-        .into()
+        modal::Modal::new(content, view::vault::psbt::save_action(self.saved))
+            .on_blur(Some(view::Message::Spend(view::SpendTxMessage::Cancel)))
+            .into()
     }
 }
 
@@ -388,7 +393,11 @@ impl Modal for BroadcastModal {
                     tx.status = SpendStatus::Broadcast;
                     self.broadcast = true;
                 }
-                Err(e) => self.error = Some(e),
+                Err(e) => {
+                    let err_msg = e.to_string();
+                    self.error = Some(e);
+                    return Task::done(Message::View(view::Message::ShowError(err_msg)));
+                }
             },
             _ => {}
         }
@@ -397,11 +406,7 @@ impl Modal for BroadcastModal {
     fn view<'a>(&'a self, content: Element<'a, view::Message>) -> Element<'a, view::Message> {
         modal::Modal::new(
             content,
-            view::vault::psbt::broadcast_action(
-                &self.conflicting_txids,
-                self.error.as_ref(),
-                self.broadcast,
-            ),
+            view::vault::psbt::broadcast_action(&self.conflicting_txids, self.broadcast),
         )
         .on_blur(Some(view::Message::Spend(view::SpendTxMessage::Cancel)))
         .into()
@@ -438,19 +443,20 @@ impl Modal for DeleteModal {
             }
             Message::Updated(res) => match res {
                 Ok(()) => self.deleted = true,
-                Err(e) => self.error = Some(e),
+                Err(e) => {
+                    let err_msg = e.to_string();
+                    self.error = Some(e);
+                    return Task::done(Message::View(view::Message::ShowError(err_msg)));
+                }
             },
             _ => {}
         }
         Task::none()
     }
     fn view<'a>(&'a self, content: Element<'a, view::Message>) -> Element<'a, view::Message> {
-        modal::Modal::new(
-            content,
-            view::vault::psbt::delete_action(self.error.as_ref(), self.deleted),
-        )
-        .on_blur(Some(view::Message::Spend(view::SpendTxMessage::Cancel)))
-        .into()
+        modal::Modal::new(content, view::vault::psbt::delete_action(self.deleted))
+            .on_blur(Some(view::Message::Spend(view::SpendTxMessage::Cancel)))
+            .into()
     }
 }
 
@@ -532,7 +538,9 @@ impl Modal for SignModal {
                     Err(e) => {
                         self.display_modal = true;
                         if !matches!(e, Error::HardwareWallet(async_hwi::Error::UserRefused)) {
-                            self.error = Some(e)
+                            let err_msg = e.to_string();
+                            self.error = Some(e);
+                            return Task::done(Message::View(view::Message::ShowError(err_msg)));
                         }
                     }
                     Ok(psbt) => {
@@ -568,9 +576,17 @@ impl Modal for SignModal {
             Message::Updated(res) => match res {
                 Ok(()) => match self.wallet.main_descriptor.partial_spend_info(&tx.psbt) {
                     Ok(sigs) => tx.sigs = sigs,
-                    Err(e) => self.error = Some(Error::Unexpected(e.to_string())),
+                    Err(e) => {
+                        let err_msg = e.to_string();
+                        self.error = Some(Error::Unexpected(err_msg.clone()));
+                        return Task::done(Message::View(view::Message::ShowError(err_msg)));
+                    }
                 },
-                Err(e) => self.error = Some(e),
+                Err(e) => {
+                    let err_msg = e.to_string();
+                    self.error = Some(e);
+                    return Task::done(Message::View(view::Message::ShowError(err_msg)));
+                }
             },
 
             Message::HardwareWallets(msg) => match self.hws.update(msg) {
@@ -578,7 +594,9 @@ impl Modal for SignModal {
                     return cmd.map(Message::HardwareWallets);
                 }
                 Err(e) => {
+                    let err_msg = e.to_string();
                     self.error = Some(e.into());
+                    return Task::done(Message::View(view::Message::ShowError(err_msg)));
                 }
             },
             _ => {}
@@ -589,18 +607,13 @@ impl Modal for SignModal {
     fn view<'a>(&'a self, content: Element<'a, view::Message>) -> Element<'a, view::Message> {
         let content = toast::Manager::new(
             content,
-            view::vault::psbt::sign_action_toasts(
-                self.error.as_ref(),
-                &self.hws.list,
-                &self.signing,
-            ),
+            view::vault::psbt::sign_action_toasts(&self.hws.list, &self.signing),
         )
         .into();
         if self.display_modal {
             modal::Modal::new(
                 content,
                 view::vault::psbt::sign_action(
-                    self.error.as_ref(),
                     &self.hws.list,
                     &self.wallet.main_descriptor,
                     self.wallet.signer.as_ref().map(|s| s.fingerprint()),

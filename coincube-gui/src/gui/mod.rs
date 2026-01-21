@@ -480,8 +480,8 @@ impl GUI {
                 for (&pane_id, pane) in self.panes.iter() {
                     for tab in pane.tabs.iter() {
                         if let Some(sett) = tab
-                            .wallet()
-                            .and_then(|w| w.fiat_price_setting.as_ref())
+                            .cube_settings()
+                            .and_then(|cs| cs.fiat_price.as_ref())
                             .filter(|sett| sett.is_enabled)
                         {
                             if let Some(fresh_price) = self

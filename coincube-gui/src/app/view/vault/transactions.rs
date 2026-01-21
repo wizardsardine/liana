@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::convert::TryInto;
 
 use chrono::{DateTime, Local, Utc};
 use iced::{
@@ -8,7 +9,14 @@ use iced::{
 };
 
 use coincube_ui::{
-    component::{amount::*, badge, button, card, form, text::*},
+    component::{
+        amount::*,
+        button, card, form,
+        text::*,
+        transaction::{
+            TransactionBadge, TransactionDirection, TransactionListItem, TransactionType,
+        },
+    },
     icon::{self, receipt_icon},
     theme,
     widget::*,
@@ -17,13 +25,13 @@ use coincube_ui::{
 use crate::{
     app::{
         cache::Cache,
-        error::Error,
-        menu::Menu,
+        menu::{Menu, VaultSubMenu},
         view::{
             dashboard,
             message::{CreateRbfMessage, Message},
             placeholder,
-            vault::{label, warning::warn},
+            vault::label,
+            FiatAmountConverter,
         },
     },
     daemon::model::{HistoryTransaction, Txid},
@@ -34,14 +42,14 @@ pub fn transactions_view<'a>(
     menu: &'a Menu,
     cache: &'a Cache,
     txs: &'a [HistoryTransaction],
-    warning: Option<&'a Error>,
     is_last_page: bool,
     processing: bool,
 ) -> Element<'a, Message> {
+    let fiat_converter = cache.fiat_price.as_ref().and_then(|p| p.try_into().ok());
+
     dashboard(
         menu,
         cache,
-        warning,
         Column::new()
             .push(
                 Row::new()
@@ -66,7 +74,7 @@ pub fn transactions_view<'a>(
                         txs.iter()
                             .enumerate()
                             .fold(Column::new().spacing(10), |col, (i, tx)| {
-                                col.push(tx_list_view(i, tx))
+                                col.push(tx_list_view(i, tx, cache.bitcoin_unit, fiat_converter))
                             }),
                     )
                     .push(if !is_last_page && !txs.is_empty() {
@@ -102,80 +110,64 @@ pub fn transactions_view<'a>(
     )
 }
 
-fn tx_list_view(i: usize, tx: &HistoryTransaction) -> Element<'_, Message> {
-    Container::new(
-        Button::new(
-            Row::new()
-                .push(
-                    Row::new()
-                        .push(if tx.is_external() {
-                            badge::receive()
-                        } else if tx.is_send_to_self() {
-                            badge::cycle()
-                        } else {
-                            badge::spend()
-                        })
-                        .push(
-                            Column::new()
-                                .push(if let Some(outpoint) = tx.is_single_payment() {
-                                    tx.labels.get(&outpoint.to_string()).map(p1_regular)
-                                } else {
-                                    tx.labels
-                                        .get(&tx.tx.compute_txid().to_string())
-                                        .map(p1_regular)
-                                })
-                                .push(tx.time.map(|t| {
-                                    Container::new(
-                                        text(
-                                            DateTime::<Utc>::from_timestamp(t as i64, 0)
-                                                .expect("Correct unix timestamp")
-                                                .with_timezone(&Local)
-                                                .format("%b. %d, %Y - %T")
-                                                .to_string(),
-                                        )
-                                        .style(theme::text::secondary)
-                                        .small(),
-                                    )
-                                })),
-                        )
-                        .spacing(10)
-                        .align_y(Alignment::Center)
-                        .width(Length::Fill),
-                )
-                .push(if tx.time.is_none() {
-                    Some(badge::unconfirmed())
-                } else {
-                    None
-                })
-                .push(if tx.is_batch() {
-                    Some(badge::batch())
-                } else {
-                    None
-                })
-                .push(if tx.is_external() {
-                    Row::new()
-                        .spacing(5)
-                        .push(text("+"))
-                        .push(amount(&tx.incoming_amount))
-                        .align_y(Alignment::Center)
-                } else if tx.outgoing_amount != Amount::from_sat(0) {
-                    Row::new()
-                        .spacing(5)
-                        .push(text("-"))
-                        .push(amount(&tx.outgoing_amount))
-                        .align_y(Alignment::Center)
-                } else {
-                    Row::new().push(text("Self-transfer"))
-                })
-                .align_y(Alignment::Center)
-                .spacing(20),
-        )
-        .padding(10)
-        .on_press(Message::Select(i))
-        .style(theme::button::transparent_border),
-    )
-    .style(theme::card::simple)
-    .into()
+fn tx_list_view(
+    i: usize,
+    tx: &HistoryTransaction,
+    bitcoin_unit: BitcoinDisplayUnit,
+    fiat_converter: Option<FiatAmountConverter>,
+) -> Element<'_, Message> {
+    let direction = if tx.is_external() {
+        TransactionDirection::Incoming
+    } else if tx.is_send_to_self() {
+        TransactionDirection::SelfTransfer
+    } else {
+        TransactionDirection::Outgoing
+    };
+
+    let amount = if tx.is_external() {
+        &tx.incoming_amount
+    } else {
+        &tx.outgoing_amount
+    };
+
+    let label = if let Some(outpoint) = tx.is_single_payment() {
+        tx.labels.get(&outpoint.to_string()).cloned()
+    } else {
+        tx.labels.get(&tx.tx.compute_txid().to_string()).cloned()
+    };
+
+    let timestamp = tx
+        .time
+        .and_then(|t| DateTime::<Utc>::from_timestamp(t as i64, 0));
+
+    let mut badges = Vec::new();
+    if tx.time.is_none() {
+        badges.push(TransactionBadge::Unconfirmed);
+    }
+    if tx.is_batch() {
+        badges.push(TransactionBadge::Batch);
+    }
+
+    let mut item = TransactionListItem::new(direction, amount, bitcoin_unit)
+        .with_type(TransactionType::Bitcoin)
+        .with_badges(badges);
+
+    if let Some(label) = label {
+        item = item.with_label(label);
+    }
+
+    if let Some(timestamp) = timestamp {
+        item = item.with_timestamp(timestamp);
+    }
+
+    if let Some(fiat_amount) = fiat_converter.map(|converter| {
+        let fiat = converter.convert(*amount);
+        format!("~{} {}", fiat.to_rounded_string(), fiat.currency())
+    }) {
+        item = item.with_fiat_amount(fiat_amount);
+    }
+
+    item.view(Message::Select(i)).into()
 }
 
 /// Return the modal view for a new RBF transaction.
@@ -187,7 +179,6 @@ pub fn create_rbf_modal<'a>(
     descendant_txids: &HashSet<Txid>,
     feerate: &form::Value<String>,
     replacement_txid: Option<Txid>,
-    warning: Option<&'a Error>,
 ) -> Element<'a, Message> {
     let mut confirm_button = button::secondary(None, "Confirm").width(Length::Fixed(200.0));
     if feerate.valid || is_cancel {
@@ -286,7 +277,6 @@ pub fn create_rbf_modal<'a>(
             } else {
                 None
             })
-            .push(warn(warning))
             .push(Row::new().push(if replacement_txid.is_none() {
                 Row::new().push(confirm_button)
             } else {
@@ -303,7 +293,7 @@ pub fn create_rbf_modal<'a>(
                 Row::new().push(
                     button::primary(None, "Go to replacement")
                         .width(Length::Fixed(200.0))
-                        .on_press(Message::Menu(Menu::PsbtPreSelected(id))),
+                        .on_press(Message::Menu(Menu::Vault(VaultSubMenu::PSBTs(Some(id))))),
                 )
             })),
     )
@@ -311,18 +301,17 @@ pub fn create_rbf_modal<'a>(
     .into()
 }
 
-pub fn tx_view<'a>(
+pub fn transaction_detail_view<'a>(
     menu: &'a Menu,
     cache: &'a Cache,
     tx: &'a HistoryTransaction,
     labels_editing: &'a HashMap<String, form::Value<String>>,
-    warning: Option<&'a Error>,
+    bitcoin_unit: BitcoinDisplayUnit,
 ) -> Element<'a, Message> {
     let txid = tx.tx.compute_txid().to_string();
     dashboard(
         menu,
         cache,
-        warning,
         Column::new()
             .push(if tx.is_send_to_self() {
                 Container::new(h3("Transaction")).width(Length::Fill)
@@ -355,15 +344,15 @@ pub fn tx_view<'a>(
                         .push(if tx.is_send_to_self() {
                             Container::new(h1("Self-transfer"))
                         } else if tx.is_external() {
-                            Container::new(amount_with_size(&tx.incoming_amount, H1_SIZE))
+                            Container::new(amount_with_size_and_unit(&tx.incoming_amount, H1_SIZE, bitcoin_unit))
                         } else {
-                            Container::new(amount_with_size(&tx.outgoing_amount, H1_SIZE))
+                            Container::new(amount_with_size_and_unit(&tx.outgoing_amount, H1_SIZE, bitcoin_unit))
                         })
                         .push(tx.fee_amount.map(|fee_amount| {
                             Row::new()
                                 .align_y(Alignment::Center)
                                 .push(h3("Miner fee: ").style(theme::text::secondary))
-                                .push(amount_with_size(&fee_amount, H3_SIZE))
+                                .push(amount_with_size_and_unit(&fee_amount, H3_SIZE, bitcoin_unit))
                                 .push(text(" ").size(H3_SIZE))
                                 .push(
                                     text(format!(
@@ -443,6 +432,7 @@ pub fn tx_view<'a>(
                             &tx.tx,
                             &tx.labels,
                             labels_editing,
+                            bitcoin_unit,
                         ))
                     })
                     .push(super::psbt::outputs_view(
@@ -455,6 +445,7 @@ pub fn tx_view<'a>(
                         },
                         &tx.labels,
                         labels_editing,
+                        bitcoin_unit,
                         tx.is_single_payment().is_some(),
                     )),
             )

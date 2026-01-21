@@ -375,7 +375,7 @@ fn migrate_v7_to_v8(conn: &mut rusqlite::Connection) -> Result<(), SqliteDbError
             db_exec(conn, |db_tx| {
                 let updated = db_tx.execute(
                     "UPDATE transactions SET num_inputs = ?1, num_outputs = ?2, is_coinbase = ?3 WHERE txid = ?4",
-                    rusqlite::params![tx.input.len(), tx.output.len(), tx.is_coinbase(), txid[..].to_vec()],
+                    rusqlite::params![tx.input.len() as i64, tx.output.len() as i64, tx.is_coinbase(), txid[..].to_vec()],
                 )?;
                 assert_eq!(updated, 1);
                 Ok(())
@@ -418,7 +418,7 @@ fn migrate_v7_to_v8(conn: &mut rusqlite::Connection) -> Result<(), SqliteDbError
                 "SELECT COUNT(*) FROM coins
                 WHERE blockheight IS NULL AND is_from_self = 0",
                 [],
-                |row| row.get(0),
+                |row| row.get::<_, i64>(0).map(|v| v as u64),
             )?;
             // Add 1 for the confirmed coins, which will all
             // be updated in the first iteration, and another 1

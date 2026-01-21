@@ -13,7 +13,6 @@ use crate::{
     app::menu::Menu,
     app::message::Message,
     app::state::coins_summary,
-    app::state::fiat_converter_for_wallet,
     app::state::State,
     app::view,
     app::wallet::{sync_status, SyncStatus, Wallet},
@@ -90,20 +89,19 @@ impl VaultOverview {
 
 impl State for VaultOverview {
     fn view<'a>(&'a self, menu: &'a Menu, cache: &'a Cache) -> Element<'a, view::Message> {
-        let converter = fiat_converter_for_wallet(&self.wallet, cache);
+        let converter: Option<view::FiatAmountConverter> =
+            cache.fiat_price.as_ref().and_then(|p| p.try_into().ok());
         if let Some((tx, output_index)) = &self.selected_event {
             view::vault::overview::payment_view(
                 cache,
                 tx,
                 *output_index,
                 self.labels_edited.cache(),
-                self.warning.as_ref(),
             )
         } else {
             view::dashboard(
                 menu,
                 cache,
-                self.warning.as_ref(),
                 view::vault::overview::vault_overview_view(
                     &self.balance,
                     &self.unconfirmed_balance,
@@ -115,6 +113,7 @@ impl State for VaultOverview {
                     self.processing,
                     &self.sync_status,
                     self.show_rescan_warning,
+                    cache.bitcoin_unit,
                 ),
             )
         }
@@ -122,10 +121,11 @@ impl State for VaultOverview {
 
     fn update(
         &mut self,
-        daemon: Arc<dyn Daemon + Sync + Send>,
+        daemon: Option<Arc<dyn Daemon + Sync + Send>>,
         cache: &Cache,
         message: Message,
     ) -> Task<Message> {
+        let daemon = daemon.expect("Daemon required for vault overview panel");
         match message {
             Message::Tick => {
                 // we reload the page only when the user is not exploring the history
@@ -135,11 +135,15 @@ impl State for VaultOverview {
                     && self.selected_event.is_none()
                     && Instant::now() > self.last_reload + HOME_RELOAD_MAX_TTL
                 {
-                    return self.reload(daemon, self.wallet.clone());
+                    return self.reload(Some(daemon.clone()), Some(self.wallet.clone()));
                 }
             }
             Message::Coins(res) => match res {
-                Err(e) => self.warning = Some(e),
+                Err(e) => {
+                    let err_msg = e.to_string();
+                    self.warning = Some(e);
+                    return Task::done(Message::View(view::Message::ShowError(err_msg)));
+                }
                 Ok(coins) => {
                     self.warning = None;
                     (
@@ -155,7 +159,11 @@ impl State for VaultOverview {
                 }
             },
             Message::Payments(res) => match res {
-                Err(e) => self.warning = Some(e),
+                Err(e) => {
+                    let err_msg = e.to_string();
+                    self.warning = Some(e);
+                    return Task::done(Message::View(view::Message::ShowError(err_msg)));
+                }
                 Ok(events) => {
                     self.warning = None;
                     self.payments.list = events;
@@ -167,7 +175,9 @@ impl State for VaultOverview {
             Message::PaymentsExtension(res) => match res {
                 Err(e) => {
                     self.processing = false;
+                    let err_msg = e.to_string();
                     self.warning = Some(e);
+                    return Task::done(Message::View(view::Message::ShowError(err_msg)));
                 }
                 Ok((events, actual_limit)) => {
                     self.processing = false;
@@ -207,7 +217,7 @@ impl State for VaultOverview {
                 );
                 // If this is the current panel, reload it if wallet is no longer syncing.
                 if is_current && wallet_was_syncing && self.sync_status.is_synced() {
-                    return self.reload(daemon, self.wallet.clone());
+                    return self.reload(Some(daemon.clone()), Some(self.wallet.clone()));
                 }
             }
             Message::Payment(res) => match res {
@@ -215,7 +225,9 @@ impl State for VaultOverview {
                     self.selected_event = Some(event);
                 }
                 Err(e) => {
+                    let err_msg = e.to_string();
                     self.warning = Some(e);
+                    return Task::done(Message::View(view::Message::ShowError(err_msg)));
                 }
             },
             Message::View(view::Message::HideRescanWarning) => {
@@ -254,12 +266,14 @@ impl State for VaultOverview {
                         return cmd;
                     }
                     Err(e) => {
+                        let err_msg = e.to_string();
                         self.warning = Some(e);
+                        return Task::done(Message::View(view::Message::ShowError(err_msg)));
                     }
                 };
             }
             Message::View(view::Message::Reload) => {
-                return self.reload(daemon, self.wallet.clone());
+                return self.reload(Some(daemon), Some(self.wallet.clone()));
             }
             Message::View(view::Message::Close) => {
                 self.selected_event = None;
@@ -269,7 +283,7 @@ impl State for VaultOverview {
                     && (self.payments.loaded_page_count > 1
                         || Instant::now() > self.last_reload + HOME_RELOAD_MIN_TTL)
                 {
-                    return self.reload(daemon, self.wallet.clone());
+                    return self.reload(Some(daemon), Some(self.wallet.clone()));
                 }
             }
             Message::View(view::Message::Next) => {
@@ -323,9 +337,12 @@ impl State for VaultOverview {
 
     fn reload(
         &mut self,
-        daemon: Arc<dyn Daemon + Sync + Send>,
-        wallet: Arc<Wallet>,
+        daemon: Option<Arc<dyn Daemon + Sync + Send>>,
+        wallet: Option<Arc<Wallet>>,
     ) -> Task<Message> {
+        let daemon = daemon.expect("Vault panels require daemon");
+        let wallet = wallet.expect("Vault panels require wallet");
+
         // If the wallet is syncing, we expect it to finish soon and so better to wait for
         // updated data before reloading. Besides, if the wallet is syncing, the DB may be
         // locked if the poller is running and we wouldn't be able to reload data until

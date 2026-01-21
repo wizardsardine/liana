@@ -118,7 +118,6 @@ impl State for VaultReceivePanel {
         let content = view::dashboard(
             menu,
             cache,
-            self.warning.as_ref(),
             view::vault::receive::receive(
                 &self.addresses.list,
                 &self.addresses.labels,
@@ -153,14 +152,15 @@ impl State for VaultReceivePanel {
 
     fn update(
         &mut self,
-        daemon: Arc<dyn Daemon + Sync + Send>,
+        daemon: Option<Arc<dyn Daemon + Sync + Send>>,
         cache: &Cache,
         message: Message,
     ) -> Task<Message> {
+        let daemon = daemon.expect("Daemon required for vault receive panel");
         match message {
             Message::View(view::Message::Label(_, _)) | Message::LabelsUpdated(_) => {
                 match self.labels_edited.update(
-                    daemon,
+                    daemon.clone(),
                     message,
                     std::iter::once(&mut self.addresses)
                         .chain(std::iter::once(&mut self.prev_addresses))
@@ -168,22 +168,25 @@ impl State for VaultReceivePanel {
                 ) {
                     Ok(cmd) => cmd,
                     Err(e) => {
+                        let err_msg = e.to_string();
                         self.warning = Some(e);
-                        Task::none()
+                        Task::done(Message::View(view::Message::ShowError(err_msg)))
                     }
                 }
             }
-            Message::ReceiveAddress(res) => {
-                match res {
-                    Ok((address, derivation_index)) => {
-                        self.warning = None;
-                        self.addresses.list.push(address);
-                        self.addresses.derivation_indexes.push(derivation_index);
-                    }
-                    Err(e) => self.warning = Some(e),
+            Message::ReceiveAddress(res) => match res {
+                Ok((address, derivation_index)) => {
+                    self.warning = None;
+                    self.addresses.list.push(address);
+                    self.addresses.derivation_indexes.push(derivation_index);
+                    Task::none()
                 }
-                Task::none()
-            }
+                Err(e) => {
+                    let err_msg = e.to_string();
+                    self.warning = Some(e);
+                    Task::done(Message::View(view::Message::ShowError(err_msg)))
+                }
+            },
             Message::View(view::Message::Close) => {
                 self.modal = Modal::None;
                 Task::none()
@@ -256,7 +259,9 @@ impl State for VaultReceivePanel {
                         }
                     }
                     Err(e) => {
+                        let err_msg = e.to_string();
                         self.warning = Some(e);
+                        return Task::done(Message::View(view::Message::ShowError(err_msg)));
                     }
                 };
                 Task::none()
@@ -306,9 +311,11 @@ impl State for VaultReceivePanel {
 
     fn reload(
         &mut self,
-        daemon: Arc<dyn Daemon + Sync + Send>,
-        wallet: Arc<Wallet>,
+        daemon: Option<Arc<dyn Daemon + Sync + Send>>,
+        wallet: Option<Arc<Wallet>>,
     ) -> Task<Message> {
+        let daemon = daemon.expect("Vault panels require daemon");
+        let wallet = wallet.expect("Vault panels require wallet");
         let data_dir = self.data_dir.clone();
         *self = Self::new(data_dir, wallet);
         Task::perform(
@@ -358,7 +365,6 @@ impl VerifyAddressModal {
 impl VerifyAddressModal {
     pub fn view(&self) -> Element<'_, view::Message> {
         view::vault::receive::verify_address_modal(
-            self.warning.as_ref(),
             &self.hws.list,
             &self.chosen_hws,
             &self.address,
@@ -380,14 +386,18 @@ impl VerifyAddressModal {
             Message::HardwareWallets(msg) => match self.hws.update(msg) {
                 Ok(cmd) => cmd.map(Message::HardwareWallets),
                 Err(e) => {
-                    self.warning = Some(e.into());
-                    Task::none()
+                    let err: Error = e.into();
+                    let err_msg = err.to_string();
+                    self.warning = Some(err);
+                    Task::done(Message::View(view::Message::ShowError(err_msg)))
                 }
             },
             Message::Verified(fg, res) => {
                 self.chosen_hws.remove(&fg);
                 if let Err(e) = res {
+                    let err_msg = e.to_string();
                     self.warning = Some(e);
+                    return Task::done(Message::View(view::Message::ShowError(err_msg)));
                 }
                 Task::none()
             }
@@ -414,6 +424,7 @@ impl VerifyAddressModal {
     }
 }
 
+#[derive(Debug)]
 pub struct ShowQrCodeModal {
     qr_code: qr_code::Data,
     address: String,

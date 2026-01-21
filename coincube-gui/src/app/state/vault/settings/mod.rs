@@ -1,5 +1,4 @@
 mod bitcoind;
-mod general;
 mod wallet;
 
 use std::convert::From;
@@ -61,19 +60,15 @@ impl SettingsState {
 impl State for SettingsState {
     fn update(
         &mut self,
-        daemon: Arc<dyn Daemon + Sync + Send>,
+        daemon: Option<Arc<dyn Daemon + Sync + Send>>,
         cache: &Cache,
         message: Message,
     ) -> Task<Message> {
+        let Some(daemon) = daemon else {
+            tracing::warn!("SettingsState::update called without daemon");
+            return Task::none();
+        };
         match &message {
-            Message::View(view::Message::Settings(view::SettingsMessage::GeneralSection)) => {
-                self.setting = Some(general::GeneralSettingsState::new(self.wallet.clone()).into());
-                let wallet = self.wallet.clone();
-                self.setting
-                    .as_mut()
-                    .map(|s| s.reload(daemon, wallet))
-                    .unwrap_or_else(Task::none)
-            }
             Message::View(view::Message::Settings(view::SettingsMessage::EditBitcoindSettings)) => {
                 self.setting = Some(
                     BitcoindSettingsState::new(
@@ -87,7 +82,7 @@ impl State for SettingsState {
                 let wallet = self.wallet.clone();
                 self.setting
                     .as_mut()
-                    .map(|s| s.reload(daemon, wallet))
+                    .map(|s| s.reload(Some(daemon), Some(wallet)))
                     .unwrap_or_else(Task::none)
             }
             Message::View(view::Message::Settings(
@@ -107,7 +102,7 @@ impl State for SettingsState {
                 let wallet = self.wallet.clone();
                 self.setting
                     .as_mut()
-                    .map(|s| s.reload(daemon, wallet))
+                    .map(|s| s.reload(Some(daemon), Some(wallet)))
                     .unwrap_or_else(Task::none)
             }
             Message::View(view::Message::Settings(view::SettingsMessage::EditWalletSettings)) => {
@@ -122,20 +117,20 @@ impl State for SettingsState {
                 let wallet = self.wallet.clone();
                 self.setting
                     .as_mut()
-                    .map(|s| s.reload(daemon, wallet))
+                    .map(|s| s.reload(Some(daemon), Some(wallet)))
                     .unwrap_or_else(Task::none)
             }
             Message::WalletUpdated(Ok(wallet)) => {
                 self.wallet = wallet.clone();
                 self.setting
                     .as_mut()
-                    .map(|s| s.update(daemon, cache, message))
+                    .map(|s| s.update(Some(daemon), cache, message))
                     .unwrap_or_else(Task::none)
             }
             _ => self
                 .setting
                 .as_mut()
-                .map(|s| s.update(daemon, cache, message))
+                .map(|s| s.update(Some(daemon), cache, message))
                 .unwrap_or_else(Task::none),
         }
     }
@@ -162,9 +157,13 @@ impl State for SettingsState {
 
     fn reload(
         &mut self,
-        _daemon: Arc<dyn Daemon + Sync + Send>,
-        wallet: Arc<Wallet>,
+        _daemon: Option<Arc<dyn Daemon + Sync + Send>>,
+        wallet: Option<Arc<Wallet>>,
     ) -> Task<Message> {
+        let Some(wallet) = wallet else {
+            tracing::warn!("SettingsState::reload called without wallet");
+            return Task::none();
+        };
         self.setting = None;
         self.wallet = wallet;
         Task::none()
@@ -178,6 +177,7 @@ impl From<SettingsState> for Box<dyn State> {
 }
 
 pub struct ImportExportSettingsState {
+    #[allow(dead_code)] // Reserved for future error handling
     warning: Option<Error>,
     modal: Option<VaultExportModal>,
     wallet: Arc<Wallet>,
@@ -205,7 +205,7 @@ macro_rules! launch {
 
 impl State for ImportExportSettingsState {
     fn view<'a>(&'a self, menu: &'a Menu, cache: &'a Cache) -> Element<'a, view::Message> {
-        let content = view::vault::settings::import_export(menu, cache, self.warning.as_ref());
+        let content = view::vault::settings::import_export(menu, cache);
         if let Some(modal) = &self.modal {
             modal.view(content)
         } else {
@@ -228,10 +228,14 @@ impl State for ImportExportSettingsState {
 
     fn update(
         &mut self,
-        daemon: Arc<dyn Daemon + Sync + Send>,
+        daemon: Option<Arc<dyn Daemon + Sync + Send>>,
         cache: &Cache,
         message: Message,
     ) -> Task<Message> {
+        let Some(daemon) = daemon else {
+            tracing::warn!("ImportExportSettingsState::update called without daemon");
+            return Task::none();
+        };
         match message {
             Message::View(view::Message::ImportExport(ImportExportMessage::Close)) => {
                 self.modal = None;
@@ -245,7 +249,7 @@ impl State for ImportExportSettingsState {
                             self.wallet.clone(),
                             None,
                             aliases.into_iter().map(|(fg, ks)| (fg, ks.name)).collect(),
-                            daemon,
+                            daemon.clone(),
                         ),
                         Message::WalletUpdated,
                     );
@@ -300,9 +304,9 @@ impl State for ImportExportSettingsState {
                     let network = cache.network;
                     let config = self.config.clone();
                     let wallet = self.wallet.clone();
-                    let daemon = daemon.clone();
+                    let daemon_clone = daemon.clone();
                     let modal = VaultExportModal::new(
-                        Some(daemon),
+                        Some(daemon_clone),
                         ImportExportType::ExportProcessBackup(datadir, network, config, wallet),
                     );
                     launch!(self, modal, true);
@@ -311,7 +315,7 @@ impl State for ImportExportSettingsState {
             Message::View(view::Message::Settings(view::SettingsMessage::ImportWallet)) => {
                 if self.modal.is_none() {
                     let modal = VaultExportModal::new(
-                        Some(daemon),
+                        Some(daemon.clone()),
                         ImportExportType::ImportBackup {
                             network_dir: cache.datadir_path.network_directory(cache.network),
                             wallet: self.wallet.clone(),
@@ -343,20 +347,19 @@ pub struct AboutSettingsState {
 
 impl State for AboutSettingsState {
     fn view<'a>(&'a self, menu: &'a Menu, cache: &'a Cache) -> Element<'a, view::Message> {
-        view::vault::settings::about_section(
-            menu,
-            cache,
-            self.warning.as_ref(),
-            self.daemon_version.as_ref(),
-        )
+        view::vault::settings::about_section(menu, cache, self.daemon_version.as_ref())
     }
 
     fn update(
         &mut self,
-        daemon: Arc<dyn Daemon + Sync + Send>,
+        daemon: Option<Arc<dyn Daemon + Sync + Send>>,
         _cache: &Cache,
         message: Message,
     ) -> Task<Message> {
+        let Some(daemon) = daemon else {
+            tracing::warn!("AboutSettingsState::update called without daemon");
+            return Task::none();
+        };
         if let Message::Info(res) = message {
             match res {
                 Ok(info) => {
@@ -366,7 +369,11 @@ impl State for AboutSettingsState {
                         self.daemon_version = Some(info.version)
                     }
                 }
-                Err(e) => self.warning = Some(e),
+                Err(e) => {
+                    let err_msg = e.to_string();
+                    self.warning = Some(e);
+                    return Task::done(Message::View(view::Message::ShowError(err_msg)));
+                }
             }
         }
 
@@ -375,9 +382,13 @@ impl State for AboutSettingsState {
 
     fn reload(
         &mut self,
-        daemon: Arc<dyn Daemon + Sync + Send>,
-        _wallet: Arc<Wallet>,
+        daemon: Option<Arc<dyn Daemon + Sync + Send>>,
+        _wallet: Option<Arc<Wallet>>,
     ) -> Task<Message> {
+        let Some(daemon) = daemon else {
+            tracing::warn!("AboutSettingsState::reload called without daemon");
+            return Task::none();
+        };
         Task::perform(
             async move { daemon.get_info().await.map_err(|e| e.into()) },
             Message::Info,
@@ -418,16 +429,19 @@ impl State for BackendSettingsState {
             &self.email_form,
             self.processing,
             self.success,
-            self.warning.as_ref(),
         )
     }
 
     fn update(
         &mut self,
-        daemon: Arc<dyn Daemon + Sync + Send>,
+        daemon: Option<Arc<dyn Daemon + Sync + Send>>,
         _cache: &Cache,
         message: Message,
     ) -> Task<Message> {
+        let Some(daemon) = daemon else {
+            tracing::warn!("BackendSettingsState::update called without daemon");
+            return Task::none();
+        };
         match message {
             Message::View(view::Message::Settings(
                 view::SettingsMessage::RemoteBackendSettings(message),
@@ -464,13 +478,17 @@ impl State for BackendSettingsState {
             Message::Updated(res) => {
                 self.processing = false;
                 match res {
-                    Ok(()) => self.success = true,
+                    Ok(()) => {
+                        self.success = true;
+                        Task::none()
+                    }
                     Err(e) => {
                         self.success = false;
+                        let err_msg = e.to_string();
                         self.warning = Some(e);
+                        Task::done(Message::View(view::Message::ShowError(err_msg)))
                     }
                 }
-                Task::none()
             }
             _ => Task::none(),
         }

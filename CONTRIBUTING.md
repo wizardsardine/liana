@@ -9,8 +9,7 @@ time (and backs and forths) to polish a contribution before it's ready for merge
 
 ## Communication
 
-Most of the communication is done on GitHub or on the [`#revault` IRC channel on
-Libera](https://web.libera.chat/?channels=#revault).
+Most of the communication is done on GitHub.
 
 If you plan to contribute a non-trivial change, consider discussing it in the IRC channel or in a
 Github issue before going forward with the implementation.
@@ -19,7 +18,7 @@ Github issue before going forward with the implementation.
 ## Looking for contributions
 
 If you are looking for first time contributions, you can `git grep` for `FIXME`s and `TODO`s
-as well as checking out the [good first issues](https://github.com/wizardsardine/liana/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22)
+as well as checking out the [good first issues](https://github.com/coincubetech/coincube/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22)
 on the issue tracker.
 
 

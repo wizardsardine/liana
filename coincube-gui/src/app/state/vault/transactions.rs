@@ -81,12 +81,12 @@ impl VaultTransactionsPanel {
 impl State for VaultTransactionsPanel {
     fn view<'a>(&'a self, menu: &'a Menu, cache: &'a Cache) -> Element<'a, view::Message> {
         if let Some(tx) = self.selected_tx.as_ref() {
-            let content = view::vault::transactions::tx_view(
+            let content = view::vault::transactions::transaction_detail_view(
                 menu,
                 cache,
                 tx,
                 self.labels_edited.cache(),
-                self.warning.as_ref(),
+                cache.bitcoin_unit,
             );
             match &self.modal {
                 VaultTransactionsModal::CreateRbf(rbf) => rbf.view(content),
@@ -97,7 +97,6 @@ impl State for VaultTransactionsPanel {
                 menu,
                 cache,
                 &self.txs,
-                self.warning.as_ref(),
                 self.is_last_page,
                 self.processing,
             );
@@ -110,13 +109,21 @@ impl State for VaultTransactionsPanel {
 
     fn update(
         &mut self,
-        daemon: Arc<dyn Daemon + Sync + Send>,
+        daemon: Option<Arc<dyn Daemon + Sync + Send>>,
         _cache: &Cache,
         message: Message,
     ) -> Task<Message> {
+        let Some(daemon) = daemon else {
+            tracing::warn!("VaultTransactionsPanel update called without daemon");
+            return Task::none();
+        };
         match message {
             Message::HistoryTransactions(res) => match res {
-                Err(e) => self.warning = Some(e),
+                Err(e) => {
+                    let err_msg = e.to_string();
+                    self.warning = Some(e);
+                    return Task::done(Message::View(view::Message::ShowError(err_msg)));
+                }
                 Ok(txs) => {
                     self.warning = None;
                     self.txs = txs;
@@ -124,7 +131,12 @@ impl State for VaultTransactionsPanel {
                 }
             },
             Message::HistoryTransactionsExtension(res) => match res {
-                Err(e) => self.warning = Some(e),
+                Err(e) => {
+                    self.processing = false;
+                    let err_msg = e.to_string();
+                    self.warning = Some(e);
+                    return Task::done(Message::View(view::Message::ShowError(err_msg)));
+                }
                 Ok(txs) => {
                     self.processing = false;
                     self.warning = None;
@@ -153,11 +165,14 @@ impl State for VaultTransactionsPanel {
                     self.modal = VaultTransactionsModal::CreateRbf(modal);
                 }
                 Err(e) => {
-                    self.warning = e.into();
+                    let err: Error = e;
+                    let err_msg = err.to_string();
+                    self.warning = Some(err);
+                    return Task::done(Message::View(view::Message::ShowError(err_msg)));
                 }
             },
             Message::View(view::Message::Reload) | Message::View(view::Message::Close) => {
-                return self.reload(daemon, self.wallet.clone());
+                return self.reload(Some(daemon), Some(self.wallet.clone()));
             }
             Message::View(view::Message::Select(i)) => {
                 self.selected_tx = self.txs.get(i).cloned();
@@ -225,7 +240,9 @@ impl State for VaultTransactionsPanel {
                         return cmd;
                     }
                     Err(e) => {
+                        let err_msg = e.to_string();
                         self.warning = Some(e);
+                        return Task::done(Message::View(view::Message::ShowError(err_msg)));
                     }
                 };
             }
@@ -306,9 +323,13 @@ impl State for VaultTransactionsPanel {
 
     fn reload(
         &mut self,
-        daemon: Arc<dyn Daemon + Sync + Send>,
-        _wallet: Arc<Wallet>,
+        daemon: Option<Arc<dyn Daemon + Sync + Send>>,
+        _wallet: Option<Arc<Wallet>>,
     ) -> Task<Message> {
+        let Some(daemon) = daemon else {
+            tracing::warn!("VaultTransactionsPanel reload called without daemon");
+            return Task::none();
+        };
         self.selected_tx = None;
         let now: u32 = now().as_secs().try_into().unwrap();
         Task::batch(vec![Task::perform(
@@ -431,7 +452,11 @@ impl CreateRbfModal {
                     Ok(txid) => {
                         self.replacement_txid = Some(txid);
                     }
-                    Err(e) => self.warning = Some(e),
+                    Err(e) => {
+                        let err_msg = e.to_string();
+                        self.warning = Some(e);
+                        return Task::done(Message::View(view::Message::ShowError(err_msg)));
+                    }
                 }
             }
             Message::View(view::Message::CreateRbf(view::CreateRbfMessage::Confirm)) => {
@@ -454,7 +479,6 @@ impl CreateRbfModal {
                 &self.descendant_txids,
                 &self.feerate_val,
                 self.replacement_txid,
-                self.warning.as_ref(),
             ),
         );
         if self.processing {

@@ -9,7 +9,6 @@ use coincube_ui::theme;
 use coincube_ui::widget::*;
 
 use crate::app::cache;
-use crate::app::error::Error;
 use crate::app::menu::Menu;
 use crate::app::settings::fiat::PriceSetting;
 use crate::app::view::dashboard;
@@ -21,14 +20,12 @@ pub fn general_section<'a>(
     cache: &'a cache::Cache,
     new_price_setting: &'a PriceSetting,
     currencies_list: &'a [Currency],
-    warning: Option<&Error>,
 ) -> Element<'a, Message> {
     let header = header("General", SettingsMessage::GeneralSection);
 
     dashboard(
         menu,
         cache,
-        warning,
         Column::new()
             .spacing(20)
             .push(header)

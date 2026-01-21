@@ -1,9 +1,9 @@
-mod active;
 pub mod buysell;
 mod global_home;
+pub mod liquid;
+pub mod settings;
 pub mod vault;
 
-use std::convert::TryInto;
 use std::sync::Arc;
 
 use coincube_core::miniscript::bitcoin::{Amount, OutPoint};
@@ -19,8 +19,12 @@ use crate::daemon::{
     model::{remaining_sequence, Coin},
     Daemon,
 };
-pub use active::{ActiveOverview, ActiveReceive, ActiveSend, ActiveSettings, ActiveTransactions};
 pub use global_home::GlobalHome;
+pub use liquid::overview::LiquidOverview;
+pub use liquid::receive::LiquidReceive;
+pub use liquid::send::LiquidSend;
+pub use liquid::settings::{BackupWalletState, LiquidSettings, LiquidSettingsFlowState};
+pub use liquid::transactions::LiquidTransactions;
 pub use vault::coins::CoinsPanel;
 pub use vault::label::LabelsEdited;
 pub use vault::overview::VaultOverview;
@@ -34,7 +38,7 @@ pub trait State {
     fn view<'a>(&'a self, menu: &'a Menu, cache: &'a Cache) -> Element<'a, view::Message>;
     fn update(
         &mut self,
-        _daemon: Arc<dyn Daemon + Sync + Send>,
+        _daemon: Option<Arc<dyn Daemon + Sync + Send>>,
         _cache: &Cache,
         _message: Message,
     ) -> Task<Message> {
@@ -50,8 +54,8 @@ pub trait State {
     fn interrupt(&mut self) {}
     fn reload(
         &mut self,
-        _daemon: Arc<dyn Daemon + Sync + Send>,
-        _wallet: Arc<Wallet>,
+        _daemon: Option<Arc<dyn Daemon + Sync + Send>>,
+        _wallet: Option<Arc<Wallet>>,
     ) -> Task<Message> {
         Task::none()
     }
@@ -60,18 +64,6 @@ pub trait State {
 /// redirect to another state with a message menu
 pub fn redirect(menu: Menu) -> Task<Message> {
     Task::done(Message::View(view::Message::Menu(menu)))
-}
-
-/// Returns fiat converter if the wallet setting is enabled and the cached price matches the setting.
-pub fn fiat_converter_for_wallet(
-    wallet: &Wallet,
-    cache: &Cache,
-) -> Option<view::FiatAmountConverter> {
-    cache
-        .fiat_price
-        .as_ref()
-        .filter(|p| wallet.fiat_price_is_relevant(p))
-        .and_then(|p| p.try_into().ok())
 }
 
 /// Returns the confirmed and unconfirmed balances from `coins`, as well
@@ -83,7 +75,7 @@ pub fn fiat_converter_for_wallet(
 ///
 /// The confirmed balance includes the values of any unconfirmed coins
 /// from self.
-fn coins_summary(
+pub fn coins_summary(
     coins: &[Coin],
     tip_height: u32,
     timelock: u16,

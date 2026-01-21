@@ -111,7 +111,6 @@ impl State for WalletSettingsState {
         let content = view::vault::settings::wallet_settings(
             menu,
             cache,
-            self.warning.as_ref(),
             &self.descriptor,
             &self.wallet_alias,
             &self.keys_aliases,
@@ -149,25 +148,33 @@ impl State for WalletSettingsState {
 
     fn update(
         &mut self,
-        daemon: Arc<dyn Daemon + Sync + Send>,
+        daemon: Option<Arc<dyn Daemon + Sync + Send>>,
         cache: &Cache,
         message: Message,
     ) -> Task<Message> {
+        let Some(daemon) = daemon else {
+            tracing::warn!("WalletSettingsState::update called without daemon");
+            return Task::none();
+        };
         match message {
             Message::WalletUpdated(res) => {
                 self.processing = false;
                 if let Modal::RegisterWallet(modal) = &mut self.modal {
-                    modal.update(daemon, cache, Message::WalletUpdated(res))
+                    modal.update(Some(daemon.clone()), cache, Message::WalletUpdated(res))
                 } else {
                     match res {
                         Ok(wallet) => {
                             self.keys_aliases = Self::keys_aliases(&wallet);
                             self.wallet = wallet;
                             self.updated = true;
+                            Task::none()
                         }
-                        Err(e) => self.warning = Some(e),
-                    };
-                    Task::none()
+                        Err(e) => {
+                            let err_msg = e.to_string();
+                            self.warning = Some(e);
+                            Task::done(Message::View(view::Message::ShowError(err_msg)))
+                        }
+                    }
                 }
             }
             Message::View(view::Message::Settings(view::SettingsMessage::WalletAliasEdited(
@@ -289,7 +296,7 @@ impl State for WalletSettingsState {
                 Task::none()
             }
             _ => match &mut self.modal {
-                Modal::RegisterWallet(m) => m.update(daemon, cache, message),
+                Modal::RegisterWallet(m) => m.update(Some(daemon.clone()), cache, message),
                 _ => Task::none(),
             },
         }
@@ -297,9 +304,17 @@ impl State for WalletSettingsState {
 
     fn reload(
         &mut self,
-        daemon: Arc<dyn Daemon + Sync + Send>,
-        wallet: Arc<Wallet>,
+        daemon: Option<Arc<dyn Daemon + Sync + Send>>,
+        wallet: Option<Arc<Wallet>>,
     ) -> Task<Message> {
+        let Some(daemon) = daemon else {
+            tracing::warn!("WalletSettingsState::reload called without daemon");
+            return Task::none();
+        };
+        let Some(wallet) = wallet else {
+            tracing::warn!("WalletSettingsState::reload called without wallet");
+            return Task::none();
+        };
         self.descriptor = wallet.main_descriptor.clone();
         self.keys_aliases = Self::keys_aliases(&wallet);
         self.wallet = wallet;
@@ -347,7 +362,6 @@ impl RegisterWalletModal {
 impl RegisterWalletModal {
     fn view(&self) -> Element<'_, view::Message> {
         view::vault::settings::register_wallet_modal(
-            self.warning.as_ref(),
             &self.hws.list,
             self.processing,
             self.chosen_hw,
@@ -361,10 +375,14 @@ impl RegisterWalletModal {
 
     fn update(
         &mut self,
-        daemon: Arc<dyn Daemon + Sync + Send>,
+        daemon: Option<Arc<dyn Daemon + Sync + Send>>,
         cache: &Cache,
         message: Message,
     ) -> Task<Message> {
+        let Some(daemon) = daemon else {
+            tracing::warn!("RegisterWalletModal::update called without daemon");
+            return Task::none();
+        };
         match message {
             Message::View(view::Message::Reload) => {
                 self.chosen_hw = None;
@@ -374,8 +392,10 @@ impl RegisterWalletModal {
             Message::HardwareWallets(msg) => match self.hws.update(msg) {
                 Ok(cmd) => cmd.map(Message::HardwareWallets),
                 Err(e) => {
-                    self.warning = Some(e.into());
-                    Task::none()
+                    let err: Error = e.into();
+                    let err_msg = err.to_string();
+                    self.warning = Some(err);
+                    Task::done(Message::View(view::Message::ShowError(err_msg)))
                 }
             },
             Message::WalletUpdated(res) => {
@@ -391,7 +411,9 @@ impl RegisterWalletModal {
                     }
                     Err(e) => {
                         if !matches!(e, Error::HardwareWallet(async_hwi::Error::UserRefused)) {
-                            self.warning = Some(e)
+                            let err_msg = e.to_string();
+                            self.warning = Some(e);
+                            return Task::done(Message::View(view::Message::ShowError(err_msg)));
                         }
                     }
                 }

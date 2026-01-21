@@ -28,7 +28,8 @@ pub fn label_editable(
                     )
                 )
                 .spacing(5)
-                .align_y(Alignment::Center),
+                .align_y(Alignment::Center)
+                .width(iced::Length::Shrink),
             )
             .into();
         }
@@ -39,6 +40,7 @@ pub fn label_editable(
             view::message::LabelMessage::Edited(String::default()),
         )),
     )
+    .width(iced::Length::Shrink)
     .into()
 }
 

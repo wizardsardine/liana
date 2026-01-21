@@ -30,3 +30,7 @@ pub fn pending(theme: &Theme) -> Style {
 pub fn error(theme: &Theme) -> Style {
     notification(&theme.colors.notifications.error)
 }
+
+pub fn success(theme: &Theme) -> Style {
+    notification(&theme.colors.notifications.success)
+}

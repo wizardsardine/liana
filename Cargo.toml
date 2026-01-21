@@ -3,6 +3,11 @@ resolver = "2"
 members = ["fuzz", "coincube-core", "coincubed", "coincube-gui", "coincube-ui"]
 default-members = ["coincube-core", "coincubed", "coincube-gui", "coincube-ui"]
 
+# Patch to resolve dependency conflicts with Breez SDK
+[patch.crates-io]
+# Resolve secp256k1-zkp MuSig2 types needed by boltz-client (Breez SDK dependency)
+secp256k1-zkp = { git = "https://github.com/breez/rust-secp256k1-zkp.git", rev = "eac2e479255a6e32b5588bc25ee53c642fdd8395" }
+
 [profile.minimal]
 inherits = "release"
 opt-level = "z"

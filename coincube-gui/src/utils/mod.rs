@@ -41,3 +41,41 @@ pub fn default_derivation_path(network: Network) -> DerivationPath {
     })
     .unwrap()
 }
+
+pub fn format_timestamp(timestamp: u64) -> Option<String> {
+    use chrono::{DateTime, Local, Utc};
+
+    let dt = DateTime::<Utc>::from_timestamp(timestamp as i64, 0)?;
+
+    Some(
+        dt.with_timezone(&Local)
+            .format("%b. %d, %Y - %T")
+            .to_string(),
+    )
+}
+
+pub fn format_time_ago(timestamp: i64) -> String {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+
+    let diff = now.saturating_sub(timestamp).max(0) as u64;
+
+    if diff < 60 {
+        "just now".to_string()
+    } else if diff < 3600 {
+        let minutes = diff / 60;
+        format!(
+            "{} minute{} ago",
+            minutes,
+            if minutes == 1 { "" } else { "s" }
+        )
+    } else if diff < 86400 {
+        let hours = diff / 3600;
+        format!("{} hour{} ago", hours, if hours == 1 { "" } else { "s" })
+    } else {
+        let days = diff / 86400;
+        format!("{} day{} ago", days, if days == 1 { "" } else { "s" })
+    }
+}

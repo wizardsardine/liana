@@ -11,7 +11,14 @@ use iced::{
 use coincube_core::miniscript::bitcoin;
 use coincube_ui::{
     color,
-    component::{amount::*, button, card, event, form, spinner, text::*},
+    component::{
+        amount::*,
+        button, card, form, spinner,
+        text::*,
+        transaction::{
+            TransactionBadge, TransactionDirection, TransactionListItem, TransactionType,
+        },
+    },
     icon::{self, cross_icon},
     theme,
     widget::*,
@@ -20,8 +27,7 @@ use coincube_ui::{
 use crate::{
     app::{
         cache::Cache,
-        error::Error,
-        menu::{self, Menu},
+        menu::{self, Menu, VaultSubMenu},
         view::{dashboard, message::Message, vault::coins, vault::label, FiatAmountConverter},
         wallet::SyncStatus,
     },
@@ -75,6 +81,7 @@ pub fn vault_overview_view<'a>(
     processing: bool,
     sync_status: &SyncStatus,
     show_rescan_warning: bool,
+    bitcoin_unit: BitcoinDisplayUnit,
 ) -> Element<'a, Message> {
     let fiat_balance = fiat_converter.as_ref().map(|c| c.convert(*balance));
     let fiat_unconfirmed = fiat_converter.map(|c| c.convert(*unconfirmed_balance));
@@ -84,28 +91,27 @@ pub fn vault_overview_view<'a>(
             Column::new()
                 .push(
                     if sync_status.is_synced() {
-                        Row::new()
-                            .align_y(Alignment::Center)
-                            .push(amount_with_size(balance, H1_SIZE))
-                            .push(fiat_balance.map(|fiat| {
-                                Row::new()
-                                    .align_y(Alignment::Center)
-                                    .push(Space::new().width(20))
-                                    .push(fiat.to_text().size(H2_SIZE).color(color::GREY_2))
-                            }))
+                        Column::new()
+                            .spacing(5)
+                            .push(amount_with_size_and_unit(balance, H1_SIZE, bitcoin_unit))
+                            .push_maybe(
+                                fiat_balance
+                                    .map(|fiat| fiat.to_text().size(P2_SIZE).color(color::GREY_2)),
+                            )
                     } else {
-                        Row::new().push(spinner::Carousel::new(
+                        Column::new().push(Row::new().push(spinner::Carousel::new(
                             Duration::from_millis(1000),
                             vec![
-                                amount_with_size(balance, H1_SIZE),
-                                amount_with_size_and_colors(
+                                amount_with_size_and_unit(balance, H1_SIZE, bitcoin_unit),
+                                amount_with_size_colors_and_unit(
                                     balance,
                                     H1_SIZE,
                                     color::GREY_4,
                                     Some(color::GREY_2),
+                                    bitcoin_unit,
                                 ),
                             ],
-                        ))
+                        )))
                     }
                     .wrap(),
                 )
@@ -140,7 +146,11 @@ pub fn vault_overview_view<'a>(
                                 .spacing(10)
                                 .align_y(Alignment::Center)
                                 .push(text("+").size(H3_SIZE).style(theme::text::secondary))
-                                .push(unconfirmed_amount_with_size(unconfirmed_balance, H3_SIZE))
+                                .push(unconfirmed_amount_with_size_and_unit(
+                                    unconfirmed_balance,
+                                    H3_SIZE,
+                                    bitcoin_unit,
+                                ))
                                 .push(
                                     text("unconfirmed")
                                         .size(H3_SIZE)
@@ -212,10 +222,10 @@ pub fn vault_overview_view<'a>(
         .push(
             Column::new()
                 .spacing(10)
-                .push(h4_bold("Last payments"))
+                .push(h4_bold("Last transactions"))
                 .push(events.iter().fold(Column::new().spacing(10), |col, event| {
                     if event.kind != PaymentKind::SendToSelf {
-                        col.push(event_list_view(event))
+                        col.push(event_list_view(event, bitcoin_unit, fiat_converter))
                     } else {
                         col
                     }
@@ -252,47 +262,50 @@ pub fn vault_overview_view<'a>(
         .into()
 }
 
-fn event_list_view(event: &Payment) -> Element<'_, Message> {
-    let label = if let Some(label) = &event.label {
-        Some(p1_regular(label))
+fn event_list_view(
+    event: &Payment,
+    bitcoin_unit: BitcoinDisplayUnit,
+    fiat_converter: Option<FiatAmountConverter>,
+) -> Element<'_, Message> {
+    let direction = if event.kind == PaymentKind::Incoming {
+        TransactionDirection::Incoming
     } else {
-        event.address_label.as_ref().map(|label| {
-            p1_regular(format!("address label: {}", label)).style(theme::text::secondary)
-        })
+        TransactionDirection::Outgoing
     };
-    if event.kind == PaymentKind::Incoming {
-        if let Some(t) = event.time {
-            event::confirmed_incoming_event(
-                label,
-                t,
-                &event.amount,
-                Message::SelectPayment(event.outpoint),
-            )
-            .into()
-        } else {
-            event::unconfirmed_incoming_event(
-                label,
-                &event.amount,
-                Message::SelectPayment(event.outpoint),
-            )
-            .into()
-        }
-    } else if let Some(t) = event.time {
-        event::confirmed_outgoing_event(
-            label,
-            t,
-            &event.amount,
-            Message::SelectPayment(event.outpoint),
-        )
-        .into()
+
+    let label = if let Some(label) = &event.label {
+        Some(label.clone())
     } else {
-        event::unconfirmed_outgoing_event(
-            label,
-            &event.amount,
-            Message::SelectPayment(event.outpoint),
-        )
-        .into()
+        event
+            .address_label
+            .as_ref()
+            .map(|label| format!("address label: {}", label))
+    };
+
+    let mut item = TransactionListItem::new(direction, &event.amount, bitcoin_unit)
+        .with_type(TransactionType::Bitcoin);
+
+    if let Some(label) = label {
+        item = item.with_label(label);
     }
+
+    if let Some(timestamp) = event.time {
+        item = item.with_timestamp(timestamp);
+    } else {
+        item = item.with_badge(TransactionBadge::Unconfirmed);
+    }
+
+    if let Some(fiat_amount) = fiat_converter.map(|converter| {
+        let fiat = converter.convert(event.amount);
+        format!("~{} {}", fiat.to_rounded_string(), fiat.currency())
+    }) {
+        item = item.with_fiat_amount(fiat_amount);
+    }
+
+    item.view(Message::Menu(Menu::Vault(VaultSubMenu::Transactions(
+        Some(event.outpoint.txid),
+    ))))
+    .into()
 }
 
 pub fn payment_view<'a>(
@@ -300,7 +313,6 @@ pub fn payment_view<'a>(
     tx: &'a HistoryTransaction,
     output_index: usize,
     labels_editing: &'a HashMap<String, form::Value<String>>,
-    warning: Option<&'a Error>,
 ) -> Element<'a, Message> {
     let txid = tx.tx.compute_txid().to_string();
     let outpoint = bitcoin::OutPoint {
@@ -311,7 +323,6 @@ pub fn payment_view<'a>(
     dashboard(
         &Menu::Home,
         cache,
-        warning,
         Column::new()
             .push(match tx.kind {
                 TransactionKind::OutgoingSinglePayment(_)
@@ -412,7 +423,7 @@ pub fn payment_view<'a>(
             ))
             .push(
                 button::secondary(None, "See transaction details").on_press(Message::Menu(
-                    Menu::TransactionPreSelected(tx.tx.compute_txid()),
+                    Menu::Vault(VaultSubMenu::Transactions(Some(tx.tx.compute_txid()))),
                 )),
             )
             .spacing(20),

@@ -111,6 +111,7 @@ pub struct Pills {
 pub struct Notifications {
     pub pending: ContainerPalette,
     pub error: ContainerPalette,
+    pub success: ContainerPalette,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq)]
@@ -513,6 +514,11 @@ impl std::default::Default for Palette {
                     background: color::RED,
                     text: color::BLACK.into(),
                     border: Some(color::RED),
+                },
+                success: ContainerPalette {
+                    background: color::GREEN,
+                    text: color::BLACK.into(),
+                    border: Some(color::GREEN),
                 },
             },
             text_inputs: TextInputs {

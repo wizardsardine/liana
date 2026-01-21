@@ -467,7 +467,7 @@ impl SqliteConn {
                         WALLET_ID,
                         coin.outpoint.txid[..].to_vec(),
                         coin.outpoint.vout,
-                        coin.amount.to_sat(),
+                        coin.amount.to_sat() as i64,
                         deriv_index,
                         coin.is_change,
                         coin.is_immature,
@@ -711,7 +711,7 @@ impl SqliteConn {
                 ) \
                 ORDER BY date DESC LIMIT (?3) \
             )",
-            rusqlite::params![start, end, limit],
+            rusqlite::params![start as i64, end as i64, limit as i64],
             |row| {
                 let txid: Vec<u8> = row.get(0)?;
                 let txid: bitcoin::Txid =
@@ -773,8 +773,8 @@ impl SqliteConn {
                     rusqlite::params![
                         txid,
                         tx_ser,
-                        tx.input.len(),
-                        tx.output.len(),
+                        tx.input.len() as i64,
+                        tx.output.len() as i64,
                         tx.is_coinbase()
                     ],
                 )?;
@@ -810,7 +810,7 @@ impl SqliteConn {
                     "SELECT COUNT(*) FROM coins
                     WHERE blockheight IS NULL AND is_from_self = 0",
                     [],
-                    |row| row.get(0),
+                    |row| row.get::<_, i64>(0).map(|v| v as u64),
                 )?;
                 // Add 1 for the confirmed coins, which will all
                 // be updated in the first iteration, and another 1
@@ -1293,8 +1293,8 @@ CREATE TABLE labels (
                         coin.block_info.map(|block| block.height),
                         coin.block_info.map(|block| block.time),
                         coin.outpoint.txid[..].to_vec(),
-                        coin.outpoint.vout,
-                        coin.amount.to_sat(),
+                        coin.outpoint.vout as i64,
+                        coin.amount.to_sat() as i64,
                         deriv_index,
                         coin.is_change,
                         coin.spend_txid.map(|txid| txid[..].to_vec()),
@@ -3145,8 +3145,8 @@ CREATE TABLE labels (
                         rusqlite::params![
                             WALLET_ID,
                             outpoint.txid[..].to_vec(),
-                            outpoint.vout,
-                            amount.to_sat(),
+                            outpoint.vout as i64,
+                            amount.to_sat() as i64,
                             deriv_index,
                             is_change,
                         ],

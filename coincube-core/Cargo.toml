@@ -1,12 +1,12 @@
 [package]
 name = "coincube-core"
-version = "13.0.0"
+version = "0.9.0"
 authors = ["Antoine Poinsot <darosior@protonmail.com>", "Coincube Team"]
 edition = "2018"
 repository = "https://github.com/coincubetech/coincube"
 license-file = "LICENCE"
-keywords = ["bitcoin", "wallet", "miniscript", "inheritance", "recovery", "active"]
-description = "COINCUBE core development kit - Bitcoin wallet with Vault and Active spending"
+keywords = ["bitcoin", "wallet", "miniscript", "inheritance", "recovery", "liquid"]
+description = "COINCUBE core development kit - Bitcoin wallet with Vault and Liquid spending"
 
 [dependencies]
 # For managing transactions (it re-exports the bitcoin crate)
@@ -25,6 +25,11 @@ getrandom = "0.3.1"
 
 # Used for the hot signer
 bip39 = "2.0"
+rand = "0.9.2"
+argon2 = "0.5.3"
+aes-gcm = "0.10.3"
+hex = "0.4.3"
+zeroize = "1.8.2"
 
 [lints.clippy]
 uninlined_format_args = "allow"

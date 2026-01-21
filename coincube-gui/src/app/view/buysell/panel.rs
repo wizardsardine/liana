@@ -91,7 +91,7 @@ impl BuySellFlowState {
 }
 
 pub struct BuySellPanel {
-    // Runtime state machine - determines which flow is active
+    // Runtime state machine - determines which flow is liquid
     pub step: BuySellFlowState,
 
     // Common fields (always present)

@@ -27,11 +27,11 @@ impl<S: State + 'static> Sandbox<S> {
         cache: &Cache,
         message: Message,
     ) -> Self {
-        let cmd = self.state.update(daemon.clone(), cache, message);
+        let cmd = self.state.update(Some(daemon.clone()), cache, message);
         if let Some(mut stream) = into_stream(cmd) {
             while let Some(action) = stream.next().await {
                 if let Action::Output(msg) = action {
-                    let _cmd = self.state.update(daemon.clone(), cache, msg);
+                    let _cmd = self.state.update(Some(daemon.clone()), cache, msg);
                 }
             }
         }
@@ -44,11 +44,11 @@ impl<S: State + 'static> Sandbox<S> {
         cache: &Cache,
         wallet: Arc<Wallet>,
     ) -> Self {
-        let cmd = self.state.reload(daemon.clone(), wallet);
+        let cmd = self.state.reload(Some(daemon.clone()), Some(wallet));
         if let Some(mut stream) = into_stream(cmd) {
             while let Some(action) = stream.next().await {
                 if let Action::Output(msg) = action {
-                    let _cmd = self.state.update(daemon.clone(), cache, msg);
+                    let _cmd = self.state.update(Some(daemon.clone()), cache, msg);
                 }
             }
         }

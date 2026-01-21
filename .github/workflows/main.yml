@@ -12,16 +12,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install Rust toolchain
-        run: |
-          rustup update stable
-          rustup default stable
-          rustup component add rustfmt clippy
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.92.0
+          components: rustfmt, clippy
       - name: rustfmt
         run: cargo fmt -- --check
       - name: clippy
         run: |
           sudo apt-get update &&
-          sudo apt-get install --allow-downgrades libudev-dev pkg-config libvulkan-dev libdbus-1-dev &&
+          sudo apt-get install --allow-downgrades libudev-dev pkg-config libvulkan-dev libdbus-1-dev protobuf-compiler &&
           cargo clippy --all-targets -- -D warnings
 
   unit_tests:
@@ -48,10 +48,14 @@ jobs:
         run: cargo test --no-default-features
       - name: Test on Rust ${{ matrix.toolchain }} (Unix)
         if: matrix.os == 'macOS-latest'
-        run: cargo test --color always -- --nocapture
+        env:
+          PROTOC: /opt/homebrew/bin/protoc
+        run: |
+          brew install protobuf
+          cargo test --color always -- --nocapture
       - name: Test on Rust ${{ matrix.toolchain }} (Unix)
         if: matrix.os == 'ubuntu-latest'
         run: |
           sudo apt-get update &&
-          sudo apt-get install libudev-dev libfontconfig1-dev pkg-config libdbus-1-dev &&
+          sudo apt-get install libudev-dev libfontconfig1-dev pkg-config libdbus-1-dev protobuf-compiler &&
           cargo test --color always -- --nocapture

@@ -1,11 +1,11 @@
 [package]
 name = "coincubed"
-version = "13.0.0"
+version = "0.9.0"
 authors = ["Antoine Poinsot <darosior@protonmail.com>", "Coincube Team"]
 edition = "2018"
 repository = "https://github.com/coincubetech/coincube"
 license-file = "LICENCE"
-keywords = ["bitcoin", "wallet", "vault", "multisig", "active"]
+keywords = ["bitcoin", "wallet", "vault", "multisig", "liquid"]
 description = "COINCUBE Vault wallet daemon - Secure Bitcoin multisig with inheritance"
 exclude = [
 	".github/",
@@ -59,7 +59,7 @@ fern = "0.7"
 # to work with our custom panic hook.
 backtrace = "0.3"
 
-rusqlite = { version = "0.37", features = ["bundled", "unlock_notify"] }
+rusqlite = { git = "https://github.com/breez/rusqlite", branch = "rusqlite-v0.38.0", features = ["bundled", "unlock_notify"] }
 
 # To talk to bitcoind
 jsonrpc = { version = "0.18", features = [

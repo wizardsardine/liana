@@ -3,25 +3,14 @@ use coincube_core::miniscript::bitcoin::{OutPoint, Txid};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Menu {
     Home,
-    Active(ActiveSubMenu),
+    Liquid(LiquidSubMenu),
     Vault(VaultSubMenu),
-    // Legacy menu items (kept for backward compatibility during transition)
-    Receive,
-    PSBTs,
-    Transactions,
-    TransactionPreSelected(Txid),
-    Settings,
-    SettingsPreSelected(SettingsOption),
-    Coins,
-    CreateSpendTx,
-    Recovery,
-    RefreshCoins(Vec<OutPoint>),
-    PsbtPreSelected(Txid),
     BuySell,
+    Settings(SettingsSubMenu),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ActiveSubMenu {
+pub enum LiquidSubMenu {
     Overview,
     Send,
     Receive,
@@ -39,6 +28,12 @@ pub enum VaultSubMenu {
     PSBTs(Option<Txid>),
     Recovery,
     Settings(Option<SettingsOption>),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SettingsSubMenu {
+    General,
+    About,
 }
 
 /// Pre-selectable settings options.

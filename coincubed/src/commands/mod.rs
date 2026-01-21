@@ -109,13 +109,13 @@ impl fmt::Display for CommandError {
             Self::SpendFinalization(e) => {
                 write!(f, "Failed to finalize the spend transaction PSBT: '{}'.", e)
             }
-            Self::TxBroadcast(e) => write!(f, "Failed to broadcast transaction: '{}'.", e),
+            Self::TxBroadcast(e) => write!(f, "Failed to broadcast transaction: {}", e),
             Self::AlreadyRescanning => write!(
                 f,
                 "There is already a rescan ongoing. Please wait for it to complete first."
             ),
             Self::InsaneRescanTimestamp(t) => write!(f, "Insane timestamp '{}'.", t),
-            Self::RescanTrigger(s) => write!(f, "Error while starting rescan: '{}'", s),
+            Self::RescanTrigger(e) => write!(f, "Error while starting rescan: '{}'", e),
             Self::RecoveryNotAvailable => write!(
                 f,
                 "No coin currently spendable through this timelocked recovery path."

@@ -1,3 +1,4 @@
+pub mod breez;
 pub mod cache;
 pub mod config;
 pub mod error;
@@ -25,14 +26,15 @@ pub use config::Config;
 pub use message::Message;
 
 use state::{
-    ActiveOverview, ActiveReceive, ActiveSend, ActiveSettings, ActiveTransactions, CoinsPanel,
-    CreateSpendPanel, GlobalHome, PsbtsPanel, State, VaultOverview, VaultReceivePanel,
+    CoinsPanel, CreateSpendPanel, GlobalHome, LiquidOverview, LiquidReceive, LiquidSend,
+    LiquidSettings, LiquidTransactions, PsbtsPanel, State, VaultOverview, VaultReceivePanel,
     VaultTransactionsPanel,
 };
 use wallet::{sync_status, SyncStatus};
 
 use crate::{
     app::{
+        breez::BreezClient,
         cache::{Cache, DaemonCache},
         error::Error,
         menu::Menu,
@@ -45,19 +47,21 @@ use crate::{
     node::{bitcoind::Bitcoind, NodeType},
 };
 
-use self::state::SettingsState;
+use self::state::settings::SettingsState as GeneralSettingsState;
+use self::state::vault::settings::SettingsState as VaultSettingsState;
 
 struct Panels {
     current: Menu,
     vault_expanded: bool,
-    active_expanded: bool,
+    liquid_expanded: bool,
     // Always available panels
     global_home: GlobalHome,
-    active_overview: ActiveOverview,
-    active_send: ActiveSend,
-    active_receive: ActiveReceive,
-    active_transactions: ActiveTransactions,
-    active_settings: ActiveSettings,
+    liquid_overview: LiquidOverview,
+    liquid_send: LiquidSend,
+    liquid_receive: LiquidReceive,
+    liquid_transactions: LiquidTransactions,
+    liquid_settings: LiquidSettings,
+    global_settings: GeneralSettingsState,
     // Vault-only panels - None when no vault exists
     vault_overview: Option<VaultOverview>,
     coins: Option<CoinsPanel>,
@@ -66,26 +70,52 @@ struct Panels {
     recovery: Option<CreateSpendPanel>,
     receive: Option<VaultReceivePanel>,
     create_spend: Option<CreateSpendPanel>,
-    settings: Option<SettingsState>,
+    vault_settings: Option<VaultSettingsState>,
+    // remaining panels
     buy_sell: Option<crate::app::view::buysell::BuySellPanel>,
 }
 
 impl Panels {
-    fn new_without_wallet() -> Panels {
-        // NO PLACEHOLDER WALLET - All vault panels are None
+    fn new_without_vault(
+        breez_client: Arc<BreezClient>,
+        wallet: Option<Arc<Wallet>>,
+        datadir: &CoincubeDirectory,
+        network: bitcoin::Network,
+        cube_id: String,
+    ) -> Panels {
+        // NO VAULT - All vault panels are None, but Liquid panels always work
         // The UI layer prevents navigation to vault panels when has_vault=false
 
         Self {
             current: Menu::Home,
             vault_expanded: false,
-            active_expanded: false,
-            // Active panels support operation without a wallet
-            global_home: GlobalHome::new_without_wallet(),
-            active_overview: ActiveOverview::new_without_wallet(),
-            active_send: ActiveSend::new_without_wallet(),
-            active_receive: ActiveReceive::new_without_wallet(),
-            active_transactions: ActiveTransactions::new_without_wallet(),
-            active_settings: ActiveSettings::new_without_wallet(),
+            liquid_expanded: false,
+            // Liquid panels always available (use BreezClient, not Vault wallet)
+            global_home: if let Some(w) = &wallet {
+                GlobalHome::new(w.clone(), breez_client.clone())
+            } else {
+                GlobalHome::new_without_wallet(breez_client.clone())
+            },
+            liquid_overview: LiquidOverview::new(breez_client.clone()),
+            liquid_send: LiquidSend::new(breez_client.clone()),
+            liquid_receive: LiquidReceive::new(breez_client.clone()),
+            liquid_transactions: LiquidTransactions::new(breez_client.clone()),
+            liquid_settings: LiquidSettings::new(breez_client),
+            global_settings: {
+                let network_dir = datadir.network_directory(network);
+                let settings_file = settings::Settings::from_file(&network_dir).ok();
+                let (price_setting, unit_setting) = settings_file
+                    .as_ref()
+                    .and_then(|s| s.cubes.iter().find(|c| c.id == cube_id))
+                    .map(|c| {
+                        (
+                            c.fiat_price.clone().unwrap_or_default(),
+                            c.unit_setting.clone(),
+                        )
+                    })
+                    .unwrap_or_default();
+                GeneralSettingsState::new(cube_id.clone(), price_setting, unit_setting)
+            },
             // All vault panels are None - no vault exists
             vault_overview: None,
             coins: None,
@@ -94,12 +124,14 @@ impl Panels {
             recovery: None,
             receive: None,
             create_spend: None,
-            settings: None,
+            vault_settings: None,
             buy_sell: None,
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn new(
+        breez_client: Arc<BreezClient>,
         cache: &Cache,
         wallet: Arc<Wallet>,
         data_dir: CoincubeDirectory,
@@ -107,6 +139,7 @@ impl Panels {
         internal_bitcoind: Option<&Bitcoind>,
         config: Arc<Config>,
         restored_from_backup: bool,
+        cube_id: String,
     ) -> Panels {
         let show_rescan_warning = restored_from_backup
             && daemon_backend.is_coincubed()
@@ -118,8 +151,8 @@ impl Panels {
         Self {
             current: Menu::Home,
             vault_expanded: false,
-            active_expanded: false,
-            global_home: GlobalHome::new(wallet.clone()),
+            liquid_expanded: false,
+            global_home: GlobalHome::new(wallet.clone(), breez_client.clone()),
             vault_overview: Some(VaultOverview::new(
                 wallet.clone(),
                 cache.coins(),
@@ -133,26 +166,68 @@ impl Panels {
                 cache.blockheight(),
                 show_rescan_warning,
             )),
-            active_overview: ActiveOverview::new(wallet.clone()),
-            active_send: ActiveSend::new(wallet.clone()),
-            active_receive: ActiveReceive::new(wallet.clone()),
-            active_transactions: ActiveTransactions::new(wallet.clone()),
-            active_settings: ActiveSettings::new(wallet.clone()),
+            liquid_overview: LiquidOverview::new(breez_client.clone()),
+            liquid_send: LiquidSend::new(breez_client.clone()),
+            liquid_receive: LiquidReceive::new(breez_client.clone()),
+            liquid_transactions: LiquidTransactions::new(breez_client.clone()),
+            liquid_settings: LiquidSettings::new(breez_client),
+            global_settings: {
+                let network_dir = data_dir.network_directory(cache.network);
+                let settings_file = settings::Settings::from_file(&network_dir).ok();
+                let (price_setting, unit_setting) = settings_file
+                    .as_ref()
+                    .and_then(|s| s.cubes.iter().find(|c| c.id == cube_id))
+                    .map(|c| {
+                        (
+                            c.fiat_price.clone().unwrap_or_default(),
+                            c.unit_setting.clone(),
+                        )
+                    })
+                    .unwrap_or_default();
+                GeneralSettingsState::new(cube_id.clone(), price_setting, unit_setting)
+            },
             coins: Some(CoinsPanel::new(
                 cache.coins(),
                 wallet.main_descriptor.first_timelock_value(),
             )),
             transactions: Some(VaultTransactionsPanel::new(wallet.clone())),
             psbts: Some(PsbtsPanel::new(wallet.clone())),
-            recovery: Some(new_recovery_panel(wallet.clone(), cache)),
-            receive: Some(VaultReceivePanel::new(data_dir.clone(), wallet.clone())),
-            create_spend: Some(CreateSpendPanel::new(
+            recovery: Some(new_recovery_panel(
                 wallet.clone(),
-                cache.coins(),
-                cache.blockheight() as u32,
-                cache.network,
+                cache,
+                sync_status(
+                    daemon_backend.clone(),
+                    cache.blockheight(),
+                    cache.sync_progress(),
+                    cache.last_poll_timestamp(),
+                    cache.last_poll_at_startup,
+                ),
             )),
-            settings: Some(state::SettingsState::new(
+            receive: Some(VaultReceivePanel::new(data_dir.clone(), wallet.clone())),
+            create_spend: Some({
+                let (balance, unconfirmed_balance, _, _) = state::coins_summary(
+                    cache.coins(),
+                    cache.blockheight().max(0) as u32,
+                    wallet.main_descriptor.first_timelock_value(),
+                );
+                CreateSpendPanel::new(
+                    wallet.clone(),
+                    cache.coins(),
+                    cache.blockheight().max(0) as u32,
+                    cache.network,
+                    balance,
+                    unconfirmed_balance,
+                    sync_status(
+                        daemon_backend.clone(),
+                        cache.blockheight(),
+                        cache.sync_progress(),
+                        cache.last_poll_timestamp(),
+                        cache.last_poll_at_startup,
+                    ),
+                    cache.bitcoin_unit,
+                )
+            }),
+            vault_settings: Some(VaultSettingsState::new(
                 data_dir.clone(),
                 wallet.clone(),
                 daemon_backend,
@@ -196,15 +271,42 @@ impl Panels {
         ));
         self.transactions = Some(VaultTransactionsPanel::new(wallet.clone()));
         self.psbts = Some(PsbtsPanel::new(wallet.clone()));
-        self.recovery = Some(new_recovery_panel(wallet.clone(), cache));
-        self.receive = Some(VaultReceivePanel::new(data_dir.clone(), wallet.clone()));
-        self.create_spend = Some(CreateSpendPanel::new(
+        self.recovery = Some(new_recovery_panel(
             wallet.clone(),
-            cache.coins(),
-            cache.blockheight() as u32,
-            cache.network,
+            cache,
+            sync_status(
+                daemon_backend.clone(),
+                cache.blockheight(),
+                cache.sync_progress(),
+                cache.last_poll_timestamp(),
+                cache.last_poll_at_startup,
+            ),
         ));
-        self.settings = Some(state::SettingsState::new(
+        self.receive = Some(VaultReceivePanel::new(data_dir.clone(), wallet.clone()));
+        self.create_spend = Some({
+            let (balance, unconfirmed_balance, _, _) = state::coins_summary(
+                cache.coins(),
+                cache.blockheight() as u32,
+                wallet.main_descriptor.first_timelock_value(),
+            );
+            CreateSpendPanel::new(
+                wallet.clone(),
+                cache.coins(),
+                cache.blockheight() as u32,
+                cache.network,
+                balance,
+                unconfirmed_balance,
+                sync_status(
+                    daemon_backend.clone(),
+                    cache.blockheight(),
+                    cache.sync_progress(),
+                    cache.last_poll_timestamp(),
+                    cache.last_poll_at_startup,
+                ),
+                cache.bitcoin_unit,
+            )
+        });
+        self.vault_settings = Some(VaultSettingsState::new(
             data_dir.clone(),
             wallet.clone(),
             daemon_backend,
@@ -221,12 +323,12 @@ impl Panels {
     fn current(&self) -> Option<&dyn State> {
         match &self.current {
             Menu::Home => Some(&self.global_home),
-            Menu::Active(submenu) => match submenu {
-                crate::app::menu::ActiveSubMenu::Overview => Some(&self.active_overview),
-                crate::app::menu::ActiveSubMenu::Send => Some(&self.active_send),
-                crate::app::menu::ActiveSubMenu::Receive => Some(&self.active_receive),
-                crate::app::menu::ActiveSubMenu::Transactions(_) => Some(&self.active_transactions),
-                crate::app::menu::ActiveSubMenu::Settings(_) => Some(&self.active_settings),
+            Menu::Liquid(submenu) => match submenu {
+                crate::app::menu::LiquidSubMenu::Overview => Some(&self.liquid_overview),
+                crate::app::menu::LiquidSubMenu::Send => Some(&self.liquid_send),
+                crate::app::menu::LiquidSubMenu::Receive => Some(&self.liquid_receive),
+                crate::app::menu::LiquidSubMenu::Transactions(_) => Some(&self.liquid_transactions),
+                crate::app::menu::LiquidSubMenu::Settings(_) => Some(&self.liquid_settings),
             },
             Menu::Vault(submenu) => match submenu {
                 crate::app::menu::VaultSubMenu::Overview => {
@@ -251,37 +353,25 @@ impl Panels {
                     self.recovery.as_ref().map(|v| v as &dyn State)
                 }
                 crate::app::menu::VaultSubMenu::Settings(_) => {
-                    self.settings.as_ref().map(|v| v as &dyn State)
+                    self.vault_settings.as_ref().map(|v| v as &dyn State)
                 }
             },
             Menu::BuySell => self.buy_sell.as_ref().map(|v| v as &dyn State),
-            // Legacy menu items
-            Menu::Receive => self.receive.as_ref().map(|v| v as &dyn State),
-            Menu::PSBTs => self.psbts.as_ref().map(|v| v as &dyn State),
-            Menu::Transactions => self.transactions.as_ref().map(|v| v as &dyn State),
-            Menu::TransactionPreSelected(_) => self.transactions.as_ref().map(|v| v as &dyn State),
-            Menu::Settings | Menu::SettingsPreSelected(_) => {
-                self.settings.as_ref().map(|v| v as &dyn State)
-            }
-            Menu::Coins => self.coins.as_ref().map(|v| v as &dyn State),
-            Menu::CreateSpendTx => self.create_spend.as_ref().map(|v| v as &dyn State),
-            Menu::Recovery => self.recovery.as_ref().map(|v| v as &dyn State),
-            Menu::RefreshCoins(_) => self.create_spend.as_ref().map(|v| v as &dyn State),
-            Menu::PsbtPreSelected(_) => self.psbts.as_ref().map(|v| v as &dyn State),
+            Menu::Settings(_) => Some(&self.global_settings as &dyn State),
         }
     }
 
     fn current_mut(&mut self) -> Option<&mut dyn State> {
         match &self.current {
             Menu::Home => Some(&mut self.global_home),
-            Menu::Active(submenu) => match submenu {
-                crate::app::menu::ActiveSubMenu::Overview => Some(&mut self.active_overview),
-                crate::app::menu::ActiveSubMenu::Send => Some(&mut self.active_send),
-                crate::app::menu::ActiveSubMenu::Receive => Some(&mut self.active_receive),
-                crate::app::menu::ActiveSubMenu::Transactions(_) => {
-                    Some(&mut self.active_transactions)
+            Menu::Liquid(submenu) => match submenu {
+                crate::app::menu::LiquidSubMenu::Overview => Some(&mut self.liquid_overview),
+                crate::app::menu::LiquidSubMenu::Send => Some(&mut self.liquid_send),
+                crate::app::menu::LiquidSubMenu::Receive => Some(&mut self.liquid_receive),
+                crate::app::menu::LiquidSubMenu::Transactions(_) => {
+                    Some(&mut self.liquid_transactions)
                 }
-                crate::app::menu::ActiveSubMenu::Settings(_) => Some(&mut self.active_settings),
+                crate::app::menu::LiquidSubMenu::Settings(_) => Some(&mut self.liquid_settings),
             },
             Menu::Vault(submenu) => match submenu {
                 crate::app::menu::VaultSubMenu::Overview => {
@@ -306,25 +396,11 @@ impl Panels {
                     self.recovery.as_mut().map(|v| v as &mut dyn State)
                 }
                 crate::app::menu::VaultSubMenu::Settings(_) => {
-                    self.settings.as_mut().map(|v| v as &mut dyn State)
+                    self.vault_settings.as_mut().map(|v| v as &mut dyn State)
                 }
             },
             Menu::BuySell => self.buy_sell.as_mut().map(|v| v as &mut dyn State),
-            // Legacy menu items
-            Menu::Receive => self.receive.as_mut().map(|v| v as &mut dyn State),
-            Menu::PSBTs => self.psbts.as_mut().map(|v| v as &mut dyn State),
-            Menu::Transactions => self.transactions.as_mut().map(|v| v as &mut dyn State),
-            Menu::TransactionPreSelected(_) => {
-                self.transactions.as_mut().map(|v| v as &mut dyn State)
-            }
-            Menu::Settings | Menu::SettingsPreSelected(_) => {
-                self.settings.as_mut().map(|v| v as &mut dyn State)
-            }
-            Menu::Coins => self.coins.as_mut().map(|v| v as &mut dyn State),
-            Menu::CreateSpendTx => self.create_spend.as_mut().map(|v| v as &mut dyn State),
-            Menu::Recovery => self.recovery.as_mut().map(|v| v as &mut dyn State),
-            Menu::RefreshCoins(_) => self.create_spend.as_mut().map(|v| v as &mut dyn State),
-            Menu::PsbtPreSelected(_) => self.psbts.as_mut().map(|v| v as &mut dyn State),
+            Menu::Settings(_) => Some(&mut self.global_settings as &mut dyn State),
         }
     }
 }
@@ -332,36 +408,34 @@ impl Panels {
 pub struct App {
     cache: Cache,
     wallet: Option<Arc<Wallet>>,
+    breez_client: Arc<BreezClient>,
     daemon: Option<Arc<dyn Daemon + Sync + Send>>,
     internal_bitcoind: Option<Bitcoind>,
     cube_settings: settings::CubeSettings,
     config: Arc<Config>,
     datadir: CoincubeDirectory,
-
     panels: Panels,
+    error_toast: Option<String>, // Global error toast message
+    error_toast_id: u64,         // ID for race condition prevention
 }
 
 impl App {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         cache: Cache,
         wallet: Arc<Wallet>,
+        breez_client: Arc<BreezClient>,
         config: Config,
         daemon: Arc<dyn Daemon + Sync + Send>,
         data_dir: CoincubeDirectory,
         internal_bitcoind: Option<Bitcoind>,
         restored_from_backup: bool,
+        cube_settings: settings::CubeSettings,
     ) -> (App, Task<Message>) {
         let config_arc = Arc::new(config);
-        let cube_settings = settings::CubeSettings::new(
-            wallet
-                .alias
-                .clone()
-                .unwrap_or_else(|| "My Cube".to_string()),
-            cache.network,
-        )
-        .with_vault(wallet.id());
 
         let mut panels = Panels::new(
+            breez_client.clone(),
             &cache,
             wallet.clone(),
             data_dir.clone(),
@@ -369,13 +443,20 @@ impl App {
             internal_bitcoind.as_ref(),
             config_arc.clone(),
             restored_from_backup,
+            cube_settings.id.clone(),
         );
-        let cmd = if let Some(vault_overview) = panels.vault_overview.as_mut() {
-            vault_overview.reload(daemon.clone(), wallet.clone())
+        let mut tasks = vec![];
+        if let Some(vault_overview) = panels.vault_overview.as_mut() {
+            tasks.push(vault_overview.reload(Some(daemon.clone()), Some(wallet.clone())));
         } else {
             tracing::warn!("vault_overview not present in App::new despite vault being configured");
-            Task::none()
-        };
+        }
+        tasks.push(
+            panels
+                .global_home
+                .reload(Some(daemon.clone()), Some(wallet.clone())),
+        );
+        let cmd = Task::batch(tasks);
         let mut cache_with_vault = cache;
         cache_with_vault.has_vault = true;
         (
@@ -384,55 +465,91 @@ impl App {
                 cache: cache_with_vault,
                 daemon: Some(daemon),
                 wallet: Some(wallet),
+                breez_client,
                 internal_bitcoind,
                 cube_settings,
                 config: config_arc,
                 datadir: data_dir,
+                error_toast: None,
+                error_toast_id: 0,
             },
             cmd,
         )
     }
 
     pub fn new_without_wallet(
+        breez_client: Arc<BreezClient>,
         config: Config,
         datadir: CoincubeDirectory,
         network: coincube_core::miniscript::bitcoin::Network,
         cube_settings: settings::CubeSettings,
     ) -> (App, Task<Message>) {
-        tracing::info!(
-            "Creating app without wallet for cube: {}",
-            cube_settings.name
-        );
         let config_arc = Arc::new(config);
+        // Load bitcoin_unit from cube settings if available
+        let bitcoin_unit = {
+            let network_dir = datadir.network_directory(network);
+            settings::Settings::from_file(&network_dir)
+                .ok()
+                .and_then(|s| {
+                    s.cubes
+                        .iter()
+                        .find(|c| c.id == cube_settings.id)
+                        .map(|c| c.unit_setting.display_unit)
+                })
+                .unwrap_or_default()
+        };
         let cache = Cache {
             network,
             datadir_path: datadir.clone(),
             has_vault: false,
+            bitcoin_unit,
             ..Default::default()
         };
-        tracing::debug!("Cache configured with has_vault=false");
 
-        // Create panels without wallet - only Active and other non-Vault features will be available
-        let panels = Panels::new_without_wallet();
+        let mut panels = Panels::new_without_vault(
+            breez_client.clone(),
+            None,
+            &datadir,
+            network,
+            cube_settings.id.clone(),
+        );
 
-        tracing::info!("App created without wallet successfully");
+        let cmd = panels.global_home.reload(None, None);
+
         (
             Self {
                 panels,
                 cache,
                 daemon: None,
                 wallet: None,
+                breez_client,
                 internal_bitcoind: None,
                 cube_settings,
                 config: config_arc,
                 datadir,
+                error_toast: None,
+                error_toast_id: 0,
             },
-            Task::none(),
+            cmd,
         )
     }
 
     pub fn wallet_id(&self) -> Option<WalletId> {
         self.wallet.as_ref().map(|w| w.id())
+    }
+
+    /// Sets a global error toast and returns an auto-dismiss timer task (8 seconds)
+    pub fn show_error_toast(&mut self, message: String) -> Task<Message> {
+        self.error_toast_id += 1;
+        let current_id = self.error_toast_id;
+        self.error_toast = Some(message);
+        Task::perform(
+            async move {
+                tokio::time::sleep(Duration::from_secs(8)).await;
+                current_id
+            },
+            |id| Message::View(view::Message::DismissErrorIfId(id)),
+        )
     }
 
     pub fn title(&self) -> &str {
@@ -450,6 +567,10 @@ impl App {
 
     pub fn cache(&self) -> &Cache {
         &self.cache
+    }
+
+    pub fn breez_client(&self) -> Arc<BreezClient> {
+        self.breez_client.clone()
     }
 
     pub fn wallet(&self) -> Option<&Wallet> {
@@ -526,7 +647,7 @@ impl App {
                                 self.panels.current = menu.clone();
                                 if let Some(panel) = self.panels.current_mut() {
                                     return panel.update(
-                                        daemon.clone(),
+                                        Some(daemon.clone()),
                                         &self.cache,
                                         Message::View(view::Message::Settings(match setting {
                                             menu::SettingsOption::Node => {
@@ -538,12 +659,27 @@ impl App {
                             }
                         }
                         menu::VaultSubMenu::Coins(Some(preselected)) => {
+                            let (balance, unconfirmed_balance, _, _) = state::coins_summary(
+                                self.cache.coins(),
+                                self.cache.blockheight() as u32,
+                                wallet.main_descriptor.first_timelock_value(),
+                            );
                             self.panels.create_spend = Some(CreateSpendPanel::new_self_send(
                                 wallet.clone(),
                                 self.cache.coins(),
                                 self.cache.blockheight() as u32,
                                 preselected,
                                 self.cache.network,
+                                balance,
+                                unconfirmed_balance,
+                                sync_status(
+                                    self.daemon_backend(),
+                                    self.cache.blockheight(),
+                                    self.cache.sync_progress(),
+                                    self.cache.last_poll_timestamp(),
+                                    self.cache.last_poll_at_startup,
+                                ),
+                                self.cache.bitcoin_unit,
                             ));
                         }
                         menu::VaultSubMenu::Send => {
@@ -554,12 +690,29 @@ impl App {
                                 .as_ref()
                                 .is_none_or(|p| !p.keep_state())
                             {
-                                self.panels.create_spend = Some(CreateSpendPanel::new(
-                                    wallet.clone(),
-                                    self.cache.coins(),
-                                    self.cache.blockheight() as u32,
-                                    self.cache.network,
-                                ));
+                                self.panels.create_spend = Some({
+                                    let (balance, unconfirmed_balance, _, _) = state::coins_summary(
+                                        self.cache.coins(),
+                                        self.cache.blockheight() as u32,
+                                        wallet.main_descriptor.first_timelock_value(),
+                                    );
+                                    CreateSpendPanel::new(
+                                        wallet.clone(),
+                                        self.cache.coins(),
+                                        self.cache.blockheight() as u32,
+                                        self.cache.network,
+                                        balance,
+                                        unconfirmed_balance,
+                                        sync_status(
+                                            self.daemon_backend(),
+                                            self.cache.blockheight(),
+                                            self.cache.sync_progress(),
+                                            self.cache.last_poll_timestamp(),
+                                            self.cache.last_poll_at_startup,
+                                        ),
+                                        self.cache.bitcoin_unit,
+                                    )
+                                });
                             }
                         }
                         menu::VaultSubMenu::Recovery => {
@@ -569,29 +722,26 @@ impl App {
                                 .as_ref()
                                 .is_none_or(|p| !p.keep_state())
                             {
-                                self.panels.recovery =
-                                    Some(new_recovery_panel(wallet.clone(), &self.cache));
+                                self.panels.recovery = Some(new_recovery_panel(
+                                    wallet.clone(),
+                                    &self.cache,
+                                    sync_status(
+                                        self.daemon_backend(),
+                                        self.cache.blockheight(),
+                                        self.cache.sync_progress(),
+                                        self.cache.last_poll_timestamp(),
+                                        self.cache.last_poll_at_startup,
+                                    ),
+                                ));
                             }
                         }
                         _ => {}
                     }
                 }
             }
-            menu::Menu::Active(submenu) => {
-                if let menu::ActiveSubMenu::Transactions(Some(txid)) = submenu {
-                    if let Some(daemon) = &self.daemon {
-                        if let Ok(Some(tx)) = Handle::current().block_on(async {
-                            daemon
-                                .get_history_txs(&[*txid])
-                                .await
-                                .map(|txs| txs.first().cloned())
-                        }) {
-                            self.panels.active_transactions.preselect(tx);
-                            self.panels.current = menu;
-                            return Task::none();
-                        }
-                    }
-                }
+            menu::Menu::Liquid(_submenu) => {
+                // Liquid transaction preselection is handled via PreselectPayment message
+                // since Payment objects are passed directly instead of fetching by ID
             }
             _ => {
                 tracing::debug!(
@@ -601,22 +751,26 @@ impl App {
             }
         };
 
-        self.panels.current = menu;
-        if let (Some(daemon), Some(wallet)) = (&self.daemon, &self.wallet) {
-            if let Some(panel) = self.panels.current_mut() {
-                panel.reload(daemon.clone(), wallet.clone())
-            } else {
-                Task::none()
-            }
+        self.panels.current = menu.clone();
+
+        // Call reload with optional daemon/wallet
+        // Liquid panels don't need them (use BreezClient), Vault panels do
+        if let Some(panel) = self.panels.current_mut() {
+            panel.reload(self.daemon.clone(), self.wallet.clone())
         } else {
             Task::none()
         }
     }
 
     pub fn subscription(&self) -> Subscription<Message> {
+        let mut subscriptions = vec![];
+
+        // Always subscribe to Breez events (handles fee acceptance globally)
+        subscriptions.push(self.breez_client.subscription().map(Message::BreezEvent));
+
         // Only create tick subscription if we have a vault (daemon exists)
-        let subscriptions = if self.daemon.is_some() {
-            vec![
+        if self.daemon.is_some() {
+            subscriptions.push(
                 time::every(Duration::from_secs(
                     match sync_status(
                         self.daemon_backend(),
@@ -646,19 +800,16 @@ impl App {
                     },
                 ))
                 .map(|_| Message::Tick),
-                self.panels
-                    .current()
-                    .unwrap_or(&self.panels.global_home)
-                    .subscription(),
-            ]
-        } else {
-            // No vault - only subscribe to panel events, no tick updates
-            vec![self
-                .panels
+            );
+        }
+
+        // Current panel's subscription
+        subscriptions.push(
+            self.panels
                 .current()
                 .unwrap_or(&self.panels.global_home)
-                .subscription()]
-        };
+                .subscription(),
+        );
 
         Subscription::batch(subscriptions)
     }
@@ -689,7 +840,7 @@ impl App {
         let tick = std::time::Instant::now();
         let mut tasks = if let Some(daemon) = &self.daemon {
             if let Some(panel) = self.panels.current_mut() {
-                vec![panel.update(daemon.clone(), &self.cache, Message::Tick)]
+                vec![panel.update(Some(daemon.clone()), &self.cache, Message::Tick)]
             } else {
                 vec![]
             }
@@ -727,8 +878,6 @@ impl App {
             },
         );
         if self.cache.daemon_cache.last_tick + duration <= tick {
-            tracing::debug!("Updating daemon cache");
-
             // We have to update here the last_tick to prevent that during a burst of events
             // there is a race condition with the Task and too much tasks are triggered.
             self.cache.daemon_cache.last_tick = tick;
@@ -763,8 +912,61 @@ impl App {
 
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
+            Message::View(view::Message::DismissError) => {
+                self.error_toast = None;
+                return Task::none();
+            }
+            Message::View(view::Message::ShowError(error_msg)) => {
+                return self.show_error_toast(error_msg);
+            }
+            Message::View(view::Message::DismissErrorIfId(id)) => {
+                // Only dismiss if ID matches current toast (prevents race condition)
+                if id == self.error_toast_id {
+                    self.error_toast = None;
+                }
+                return Task::none();
+            }
+            Message::SettingsSaved => {
+                // Settings saved - reload unit preference and fiat_price from cube settings
+                let network_dir = self
+                    .cache
+                    .datadir_path
+                    .network_directory(self.cache.network);
+                if let Ok(settings) = settings::Settings::from_file(&network_dir) {
+                    if let Some(cube) = settings
+                        .cubes
+                        .iter()
+                        .find(|c| c.id == self.cube_settings.id)
+                    {
+                        self.cache.bitcoin_unit = cube.unit_setting.display_unit;
+                        self.cube_settings.fiat_price = cube.fiat_price.clone();
+
+                        // Clear cached fiat price if disabled
+                        if !cube.fiat_price.as_ref().is_some_and(|p| p.is_enabled) {
+                            self.cache.fiat_price = None;
+                        }
+                    }
+                }
+
+                // Forward to state panels so they can reload their internal state
+                if let Some(panel) = self.panels.current_mut() {
+                    return Task::batch(vec![
+                        panel.update(self.daemon.clone(), &self.cache, message),
+                        Task::done(Message::CacheUpdated),
+                    ]);
+                }
+
+                return Task::done(Message::CacheUpdated);
+            }
             Message::Fiat(FiatMessage::GetPriceResult(fiat_price)) => {
-                if self.wallet.as_ref().map(|w| w.fiat_price_is_relevant(&fiat_price)).unwrap_or(false)
+                // Check if fiat price is relevant based on cube settings (applies to both Liquid and Vault)
+                let is_relevant = self.cube_settings.fiat_price.as_ref().is_some_and(|sett| {
+                    sett.is_enabled
+                        && sett.source == fiat_price.source()
+                        && sett.currency == fiat_price.currency()
+                });
+
+                if is_relevant
                     // make sure we only update if the price is newer than the cached one
                     && !self.cache.fiat_price.as_ref().is_some_and(|cached| {
                         cached.source() == fiat_price.source()
@@ -785,10 +987,10 @@ impl App {
             },
             Message::CacheUpdated => {
                 // Update vault panels with cache if they exist
-                if let (Some(daemon), Some(vault_overview), Some(settings)) = (
+                if let (Some(daemon), Some(vault_overview), Some(vault_settings)) = (
                     &self.daemon,
                     self.panels.vault_overview.as_mut(),
-                    self.panels.settings.as_mut(),
+                    self.panels.vault_settings.as_mut(),
                 ) {
                     let daemon = daemon.clone();
                     let current = &self.panels.current;
@@ -796,25 +998,37 @@ impl App {
 
                     let is_settings_current = matches!(
                         current,
-                        Menu::Settings
-                            | Menu::SettingsPreSelected(_)
+                        Menu::Settings(_)
                             | Menu::Vault(crate::app::menu::VaultSubMenu::Settings(_))
                     );
 
-                    let commands = [
+                    let is_spend_current =
+                        matches!(current, Menu::Vault(crate::app::menu::VaultSubMenu::Send));
+
+                    let mut commands = vec![
                         vault_overview.update(
-                            daemon.clone(),
+                            Some(daemon.clone()),
                             &cache,
                             Message::UpdatePanelCache(
                                 current == &Menu::Vault(crate::app::menu::VaultSubMenu::Overview),
                             ),
                         ),
-                        settings.update(
-                            daemon.clone(),
+                        vault_settings.update(
+                            Some(daemon.clone()),
                             &cache,
                             Message::UpdatePanelCache(is_settings_current),
                         ),
                     ];
+
+                    // Also update create_spend panel if it exists
+                    if let Some(create_spend) = self.panels.create_spend.as_mut() {
+                        commands.push(create_spend.update(
+                            Some(daemon.clone()),
+                            &cache,
+                            Message::UpdatePanelCache(is_spend_current),
+                        ));
+                    }
+
                     return Task::batch(commands);
                 }
             }
@@ -837,7 +1051,6 @@ impl App {
                 // If we didn't have a vault before, rebuild all vault panels
                 if was_vaultless {
                     if let Some(daemon) = &self.daemon {
-                        tracing::info!("Vault added to app - rebuilding vault panels");
                         self.panels.build_vault_panels(
                             wallet.clone(),
                             &self.cache,
@@ -853,7 +1066,11 @@ impl App {
                 if let (Some(daemon), Some(panel)) =
                     (self.daemon.clone(), self.panels.current_mut())
                 {
-                    return panel.update(daemon, &self.cache, Message::WalletUpdated(Ok(wallet)));
+                    return panel.update(
+                        Some(daemon),
+                        &self.cache,
+                        Message::WalletUpdated(Ok(wallet)),
+                    );
                 }
             }
             Message::View(view::Message::Menu(menu)) => {
@@ -864,17 +1081,17 @@ impl App {
             Message::View(view::Message::ToggleVault) => {
                 self.panels.vault_expanded = !self.panels.vault_expanded;
                 self.cache.vault_expanded = self.panels.vault_expanded;
-                // If we're expanding Vault, collapse Active
+                // If we're expanding Vault, collapse Liquid
                 if self.panels.vault_expanded {
-                    self.panels.active_expanded = false;
-                    self.cache.active_expanded = false;
+                    self.panels.liquid_expanded = false;
+                    self.cache.liquid_expanded = false;
                 }
             }
-            Message::View(view::Message::ToggleActive) => {
-                self.panels.active_expanded = !self.panels.active_expanded;
-                self.cache.active_expanded = self.panels.active_expanded;
-                // If we're expanding Active, collapse Vault
-                if self.panels.active_expanded {
+            Message::View(view::Message::ToggleLiquid) => {
+                self.panels.liquid_expanded = !self.panels.liquid_expanded;
+                self.cache.liquid_expanded = self.panels.liquid_expanded;
+                // If we're expanding Liquid, collapse Vault
+                if self.panels.liquid_expanded {
                     self.panels.vault_expanded = false;
                     self.cache.vault_expanded = false;
                 }
@@ -886,11 +1103,90 @@ impl App {
             }
             Message::View(view::Message::Clipboard(text)) => return clipboard::write(text),
 
+            Message::BreezEvent(event) => {
+                use breez_sdk_liquid::prelude::{PaymentDetails, SdkEvent};
+                log::info!("App received Breez Event: {:?}", event);
+
+                match event {
+                    SdkEvent::PaymentWaitingFeeAcceptance { details } => {
+                        log::info!("Payment waiting for fee acceptance: {:?}", details);
+                        let client = self.breez_client.clone();
+
+                        return Task::perform(
+                            async move {
+                                if let PaymentDetails::Bitcoin { swap_id, .. } = details.details {
+                                    match client.fetch_payment_proposed_fees(&swap_id).await {
+                                        Ok(fees_response) => {
+                                            log::info!(
+                                                "Accepting fees for swap {}: payer_amount={}, fees={}",
+                                                swap_id,
+                                                fees_response.payer_amount_sat,
+                                                fees_response.fees_sat
+                                            );
+                                            if let Err(e) = client
+                                                .accept_payment_proposed_fees(fees_response)
+                                                .await
+                                            {
+                                                log::error!("Failed to accept payment fees: {}", e);
+                                                Err(format!("Failed to accept payment fees: {}", e))
+                                            } else {
+                                                log::info!(
+                                                    "Successfully accepted fees for swap {}",
+                                                    swap_id
+                                                );
+                                                Ok(())
+                                            }
+                                        }
+                                        Err(e) => {
+                                            log::error!("Failed to fetch proposed fees: {}", e);
+                                            Err(format!("Failed to fetch proposed fees: {}", e))
+                                        }
+                                    }
+                                } else {
+                                    Ok(())
+                                }
+                            },
+                            |result| {
+                                if let Err(err) = result {
+                                    log::error!("Fee acceptance failed: {}", err);
+                                }
+                                // Trigger a cache update to refresh balance displays
+                                Message::Tick
+                            },
+                        );
+                    }
+                    SdkEvent::PaymentPending { .. }
+                    | SdkEvent::PaymentSucceeded { .. }
+                    | SdkEvent::PaymentFailed { .. }
+                    | SdkEvent::PaymentWaitingConfirmation { .. } => {
+                        // Payment state changed - trigger cache update
+                        return Task::batch(vec![
+                            Task::done(Message::Tick),
+                            Task::done(Message::View(view::Message::LiquidSend(
+                                view::LiquidSendMessage::RefreshRequested,
+                            ))),
+                            Task::done(Message::View(view::Message::LiquidOverview(
+                                view::LiquidOverviewMessage::RefreshRequested,
+                            ))),
+                            Task::done(Message::View(view::Message::Home(
+                                view::HomeMessage::RefreshLiquidBalance,
+                            ))),
+                        ]);
+                    }
+                    _ => {
+                        // Other events - just log
+                        log::debug!("Unhandled Breez event: {:?}", event);
+                    }
+                }
+            }
+
             msg => {
                 if let (Some(daemon), Some(panel)) =
                     (self.daemon.clone(), self.panels.current_mut())
                 {
-                    return panel.update(daemon, &self.cache, msg);
+                    return panel.update(Some(daemon), &self.cache, msg);
+                } else if let Some(panel) = self.panels.current_mut() {
+                    return panel.update(None, &self.cache, msg);
                 }
             }
         };
@@ -932,13 +1228,16 @@ impl App {
     }
 
     pub fn view(&self) -> Element<'_, Message> {
+        use iced::widget::{container, Stack};
+        use iced::{Alignment, Length};
+
         let view = self
             .panels
             .current()
             .unwrap_or(&self.panels.global_home)
             .view(&self.panels.current, &self.cache);
 
-        if self.cache.network != bitcoin::Network::Bitcoin {
+        let content: Element<'_, Message> = if self.cache.network != bitcoin::Network::Bitcoin {
             Column::with_children([
                 network_banner(self.cache.network).into(),
                 view.map(Message::View),
@@ -946,6 +1245,46 @@ impl App {
             .into()
         } else {
             view.map(Message::View)
+        };
+
+        // Overlay error toast at bottom if present
+        if let Some(err) = &self.error_toast {
+            use coincube_ui::{color, component::text, icon::cross_icon, theme};
+            use iced::widget::{Button, Row};
+
+            let close_btn: Element<'_, view::Message> =
+                Button::new(cross_icon().color(color::WHITE).size(18))
+                    .style(theme::button::transparent)
+                    .on_press(view::Message::DismissError)
+                    .into();
+
+            let error_toast = container(
+                Row::new()
+                    .push(container(text::p2_regular(err).color(color::WHITE)))
+                    .push(close_btn)
+                    .align_y(Alignment::Center)
+                    .spacing(15),
+            )
+            .padding(15)
+            .style(theme::notification::error)
+            .max_width(500.0);
+
+            // Bottom-center of content area (offset by sidebar width 190px)
+            let toast_overlay: Element<'_, view::Message> =
+                container(container(error_toast).padding(20))
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .padding(iced::Padding::new(0.0).left(190.0)) // left padding for sidebar
+                    .align_x(Alignment::Center)
+                    .align_y(Alignment::End)
+                    .into();
+
+            Stack::new()
+                .push(content)
+                .push(toast_overlay.map(Message::View))
+                .into()
+        } else {
+            content
         }
     }
 
@@ -954,11 +1293,24 @@ impl App {
     }
 }
 
-fn new_recovery_panel(wallet: Arc<Wallet>, cache: &Cache) -> CreateSpendPanel {
+fn new_recovery_panel(
+    wallet: Arc<Wallet>,
+    cache: &Cache,
+    sync_status: SyncStatus,
+) -> CreateSpendPanel {
+    let (balance, unconfirmed_balance, _, _) = state::coins_summary(
+        cache.coins(),
+        cache.blockheight() as u32,
+        wallet.main_descriptor.first_timelock_value(),
+    );
     CreateSpendPanel::new_recovery(
         wallet,
         cache.coins(),
         cache.blockheight() as u32,
         cache.network,
+        balance,
+        unconfirmed_balance,
+        sync_status,
+        cache.bitcoin_unit,
     )
 }

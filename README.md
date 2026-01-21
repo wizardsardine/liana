@@ -4,7 +4,7 @@
     <img src="coincube-ui/static/logos/coincube-logo.svg" width="440px" />
   </a>
 
-_Secure Bitcoin wallet with Vault, Active spending, and inheritance_.
+_Secure Bitcoin wallet with Vault, Liquid spending, and inheritance_.
 
 </div>
 
@@ -17,19 +17,19 @@ a primary spending path (always accessible) and recovery paths (available after 
 You may have multiple keys in either path. Recovery paths are enforced onchain by Bitcoin's Script
 capabilities.
 
-**ACTIVE Wallet** - Lightning-enabled spending wallet powered by Breez SDK for instant, low-fee payments.
-
-**BUY/SELL** - Integrated Bitcoin on/off-ramp functionality.
-
-**KEYCHAIN** - Remote keychain-based signers for enhanced flexibility.
-
 Example VAULT configuration:
 
 - Owner's key (can always spend)
 - Any 2 keys from trusted parties (after 1 year)
 - Emergency recovery key (after 1 year and 3 months)
 
-COINCUBE is designed for **trustless inheritance**, **loss protection**, **active spending**, and
+**LIQUID WALLET** - Lightning-enabled spending wallet powered by Breez SDK for instant, low-fee payments. [Liquid](https://liquid.net/) is a sidechain of Bitcoin that provides low cost payments and confidential transactions.
+
+**BUY/SELL** - Integrated Bitcoin on/off-ramp functionality.
+
+**KEYCHAIN** - Remote keychain-based signers for enhanced flexibility.
+
+COINCUBE is designed for **trustless inheritance**, **loss protection**, **liquid spending**, and
 **user-friendly Bitcoin custody**.
 
 ## Usage
@@ -60,7 +60,7 @@ built with the [`iced`](https://github.com/iced-rs/iced/) library.
 
 The code for the GUI can be found in the [`coincube-gui`](coincube-gui) folder.
 
-#### Active Wallet
+#### Liquid Wallet
 
 Lightning-enabled spending wallet integration with Breez SDK (under development).
 

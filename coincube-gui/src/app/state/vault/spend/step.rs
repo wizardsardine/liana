@@ -19,7 +19,10 @@ use coincube_core::{
 use coincubed::commands::ListCoinsEntry;
 use iced::{Subscription, Task};
 
-use coincube_ui::{component::form, widget::Element};
+use coincube_ui::{
+    component::{amount::BitcoinDisplayUnit, form},
+    widget::Element,
+};
 
 use crate::{
     app::{
@@ -27,9 +30,9 @@ use crate::{
         error::Error,
         menu::Menu,
         message::Message,
-        state::{fiat_converter_for_wallet, vault::psbt},
+        state::vault::psbt,
         view::{self, vault::fiat::FiatAmount, CreateSpendMessage},
-        wallet::Wallet,
+        wallet::{SyncStatus, Wallet},
     },
     daemon::{
         model::{coin_is_owned, remaining_sequence, Coin, CreateSpendResult, SpendTx},
@@ -169,8 +172,13 @@ pub struct DefineSpend {
     /// Whether this is the first step of the spend creation.
     /// Required in order to know whether the user can navigate to a previous step.
     is_first_step: bool,
+    balance: Amount,
+    unconfirmed_balance: Amount,
+    sync_status: SyncStatus,
+    bitcoin_unit: BitcoinDisplayUnit,
 }
 
+#[allow(clippy::too_many_arguments)]
 impl DefineSpend {
     pub fn new(
         network: Network,
@@ -179,6 +187,10 @@ impl DefineSpend {
         tip_height: u32,
         recovery_timelock: Option<u16>,
         is_first_step: bool,
+        balance: Amount,
+        unconfirmed_balance: Amount,
+        sync_status: SyncStatus,
+        bitcoin_unit: BitcoinDisplayUnit,
     ) -> Self {
         let coins = filter_coins(
             coins,
@@ -209,6 +221,10 @@ impl DefineSpend {
             warning: None,
             is_first_step,
             loading_fee_estimate: None,
+            balance,
+            unconfirmed_balance,
+            sync_status,
+            bitcoin_unit,
         }
     }
 
@@ -526,6 +542,10 @@ impl Step for DefineSpend {
                         tip_height as u32,
                         Some(new_tl),
                         self.is_first_step,
+                        self.balance,
+                        self.unconfirmed_balance,
+                        self.sync_status.clone(),
+                        self.bitcoin_unit,
                     );
                     *self = new;
                     return;
@@ -560,6 +580,26 @@ impl Step for DefineSpend {
         message: Message,
     ) -> Task<Message> {
         match message {
+            Message::UpdatePanelCache(_) => {
+                // Update sync_status from cache, same as VaultOverview does
+                self.sync_status = crate::app::wallet::sync_status(
+                    daemon.backend(),
+                    cache.blockheight(),
+                    cache.sync_progress(),
+                    cache.last_poll_timestamp(),
+                    cache.last_poll_at_startup,
+                );
+
+                // Recalculate balance from currency cache
+                let (balance, unconfirmed_balance, _, _) = crate::app::state::coins_summary(
+                    cache.coins(),
+                    cache.blockheight().max(0) as u32,
+                    self.wallet.main_descriptor.first_timelock_value(),
+                );
+                self.balance = balance;
+                self.unconfirmed_balance = unconfirmed_balance;
+                self.bitcoin_unit = cache.bitcoin_unit;
+            }
             Message::View(view::Message::CreateSpend(msg)) => {
                 match msg {
                     view::CreateSpendMessage::BatchLabelEdited(label) => {
@@ -578,6 +618,10 @@ impl Step for DefineSpend {
                             self.tip_height,
                             self.recovery_timelock,
                             self.is_first_step,
+                            self.balance,
+                            self.unconfirmed_balance,
+                            self.sync_status.clone(),
+                            self.bitcoin_unit,
                         );
                         return Task::none();
                     }
@@ -626,7 +670,10 @@ impl Step for DefineSpend {
                         self.loading_fee_estimate = None;
                     }
                     view::CreateSpendMessage::SessionError(error) => {
-                        self.warning = Some(error.into());
+                        let err: Error = error.into();
+                        let err_msg = err.to_string();
+                        self.warning = Some(err);
+                        return Task::done(Message::View(view::Message::ShowError(err_msg)));
                     }
                     view::CreateSpendMessage::FetchFeeEstimate(block_target) => {
                         self.loading_fee_estimate = Some(block_target);
@@ -760,13 +807,21 @@ impl Step for DefineSpend {
                     self.generated = Some(psbt);
                     return Task::perform(async {}, |_| Message::View(view::Message::Next));
                 }
-                Err(e) => self.warning = Some(e),
+                Err(e) => {
+                    let err_msg = e.to_string();
+                    self.warning = Some(e);
+                    return Task::done(Message::View(view::Message::ShowError(err_msg)));
+                }
             },
             Message::Labels(res) => match res {
                 Ok(labels) => {
                     self.coins_labels = labels;
                 }
-                Err(e) => self.warning = Some(e),
+                Err(e) => {
+                    let err_msg = e.to_string();
+                    self.warning = Some(e);
+                    return Task::done(Message::View(view::Message::ShowError(err_msg)));
+                }
             },
             Message::CoinsTipHeight(res_coins, res_tip) => match (res_coins, res_tip) {
                 (Ok(coins), Ok(tip)) => {
@@ -792,7 +847,11 @@ impl Step for DefineSpend {
                     self.redraft(daemon);
                     self.check_valid();
                 }
-                (Err(e), _) | (Ok(_), Err(e)) => self.warning = Some(e),
+                (Err(e), _) | (Ok(_), Err(e)) => {
+                    let err_msg = e.to_string();
+                    self.warning = Some(e);
+                    return Task::done(Message::View(view::Message::ShowError(err_msg)));
+                }
             },
             _ => {}
         };
@@ -841,8 +900,11 @@ impl Step for DefineSpend {
     }
 
     fn view<'a>(&'a self, menu: &'a Menu, cache: &'a Cache) -> Element<'a, view::Message> {
-        let converter = fiat_converter_for_wallet(&self.wallet, cache);
+        let converter: Option<view::FiatAmountConverter> =
+            cache.fiat_price.as_ref().and_then(|p| p.try_into().ok());
         view::vault::spend::create_spend_tx(
+            &self.balance,
+            &self.unconfirmed_balance,
             menu,
             cache,
             converter.as_ref(),
@@ -865,9 +927,10 @@ impl Step for DefineSpend {
             self.amount_left_to_select.as_ref(),
             &self.feerate,
             self.fee_amount.as_ref(),
-            self.warning.as_ref(),
+            &self.sync_status,
             self.is_first_step,
             self.loading_fee_estimate,
+            self.bitcoin_unit,
         )
     }
 
@@ -1148,7 +1211,7 @@ impl Step for SaveSpend {
             } else {
                 false
             },
-            psbt_state.warning.as_ref(),
+            cache.bitcoin_unit,
         );
         if let Some(modal) = &psbt_state.modal {
             modal.as_ref().view(content)
@@ -1226,7 +1289,6 @@ impl Step for SelectRecoveryPath {
                 })
                 .collect(),
             self.selected_path,
-            self.warning.as_ref(),
         )
     }
 
@@ -1242,7 +1304,9 @@ impl Step for SelectRecoveryPath {
                     self.load_from_coins_and_tip_height(&coins, tip);
                 }
                 (Err(e), _) | (Ok(_), Err(e)) => {
+                    let err_msg = e.to_string();
                     self.warning = Some(e);
+                    return Task::done(Message::View(view::Message::ShowError(err_msg)));
                 }
             },
             Message::View(view::Message::CreateSpend(view::CreateSpendMessage::SelectPath(

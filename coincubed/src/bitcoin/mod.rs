@@ -356,7 +356,7 @@ impl BitcoinInterface for d::BitcoinD {
             Err(BitcoindError::Server(e)) => Err(e.to_string()),
             // We assume the Bitcoin backend doesn't fail, so it must be a JSONRPC error.
             Err(e) => panic!(
-                "Unexpected Bitcoin error when broadcast transaction: '{}'.",
+                "Unexpected Bitcoin error when broadcasting transaction: {}",
                 e
             ),
         }

@@ -1,4 +1,5 @@
 use crate::{
+    app::settings::unit::BitcoinDisplayUnit,
     daemon::{
         model::{Coin, ListCoinsResult},
         Daemon, DaemonError,
@@ -23,10 +24,12 @@ pub struct Cache {
     pub last_poll_at_startup: Option<u32>,
     pub daemon_cache: DaemonCache,
     pub fiat_price: Option<FiatPrice>,
+    /// Bitcoin display unit preference (BTC or Sats)
+    pub bitcoin_unit: BitcoinDisplayUnit,
     /// UI state: whether the Vault submenu is expanded
     pub vault_expanded: bool,
-    /// UI state: whether the Active submenu is expanded
-    pub active_expanded: bool,
+    /// UI state: whether the Liquid submenu is expanded
+    pub liquid_expanded: bool,
     /// Whether this cube has a vault wallet configured
     pub has_vault: bool,
 }
@@ -40,8 +43,9 @@ impl std::default::Default for Cache {
             last_poll_at_startup: None,
             daemon_cache: DaemonCache::default(),
             fiat_price: None,
+            bitcoin_unit: BitcoinDisplayUnit::default(),
             vault_expanded: true,
-            active_expanded: false,
+            liquid_expanded: false,
             has_vault: false,
         }
     }

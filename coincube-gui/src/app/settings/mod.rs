@@ -1,6 +1,7 @@
 //! Settings is the module to handle the GUI settings file.
 //! The settings file is used by the GUI to store useful information.
 pub mod fiat;
+pub mod unit;
 
 use std::collections::HashMap;
 
@@ -117,12 +118,16 @@ where
     Ok(())
 }
 
-/// Cubes represent user accounts that can contain multiple features (Vault, Active wallet, etc.)
+/// Cubes represent user accounts that can contain multiple features (Vault, Liquid wallet, etc.)
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct CubeSettings {
     pub id: String,
     pub name: String,
     pub network: Network,
+    #[serde(default)]
+    pub backed_up: bool,
+    #[serde(default)]
+    pub mfa_done: bool,
     pub created_at: i64,
     /// The Vault wallet for this Cube (optional - may not be set up yet)
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -130,6 +135,14 @@ pub struct CubeSettings {
     /// Optional security PIN (stored as Argon2id hash with salt in PHC format)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub security_pin_hash: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub liquid_wallet_signer_fingerprint: Option<Fingerprint>,
+    /// Bitcoin display unit preference for this cube
+    #[serde(default)]
+    pub unit_setting: unit::UnitSetting,
+    /// Fiat price display preference for this cube
+    #[serde(default, deserialize_with = "ok_or_none")]
+    pub fiat_price: Option<fiat::PriceSetting>,
 }
 
 impl CubeSettings {
@@ -141,11 +154,21 @@ impl CubeSettings {
             created_at: chrono::Utc::now().timestamp(),
             vault_wallet_id: None,
             security_pin_hash: None,
+            liquid_wallet_signer_fingerprint: None,
+            backed_up: false,
+            mfa_done: false,
+            unit_setting: unit::UnitSetting::default(),
+            fiat_price: None,
         }
     }
 
     pub fn with_vault(mut self, wallet_id: WalletId) -> Self {
         self.vault_wallet_id = Some(wallet_id);
+        self
+    }
+
+    pub fn with_liquid_signer(mut self, fingerprint: Fingerprint) -> Self {
+        self.liquid_wallet_signer_fingerprint = Some(fingerprint);
         self
     }
 
@@ -207,6 +230,27 @@ impl CubeSettings {
             .verify_password(pin.as_bytes(), &parsed_hash)
             .is_ok()
     }
+
+    /// Load Cube settings from file
+    pub fn load_from_file(
+        network_dir: &crate::dir::NetworkDirectory,
+    ) -> Result<Option<Self>, SettingsError> {
+        let path = network_dir.path().join("cube_settings.toml");
+
+        if !path.exists() {
+            return Ok(None);
+        }
+
+        let content = std::fs::read_to_string(&path).map_err(|e| {
+            SettingsError::ReadingFile(format!("Failed to read cube settings: {}", e))
+        })?;
+
+        let cube_settings: CubeSettings = toml::from_str(&content).map_err(|e| {
+            SettingsError::ReadingFile(format!("Failed to parse cube settings: {}", e))
+        })?;
+
+        Ok(Some(cube_settings))
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -248,10 +292,6 @@ pub struct WalletSettings {
     /// Start internal bitcoind executable.
     /// if None, the app must refer to the gui.toml start_internal_bitcoind field.
     pub start_internal_bitcoind: Option<bool>,
-    // If the settings file contains a currency or source that is no longer supported, the price
-    // setting will be set to None during deserialization and the user will need to reconfigure it.
-    #[serde(default, deserialize_with = "ok_or_none")]
-    pub fiat_price: Option<fiat::PriceSetting>,
 }
 
 impl WalletSettings {
@@ -522,7 +562,7 @@ pub mod global {
         pub fn update_window_config(
             path: &PathBuf,
             window_config: &WindowConfig,
-        ) -> Result<(), String> {
+        ) -> Result<(), super::SettingsError> {
             Self::update(
                 path,
                 |s| s.window_config = Some(window_config.clone()),
@@ -530,7 +570,9 @@ pub mod global {
             )
         }
 
-        pub fn load_bitbox_settings(path: &PathBuf) -> Result<Option<BitboxSettings>, String> {
+        pub fn load_bitbox_settings(
+            path: &PathBuf,
+        ) -> Result<Option<BitboxSettings>, super::SettingsError> {
             let mut ret = None;
             Self::update(path, |s| ret = s.bitbox.clone(), false)?;
             Ok(ret)
@@ -539,11 +581,15 @@ pub mod global {
         pub fn update_bitbox_settings(
             path: &PathBuf,
             bitbox: &BitboxSettings,
-        ) -> Result<(), String> {
+        ) -> Result<(), super::SettingsError> {
             Self::update(path, |s| s.bitbox = Some(bitbox.clone()), true)
         }
 
-        pub fn update<F>(path: &PathBuf, mut update: F, mut write: bool) -> Result<(), String>
+        pub fn update<F>(
+            path: &PathBuf,
+            mut update: F,
+            mut write: bool,
+        ) -> Result<(), super::SettingsError>
         where
             F: FnMut(&mut GlobalSettings),
         {
@@ -556,21 +602,24 @@ pub mod global {
                     .create(true)
                     .truncate(false)
                     .open(path)
-                    .map_err(|e| format!("Opening file: {e}"))?;
+                    .map_err(|e| super::SettingsError::ReadingFile(format!("Opening file: {e}")))?;
 
                 file.lock_exclusive()
-                    .map_err(|e| format!("Locking file: {e}"))?;
+                    .map_err(|e| super::SettingsError::ReadingFile(format!("Locking file: {e}")))?;
 
                 let mut content = String::new();
                 file.read_to_string(&mut content)
-                    .map_err(|e| format!("Reading file: {e}"))?;
+                    .map_err(|e| super::SettingsError::ReadingFile(format!("Reading file: {e}")))?;
 
                 if !write {
-                    File::unlock(&file).map_err(|e| format!("Unlocking file: {e}"))?;
+                    File::unlock(&file).map_err(|e| {
+                        super::SettingsError::ReadingFile(format!("Unlocking file: {e}"))
+                    })?;
                 }
 
                 (
-                    serde_json::from_str::<GlobalSettings>(&content).map_err(|e| e.to_string())?,
+                    serde_json::from_str::<GlobalSettings>(&content)
+                        .map_err(|e| super::SettingsError::ReadingFile(e.to_string()))?,
                     Some(file),
                 )
             } else {
@@ -596,23 +645,34 @@ pub mod global {
                         .create(true)
                         .truncate(false)
                         .open(path)
-                        .map_err(|e| format!("Opening file: {e}"))?;
+                        .map_err(|e| {
+                            super::SettingsError::WritingFile(format!("Opening file: {e}"))
+                        })?;
 
-                    file.lock_exclusive()
-                        .map_err(|e| format!("Locking file: {e}"))?;
+                    file.lock_exclusive().map_err(|e| {
+                        super::SettingsError::WritingFile(format!("Locking file: {e}"))
+                    })?;
                     file
                 };
-                let content = serde_json::to_vec_pretty(&global_settings)
-                    .map_err(|e| format!("Failed to serialize GlobalSettings: {e}"))?;
+                let content = serde_json::to_vec_pretty(&global_settings).map_err(|e| {
+                    super::SettingsError::WritingFile(format!(
+                        "Failed to serialize GlobalSettings: {e}"
+                    ))
+                })?;
 
-                file.seek(SeekFrom::Start(0))
-                    .map_err(|e| format!("Failed to seek file: {e}"))?;
+                file.seek(SeekFrom::Start(0)).map_err(|e| {
+                    super::SettingsError::WritingFile(format!("Failed to seek file: {e}"))
+                })?;
 
-                file.write_all(&content)
-                    .map_err(|e| format!("Failed to write file: {e}"))?;
-                file.set_len(content.len() as u64)
-                    .map_err(|e| format!("Failed to truncate file: {e}"))?;
-                File::unlock(&file).map_err(|e| format!("Unlocking file: {e}"))?;
+                file.write_all(&content).map_err(|e| {
+                    super::SettingsError::WritingFile(format!("Failed to write file: {e}"))
+                })?;
+                file.set_len(content.len() as u64).map_err(|e| {
+                    super::SettingsError::WritingFile(format!("Failed to truncate file: {e}"))
+                })?;
+                File::unlock(&file).map_err(|e| {
+                    super::SettingsError::WritingFile(format!("Unlocking file: {e}"))
+                })?;
             }
 
             Ok(())
@@ -643,7 +703,7 @@ pub mod global {
     impl NoiseConfig for PersistedBitboxNoiseConfig {
         fn read_config(&self) -> Result<NoiseConfigData, ConfigError> {
             let res = GlobalSettings::load_bitbox_settings(&self.file_path)
-                .map_err(ConfigError)?
+                .map_err(|e| ConfigError(e.to_string()))?
                 .map(|s| s.noise_config)
                 .unwrap_or_else(NoiseConfigData::default);
             Ok(res)
@@ -663,7 +723,7 @@ pub mod global {
                 },
                 true,
             )
-            .map_err(ConfigError)
+            .map_err(|e| ConfigError(e.to_string()))
         }
     }
 }

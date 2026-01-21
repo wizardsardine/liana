@@ -1,6 +1,7 @@
 use crate::{
     app::{
         menu::Menu,
+        settings::unit::BitcoinDisplayUnit,
         view::{global_home::TransferDirection, FiatAmountConverter},
     },
     export::ImportExportMessage,
@@ -8,8 +9,25 @@ use crate::{
     services::fiat::{Currency, PriceSource},
 };
 
+use breez_sdk_liquid::prelude::{
+    InputType, Payment, PreparePayOnchainResponse, PrepareSendResponse,
+};
+use coincube_core::miniscript::bitcoin::Amount;
 use coincube_core::miniscript::bitcoin::{bip32::Fingerprint, Address, OutPoint};
 use coincube_core::spend::SpendCreationError;
+
+// Type alias for complex transfer PSBT result
+type TransferPsbtResult = Result<
+    (
+        coincube_core::miniscript::bitcoin::psbt::Psbt,
+        Option<std::sync::Arc<crate::app::wallet::Wallet>>,
+        (
+            crate::dir::CoincubeDirectory,
+            coincube_core::miniscript::bitcoin::Network,
+        ),
+    ),
+    String,
+>;
 
 pub trait Close {
     fn close() -> Self;
@@ -22,7 +40,7 @@ pub enum Message {
     Clipboard(String),
     Menu(Menu),
     ToggleVault,
-    ToggleActive,
+    ToggleLiquid,
     SetupVault,
     Close,
     Select(usize),
@@ -47,6 +65,14 @@ pub enum Message {
     ImportPsbt,
     OpenUrl(String),
     Home(HomeMessage),
+    LiquidOverview(LiquidOverviewMessage),
+    LiquidReceive(LiquidReceiveMessage),
+    LiquidSend(LiquidSendMessage),
+    LiquidSettings(LiquidSettingsMessage),
+    PreselectPayment(Payment),
+    DismissError,
+    ShowError(String),
+    DismissErrorIfId(u64),
 }
 
 impl Close for Message {
@@ -123,6 +149,7 @@ pub enum SettingsMessage {
     WalletAliasEdited(String),
     Save,
     GeneralSection,
+    DisplayUnitChanged(BitcoinDisplayUnit),
     Fiat(FiatMessage),
 }
 
@@ -222,9 +249,112 @@ pub enum FiatMessage {
     CurrencyEdited(Currency),
 }
 
+#[derive(Debug, Clone)]
+pub enum LiquidOverviewMessage {
+    Send,
+    Receive,
+    History,
+    SelectTransaction(usize),
+    DataLoaded {
+        balance: Amount,
+        recent_payment: Vec<Payment>,
+    },
+    Error(String),
+    RefreshRequested,
+}
+
+#[derive(Debug, Clone)]
+pub enum LiquidSendMessage {
+    InputEdited(String),
+    InputValidated(Option<InputType>),
+    Send,
+    History,
+    SelectTransaction(usize),
+    DataLoaded {
+        balance: Amount,
+        recent_payment: Vec<Payment>,
+    },
+    Error(String),
+    ClearError,
+    // Send flow popup messages
+    PopupMessage(SendPopupMessage),
+    PrepareResponseReceived(PrepareSendResponse),
+    PrepareOnChainResponseReceived(PreparePayOnchainResponse),
+    ConfirmSend,
+    SendComplete,
+    BackToHome,
+    LightningLimitsFetched {
+        min_sat: u64,
+        max_sat: u64,
+    },
+    OnChainLimitsFetched {
+        min_sat: u64,
+        max_sat: u64,
+    },
+    RefreshRequested,
+}
+
+#[derive(Debug, Clone)]
+pub enum SendPopupMessage {
+    AmountEdited(String),
+    CommentEdited(String),
+    FiatConvert,
+    FiatInputEdited(String),
+    FiatCurrencySelected(Currency),
+    FiatPricesLoaded(std::collections::HashMap<Currency, FiatAmountConverter>),
+    FiatDone,
+    FiatClose,
+    Done,
+    Close,
+}
+
+#[derive(Debug, Clone)]
+pub enum LiquidReceiveMessage {
+    ToggleMethod(ReceiveMethod),
+    Copy,
+    ClearToast,
+    GenerateAddress,
+    AddressGenerated(ReceiveMethod, Result<String, String>),
+    AmountInput(String),
+    DescriptionInput(String),
+    Error(String),
+    ClearError,
+    OnChainLimitsFetched { min_sat: u64, max_sat: u64 },
+    LightningLimitsFetched { min_sat: u64, max_sat: u64 },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ReceiveMethod {
+    Lightning,
+    OnChain,
+}
+
+#[derive(Debug, Clone)]
+pub enum LiquidSettingsMessage {
+    BackupWallet(BackupWalletMessage),
+    SettingsUpdated,
+}
+
+#[derive(Debug, Clone)]
+pub enum BackupWalletMessage {
+    ToggleBackupIntroCheck,
+    Start,
+    NextStep,
+    PreviousStep,
+    VerifyPhrase,
+    Complete,
+    WordInput { index: u8, input: String },
+}
+
 impl From<FiatMessage> for Message {
-    fn from(msg: FiatMessage) -> Self {
-        Message::Settings(SettingsMessage::Fiat(msg))
+    fn from(value: FiatMessage) -> Self {
+        Message::Settings(SettingsMessage::Fiat(value))
+    }
+}
+
+impl From<SettingsMessage> for Message {
+    fn from(value: SettingsMessage) -> Self {
+        Message::Settings(value)
     }
 }
 
@@ -233,7 +363,21 @@ pub enum HomeMessage {
     ToggleBalanceMask,
     SelectTransferDirection(TransferDirection),
     AmountEdited(String),
-    ConfirmTransfer,
     NextStep,
     PreviousStep,
+    Error(String),
+    LiquidBalanceUpdated(Amount),
+    OnChainLimitsFetched {
+        send: (u64, u64),    // (min_sat, max_sat)
+        receive: (u64, u64), // (min_sat, max_sat)
+    },
+    PrepareOnChainResponseReceived(PreparePayOnchainResponse),
+    TransferSuccessful,
+    BackToHome,
+    BreezOnchainAddress(String),
+    RefreshLiquidBalance,
+    SignVaultToLiquidTx,
+    TransferPsbtReady(TransferPsbtResult),
+    TransferSigningComplete,
+    ConfirmTransfer,
 }

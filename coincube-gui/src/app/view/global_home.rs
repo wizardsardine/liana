@@ -1,9 +1,10 @@
+use breez_sdk_liquid::bitcoin::Denomination;
 use coincube_ui::{
     color,
     component::{amount::*, button, form, text::*},
     icon::{
-        arrow_down_up_icon, arrow_right, eye_outline_icon, eye_slash_icon, lightning_icon,
-        vault_icon,
+        arrow_down_up_icon, arrow_right, check_circle_icon, eye_outline_icon, eye_slash_icon,
+        lightning_icon, vault_icon,
     },
     theme,
     widget::*,
@@ -15,17 +16,17 @@ use iced::{
 
 use crate::app::{
     menu::Menu,
-    view::{vault::receive::address_card, vault::warning::warn, FiatAmountConverter, HomeMessage},
+    view::{vault::receive::address_card, FiatAmountConverter},
 };
 use crate::app::{
-    menu::{ActiveSubMenu, VaultSubMenu},
-    view::message::Message,
+    menu::{LiquidSubMenu, VaultSubMenu},
+    view::message::{HomeMessage, Message},
 };
 use coincube_core::miniscript::bitcoin::Amount;
 
 #[derive(Clone, Copy, Debug)]
 enum WalletType {
-    Active,
+    Liquid,
     Vault,
 }
 
@@ -35,16 +36,17 @@ fn wallet_card<'a>(
     fiat_converter: Option<FiatAmountConverter>,
     balance_masked: bool,
     has_vault: bool,
+    bitcoin_unit: coincube_ui::component::amount::BitcoinDisplayUnit,
 ) -> Element<'a, Message> {
     let fiat_balance = fiat_converter.as_ref().map(|c| c.convert(*balance));
 
     let (icon, title, title_color, send_action, receive_action) = match wallet_type {
-        WalletType::Active => (
+        WalletType::Liquid => (
             lightning_icon().color(color::ORANGE),
-            "Active",
+            "Liquid",
             Some(color::ORANGE),
-            Message::Menu(Menu::Active(ActiveSubMenu::Send)),
-            Message::Menu(Menu::Active(ActiveSubMenu::Receive)),
+            Message::Menu(Menu::Liquid(LiquidSubMenu::Send)),
+            Message::Menu(Menu::Liquid(LiquidSubMenu::Receive)),
         ),
         WalletType::Vault => (
             vault_icon(),
@@ -95,7 +97,7 @@ fn wallet_card<'a>(
                             .push(if balance_masked {
                                 Row::new().push(text("********").size(H2_SIZE))
                             } else {
-                                amount_with_size(balance, H2_SIZE)
+                                amount_with_size_and_unit(balance, H2_SIZE, bitcoin_unit)
                             })
                             .push(if balance_masked {
                                 Some(text("********").size(P1_SIZE))
@@ -131,7 +133,7 @@ fn wallet_card<'a>(
     Container::new(content)
         .padding(20)
         .style(move |t| match wallet_type {
-            WalletType::Active => iced::widget::container::Style {
+            WalletType::Liquid => iced::widget::container::Style {
                 border: iced::Border {
                     color: color::ORANGE,
                     width: 0.2,
@@ -225,16 +227,16 @@ fn select_transfer_direction_view<'a>(
                             Column::new()
                                 .spacing(20)
                                 .push(transfer_direction_card(
-                                    "From Active to Vault",
+                                    "From Liquid to Vault",
                                     "Move funds into your secure Vault Wallet.",
-                                    TransferDirection::ActiveToVault,
-                                    matches!(direction, Some(TransferDirection::ActiveToVault)),
+                                    TransferDirection::LiquidToVault,
+                                    matches!(direction, Some(TransferDirection::LiquidToVault)),
                                 ))
                                 .push(transfer_direction_card(
-                                    "From Vault to Active",
-                                    "Move funds back into your Active Wallet.",
-                                    TransferDirection::VaultToActive,
-                                    matches!(direction, Some(TransferDirection::VaultToActive)),
+                                    "From Vault to Liquid",
+                                    "Move funds back into your Liquid Wallet.",
+                                    TransferDirection::VaultToLiquid,
+                                    matches!(direction, Some(TransferDirection::VaultToLiquid)),
                                 ))
                                 .width(Length::Fill),
                         )
@@ -258,13 +260,14 @@ fn select_transfer_direction_view<'a>(
 
 fn balance_summary_card<'a>(
     wallet_name: &str,
-    is_active: bool,
+    is_liquid: bool,
     balance: &Amount,
     fiat_converter: Option<FiatAmountConverter>,
+    bitcoin_unit: crate::app::settings::unit::BitcoinDisplayUnit,
 ) -> Element<'a, Message> {
     let fiat_balance = fiat_converter.as_ref().map(|c| c.convert(*balance));
 
-    let (icon, title_color) = if is_active {
+    let (icon, title_color) = if is_liquid {
         (lightning_icon().color(color::ORANGE), Some(color::ORANGE))
     } else {
         (vault_icon(), None)
@@ -287,8 +290,8 @@ fn balance_summary_card<'a>(
             Row::new().align_y(Alignment::Center).push(
                 Column::new()
                     .spacing(4)
-                    .push(amount_with_size(balance, H2_SIZE))
-                    .push(
+                    .push(amount_with_size_and_unit(balance, H2_SIZE, bitcoin_unit))
+                    .push_maybe(
                         fiat_balance.map(|fiat| fiat.to_text().size(P1_SIZE).color(color::GREY_2)),
                     ),
             ),
@@ -298,7 +301,7 @@ fn balance_summary_card<'a>(
         .padding(20)
         .width(Length::Fill)
         .style(move |t| {
-            if is_active {
+            if is_liquid {
                 iced::widget::container::Style {
                     border: iced::Border {
                         color: color::ORANGE,
@@ -318,6 +321,9 @@ fn balance_summary_card<'a>(
 fn enter_amount_card<'a>(
     direction: TransferDirection,
     amount: &'a form::Value<String>,
+    onchain_send_limit: Option<(u64, u64)>,
+    onchain_receive_limit: Option<(u64, u64)>,
+    bitcoin_unit: BitcoinDisplayUnit,
 ) -> Element<'a, Message> {
     let content = Column::new()
         .push(text("Enter Amount").bold().size(H2_SIZE))
@@ -331,22 +337,53 @@ fn enter_amount_card<'a>(
         .push(Space::new().height(Length::Fixed(80.0)))
         .push(
             Column::new()
-                .push(Container::new(
-                    form::Form::new_amount_btc("Amount in BTC", amount, |msg| {
-                        Message::Home(HomeMessage::AmountEdited(msg))
-                    })
-                    .warning("Please enter an amount")
-                    .size(20)
-                    .padding(10),
-                ))
                 .push(
-                    button::primary(None, "Next").on_press_maybe(if amount.value.is_empty() {
+                    Column::new()
+                        .push(Container::new(
+                            match bitcoin_unit {
+                                BitcoinDisplayUnit::BTC => {
+                                    form::Form::new_amount_btc("Amount in BTC", amount, |msg| {
+                                        Message::Home(HomeMessage::AmountEdited(msg))
+                                    })
+                                }
+                                BitcoinDisplayUnit::Sats => {
+                                    form::Form::new_amount_sats("Amount in sats", amount, |msg| {
+                                        Message::Home(HomeMessage::AmountEdited(msg))
+                                    })
+                                }
+                            }
+                            .size(20)
+                            .padding(10),
+                        ))
+                        .push_maybe(
+                            if direction == TransferDirection::LiquidToVault {
+                                onchain_send_limit
+                            } else {
+                                onchain_receive_limit
+                            }
+                            .map(|limits| {
+                                Container::new(
+                                    text(format!(
+                                        "Enter an amount between {} and {}",
+                                        Amount::from_sat(limits.0)
+                                            .to_formatted_string_with_unit(bitcoin_unit),
+                                        Amount::from_sat(limits.1)
+                                            .to_formatted_string_with_unit(bitcoin_unit),
+                                    ))
+                                    .size(12),
+                                )
+                                .padding(7)
+                            }),
+                        ),
+                )
+                .push(button::primary(None, "Next").on_press_maybe(
+                    if amount.value.is_empty() || !amount.valid {
                         None
                     } else {
                         Some(Message::Home(HomeMessage::NextStep))
-                    }),
-                )
-                .spacing(80)
+                    },
+                ))
+                .spacing(40)
                 .width(Length::Fixed(460.0)),
         )
         .width(Length::Fill)
@@ -360,46 +397,54 @@ fn enter_amount_card<'a>(
         .into()
 }
 
+#[allow(clippy::too_many_arguments)]
 fn enter_amount_view<'a>(
     direction: TransferDirection,
-    active_balance: &Amount,
+    liquid_balance: &Amount,
     vault_balance: &Amount,
     fiat_converter: Option<FiatAmountConverter>,
     entered_amount: &'a form::Value<String>,
+    bitcoin_unit: crate::app::settings::unit::BitcoinDisplayUnit,
+    onchain_send_limit: Option<(u64, u64)>,
+    onchain_receive_limit: Option<(u64, u64)>,
 ) -> Element<'a, Message> {
     let (from_balance, to_balance, from_name, to_name) = match direction {
-        TransferDirection::ActiveToVault => (active_balance, vault_balance, "Active", "Vault"),
-        TransferDirection::VaultToActive => (vault_balance, active_balance, "Vault", "Active"),
+        TransferDirection::LiquidToVault => (liquid_balance, vault_balance, "Liquid", "Vault"),
+        TransferDirection::VaultToLiquid => (vault_balance, liquid_balance, "Vault", "Liquid"),
     };
 
     let cards_row = match direction {
-        TransferDirection::ActiveToVault => Row::new()
+        TransferDirection::LiquidToVault => Row::new()
             .spacing(20)
             .push(balance_summary_card(
                 from_name,
                 true,
                 from_balance,
                 fiat_converter,
+                bitcoin_unit,
             ))
             .push(balance_summary_card(
                 to_name,
                 false,
                 to_balance,
                 fiat_converter,
+                bitcoin_unit,
             )),
-        TransferDirection::VaultToActive => Row::new()
+        TransferDirection::VaultToLiquid => Row::new()
             .spacing(20)
             .push(balance_summary_card(
                 from_name,
                 false,
                 from_balance,
                 fiat_converter,
+                bitcoin_unit,
             ))
             .push(balance_summary_card(
                 to_name,
                 true,
                 to_balance,
                 fiat_converter,
+                bitcoin_unit,
             )),
     };
 
@@ -455,7 +500,13 @@ fn enter_amount_view<'a>(
                 .align_y(Alignment::Center),
             ),
         )
-        .push(enter_amount_card(direction, entered_amount))
+        .push(enter_amount_card(
+            direction,
+            entered_amount,
+            onchain_send_limit,
+            onchain_receive_limit,
+            bitcoin_unit,
+        ))
         .padding(20)
         .width(Length::Fill)
         .align_x(Alignment::Center);
@@ -466,6 +517,7 @@ fn enter_amount_view<'a>(
         .into()
 }
 
+#[allow(clippy::too_many_arguments)]
 fn confirm_transfer_view<'a>(
     direction: TransferDirection,
     amount: &'a form::Value<String>,
@@ -473,7 +525,9 @@ fn confirm_transfer_view<'a>(
     labels: &'a std::collections::HashMap<String, String>,
     labels_editing: &'a std::collections::HashMap<String, form::Value<String>>,
     address_expanded: bool,
-    warning: Option<&'a crate::app::error::Error>,
+    is_sending: bool,
+    is_tx_signed: bool,
+    bitcoin_unit: BitcoinDisplayUnit,
 ) -> Element<'a, Message> {
     const NUM_ADDR_CHARS: usize = 16;
 
@@ -486,7 +540,6 @@ fn confirm_transfer_view<'a>(
                 .on_press(Message::Home(HomeMessage::PreviousStep)),
         )
         .push(Space::new().height(Length::Fixed(20.0)))
-        .push(warning.map(|w| warn(Some(w))))
         .push(Container::new(
             Column::new()
                 .push(
@@ -504,7 +557,7 @@ fn confirm_transfer_view<'a>(
                 )
                 .push(Space::new().height(60))
                 .push(match direction {
-                    TransferDirection::ActiveToVault => Some(
+                    TransferDirection::LiquidToVault => Some(
                         Column::new()
                             .spacing(10)
                             .push(
@@ -586,44 +639,145 @@ fn confirm_transfer_view<'a>(
                                     .style(theme::text::secondary)
                             })),
                     ),
-                    TransferDirection::VaultToActive => {
-                        // TODO: This should be implemented once Active Wallet is done
+                    TransferDirection::VaultToLiquid => {
+                        // TODO: This should be implemented once Liquid Wallet is done
                         Some(
                             Column::new()
                                 .spacing(10)
                                 .push(text("Receiving Wallet").bold())
                                 .push(
-                                    text("Transferring to Active wallet")
+                                    text("Transferring to Liquid wallet")
                                         .style(theme::text::secondary),
                                 )
-                                .push(
-                                    text("(Active wallet address generation not yet implemented)")
-                                        .size(12)
-                                        .style(theme::text::secondary),
-                                ),
+                                .push_maybe(receive_address.map(|addr| -> Element<'a, Message> {
+                                    if address_expanded {
+                                        Button::new(address_card(0, addr, labels, labels_editing))
+                                            .padding(0)
+                                            .on_press(Message::SelectAddress(addr.clone()))
+                                            .style(theme::button::transparent_border)
+                                            .into()
+                                    } else {
+                                        let addr_str = addr.to_string();
+                                        let addr_len = addr_str.chars().count();
+
+                                        Container::new(
+                                            Button::new(
+                                                Row::new()
+                                                    .spacing(10)
+                                                    .push(
+                                                        Container::new(
+                                                            p2_regular(
+                                                                if addr_len > 2 * NUM_ADDR_CHARS {
+                                                                    format!(
+                                                                    "{}...{}",
+                                                                    addr_str
+                                                                        .chars()
+                                                                        .take(NUM_ADDR_CHARS)
+                                                                        .collect::<String>(),
+                                                                    addr_str
+                                                                        .chars()
+                                                                        .skip(
+                                                                            addr_len
+                                                                                - NUM_ADDR_CHARS
+                                                                        )
+                                                                        .collect::<String>(),
+                                                                )
+                                                                } else {
+                                                                    addr_str.clone()
+                                                                },
+                                                            )
+                                                            .small()
+                                                            .style(theme::text::secondary),
+                                                        )
+                                                        .padding(10)
+                                                        .width(Length::Fixed(350.0)),
+                                                    )
+                                                    .push(
+                                                        Container::new(
+                                                            text(
+                                                                labels
+                                                                    .get(&addr_str)
+                                                                    .cloned()
+                                                                    .unwrap_or_default(),
+                                                            )
+                                                            .small()
+                                                            .style(theme::text::secondary),
+                                                        )
+                                                        .padding(10)
+                                                        .width(Length::Fill),
+                                                    )
+                                                    .align_y(Alignment::Center),
+                                            )
+                                            .on_press(Message::SelectAddress(addr.clone()))
+                                            .padding(20)
+                                            .width(Length::Fill)
+                                            .style(theme::button::secondary),
+                                        )
+                                        .style(theme::card::simple)
+                                        .into()
+                                    }
+                                })).
+                            push_maybe(receive_address.is_none().then(|| {
+                                text("No receiving address available. Please generate one first.")
+                                    .style(theme::text::secondary)
+                            })),
                         )
                     }
                 }),
         ))
         .push(Space::new().height(Length::Fixed(20.0)))
-        .push(
+        .push({
+            let amount = Amount::from_str_in(
+                &amount.value,
+                if matches!(bitcoin_unit, BitcoinDisplayUnit::BTC) {
+                    Denomination::Bitcoin
+                } else {
+                    Denomination::Satoshi
+                },
+            );
             Container::new(
                 Row::new()
                     .padding(20)
                     .push(text("Amount:"))
                     .push(Space::new().width(Length::Fill))
-                    .push(text(&amount.value))
-                    .push(Space::new().width(4))
-                    .push(text("BTC")),
+                    .push_maybe(if amount.is_ok() {
+                        Some(text(
+                            amount
+                                .clone()
+                                .unwrap()
+                                .to_formatted_string_with_unit(bitcoin_unit),
+                        ))
+                    } else {
+                        None
+                    }),
             )
             .width(Length::Fill)
-            .style(theme::card::simple),
-        )
+            .style(theme::card::simple)
+        })
         .push(Space::new().height(Length::Fixed(60.0)))
-        .push(
-            button::primary(None, "Confirm Transfer")
-                .on_press(Message::Home(HomeMessage::ConfirmTransfer)),
-        );
+        .push(match direction {
+            TransferDirection::VaultToLiquid => {
+                if is_tx_signed {
+                    button::primary(None, "Confirm & Broadcast").on_press_maybe(if !is_sending {
+                        Some(Message::Home(HomeMessage::ConfirmTransfer))
+                    } else {
+                        None
+                    })
+                } else {
+                    button::primary(None, "Sign Transaction").on_press_maybe(if !is_sending {
+                        Some(Message::Home(HomeMessage::SignVaultToLiquidTx))
+                    } else {
+                        None
+                    })
+                }
+            }
+            TransferDirection::LiquidToVault => button::primary(None, "Confirm Transfer")
+                .on_press_maybe(if !is_sending {
+                    Some(Message::Home(HomeMessage::ConfirmTransfer))
+                } else {
+                    None
+                }),
+        });
 
     Container::new(content)
         .width(Length::Fill)
@@ -631,24 +785,88 @@ fn confirm_transfer_view<'a>(
         .into()
 }
 
-#[derive(Clone, Copy, Debug)]
+pub fn transfer_successful_view<'a>(direction: TransferDirection) -> Element<'a, Message> {
+    use coincube_ui::widget::{Column, Row};
+    Column::new()
+        .spacing(20)
+        .width(Length::Fill)
+        .push(Space::new().height(Length::Fixed(20.0)))
+        .push(
+            Row::new()
+                .width(Length::Fill)
+                .align_y(Alignment::Center)
+                .push(Space::new().width(Length::Fill))
+                .push(check_circle_icon().size(140).color(color::ORANGE))
+                .push(Space::new().width(Length::Fill)),
+        )
+        .push(Space::new().height(Length::Fixed(16.0)))
+        .push(
+            Row::new()
+                .width(Length::Fill)
+                .align_y(Alignment::Center)
+                .push(Space::new().width(Length::Fill))
+                .push(
+                    Column::new()
+                        .width(Length::Shrink)
+                        .align_x(Alignment::Center)
+                        .push(h3("Transfer Successful!")),
+                )
+                .push(Space::new().width(Length::Fill)),
+        )
+        .push(
+            Row::new()
+                .width(Length::Fill)
+                .align_y(Alignment::Center)
+                .push(Space::new().width(Length::Fill))
+                .push(
+                    Row::new().spacing(5).push(
+                        text(format!(
+                            "Your funds have been moved to your {} Wallet",
+                            if matches!(direction, TransferDirection::LiquidToVault) {
+                                "Vault"
+                            } else {
+                                "Liquid"
+                            }
+                        ))
+                        .size(20),
+                    ),
+                )
+                .push(Space::new().width(Length::Fill)),
+        )
+        .push(Space::new().height(Length::Fixed(20.0)))
+        .push(
+            Row::new()
+                .width(Length::Fill)
+                .align_y(Alignment::Center)
+                .push(Space::new().width(Length::Fill))
+                .push(
+                    button::primary(None, "Back")
+                        .width(Length::Fixed(150.0))
+                        .on_press(Message::Home(HomeMessage::BackToHome)),
+                )
+                .push(Space::new().width(Length::Fill)),
+        )
+        .into()
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum TransferDirection {
-    ActiveToVault,
-    VaultToActive,
+    LiquidToVault,
+    VaultToLiquid,
 }
 
 impl TransferDirection {
     pub fn from_wallet(&self) -> &'static str {
         match self {
-            Self::ActiveToVault => "Active",
-            Self::VaultToActive => "Vault",
+            Self::LiquidToVault => "Liquid",
+            Self::VaultToLiquid => "Vault",
         }
     }
 
     pub fn to_wallet(&self) -> &'static str {
         match self {
-            Self::ActiveToVault => "Vault",
-            Self::VaultToActive => "Active",
+            Self::LiquidToVault => "Vault",
+            Self::VaultToLiquid => "Liquid",
         }
     }
 
@@ -658,7 +876,7 @@ impl TransferDirection {
 }
 
 pub struct GlobalViewConfig<'a> {
-    pub active_balance: Amount,
+    pub liquid_balance: Amount,
     pub vault_balance: Amount,
     pub fiat_converter: Option<FiatAmountConverter>,
     pub balance_masked: bool,
@@ -671,7 +889,11 @@ pub struct GlobalViewConfig<'a> {
     pub labels: &'a std::collections::HashMap<String, String>,
     pub labels_editing: &'a std::collections::HashMap<String, form::Value<String>>,
     pub address_expanded: bool,
-    pub warning: Option<&'a crate::app::error::Error>,
+    pub bitcoin_unit: crate::app::settings::unit::BitcoinDisplayUnit,
+    pub onchain_send_limit: Option<(u64, u64)>,
+    pub onchain_receive_limit: Option<(u64, u64)>,
+    pub is_sending: bool,
+    pub is_tx_signed: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -697,7 +919,7 @@ impl HomeView {
 
 pub fn global_home_view<'a>(config: GlobalViewConfig<'a>) -> Element<'a, Message> {
     let GlobalViewConfig {
-        active_balance,
+        liquid_balance,
         vault_balance,
         fiat_converter,
         balance_masked,
@@ -710,7 +932,11 @@ pub fn global_home_view<'a>(config: GlobalViewConfig<'a>) -> Element<'a, Message
         labels,
         labels_editing,
         address_expanded,
-        warning,
+        bitcoin_unit,
+        onchain_send_limit,
+        onchain_receive_limit,
+        is_sending,
+        is_tx_signed,
     } = config;
 
     match current_view.step {
@@ -721,10 +947,13 @@ pub fn global_home_view<'a>(config: GlobalViewConfig<'a>) -> Element<'a, Message
             if let Some(direction) = transfer_direction {
                 return enter_amount_view(
                     direction,
-                    &active_balance,
+                    &liquid_balance,
                     &vault_balance,
                     fiat_converter,
                     entered_amount,
+                    bitcoin_unit,
+                    onchain_send_limit,
+                    onchain_receive_limit,
                 );
             }
         }
@@ -737,20 +966,28 @@ pub fn global_home_view<'a>(config: GlobalViewConfig<'a>) -> Element<'a, Message
                     labels,
                     labels_editing,
                     address_expanded,
-                    warning,
+                    is_sending,
+                    is_tx_signed,
+                    bitcoin_unit,
                 );
+            }
+        }
+        4 => {
+            if let Some(direction) = transfer_direction {
+                return transfer_successful_view(direction);
             }
         }
         0 => {}
         _ => {}
     }
 
-    let active_card = wallet_card(
-        WalletType::Active,
-        &active_balance,
+    let liquid_card = wallet_card(
+        WalletType::Liquid,
+        &liquid_balance,
         fiat_converter,
         balance_masked,
         false,
+        bitcoin_unit,
     );
 
     let vault_card_element = wallet_card(
@@ -759,6 +996,7 @@ pub fn global_home_view<'a>(config: GlobalViewConfig<'a>) -> Element<'a, Message
         fiat_converter,
         balance_masked,
         has_vault,
+        bitcoin_unit,
     );
 
     Column::new()
@@ -784,7 +1022,7 @@ pub fn global_home_view<'a>(config: GlobalViewConfig<'a>) -> Element<'a, Message
                 .push(
                     Column::new()
                         .spacing(40)
-                        .push(active_card)
+                        .push(liquid_card)
                         .push(vault_card_element),
                 )
                 .push(

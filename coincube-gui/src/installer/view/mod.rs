@@ -975,7 +975,7 @@ fn display_policy(
                         }
                     },
                 ))
-                .push(text("can spend coins inactive for"))
+                .push(text("can spend coins inliquid for"))
                 .push(
                     text(format!(
                         "{} blocks (~{})",

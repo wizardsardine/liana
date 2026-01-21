@@ -40,3 +40,34 @@ pub fn primary(theme: &Theme, status: Status) -> Style {
         },
     }
 }
+
+pub fn orange(_theme: &Theme, status: Status) -> Style {
+    let orange = iced::color!(0xF7931B);
+    let grey_off = iced::color!(0x424242);
+    let white = iced::Color::WHITE;
+
+    match status {
+        Status::Active { is_toggled: true } | Status::Hovered { is_toggled: true } => Style {
+            background: iced::Background::Color(orange),
+            background_border_width: 0.0,
+            background_border_color: orange,
+            foreground: iced::Background::Color(white),
+            foreground_border_width: 0.0,
+            foreground_border_color: white,
+            text_color: None,
+            border_radius: Some(12.0.into()),
+            padding_ratio: 0.1,
+        },
+        _ => Style {
+            background: iced::Background::Color(grey_off),
+            background_border_width: 0.0,
+            background_border_color: grey_off,
+            foreground: iced::Background::Color(white),
+            foreground_border_width: 0.0,
+            foreground_border_color: white,
+            text_color: None,
+            border_radius: Some(12.0.into()),
+            padding_ratio: 0.1,
+        },
+    }
+}

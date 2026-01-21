@@ -51,3 +51,27 @@ pub fn custom(color: iced::Color) -> Box<dyn Fn(&Theme) -> Style> {
         ..Default::default()
     })
 }
+
+pub fn border_orange(theme: &Theme) -> Style {
+    Style {
+        background: Some(Background::Color(theme.colors.general.background)),
+        border: iced::Border {
+            color: crate::color::ORANGE,
+            width: 2.0,
+            radius: 8.0.into(),
+        },
+        ..Default::default()
+    }
+}
+
+pub fn border_grey(theme: &Theme) -> Style {
+    Style {
+        background: Some(Background::Color(theme.colors.general.background)),
+        border: iced::Border {
+            color: theme.colors.text.secondary,
+            width: 1.0,
+            radius: 8.0.into(),
+        },
+        ..Default::default()
+    }
+}
