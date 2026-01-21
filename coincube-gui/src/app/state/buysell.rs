@@ -125,13 +125,13 @@ impl State for BuySellPanel {
                         }
                         Err(e) => {
                             log::error!("Unable to restore login state from OS keyring: {e}");
-
-                            // send user to login screen, to initialize login credentials
-                            self.step = BuySellFlowState::Login {
-                                email: Default::default(),
-                                password: Default::default(),
-                            };
                         }
+                    };
+
+                    // send user to login screen, to initialize login credentials
+                    self.step = BuySellFlowState::Login {
+                        email: Default::default(),
+                        password: Default::default(),
                     };
                 }
             }
@@ -761,11 +761,8 @@ impl State for BuySellPanel {
     fn close(&mut self) -> Task<Message> {
         #[cfg(feature = "meld")]
         if let BuySellFlowState::Meld(meld) = &self.step {
-            if let Some(meld::MeldFlowStep::ActiveSession {
-                active: Some(wv), ..
-            }) = meld.steps.last()
-            {
-                if let Some(strong) = std::sync::Weak::upgrade(&wv.webview) {
+            if let Some(meld::MeldFlowStep::ActiveSession { active, .. }) = meld.steps.last() {
+                if let Some(strong) = std::sync::Weak::upgrade(&active.webview) {
                     let _ = strong.set_visible(false);
                     let _ = strong.focus_parent();
                 }
