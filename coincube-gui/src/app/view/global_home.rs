@@ -16,11 +16,11 @@ use iced::{
 
 use crate::app::{
     menu::Menu,
-    view::{vault::receive::address_card, FiatAmountConverter, HomeMessage},
+    view::{vault::receive::address_card, FiatAmountConverter},
 };
 use crate::app::{
     menu::{LiquidSubMenu, VaultSubMenu},
-    view::message::Message,
+    view::message::{HomeMessage, Message},
 };
 use coincube_core::miniscript::bitcoin::Amount;
 

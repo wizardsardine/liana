@@ -279,6 +279,10 @@ pub fn arrow_down_up_icon() -> Text<'static> {
     bootstrap_icon('\u{F127}')
 }
 
+pub fn cash_icon() -> Text<'static> {
+    bootstrap_icon('\u{F247}')
+}
+
 pub fn lock_icon() -> Text<'static> {
     bootstrap_icon('\u{F47B}')
 }
@@ -297,8 +301,4 @@ pub fn phone_icon() -> Text<'static> {
 
 pub fn chain_icon() -> Text<'static> {
     bootstrap_icon('\u{F470}')
-}
-
-pub fn cash_icon() -> Text<'static> {
-    bootstrap_icon('\u{F247}')
 }

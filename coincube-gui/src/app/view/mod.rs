@@ -1,10 +1,9 @@
 mod message;
 
+pub mod buysell;
 pub mod global_home;
 pub mod liquid;
 pub mod settings;
-pub mod buysell;
-pub mod global_home;
 
 pub mod vault;
 
@@ -30,8 +29,6 @@ use coincube_ui::{
     theme,
     widget::*,
 };
-
-use coincube_ui::icon::bitcoin_icon;
 
 use crate::app::{cache::Cache, menu::Menu};
 

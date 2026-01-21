@@ -1,3 +1,4 @@
+use async_trait::async_trait;
 use breez_sdk_liquid::{
     bitcoin::Network,
     model::{LightningPaymentLimitsResponse, OnchainPaymentLimitsResponse},
@@ -69,7 +70,8 @@ impl breez::Signer for HotSignerAdapter {
     fn sign_ecdsa_recoverable(&self, msg: Vec<u8>) -> Result<Vec<u8>, breez::SignerError> {
         let secp = Secp256k1::new();
         let signer = self.signer.lock().unwrap();
-        let keypair = signer.master_xpriv().to_keypair(&secp);
+        let master_xpriv = signer.xpriv_at(&"m".parse().unwrap(), &secp);
+        let keypair = master_xpriv.to_keypair(&secp);
         let s = msg.as_slice();
 
         let msg: coincube_core::miniscript::bitcoin::secp256k1::Message =
@@ -232,7 +234,7 @@ impl BreezClient {
                 prepare_response: prepare,
                 description,
                 payer_note: None,
-                use_description_hash: Some(false),
+                description_hash: None,
             })
             .await
             .map_err(|e| BreezError::Sdk(e.to_string()))
@@ -258,7 +260,7 @@ impl BreezClient {
                 prepare_response: prepare,
                 description: None,
                 payer_note: None,
-                use_description_hash: Some(false),
+                description_hash: None,
             })
             .await
             .map_err(|e| BreezError::Sdk(e.to_string()))
@@ -276,6 +278,8 @@ impl BreezClient {
                 amount: amount_sat.map(|sat| breez::PayAmount::Bitcoin {
                     receiver_amount_sat: sat,
                 }),
+                disable_mrh: None,
+                payment_timeout_sec: None,
             })
             .await
             .map_err(|e| BreezError::Sdk(e.to_string()))?;
@@ -444,8 +448,9 @@ struct BreezEventListener {
     sender: tokio::sync::mpsc::UnboundedSender<breez::SdkEvent>,
 }
 
+#[async_trait]
 impl breez::EventListener for BreezEventListener {
-    fn on_event(&self, e: breez::SdkEvent) {
+    async fn on_event(&self, e: breez::SdkEvent) {
         let _ = self.sender.send(e);
     }
 }
