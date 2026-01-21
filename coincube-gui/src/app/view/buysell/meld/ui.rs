@@ -250,7 +250,29 @@ pub(crate) fn quote_selection_ux<'a>(
             base.push_str(" (RECOMMENDED)");
         }
 
-        widget::button(card::simple(text::p2_regular(base))).on_press(match selected {
+        let _card = card::simple(widget::row![
+            widget::column![
+                text::p1_regular("YOU SEND"),
+                text::h4_bold(format!(
+                    "{} {}",
+                    quote.source_amount, quote.source_currency_code
+                )),
+            ]
+            .align_x(iced::Alignment::Center),
+            widget::column![
+                text::p1_regular("YOU RECEIVE"),
+                text::h4_bold(format!(
+                    "{} {}",
+                    quote.destination_amount, quote.destination_currency_code
+                )),
+            ]
+            .align_x(iced::Alignment::Center),
+            widget::container(widget::Space::default().width(5).height(iced::Length::Fill))
+                .style(theme::card::border),
+            widget::column![],
+        ]);
+
+        widget::button(_card).on_press(match selected {
             true => view::buysell::meld::MeldMessage::DeselectQuote,
             false => view::buysell::meld::MeldMessage::SelectQuote(idx),
         })
@@ -270,7 +292,8 @@ pub(crate) fn quote_selection_ux<'a>(
         .push(selected.map(|s| {
             button::primary(Some(icon::globe_icon()), "Start Session")
                 .on_press(view::buysell::meld::MeldMessage::StartSessionPressed(s))
-        }));
+        }))
+        .spacing(5);
 
     let elem: iced::Element<view::buysell::meld::MeldMessage, theme::Theme> = column.into();
     elem.map(|m| view::Message::BuySell(view::BuySellMessage::Meld(m)))

@@ -54,8 +54,17 @@ pub enum TransactionType {
 }
 
 #[derive(Debug, Serialize)]
+#[serde(rename_all = "UPPERCASE")]
+pub enum SessionType {
+    Buy,
+    Sell,
+    Transfer,
+}
+
+#[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GetQuotesRequest<'a> {
+    pub session_type: SessionType,
     pub source_amount: f64,
     pub source_currency: &'a str,
     pub destination_currency: &'a str,
@@ -83,9 +92,6 @@ pub struct Quote {
     pub payment_method_type: String,
     pub service_provider: String,
     pub customer_score: f32,
-
-    #[serde(flatten)]
-    pub extras: std::collections::HashMap<String, serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -100,6 +106,7 @@ pub struct GetQuoteResponse {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CreateSessionRequest<'a> {
+    pub session_type: SessionType,
     pub quote_provider: &'a str,
     pub source_amount: f32,
     pub source_currency: &'a str,
@@ -114,5 +121,6 @@ pub struct CreateSessionRequest<'a> {
 pub struct CreateSessionResponse {
     pub session_id: String,
     pub widget_url: String,
+    pub service_provider_widget_url: Option<String>,
     pub provider: String,
 }

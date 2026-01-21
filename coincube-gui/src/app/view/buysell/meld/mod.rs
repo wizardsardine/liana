@@ -222,19 +222,18 @@ impl MeldState {
                     let task = iced::Task::perform(
                         async move {
                             // TODO: include us state-code input (if in the US)
-                            let request = match buy_or_sell.clone() {
+                            let req = match buy_or_sell.clone() {
                                 BuyOrSell::Sell => meld::api::GetQuotesRequest {
+                                    session_type: meld::api::SessionType::Sell,
                                     country_code: country.code,
                                     state_code: None,
                                     destination_currency: country.currency.code,
                                     source_currency: "BTC",
                                     source_amount,
-                                    // TODO: Why do we need to provide an address for `sell` quotes?
-                                    wallet_address: Some(
-                                        "3GetNke9R6dQNDP2TDrM3BxzPDcEQYkrNW".to_string(),
-                                    ),
+                                    wallet_address: None,
                                 },
                                 BuyOrSell::Buy { address } => meld::api::GetQuotesRequest {
+                                    session_type: meld::api::SessionType::Buy,
                                     country_code: country.code,
                                     state_code: None,
                                     destination_currency: "BTC",
@@ -245,7 +244,7 @@ impl MeldState {
                             };
 
                             let meld_client = meld::MeldClient(&client);
-                            meld_client.get_quotes(request).await
+                            meld_client.get_quotes(req).await
                         },
                         |res| match res {
                             Ok(meld::api::GetQuoteResponse {
@@ -360,6 +359,10 @@ impl MeldState {
                 let task = iced::Task::perform(
                     async move {
                         let req = meld::api::CreateSessionRequest {
+                            session_type: match buy_or_sell {
+                                BuyOrSell::Sell => meld::api::SessionType::Sell,
+                                BuyOrSell::Buy { .. } => meld::api::SessionType::Buy,
+                            },
                             quote_provider: &pick.service_provider,
                             source_amount: pick.source_amount,
                             source_currency: &pick.source_currency_code,
@@ -367,9 +370,7 @@ impl MeldState {
                             country_code: country.code,
                             state_code: None,
                             wallet_address: match buy_or_sell {
-                                BuyOrSell::Sell => {
-                                    Some("3GetNke9R6dQNDP2TDrM3BxzPDcEQYkrNW".to_string())
-                                }
+                                BuyOrSell::Sell => None,
                                 BuyOrSell::Buy { address } => Some(address.address.to_string()),
                             },
                         };
@@ -412,8 +413,13 @@ impl MeldState {
             MeldMessage::ExtractWindowId(id) => {
                 if let Some(MeldFlowStep::ActiveSession { active, session }) = self.steps.last_mut()
                 {
+                    let url = session
+                        .service_provider_widget_url
+                        .as_deref()
+                        .unwrap_or(session.widget_url.as_str());
+
                     let attrs = iced_wry::wry::WebViewAttributes {
-                        url: Some(session.widget_url.clone()),
+                        url: Some(url.to_owned()),
                         devtools: cfg!(debug_assertions),
                         incognito: true,
                         ..Default::default()
@@ -421,7 +427,7 @@ impl MeldState {
 
                     match self.webview_manager.new_webview(attrs, id) {
                         Some(a) => *active = Some(a),
-                        None => tracing::error!("Unable to instantiate wry webview"),
+                        None => log::error!("[MELD] Unable to instantiate wry webview"),
                     }
                 } else {
                     unreachable!()

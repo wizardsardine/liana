@@ -96,47 +96,44 @@ impl State for BuySellPanel {
             view::BuySellMessage::ResetWidget => {
                 self.error = None;
 
-                // attempt automatic refresh from os-keyring
-                let mut login = None;
+                if self.detected_country.is_none() {
+                    log::warn!("Unable to reset widget, country is unknown");
+                    self.step = BuySellFlowState::DetectingLocation(true);
 
-                match keyring::Entry::new("io.coincube.Vault", &self.wallet.name) {
-                    Ok(entry) => {
-                        if let Ok(user_data) = entry.get_secret() {
-                            match serde_json::from_slice::<LoginResponse>(&user_data) {
-                                Ok(l) => {
-                                    log::trace!("Found login credentials in OS keyring");
-                                    login = Some(l)
-                                }
-                                Err(er) => {
-                                    log::error!("Unable to parse user information found in OS keyring: {:?}", er)
-                                }
-                            };
-                        };
-                    }
-                    Err(e) => {
-                        log::error!("Unable to restore login state from OS keyring: {e}");
-                    }
+                    return iced::Task::none();
                 };
 
-                if self.detected_country.is_some() {
-                    match login {
-                        None => {
+                if self.login.as_ref().is_none() {
+                    match keyring::Entry::new("io.coincube.Vault", &self.wallet.name) {
+                        Ok(entry) => {
+                            if let Ok(user_data) = entry.get_secret() {
+                                match serde_json::from_slice::<LoginResponse>(&user_data) {
+                                    Ok(l) => {
+                                        log::trace!("Found login credentials in OS keyring");
+
+                                        // check if token is valid
+                                        return iced::Task::done(Message::View(
+                                            view::Message::BuySell(
+                                                view::BuySellMessage::RefreshLocalLogin(l),
+                                            ),
+                                        ));
+                                    }
+                                    Err(er) => {
+                                        log::error!("Unable to parse user information found in OS keyring: {:?}", er)
+                                    }
+                                };
+                            };
+                        }
+                        Err(e) => {
+                            log::error!("Unable to restore login state from OS keyring: {e}");
+
                             // send user to login screen, to initialize login credentials
                             self.step = BuySellFlowState::Login {
                                 email: Default::default(),
                                 password: Default::default(),
                             };
                         }
-                        Some(login) => {
-                            // check if token is valid
-                            return iced::Task::done(Message::View(view::Message::BuySell(
-                                view::BuySellMessage::RefreshLocalLogin(login),
-                            )));
-                        }
-                    }
-                } else {
-                    log::warn!("Unable to reset widget, country is unknown");
-                    self.step = BuySellFlowState::DetectingLocation(true);
+                    };
                 }
             }
 
