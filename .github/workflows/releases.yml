@@ -177,7 +177,6 @@ jobs:
             --p12-password-file cert.pass \
             --code-signature-flags runtime \
             Coincube.app
-          rm cert.p12 cert.pass
 
       - name: Notarize and staple app
         if: matrix.platform == 'macos'
@@ -188,7 +187,6 @@ jobs:
             --staple \
             Coincube.app
           spctl --assess --type execute --verbose Coincube.app
-          rm key.json
 
       - name: Create DMG
         if: matrix.platform == 'macos'
@@ -210,6 +208,11 @@ jobs:
           file: Coincube-${{ env.COINCUBE_VERSION }}-macos-${{ matrix.arch }}.dmg
           tag: ${{ github.ref }}
           overwrite: true
+
+      - name: Cleanup secrets
+        if: matrix.platform == 'macos' && always()
+        run: |
+          rm -f cert.p12 cert.pass key.json
 
   checksums:
     name: Generate & Sign Checksums
