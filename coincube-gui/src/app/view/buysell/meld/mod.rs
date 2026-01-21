@@ -23,10 +23,13 @@ pub enum MeldMessage {
     SelectQuote(usize),
     DeselectQuote,
     StartSessionPressed(usize),
-    CreateWebviewSession(meld::api::Quote),
+    CreateSession(meld::api::Quote),
     SessionCreated(meld::api::CreateSessionResponse),
     // Webview specific messages
-    ExtractWindowId(iced_wry::ExtractedWindowId),
+    CreateWebviewSession(
+        iced_wry::ExtractedWindowId,
+        meld::api::CreateSessionResponse,
+    ),
     WebviewManagerUpdate(iced_wry::IcedWryMessage),
     // Active session updates
     EventSourceConnected,
@@ -50,7 +53,7 @@ pub enum MeldFlowStep {
     },
     ActiveSession {
         session: meld::api::CreateSessionResponse,
-        active: Option<iced_wry::IcedWebview>,
+        active: iced_wry::IcedWebview,
     },
 }
 
@@ -130,9 +133,7 @@ impl MeldState {
     ) -> coincube_ui::widget::Element<'a, view::Message> {
         match &self.steps.last() {
             None | Some(MeldFlowStep::RegionChecks) => ui::region_checks_ux(),
-            Some(MeldFlowStep::ActiveSession { active, .. }) => {
-                ui::webview_ux(active.as_ref(), network)
-            }
+            Some(MeldFlowStep::ActiveSession { active, .. }) => ui::webview_ux(active, network),
             Some(MeldFlowStep::CountryNotSupported) => ui::not_supported_ux(self.country),
             Some(MeldFlowStep::InputForm {
                 amount,
@@ -306,9 +307,7 @@ impl MeldState {
                         }
                         [q] => {
                             return Some(iced::Task::done(view::Message::BuySell(
-                                view::BuySellMessage::Meld(MeldMessage::CreateWebviewSession(
-                                    q.clone(),
-                                )),
+                                view::BuySellMessage::Meld(MeldMessage::CreateSession(q.clone())),
                             )));
                         }
                         _ => {
@@ -338,14 +337,12 @@ impl MeldState {
                 if let Some(MeldFlowStep::QuoteSelection { quotes, .. }) = self.steps.last() {
                     if let Some(quote) = quotes.get(selected) {
                         return Some(iced::Task::done(view::Message::BuySell(
-                            view::BuySellMessage::Meld(MeldMessage::CreateWebviewSession(
-                                quote.clone(),
-                            )),
+                            view::BuySellMessage::Meld(MeldMessage::CreateSession(quote.clone())),
                         )));
                     }
                 }
             }
-            MeldMessage::CreateWebviewSession(pick) => {
+            MeldMessage::CreateSession(pick) => {
                 log::info!(
                     "[MELD] Starting session for provider: {:?}",
                     pick.service_provider
@@ -392,45 +389,43 @@ impl MeldState {
             }
             // webview session
             MeldMessage::SessionCreated(session) => {
-                log::info!(
-                    "[MELD] Successfully created Webview Session with ID: {}",
-                    session.session_id
-                );
-
-                // start webview session
-                self.steps.push(MeldFlowStep::ActiveSession {
-                    active: None,
-                    session,
-                });
-
                 // extract the main window's raw_window_handle, to instantiate a webview with
                 return Some(iced_wry::extract_window_id(None).map(move |w| {
                     view::Message::BuySell(view::BuySellMessage::Meld(
-                        MeldMessage::ExtractWindowId(w),
+                        MeldMessage::CreateWebviewSession(w, session.clone()),
                     ))
                 }));
             }
-            MeldMessage::ExtractWindowId(id) => {
-                if let Some(MeldFlowStep::ActiveSession { active, session }) = self.steps.last_mut()
-                {
-                    let url = session
-                        .service_provider_widget_url
-                        .as_deref()
-                        .unwrap_or(session.widget_url.as_str());
+            MeldMessage::CreateWebviewSession(id, session) => {
+                let url = session
+                    .service_provider_widget_url
+                    .as_deref()
+                    .unwrap_or(session.widget_url.as_str());
 
-                    let attrs = iced_wry::wry::WebViewAttributes {
-                        url: Some(url.to_owned()),
-                        devtools: cfg!(debug_assertions),
-                        incognito: true,
-                        ..Default::default()
-                    };
+                let attrs = iced_wry::wry::WebViewAttributes {
+                    url: Some(url.to_owned()),
+                    devtools: cfg!(debug_assertions),
+                    incognito: true,
+                    ..Default::default()
+                };
 
-                    match self.webview_manager.new_webview(attrs, id) {
-                        Some(a) => *active = Some(a),
-                        None => log::error!("[MELD] Unable to instantiate wry webview"),
+                match self.webview_manager.new_webview(attrs, id) {
+                    Some(active) => {
+                        log::info!(
+                            "[MELD] Successfully created Webview Session with ID: {}",
+                            session.session_id
+                        );
+                        self.steps
+                            .push(MeldFlowStep::ActiveSession { session, active })
                     }
-                } else {
-                    unreachable!()
+                    None => {
+                        return Some(iced::Task::done(view::Message::BuySell(
+                            view::BuySellMessage::Meld(MeldMessage::SessionError(
+                                "Unable to start ActiveSession".into(),
+                                "Webview failed to initialize, check logs for specific details",
+                            )),
+                        )));
+                    }
                 }
             }
             MeldMessage::WebviewManagerUpdate(msg) => self.webview_manager.update(msg),

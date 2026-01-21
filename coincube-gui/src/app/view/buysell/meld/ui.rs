@@ -300,14 +300,11 @@ pub(crate) fn quote_selection_ux<'a>(
 }
 
 pub(super) fn webview_ux<'a>(
-    active: Option<&'a iced_wry::IcedWebview>,
+    active: &'a iced_wry::IcedWebview,
     network: &'a bitcoin::Network,
 ) -> coincube_ui::widget::Element<'a, view::Message> {
     let col = iced::widget::column![
-        active.map(|a| a.view(Length::Fixed(640.0), Length::Fixed(600.0))),
-        active
-            .is_none()
-            .then_some(text::p1_bold("Currently loading webview...")),
+        active.view(Length::Fixed(640.0), Length::Fixed(600.0)),
         // Network display banner
         widget::Space::new().height(Length::Fixed(15.0)),
         {
