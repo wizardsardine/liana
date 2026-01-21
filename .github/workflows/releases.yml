@@ -120,7 +120,7 @@ jobs:
         uses: svenstaro/upload-release-action@v2
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: target/wix/coincube-x86_64.msi
+          file: target/wix/coincube-x86_64-pc-windows-msvc.msi
           tag: ${{ github.ref }}
           overwrite: true
 
@@ -149,7 +149,7 @@ jobs:
           rustup target add ${{ matrix.target }}
           cargo build \
             --package coincube-gui \
-            --profile app-release \
+            --profile minimal \
             --target ${{ matrix.target }}
 
       - name: Generate Icons for Installers

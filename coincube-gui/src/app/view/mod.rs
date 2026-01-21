@@ -1,10 +1,9 @@
 mod message;
 
+pub mod buysell;
 pub mod global_home;
 pub mod liquid;
 pub mod settings;
-pub mod buysell;
-pub mod global_home;
 
 pub mod vault;
 
@@ -31,8 +30,6 @@ use coincube_ui::{
     widget::*,
 };
 
-use coincube_ui::icon::bitcoin_icon;
-
 use crate::app::{cache::Cache, menu::Menu};
 
 /// Simple toast notification for clipboard copy and other success messages
@@ -53,7 +50,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<
     // Top-level Home button
     let home_button = if *menu == Menu::Home {
         row!(
-            button::menu_liquid(Some(cube_icon()), "Home")
+            button::menu_active(Some(cube_icon()), "Home")
                 .on_press(Message::Reload)
                 .width(iced::Length::Fill),
             menu_bar_highlight(),
@@ -67,7 +64,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<
     let buy_sell_button = {
         if *menu == Menu::BuySell {
             row!(
-                button::menu_liquid(Some(bitcoin_icon()), "Buy/Sell")
+                button::menu_active(Some(bitcoin_icon()), "Buy/Sell")
                     .on_press(Message::Reload)
                     .width(iced::Length::Fill),
                 menu_bar_highlight()
@@ -124,7 +121,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<
         let liquid_overview_button = if matches!(menu, Menu::Liquid(LiquidSubMenu::Overview)) {
             row!(
                 Space::new().width(Length::Fixed(20.0)),
-                button::menu_liquid(Some(home_icon()), "Overview")
+                button::menu_active(Some(home_icon()), "Overview")
                     .on_press(Message::Reload)
                     .width(iced::Length::Fill),
                 menu_bar_highlight()
@@ -144,7 +141,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<
         let liquid_send_button = if matches!(menu, Menu::Liquid(LiquidSubMenu::Send)) {
             row!(
                 Space::new().width(Length::Fixed(20.0)),
-                button::menu_liquid(Some(send_icon()), "Send")
+                button::menu_active(Some(send_icon()), "Send")
                     .on_press(Message::Reload)
                     .width(iced::Length::Fill),
                 menu_bar_highlight()
@@ -164,7 +161,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<
         let liquid_receive_button = if matches!(menu, Menu::Liquid(LiquidSubMenu::Receive)) {
             row!(
                 Space::new().width(Length::Fixed(20.0)),
-                button::menu_liquid(Some(receive_icon()), "Receive")
+                button::menu_active(Some(receive_icon()), "Receive")
                     .on_press(Message::Reload)
                     .width(iced::Length::Fill),
                 menu_bar_highlight()
@@ -185,7 +182,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<
             if matches!(menu, Menu::Liquid(LiquidSubMenu::Transactions(_))) {
                 row!(
                     Space::new().width(Length::Fixed(20.0)),
-                    button::menu_liquid(Some(receipt_icon()), "Transactions")
+                    button::menu_active(Some(receipt_icon()), "Transactions")
                         .on_press(Message::Reload)
                         .width(iced::Length::Fill),
                     menu_bar_highlight()
@@ -207,7 +204,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<
         let liquid_settings_button = if matches!(menu, Menu::Liquid(LiquidSubMenu::Settings(_))) {
             row!(
                 Space::new().width(Length::Fixed(20.0)),
-                button::menu_liquid(Some(settings_icon()), "Settings")
+                button::menu_active(Some(settings_icon()), "Settings")
                     .on_press(Message::Reload)
                     .width(iced::Length::Fill),
                 menu_bar_highlight()
@@ -288,7 +285,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<
         let vault_overview_button = if matches!(menu, Menu::Vault(VaultSubMenu::Overview)) {
             row!(
                 Space::new().width(Length::Fixed(20.0)),
-                button::menu_liquid(Some(home_icon()), "Overview")
+                button::menu_active(Some(home_icon()), "Overview")
                     .on_press(Message::Reload)
                     .width(iced::Length::Fill),
                 menu_bar_highlight(),
@@ -308,7 +305,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<
         let vault_send_button = if matches!(menu, Menu::Vault(VaultSubMenu::Send)) {
             row!(
                 Space::new().width(Length::Fixed(20.0)),
-                button::menu_liquid(Some(send_icon()), "Send")
+                button::menu_active(Some(send_icon()), "Send")
                     .on_press(Message::Reload)
                     .width(iced::Length::Fill),
                 menu_bar_highlight()
@@ -328,7 +325,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<
         let vault_receive_button = if matches!(menu, Menu::Vault(VaultSubMenu::Receive)) {
             row!(
                 Space::new().width(Length::Fixed(20.0)),
-                button::menu_liquid(Some(receive_icon()), "Receive")
+                button::menu_active(Some(receive_icon()), "Receive")
                     .on_press(Message::Reload)
                     .width(iced::Length::Fill),
                 menu_bar_highlight()
@@ -348,7 +345,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<
         let vault_coins_button = if matches!(menu, Menu::Vault(VaultSubMenu::Coins(_))) {
             row!(
                 Space::new().width(Length::Fixed(20.0)),
-                button::menu_liquid(Some(coins_icon()), "Coins")
+                button::menu_active(Some(coins_icon()), "Coins")
                     .on_press(Message::Reload)
                     .width(iced::Length::Fill),
                 menu_bar_highlight()
@@ -369,7 +366,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<
             if matches!(menu, Menu::Vault(VaultSubMenu::Transactions(_))) {
                 row!(
                     Space::new().width(Length::Fixed(20.0)),
-                    button::menu_liquid(Some(receipt_icon()), "Transactions")
+                    button::menu_active(Some(receipt_icon()), "Transactions")
                         .on_press(Message::Reload)
                         .width(iced::Length::Fill),
                     menu_bar_highlight()
@@ -389,7 +386,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<
         let vault_psbts_button = if matches!(menu, Menu::Vault(VaultSubMenu::PSBTs(_))) {
             row!(
                 Space::new().width(Length::Fixed(20.0)),
-                button::menu_liquid(Some(receipt_icon()), "PSBTs")
+                button::menu_active(Some(receipt_icon()), "PSBTs")
                     .on_press(Message::Reload)
                     .width(iced::Length::Fill),
                 menu_bar_highlight()
@@ -409,7 +406,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<
         let vault_recovery_button = if matches!(menu, Menu::Vault(VaultSubMenu::Recovery)) {
             row!(
                 Space::new().width(Length::Fixed(20.0)),
-                button::menu_liquid(Some(recovery_icon()), "Recovery")
+                button::menu_active(Some(recovery_icon()), "Recovery")
                     .on_press(Message::Reload)
                     .width(iced::Length::Fill),
                 menu_bar_highlight()
@@ -429,7 +426,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<
         let vault_settings_button = if matches!(menu, Menu::Vault(VaultSubMenu::Settings(_))) {
             row!(
                 Space::new().width(Length::Fixed(20.0)),
-                button::menu_liquid(Some(settings_icon()), "Settings")
+                button::menu_active(Some(settings_icon()), "Settings")
                     .on_press(Message::Reload)
                     .width(iced::Length::Fill),
                 menu_bar_highlight()
@@ -461,7 +458,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<
     // Global Settings button (always visible at bottom of main menu)
     let global_settings_button = if matches!(menu, Menu::Settings(_)) {
         row!(
-            button::menu_liquid(Some(settings_icon()), "Settings")
+            button::menu_active(Some(settings_icon()), "Settings")
                 .on_press(Message::Reload)
                 .width(iced::Length::Fill),
             menu_bar_highlight(),

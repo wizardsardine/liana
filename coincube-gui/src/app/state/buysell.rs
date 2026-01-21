@@ -19,7 +19,7 @@ impl State for BuySellPanel {
         menu: &'a Menu,
         cache: &'a Cache,
     ) -> coincube_ui::widget::Element<'a, view::Message> {
-        let inner = view::dashboard(menu, cache, None, self.view());
+        let inner = view::dashboard(menu, cache, self.view());
 
         if let BuySellFlowState::Initialization { modal, .. } = &self.step {
             let overlay = match modal {
@@ -38,7 +38,7 @@ impl State for BuySellPanel {
 
     fn update(
         &mut self,
-        daemon: Arc<dyn Daemon + Sync + Send>,
+        daemon: Option<Arc<dyn Daemon + Sync + Send>>,
         cache: &Cache,
         message: Message,
     ) -> Task<Message> {
@@ -221,9 +221,10 @@ impl State for BuySellPanel {
                 }
             }
             view::BuySellMessage::CreateNewAddress => {
+                let daemon = daemon.expect("Daemon must be available for BuySell panel");
                 return Task::perform(
                     async move { daemon.get_new_address().await },
-                    |res| match res {
+                    |res: Result<_, _>| match res {
                         Ok(out) => Message::View(view::Message::BuySell(
                             view::BuySellMessage::AddressCreated(
                                 view::buysell::panel::LabelledAddress {
@@ -240,7 +241,7 @@ impl State for BuySellPanel {
                             ),
                         )),
                     },
-                )
+                );
             }
             view::BuySellMessage::AddressCreated(address) => {
                 if let BuySellFlowState::Initialization { buy_or_sell, .. } = &mut self.step {

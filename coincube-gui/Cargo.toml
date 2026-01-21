@@ -22,7 +22,7 @@ path = "src/main.rs"
 [dependencies]
 async-trait = "0.1"
 async-hwi = "0.0.29"
-breez-sdk-liquid = { git = "https://github.com/breez/breez-sdk-liquid", tag = "0.11.11" }
+breez-sdk-liquid = { git = "https://github.com/breez/breez-sdk-liquid" }
 coincube-core = { path = "../coincube-core" }
 coincubed = { path = "../coincubed", default-features = false, features = [
 	"nonblocking_shutdown",
@@ -86,11 +86,10 @@ fs4 = { version = "0.13", features = ["sync"] }
 # Used for opening URLs in browser
 open = "5.3"
 
-
 # Webview for embedded browser functionality (wry-based)
 iced_wry = { git = "https://github.com/sokorototo/iced_wry", optional = true }
 
-keyring = { version = "3.1.0", features = [
+keyring = { version = "3.2.0", features = [
 	"apple-native",
 	"windows-native",
 	"sync-secret-service",

@@ -70,10 +70,9 @@ struct Panels {
     recovery: Option<CreateSpendPanel>,
     receive: Option<VaultReceivePanel>,
     create_spend: Option<CreateSpendPanel>,
-    settings: Option<VaultSettingsState>,
+    vault_settings: Option<VaultSettingsState>,
     // remaining panels
     buy_sell: Option<crate::app::view::buysell::BuySellPanel>,
-    settings: Option<SettingsState>,
 }
 
 impl Panels {
@@ -125,7 +124,7 @@ impl Panels {
             recovery: None,
             receive: None,
             create_spend: None,
-            settings: None,
+            vault_settings: None,
             buy_sell: None,
         }
     }
@@ -228,7 +227,7 @@ impl Panels {
                     cache.bitcoin_unit,
                 )
             }),
-            settings: Some(VaultSettingsState::new(
+            vault_settings: Some(VaultSettingsState::new(
                 data_dir.clone(),
                 wallet.clone(),
                 daemon_backend,
@@ -307,7 +306,7 @@ impl Panels {
                 cache.bitcoin_unit,
             )
         });
-        self.settings = Some(VaultSettingsState::new(
+        self.vault_settings = Some(VaultSettingsState::new(
             data_dir.clone(),
             wallet.clone(),
             daemon_backend,
@@ -354,7 +353,7 @@ impl Panels {
                     self.recovery.as_ref().map(|v| v as &dyn State)
                 }
                 crate::app::menu::VaultSubMenu::Settings(_) => {
-                    self.settings.as_ref().map(|v| v as &dyn State)
+                    self.vault_settings.as_ref().map(|v| v as &dyn State)
                 }
             },
             Menu::BuySell => self.buy_sell.as_ref().map(|v| v as &dyn State),
@@ -397,7 +396,7 @@ impl Panels {
                     self.recovery.as_mut().map(|v| v as &mut dyn State)
                 }
                 crate::app::menu::VaultSubMenu::Settings(_) => {
-                    self.settings.as_mut().map(|v| v as &mut dyn State)
+                    self.vault_settings.as_mut().map(|v| v as &mut dyn State)
                 }
             },
             Menu::BuySell => self.buy_sell.as_mut().map(|v| v as &mut dyn State),
@@ -988,10 +987,10 @@ impl App {
             },
             Message::CacheUpdated => {
                 // Update vault panels with cache if they exist
-                if let (Some(daemon), Some(vault_overview), Some(settings)) = (
+                if let (Some(daemon), Some(vault_overview), Some(vault_settings)) = (
                     &self.daemon,
                     self.panels.vault_overview.as_mut(),
-                    self.panels.settings.as_mut(),
+                    self.panels.vault_settings.as_mut(),
                 ) {
                     let daemon = daemon.clone();
                     let current = &self.panels.current;
@@ -1014,7 +1013,7 @@ impl App {
                                 current == &Menu::Vault(crate::app::menu::VaultSubMenu::Overview),
                             ),
                         ),
-                        settings.update(
+                        vault_settings.update(
                             Some(daemon.clone()),
                             &cache,
                             Message::UpdatePanelCache(is_settings_current),

@@ -59,9 +59,9 @@ pub fn link(theme: &Theme, status: Status) -> Style {
 fn button(p: &Button, status: Status) -> Style {
     match status {
         Status::Active => Style {
-            background: Some(Background::Color(p.liquid.background)),
-            text_color: p.liquid.text,
-            border: if let Some(color) = p.liquid.border {
+            background: Some(Background::Color(p.active.background)),
+            text_color: p.active.text,
+            border: if let Some(color) = p.active.border {
                 Border {
                     radius: 25.0.into(),
                     width: 1.0,
@@ -136,14 +136,14 @@ fn button(p: &Button, status: Status) -> Style {
                     ..Default::default()
                 }
             } else {
-                let liquid: Style = button(p, Status::Active);
+                let active: Style = button(p, Status::Active);
 
                 Style {
                     text_color: Color {
                         a: 0.2,
-                        ..liquid.text_color
+                        ..active.text_color
                     },
-                    ..liquid
+                    ..active
                 }
             }
         }

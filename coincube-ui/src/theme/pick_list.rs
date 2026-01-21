@@ -19,10 +19,10 @@ impl Catalog for Theme {
 
 pub fn primary(theme: &Theme, _status: Status) -> Style {
     Style {
-        text_color: theme.colors.buttons.secondary.liquid.text,
-        placeholder_color: theme.colors.buttons.secondary.liquid.text,
-        background: theme.colors.buttons.secondary.liquid.background.into(),
-        border: if let Some(color) = theme.colors.buttons.secondary.liquid.border {
+        text_color: theme.colors.buttons.secondary.active.text,
+        placeholder_color: theme.colors.buttons.secondary.active.text,
+        background: theme.colors.buttons.secondary.active.background.into(),
+        border: if let Some(color) = theme.colors.buttons.secondary.active.border {
             Border {
                 radius: 25.0.into(),
                 width: 1.0,
@@ -33,6 +33,6 @@ pub fn primary(theme: &Theme, _status: Status) -> Style {
                 ..Default::default()
             }
         },
-        handle_color: theme.colors.buttons.secondary.liquid.text,
+        handle_color: theme.colors.buttons.secondary.active.text,
     }
 }

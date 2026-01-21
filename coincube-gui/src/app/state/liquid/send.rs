@@ -761,6 +761,8 @@ impl State for LiquidSend {
                                                         receiver_amount_sat: amount_sat,
                                                     },
                                                 ),
+                                                disable_mrh: None,
+                                                payment_timeout_sec: None,
                                             },
                                         )
                                         .await

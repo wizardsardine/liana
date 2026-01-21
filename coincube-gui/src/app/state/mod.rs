@@ -1,11 +1,9 @@
-
 pub mod buysell;
 mod global_home;
 pub mod liquid;
 pub mod settings;
 pub mod vault;
 
-use std::convert::TryInto;
 use std::sync::Arc;
 
 use coincube_core::miniscript::bitcoin::{Amount, OutPoint};
