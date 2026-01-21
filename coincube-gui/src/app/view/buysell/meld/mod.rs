@@ -312,7 +312,7 @@ impl MeldState {
                         }
                         _ => {
                             // TODO: Use Meld's recommended quote ranking
-                            quotes.sort_by(|a, b| a.customer_score.total_cmp(&b.customer_score));
+                            quotes.sort_by(|a, b| b.customer_score.total_cmp(&a.customer_score));
                             self.steps.push(MeldFlowStep::QuoteSelection {
                                 quotes,
                                 selected: None,
