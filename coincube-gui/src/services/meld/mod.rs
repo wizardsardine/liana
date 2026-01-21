@@ -11,7 +11,7 @@ use reqwest::Method;
 pub struct MeldClient<'client>(pub &'client super::coincube::CoincubeClient);
 
 impl<'client> MeldClient<'client> {
-    pub async fn get_supported_countries<'a>(
+    pub async fn get_supported_countries(
         &'client self,
     ) -> Result<Vec<api::MeldCountry>, CoincubeError> {
         let url = format!("{}/api/v1/meld/countries", self.0.base_url);
@@ -114,8 +114,8 @@ impl<'client> MeldClient<'client> {
     }
 }
 
-fn create_subscription<'a>(
-    user_jwt: &'a String,
+fn create_subscription(
+    user_jwt: &String,
 ) -> impl iced::futures::Stream<Item = meld::MeldMessage> + 'static {
     use futures::SinkExt;
     use reqwest_sse::EventSource;

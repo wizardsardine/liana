@@ -179,7 +179,7 @@ pub struct Currency {
 }
 
 pub fn get_countries() -> &'static [Country] {
-    static COUNTRIES_JSON: &'static str = include_str!("../countries.json");
+    static COUNTRIES_JSON: &str = include_str!("../countries.json");
     static COUNTRIES: std::sync::OnceLock<Vec<Country>> = std::sync::OnceLock::new();
 
     COUNTRIES

@@ -47,37 +47,36 @@ impl State for BuySellPanel {
             // modal for any generated address
             Message::View(view::Message::Select(_)) => {
                 if let BuySellFlowState::Initialization {
-                    buy_or_sell, modal, ..
+                    buy_or_sell: Some(panel::BuyOrSell::Buy { address }),
+                    modal,
+                    ..
                 } = &mut self.step
                 {
-                    if let Some(panel::BuyOrSell::Buy { address }) = buy_or_sell {
-                        *modal = super::vault::receive::Modal::VerifyAddress(
-                            super::vault::receive::VerifyAddressModal::new(
-                                cache.datadir_path.clone(),
-                                self.wallet.clone(),
-                                cache.network,
-                                address.address.clone(),
-                                address.index,
-                            ),
-                        );
-                    };
+                    *modal = super::vault::receive::Modal::VerifyAddress(
+                        super::vault::receive::VerifyAddressModal::new(
+                            cache.datadir_path.clone(),
+                            self.wallet.clone(),
+                            cache.network,
+                            address.address.clone(),
+                            address.index,
+                        ),
+                    );
                 }
 
                 return Task::none();
             }
             Message::View(view::Message::ShowQrCode(_)) => {
                 if let BuySellFlowState::Initialization {
-                    buy_or_sell, modal, ..
+                    buy_or_sell: Some(panel::BuyOrSell::Buy { address }),
+                    modal,
+                    ..
                 } = &mut self.step
                 {
-                    if let Some(panel::BuyOrSell::Buy { address }) = buy_or_sell {
-                        if let Some(new) = super::vault::receive::ShowQrCodeModal::new(
-                            &address.address,
-                            address.index,
-                        ) {
-                            *modal = super::vault::receive::Modal::ShowQrCode(new);
-                        }
-                    };
+                    if let Some(new) =
+                        super::vault::receive::ShowQrCodeModal::new(&address.address, address.index)
+                    {
+                        *modal = super::vault::receive::Modal::ShowQrCode(new);
+                    }
                 }
 
                 return Task::none();
@@ -616,7 +615,7 @@ impl State for BuySellPanel {
                                             }
                                         }
 
-                                        count = count - 1;
+                                        count -= 1;
                                         tokio::time::sleep(std::time::Duration::from_secs(10))
                                             .await;
                                     }

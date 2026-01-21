@@ -117,7 +117,7 @@ pub(crate) fn input_form_ux<'a>(
         Ok(_) => validation_messages.push("Now how did you manage to input that?".into()),
     };
 
-    let amount_input = widget::text_input(&limits.currency_code, &current_amount_str)
+    let amount_input = widget::text_input(&limits.currency_code, current_amount_str)
         .on_input(|am| {
             view::Message::BuySell(view::BuySellMessage::Meld(
                 view::buysell::meld::MeldMessage::SetAmount(am),
@@ -337,5 +337,5 @@ pub(super) fn webview_ux<'a>(
     ];
 
     let elem: iced::Element<view::BuySellMessage, theme::Theme> = col.into();
-    elem.map(|b| view::Message::BuySell(b))
+    elem.map(view::Message::BuySell)
 }

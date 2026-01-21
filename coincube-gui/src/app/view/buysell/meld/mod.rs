@@ -133,7 +133,7 @@ impl MeldState {
             Some(MeldFlowStep::ActiveSession { active, .. }) => {
                 ui::webview_ux(active.as_ref(), network)
             }
-            Some(MeldFlowStep::CountryNotSupported) => ui::not_supported_ux(&self.country),
+            Some(MeldFlowStep::CountryNotSupported) => ui::not_supported_ux(self.country),
             Some(MeldFlowStep::InputForm {
                 amount,
                 limits,
@@ -150,7 +150,7 @@ impl MeldState {
                 quotes,
                 selected,
                 recommended_provider,
-            }) => ui::quote_selection_ux(quotes, selected.clone(), recommended_provider.as_deref()),
+            }) => ui::quote_selection_ux(quotes, *selected, recommended_provider.as_deref()),
         }
     }
 
@@ -185,7 +185,7 @@ impl MeldState {
                     limits: l,
                     btc_balance: cache
                         .coins()
-                        .into_iter()
+                        .iter()
                         .filter(|c| c.block_height.is_some() && c.is_from_self)
                         .map(|c| c.amount)
                         .sum(),

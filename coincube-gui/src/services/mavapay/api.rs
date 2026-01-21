@@ -149,14 +149,19 @@ impl MavapayCurrency {
     }
 }
 
-impl MavapayCurrency {
-    pub fn from_str(string: &str) -> Option<Self> {
+impl std::str::FromStr for MavapayCurrency {
+    type Err = ();
+
+    fn from_str(string: &str) -> Result<MavapayCurrency, Self::Err> {
         match string {
-            "BTC" => Some(MavapayCurrency::Bitcoin),
-            "KES" => Some(MavapayCurrency::KenyanShilling),
-            "ZAR" => Some(MavapayCurrency::SouthAfricanRand),
-            "NGN" => Some(MavapayCurrency::NigerianNaira),
-            _ => None,
+            "BTC" => Ok(MavapayCurrency::Bitcoin),
+            "KES" => Ok(MavapayCurrency::KenyanShilling),
+            "ZAR" => Ok(MavapayCurrency::SouthAfricanRand),
+            "NGN" => Ok(MavapayCurrency::NigerianNaira),
+            c => {
+                log::error!("[MAVAPAY] Unknown currency: {}", c);
+                Err(())
+            }
         }
     }
 }

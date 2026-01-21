@@ -179,7 +179,7 @@ impl CoincubeClient {
             }
         };
 
-        match { get_countries().iter().find(|c| c.code == &iso_code) } {
+        match get_countries().iter().find(|c| c.code == iso_code) {
             Some(country) => Ok(country),
             None => Err(CoincubeError::Api(format!(
                 "Unknown country iso code: ({})",

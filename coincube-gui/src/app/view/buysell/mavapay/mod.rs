@@ -67,7 +67,7 @@ impl MavapayState {
             ) => {
                 match msg {
                     MavapayMessage::NormalizeAmounts => {
-                        *sat_amount = (*sat_amount).max(6000).min(2_100_000_000_000_000)
+                        *sat_amount = (*sat_amount).clamp(6000, 2_100_000_000_000_000)
                     }
                     MavapayMessage::SatAmountChanged(sats) => *sat_amount = sats.round() as _,
                     MavapayMessage::FiatAmountChanged(fiat) => match btc_price {
@@ -91,7 +91,7 @@ impl MavapayState {
 
                         let request = match buy_or_sell {
                             panel::BuyOrSell::Sell => GetQuoteRequest {
-                                amount: sat_amount.clone(),
+                                amount: *sat_amount,
                                 source_currency: MavapayUnitCurrency::BitcoinSatoshi,
                                 target_currency: local_currency,
                                 // TODO: Mavapay only supports lightning transactions for selling BTC, meaning we are currently blocked by the breeze integration
@@ -105,7 +105,7 @@ impl MavapayState {
                             },
                             panel::BuyOrSell::Buy { address } => {
                                 GetQuoteRequest {
-                                    amount: sat_amount.clone(),
+                                    amount: *sat_amount,
                                     source_currency: local_currency,
                                     target_currency: MavapayUnitCurrency::BitcoinSatoshi,
                                     // TODO: Currently, Kenyan beneficiaries are not supported by Mavapay, as only BankTransfer is currently supported by `onchain` buy
@@ -407,7 +407,7 @@ impl MavapayState {
                     *loading = false;
                 }
                 MavapayMessage::SelectTransaction(idx) => {
-                    let Some(transaction) = transactions.as_mut().map(|t| t.get(idx)).flatten()
+                    let Some(transaction) = transactions.as_mut().and_then(|t| t.get(idx))
                     else {
                         log::warn!("[MAVAPAY] Selected transaction index is out of bounds");
                         return None;
