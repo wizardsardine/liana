@@ -184,6 +184,7 @@ jobs:
           base64 -D <<< "${{ secrets.APPSTORECONNECT_KEY_JSON }}" > key.json
           rcodesign notary-submit \
             --api-key-path key.json \
+            --max-wait-seconds 1800 \
             --staple \
             Coincube.app
           spctl --assess --type execute --verbose Coincube.app
