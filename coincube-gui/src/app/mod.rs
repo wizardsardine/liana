@@ -67,7 +67,6 @@ struct Panels {
     receive: Option<VaultReceivePanel>,
     create_spend: Option<CreateSpendPanel>,
     settings: Option<SettingsState>,
-    #[cfg(feature = "buysell")]
     buy_sell: Option<crate::app::view::buysell::BuySellPanel>,
 }
 
@@ -96,7 +95,6 @@ impl Panels {
             receive: None,
             create_spend: None,
             settings: None,
-            #[cfg(feature = "buysell")]
             buy_sell: None,
         }
     }
@@ -161,7 +159,6 @@ impl Panels {
                 internal_bitcoind.is_some(),
                 config.clone(),
             )),
-            #[cfg(feature = "buysell")]
             buy_sell: Some(crate::app::view::buysell::BuySellPanel::new(
                 cache.network,
                 wallet,
@@ -214,13 +211,11 @@ impl Panels {
             internal_bitcoind.is_some(),
             config.clone(),
         ));
-        #[cfg(feature = "buysell")]
-        {
-            self.buy_sell = Some(crate::app::view::buysell::BuySellPanel::new(
-                cache.network,
-                wallet,
-            ));
-        }
+
+        self.buy_sell = Some(crate::app::view::buysell::BuySellPanel::new(
+            cache.network,
+            wallet,
+        ));
     }
 
     fn current(&self) -> Option<&dyn State> {
@@ -259,7 +254,6 @@ impl Panels {
                     self.settings.as_ref().map(|v| v as &dyn State)
                 }
             },
-            #[cfg(feature = "buysell")]
             Menu::BuySell => self.buy_sell.as_ref().map(|v| v as &dyn State),
             // Legacy menu items
             Menu::Receive => self.receive.as_ref().map(|v| v as &dyn State),
@@ -315,7 +309,6 @@ impl Panels {
                     self.settings.as_mut().map(|v| v as &mut dyn State)
                 }
             },
-            #[cfg(feature = "buysell")]
             Menu::BuySell => self.buy_sell.as_mut().map(|v| v as &mut dyn State),
             // Legacy menu items
             Menu::Receive => self.receive.as_mut().map(|v| v as &mut dyn State),
@@ -621,10 +614,6 @@ impl App {
     }
 
     pub fn subscription(&self) -> Subscription<Message> {
-        tracing::trace!(
-            "App::subscription() called, has_vault={}",
-            self.cache.has_vault
-        );
         // Only create tick subscription if we have a vault (daemon exists)
         let subscriptions = if self.daemon.is_some() {
             vec![

@@ -74,7 +74,7 @@ jobs:
           archive: coincube-$target
           target: x86_64-unknown-linux-gnu
           include: LICENCE,README.md,lib
-          profile: app-release
+          profile: minimal
           locked: true
 
       # Generate icons for macOS and Windows
@@ -88,7 +88,7 @@ jobs:
         if: matrix.os == 'windows-latest'
         run: |
           choco install wixtoolset --version=3.14.1 --yes
-          cargo wix --package coincube-gui --profile app-release --output "target\wix\coincube-x86_64-pc-windows-msvc.msi" --include ./contrib/release/wix/main.wxs --nocapture -v
+          cargo wix --package coincube-gui --profile minimal --output "target\wix\coincube-x86_64-pc-windows-msvc.msi" --include ./contrib/release/wix/main.wxs --nocapture -v
 
       - name: Upload .msi to release
         if: matrix.os == 'windows-latest'
@@ -104,14 +104,14 @@ jobs:
       - name: Compile Project for macOS arm64
         if: matrix.os == 'macos-latest'
         run: |
-          cargo build --package coincube-gui --profile app-release
+          cargo build --package coincube-gui --profile minimal
 
       - name: Copy Executable, Icons and Extra Metadata into .app folder
         if: matrix.os == 'macos-latest'
         run: |
           unzip ./contrib/release/macos/Coincube.app.zip
           sed -i '' "s/VERSION_PLACEHOLDER/${{ env.COINCUBE_VERSION }}/g" ./Coincube.app/Contents/Info.plist
-          mv target/app-release/coincube ./Coincube.app/Contents/MacOS/Coincube
+          mv target/minimal/coincube ./Coincube.app/Contents/MacOS/Coincube
           mv ./contrib/release/macos/Coincube.icns ./Coincube.app/Contents/Resources/Coincube.icns
 
       - name: CodeSign macOS App Bundle

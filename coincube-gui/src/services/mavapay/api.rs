@@ -58,7 +58,9 @@ impl<T> From<coincube::CoincubeError> for MavapayApiResult<T> {
             }
             coincube::CoincubeError::Network(e) => format!("Network error: {e}"),
             coincube::CoincubeError::Api(msg) => msg.clone(),
-            coincube::CoincubeError::Parse(e) => format!("Parse error: {e}"),
+            coincube::CoincubeError::Parse(e) => format!("Parse error: {e:?}"),
+            #[cfg(feature = "meld")]
+            coincube::CoincubeError::SseError(e) => format!("EventSource error: {:?}", e),
         };
         Self::Error(message)
     }
@@ -147,14 +149,19 @@ impl MavapayCurrency {
     }
 }
 
-impl MavapayCurrency {
-    pub fn from_str(string: &str) -> Option<Self> {
+impl std::str::FromStr for MavapayCurrency {
+    type Err = ();
+
+    fn from_str(string: &str) -> Result<MavapayCurrency, Self::Err> {
         match string {
-            "BTC" => Some(MavapayCurrency::Bitcoin),
-            "KES" => Some(MavapayCurrency::KenyanShilling),
-            "ZAR" => Some(MavapayCurrency::SouthAfricanRand),
-            "NGN" => Some(MavapayCurrency::NigerianNaira),
-            _ => None,
+            "BTC" => Ok(MavapayCurrency::Bitcoin),
+            "KES" => Ok(MavapayCurrency::KenyanShilling),
+            "ZAR" => Ok(MavapayCurrency::SouthAfricanRand),
+            "NGN" => Ok(MavapayCurrency::NigerianNaira),
+            c => {
+                log::error!("[MAVAPAY] Unknown currency: {}", c);
+                Err(())
+            }
         }
     }
 }

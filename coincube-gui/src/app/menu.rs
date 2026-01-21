@@ -5,10 +5,6 @@ pub enum Menu {
     Home,
     Active(ActiveSubMenu),
     Vault(VaultSubMenu),
-
-    #[cfg(feature = "buysell")]
-    BuySell,
-
     // Legacy menu items (kept for backward compatibility during transition)
     Receive,
     PSBTs,
@@ -21,6 +17,7 @@ pub enum Menu {
     Recovery,
     RefreshCoins(Vec<OutPoint>),
     PsbtPreSelected(Txid),
+    BuySell,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

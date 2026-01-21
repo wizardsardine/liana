@@ -21,41 +21,32 @@ impl<T> From<coincube::CoincubeError> for MeldApiResult<T> {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MeldCountry {
+    pub country_code: String,
+    pub name: String,
+    pub flag_url: Option<String>,
+    pub regions: Option<Vec<MeldRegion>>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct MeldRegion {
+    pub region_code: String,
+    pub name: String,
+}
+
+#[derive(Debug, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct CurrencyLimit {
-    currency_code: String,
-    default_amount: f32,
-    minimum_amount: f32,
-    maximum_amount: f32,
+    pub currency_code: String,
+    pub default_amount: f64,
+    pub minimum_amount: f64,
+    pub maximum_amount: f64,
 }
 
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct FindPaymentMethodsRequest {
-    categories: String,
-    account_filter: bool,
-    countries: String,
-    fiat_currencies: String,
-    crypto_currencies: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PaymentMethodLogo {
-    dark: String,
-    light: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PaymentMethod {
-    payment_method: String,
-    name: String,
-    logos: PaymentMethodLogo,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum TransactionType {
     CryptoPurchase,
@@ -63,40 +54,73 @@ pub enum TransactionType {
 }
 
 #[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct GetQuoteRequest<'a> {
-    country_code: &'a str,
-    destination_currency_code: &'a str,
-    source_currency_code: &'a str,
-    source_amount: f32,
-    wallet_address: Option<String>,
+#[serde(rename_all = "UPPERCASE")]
+pub enum SessionType {
+    Buy,
+    Sell,
+    Transfer,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GetQuotesRequest<'a> {
+    pub session_type: SessionType,
+    pub source_amount: f64,
+    pub source_currency: &'a str,
+    pub destination_currency: &'a str,
+    pub country_code: &'a str,
+    pub state_code: Option<&'a str>,
+    pub wallet_address: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct Quote {
-    transaction_type: TransactionType,
+    pub transaction_type: TransactionType,
 
-    wallet_address: Option<String>,
-    source_amount: f32,
-    destination_amount: f32,
+    pub wallet_address: Option<String>,
+    pub source_amount: f32,
+    pub destination_amount: f32,
 
-    institution_name: Option<String>,
-    exchange_rate: f32,
-    total_fees: f32,
+    pub exchange_rate: Option<f32>,
+    pub total_fee: f32,
 
-    source_currency_code: String,
-    destination_currency_code: String,
+    pub source_currency_code: String,
+    pub destination_currency_code: String,
 
     // TODO: Use enums instead
-    payment_method_type: String,
-    service_provider: String,
+    pub payment_method_type: String,
+    pub service_provider: String,
+    pub customer_score: f32,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GetQuoteResponse {
-    quotes: Vec<Quote>,
-    message: Option<String>,
-    error: Option<String>,
+    pub quotes: Vec<Quote>,
+    pub message: Option<String>,
+    pub error: Option<String>,
+    pub recommended_provider: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateSessionRequest<'a> {
+    pub session_type: SessionType,
+    pub quote_provider: &'a str,
+    pub source_amount: f32,
+    pub source_currency: &'a str,
+    pub destination_currency: &'a str,
+    pub country_code: &'a str,
+    pub state_code: Option<&'a str>,
+    pub wallet_address: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateSessionResponse {
+    pub session_id: String,
+    pub widget_url: String,
+    pub service_provider_widget_url: Option<String>,
+    pub provider: String,
 }

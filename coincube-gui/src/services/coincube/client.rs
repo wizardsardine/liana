@@ -126,6 +126,19 @@ impl CoincubeClient {
         Ok(response.json().await?)
     }
 
+    pub async fn refresh_login(&self, refresh_token: &str) -> Result<LoginResponse, CoincubeError> {
+        let request = RefreshTokenRequest { refresh_token };
+
+        let response = {
+            let url = format!("{}{}", self.base_url, "/api/v1/auth/token/refresh");
+            self.client.post(&url).json(&request).send()
+        }
+        .await?;
+        let response = response.check_success().await?;
+
+        Ok(response.json().await?)
+    }
+
     pub async fn send_password_reset_email(
         &self,
         email: &str,
@@ -151,7 +164,7 @@ struct CountryResponse {
 
 impl CoincubeClient {
     /// Detects the user's country and returns (country_name, iso_code)
-    pub async fn locate(&self) -> Result<Country, CoincubeError> {
+    pub async fn locate(&self) -> Result<&'static Country, CoincubeError> {
         // allow users (and developers) to override detected ISO_CODE
         let iso_code = match std::env::var("FORCE_ISOCODE") {
             Ok(iso) => iso,
@@ -166,12 +179,7 @@ impl CoincubeClient {
             }
         };
 
-        match {
-            get_countries()
-                .iter()
-                .find(|c| c.code == &iso_code)
-                .cloned()
-        } {
+        match get_countries().iter().find(|c| c.code == iso_code) {
             Some(country) => Ok(country),
             None => Err(CoincubeError::Api(format!(
                 "Unknown country iso code: ({})",
