@@ -407,8 +407,7 @@ impl MavapayState {
                     *loading = false;
                 }
                 MavapayMessage::SelectTransaction(idx) => {
-                    let Some(transaction) = transactions.as_mut().and_then(|t| t.get(idx))
-                    else {
+                    let Some(transaction) = transactions.as_mut().and_then(|t| t.get(idx)) else {
                         log::warn!("[MAVAPAY] Selected transaction index is out of bounds");
                         return None;
                     };
