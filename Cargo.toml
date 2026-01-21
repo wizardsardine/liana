@@ -24,3 +24,8 @@ rusqlite_migration = "2.3"
 # This is the official Breez fork with proper MuSig2 types
 [patch.crates-io]
 secp256k1-zkp = { git = "https://github.com/breez/rust-secp256k1-zkp.git", rev = "eac2e479255a6e32b5588bc25ee53c642fdd8395" }
+[profile.dev.package.iced]
+opt-level = 3
+
+[profile.minimal.package.iced]
+opt-level = 3

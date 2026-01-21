@@ -52,7 +52,6 @@ pub enum Message {
     Settings(SettingsMessage),
     CreateSpend(CreateSpendMessage),
     ImportSpend(ImportSpendMessage),
-    #[cfg(feature = "buysell")]
     BuySell(BuySellMessage),
     Spend(SpendTxMessage),
     Next,
@@ -179,7 +178,6 @@ pub enum CreateRbfMessage {
     Confirm,
 }
 
-#[cfg(feature = "buysell")]
 #[derive(Debug, Clone)]
 pub enum BuySellMessage {
     // state management
@@ -187,6 +185,8 @@ pub enum BuySellMessage {
     ResetWidget,
     SelectBuyOrSell(bool), // true = buy, false = sell
     StartSession,
+    RefreshLocalLogin(crate::services::coincube::LoginResponse),
+    SetLoginState(crate::services::coincube::LoginResponse),
     LogOut,
 
     // automatic user login
@@ -199,9 +199,7 @@ pub enum BuySellMessage {
     },
 
     // ip geolocation
-    CountryDetected(
-        Result<crate::services::coincube::Country, crate::services::coincube::CoincubeError>,
-    ),
+    CountryDetected(Result<&'static crate::services::coincube::Country, String>),
 
     // recipient address generation
     CreateNewAddress,
@@ -235,19 +233,13 @@ pub enum BuySellMessage {
     Mavapay(crate::services::mavapay::MavapayMessage),
 
     // Meld specific messages
+    #[cfg(feature = "meld")]
     Meld(crate::app::view::buysell::meld::MeldMessage),
 
     // Clipboard action (forwarded to parent Message::Clipboard)
     Clipboard(String),
 
     ViewHistory,
-}
-
-#[cfg(feature = "buysell")]
-#[derive(Debug, Clone)]
-pub enum WebviewMessage {
-    WryMessage(iced_wry::IcedWryMessage),
-    InitWryWebviewWithUrl(iced_wry::ExtractedWindowId, String),
 }
 
 #[derive(Debug, Clone)]

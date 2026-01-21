@@ -10,7 +10,7 @@ edition = "2018"
 resolver = "2"
 
 [features]
-buysell = ["dep:iced_wry"]
+meld = ["dep:iced_wry"]
 
 [package.metadata.winres]
 LegalCopyright = "Copyright © 2026"
@@ -78,6 +78,7 @@ reqwest = { version = "0.12.18", default-features = false, features = [
 	"rustls-tls",
 	"stream",
 ] }
+reqwest-sse = "0.1"
 rust-ini = "0.21"
 rfd = "0.15.1"
 fs4 = { version = "0.13", features = ["sync"] }
@@ -87,7 +88,7 @@ open = "5.3"
 
 
 # Webview for embedded browser functionality (wry-based)
-iced_wry = { git = "https://github.com/sokorototo/iced_wry", optional = true}
+iced_wry = { git = "https://github.com/sokorototo/iced_wry", optional = true }
 
 keyring = { version = "3.1.0", features = [
 	"apple-native",

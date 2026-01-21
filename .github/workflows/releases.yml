@@ -98,7 +98,7 @@ jobs:
           archive: coincube-${{ matrix.target }}
           target: ${{ matrix.target }}
           include: LICENCE,README.md,lib
-          profile: app-release
+          profile: minimal
           locked: true
 
 # --------------------------------------------------
@@ -113,7 +113,7 @@ jobs:
 
       - name: Build Windows MSI
         if: matrix.platform == 'windows'
-        run: cargo wix --package coincube-gui --profile app-release --output target/wix/coincube-x86_64.msi --include ./contrib/release/wix/main.wxs
+        run: cargo wix --package coincube-gui --profile minimal --output "target\wix\coincube-x86_64-pc-windows-msvc.msi" --include ./contrib/release/wix/main.wxs --nocapture -v
 
       - name: Upload Windows MSI
         if: matrix.platform == 'windows'
@@ -164,10 +164,10 @@ jobs:
         run: |
           unzip contrib/release/macos/Coincube.app.zip
           sed -i '' "s/VERSION_PLACEHOLDER/${{ env.COINCUBE_VERSION }}/g" Coincube.app/Contents/Info.plist
-          mv target/${{ matrix.target }}/app-release/coincube \
+          mv target/${{ matrix.target }}/minimal/coincube \
              Coincube.app/Contents/MacOS/Coincube
           mv contrib/release/macos/Coincube.icns \
-             Coincube.app/Contents/Resources/
+             Coincube.app/Contents/Resources/Coincube.icns
 
       - name: Sign macOS app
         if: matrix.platform == 'macos'

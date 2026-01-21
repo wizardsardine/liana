@@ -1,11 +1,11 @@
+
+pub mod buysell;
 mod global_home;
 pub mod liquid;
 pub mod settings;
 pub mod vault;
 
-#[cfg(feature = "buysell")]
-pub mod buysell;
-
+use std::convert::TryInto;
 use std::sync::Arc;
 
 use coincube_core::miniscript::bitcoin::{Amount, OutPoint};

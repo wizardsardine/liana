@@ -5,10 +5,8 @@ pub enum Menu {
     Home,
     Liquid(LiquidSubMenu),
     Vault(VaultSubMenu),
-    Settings(SettingsSubMenu),
-
-    #[cfg(feature = "buysell")]
     BuySell,
+    Settings(SettingsSubMenu),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

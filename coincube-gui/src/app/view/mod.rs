@@ -3,9 +3,8 @@ mod message;
 pub mod global_home;
 pub mod liquid;
 pub mod settings;
-
-#[cfg(feature = "buysell")]
 pub mod buysell;
+pub mod global_home;
 
 pub mod vault;
 
@@ -23,15 +22,15 @@ use coincube_ui::{
     color,
     component::{button, text, text::*},
     icon::{
-        coins_icon, cross_icon, cube_icon, down_icon, home_icon, lightning_icon, plus_icon,
-        receipt_icon, receive_icon, recovery_icon, send_icon, settings_icon, up_icon, vault_icon,
+        bitcoin_icon, coins_icon, cross_icon, cube_icon, down_icon, home_icon, lightning_icon,
+        plus_icon, receipt_icon, receive_icon, recovery_icon, send_icon, settings_icon, up_icon,
+        vault_icon,
     },
     image::*,
     theme,
     widget::*,
 };
 
-#[cfg(feature = "buysell")]
 use coincube_ui::icon::bitcoin_icon;
 
 use crate::app::{cache::Cache, menu::Menu};
@@ -65,7 +64,6 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<
             .width(iced::Length::Fill),)
     };
 
-    #[cfg(feature = "buysell")]
     let buy_sell_button = {
         if *menu == Menu::BuySell {
             row!(
@@ -458,11 +456,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<
             .push(vault_settings_button);
     }
 
-    // Add Buy/Sell button after submenu items (only if vault exists)
-    #[cfg(feature = "buysell")]
-    {
-        menu_column = menu_column.push(has_vault.then_some(buy_sell_button));
-    }
+    menu_column = menu_column.push(has_vault.then_some(buy_sell_button));
 
     // Global Settings button (always visible at bottom of main menu)
     let global_settings_button = if matches!(menu, Menu::Settings(_)) {
