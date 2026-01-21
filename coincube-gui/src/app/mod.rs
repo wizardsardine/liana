@@ -309,7 +309,7 @@ impl Panels {
                 cache.bitcoin_unit,
             )
         });
-        self.settings = Some(VaultSettingsState::new(
+        self.vault_settings = Some(VaultSettingsState::new(
             data_dir.clone(),
             wallet.clone(),
             daemon_backend,
