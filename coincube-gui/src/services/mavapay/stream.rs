@@ -26,7 +26,9 @@ pub fn transaction_stream(
     let (order_id, user_jwt) = data;
     let base_url = match cfg!(debug_assertions) {
         true => "https://dev-events.coincube.io",
-        false => "https://events.coincube.io",
+        false => {
+            option_env!("EVENTS_API_URL").expect("Please set `EVENTS_API_URL` for release builds")
+        }
     };
     let auth = format!("Bearer {}", user_jwt);
     let url = format!("{}/api/v1/mavapay/stream/transactions", base_url);

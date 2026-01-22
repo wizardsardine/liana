@@ -1177,7 +1177,7 @@ dependencies = [
 [[package]]
 name = "breez-sdk-liquid"
 version = "0.11.7"
-source = "git+https://github.com/breez/breez-sdk-liquid#133126e5081bf1125b9bb1e3eec0d44b1a2942af"
+source = "git+https://github.com/breez/breez-sdk-liquid#613e33c4e4fa0b2cf250de17bb50e1746e806e1d"
 dependencies = [
  "aes",
  "aes-gcm",
@@ -1522,7 +1522,7 @@ dependencies = [
 
 [[package]]
 name = "coincube-core"
-version = "13.0.0"
+version = "0.9.0"
 dependencies = [
  "aes-gcm",
  "argon2",
@@ -1549,7 +1549,7 @@ dependencies = [
 
 [[package]]
 name = "coincube-gui"
-version = "13.0.0"
+version = "0.9.0"
 dependencies = [
  "argon2",
  "async-fd-lock",
@@ -1565,7 +1565,7 @@ dependencies = [
  "coincube-ui",
  "coincubed",
  "dirs",
- "dotenv",
+ "dotenvy",
  "email_address",
  "flate2",
  "fs4",
@@ -1614,7 +1614,7 @@ dependencies = [
 
 [[package]]
 name = "coincubed"
-version = "13.0.0"
+version = "0.9.0"
 dependencies = [
  "backtrace",
  "bdk_electrum",
@@ -2244,10 +2244,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "dotenv"
-version = "0.15.0"
+name = "dotenvy"
+version = "0.15.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "77c90badedccf4105eca100756a0b1289e191f6fcbdadd3cee1d2f614f97da8f"
+checksum = "1aaf95b3e5c8f23aa320147307562d361db0ae0d51242340f558153b4eb2439b"
 
 [[package]]
 name = "downcast"
@@ -6889,9 +6889,9 @@ checksum = "dc375e1527247fe1a97d8b7156678dfe7c1af2fc075c9a4db3690ecd2a148068"
 
 [[package]]
 name = "proc-macro2"
-version = "1.0.105"
+version = "1.0.106"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "535d180e0ecab6268a3e718bb9fd44db66bbbc256257165fc699dadf70d16fe7"
+checksum = "8fd00f0bb2e90d81d1044c2b32617f68fcb9fa3bb7640c23e9c748e53fb30934"
 dependencies = [
  "unicode-ident",
 ]
@@ -7954,7 +7954,7 @@ dependencies = [
 [[package]]
 name = "sdk-common"
 version = "0.7.1"
-source = "git+https://github.com/breez/breez-sdk?rev=27452b5fd80be52ef047b3e3acb51dc6779b4a38#27452b5fd80be52ef047b3e3acb51dc6779b4a38"
+source = "git+https://github.com/breez/breez-sdk?rev=113749fd36dd7a20358dc40526c4a30147f8c1a8#113749fd36dd7a20358dc40526c4a30147f8c1a8"
 dependencies = [
  "aes",
  "anyhow",
@@ -7999,7 +7999,7 @@ dependencies = [
 [[package]]
 name = "sdk-macros"
 version = "0.7.1"
-source = "git+https://github.com/breez/breez-sdk?rev=27452b5fd80be52ef047b3e3acb51dc6779b4a38#27452b5fd80be52ef047b3e3acb51dc6779b4a38"
+source = "git+https://github.com/breez/breez-sdk?rev=113749fd36dd7a20358dc40526c4a30147f8c1a8#113749fd36dd7a20358dc40526c4a30147f8c1a8"
 dependencies = [
  "proc-macro2",
  "quote",

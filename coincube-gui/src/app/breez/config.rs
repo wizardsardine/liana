@@ -6,7 +6,7 @@ use super::BreezError;
 
 #[derive(Debug, Clone)]
 pub struct BreezConfig {
-    pub api_key: String,
+    pub api_key: &'static str,
     pub network: bitcoin::Network,
     pub working_dir: PathBuf,
 }
@@ -16,9 +16,8 @@ impl BreezConfig {
         network: bitcoin::Network,
         datadir: &std::path::Path,
     ) -> Result<Self, BreezError> {
-        let api_key = std::env::var("BREEZ_API_KEY").map_err(|_| BreezError::MissingApiKey)?;
         Ok(Self {
-            api_key,
+            api_key: env!("BREEZ_API_KEY"),
             network,
             working_dir: datadir.join("breez"),
         })
@@ -60,7 +59,7 @@ impl BreezConfig {
             payment_timeout_sec: 60,
             sync_service_url: None,         // Use default
             zero_conf_max_amount_sat: None, // Use default
-            breez_api_key: Some(self.api_key.clone()),
+            breez_api_key: Some(self.api_key.to_string()),
             external_input_parsers: None,
             use_default_external_input_parsers: true,
             onchain_fee_rate_leeway_sat: None, // Use default
