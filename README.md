@@ -12,7 +12,7 @@
 
 ## About
 
-Liana is a simple Bitcoin wallet. Like other Bitcoin wallets you have one key which can spend the
+[Liana](https://wizardsardine.com/liana/) is a simple Bitcoin wallet. Like other Bitcoin wallets you have one key which can spend the
 funds in the wallet immediately. Unlike other wallets, Liana lets you in addition specify one key
 which can only spend the coins after the wallet has been inactive for some time.
 
@@ -35,7 +35,7 @@ Liana can be used for **trustless inheritance**, **loss protection** or **safer 
 
 ## Usage
 
-Liana is available on Windows, Mac and Linux. To install and start using it see
+Liana is available on Windows, MacOc and Linux. To install and start using it see
 [`doc/USAGE.md`](doc/USAGE.md). A more accessible version of Liana is also available as a web
 application [here](https://lianalite.com/).
 
