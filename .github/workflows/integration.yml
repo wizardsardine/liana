@@ -27,6 +27,7 @@ jobs:
             BITCOIN_BACKEND_TYPE: "electrs"
 
     env:
+      BREEZ_API_KEY: ${{ secrets.BREEZ_API_KEY }}
       EXECUTOR_WORKERS: 3
       VERBOSE: 0
       LOG_LEVEL: debug
@@ -100,7 +101,7 @@ jobs:
           curl -LO https://github.com/coincubetech/coincube/releases/download/v13.0.0/Coincube-Vault-x86_64-unknown-linux-gnu.tar.gz
           echo "f4472364ef457e78ca684115d695fac7b51746607f546c5de9b56f3ce4722472 Coincube-Vault-x86_64-unknown-linux-gnu.tar.gz" | sha256sum -c
           tar -xzf Coincube-Vault-x86_64-unknown-linux-gnu.tar.gz
-          export OLD_LIANAD_PATH="$PWD/Coincube-Vault-x86_64-unknown-linux-gnu/lianad"
+          export OLD_COINCUBED_PATH="$PWD/Coincube-Vault-x86_64-unknown-linux-gnu/coincubed"
 
           # Run the functional tests
           pytest tests/ -vvv -n 8
