@@ -26,47 +26,47 @@ fn delete_button_style(_theme: &Theme, status: Status) -> Style {
 
 /// Shared bordered button style with configurable border radius
 fn bordered_button_style(status: Status, radius: f32) -> Style {
-    let grey_border = color::GREY_7;
-    let green_border = color::GREEN;
+    let border_inactive = color::LIGHT_BORDER;
+    let border_active = color::BUSINESS_BLUE_DARK;
 
     match status {
         Status::Active => Style {
             background: Some(Background::Color(color::TRANSPARENT)),
-            text_color: color::GREY_2,
+            text_color: color::DARK_TEXT_SECONDARY,
             border: Border {
                 radius: radius.into(),
                 width: 1.0,
-                color: grey_border,
+                color: border_inactive,
             },
             ..Default::default()
         },
         Status::Hovered => Style {
             background: Some(Background::Color(color::TRANSPARENT)),
-            text_color: color::GREEN,
+            text_color: color::BUSINESS_BLUE_DARK,
             border: Border {
                 radius: radius.into(),
                 width: 1.0,
-                color: green_border,
+                color: border_active,
             },
             ..Default::default()
         },
         Status::Pressed => Style {
             background: Some(Background::Color(color::TRANSPARENT)),
-            text_color: color::GREEN,
+            text_color: color::BUSINESS_BLUE_DARK,
             border: Border {
                 radius: radius.into(),
                 width: 1.0,
-                color: green_border,
+                color: border_active,
             },
             ..Default::default()
         },
         Status::Disabled => Style {
             background: Some(Background::Color(color::TRANSPARENT)),
-            text_color: color::GREY_2,
+            text_color: color::DARK_TEXT_TERTIARY,
             border: Border {
                 radius: radius.into(),
                 width: 1.0,
-                color: grey_border,
+                color: border_inactive,
             },
             ..Default::default()
         },
@@ -77,19 +77,19 @@ fn bordered_button_style(status: Status, radius: f32) -> Style {
 fn path_card_container_style(_theme: &Theme) -> iced::widget::container::Style {
     use iced::widget::container;
     container::Style {
-        text_color: Some(color::GREY_2),
+        text_color: Some(color::DARK_TEXT_SECONDARY),
         background: Some(Background::Color(color::TRANSPARENT)),
         border: Border {
             radius: 25.0.into(),
             width: 1.0,
-            color: color::GREY_7,
+            color: color::LIGHT_BORDER,
         },
         ..Default::default()
     }
 }
 
 // Colors for paths
-const PRIMARY_COLOR: &str = "#32cd32"; // Green
+const PRIMARY_COLOR: &str = "#00BFFF"; // Business Blue
 
 // Card width constants
 const PATH_CARD_WIDTH: f32 = 600.0;
@@ -101,38 +101,38 @@ const BLOCKS_PER_HOUR: u64 = 6;
 const BLOCKS_PER_DAY: u64 = 144;
 const BLOCKS_PER_MONTH: u64 = 4380;
 
-// Generate color from green to blue gradient based on index and total count
-// Recovery path 1 should be between green and blue (not the same as primary green)
+// Generate color from blue to purple gradient based on index and total count
+// Recovery path 1 should be between blue and purple (not the same as primary blue)
 fn get_secondary_color(index: usize, total_count: usize) -> String {
     if total_count == 0 {
-        return "#32cd32".to_string(); // Default to green
+        return "#00BFFF".to_string(); // Default to business blue
     }
 
-    // Calculate interpolation factor (0.0 = mid-green-blue, 1.0 = blue)
-    // First recovery path (index 0) should be between green and blue
-    // Last recovery path should be blue
+    // Calculate interpolation factor (0.0 = mid-blue-purple, 1.0 = purple)
+    // First recovery path (index 0) should be between blue and purple
+    // Last recovery path should be purple
     let factor = if total_count == 1 {
-        0.5 // Single recovery path: midpoint between green and blue
+        0.5 // Single recovery path: midpoint between blue and purple
     } else {
         // Distribute from 0.0 (first) to 1.0 (last)
-        // This ensures first path is between green and blue, not pure green
+        // This ensures first path is between blue and purple, not pure blue
         index as f32 / (total_count - 1) as f32
     };
 
-    // Start color (mid-green-blue): RGB(25, 102, 152) - halfway between green and blue
-    // End color (blue): RGB(0, 0, 255) = #0000ff
-    // Primary green: RGB(50, 205, 50) = #32cd32
-    // Midpoint: RGB(25, 102, 152) = #196698
+    // Start color (mid-blue-purple): RGB(64, 96, 255) - halfway between blue and purple
+    // End color (purple): RGB(128, 0, 255) = #8000FF
+    // Primary blue: RGB(0, 191, 255) = #00BFFF
+    // Midpoint: RGB(64, 96, 255) = #4060FF
 
-    let start_r = 25.0;
-    let start_g = 102.0;
-    let start_b = 152.0;
+    let start_r = 64.0;
+    let start_g = 96.0;
+    let start_b = 255.0;
 
-    let end_r = 0.0;
+    let end_r = 128.0;
     let end_g = 0.0;
     let end_b = 255.0;
 
-    // Interpolate from mid-green-blue to blue
+    // Interpolate from mid-blue-purple to purple
     let r = (start_r + (end_r - start_r) * factor) as u8;
     let g = (start_g + (end_g - start_g) * factor) as u8;
     let b = (start_b + (end_b - start_b) * factor) as u8;

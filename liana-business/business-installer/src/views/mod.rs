@@ -107,7 +107,7 @@ pub fn layout<'a>(
     // Add email if provided
     if let Some(e) = email {
         email_row = email_row
-            .push(Container::new(text::p1_regular(e).style(theme::text::success)).padding(20));
+            .push(Container::new(text::p1_regular(e).style(theme::text::secondary)).padding(20));
     }
     let header = Row::new()
         .align_y(Alignment::Center)
@@ -191,7 +191,7 @@ pub fn layout_with_scrollable_list<'a>(
 
     if let Some(e) = email {
         email_row = email_row
-            .push(Container::new(text::p1_regular(e).style(theme::text::success)).padding(20));
+            .push(Container::new(text::p1_regular(e).style(theme::text::secondary)).padding(20));
     }
 
     let header = Row::new()

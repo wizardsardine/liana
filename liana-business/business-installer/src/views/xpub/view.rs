@@ -18,49 +18,49 @@ use crate::views::layout_with_scrollable_list;
 // Card width constant (matching keys view)
 const KEY_CARD_WIDTH: f32 = 600.0;
 
-/// Custom button style for key cards: dark grey border when not hovered, green when hovered
+/// Custom button style for key cards: light border when not hovered, blue when hovered
 fn key_card_button(_theme: &Theme, status: Status) -> Style {
-    let grey_border = color::GREY_7;
-    let green_border = color::GREEN;
+    let border_inactive = color::LIGHT_BORDER;
+    let border_active = color::BUSINESS_BLUE_DARK;
 
     match status {
         Status::Active => Style {
             background: Some(Background::Color(color::TRANSPARENT)),
-            text_color: color::GREY_2,
+            text_color: color::DARK_TEXT_SECONDARY,
             border: Border {
                 radius: 25.0.into(),
                 width: 1.0,
-                color: grey_border,
+                color: border_inactive,
             },
             ..Default::default()
         },
         Status::Hovered => Style {
             background: Some(Background::Color(color::TRANSPARENT)),
-            text_color: color::GREEN,
+            text_color: color::BUSINESS_BLUE_DARK,
             border: Border {
                 radius: 25.0.into(),
                 width: 1.0,
-                color: green_border,
+                color: border_active,
             },
             ..Default::default()
         },
         Status::Pressed => Style {
             background: Some(Background::Color(color::TRANSPARENT)),
-            text_color: color::GREEN,
+            text_color: color::BUSINESS_BLUE_DARK,
             border: Border {
                 radius: 25.0.into(),
                 width: 1.0,
-                color: green_border,
+                color: border_active,
             },
             ..Default::default()
         },
         Status::Disabled => Style {
             background: Some(Background::Color(color::TRANSPARENT)),
-            text_color: color::GREY_2,
+            text_color: color::DARK_TEXT_TERTIARY,
             border: Border {
                 radius: 25.0.into(),
                 width: 1.0,
-                color: grey_border,
+                color: border_inactive,
             },
             ..Default::default()
         },

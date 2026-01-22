@@ -27,6 +27,15 @@ pub struct Theme {
     pub colors: palette::Palette,
 }
 
+impl Theme {
+    /// Creates the Liana Business theme (light mode with cyan-blue accent)
+    pub fn business() -> Self {
+        Self {
+            colors: palette::Palette::business(),
+        }
+    }
+}
+
 impl iced::application::DefaultStyle for Theme {
     fn default_style(&self) -> iced::application::Appearance {
         iced::application::Appearance {

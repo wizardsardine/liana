@@ -31,47 +31,47 @@ fn delete_button_style(_theme: &Theme, status: Status) -> Style {
 
 /// Shared bordered button style with configurable border radius
 fn bordered_button_style(status: Status, radius: f32) -> Style {
-    let grey_border = color::GREY_7;
-    let green_border = color::GREEN;
+    let border_inactive = color::LIGHT_BORDER;
+    let border_active = color::BUSINESS_BLUE_DARK;
 
     match status {
         Status::Active => Style {
             background: Some(Background::Color(color::TRANSPARENT)),
-            text_color: color::GREY_2,
+            text_color: color::DARK_TEXT_SECONDARY,
             border: Border {
                 radius: radius.into(),
                 width: 1.0,
-                color: grey_border,
+                color: border_inactive,
             },
             ..Default::default()
         },
         Status::Hovered => Style {
             background: Some(Background::Color(color::TRANSPARENT)),
-            text_color: color::GREEN,
+            text_color: color::BUSINESS_BLUE_DARK,
             border: Border {
                 radius: radius.into(),
                 width: 1.0,
-                color: green_border,
+                color: border_active,
             },
             ..Default::default()
         },
         Status::Pressed => Style {
             background: Some(Background::Color(color::TRANSPARENT)),
-            text_color: color::GREEN,
+            text_color: color::BUSINESS_BLUE_DARK,
             border: Border {
                 radius: radius.into(),
                 width: 1.0,
-                color: green_border,
+                color: border_active,
             },
             ..Default::default()
         },
         Status::Disabled => Style {
             background: Some(Background::Color(color::TRANSPARENT)),
-            text_color: color::GREY_2,
+            text_color: color::DARK_TEXT_TERTIARY,
             border: Border {
                 radius: radius.into(),
                 width: 1.0,
-                color: grey_border,
+                color: border_inactive,
             },
             ..Default::default()
         },

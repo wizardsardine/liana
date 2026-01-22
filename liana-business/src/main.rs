@@ -54,7 +54,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         LianaBusiness::update,
         LianaBusiness::view,
     )
-    .theme(|_| theme::Theme::default())
+    .theme(|_| theme::Theme::business())
     .scale_factor(LianaBusiness::scale_factor)
     .subscription(LianaBusiness::subscription)
     .settings(settings)
