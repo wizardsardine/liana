@@ -27,7 +27,7 @@ jobs:
             BITCOIN_BACKEND_TYPE: "electrs"
 
     env:
-      BREEZ_API_KEY: ${{ secrets.BREEZ_API_KEY }}
+      BREEZ_API_KEY: ${{ github.event_name == 'push' && secrets.BREEZ_API_KEY || 'DUMMY_BREEZ_API_KEY' }}
       EXECUTOR_WORKERS: 3
       VERBOSE: 0
       LOG_LEVEL: debug
