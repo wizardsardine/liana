@@ -11,7 +11,7 @@ use std::error::Error;
 use iced::Size;
 
 use liana::miniscript::bitcoin;
-use liana_ui::theme;
+use liana_ui::{image, theme};
 
 use business_installer::{BusinessInstaller, Message};
 use business_settings::BusinessSettings;
@@ -47,7 +47,9 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let settings = create_app_settings("LianaBusiness");
     let initial_size = load_initial_size(&config.liana_directory, Some(Size::new(1200.0, 800.0)));
-    let window_settings = create_window_settings("LianaBusiness", initial_size);
+    let mut window_settings = create_window_settings("LianaBusiness", initial_size);
+    // Use business-specific app icon (blue instead of green)
+    window_settings.icon = Some(image::liana_business_app_icon());
 
     if let Err(e) = iced::application(
         LianaBusiness::title,
