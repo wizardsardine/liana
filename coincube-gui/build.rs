@@ -6,10 +6,8 @@ fn main() {
         if dotenv().is_ok() {
             let env = dotenvy::dotenv_iter();
             if let Ok(iter) = env {
-                for r in iter {
-                    if let Ok((key, value)) = r {
-                        println!("cargo:rustc-env={}={}", key, value);
-                    }
+                for (key, value) in iter.flatten() {
+                    println!("cargo:rustc-env={}={}", key, value);
                 }
             }
         };
