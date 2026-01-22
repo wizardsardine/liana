@@ -4,7 +4,7 @@
     <img src="coincube-ui/static/logos/coincube-logo.svg" width="440px" />
   </a>
 
-_Secure Bitcoin wallet with Vault, Liquid spending, and inheritance_.
+_Secure Bitcoin wallet with Vault multi-sig, Liquid spending, Buy/Sell and inheritance_.
 
 </div>
 
@@ -26,8 +26,6 @@ Example VAULT configuration:
 **LIQUID WALLET** - Lightning-enabled spending wallet powered by Breez SDK for instant, low-fee payments. [Liquid](https://liquid.net/) is a sidechain of Bitcoin that provides low cost payments and confidential transactions.
 
 **BUY/SELL** - Integrated Bitcoin on/off-ramp functionality.
-
-**KEYCHAIN** - Remote keychain-based signers for enhanced flexibility.
 
 COINCUBE is designed for **trustless inheritance**, **loss protection**, **liquid spending**, and
 **user-friendly Bitcoin custody**.
