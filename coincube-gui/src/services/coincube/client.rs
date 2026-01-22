@@ -19,15 +19,18 @@ impl CoincubeClient {
             );
         }
 
+        #[cfg(debug_assertions)]
+        let base_url = "https://dev-api.coincube.io";
+
+        #[cfg(not(debug_assertions))]
+        let base_url = env!("COINCUBE_API_URL");
+
         Self {
             client: reqwest::ClientBuilder::new()
                 .default_headers(headers)
                 .build()
                 .unwrap(),
-            base_url: match cfg!(debug_assertions) {
-                false => "https://api.coincube.io",
-                true => option_env!("COINCUBE_API_URL").unwrap_or("https://dev-api.coincube.io"),
-            },
+            base_url,
         }
     }
 
