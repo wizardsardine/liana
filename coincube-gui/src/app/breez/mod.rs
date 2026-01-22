@@ -14,7 +14,6 @@ use std::sync::{Arc, Mutex};
 
 #[derive(Debug, Clone)]
 pub enum BreezError {
-    MissingApiKey,
     Connection(String),
     Sdk(String),
     SignerNotFound(Fingerprint),
@@ -24,7 +23,6 @@ pub enum BreezError {
 impl std::fmt::Display for BreezError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            BreezError::MissingApiKey => write!(f, "Breez API key missing (set BREEZ_API_KEY)"),
             BreezError::Connection(msg) => write!(f, "failed to connect Breez SDK: {}", msg),
             BreezError::Sdk(msg) => write!(f, "SDK request failed: {}", msg),
             BreezError::SignerNotFound(fp) => {

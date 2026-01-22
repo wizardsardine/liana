@@ -203,7 +203,7 @@ fn checkout_form<'a>(state: &'a MavapayState) -> Column<'a, BuySellMessage> {
             ]
             .push(Space::new().height(10))
             .push(
-                (cfg!(debug_assertions) && option_env!("MAVAPAY_API_KEY").is_none()).then(|| {
+                cfg!(debug_assertions).then(|| {
                     button::primary(Some(wrench_icon()), "Simulate Pay-In (Developer Option)")
                         .on_press_maybe(
                             fulfilled_order

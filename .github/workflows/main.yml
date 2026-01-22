@@ -9,6 +9,8 @@ on:
 jobs:
   linter:
     runs-on: ubuntu-latest
+    env:
+      BREEZ_API_KEY: ${{ github.event_name == 'push' && secrets.BREEZ_API_KEY || 'DUMMY_BREEZ_API_KEY' }}
     steps:
       - uses: actions/checkout@v4
       - name: Install Rust toolchain
@@ -36,6 +38,8 @@ jobs:
           - macOS-latest
           - windows-latest
     runs-on: ${{ matrix.os }}
+    env:
+      BREEZ_API_KEY: ${{ secrets.BREEZ_API_KEY }}
     steps:
       - name: Checkout source code
         uses: actions/checkout@v4

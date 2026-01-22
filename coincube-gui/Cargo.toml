@@ -30,7 +30,6 @@ coincubed = { path = "../coincubed", default-features = false, features = [
 coincube-ui = { path = "../coincube-ui" }
 backtrace = "0.3"
 hex = "0.4.3"
-dotenv = "0.15"
 
 iced = { version = "0.14.0", default-features = false, features = [
 	"tokio",
@@ -113,6 +112,9 @@ iced = { version = "0.14.0", features = ["x11", "wayland"] }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt", "macros"] }
+
+[build-dependencies]
+dotenvy = "0.15.7"
 
 [target.'cfg(windows)'.build-dependencies]
 winresource = "0.1"

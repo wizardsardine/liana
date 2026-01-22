@@ -120,10 +120,10 @@ fn create_subscription(
     use futures::SinkExt;
     use reqwest_sse::EventSource;
 
-    let base_url = match cfg!(debug_assertions) {
-        true => "https://dev-events.coincube.io",
-        false => "https://events.coincube.io",
-    };
+    #[cfg(debug_assertions)]
+    let base_url = "https://dev-events.coincube.io";
+    #[cfg(not(debug_assertions))]
+    let base_url = env!("EVENTS_API_URL");
 
     let auth = format!("Bearer {}", user_jwt);
     let url = format!("{}/api/v1/meld/stream/transactions", base_url);
