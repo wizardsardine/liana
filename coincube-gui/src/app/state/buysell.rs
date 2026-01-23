@@ -133,6 +133,13 @@ impl State for BuySellPanel {
                         email: Default::default(),
                         password: Default::default(),
                     };
+                } else {
+                    // User is already logged in and has a country detected - reset to initialization
+                    self.step = BuySellFlowState::Initialization {
+                        modal: state::vault::receive::Modal::None,
+                        buy_or_sell_selected: None,
+                        buy_or_sell: None,
+                    };
                 }
             }
 

@@ -7,6 +7,7 @@ use iced::{
     widget::{operation::focus_next, operation::focus_previous, Space},
     Alignment, Length, Task,
 };
+use std::time::Duration;
 
 use crate::app::settings::CubeSettings;
 
@@ -15,6 +16,7 @@ pub struct PinEntry {
     pin_digits: [String; 4],
     error: Option<String>,
     show_pin: bool,
+    loading: bool,
     // Store what to do after successful PIN entry
     pub on_success: PinEntrySuccess,
 }
@@ -47,6 +49,7 @@ impl PinEntry {
             pin_digits: [String::new(), String::new(), String::new(), String::new()],
             error: None,
             show_pin: false,
+            loading: false,
             on_success,
         }
     }
@@ -84,6 +87,10 @@ impl PinEntry {
                 Task::none()
             }
             Message::Submit => {
+                if self.loading {
+                    return Task::none();
+                }
+
                 // Check if all digits are filled
                 if self.pin_digits.iter().any(|d| d.is_empty()) {
                     self.error = Some("Please enter all 4 digits".to_string());
@@ -94,6 +101,7 @@ impl PinEntry {
 
                 // Verify PIN
                 if self.cube.verify_pin(&pin) {
+                    self.loading = true;
                     Task::perform(async {}, |_| Message::PinVerified)
                 } else {
                     self.error = Some("Incorrect PIN. Please try again.".to_string());
@@ -111,10 +119,13 @@ impl PinEntry {
     }
 
     pub fn view(&self) -> Element<Message> {
-        let back_button =
-            button::transparent(Some(icon::previous_icon()), "Previous").on_press(Message::Back);
+        let back_button = button::transparent(Some(icon::previous_icon()), "Previous")
+            .on_press_maybe(if self.loading {
+                None
+            } else {
+                Some(Message::Back)
+            });
 
-        // Header with back button on the left
         let header = Row::new()
             .align_y(Alignment::Center)
             .push(Container::new(back_button).center_x(Length::FillPortion(2)))
@@ -125,17 +136,17 @@ impl PinEntry {
         let title = h3(format!("Enter PIN for {}", self.cube.name));
 
         // Small toggle visibility button (icon only) with padding to center icon
-        let toggle_icon_button = if self.show_pin {
-            button::secondary(Some(icon::eye_icon()), "")
-                .on_press(Message::ToggleShowPin)
-                .width(Length::Fixed(50.0))
-                .padding(iced::Padding::new(10.0).left(15.0))
-        } else {
-            button::secondary(Some(icon::eye_slash_icon()), "")
-                .on_press(Message::ToggleShowPin)
-                .width(Length::Fixed(50.0))
-                .padding(iced::Padding::new(10.0).left(15.0))
-        };
+        let toggle_icon_button = button::secondary(
+            Some(if self.show_pin {
+                icon::eye_icon()
+            } else {
+                icon::eye_slash_icon()
+            }),
+            "",
+        )
+        .on_press(Message::ToggleShowPin)
+        .width(Length::Fixed(50.0))
+        .padding(iced::Padding::new(10.0).left(15.0));
 
         let title_row = Row::new()
             .spacing(10)
@@ -175,9 +186,42 @@ impl PinEntry {
             content = content.push(p1_regular(error).style(theme::text::error));
         }
 
-        let submit_button = button::primary(None, "Submit")
+        let can_submit = !self.loading && !self.pin_digits.iter().any(|d| d.is_empty());
+
+        let submit_button = if self.loading {
+            use coincube_ui::component::spinner;
+
+            iced::widget::button(
+                Container::new(
+                    Row::new()
+                        .spacing(5)
+                        .align_y(Alignment::Center)
+                        .push(text("Loading"))
+                        .push(
+                            Container::new(spinner::typing_text_carousel(
+                                "...",
+                                true,
+                                Duration::from_millis(500),
+                                text,
+                            ))
+                            .width(Length::Fixed(20.0)),
+                        ),
+                )
+                .center_x(Length::Fill)
+                .center_y(Length::Fill),
+            )
             .width(Length::Fixed(200.0))
-            .on_press(Message::Submit);
+            .height(Length::Fixed(44.0))
+            .style(theme::button::primary)
+        } else {
+            button::primary(None, "Submit")
+                .width(Length::Fixed(200.0))
+                .on_press_maybe(if can_submit {
+                    Some(Message::Submit)
+                } else {
+                    None
+                })
+        };
 
         content = content.push(submit_button);
 
