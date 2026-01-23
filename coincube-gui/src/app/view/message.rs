@@ -183,6 +183,7 @@ pub enum BuySellMessage {
     // state management
     SessionError(&'static str, String), // inline description + runtime error
     ResetWidget,
+    BackToAddressView,
     SelectBuyOrSell(bool), // true = buy, false = sell
     StartSession,
     RefreshLocalLogin(crate::services::coincube::LoginResponse),

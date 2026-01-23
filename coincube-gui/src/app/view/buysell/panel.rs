@@ -550,68 +550,101 @@ impl BuySellPanel {
 
         let mut column = Column::new();
         column = match buy_or_sell {
-            Some(BuyOrSell::Buy { address }) => column
-                .push(
-                    text::p1_italic("Bitcoin will be deposited in the following address")
-                        .color(color::GREY_2),
-                )
-                .push({
-                    let address_text = address.to_string();
+            Some(BuyOrSell::Buy { address }) => {
+                let address_text = address.to_string();
 
-                    card::simple(
+                Column::new()
+                    .push(
+                        button::transparent(Some(previous_icon()), "Previous")
+                            .width(Length::Shrink)
+                            .on_press(ViewMessage::BuySell(BuySellMessage::ResetWidget)),
+                    )
+                    .push(
                         Column::new()
+                            .push(Space::new().height(Length::Fixed(15.0)))
                             .push(
-                                Container::new(
-                                    scrollable(
-                                        Column::new()
-                                            .push(Space::new().height(Length::Fixed(10.0)))
-                                            .push(
-                                                text::Text::small(text::p2_regular(&address_text))
-                                                    .style(theme::text::secondary),
+                                text::p1_italic(
+                                    "Bitcoin will be deposited in the following address",
+                                )
+                                .color(color::GREY_2),
+                            )
+                            .push(
+                                card::simple(
+                                    Column::new()
+                                        .push(
+                                            Container::new(
+                                                scrollable(
+                                                    Column::new()
+                                                        .push(
+                                                            Space::new()
+                                                                .height(Length::Fixed(10.0)),
+                                                        )
+                                                        .push(
+                                                            text::Text::small(text::p2_regular(
+                                                                &address_text,
+                                                            ))
+                                                            .style(theme::text::secondary),
+                                                        )
+                                                        // Space between the address and the scrollbar
+                                                        .push(
+                                                            Space::new()
+                                                                .height(Length::Fixed(10.0)),
+                                                        ),
+                                                )
+                                                .direction(scrollable::Direction::Horizontal(
+                                                    scrollable::Scrollbar::new()
+                                                        .width(2)
+                                                        .scroller_width(2),
+                                                )),
                                             )
-                                            // Space between the address and the scrollbar
-                                            .push(Space::new().height(Length::Fixed(10.0))),
-                                    )
-                                    .direction(
-                                        scrollable::Direction::Horizontal(
-                                            scrollable::Scrollbar::new().width(2).scroller_width(2),
-                                        ),
-                                    ),
+                                            .width(Length::Fill),
+                                        )
+                                        .push(
+                                            Row::new()
+                                                .push(
+                                                    button::secondary(
+                                                        None,
+                                                        "Verify on hardware device",
+                                                    )
+                                                    .on_press(ViewMessage::Select(0)),
+                                                )
+                                                .push(Space::new().width(Length::Fill))
+                                                .push(
+                                                    Button::new(
+                                                        qr_code_icon()
+                                                            .style(theme::text::secondary),
+                                                    )
+                                                    .on_press(ViewMessage::ShowQrCode(0))
+                                                    .style(theme::button::transparent_border),
+                                                )
+                                                .push(
+                                                    Button::new(
+                                                        clipboard_icon()
+                                                            .style(theme::text::secondary),
+                                                    )
+                                                    .on_press(ViewMessage::Clipboard(address_text))
+                                                    .style(theme::button::transparent_border),
+                                                )
+                                                .align_y(Alignment::Center),
+                                        )
+                                        .spacing(10),
                                 )
                                 .width(Length::Fill),
-                            )
-                            .push(
-                                Row::new()
-                                    .push(
-                                        button::secondary(None, "Verify on hardware device")
-                                            .on_press(ViewMessage::Select(0)),
-                                    )
-                                    .push(Space::new().width(Length::Fill))
-                                    .push(
-                                        Button::new(qr_code_icon().style(theme::text::secondary))
-                                            .on_press(ViewMessage::ShowQrCode(0))
-                                            .style(theme::button::transparent_border),
-                                    )
-                                    .push(
-                                        Button::new(clipboard_icon().style(theme::text::secondary))
-                                            .on_press(ViewMessage::Clipboard(address_text))
-                                            .style(theme::button::transparent_border),
-                                    )
-                                    .align_y(Alignment::Center),
-                            )
-                            .spacing(10),
+                            ),
                     )
+                    .push(
+                        button::primary(Some(globe_icon()), "Continue")
+                            .on_press_maybe(
+                                self.detected_country
+                                    .is_some()
+                                    .then_some(ViewMessage::BuySell(BuySellMessage::StartSession)),
+                            )
+                            .width(iced::Length::Fill),
+                    )
+                    .spacing(12)
+                    .max_width(640)
                     .width(Length::Fill)
-                })
-                .push(
-                    button::primary(Some(globe_icon()), "Continue")
-                        .on_press_maybe(
-                            self.detected_country
-                                .is_some()
-                                .then_some(ViewMessage::BuySell(BuySellMessage::StartSession)),
-                        )
-                        .width(iced::Length::Fill),
-                ),
+            }
             _ => column
                 .push({
                     Column::new()
@@ -687,12 +720,12 @@ impl BuySellPanel {
                         ]
                         .spacing(10)
                     })
-                }),
-        }
-        .align_x(Alignment::Center)
-        .spacing(12)
-        .max_width(640)
-        .width(Length::Fill);
+                })
+                .align_x(Alignment::Center)
+                .spacing(12)
+                .max_width(640)
+                .width(Length::Fill),
+        };
 
         column.into()
     }

@@ -143,6 +143,32 @@ impl State for BuySellPanel {
                 }
             }
 
+            view::BuySellMessage::BackToAddressView => {
+                self.error = None;
+
+                // Extract buy_or_sell from Mavapay state and go back to Initialization
+                let buy_or_sell = match &self.step {
+                    BuySellFlowState::Mavapay(mavapay_state) => match mavapay_state {
+                        view::buysell::MavapayState::Transaction { buy_or_sell, .. } => {
+                            Some(buy_or_sell.clone())
+                        }
+                        view::buysell::MavapayState::Checkout { buy_or_sell, .. } => {
+                            Some(buy_or_sell.clone())
+                        }
+                        _ => None,
+                    },
+                    _ => None,
+                };
+
+                self.step = BuySellFlowState::Initialization {
+                    modal: state::vault::receive::Modal::None,
+                    buy_or_sell_selected: buy_or_sell
+                        .as_ref()
+                        .map(|b| matches!(b, view::buysell::panel::BuyOrSell::Buy { .. })),
+                    buy_or_sell,
+                };
+            }
+
             // login states
             view::BuySellMessage::RefreshLocalLogin(login) => {
                 let client = self.coincube_client.clone();

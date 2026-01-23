@@ -335,24 +335,31 @@ fn transactions_form<'a>(state: &'a MavapayState) -> Column<'a, BuySellMessage> 
 
     // combine UI, render beneficiary input form using card styling
     iced::widget::column![
-        // separator
-        Space::new().height(Length::Fixed(5.0)),
-        container(Space::new().height(Length::Fixed(4.0)).width(Length::Fill))
-            .style(theme::card::simple),
-        Space::new().height(Length::Fixed(5.0)),
-        // header text
-        text::h4_bold(match buy_or_sell {
-            BuyOrSell::Sell => "Sell Bitcoin to Fiat Money",
-            BuyOrSell::Buy { .. } => "Buy Bitcoin using Fiat Money",
-        })
-        .color(color::WHITE)
-        .center(),
-        Space::new().height(Length::Fixed(20.0)),
-        input_form,
-        Space::new().height(Length::Fixed(5.0)),
-        text::p2_medium("Powered by Mavapay").color(color::GREY_3)
+        button::transparent(Some(previous_icon()), "Previous")
+            .width(Length::Shrink)
+            .on_press_maybe((!sending_quote).then_some(BuySellMessage::BackToAddressView)),
+        iced::widget::column![
+            Space::new().height(Length::Fixed(10.0)),
+            // separator
+            Space::new().height(Length::Fixed(5.0)),
+            container(Space::new().height(Length::Fixed(4.0)).width(Length::Fill))
+                .style(theme::card::simple),
+            Space::new().height(Length::Fixed(5.0)),
+            // header text
+            text::h4_bold(match buy_or_sell {
+                BuyOrSell::Sell => "Sell Bitcoin to Fiat Money",
+                BuyOrSell::Buy { .. } => "Buy Bitcoin using Fiat Money",
+            })
+            .color(color::WHITE)
+            .center(),
+            Space::new().height(Length::Fixed(20.0)),
+            input_form,
+            Space::new().height(Length::Fixed(5.0)),
+            text::p2_medium("Powered by Mavapay").color(color::GREY_3)
+        ]
+        .align_x(Alignment::Center)
     ]
-    .align_x(Alignment::Center)
+    .width(Length::Fill)
 }
 
 fn detail_row<'a>(
@@ -714,21 +721,15 @@ fn history_view<'a>(state: &'a MavapayState) -> Column<'a, BuySellMessage> {
         };
 
     iced::widget::column![
-        iced::widget::button(
-            iced::widget::row![
-                previous_icon().size(16).color(color::GREY_2),
-                Space::new().width(5),
-                text::p2_medium("Back").color(color::GREY_2)
-            ]
-            .align_y(Alignment::Center)
-        )
-        .style(theme::button::transparent)
-        .on_press(BuySellMessage::ResetWidget),
+        button::transparent(Some(previous_icon()), "Previous")
+            .width(Length::Shrink)
+            .on_press(BuySellMessage::ResetWidget),
         Space::new().height(10),
         text::h4_bold("Order History"),
         content
     ]
     .padding(20)
+    .width(Length::Fill)
 }
 
 fn pretty_timestamp(ts: &str) -> String {
