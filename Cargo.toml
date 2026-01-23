@@ -61,7 +61,7 @@ tungstenite = "0.24"
 # liana-business (installer)
 thiserror = "2.0.17"
 url = "2.5"
-rustls = "0.23.35"
+rustls = { version = "0.23.35", features = ["ring"] }
 
 # Other dependencies
 bdk_coin_select = "0.4"

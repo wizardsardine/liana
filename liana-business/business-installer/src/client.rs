@@ -889,6 +889,9 @@ fn wss_thread(
 
     tracing::debug!("wss_thread: connecting to {}", url);
 
+    // Install ring crypto provider for rustls (required by tungstenite TLS)
+    let _ = rustls::crypto::ring::default_provider().install_default();
+
     let (mut ws_stream, _) = match tungstenite::connect(&url) {
         Ok(stream) => {
             tracing::debug!("wss_thread: WebSocket connection established");
