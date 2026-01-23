@@ -9,8 +9,8 @@ use serde::Deserialize;
 const DEFAULT_CONNECT_SIGNET_URL: &str = "https://api.connect.signet.lianawallet.com";
 const DEFAULT_CONNECT_MAINNET_URL: &str = "https://api.connect.lianawallet.com";
 
-pub const BUSINESS_MAINNET_API_URL: &str = "https://api.business.lianawallet.com";
-pub const BUSINESS_SIGNET_API_URL: &str = "https://api.signet.business.lianawallet.com";
+pub const BUSINESS_MAINNET_API_URL: &str = "https://api.connect.lianawallet.com";
+pub const BUSINESS_SIGNET_API_URL: &str = "https://api.connect.signet.lianawallet.com";
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct ServiceConfigResource {

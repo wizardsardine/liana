@@ -46,7 +46,9 @@ pub fn auth_api_url(network: Network) -> String {
         BUSINESS_MAINNET_API_URL.to_string()
     } else {
         std::env::var("LIANA_BUSINESS_SIGNET_API_URL")
-            .unwrap_or_else(|_| BUSINESS_SIGNET_API_URL.to_string())
+            .ok()
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| BUSINESS_SIGNET_API_URL.to_string())
     }
 }
 
@@ -58,7 +60,9 @@ pub fn ws_url(network: Network) -> String {
         DEFAULT_MAINNET_WS_URL.to_string()
     } else {
         std::env::var("LIANA_BUSINESS_SIGNET_WS_URL")
-            .unwrap_or_else(|_| DEFAULT_SIGNET_WS_URL.to_string())
+            .ok()
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| DEFAULT_SIGNET_WS_URL.to_string())
     }
 }
 
