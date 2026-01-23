@@ -6,7 +6,7 @@ use crate::{
     state::Message,
 };
 use crossbeam::channel;
-use liana_connect::ws_business::{self, Org, Request, Response, User, Wallet};
+use liana_connect::ws_business::{self, Org, Request, Response, User, UserRole, Wallet};
 use liana_gui::{
     dir::{LianaDirectory, NetworkDirectory},
     services::connect::client::{
@@ -1136,9 +1136,33 @@ fn handle_wss_message(
 
     // Handle error responses first - they're always valid and we remove from cache
     if let Response::Error { error } = &response {
+        // Check if this is an UNAUTHORIZED error for a FetchUser request
+        // Non-admins cannot fetch admin user info, so we create a dummy user
         if let Some(req_id) = &request_id {
             let mut requests = sent_requests.lock().expect("poisoned");
-            requests.remove(req_id);
+            let original_request = requests.remove(req_id);
+
+            // Handle UNAUTHORIZED FetchUser specially - create unknown user
+            if error.code == "UNAUTHORIZED" {
+                if let Some((Request::FetchUser { id }, _, _)) = original_request {
+                    tracing::warn!(
+                        "Cannot fetch user {}: {} - using unknown user placeholder",
+                        id,
+                        error.message
+                    );
+                    let unknown_user = User {
+                        uuid: id,
+                        name: "Unknown".to_string(),
+                        email: String::new(),
+                        role: UserRole::Participant,
+                        last_edited: None,
+                        last_editor: None,
+                    };
+                    users.lock().expect("poisoned").insert(id, unknown_user);
+                    Client::send_notif(n_sender, n_waker, Notification::User(id).into());
+                    return Ok(());
+                }
+            }
         }
         let wss_error = format!("WSS error: {} - {}", error.code, error.message);
         tracing::error!("{wss_error}");
