@@ -9,7 +9,7 @@ use iced::{
 
 use coincube_core::miniscript::bitcoin::Network;
 use coincube_ui::{
-    component::{button, card, network_banner, notification, text::*},
+    component::{button, card, network_banner, notification, spinner, text::*},
     icon, image, theme,
     widget::{modal::Modal, Column, Container, Element, Row},
 };
@@ -61,6 +61,7 @@ pub struct Launcher {
     create_cube_pin_confirm: [String; 4],
     show_pin: bool,
     show_pin_confirm: bool,
+    creating_cube: bool,
 }
 
 impl Launcher {
@@ -91,6 +92,7 @@ impl Launcher {
                 ],
                 show_pin: false,
                 show_pin_confirm: false,
+                creating_cube: false,
             },
             Task::perform(check_network_datadir(network_dir), Message::Checked),
         )
@@ -204,6 +206,10 @@ impl Launcher {
                 Task::none()
             }
             Message::View(ViewMessage::CreateCube) => {
+                if self.creating_cube {
+                    return Task::none();
+                }
+
                 if self.create_cube_name.value.trim().is_empty() {
                     return Task::none();
                 }
@@ -222,6 +228,7 @@ impl Launcher {
                     return Task::none();
                 }
 
+                self.creating_cube = true;
                 let network = self.network;
                 let cube_name = self.create_cube_name.value.trim().to_string();
                 let pin = self.create_cube_pin.join("");
@@ -281,25 +288,28 @@ impl Launcher {
                     Message::CubeCreated,
                 )
             }
-            Message::CubeCreated(res) => match res {
-                Ok(_cube) => {
-                    // Clear any previous error state
-                    self.error = None;
-                    // Reset form fields
-                    self.create_cube_name = coincube_ui::component::form::Value::default();
-                    self.create_cube_pin =
-                        [String::new(), String::new(), String::new(), String::new()];
-                    self.create_cube_pin_confirm =
-                        [String::new(), String::new(), String::new(), String::new()];
-                    self.show_pin = false;
-                    self.show_pin_confirm = false;
-                    self.reload()
+            Message::CubeCreated(res) => {
+                self.creating_cube = false;
+                match res {
+                    Ok(_cube) => {
+                        // Clear any previous error state
+                        self.error = None;
+                        // Reset form fields
+                        self.create_cube_name = coincube_ui::component::form::Value::default();
+                        self.create_cube_pin =
+                            [String::new(), String::new(), String::new(), String::new()];
+                        self.create_cube_pin_confirm =
+                            [String::new(), String::new(), String::new(), String::new()];
+                        self.show_pin = false;
+                        self.show_pin_confirm = false;
+                        self.reload()
+                    }
+                    Err(e) => {
+                        self.error = Some(format!("Failed to create Cube: {}", e));
+                        Task::none()
+                    }
                 }
-                Err(e) => {
-                    self.error = Some(format!("Failed to create Cube: {}", e));
-                    Task::none()
-                }
-            },
+            }
             Message::View(ViewMessage::DeleteCube(DeleteCubeMessage::ShowModal(i))) => {
                 if let State::Cubes { cubes, .. } = &self.state {
                     if let Some(cube) = cubes.get(i) {
@@ -425,7 +435,13 @@ impl Launcher {
                                         Some(icon::previous_icon()),
                                         "Back to Cube list",
                                     )
-                                    .on_press(ViewMessage::ShowCreateCube(false)),
+                                    .on_press_maybe(
+                                        if self.creating_cube {
+                                            None
+                                        } else {
+                                            Some(ViewMessage::ShowCreateCube(false))
+                                        },
+                                    ),
                                 )
                             } else {
                                 None
@@ -487,6 +503,7 @@ impl Launcher {
                                             self.show_pin,
                                             self.show_pin_confirm,
                                             &self.error,
+                                            self.creating_cube,
                                         )
                                     } else {
                                         let mut col =
@@ -515,6 +532,7 @@ impl Launcher {
                                     self.show_pin,
                                     self.show_pin_confirm,
                                     &self.error,
+                                    self.creating_cube,
                                 ),
                             })
                             .align_x(Alignment::Center),
@@ -548,8 +566,10 @@ fn create_cube_form<'a>(
     show_pin: bool,
     show_pin_confirm: bool,
     error: &Option<String>,
+    creating_cube: bool,
 ) -> Element<'a, ViewMessage> {
     use coincube_ui::component::form;
+    use std::time::Duration;
 
     let mut column = Column::new()
         .spacing(20)
@@ -671,20 +691,46 @@ fn create_cube_form<'a>(
 
     // Determine if button should be enabled
     // PIN is always required, so all PIN fields must be filled
-    let can_create = cube_name.valid
+    let can_create = !creating_cube
+        && cube_name.valid
         && !cube_name.value.trim().is_empty()
         && !pin_digits.iter().any(|d| d.is_empty())
         && !pin_confirm_digits.iter().any(|d| d.is_empty());
 
-    column = column.push(
+    let submit_button = if creating_cube {
+        iced::widget::button(
+            Container::new(
+                Row::new()
+                    .spacing(5)
+                    .align_y(Alignment::Center)
+                    .push(text("Creating"))
+                    .push(
+                        Container::new(spinner::typing_text_carousel(
+                            "...",
+                            true,
+                            Duration::from_millis(500),
+                            text,
+                        ))
+                        .width(Length::Fixed(20.0)),
+                    ),
+            )
+            .center_x(Length::Fill)
+            .center_y(Length::Fill),
+        )
+        .width(Length::Fixed(200.0))
+        .height(Length::Fixed(44.0))
+        .style(theme::button::primary)
+    } else {
         button::primary(None, "Create Cube")
             .width(Length::Fixed(200.0))
             .on_press_maybe(if can_create {
                 Some(ViewMessage::CreateCube)
             } else {
                 None
-            }),
-    );
+            })
+    };
+
+    column = column.push(submit_button);
 
     Container::new(column)
         .padding(20)
