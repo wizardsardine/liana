@@ -13,7 +13,7 @@ pub const BUSINESS_MAINNET_API_URL: &str = "https://api.business.lianawallet.com
 pub const BUSINESS_SIGNET_API_URL: &str = "https://api.signet.business.lianawallet.com";
 
 #[derive(Debug, Clone, Deserialize)]
-struct ServiceConfigResource {
+pub struct ServiceConfigResource {
     pub auth_api_url: String,
     pub auth_api_public_key: String,
 }
