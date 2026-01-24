@@ -27,8 +27,12 @@ impl<C: Default> PriceClient<C> {
 impl PriceApi for PriceClient<reqwest::Client> {
     async fn get_price(&self, currency: Currency) -> Result<GetPriceResult, PriceApiError> {
         let url = self.source.get_price_url(currency);
+        tracing::debug!("Fetching price from {} for {}: {}", self.source, currency, url);
         let data = get_data(&self.inner, &url).await?;
-        self.source.parse_price_data(currency, &data)
+        tracing::debug!("Received data from {}: {:?}", self.source, data);
+        let result = self.source.parse_price_data(currency, &data);
+        tracing::debug!("Parsed price result from {}: {:?}", self.source, result);
+        result
     }
 
     async fn list_currencies(&self) -> Result<ListCurrenciesResult, PriceApiError> {

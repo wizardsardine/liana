@@ -26,14 +26,14 @@ impl BreezConfig {
     pub fn sdk_config(&self) -> breez::Config {
         // Allow overriding Esplora URLs via environment variables
         let liquid_explorer_url = match self.network {
-            bitcoin::Network::Bitcoin => "https://blockstream.info/liquid/api",
-            bitcoin::Network::Testnet => "https://blockstream.info/liquidtestnet/api",
+            bitcoin::Network::Bitcoin => "https://api.coincube.io/api/v1/esplora/liquid/mainnet",
+            bitcoin::Network::Testnet => "https://api.coincube.io/api/v1/esplora/bitcoin/testnet",
             bitcoin::Network::Signet => "https://blockstream.info/liquidtestnet/api",
             bitcoin::Network::Regtest | bitcoin::Network::Testnet4 => "http://localhost:4003/api",
         };
         let bitcoin_explorer_url = match self.network {
-            bitcoin::Network::Bitcoin => "https://blockstream.info/api",
-            bitcoin::Network::Testnet => "https://blockstream.info/testnet/api",
+            bitcoin::Network::Bitcoin => "https://api.coincube.io/api/v1/esplora/bitcoin/mainnet",
+            bitcoin::Network::Testnet => "https://api.coincube.io/api/v1/esplora/bitcoin/testnet",
             bitcoin::Network::Signet => "https://blockstream.info/signet/api",
             bitcoin::Network::Regtest | bitcoin::Network::Testnet4 => "http://localhost:4002/api",
         };
