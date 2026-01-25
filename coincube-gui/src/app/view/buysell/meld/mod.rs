@@ -18,10 +18,9 @@ pub enum MeldMessage {
     SetAmount(String),
     SetMaxAmount,
     SubmitInputForm(f64),
-    ReceivedQuotes(Vec<meld::api::Quote>, Option<String>),
+    ReceivedQuotes(Vec<meld::api::Quote>),
     // Quote selection
     SelectQuote(usize),
-    DeselectQuote,
     StartSessionPressed(usize),
     CreateSession(meld::api::Quote),
     SessionCreated(meld::api::CreateSessionResponse),
@@ -49,7 +48,7 @@ pub enum MeldFlowStep {
     QuoteSelection {
         quotes: Vec<meld::api::Quote>,
         selected: Option<usize>,
-        recommended_provider: Option<String>,
+        webview_pending: bool,
     },
     ActiveSession {
         session: meld::api::CreateSessionResponse,
@@ -61,6 +60,10 @@ pub struct MeldState {
     pub steps: Vec<MeldFlowStep>,
     pub buy_or_sell: BuyOrSell,
     pub country: &'static Country,
+
+    // sse data
+    pub idempotency_set: std::collections::BTreeSet<String>,
+    pub sse_retries: usize,
 
     pub webview_manager: iced_wry::IcedWebviewManager,
 }
@@ -74,6 +77,8 @@ impl MeldState {
         let state = MeldState {
             buy_or_sell: buy_or_sell.clone(),
             country,
+            idempotency_set: std::collections::BTreeSet::new(),
+            sse_retries: 0,
             webview_manager: iced_wry::IcedWebviewManager::new(),
             steps: vec![MeldFlowStep::RegionChecks],
         };
@@ -150,8 +155,8 @@ impl MeldState {
             Some(MeldFlowStep::QuoteSelection {
                 quotes,
                 selected,
-                recommended_provider,
-            }) => ui::quote_selection_ux(quotes, *selected, recommended_provider.as_deref()),
+                webview_pending,
+            }) => ui::quote_selection_ux(quotes, *selected, *webview_pending, &self.buy_or_sell),
         }
     }
 
@@ -165,18 +170,33 @@ impl MeldState {
             MeldMessage::NavigateBack => {
                 self.steps.pop();
             }
-            MeldMessage::SessionError(err, desc) => {
-                if desc == "QUOTE_ACQUISITION_FAILED" {
-                    if let Some(MeldFlowStep::InputForm {
-                        sending_request, ..
-                    }) = self.steps.last_mut()
-                    {
-                        *sending_request = false;
+            MeldMessage::SessionError(err, description) => {
+                let msg = match description {
+                    "QUOTE_ACQUISITION_FAILED" => {
+                        if let Some(MeldFlowStep::InputForm {
+                            sending_request, ..
+                        }) = self.steps.last_mut()
+                        {
+                            *sending_request = false;
+                        }
+
+                        format!("[MELD] (Unable to acquire Quotes from API): {}", err)
                     }
+                    "WEBVIEW_INIT_FAILURE" => {
+                        // reset webview loading state
+                        if let Some(MeldFlowStep::QuoteSelection {
+                            webview_pending, ..
+                        }) = self.steps.last_mut()
+                        {
+                            *webview_pending = false;
+                        }
+
+                        format!("[MELD] (Unable to start webview): {}", err)
+                    }
+                    desc => format!("[MELD] ({}): {}", desc, err),
                 };
 
-                // TODO: Ideally, should be unified into global error interface
-                log::error!("[MELD] ({}): {}", desc, err);
+                return Some(iced::Task::done(view::Message::ShowError(msg)));
             }
             // initialization
             MeldMessage::CountryNotSupported => self.steps.push(MeldFlowStep::CountryNotSupported),
@@ -252,7 +272,6 @@ impl MeldState {
                                 quotes,
                                 message,
                                 error,
-                                recommended_provider,
                             }) => {
                                 if let Some(e) = error {
                                     log::error!(
@@ -264,7 +283,7 @@ impl MeldState {
                                     log::info!("[MELD] {}", msg)
                                 };
 
-                                MeldMessage::ReceivedQuotes(quotes, recommended_provider)
+                                MeldMessage::ReceivedQuotes(quotes)
                             }
                             Err(e) => {
                                 MeldMessage::SessionError(e.to_string(), "QUOTE_ACQUISITION_FAILED")
@@ -276,7 +295,7 @@ impl MeldState {
                     return Some(task);
                 }
             }
-            MeldMessage::ReceivedQuotes(mut quotes, r) => {
+            MeldMessage::ReceivedQuotes(mut quotes) => {
                 if let Some(MeldFlowStep::InputForm {
                     sending_request,
                     amount,
@@ -284,12 +303,7 @@ impl MeldState {
                 }) = self.steps.last_mut()
                 {
                     *sending_request = false;
-
-                    log::info!(
-                        "[MELD] Successfully received quotes: {}, Recommended = {:?}",
-                        quotes.len(),
-                        r
-                    );
+                    log::trace!("[MELD] Successfully received quotes: {}", quotes.len(),);
 
                     match quotes.as_slice() {
                         [] => {
@@ -316,7 +330,7 @@ impl MeldState {
                             self.steps.push(MeldFlowStep::QuoteSelection {
                                 quotes,
                                 selected: None,
-                                recommended_provider: r,
+                                webview_pending: false,
                             });
                         }
                     }
@@ -325,17 +339,23 @@ impl MeldState {
             // Quote Selection
             MeldMessage::SelectQuote(idx) => {
                 if let Some(MeldFlowStep::QuoteSelection { selected, .. }) = self.steps.last_mut() {
-                    *selected = Some(idx)
-                }
-            }
-            MeldMessage::DeselectQuote => {
-                if let Some(MeldFlowStep::QuoteSelection { selected, .. }) = self.steps.last_mut() {
-                    *selected = None;
+                    if *selected == Some(idx) {
+                        *selected = None
+                    } else {
+                        *selected = Some(idx)
+                    }
                 }
             }
             MeldMessage::StartSessionPressed(selected) => {
-                if let Some(MeldFlowStep::QuoteSelection { quotes, .. }) = self.steps.last() {
+                if let Some(MeldFlowStep::QuoteSelection {
+                    quotes,
+                    webview_pending,
+                    ..
+                }) = self.steps.last_mut()
+                {
                     if let Some(quote) = quotes.get(selected) {
+                        *webview_pending = true;
+
                         return Some(iced::Task::done(view::Message::BuySell(
                             view::BuySellMessage::Meld(MeldMessage::CreateSession(quote.clone())),
                         )));
@@ -377,10 +397,7 @@ impl MeldState {
                     },
                     |res| match res {
                         Ok(s) => MeldMessage::SessionCreated(s),
-                        Err(e) => MeldMessage::SessionError(
-                            e.to_string(),
-                            "Unable to create Meld webview session",
-                        ),
+                        Err(e) => MeldMessage::SessionError(e.to_string(), "WEBVIEW_INIT_FAILURE"),
                     },
                 )
                 .map(|msg| view::Message::BuySell(view::BuySellMessage::Meld(msg)));
@@ -411,10 +428,19 @@ impl MeldState {
 
                 match self.webview_manager.new_webview(attrs, id) {
                     Some(active) => {
-                        log::info!(
+                        log::trace!(
                             "[MELD] Successfully created Webview Session with ID: {}",
                             session.session_id
                         );
+
+                        // reset webview loading state
+                        if let Some(MeldFlowStep::QuoteSelection {
+                            webview_pending, ..
+                        }) = self.steps.last_mut()
+                        {
+                            *webview_pending = false;
+                        }
+
                         self.steps
                             .push(MeldFlowStep::ActiveSession { session, active })
                     }
@@ -435,9 +461,69 @@ impl MeldState {
             }
             MeldMessage::EventSourceDisconnected(msg) => {
                 log::warn!("[MELD] EventSource has disconnected: {}", msg);
+
+                // incrementing sse_retries updates the data hash for the subscription, thus recreating it
+                self.sse_retries += 1;
             }
             MeldMessage::SseEvent(event) => {
-                log::info!("[MELD] Got SSE event: {:#?}", event);
+                match serde_json::from_str::<meld::api::MeldEvent>(&event.data) {
+                    Ok(ev) => {
+                        // check for duplicate events
+                        if !self.idempotency_set.insert(ev.event_id) {
+                            log::trace!("[MELD] Received duplicate SSE Event: {:?}", event);
+                            return None;
+                        }
+
+                        // ensure event belongs to current session
+                        if let Some(MeldFlowStep::ActiveSession { session, .. }) = self.steps.last()
+                        {
+                            if ev.meld_session_id != session.session_id {
+                                log::debug!(
+                                    "[MELD] Ignoring event received for previous session: {:?}",
+                                    ev.meld_session_id
+                                );
+
+                                return None;
+                            }
+                        }
+
+                        // check if event was a success
+                        match ev.status {
+                            meld::api::TransactionStatus::Settled => {
+                                // wait a few seconds before resetting widget
+                                let task = iced::Task::perform(
+                                    async move {
+                                        tokio::time::sleep(std::time::Duration::from_secs(5)).await
+                                    },
+                                    |_| view::Message::BuySell(view::BuySellMessage::ResetWidget),
+                                );
+
+                                return Some(task);
+                            }
+                            meld::api::TransactionStatus::Error => {
+                                let task = iced::Task::done(view::Message::BuySell(
+                                    view::BuySellMessage::Meld(MeldMessage::SessionError(
+                                        "Unable to complete transaction".to_string(),
+                                        "Unable to settle transaction",
+                                    )),
+                                ));
+
+                                return Some(task);
+                            }
+                            meld::api::TransactionStatus::Pending
+                            | meld::api::TransactionStatus::Settling => {
+                                log::info!("[MELD] Transaction is currently in flight");
+                            }
+                        }
+                    }
+                    Err(er) => {
+                        log::error!(
+                            "[MELD] Event data from SSE was malformed: {:?}\n{:?}",
+                            er,
+                            event
+                        )
+                    }
+                }
             }
         };
 

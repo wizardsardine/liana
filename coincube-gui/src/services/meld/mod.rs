@@ -108,14 +108,15 @@ impl<'client> MeldClient<'client> {
     }
 
     pub fn transactions_subscription(
-        user_jwt: String,
+        token: String,
+        retries: usize,
     ) -> iced::Subscription<crate::app::view::buysell::meld::MeldMessage> {
-        iced::Subscription::run_with(user_jwt, create_subscription)
+        iced::Subscription::run_with((token, retries), create_subscription)
     }
 }
 
 fn create_subscription(
-    user_jwt: &String,
+    data: &(String, usize),
 ) -> impl iced::futures::Stream<Item = meld::MeldMessage> + 'static {
     use futures::SinkExt;
     use reqwest_sse::EventSource;
@@ -125,7 +126,9 @@ fn create_subscription(
     #[cfg(not(debug_assertions))]
     let base_url = env!("EVENTS_API_URL");
 
-    let auth = format!("Bearer {}", user_jwt);
+    let (token, retries) = data;
+
+    let auth = format!("Bearer {}", token);
     let url = format!("{}/api/v1/meld/stream/transactions", base_url);
 
     // attempt to parse parameters
@@ -148,7 +151,10 @@ fn create_subscription(
         }
     };
 
-    log::trace!("[MELD] Starting subscription execution");
+    log::trace!(
+        "[MELD] Starting subscription execution: Attempt #{}",
+        retries
+    );
 
     iced::stream::channel(
         8,
@@ -174,7 +180,7 @@ fn create_subscription(
                                     futures::future::Either::Left(_) => {
                                         let _ = channel
                                         .send(meld::MeldMessage::EventSourceDisconnected(
-                                            "EventSource heartbeat failure, client is probably offline".to_string(),
+                                            "EventSource heartbeat failure, Client is probably offline".to_string(),
                                         ))
                                         .await;
 
@@ -182,14 +188,19 @@ fn create_subscription(
                                     }
                                     futures::future::Either::Right((event, _)) => match event {
                                         Ok(Some(ev)) => {
-                                            if let Err(err) =
-                                                channel.send(meld::MeldMessage::SseEvent(ev)).await
-                                            {
-                                                if err.is_disconnected() {
-                                                    log::trace!("[MELD] Exiting subscription, Meld state was dropped");
-                                                    break;
-                                                }
-                                            };
+                                            if ev.event_type == "transactionUpdate" {
+                                                if let Err(err) = channel
+                                                    .send(meld::MeldMessage::SseEvent(ev))
+                                                    .await
+                                                {
+                                                    if err.is_disconnected() {
+                                                        log::trace!("[MELD] Exiting subscription, Meld state was dropped");
+                                                        break;
+                                                    }
+                                                };
+                                            } else {
+                                                log::trace!("[MELD] Got event from SSE: {:?}", ev)
+                                            }
                                         }
                                         Ok(None) => {
                                             log::info!("[MELD] EventSource exiting safely");

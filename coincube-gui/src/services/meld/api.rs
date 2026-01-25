@@ -51,6 +51,16 @@ pub struct CurrencyLimit {
 pub enum TransactionType {
     CryptoPurchase,
     CryptoSell,
+    CryptoTransfer,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum TransactionStatus {
+    Pending,
+    Settling,
+    Settled,
+    Error,
 }
 
 #[derive(Debug, Serialize)]
@@ -88,8 +98,6 @@ pub struct Quote {
     pub source_currency_code: String,
     pub destination_currency_code: String,
 
-    // TODO: Use enums instead
-    pub payment_method_type: String,
     pub service_provider: String,
     pub customer_score: f32,
 }
@@ -100,7 +108,6 @@ pub struct GetQuoteResponse {
     pub quotes: Vec<Quote>,
     pub message: Option<String>,
     pub error: Option<String>,
-    pub recommended_provider: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -123,4 +130,25 @@ pub struct CreateSessionResponse {
     pub widget_url: String,
     pub service_provider_widget_url: Option<String>,
     pub provider: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum MeldEventType {
+    TransactionCryptoPending,
+    TransactionCryptoTransferring,
+    TransactionCryptoComplete,
+    TransactionCryptoFailed,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct MeldEvent {
+    pub event_type: MeldEventType,
+    pub event_id: String, // for idempotency
+    pub meld_session_id: String,
+    pub transaction_type: TransactionType,
+    pub status: TransactionStatus,
+    #[serde(flatten)]
+    pub extras: serde_json::Value,
 }

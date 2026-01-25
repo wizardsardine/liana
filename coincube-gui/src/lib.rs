@@ -18,9 +18,9 @@ pub mod services;
 pub mod signer;
 pub mod utils;
 
-use coincubed::Version;
+use coincubed::ApiVersion;
 
-pub const VERSION: Version = Version {
+pub const VERSION: ApiVersion = ApiVersion {
     major: 13,
     minor: 0,
 };

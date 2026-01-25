@@ -234,7 +234,6 @@ pub enum BuySellMessage {
     Mavapay(crate::services::mavapay::MavapayMessage),
 
     // Meld specific messages
-    #[cfg(feature = "meld")]
     Meld(crate::app::view::buysell::meld::MeldMessage),
 
     // Clipboard action (forwarded to parent Message::Clipboard)

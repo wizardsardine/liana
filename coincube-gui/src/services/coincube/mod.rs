@@ -9,7 +9,6 @@ pub enum CoincubeError {
     Unsuccessful(crate::services::http::NotSuccessResponseInfo),
     Api(String),
     Parse(serde_json::Error),
-    #[cfg(feature = "meld")]
     SseError(reqwest_sse::error::EventSourceError),
 }
 
@@ -31,7 +30,6 @@ impl From<reqwest::Error> for CoincubeError {
     }
 }
 
-#[cfg(feature = "meld")]
 impl From<reqwest_sse::error::EventSourceError> for CoincubeError {
     fn from(e: reqwest_sse::error::EventSourceError) -> Self {
         Self::SseError(e)
@@ -45,7 +43,6 @@ impl std::fmt::Display for CoincubeError {
             CoincubeError::Unsuccessful(e) => write!(f, "{}", e.text),
             CoincubeError::Api(msg) => write!(f, "API error: {}", msg),
             CoincubeError::Parse(msg) => write!(f, "Parse error: {}", msg),
-            #[cfg(feature = "meld")]
             CoincubeError::SseError(e) => write!(f, "SSE Error: {}", e),
         }
     }

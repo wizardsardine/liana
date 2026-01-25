@@ -598,3 +598,51 @@ pub fn placeholder<'a, T: Into<Element<'a, Message>>>(
         })
         .into()
 }
+
+pub fn error_toast_overlay<'a>(msg: &'a str) -> coincube_ui::widget::Element<'a, Message> {
+    use coincube_ui::{color, component::text, icon::cross_icon};
+
+    let error_toast = iced::widget::row![
+        // represent space covered by the dashboard
+        iced::widget::Space::new().width(190.0),
+        // center toast horizontally
+        iced::widget::Space::new().width(iced::Length::Fill),
+        container(text::p1_bold(msg).color(color::WHITE))
+            .width(600)
+            .height(iced::Length::Fill)
+            .padding(25)
+            .style(|_| {
+                iced::widget::container::Style::default()
+                    .background(iced::Color::BLACK)
+                    .border(iced::Border::default().width(1).color(color::RED))
+            }),
+        iced::widget::Button::new(
+            cross_icon()
+                .color(color::BLACK)
+                .size(36)
+                .align_x(iced::Alignment::Center)
+                .align_y(iced::Alignment::Center)
+                .height(iced::Length::Fill)
+        )
+        .height(iced::Length::Fill)
+        .width(60)
+        .style(|_, _| iced::widget::button::Style::default().with_background(color::RED))
+        .on_press(Message::DismissError),
+        iced::widget::Space::new().width(iced::Length::Fill),
+    ]
+    .height(90)
+    .align_y(Alignment::Center);
+
+    let column = iced::widget::column![
+        iced::widget::Space::new().height(iced::Length::Fill),
+        error_toast,
+        iced::widget::Space::new().height(25),
+    ];
+
+    container(column)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .align_x(Alignment::Center)
+        .align_y(Alignment::Center)
+        .into()
+}

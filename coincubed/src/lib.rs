@@ -68,12 +68,12 @@ pub fn setup_panic_hook() {
 }
 
 #[derive(Debug, Clone)]
-pub struct Version {
+pub struct ApiVersion {
     pub major: u32,
     pub minor: u32,
 }
 
-impl fmt::Display for Version {
+impl fmt::Display for ApiVersion {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         if cfg!(debug_assertions) {
             write!(f, "{}.{}-dev", self.major, self.minor)
@@ -83,7 +83,7 @@ impl fmt::Display for Version {
     }
 }
 
-pub const VERSION: Version = Version {
+pub const VERSION: ApiVersion = ApiVersion {
     major: 13,
     minor: 0,
 };

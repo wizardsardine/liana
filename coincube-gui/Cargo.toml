@@ -1,6 +1,6 @@
 [package]
 name = "coincube-gui"
-version = "0.9.0"
+version = "1.0.0-rc1"
 readme = "README.md"
 description = "COINCUBE GUI - Secure Bitcoin wallet with multisig and inheritance"
 repository = "https://github.com/coincubetech/coincube"
@@ -9,8 +9,6 @@ authors = ["Edouard Paris <m@edouard.paris>", "Coincube Team"]
 edition = "2018"
 resolver = "2"
 
-[features]
-meld = ["dep:iced_wry"]
 
 [package.metadata.winres]
 LegalCopyright = "Copyright © 2026"
@@ -86,7 +84,7 @@ fs4 = { version = "0.13", features = ["sync"] }
 open = "5.3"
 
 # Webview for embedded browser functionality (wry-based)
-iced_wry = { git = "https://github.com/sokorototo/iced_wry", optional = true }
+iced_wry = { git = "https://github.com/sokorototo/iced_wry" }
 
 keyring = { version = "3.2.0", features = [
 	"apple-native",

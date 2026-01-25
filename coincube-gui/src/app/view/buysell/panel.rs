@@ -70,7 +70,6 @@ pub enum BuySellFlowState {
     /// Nigeria, Kenya and South Africa, ie Mavapay supported countries
     Mavapay(super::mavapay::MavapayState),
     /// Utilize Meld for countries not supported by Mavapay
-    #[cfg(feature = "meld")]
     Meld(super::meld::MeldState),
 }
 
@@ -84,7 +83,6 @@ impl BuySellFlowState {
             BuySellFlowState::PasswordReset { .. } => "PasswordReset",
             BuySellFlowState::Initialization { .. } => "Initialization",
             BuySellFlowState::Mavapay(..) => "Mavapay",
-            #[cfg(feature = "meld")]
             BuySellFlowState::Meld { .. } => "Meld",
         }
     }
@@ -131,7 +129,6 @@ impl BuySellPanel {
     pub fn view<'a>(&'a self) -> iced::Element<'a, ViewMessage, theme::Theme> {
         let column = {
             let column = Column::new()
-                .push(Space::new().height(60))
                 // COINCUBE branding
                 .push(
                     Row::new()
@@ -173,7 +170,6 @@ impl BuySellPanel {
                         BuySellFlowState::Mavapay(state) => super::mavapay::ui::form(state),
 
                         // meld
-                        #[cfg(feature = "meld")]
                         BuySellFlowState::Meld(state) => state.view(&self.network),
                     }
                 });
@@ -660,7 +656,7 @@ impl BuySellPanel {
                                     _ => coincube_ui::theme::button::secondary,
                                 }
                             })
-                            .padding(30)
+                            .padding(35)
                             .width(iced::Length::Fill),
                         )
                         .push(
@@ -675,7 +671,7 @@ impl BuySellPanel {
                                     _ => coincube_ui::theme::button::secondary,
                                 }
                             })
-                            .padding(30)
+                            .padding(35)
                             .width(iced::Length::Fill),
                         )
                         .spacing(15)
