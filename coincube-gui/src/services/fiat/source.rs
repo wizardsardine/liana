@@ -56,7 +56,10 @@ impl PriceSource {
     /// Returns the URL to fetch the price for a given currency.
     pub fn get_price_url(&self, currency: Currency) -> String {
         match self {
-            Self::Coincube => format!("https://api.coincube.io/api/v1/exchange-rates/price/{}", currency),
+            Self::Coincube => format!(
+                "https://api.coincube.io/api/v1/exchange-rates/price/{}",
+                currency
+            ),
             Self::CoinGecko => "https://api.coingecko.com/api/v3/exchange_rates".to_string(),
             Self::MempoolSpace => "https://mempool.space/api/v1/prices".to_string(),
         }
@@ -65,7 +68,9 @@ impl PriceSource {
     /// Returns the URL to fetch the list of supported currencies.
     pub fn list_currencies_url(&self) -> String {
         match self {
-            Self::Coincube => "https://api.coincube.io/api/v1/exchange-rates/currencies".to_string(),
+            Self::Coincube => {
+                "https://api.coincube.io/api/v1/exchange-rates/currencies".to_string()
+            }
             Self::CoinGecko => "https://api.coingecko.com/api/v3/exchange_rates".to_string(),
             Self::MempoolSpace => "https://mempool.space/api/v1/prices".to_string(),
         }
@@ -118,7 +123,9 @@ impl PriceSource {
             Self::Coincube => data
                 .get("currencies")
                 .and_then(|currencies| currencies.as_array())
-                .ok_or(PriceApiError::CannotParseData("data is not array".to_string()))?
+                .ok_or(PriceApiError::CannotParseData(
+                    "data is not array".to_string(),
+                ))?
                 .iter()
                 .filter_map(|s| s.as_str().and_then(|s| s.parse::<Currency>().ok()))
                 .collect(),
