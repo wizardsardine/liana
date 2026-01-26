@@ -143,7 +143,7 @@ pub fn xpub_view(state: &State) -> Element<'_, Msg> {
     let current_user_email = &state.views.login.email.form.value;
     let user_role = &state.app.current_user_role;
 
-    // Determine if user is WS Manager
+    // Determine if user is WS Admin
     let is_ws_manager = matches!(user_role, Some(UserRole::WizardSardineAdmin));
 
     // Build breadcrumb: org_name > wallet_name > Key Information
@@ -250,7 +250,7 @@ pub fn xpub_view(state: &State) -> Element<'_, Msg> {
     list_content = list_content.push(Space::with_height(50));
 
     let role_badge = if is_ws_manager {
-        Some("WS Manager")
+        Some("WS Admin")
     } else {
         None
     };

@@ -187,7 +187,7 @@ pub fn org_select_view(state: &State) -> Element<'_, Msg> {
         let current_user_email_lower = current_user_email.to_lowercase();
         // Use global role from User record for filtering
         let global_role = state.app.global_user_role;
-        // Get hide_finalized setting for WSManager wallet count filtering
+        // Get hide_finalized setting for WS Admin wallet count filtering
         let hide_finalized = state.views.wallet_select.hide_finalized;
         for (id, org) in &filtered_orgs {
             // Count only wallets accessible to this user
@@ -234,7 +234,7 @@ pub fn org_select_view(state: &State) -> Element<'_, Msg> {
     list_content = list_content.push(Space::with_height(50));
 
     let role_badge = if is_ws_manager {
-        Some("WS Manager")
+        Some("WS Admin")
     } else {
         None
     };

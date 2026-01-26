@@ -323,7 +323,7 @@ pub fn template_visualization(state: &State) -> Element<'static, Msg> {
         .and_then(|id| state.backend.get_wallet(id))
         .map(|w| w.status);
 
-    // Determine if user can edit: WSManager only, and only when status is Draft
+    // Determine if user can edit: WS Admin only, and only when status is Draft
     let is_draft = matches!(
         wallet_status,
         Some(WalletStatus::Created) | Some(WalletStatus::Drafted)
@@ -386,7 +386,7 @@ pub fn template_visualization(state: &State) -> Element<'static, Msg> {
                 secondary_last_edit,
             ));
 
-        // Only show delete button if editable (WSManager)
+        // Only show delete button if editable (WS Admin)
         if is_editable {
             secondary_row = secondary_row.push(
                 Button::new(
@@ -405,7 +405,7 @@ pub fn template_visualization(state: &State) -> Element<'static, Msg> {
         column = column.push(secondary_row);
     }
 
-    // "Add a recovery path" card - only show if editable (WSManager)
+    // "Add a recovery path" card - only show if editable (WS Admin)
     if is_editable {
         let add_path_content = Container::new(
             text::p1_regular("+ Add a recovery path").style(liana_ui::theme::text::secondary),

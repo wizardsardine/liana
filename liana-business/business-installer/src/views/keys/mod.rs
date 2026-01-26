@@ -149,7 +149,7 @@ pub fn keys_view(state: &State) -> Element<'_, Msg> {
     let header_content: Element<'_, Msg> = Column::new().into();
 
     let role_badge = if is_ws_manager {
-        Some("WS Manager")
+        Some("WS Admin")
     } else {
         None
     };

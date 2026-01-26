@@ -840,7 +840,7 @@ mod protocol_tests {
                         "keys": {
                             "0": {
                                 "id": 0,
-                                "alias": "Owner Key",
+                                "alias": "Wallet Manager Key",
                                 "description": "Primary owner key",
                                 "email": "alice@example.com",
                                 "key_type": "Internal"
@@ -878,7 +878,7 @@ mod protocol_tests {
             0,
             Key {
                 id: 0,
-                alias: "Owner Key".to_string(),
+                alias: "Wallet Manager Key".to_string(),
                 description: "Primary owner key".to_string(),
                 identity: KeyIdentity::Email("alice@example.com".to_string()),
                 key_type: KeyType::Internal,
@@ -1285,7 +1285,7 @@ mod protocol_tests {
                     "keys": {
                         "0": {
                             "id": 0,
-                            "alias": "Owner Key",
+                            "alias": "Wallet Manager Key",
                             "description": "Primary owner key",
                             "email": "owner@example.com",
                             "key_type": "Internal"
@@ -1307,7 +1307,7 @@ mod protocol_tests {
             0,
             Key {
                 id: 0,
-                alias: "Owner Key".to_string(),
+                alias: "Wallet Manager Key".to_string(),
                 description: "Primary owner key".to_string(),
                 identity: KeyIdentity::Email("owner@example.com".to_string()),
                 key_type: KeyType::Internal,

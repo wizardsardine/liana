@@ -64,7 +64,7 @@ pub fn my_view(state: &State) -> Element<'_, Message> {
     layout(
         (current_step, total_steps),  // Progress (0, 0) to hide
         Some("user@email.com"),       // Email display
-        Some("WS Manager"),           // Role badge (None to hide)
+        Some("WS Admin"),           // Role badge (None to hide)
         &breadcrumb,
         content,
         true,                         // padding_left: center content
@@ -430,7 +430,7 @@ let filtered_keys: Vec<_> = state.app.keys.iter()
             Some(UserRole::Participant) => {
                 key.email.to_lowercase() == current_email.to_lowercase()
             }
-            _ => true,  // WSManager/Owner see all
+            _ => true,  // WS Admin/Wallet Manager see all
         }
     })
     .collect();
@@ -439,8 +439,8 @@ let filtered_keys: Vec<_> = state.app.keys.iter()
 ### Role Badge
 
 ```rust
-let role_badge = if matches!(user_role, Some(UserRole::WSManager)) {
-    Some("WS Manager")
+let role_badge = if matches!(user_role, Some(UserRole::WS Admin)) {
+    Some("WS Admin")
 } else {
     None
 };
@@ -449,8 +449,8 @@ let role_badge = if matches!(user_role, Some(UserRole::WSManager)) {
 ### Role-Based Actions
 
 ```rust
-// Only WSManager can edit paths
-let is_editable = matches!(user_role, Some(UserRole::WSManager));
+// Only WS Admin can edit paths
+let is_editable = matches!(user_role, Some(UserRole::WS Admin));
 
 let path_card = if is_editable {
     button::transparent(None, path_content)

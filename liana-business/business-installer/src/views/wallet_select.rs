@@ -87,8 +87,8 @@ fn status_badge(status: &WalletStatus) -> Element<'static, Msg> {
 /// Get a display label for the user role
 fn role_label(role: &UserRole) -> &'static str {
     match role {
-        UserRole::WizardSardineAdmin => "Manager",
-        UserRole::WalletManager => "Owner",
+        UserRole::WizardSardineAdmin => "Admin",
+        UserRole::WalletManager => "Manager",
         UserRole::Participant => "Participant",
     }
 }
@@ -132,14 +132,14 @@ pub fn wallet_card<'a>(
     }
 
     // Right side: status badge and role label
-    // Don't show "Manager" role - it's already in the header for WSManager users
+    // Don't show "Manager" role - it's already in the header for WS Admin users
     let mut right_col = Column::new()
         .push(status_badge(status))
         .spacing(4)
         .width(STATUS_BADGE_WIDTH)
         .align_x(Alignment::Center);
 
-    // Only show role for Owner and Participant (not WSManager)
+    // Only show role for Wallet Manager and Participant (not WS Admin)
     if !matches!(role, UserRole::WizardSardineAdmin) {
         right_col = right_col.push(text::p2_regular(role_label(role)));
     }
@@ -200,7 +200,7 @@ pub fn wallet_select_view(state: &State) -> Element<'_, Msg> {
         .align_x(Alignment::Center)
         .padding(20);
 
-    // Add filter checkbox for WSManager users (centered)
+    // Add filter checkbox for WS Admin users (centered)
     if is_ws_admin && has_wallets {
         let filter_checkbox = Row::new()
             .push(Space::with_width(Length::Fill))
@@ -336,11 +336,7 @@ pub fn wallet_select_view(state: &State) -> Element<'_, Msg> {
 
     list_content = list_content.push(Space::with_height(50));
 
-    let role_badge = if is_ws_admin {
-        Some("WS Manager")
-    } else {
-        None
-    };
+    let role_badge = if is_ws_admin { Some("WS Admin") } else { None };
 
     // Build breadcrumb: org_name > Wallets
     let org_name = state

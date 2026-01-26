@@ -41,7 +41,7 @@ pub fn template_builder_view(state: &State) -> Element<'_, Msg> {
     // Action buttons row (fixed at bottom) - role-based and status-based
     let mut buttons_row = Row::new().spacing(20).align_y(Alignment::Center);
 
-    // "Manage Keys" button: WSManager or Owner, only on Draft status
+    // "Manage Keys" button: WS Admin or Wallet Manager, only on Draft status
     // Once the wallet is Locked/Validated/Finalized, keys cannot be managed
     if (is_ws_manager || is_owner) && is_draft {
         buttons_row = buttons_row.push(
@@ -49,7 +49,7 @@ pub fn template_builder_view(state: &State) -> Element<'_, Msg> {
         );
     }
 
-    // WSManager on Draft: "Lock Template" (if valid)
+    // WS Admin on Draft: "Lock Template" (if valid)
     let approval = "Send for approval";
     if is_ws_manager && is_draft {
         let is_valid = state.is_template_valid();
@@ -61,13 +61,13 @@ pub fn template_builder_view(state: &State) -> Element<'_, Msg> {
         buttons_row = buttons_row.push(lock_button);
     }
 
-    // WSManager on Locked: "Unlock" button
+    // WS Admin on Locked: "Unlock" button
     if is_ws_manager && is_locked {
         buttons_row =
             buttons_row.push(button::secondary(None, "Unlock").on_press(Msg::TemplateUnlock));
     }
 
-    // Owner on Locked: "Approve Template" button
+    // Wallet Manager on Locked: "Approve Template" button
     if is_owner && is_locked {
         let validate_button =
             button::primary(None, "Approve Template").on_press(Msg::TemplateValidate);
@@ -81,7 +81,7 @@ pub fn template_builder_view(state: &State) -> Element<'_, Msg> {
         .into();
 
     let role_badge = if is_ws_manager {
-        Some("WS Manager")
+        Some("WS Admin")
     } else {
         None
     };

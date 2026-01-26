@@ -1,7 +1,7 @@
 /// State for the wallet selection view
 #[derive(Debug, Clone)]
 pub struct WalletSelectState {
-    /// Whether to hide finalized wallets (WSManager only)
+    /// Whether to hide finalized wallets (WS Admin only)
     pub hide_finalized: bool,
     /// Search filter text for wallet names
     pub search_filter: String,

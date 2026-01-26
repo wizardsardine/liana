@@ -105,8 +105,8 @@ impl AppState {
             0,
             Key {
                 id: 0,
-                alias: "Owner".to_string(),
-                description: "Owner key".to_string(),
+                alias: "Wallet Manager".to_string(),
+                description: "Wallet Manager key".to_string(),
                 identity: KeyIdentity::Email("owner@example.com".to_string()),
                 key_type: KeyType::Internal,
                 xpub: None,
@@ -153,7 +153,7 @@ impl AppState {
             },
         );
 
-        // Primary path: All of Owner, Bob (threshold 2 of 2)
+        // Primary path: All of Wallet Manager, Bob (threshold 2 of 2)
         let primary_path = SpendingPath::new(true, 2, vec![0, 1]);
 
         // Secondary paths
@@ -167,7 +167,7 @@ impl AppState {
             timelock: timelock1,
         });
 
-        // Secondary path 2: All of Owner - After 5 months (21900 blocks)
+        // Secondary path 2: All of Wallet Manager - After 5 months (21900 blocks)
         let secondary2 = SpendingPath::new(false, 1, vec![0]);
         let timelock2 = Timelock::new(21900); // 5 months
         secondary_paths.push(SecondaryPath {

@@ -14,8 +14,8 @@ This file tracks all milestones for liana-business (wrapper + installer + settin
 
 Users can have 3 roles in a wallet:
 
-1. **WS Manager** - Platform-side administrator
-2. **Owner** - Consumer-side wallet manager (aka Wallet Owner)
+1. **WS Admin** - Platform-side administrator
+2. **Wallet Manager** - Consumer-side wallet manager (aka Wallet Wallet Manager)
 3. **Participant** - Limited access user
 
 Roles are defined in `liana-connect/src/models.rs` as `UserRole` enum.
@@ -24,9 +24,9 @@ Roles are defined in `liana-connect/src/models.rs` as `UserRole` enum.
 
 Wallets progress through 3 statuses:
 
-1. **Draft** (`Drafted`) - Template can be edited (paths/keys). Only WSManager and Owner
+1. **Draft** (`Drafted`) - Template can be edited (paths/keys). Only WS Admin and Wallet Manager
    can edit.
-2. **Validated** - Owner has accepted the template. Paths/keys cannot be changed.
+2. **Validated** - Wallet Manager has accepted the template. Paths/keys cannot be changed.
    Participants can now populate xpub information for keys linked to their account.
 3. **Final** (`Finalized`) - All users have successfully populated their xpub information.
    The descriptor is now known and cannot be changed. Wallet can be loaded.
@@ -37,7 +37,7 @@ Statuses are defined in `liana-connect/src/models.rs` as `WalletStatus` enum.
 
 When user arrives at wallet selection, three possible subflows based on status:
 
-1. **Edit Wallet Template** - For Draft wallets, WSManager/Owner only
+1. **Edit Wallet Template** - For Draft wallets, WS Admin/Wallet Manager only
 2. **Add Key Information** - For Validated wallets, role-filtered key access
 3. **Load Wallet** - For Final wallets, triggers `exit_maybe()` -> `LoginLianaLite`
 
@@ -126,11 +126,11 @@ When user arrives at wallet selection, three possible subflows based on status:
   - [x] Route to appropriate subflow based on role + status
   - [x] Sort wallets by status (Draft first, Finalized last)
   - [x] Filter out Draft wallets from Participant view
-  - [x] "Hide finalized wallets" checkbox for WSManager
-  - [x] Show "WS Manager" badge in header
+  - [x] "Hide finalized wallets" checkbox for WS Admin
+  - [x] Show "WS Admin" badge in header
 
 - [x] **4.2 Edit Wallet Template Subflow**
-  - [x] Restrict access to WSManager and WalletOwner roles
+  - [x] Restrict access to WS Admin and WalletWallet Manager roles
   - [x] Restrict to Draft status wallets only
   - [x] Finalize key management panel (UI, operations, UX)
   - [x] Finalize path management panel
@@ -138,7 +138,7 @@ When user arrives at wallet selection, three possible subflows based on status:
     - [x] Edit Path modal with key selection (checkboxes)
     - [x] Threshold input with validation
     - [x] Timelock input with unit dropdown (blocks/hours/days/months)
-  - [x] Add "Validate Template" action for Owner (Draft -> Validated)
+  - [x] Add "Validate Template" action for Wallet Manager (Draft -> Validated)
 
 - [x] **4.3 Add Key Information Subflow**
   - [x] Create xpub entry view (reuse `SelectKeySource` pattern)
@@ -154,10 +154,10 @@ When user arrives at wallet selection, three possible subflows based on status:
   - [x] Validate xpub format and network compatibility
   - [x] Save xpub to key via backend
 
-- [x] **4.4 Filter/Search Bar (WS Manager Only)**
+- [x] **4.4 Filter/Search Bar (WS Admin Only)**
   - [x] Add search bar to organization selection page
   - [x] Add filter to wallet selection page
-  - [x] "Hide finalized wallets" checkbox (WSManager only)
+  - [x] "Hide finalized wallets" checkbox (WS Admin only)
 
 - [x] **4.5 Keyboard Navigation in Login**
   - [x] Tab navigation between input fields
@@ -222,12 +222,12 @@ When user arrives at wallet selection, three possible subflows based on status:
 
 ## In Progress
 
-- [ ] **WS Manager Flow (3.1)**
+- [ ] **WS Admin Flow (3.1)**
   - [x] Full template editing for Draft wallets
   - [ ] Wallet loading for Final wallets
   - [ ] Testing and validation
 
-- [ ] **Owner Flow (3.2)**
+- [ ] **Wallet Manager Flow (3.2)**
   - [x] Template editing for Draft wallets
   - [x] Template validation action
   - [x] Key info entry for Validated wallets
@@ -319,9 +319,9 @@ When user arrives at wallet selection, three possible subflows based on status:
 
 ## Known Issues
 
-- [x] WS Manager role: Org list wallet count includes non-visible wallets
+- [x] WS Admin role: Org list wallet count includes non-visible wallets
 - [x] Login page: Wrong email greys out "Send token" button, user stuck (dummy server issue)
-- [x] Owner role: "Manage Key" button displayed after wallet approved (should be hidden)
+- [x] Wallet Manager role: "Manage Key" button displayed after wallet approved (should be hidden)
 
 ## Bugs Fixed
 
@@ -341,9 +341,9 @@ When user arrives at wallet selection, three possible subflows based on status:
 - Hide organizations with 0 accessible wallets from org selection view
 
 ### 2026-01-12
-- Fixed: WS Manager org list wallet count now respects "Hide finalized wallets" filter
+- Fixed: WS Admin org list wallet count now respects "Hide finalized wallets" filter
 - Fixed: Login page "Send token" button re-enabled after backend errors
-- Fixed: Owner role "Manage Keys" button hidden after wallet approved (Validated/Finalized)
+- Fixed: Wallet Manager role "Manage Keys" button hidden after wallet approved (Validated/Finalized)
 
 ### 2026-01-09
 - Separate Backend URL with network-specific endpoints:
@@ -410,7 +410,7 @@ When user arrives at wallet selection, three possible subflows based on status:
 
 ### 2025-12-17
 - 4.7 Logout Feature: Implemented
-- 4.4 Filter/Search Bar (WS Manager Only): Implemented
+- 4.4 Filter/Search Bar (WS Admin Only): Implemented
 - 4.5 Better Keyboard Navigation in Login: Implemented
 
 ### 2025-12-16

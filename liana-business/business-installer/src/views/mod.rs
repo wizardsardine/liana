@@ -72,7 +72,7 @@ fn breadcrumb_header<'a>(segments: &[String]) -> Element<'a, Msg> {
 pub fn layout<'a>(
     progress: (usize, usize),
     email: Option<&'a str>,
-    role_badge: Option<&'static str>, // Show role badge before email (e.g., "Manager" for WSManager)
+    role_badge: Option<&'static str>, // Show role badge before email (e.g., "Manager" for WS Admin)
     breadcrumb: &[String],
     content: impl Into<Element<'a, Msg>>,
     padding_left: bool,

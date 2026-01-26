@@ -303,7 +303,7 @@ When user selects a wallet, routing depends on wallet status and user role:
 +-----------+-----------------+---------------------------------------------+
 | Status    | Role            | Destination                                 |
 +-----------+-----------------+---------------------------------------------+
-| Draft     | WSManager/Owner | WalletEdit (template builder)               |
+| Draft     | WS Admin/Wallet Manager | WalletEdit (template builder)               |
 | Draft     | Participant     | Warning Modal (access denied)               |
 | Validated | Any             | Xpub (key information entry)                |
 | Final     | Any             | exit_maybe() -> RunLianaBusiness -> App     |

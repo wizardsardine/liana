@@ -311,7 +311,7 @@ impl State {
             Some(WalletStatus::Created)
             | Some(WalletStatus::Drafted)
             | Some(WalletStatus::Locked) => {
-                // Draft/Locked + (WSManager|Owner) -> Edit Template
+                // Draft/Locked + (WS Admin|Wallet Manager) -> Edit Template
                 self.current_view = View::WalletEdit;
             }
             None => {
@@ -497,7 +497,7 @@ impl State {
         if path_index < self.app.secondary_paths.len() {
             self.app.secondary_paths.remove(path_index);
 
-            // Auto-save for WSManager only: push changes to server with status = Drafted
+            // Auto-save for WS Admin only: push changes to server with status = Drafted
             if matches!(
                 self.app.current_user_role,
                 Some(UserRole::WizardSardineAdmin)
@@ -658,7 +658,7 @@ impl State {
 
             self.views.paths.edit_path_modal = None;
 
-            // Auto-save for WSManager only: push changes to server with status = Drafted
+            // Auto-save for WS Admin only: push changes to server with status = Drafted
             if matches!(
                 self.app.current_user_role,
                 Some(UserRole::WizardSardineAdmin)
@@ -671,7 +671,7 @@ impl State {
     }
 
     fn on_template_lock(&mut self) {
-        // Only WSManager can lock
+        // Only WS Admin can lock
         if !matches!(
             self.app.current_user_role,
             Some(UserRole::WizardSardineAdmin)
@@ -688,7 +688,7 @@ impl State {
     }
 
     fn on_template_unlock(&mut self) {
-        // Only WSManager can unlock
+        // Only WS Admin can unlock
         if !matches!(
             self.app.current_user_role,
             Some(UserRole::WizardSardineAdmin)
@@ -703,12 +703,12 @@ impl State {
     }
 
     fn on_template_validate(&mut self) {
-        // Only Owner can validate
+        // Only Wallet Manager can validate
         if !matches!(self.app.current_user_role, Some(UserRole::WalletManager)) {
             return;
         }
 
-        // Owner can only validate Locked wallets
+        // Wallet Manager can only validate Locked wallets
         let wallet_status = self
             .app
             .selected_wallet
