@@ -243,6 +243,11 @@ pub fn org_select_view(state: &State) -> Element<'_, Msg> {
                 })
                 .count();
 
+            // Hide orgs with no accessible wallets
+            if wallet_count == 0 {
+                continue;
+            }
+
             let last_edit_info = format_last_edit_info(
                 org.last_edited,
                 org.last_editor,

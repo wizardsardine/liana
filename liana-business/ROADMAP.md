@@ -337,6 +337,9 @@ When user arrives at wallet selection, three possible subflows based on status:
 
 ## Changelog
 
+### 2026-01-26
+- Hide organizations with 0 accessible wallets from org selection view
+
 ### 2026-01-12
 - Fixed: WS Manager org list wallet count now respects "Hide finalized wallets" filter
 - Fixed: Login page "Send token" button re-enabled after backend errors
