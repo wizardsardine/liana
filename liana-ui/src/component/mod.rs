@@ -14,7 +14,7 @@ pub mod toast;
 pub mod tooltip;
 
 use bitcoin::Network;
-pub use tooltip::tooltip;
+pub use tooltip::{tooltip, tooltip_custom};
 
 use iced::Length;
 
