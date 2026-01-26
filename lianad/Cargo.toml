@@ -52,3 +52,11 @@ jsonrpc = { workspace = true, features = ["minreq_http"], default-features = fal
 
 # import/export labels
 bip329 = { workspace = true, default-features = false }
+
+[dev-dependencies]
+anyhow = { workspace = true }
+tempfile = { workspace = true }
+
+# Platform-specific test dependencies (excluded on Windows)
+[target.'cfg(not(windows))'.dev-dependencies]
+electrsd = { version = "0.36", default-features = false, features = ["electrs_0_10_6", "corepc-node_29_0"] }
