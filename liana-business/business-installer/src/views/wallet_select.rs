@@ -186,42 +186,11 @@ pub fn wallet_select_view(state: &State) -> Element<'_, Msg> {
     let current_user_email = &state.views.login.email.form.value;
     let hide_finalized = state.views.wallet_select.hide_finalized;
 
-    // Determine if user is WizardSardineManager for ALL wallets in this org
-    // (not owner and not signer of any wallet)
-    let is_ws_manager = if let Some(org_id) = state.app.selected_org {
-        if let Some(org) = state.backend.get_org(org_id) {
-            let email_lower = current_user_email.to_lowercase();
-            let mut is_owner_or_signer = false;
-
-            'outer: for wallet_id in &org.wallets {
-                if let Some(wallet) = state.backend.get_wallet(*wallet_id) {
-                    // Check if owner
-                    if let Some(owner) = state.backend.get_user(wallet.owner) {
-                        if owner.email.to_lowercase() == email_lower {
-                            is_owner_or_signer = true;
-                            break 'outer;
-                        }
-                    }
-                    // Check if signer (has matching key)
-                    if let Some(template) = &wallet.template {
-                        for key in template.keys.values() {
-                            if let KeyIdentity::Email(key_email) = &key.identity {
-                                if key_email.to_lowercase() == email_lower {
-                                    is_owner_or_signer = true;
-                                    break 'outer;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            !is_owner_or_signer
-        } else {
-            false
-        }
-    } else {
-        false
-    };
+    // Determine if user is WSAdmin (use global role from User record)
+    let is_ws_admin = matches!(
+        state.app.global_user_role,
+        Some(UserRole::WizardSardineAdmin)
+    );
 
     // Fixed header content: title, filter checkbox, and search bar
     let mut header_content = Column::new()
@@ -232,7 +201,7 @@ pub fn wallet_select_view(state: &State) -> Element<'_, Msg> {
         .padding(20);
 
     // Add filter checkbox for WSManager users (centered)
-    if is_ws_manager && has_wallets {
+    if is_ws_admin && has_wallets {
         let filter_checkbox = Row::new()
             .push(Space::with_width(Length::Fill))
             .push(
@@ -309,7 +278,7 @@ pub fn wallet_select_view(state: &State) -> Element<'_, Msg> {
                         }
 
                         // WizardSardineManager: optionally hide finalized wallets
-                        if is_ws_manager
+                        if is_ws_admin
                             && hide_finalized
                             && matches!(wallet.status, WalletStatus::Finalized)
                         {
@@ -367,7 +336,7 @@ pub fn wallet_select_view(state: &State) -> Element<'_, Msg> {
 
     list_content = list_content.push(Space::with_height(50));
 
-    let role_badge = if is_ws_manager {
+    let role_badge = if is_ws_admin {
         Some("WS Manager")
     } else {
         None

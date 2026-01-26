@@ -130,41 +130,13 @@ pub fn org_select_view(state: &State) -> Element<'_, Msg> {
 
     let orgs = state.backend.get_orgs();
 
-    // Determine if user is WizardSardineManager (not owner/signer of any wallet in any org)
-    let is_ws_manager = {
-        let email_lower = current_user_email.to_lowercase();
-        let mut is_owner_or_signer = false;
+    // Determine if user is WSAdmin (use global role from User record)
+    let is_ws_manager = matches!(
+        state.app.global_user_role,
+        Some(UserRole::WizardSardineAdmin)
+    );
 
-        'outer: for org_id in orgs.keys() {
-            if let Some(org_data) = state.backend.get_org(*org_id) {
-                for wallet_id in &org_data.wallets {
-                    if let Some(wallet) = state.backend.get_wallet(*wallet_id) {
-                        // Check if owner
-                        if let Some(owner) = state.backend.get_user(wallet.owner) {
-                            if owner.email.to_lowercase() == email_lower {
-                                is_owner_or_signer = true;
-                                break 'outer;
-                            }
-                        }
-                        // Check if signer (has matching key)
-                        if let Some(template) = &wallet.template {
-                            for key in template.keys.values() {
-                                if let KeyIdentity::Email(key_email) = &key.identity {
-                                    if key_email.to_lowercase() == email_lower {
-                                        is_owner_or_signer = true;
-                                        break 'outer;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        !is_owner_or_signer && !orgs.is_empty()
-    };
-
-    // Add search bar for WS Manager users
+    // Add search bar for WSAdmin users
     if is_ws_manager && !orgs.is_empty() {
         let search_value = form::Value {
             value: state.views.org_select.search_filter.clone(),
