@@ -923,6 +923,8 @@ fn wss_thread(
                 }
                 connected.store(true, Ordering::Relaxed);
                 Client::send_notif(&notif_sender, &notif_waker, Notification::Connected.into());
+                // Fetch current user's info
+                let _ = request_sender.send(Request::FetchUser { id: user });
             }
             Ok((response, _)) => {
                 // NOTE: Handshake fails if we receive anything other than Response::Connected
