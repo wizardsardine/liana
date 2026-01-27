@@ -959,24 +959,8 @@ impl State {
     }
 
     fn on_logout(&mut self) -> Task<Msg> {
-        // Get the email of the logged-in account to clear from cache
-        let logged_in_email = self.views.login.email.form.value.clone();
-
-        // Call backend logout to clear token, close connection, and remove cache
+        // Call backend logout to clear token, close connection
         self.backend.logout();
-
-        // Clear this account from the cache
-        if !logged_in_email.is_empty() {
-            self.backend
-                .clear_invalid_tokens(&[logged_in_email.clone()]);
-
-            // Also remove from account_select list
-            self.views
-                .login
-                .account_select
-                .accounts
-                .retain(|a| a.email != logged_in_email);
-        }
 
         // Clear email and code form values
         self.views.login.email.form.value = String::new();

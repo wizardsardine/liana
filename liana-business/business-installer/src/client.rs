@@ -534,43 +534,6 @@ impl Client {
             users.clear();
         }
 
-        // Remove auth cache from disk if network_dir and email are available
-        if let (Some(network_dir), Some(email)) = (self.network_dir.clone(), self.email.clone()) {
-            tracing::debug!("logout: removing auth cache from disk for email={}", email);
-            let network_dir_clone = network_dir.clone();
-            let email_clone = email.clone();
-
-            // Spawn thread to handle async cache removal
-            thread::spawn(move || {
-                let rt = tokio::runtime::Runtime::new().unwrap();
-                let result = rt.block_on(async {
-                    use std::collections::HashSet;
-
-                    // Read current cache to get all account emails
-                    let cache = match ConnectCache::from_file(&network_dir_clone) {
-                        Ok(cache) => cache,
-                        Err(_) => {
-                            // Cache doesn't exist or can't be read, nothing to do
-                            return Ok(());
-                        }
-                    };
-
-                    // Get all emails except the current one
-                    let remaining_emails: HashSet<String> = cache
-                        .accounts
-                        .iter()
-                        .map(|a| a.email.clone())
-                        .filter(|e| e != &email_clone)
-                        .collect();
-
-                    // Update cache to exclude current email
-                    filter_connect_cache(&network_dir_clone, &remaining_emails).await
-                });
-
-                let _ = result;
-            });
-        }
-
         // Clear email
         self.email = None;
 
