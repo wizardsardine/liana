@@ -310,9 +310,9 @@ impl State {
             self.app.next_key_id = app_state.next_key_id;
         }
 
-        // Check if wallet is in registration
+        // Check if wallet is in registration (descriptor set but not finalized)
         if let Some(wallet) = self.backend.get_wallet(wallet_id) {
-            if wallet.status == WalletStatus::Registration {
+            if wallet.descriptor.is_some() && wallet.status != WalletStatus::Finalized {
                 // Registration -> Device Registration view
                 self.current_view = View::Registration;
 
@@ -329,10 +329,6 @@ impl State {
 
         // Route based on wallet status
         match wallet_status {
-            Some(WalletStatus::Registration) => {
-                // Registration handled above with early return
-                unreachable!();
-            }
             Some(WalletStatus::Validated) => {
                 // Validated -> Add Key Information (xpub entry)
                 self.current_view = View::Xpub;
@@ -1105,7 +1101,14 @@ impl State {
         // Update registration state if on Registration view
         if self.current_view == View::Registration {
             debug!("on_backend_wallet: on Registration view, checking status");
-            if wallet.status == WalletStatus::Registration {
+            if wallet.status == WalletStatus::Finalized {
+                debug!("on_backend_wallet: wallet is now Finalized, navigating to wallet list");
+                // All devices registered/skipped, go back to wallet selection
+                self.current_view = View::WalletSelect;
+                self.app.selected_wallet = None;
+                self.stop_hw();
+            } else if wallet.descriptor.is_some() {
+                // In registration state (descriptor set but not finalized)
                 let devices = wallet.devices.clone().unwrap_or_default();
                 let descriptor_len = wallet.descriptor.as_ref().map(|d| d.len()).unwrap_or(0);
                 debug!(
@@ -1119,15 +1122,9 @@ impl State {
                     "on_backend_wallet: user_devices: {:?}",
                     self.views.registration.user_devices
                 );
-            } else if wallet.status == WalletStatus::Finalized {
-                debug!("on_backend_wallet: wallet is now Finalized, navigating to wallet list");
-                // All devices registered/skipped, go back to wallet selection
-                self.current_view = View::WalletSelect;
-                self.app.selected_wallet = None;
-                self.stop_hw();
             } else {
                 debug!(
-                    "on_backend_wallet: wallet not in Registration status: {:?}",
+                    "on_backend_wallet: wallet not in Registration state: {:?}",
                     wallet.status
                 );
             }

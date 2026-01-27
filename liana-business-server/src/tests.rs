@@ -307,15 +307,15 @@ mod tests_ {
 
         let fingerprint = Fingerprint::from_hex("d34db33f").unwrap();
 
-        // Set up the wallet to be in Registration status with our device
+        // Set up the wallet to be in Registration state with our device
         {
             let mut wallets = state.wallets.lock().unwrap();
             let wallet = wallets.get_mut(&wallet_id).unwrap();
 
-            wallet.status = WalletStatus::Registration {
-                descriptor: "wsh(pk([d34db33f/48'/0'/0'/2']xpub.../0/*))".to_string(),
-                devices: vec![fingerprint],
-            };
+            wallet.status = WalletStatus::Validated;
+            wallet.descriptor =
+                Some("wsh(pk([d34db33f/48'/0'/0'/2']xpub.../0/*))".to_string());
+            wallet.devices = Some(vec![fingerprint]);
         }
 
         // Create the DeviceRegistered request
@@ -437,15 +437,15 @@ mod tests_ {
 
         let fingerprint = Fingerprint::from_hex("d34db33f").unwrap();
 
-        // Set up wallet in Registration status
+        // Set up wallet in Registration state
         {
             let mut wallets = state.wallets.lock().unwrap();
             let wallet = wallets.get_mut(&wallet_id).unwrap();
 
-            wallet.status = WalletStatus::Registration {
-                descriptor: "wsh(pk([d34db33f/48'/0'/0'/2']xpub.../0/*))".to_string(),
-                devices: vec![fingerprint],
-            };
+            wallet.status = WalletStatus::Validated;
+            wallet.descriptor =
+                Some("wsh(pk([d34db33f/48'/0'/0'/2']xpub.../0/*))".to_string());
+            wallet.devices = Some(vec![fingerprint]);
         }
 
         // Create infos claiming to be for user1, but request comes from user2

@@ -54,7 +54,8 @@ const STATUS_BADGE_WIDTH: f32 = 80.0;
 
 /// Render a colored status badge for wallet status
 fn status_badge(wallet: &Wallet) -> Element<'static, Msg> {
-    if wallet.status == WalletStatus::Registration {
+    // Check for registration state (descriptor set but not finalized)
+    if wallet.descriptor.is_some() && wallet.status != WalletStatus::Finalized {
         return Container::new(text::caption("Register"))
             .padding([4, 12])
             .width(STATUS_BADGE_WIDTH)
@@ -64,7 +65,6 @@ fn status_badge(wallet: &Wallet) -> Element<'static, Msg> {
     }
 
     match wallet.status {
-        WalletStatus::Registration => unreachable!(), // Handled above
         WalletStatus::Created | WalletStatus::Drafted => Container::new(text::caption("Draft"))
             .padding([4, 12])
             .width(STATUS_BADGE_WIDTH)
@@ -104,11 +104,14 @@ fn role_label(role: &UserRole) -> &'static str {
 /// Get sort priority for wallet status (lower = shown first)
 /// Order: Draft (0) -> Locked (1) -> Validated (2) -> Registration (3) -> Finalized (4)
 fn status_sort_priority(wallet: &Wallet) -> u8 {
+    // Registration state: descriptor set but not finalized
+    if wallet.descriptor.is_some() && wallet.status != WalletStatus::Finalized {
+        return 3;
+    }
     match wallet.status {
         WalletStatus::Created | WalletStatus::Drafted => 0,
         WalletStatus::Locked => 1,
         WalletStatus::Validated => 2,
-        WalletStatus::Registration => 3,
         WalletStatus::Finalized => 4,
     }
 }

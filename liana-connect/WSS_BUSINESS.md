@@ -1252,44 +1252,31 @@ Server -> Client: Response::Wallet { wallet: Wallet { /* key 0 xpub is now None 
 
 ### Device Registration Flow
 
-After the owner validates the wallet, the server transitions the wallet to
-`Registration(Pending)` status with a generated descriptor. Each participant with
-Internal keys must register the descriptor on their hardware devices.
+After the owner validates the wallet and all xpubs are provided, the server populates
+the `descriptor` and `devices` fields on the wallet. The wallet is in "registration
+state" when `descriptor` is set (not None) and status is not yet `Finalized`. Each
+participant with Internal keys must register the descriptor on their hardware devices.
+
+**Registration State Detection:** `wallet.descriptor.is_some() && wallet.status != WalletStatus::Finalized`
 
 **Actor:** Participant with Internal keys
 
-**Precondition:** Wallet is in `Registration(Pending)` status, user has devices to register
+**Precondition:** Wallet has `descriptor` set and `devices` list contains their fingerprint
 
 ```
-// Step 1: Receive wallet with Registration status (after validation)
+// Step 1: Receive wallet with descriptor set (after xpub entry complete)
 Server -> Client: Response::Wallet {
     wallet: Wallet {
         id: "wallet-uuid-001",
-        status: WalletStatus::Registration(RegistrationStatus::Pending {
-            descriptor: "wsh(or_d(multi(2,[d34db33f/48'/0'/0'/2']xpub.../0/*,...),and_v(...)))",
-            registered_devices: {
-                "d34db33f": RegistrationInfos {
-                    user: "user-uuid-001",
-                    fingerprint: "d34db33f",
-                    registered: false,
-                    registered_alias: None,
-                    proof_of_registration: None,
-                },
-                "cafebabe": RegistrationInfos {
-                    user: "user-uuid-002",
-                    fingerprint: "cafebabe",
-                    registered: false,
-                    registered_alias: None,
-                    proof_of_registration: None,
-                },
-            },
-        }),
+        status: WalletStatus::Validated,
+        descriptor: Some("wsh(or_d(multi(2,[d34db33f/48'/0'/0'/2']xpub.../0/*,...),and_v(...)))"),
+        devices: Some(["d34db33f", "cafebabe"]),  // Fingerprints pending registration
         ...
     }
 }
 
 // Step 2: User connects hardware device (fingerprint: d34db33f)
-// Client detects device via HwiService, matches fingerprint to registered_devices
+// Client detects device via HwiService, matches fingerprint to devices list
 
 // Step 3: User initiates registration on device
 // Client calls async-hwi register_wallet() which prompts user to confirm on device
@@ -1306,39 +1293,25 @@ Client -> Server: Request::DeviceRegistered {
     },
 }
 
-// Step 5: Server updates registration status and responds
+// Step 5: Server stores registration info, removes fingerprint from devices list
 Server -> Client: Response::Wallet {
     wallet: Wallet {
         id: "wallet-uuid-001",
-        status: WalletStatus::Registration(RegistrationStatus::Pending {
-            descriptor: "wsh(...)",
-            registered_devices: {
-                "d34db33f": RegistrationInfos {
-                    user: "user-uuid-001",
-                    fingerprint: "d34db33f",
-                    registered: true,  // Now registered
-                    registered_alias: Some("My Wallet"),
-                    proof_of_registration: Some("a1b2c3d4..."),
-                },
-                "cafebabe": RegistrationInfos {
-                    user: "user-uuid-002",
-                    fingerprint: "cafebabe",
-                    registered: false,  // Still waiting
-                    registered_alias: None,
-                    proof_of_registration: None,
-                },
-            },
-        }),
+        status: WalletStatus::Validated,
+        descriptor: Some("wsh(...)"),
+        devices: Some(["cafebabe"]),  // Only unregistered devices remain
         ...
     }
 }
 
-// Step 6: When ALL devices are registered, server transitions to Registered
+// Step 6: When ALL devices are registered, server transitions to Finalized
 // (After user-uuid-002 also registers their device)
 Server -> Client: Response::Wallet {
     wallet: Wallet {
         id: "wallet-uuid-001",
-        status: WalletStatus::Registration(RegistrationStatus::Registered),
+        status: WalletStatus::Finalized,
+        descriptor: Some("wsh(...)"),
+        devices: None,  // Cleared when finalized
         ...
     }
 }

@@ -310,28 +310,30 @@ When user arrives at wallet selection, three possible subflows based on status:
     - [ ] 8.9.4 End-to-end test with hardware wallet (Ledger, others)
 
   - [x] **8.10 Registration Simplification** - Simplify flow, add Skip functionality
-    - New specs: `WalletStatus::Registration { descriptor, devices }`, user can register or skip each device
+    - Registration state determined by `wallet.descriptor.is_some()` (not a separate status)
+    - `descriptor` and `devices` are fields on `Wallet` struct
     - Skip sends `RegistrationInfos.registered = false`
     - Server transitions to `Finalized` when ALL fingerprints have registration info
 
     - [x] **8.10.1 Protocol Changes (liana-connect)**
-      - [x] `models.rs`: Change `WalletStatus::Registration` to struct variant with `descriptor: String` and `devices: Vec<Fingerprint>`
+      - [x] `models.rs`: Remove `WalletStatus::Registration` variant
+      - [x] `models.rs`: Keep `descriptor: Option<String>` and `devices: Option<Vec<Fingerprint>>` on `Wallet`
+      - [x] Registration state: `wallet.descriptor.is_some() && wallet.status != WalletStatus::Finalized`
 
     - [x] **8.10.2 Server Changes (liana-business-server)**
-      - [x] `handler.rs`: Remove `RegistrationStatus` import
-      - [x] `handler.rs`: Update `handle_edit_wallet()` to match `WalletStatus::Registration { .. }`
+      - [x] `handler.rs`: Check `existing.descriptor.is_some()` instead of matching status variant
       - [x] `handler.rs`: Update `handle_device_registered()` to check all fingerprints have info → `Finalized`
-      - [x] `state.rs`: Remove `RegistrationStatus` import
+      - [x] `handler.rs`: Access `wallet.devices` directly instead of from status variant
       - [x] `state.rs`: Add `registration_infos` storage to `ServerState`
-      - [x] `state.rs`: Update `init_test_data()` to use new struct variant
-      - [x] `tests.rs`: Update tests for new struct variant and `Finalized` assertions
+      - [x] `state.rs`: Update `init_test_data()` to use `descriptor`/`devices` fields
+      - [x] `tests.rs`: Update tests for field-based registration state
 
     - [x] **8.10.3 Client State Changes (business-installer)**
       - [x] `state/views/registration.rs`: Remove `wallet_fully_registered` field
       - [x] `state/views/registration.rs`: Change `user_devices` to `Vec<Fingerprint>`
       - [x] `state/views/registration.rs`: Remove `all_user_devices_registered()` and `pending_devices()` methods
       - [x] `state/message.rs`: Add `RegistrationSkip(Fingerprint)` message
-      - [x] `state/update.rs`: Update handlers for new `WalletStatus::Registration { descriptor, devices }` struct
+      - [x] `state/update.rs`: Check `wallet.descriptor.is_some()` for registration state
       - [x] `state/update.rs`: Add `on_registration_skip(fingerprint)` handler
       - [x] `state/update.rs`: Handle `WalletStatus::Finalized` → trigger exit
 
@@ -341,9 +343,11 @@ When user arrives at wallet selection, three possible subflows based on status:
       - [x] `views/registration/mod.rs`: Delete `all_complete_view()`
       - [x] `views/registration/mod.rs`: Simplify `registration_view()` logic
       - [x] `views/registration/mod.rs`: Add Skip button to disconnected device cards
+      - [x] `views/wallet_select.rs`: Check `wallet.descriptor.is_some()` for registration badge
 
     - [x] **8.10.5 Documentation**
       - [x] `ROADMAP.md`: Update completed items in section 8 to reflect changes
+      - [x] `WSS_BUSINESS.md`: Update registration flow examples
 
 - [ ] **WS Manager Flow (3.1)**
   - [x] Full template editing for Draft wallets
@@ -460,6 +464,12 @@ When user arrives at wallet selection, three possible subflows based on status:
   - Resolution: Service abstraction handles runtime requirements
 
 ## Changelog
+
+### 2026-01-27
+- Refactored: Removed `WalletStatus::Registration` enum variant
+  - Registration state now determined by `wallet.descriptor.is_some()`
+  - `descriptor` and `devices` fields remain on `Wallet` struct
+  - Simplifies state model and reduces enum variant complexity
 
 ### 2026-01-12
 - Fixed: WS Manager org list wallet count now respects "Hide finalized wallets" filter

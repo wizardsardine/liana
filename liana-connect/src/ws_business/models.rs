@@ -25,8 +25,6 @@ pub enum WalletStatus {
     Locked,
     /// Policy validated by owner, keys metadata not yet completed
     Validated,
-    /// Descriptor generated, ready to register on signing device
-    Registration,
     /// All key metadata filled, ready for prod
     Finalized,
 }
@@ -1382,12 +1380,11 @@ mod wire_format_tests {
             (r#""Drafted""#, WalletStatus::Drafted),
             (r#""Locked""#, WalletStatus::Locked),
             (r#""Validated""#, WalletStatus::Validated),
-            (r#""Registration""#, WalletStatus::Registration),
             (r#""Finalized""#, WalletStatus::Finalized),
         ];
 
         // Verify count matches enum variant count (catches new variants)
-        assert_eq!(cases.len(), 6, "test must cover all WalletStatus variants");
+        assert_eq!(cases.len(), 5, "test must cover all WalletStatus variants");
 
         for (json_str, expected) in cases {
             // Test deserialization

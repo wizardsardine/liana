@@ -229,6 +229,17 @@ fn handle_edit_wallet(state: &ServerState, mut wallet: Wallet, editor_id: Uuid) 
         }
     };
 
+    // Check if wallet is in registration state (descriptor set but not finalized)
+    if existing.descriptor.is_some() && existing.status != WalletStatus::Finalized {
+        return Response::Error {
+            error: WssError {
+                code: "ACCESS_DENIED".to_string(),
+                message: "Wallets in registration cannot be modified".to_string(),
+                request_id: None,
+            },
+        };
+    }
+
     // Role-based permission checks based on current wallet status
     match existing.status {
         WalletStatus::Created | WalletStatus::Drafted => {
@@ -360,16 +371,6 @@ fn handle_edit_wallet(state: &ServerState, mut wallet: Wallet, editor_id: Uuid) 
                 error: WssError {
                     code: "ACCESS_DENIED".to_string(),
                     message: "Finalized wallets cannot be modified".to_string(),
-                    request_id: None,
-                },
-            };
-        }
-        WalletStatus::Registration { .. } => {
-            // Wallets in registration cannot be modified via edit_wallet
-            return Response::Error {
-                error: WssError {
-                    code: "ACCESS_DENIED".to_string(),
-                    message: "Wallets in registration cannot be modified".to_string(),
                     request_id: None,
                 },
             };
@@ -649,19 +650,19 @@ fn handle_device_registered(
         };
     }
 
-    // Must be in Registration status
-    let devices = match &wallet.status {
-        WalletStatus::Registration { descriptor: _, devices } => {
+    // Must be in Registration state (descriptor set but not finalized)
+    let devices = match &wallet.devices {
+        Some(devices) if wallet.descriptor.is_some() && wallet.status != WalletStatus::Finalized => {
             debug!(
-                "handle_device_registered: wallet in Registration status with {} devices",
+                "handle_device_registered: wallet in Registration state with {} devices",
                 devices.len()
             );
             devices.clone()
         }
-        other => {
+        _ => {
             error!(
-                "handle_device_registered: invalid wallet status {:?}, expected Registration",
-                other
+                "handle_device_registered: invalid wallet state {:?}, expected Registration",
+                wallet.status
             );
             return Response::Error {
                 error: WssError {
@@ -712,9 +713,10 @@ fn handle_device_registered(
 
     if all_have_info {
         wallet.status = WalletStatus::Finalized;
+        wallet.devices = None; // Clear devices list when finalized
     } else {
         // Remove the registered fingerprint from devices list so client doesn't show it
-        if let WalletStatus::Registration { descriptor: _, devices } = &mut wallet.status {
+        if let Some(devices) = &mut wallet.devices {
             devices.retain(|fp| *fp != registered_fingerprint);
             debug!(
                 "handle_device_registered: removed fingerprint from devices, {} remaining",

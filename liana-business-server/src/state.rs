@@ -517,12 +517,11 @@ fn init_test_data(
         owner: owner_user.uuid,
         id: wallet5_id,
         template: Some(wallet5_template),
-        status: WalletStatus::Registration {
-            descriptor,
-            devices: vec![user_fingerprint],
-        },
+        status: WalletStatus::Validated,
         last_edited: None,
         last_editor: None,
+        descriptor: Some(descriptor),
+        devices: Some(vec![user_fingerprint]),
     };
     org1_wallets.insert(wallet5_id);
     wallets.insert(wallet5_id, wallet5);
