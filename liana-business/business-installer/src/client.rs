@@ -128,10 +128,23 @@ pub struct Client {
 
 impl Client {
     pub fn new(notif_sender: channel::Sender<Message>, notif_waker: SharedWaker) -> Self {
+        // We prefil users with a dummy user, to avoid trying to fetch non exixting users.
+        let dummy_user = User {
+            name: "None".into(),
+            uuid: Uuid::nil(),
+            email: "contact@lianawallet.com".into(),
+            role: UserRole::WizardSardineAdmin,
+            last_edited: None,
+            last_editor: None,
+        };
+        let mut users = BTreeMap::new();
+        users.insert(Uuid::nil(), dummy_user);
+        let users = Arc::new(Mutex::new(users));
+
         Self {
             orgs: Arc::new(Mutex::new(BTreeMap::new())),
             wallets: Arc::new(Mutex::new(BTreeMap::new())),
-            users: Arc::new(Mutex::new(BTreeMap::new())),
+            users,
             token: Arc::new(Mutex::new(None)),
             request_sender: None,
             notif_sender,
