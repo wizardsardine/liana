@@ -1118,6 +1118,20 @@ fn handle_wss_message(
             let mut requests = sent_requests.lock().expect("poisoned");
             let original_request = requests.remove(req_id);
 
+            // Check if user failed to fetch their own info
+            if let Some((Request::FetchUser { id }, _, _)) = &original_request {
+                if let Ok(uid) = user_id.lock() {
+                    if *uid == Some(*id) {
+                        tracing::warn!(
+                            "User {} failed to fetch their own info: {} - {}",
+                            id,
+                            error.code,
+                            error.message
+                        );
+                    }
+                }
+            }
+
             // Handle UNAUTHORIZED FetchUser specially - create unknown user
             if error.code == "UNAUTHORIZED" {
                 if let Some((Request::FetchUser { id }, _, _)) = original_request {
