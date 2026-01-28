@@ -126,6 +126,7 @@
       Absent='disallow'>
 
       <ComponentRef Id='License' />
+      <ComponentRef Id='binary0' />
 
     </Feature>
 
