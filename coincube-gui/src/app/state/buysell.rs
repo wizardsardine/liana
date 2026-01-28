@@ -88,6 +88,10 @@ impl State for BuySellPanel {
 
                 return Task::none();
             }
+            Message::View(view::Message::DismissError) => {
+                self.error = None;
+                return Task::none();
+            }
             _ => return Task::none(),
         };
 
@@ -131,7 +135,7 @@ impl State for BuySellPanel {
                     // send user to login screen, to initialize login credentials
                     self.step = BuySellFlowState::Login {
                         email: Default::default(),
-                        password: Default::default(),
+                        loading: false,
                     };
                 } else {
                     // User is already logged in and has a country detected - reset to initialization
@@ -229,7 +233,7 @@ impl State for BuySellPanel {
                 // send user to login screen, to re-initialize login credentials
                 self.step = BuySellFlowState::Login {
                     email: Default::default(),
-                    password: Default::default(),
+                    loading: false,
                 };
             }
 
@@ -433,81 +437,68 @@ impl State for BuySellPanel {
                     }
                 }
 
-                if let BuySellFlowState::VerifyEmail { checking, .. } = &mut self.step {
-                    *checking = false;
+                if let BuySellFlowState::OtpVerification { sending, .. } = &mut self.step {
+                    *sending = false;
+                }
+
+                if let BuySellFlowState::Login { loading, .. }
+                | BuySellFlowState::Register { loading, .. } = &mut self.step
+                {
+                    *loading = false;
                 }
             }
 
             // state specific messages
             msg => {
                 match (&mut self.step, msg) {
-                    // user can login from email verification or login forms
+                    // user can login from OTP verification or login forms
                     (
-                        BuySellFlowState::VerifyEmail {
-                            email, password, ..
-                        }
-                        | BuySellFlowState::Login { email, password },
-                        view::BuySellMessage::SubmitLogin {
-                            skip_email_verification,
-                        },
+                        BuySellFlowState::Login { email, loading },
+                        view::BuySellMessage::SubmitLogin,
                     ) => {
-                        let client = self.coincube_client.clone();
+                        if *loading {
+                            return Task::none();
+                        }
+                        *loading = true;
 
+                        let client = self.coincube_client.clone();
                         let email = email.to_string();
-                        let password = password.to_string();
 
                         return Task::perform(
                             async move {
-                                let login = client.login(&email, &password).await;
-                                let verified = match skip_email_verification {
-                                    true => true,
-                                    false => {
-                                        let status =
-                                            client.check_email_verification_status(&email).await?;
-                                        status.email_verified
-                                    }
+                                let send_otp_request = OtpRequest {
+                                    email: email.clone(),
                                 };
-
-                                // TODO: two factor authentication flows will be needed here
-
-                                login.map(|l| (l, verified))
+                                client.login_send_otp(send_otp_request).await
                             },
                             |res| match res {
-                                Ok((login, email_verified)) => view::BuySellMessage::LoginSuccess {
-                                    email_verified,
-                                    login,
-                                },
+                                Ok(_) => view::BuySellMessage::SendOtp,
                                 Err(e) => view::BuySellMessage::SessionError(
-                                    "Failed to submit login",
+                                    "Failed to send OTP",
                                     e.to_string(),
                                 ),
                             },
                         )
                         .map(|m| Message::View(view::Message::BuySell(m)));
                     }
-                    (
-                        BuySellFlowState::VerifyEmail {
-                            email, password, ..
-                        }
-                        | BuySellFlowState::Login {
-                            email, password, ..
-                        },
-                        view::BuySellMessage::LoginSuccess {
-                            email_verified,
-                            login,
-                        },
-                    ) => {
-                        if !email_verified {
-                            // transition to email verification UI flow
-                            self.step = BuySellFlowState::VerifyEmail {
-                                email: email.clone(),
-                                password: password.clone(),
-                                checking: false,
-                            };
-
+                    (BuySellFlowState::Login { email, loading }, view::BuySellMessage::SendOtp) => {
+                        if !*loading {
+                            // Ignore stale callback from a previous OTP resend
                             return Task::none();
                         }
-
+                        self.step = BuySellFlowState::OtpVerification {
+                            email: email.clone(),
+                            otp: String::new(),
+                            sending: false,
+                            is_signup: false,
+                            cooldown: 30,
+                        };
+                        return Task::none();
+                    }
+                    (
+                        BuySellFlowState::OtpVerification { .. } | BuySellFlowState::Login { .. },
+                        view::BuySellMessage::LoginSuccess { login },
+                    ) => {
                         log::info!("Successfully logged in user: {}", &login.user.email);
                         self.step = BuySellFlowState::Initialization {
                             modal: state::vault::receive::Modal::None,
@@ -520,53 +511,40 @@ impl State for BuySellPanel {
                         )));
                     }
                     // user registration form
-                    (
-                        BuySellFlowState::Register {
-                            legal_name,
-                            password1,
-                            password2,
-                            email,
-                        },
-                        msg,
-                    ) => match msg {
-                        view::BuySellMessage::LegalNameChanged(n) => *legal_name = n,
+                    (BuySellFlowState::Register { email, loading }, msg) => match msg {
                         view::BuySellMessage::EmailChanged(e) => *email = e,
-                        view::BuySellMessage::Password1Changed(p) => *password1 = p,
-                        view::BuySellMessage::Password2Changed(p) => *password2 = p,
 
                         view::BuySellMessage::SubmitRegistration => {
+                            if *loading {
+                                return Task::none();
+                            }
+                            *loading = true;
+
                             let client = self.coincube_client.clone();
-                            let request = crate::services::coincube::SignUpRequest {
-                                account_type: crate::services::coincube::AccountType::Individual,
+                            let send_otp_request = OtpRequest {
                                 email: email.clone(),
-                                legal_name: legal_name.clone(),
-                                auth_details: [crate::services::coincube::AuthDetail {
-                                    provider: 1, // EmailProvider = 1
-                                    password: password1.clone(),
-                                }],
                             };
 
                             return Task::perform(
-                                async move { client.sign_up(request).await },
+                                async move { client.signup_send_otp(send_otp_request).await },
                                 |result| match result {
-                                    Ok(_response) => Message::View(view::Message::BuySell(
-                                        view::BuySellMessage::RegistrationSuccess,
-                                    )),
-                                    Err(e) => Message::View(view::Message::BuySell(
-                                        view::BuySellMessage::SessionError(
-                                            "Couldn't process signup request",
-                                            e.to_string(),
-                                        ),
-                                    )),
+                                    Ok(_) => view::BuySellMessage::RegistrationSuccess,
+                                    Err(e) => view::BuySellMessage::SessionError(
+                                        "Couldn't process signup request",
+                                        e.to_string(),
+                                    ),
                                 },
-                            );
+                            )
+                            .map(|m| Message::View(view::Message::BuySell(m)));
                         }
                         view::BuySellMessage::RegistrationSuccess => {
                             self.error = None;
-                            self.step = BuySellFlowState::VerifyEmail {
+                            self.step = BuySellFlowState::OtpVerification {
                                 email: email.clone(),
-                                password: password1.clone(),
-                                checking: false,
+                                otp: String::new(),
+                                sending: false,
+                                is_signup: true,
+                                cooldown: 30,
                             };
                         }
                         msg => {
@@ -577,101 +555,92 @@ impl State for BuySellPanel {
                             )
                         }
                     },
-                    // email verification step
+                    // OTP verification step
                     (
-                        BuySellFlowState::VerifyEmail {
-                            email, checking, ..
+                        BuySellFlowState::OtpVerification {
+                            email,
+                            otp,
+                            sending,
+                            is_signup,
+                            cooldown,
                         },
                         msg,
                     ) => match msg {
-                        view::BuySellMessage::SendVerificationEmail => {
-                            match email.get(..8) {
-                                Some(e) => {
-                                    log::info!("[COINCUBE] Sending verification email to: {}..", e)
-                                }
-                                None => log::info!("[COINCUBE] Sending verification email"),
-                            }
-
-                            let client = self.coincube_client.clone();
-                            let email = email.clone();
-
-                            return Task::perform(
-                                async move { client.send_verification_email(&email).await },
-                                |result| match result {
-                                    Ok(_) => Message::View(view::Message::BuySell(
-                                        view::BuySellMessage::CheckEmailVerificationStatus,
-                                    )),
-                                    Err(e) => Message::View(view::Message::BuySell(
-                                        view::BuySellMessage::SessionError(
-                                            "Unable to send verification email",
-                                            e.to_string(),
-                                        ),
-                                    )),
-                                },
-                            );
+                        view::BuySellMessage::OtpCooldownTick => {
+                            *cooldown = cooldown.saturating_sub(1);
                         }
-                        view::BuySellMessage::CheckEmailVerificationStatus => {
-                            if *checking {
-                                log::info!(
-                                    "Already polling API for Email verification status for {email}"
-                                );
+                        view::BuySellMessage::SendOtp => {
+                            if *cooldown > 0 {
                                 return Task::none();
                             }
+                            *cooldown = 30;
 
-                            self.error = None;
-                            *checking = true;
+                            match email.get(..8) {
+                                Some(e) => {
+                                    log::info!("[COINCUBE] Sending OTP to: {}..", e)
+                                }
+                                None => log::info!("[COINCUBE] Sending OTP"),
+                            }
 
-                            // recheck status every 10 seconds, automatic login if email is verified
                             let client = self.coincube_client.clone();
-                            let email = email.clone();
+                            let send_otp_request = OtpRequest {
+                                email: email.clone(),
+                            };
+                            let is_signup = *is_signup;
 
                             return Task::perform(
                                 async move {
-                                    let mut count = 30;
-
-                                    loop {
-                                        if count == 0 {
-                                            break Err(());
-                                        };
-
-                                        match client.check_email_verification_status(&email).await {
-                                            Ok(res) => {
-                                                if res.email_verified {
-                                                    log::info!("Email {} has been verified", email);
-                                                    break Ok(());
-                                                }
-                                            }
-                                            Err(err) => {
-                                                log::warn!(
-                                                    "Encountered error while verifying email: {:?}",
-                                                    err
-                                                )
-                                            }
-                                        }
-
-                                        count -= 1;
-                                        tokio::time::sleep(std::time::Duration::from_secs(10))
-                                            .await;
+                                    if is_signup {
+                                        client.signup_send_otp(send_otp_request).await
+                                    } else {
+                                        client.login_send_otp(send_otp_request).await
                                     }
                                 },
-                                |r| match r {
-                                    Ok(_) => Message::View(view::Message::BuySell(
-                                        view::BuySellMessage::SubmitLogin {
-                                            skip_email_verification: true,
-                                        },
-                                    )),
-                                    Err(_) => Message::View(view::Message::BuySell(
-                                        view::BuySellMessage::EmailVerificationFailed,
-                                    )),
+                                |result| match result {
+                                    Ok(_) => view::Message::DismissError,
+                                    Err(e) => {
+                                        view::Message::BuySell(view::BuySellMessage::SessionError(
+                                            "Unable to send OTP",
+                                            e.to_string(),
+                                        ))
+                                    }
                                 },
-                            );
+                            )
+                            .map(Message::View);
                         }
-                        view::BuySellMessage::EmailVerificationFailed => {
-                            *checking = false;
-                            self.error = Some(
-                                "Timeout attempting automatic login after email verification"
-                                    .to_string(),
-                            );
+                        view::BuySellMessage::OtpChanged(o) => *otp = o,
+                        view::BuySellMessage::VerifyOtp => {
+                            if otp.is_empty() || *sending {
+                                return Task::none();
+                            }
+
+                            let client = self.coincube_client.clone();
+                            let verify_otp_request = OtpVerifyRequest {
+                                email: email.clone(),
+                                otp: otp.clone(),
+                            };
+                            *sending = true;
+                            let is_signup = *is_signup;
+
+                            return Task::perform(
+                                async move {
+                                    if is_signup {
+                                        client.signup_verify_otp(verify_otp_request).await
+                                    } else {
+                                        client.login_verify_otp(verify_otp_request).await
+                                    }
+                                },
+                                |result| match result {
+                                    Ok(response) => {
+                                        view::BuySellMessage::LoginSuccess { login: response }
+                                    }
+                                    Err(e) => view::BuySellMessage::SessionError(
+                                        "Failed to verify OTP",
+                                        e.to_string(),
+                                    ),
+                                },
+                            )
+                            .map(|m| Message::View(view::Message::BuySell(m)));
                         }
                         msg => {
                             log::warn!(
@@ -682,66 +651,13 @@ impl State for BuySellPanel {
                         }
                     },
                     // login to existing coincube account
-                    (BuySellFlowState::Login { email, password }, msg) => match msg {
-                        view::BuySellMessage::LoginUsernameChanged(username) => *email = username,
-                        view::BuySellMessage::LoginPasswordChanged(pswd) => *password = pswd,
+                    (BuySellFlowState::Login { email, .. }, msg) => match msg {
+                        view::BuySellMessage::EmailChanged(e) => *email = e,
                         view::BuySellMessage::CreateNewAccount => {
                             self.step = BuySellFlowState::Register {
-                                legal_name: Default::default(),
-                                password1: Default::default(),
-                                password2: Default::default(),
                                 email: Default::default(),
+                                loading: false,
                             };
-                        }
-                        view::BuySellMessage::ResetPassword => {
-                            self.step = BuySellFlowState::PasswordReset {
-                                email: email.clone(),
-                                sent: false,
-                            }
-                        }
-
-                        msg => {
-                            log::warn!(
-                                "Current {:?} has ignored message: {:?}",
-                                self.step.name(),
-                                msg
-                            )
-                        }
-                    },
-                    // password reset form
-                    (BuySellFlowState::PasswordReset { email, sent }, msg) => match msg {
-                        view::BuySellMessage::EmailChanged(e) => {
-                            *sent = false;
-                            *email = e;
-                        }
-                        view::BuySellMessage::SendPasswordResetEmail => {
-                            let email = email.clone();
-                            let client = self.coincube_client.clone();
-
-                            return Task::perform(
-                                async move { client.send_password_reset_email(&email).await },
-                                |res| match res {
-                                    Ok(sent) => Message::View(view::Message::BuySell(
-                                        view::BuySellMessage::PasswordResetEmailSent(sent.message),
-                                    )),
-                                    Err(e) => Message::View(view::Message::BuySell(
-                                        view::BuySellMessage::SessionError(
-                                            "Unable to send password reset email",
-                                            e.to_string(),
-                                        ),
-                                    )),
-                                },
-                            );
-                        }
-                        view::BuySellMessage::PasswordResetEmailSent(msg) => {
-                            log::info!("[PASSWORD RESET] {}", msg);
-                            *sent = true;
-                        }
-                        view::BuySellMessage::ReturnToLogin => {
-                            self.step = BuySellFlowState::Login {
-                                email: email.clone(),
-                                password: "".to_string(),
-                            }
                         }
                         msg => {
                             log::warn!(
@@ -865,6 +781,13 @@ impl State for BuySellPanel {
                 } else {
                     iced::Subscription::none()
                 }
+            }
+            BuySellFlowState::OtpVerification { cooldown, .. } if *cooldown > 0 => {
+                iced::time::every(std::time::Duration::from_secs(1)).map(|_| {
+                    Message::View(view::Message::BuySell(
+                        view::BuySellMessage::OtpCooldownTick,
+                    ))
+                })
             }
             _ => iced::Subscription::none(),
         }

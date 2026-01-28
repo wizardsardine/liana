@@ -44,23 +44,18 @@ impl std::fmt::Display for LabelledAddress {
 pub enum BuySellFlowState {
     /// Detecting user's location via IP geolocation, true if geolocation failed and the user is manually prompted
     DetectingLocation(bool),
-    /// Registers a new user
-    Register {
-        legal_name: String,
-        password1: String,
-        password2: String,
+    /// Registers a new user (email only)
+    Register { email: String, loading: bool },
+    /// User OTP verification UI
+    OtpVerification {
         email: String,
+        otp: String,
+        sending: bool,
+        is_signup: bool,
+        cooldown: u8,
     },
-    /// User email verification UI
-    VerifyEmail {
-        email: String,
-        password: String,
-        checking: bool,
-    },
-    /// Logs in a user to their existing coincube account
-    Login { email: String, password: String },
-    /// Flow for resetting a forgotten password
-    PasswordReset { email: String, sent: bool },
+    /// Logs in a user to their existing coincube account (email only)
+    Login { email: String, loading: bool },
     /// Renders an interface to either generate a new address for bitcoin deposit, or skip to selling BTC
     Initialization {
         modal: app::state::vault::receive::Modal,
@@ -79,9 +74,8 @@ impl BuySellFlowState {
         match self {
             BuySellFlowState::DetectingLocation(..) => "DetectingLocation",
             BuySellFlowState::Register { .. } => "Register",
-            BuySellFlowState::VerifyEmail { .. } => "VerifyEmail",
+            BuySellFlowState::OtpVerification { .. } => "OtpVerification",
             BuySellFlowState::Login { .. } => "Login",
-            BuySellFlowState::PasswordReset { .. } => "PasswordReset",
             BuySellFlowState::Initialization { .. } => "Initialization",
             BuySellFlowState::Mavapay(..) => "Mavapay",
             #[cfg(feature = "meld")]
@@ -162,8 +156,7 @@ impl BuySellPanel {
                         // user management
                         BuySellFlowState::Login { .. } => self.login_ux(),
                         BuySellFlowState::Register { .. } => self.registration_ux(),
-                        BuySellFlowState::PasswordReset { .. } => self.password_reset_ux(),
-                        BuySellFlowState::VerifyEmail { .. } => self.email_verification_ux(),
+                        BuySellFlowState::OtpVerification { .. } => self.otp_verification_ux(),
 
                         // init
                         BuySellFlowState::DetectingLocation(..) => self.geolocation_ux(),
@@ -195,163 +188,74 @@ impl BuySellPanel {
 // TODO: Use labels instead of placeholders for all input forms
 impl BuySellPanel {
     fn login_ux<'a>(self: &'a BuySellPanel) -> iced::Element<'a, ViewMessage, theme::Theme> {
-        let BuySellFlowState::Login { email, password } = &self.step else {
+        use coincube_ui::component::spinner;
+        use std::time::Duration;
+
+        let BuySellFlowState::Login { email, loading } = &self.step else {
             unreachable!();
         };
 
-        let col =
-            iced::widget::column![
-                // header
-                text::h3("Sign in to your account").color(color::WHITE),
-                Space::new().height(Length::Fixed(35.0)),
-                // input fields
-                text_input("Email", email)
-                    .on_input(BuySellMessage::LoginUsernameChanged)
-                    .size(16)
-                    .padding(15),
-                Space::new().height(Length::Fixed(5.0)),
-                text_input("Password", password)
-                    .secure(true)
-                    .on_input(BuySellMessage::LoginPasswordChanged)
-                    .on_submit_maybe(
-                        (email.contains('.') && email.contains('@') && !password.is_empty())
-                            .then_some(BuySellMessage::SubmitLogin {
-                                skip_email_verification: false
-                            }),
-                    )
-                    .size(16)
-                    .padding(15),
-                Space::new().height(Length::Fixed(15.0)),
-                // submit button
-                button::primary(None, "Log In")
-                    .on_press_maybe(
-                        (email.contains('.') && email.contains('@') && !password.is_empty())
-                            .then_some(BuySellMessage::SubmitLogin {
-                                skip_email_verification: false
-                            }),
-                    )
-                    .width(Length::Fill),
-                Space::new().height(Length::Fixed(10.0)),
-                // separator
-                container(Space::new().height(Length::Fixed(3.0)).width(Length::Fill))
-                    .style(|_| { color::GREY_6.into() }),
-                Space::new().height(Length::Fixed(5.0)),
-                // sign-up redirect
-                iced::widget::button(
-                    text::p2_regular("Don't have an account? Sign up").color(color::BLUE),
-                )
-                .style(theme::button::link)
-                .on_press(BuySellMessage::CreateNewAccount),
-                // password reset button
-                iced::widget::button(
-                    text::p2_regular("Forgot your Password? Reset it here...").color(color::ORANGE),
-                )
-                .style(theme::button::link)
-                .on_press(BuySellMessage::ResetPassword)
-            ]
-            .align_x(Alignment::Center)
-            .spacing(2)
-            .max_width(500)
-            .width(Length::Fill);
+        let valid_email = email.contains('.') && email.contains('@');
 
-        let elem: iced::Element<BuySellMessage, theme::Theme> = col.into();
-        elem.map(ViewMessage::BuySell)
-    }
-
-    fn password_reset_ux<'a>(
-        self: &'a BuySellPanel,
-    ) -> iced::Element<'a, ViewMessage, theme::Theme> {
-        let BuySellFlowState::PasswordReset { email, sent } = &self.step else {
-            unreachable!()
+        let submit_button: iced::Element<BuySellMessage, theme::Theme> = if *loading {
+            iced::widget::button(
+                Container::new(
+                    Row::new()
+                        .spacing(5)
+                        .align_y(Alignment::Center)
+                        .push(text::text("Signing in").size(16))
+                        .push(
+                            Container::new(spinner::typing_text_carousel(
+                                "...",
+                                true,
+                                Duration::from_millis(500),
+                                |s| text::text(s).size(16),
+                            ))
+                            .width(Length::Fixed(20.0)),
+                        ),
+                )
+                .center_x(Length::Fill)
+                .center_y(Length::Fill),
+            )
+            .width(Length::Fill)
+            .height(Length::Fixed(44.0))
+            .style(theme::button::primary)
+            .into()
+        } else {
+            button::primary(None, "Continue")
+                .on_press_maybe(valid_email.then_some(BuySellMessage::SubmitLogin))
+                .width(Length::Fill)
+                .into()
         };
 
         let col = iced::widget::column![
+            // header
+            text::h3("Sign in to your account").color(color::WHITE),
+            Space::new().height(Length::Fixed(35.0)),
+            // input field
+            text_input("Email", email)
+                .on_input(BuySellMessage::EmailChanged)
+                .on_submit_maybe((!*loading && valid_email).then_some(BuySellMessage::SubmitLogin),)
+                .size(16)
+                .padding(15),
             Space::new().height(Length::Fixed(15.0)),
-            text::p1_bold("Password Reset Form"),
+            // submit button
+            submit_button,
             Space::new().height(Length::Fixed(10.0)),
-            iced::widget::row![
-                container(email_icon().color(color::BLACK).size(20))
-                    .style(|_| {
-                        iced::widget::container::Style::default()
-                            .border(iced::Border {
-                                color: color::GREY_1,
-                                width: 0.5,
-                                radius: 1.0.into(),
-                            })
-                            .background(color::GREY_1)
-                    })
-                    .padding(8.0),
-                container({
-                    let el: iced::Element<BuySellMessage, theme::Theme> = match sent {
-                        true => container(
-                            text::text(email)
-                                .style(theme::text::success)
-                                .size(20)
-                                .center()
-                                .width(Length::Fill),
-                        )
-                        .padding(8)
-                        .into(),
-                        false => text_input("Your e-mail here: ", email)
-                            .width(Length::Fill)
-                            .size(20)
-                            .padding(8)
-                            .style(|th, st| {
-                                let mut style = theme::text_input::primary(th, st);
-                                style.border.radius = 0.into();
-                                style.border.width = 0.0;
-                                style
-                            })
-                            .on_input(BuySellMessage::EmailChanged)
-                            .on_submit(BuySellMessage::SendPasswordResetEmail)
-                            .into(),
-                    };
-
-                    el
-                })
-                .style(|_| iced::widget::container::Style::default().border(
-                    iced::Border {
-                        color: color::GREY_1,
-                        width: 0.5,
-                        radius: 1.0.into()
-                    }
-                ))
-            ]
-            .height(40.0)
+            // separator
+            container(Space::new().height(Length::Fixed(3.0)).width(Length::Fill))
+                .style(|_| { color::GREY_6.into() }),
+            Space::new().height(Length::Fixed(5.0)),
+            // sign-up redirect
+            iced::widget::button(
+                text::p2_regular("Don't have an account? Sign up").color(color::BLUE),
+            )
+            .style(theme::button::link)
+            .on_press(BuySellMessage::CreateNewAccount)
         ]
-        .push(
-            iced::widget::column![
-                Space::new().height(Length::Fixed(10.0)),
-                // separator
-                container(
-                    Space::new()
-                        .height(iced::Length::Fixed(2.0))
-                        .width(iced::Length::Fill)
-                )
-                .style(|_| { color::GREY_7.into() }),
-                Space::new().height(Length::Fixed(10.0)),
-                match sent {
-                    // log-in redirect
-                    true => iced::widget::button(
-                        text::p2_regular("Recovery Email Sent! Return to Log-In")
-                            .color(color::BLUE),
-                    )
-                    .style(theme::button::link)
-                    .on_press(BuySellMessage::ReturnToLogin),
-                    // sends the password reset email
-                    false =>
-                        iced::widget::button(text::p2_medium("Proceed").size(16).width(80).center())
-                            .on_press_maybe(
-                                (!*sent && email.contains('.') && email.contains('@'))
-                                    .then_some(BuySellMessage::SendPasswordResetEmail)
-                            ),
-                },
-            ]
-            .align_x(iced::Alignment::Center),
-        )
-        .align_x(iced::Alignment::Center)
+        .align_x(Alignment::Center)
         .spacing(2)
-        .max_width(400)
+        .max_width(500)
         .width(Length::Fill);
 
         let elem: iced::Element<BuySellMessage, theme::Theme> = col.into();
@@ -359,14 +263,44 @@ impl BuySellPanel {
     }
 
     fn registration_ux<'a>(self: &'a BuySellPanel) -> iced::Element<'a, ViewMessage, theme::Theme> {
-        let BuySellFlowState::Register {
-            legal_name,
-            password1,
-            password2,
-            email,
-        } = &self.step
-        else {
+        use coincube_ui::component::spinner;
+        use std::time::Duration;
+
+        let BuySellFlowState::Register { email, loading } = &self.step else {
             unreachable!();
+        };
+
+        let valid_email = email.contains('.') && email.contains('@');
+
+        let submit_button: iced::Element<BuySellMessage, theme::Theme> = if *loading {
+            iced::widget::button(
+                Container::new(
+                    Row::new()
+                        .spacing(5)
+                        .align_y(Alignment::Center)
+                        .push(text::text("Signing up").size(16))
+                        .push(
+                            Container::new(spinner::typing_text_carousel(
+                                "...",
+                                true,
+                                Duration::from_millis(500),
+                                |s| text::text(s).size(16),
+                            ))
+                            .width(Length::Fixed(20.0)),
+                        ),
+                )
+                .center_x(Length::Fill)
+                .center_y(Length::Fill),
+            )
+            .width(Length::Fill)
+            .height(Length::Fixed(44.0))
+            .style(theme::button::primary)
+            .into()
+        } else {
+            button::primary(None, "Continue")
+                .on_press_maybe(valid_email.then_some(BuySellMessage::SubmitRegistration))
+                .width(Length::Fill)
+                .into()
         };
 
         // TODO: include form validation messages
@@ -387,7 +321,7 @@ impl BuySellPanel {
                 shadow: iced::Shadow::default(),
                 snap: true
             })
-            .on_press(BuySellMessage::ResetWidget),
+            .on_press_maybe((!*loading).then_some(BuySellMessage::ResetWidget)),
             Space::new().height(Length::Fixed(10.0)),
             // Title and subtitle
             iced::widget::column![
@@ -397,42 +331,15 @@ impl BuySellPanel {
             .spacing(10)
             .align_x(Alignment::Center),
             Space::new().height(Length::Fixed(20.0)),
-            // Name Input
-            text_input("Full Legal Name: ", legal_name).on_input(BuySellMessage::LegalNameChanged)
-                .width(Length::Fill)
-                .size(16)
-                .padding(15),
             // Email Input
-            text_input("Email Address", email).on_input(|v| {
-                BuySellMessage::EmailChanged(v)
-            })
-            .size(16)
-            .padding(15),
-            Space::new().height(Length::Fixed(10.0)),
-            // Password Inputs
-            text_input("Password", password1).on_input(|v| {
-                BuySellMessage::Password1Changed(v)
-            })
-            .size(16)
-            .padding(15)
-            .secure(true),
-            text_input("Confirm Password", password2).on_input(|v| {
-                BuySellMessage::Password2Changed(v)
-            })
+            text_input("Email Address", email).on_input(BuySellMessage::EmailChanged)
             .on_submit_maybe(
-                (!legal_name.is_empty() && email.contains('.') &&  email.contains('@')  && !password1.is_empty() && (password1 == password2))
-                    .then_some(BuySellMessage::SubmitRegistration),
+                (!*loading && valid_email).then_some(BuySellMessage::SubmitRegistration),
             )
             .size(16)
-            .padding(15)
-            .secure(true),
+            .padding(15),
             Space::new().height(Length::Fixed(20.0)),
-            button::primary(None, "Create Account")
-                .on_press_maybe(
-                    (!legal_name.is_empty() && email.contains('.') &&  email.contains('@')  && !password1.is_empty() && (password1 == password2))
-                        .then_some(BuySellMessage::SubmitRegistration),
-                )
-                .width(Length::Fill),
+            submit_button,
         ]
         .align_x(Alignment::Center)
         .spacing(5)
@@ -443,11 +350,18 @@ impl BuySellPanel {
         elem.map(ViewMessage::BuySell)
     }
 
-    fn email_verification_ux<'a>(
+    fn otp_verification_ux<'a>(
         self: &'a BuySellPanel,
     ) -> iced::Element<'a, ViewMessage, theme::Theme> {
-        let BuySellFlowState::VerifyEmail {
-            email, checking, ..
+        use coincube_ui::component::spinner;
+        use std::time::Duration;
+
+        let BuySellFlowState::OtpVerification {
+            email,
+            otp,
+            sending,
+            is_signup: _,
+            cooldown,
         } = &self.step
         else {
             unreachable!()
@@ -471,17 +385,12 @@ impl BuySellPanel {
                     shadow: iced::Shadow::default(),
                     snap: true,
                 })
-                .on_press(BuySellMessage::ResetWidget),
+                .on_press_maybe((!*sending).then_some(BuySellMessage::ResetWidget)),
             )
             .align_y(Alignment::Center);
 
         // Widget title
-        let title = match checking {
-            true => text::p2_regular("Verification email has been sent, it's your turn now")
-                .color(color::GREY_3),
-            false => text::p2_regular("We need to verify your email before you continue")
-                .color(color::WHITE),
-        };
+        let title = text::p2_regular("Enter the OTP sent to your email").color(color::WHITE);
 
         // Email display
         let email_display = Column::new()
@@ -489,34 +398,77 @@ impl BuySellPanel {
             .spacing(10)
             .align_x(Alignment::Center);
 
-        // Action buttons
-        let action_buttons = match checking {
-            true => {
-                // TODO: Add some animation, probably make this UI nicer
-                Row::new()
-                    .push(
-                        text::p1_italic(
-                            "You'll be automatically logged in after verifying your email",
-                        )
-                        .width(Length::Fill)
-                        .center(),
-                    )
-                    .spacing(10)
-            }
-            false => Row::new()
-                .push(
-                    button::secondary(Some(reload_icon()), "Check Status")
-                        .on_press(BuySellMessage::CheckEmailVerificationStatus)
-                        .width(Length::FillPortion(1)),
+        // OTP Input
+        let otp_input = text_input("Enter OTP code", otp)
+            .on_input(BuySellMessage::OtpChanged)
+            .on_submit_maybe((!otp.is_empty() && !*sending).then_some(BuySellMessage::VerifyOtp))
+            .size(16)
+            .padding(15);
+
+        // Verify button with spinner
+        let verify_button: iced::Element<BuySellMessage, theme::Theme> = if *sending {
+            iced::widget::button(
+                Container::new(
+                    Row::new()
+                        .spacing(5)
+                        .align_y(Alignment::Center)
+                        .push(text::text("Verifying").size(16))
+                        .push(
+                            Container::new(spinner::typing_text_carousel(
+                                "...",
+                                true,
+                                Duration::from_millis(500),
+                                |s| text::text(s).size(16),
+                            ))
+                            .width(Length::Fixed(20.0)),
+                        ),
                 )
-                .push(Space::new().width(Length::Fixed(10.0)))
-                .push(
-                    button::primary(Some(email_icon()), "Resend Email")
-                        .on_press(BuySellMessage::SendVerificationEmail),
-                )
-                .spacing(10)
-                .align_y(Alignment::Center),
+                .center_x(Length::Fill)
+                .center_y(Length::Fill),
+            )
+            .width(Length::FillPortion(1))
+            .height(Length::Fixed(44.0))
+            .style(theme::button::primary)
+            .into()
+        } else {
+            button::primary(None, "Verify OTP")
+                .on_press_maybe((!otp.is_empty()).then_some(BuySellMessage::VerifyOtp))
+                .width(Length::FillPortion(1))
+                .into()
         };
+
+        // Action buttons
+        let resend_enabled = !*sending && *cooldown == 0;
+        let resend_button: iced::Element<BuySellMessage, theme::Theme> = if *cooldown > 0 {
+            let label = format!("Resend in {}s", cooldown);
+            iced::widget::button(
+                Container::new(
+                    Row::new()
+                        .push(email_icon().style(theme::text::secondary))
+                        .push(text::text(label).size(14))
+                        .spacing(10)
+                        .align_y(Alignment::Center),
+                )
+                .center_x(Length::Fill)
+                .center_y(Length::Fill),
+            )
+            .style(theme::button::secondary)
+            .width(Length::FillPortion(1))
+            .height(Length::Fixed(44.0))
+            .into()
+        } else {
+            button::secondary(Some(email_icon()), "Resend OTP")
+                .on_press_maybe(resend_enabled.then_some(BuySellMessage::SendOtp))
+                .width(Length::FillPortion(1))
+                .into()
+        };
+
+        let action_buttons = Row::new()
+            .push(resend_button)
+            .push(Space::new().width(Length::Fixed(10.0)))
+            .push(verify_button)
+            .spacing(10)
+            .align_y(Alignment::Center);
 
         let col = iced::widget::column![
             top_bar,
@@ -524,7 +476,9 @@ impl BuySellPanel {
             title,
             Space::new().height(Length::Fixed(30.0)),
             email_display,
-            Space::new().height(Length::Fixed(30.0)),
+            Space::new().height(Length::Fixed(20.0)),
+            otp_input,
+            Space::new().height(Length::Fixed(20.0)),
             action_buttons,
         ]
         .align_x(Alignment::Center)
