@@ -100,7 +100,7 @@ jobs:
           bin: coincube
           archive: coincube-${{ matrix.target }}
           target: ${{ matrix.target }}
-          include: LICENCE,README.md,lib
+          include: LICENCE,README.md
           profile: minimal
           locked: true
 
