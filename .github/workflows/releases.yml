@@ -148,10 +148,7 @@ jobs:
           PROTOC: /opt/homebrew/bin/protoc
         run: |
           rustup target add ${{ matrix.target }}
-          cargo build \
-            --package coincube-gui \
-            --profile minimal \
-            --target ${{ matrix.target }}
+          cargo build --package coincube-gui --profile minimal --target ${{ matrix.target }}
 
       - name: Generate Icons for Installers
         if: matrix.platform == 'macos'
@@ -166,14 +163,12 @@ jobs:
         run: |
           unzip contrib/release/macos/_coincube.zip
           sed -i '' "s/VERSION_PLACEHOLDER/${{ env.COINCUBE_VERSION }}/g" Coincube.app/Contents/Info.plist
-          mv target/${{ matrix.target }}/minimal/coincube \
-             Coincube.app/Contents/MacOS/Coincube
-          mv contrib/release/macos/Coincube.icns \
-             Coincube.app/Contents/Resources/Coincube.icns
+          mv target/${{ matrix.target }}/minimal/coincube Coincube.app/Contents/MacOS/Coincube
+          mv contrib/release/macos/Coincube.icns Coincube.app/Contents/Resources/Coincube.icns
 
       - name: Sign macOS app
         if: matrix.platform == 'macos'
-        run: rcodesign sign --p12-file cert.p12 --p12-password-file cert.pass --code-signature-flags runtime Coincube.app
+        run: rcodesign sign --for-notarization --p12-file cert.p12 --p12-password-file cert.pass --code-signature-flags runtime Coincube.app
 
       - name: Notarize and staple app
         if: matrix.platform == 'macos'
