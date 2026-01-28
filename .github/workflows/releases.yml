@@ -164,7 +164,7 @@ jobs:
       - name: Assemble .app bundle
         if: matrix.platform == 'macos'
         run: |
-          unzip contrib/release/macos/Coincube.app.zip
+          unzip contrib/release/macos/Coincube.zip
           sed -i '' "s/VERSION_PLACEHOLDER/${{ env.COINCUBE_VERSION }}/g" Coincube.app/Contents/Info.plist
           mv target/${{ matrix.target }}/minimal/coincube \
              Coincube.app/Contents/MacOS/Coincube
