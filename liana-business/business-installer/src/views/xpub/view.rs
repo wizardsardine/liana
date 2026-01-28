@@ -133,6 +133,7 @@ fn xpub_key_card(
 
     // Make card clickable
     Button::new(card_content)
+        .padding(0)
         .width(Length::Fixed(KEY_CARD_WIDTH))
         .on_press(Msg::XpubSelectKey(key_id))
         .style(key_card_button)

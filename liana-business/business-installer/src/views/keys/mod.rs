@@ -127,6 +127,7 @@ fn key_card(
     let card_content = Container::new(content).padding(15).width(Length::Fill);
 
     Button::new(card_content)
+        .padding(0)
         .width(Length::Fixed(KEY_CARD_WIDTH))
         .on_press(Msg::KeyEdit(key_id))
         .style(key_card_button)
@@ -225,6 +226,7 @@ fn keys_visualization(state: &State) -> Element<'static, Msg> {
             .width(Length::Fill);
 
     let add_key_card = Button::new(add_key_content)
+        .padding(0)
         .width(Length::Fixed(KEY_CARD_WIDTH))
         .on_press(Msg::KeyAdd)
         .style(key_card_button);

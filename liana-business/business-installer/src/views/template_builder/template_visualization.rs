@@ -297,6 +297,7 @@ fn path_card(
     // Make clickable only if editable
     if is_editable {
         Button::new(card_content)
+            .padding(0)
             .width(Length::Fixed(PATH_CARD_WIDTH))
             .on_press(Msg::TemplateEditPath(is_primary, path_index))
             .style(path_card_button)
@@ -414,6 +415,7 @@ pub fn template_visualization(state: &State) -> Element<'static, Msg> {
         .width(Length::Fill);
 
         let add_path_card = Button::new(add_path_content)
+            .padding(0)
             .width(Length::Fixed(PATH_CARD_WIDTH))
             .on_press(Msg::TemplateNewPathModal)
             .style(path_card_button);
