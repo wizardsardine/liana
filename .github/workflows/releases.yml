@@ -77,12 +77,11 @@ jobs:
           path: target
 
       - name: Create GitHub Release
-        if: matrix.platform == 'linux'
-        uses: taiki-e/create-gh-release-action@v1
+        uses: ncipollo/release-action@v1
         with:
-          title: v${{ env.COINCUBE_VERSION }}
-          ref: ${{ github.ref }}
-          branch: master
+          makeLatest: true
+          name: v${{ env.COINCUBE_VERSION }}
+          allowUpdates: true
 
 # --------------------------------------------------
 # Linux
@@ -110,9 +109,7 @@ jobs:
 
       - name: Install Windows dependencies
         if: matrix.platform == 'windows'
-        run: |
-          choco install protoc --yes
-          choco install wixtoolset --version=3.14.1 --yes
+        run: choco install protoc --yes
 
       - name: Build Windows MSI
         if: matrix.platform == 'windows'
