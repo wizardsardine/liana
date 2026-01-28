@@ -80,7 +80,7 @@ jobs:
         uses: ncipollo/release-action@v1
         with:
           makeLatest: true
-          name: v${{ env.COINCUBE_VERSION }}
+          name: Coincube v${{ env.COINCUBE_VERSION }}
           allowUpdates: true
 
 # --------------------------------------------------
