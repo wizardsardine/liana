@@ -126,11 +126,6 @@
       Absent='disallow'>
 
       <ComponentRef Id='License' />
-      <ComponentRef Id='binary0' />
-      <ComponentRef Id='binary1' />
-      <ComponentRef Id='binary2' />
-      <ComponentRef Id='binary3' />
-      <ComponentRef Id='binary4' />
 
     </Feature>
 
