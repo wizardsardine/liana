@@ -149,7 +149,7 @@ jobs:
         run: |
           rustup target add ${{ matrix.target }}
           cargo build --package coincube-gui --profile minimal --target ${{ matrix.target }}
-          tree target
+          ls -R target
 
       - name: Generate Icons for Installers
         if: matrix.platform == 'macos'
@@ -174,7 +174,7 @@ jobs:
       - name: Notarize and staple app
         if: matrix.platform == 'macos'
         run: |
-          tree Coincube.app
+          ls -R Coincube.app
           base64 -D <<< "${{ secrets.APPSTORECONNECT_KEY_JSON }}" > key.json
           rcodesign notary-submit --api-key-path key.json --max-wait-seconds 1800 --staple Coincube.app
           spctl --assess --type execute --verbose Coincube.app
