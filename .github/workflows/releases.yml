@@ -89,7 +89,7 @@ jobs:
 
       - name: Install Linux dependencies
         if: matrix.platform == 'linux'
-        run: sudo apt-get update && sudo apt-get install -y libudev-dev pkg-config protobuf-compiler
+        run: sudo apt-get update && sudo apt-get install -y libudev-dev pkg-config protobuf-compiler libdbus-1-dev
 
       - name: Upload Linux binary
         if: matrix.platform == 'linux'
