@@ -10,14 +10,18 @@ use liana_connect::ws_business::{
     Wallet, WalletStatus,
 };
 use liana_ui::widget::text_input;
-use tracing::debug;
+use tracing::{debug, trace};
 use uuid::Uuid;
 
 // Update routing logic
 impl State {
     #[rustfmt::skip]
     pub fn update(&mut self, message: Msg) -> Task<Msg> {
-        debug!(?message, "received message");
+        if !matches!(message, Msg::Update) {
+            debug!("received message");
+        } else {
+            trace!("received message");
+        }
         match message {
             // Login/Auth
             Msg::LoginUpdateEmail(email) => self.views.login.on_update_email(email),

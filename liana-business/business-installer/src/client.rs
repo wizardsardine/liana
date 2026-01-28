@@ -1014,8 +1014,8 @@ fn wss_thread(
                             break;
                         }
 
-                        tracing::debug!("wss_thread: sending request {:?}", request);
                         let (ws_msg, request_id) = request.to_ws_message(&token);
+                        tracing::debug!("wss_thread: sending request {:?} ", request);
                         // Cache sent request for response validation
                         {
                             let mut requests = sent_requests2.lock().expect("poisoned");
@@ -1107,8 +1107,8 @@ fn handle_wss_message(
     let request_id = request_id.and_then(|s| Uuid::try_parse(&s).ok());
 
     tracing::debug!(
-        "handle_wss_message: received response type={:?} request_id={:?}",
-        std::mem::discriminant(&response),
+        "handle_wss_message: received response={:?} request_id={:?}",
+        response,
         request_id
     );
 

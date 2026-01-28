@@ -73,7 +73,11 @@ impl Installer<'_, Message> for BusinessInstaller {
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
-        tracing::debug!("BusinessInstaller::update received {:?}", message);
+        if !matches!(message, Message::Update) {
+            tracing::debug!("BusinessInstaller::update received {:?}", message);
+        } else {
+            tracing::trace!("BusinessInstaller::update received {:?}", message);
+        }
         self.state.update(message)
     }
 
