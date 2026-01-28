@@ -168,7 +168,7 @@ jobs:
 
       - name: Sign macOS app
         if: matrix.platform == 'macos'
-        run: rcodesign sign --for-notarization --p12-file cert.p12 --p12-password-file cert.pass --code-signature-flags runtime Coincube.app
+        run: rcodesign sign --for-notarization --p12-file cert.p12 --p12-password-file cert.pass Coincube.app
 
       - name: Notarize and staple app
         if: matrix.platform == 'macos'
