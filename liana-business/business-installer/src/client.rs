@@ -1280,6 +1280,10 @@ fn fetch_user_maybe(
     request_sender: &channel::Sender<Request>,
 ) {
     if let Some(id) = user {
+        if id == Uuid::nil() {
+            tracing::error!("attempting to fetch user with Uuid::nil()");
+            return;
+        }
         if !users.lock().expect("poisoned").contains_key(&id) {
             let _ = request_sender.send(Request::FetchUser { id });
         }
@@ -1392,7 +1396,7 @@ fn handle_wallet(
     // The response will be handled automatically by handle_user().
     {
         let users_guard = users.lock().expect("poisoned");
-        if !users_guard.contains_key(&owner_id) {
+        if !users_guard.contains_key(&owner_id) && owner_id != Uuid::nil() {
             tracing::debug!("handle_wallet: fetching owner user_id={}", owner_id);
             let _ = request_sender.send(Request::FetchUser { id: owner_id });
         }
