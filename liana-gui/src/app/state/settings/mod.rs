@@ -1,6 +1,6 @@
 mod bitcoind;
 mod general;
-mod wallet;
+pub mod wallet;
 
 use std::convert::From;
 use std::sync::Arc;

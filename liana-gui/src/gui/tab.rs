@@ -687,10 +687,13 @@ async fn connect_for_business(
 > {
     use crate::app::cache::coins_to_cache;
 
-    // Get service config for liana-business (uses LIANA_BUSINESS_* env vars)
-    let service_config = crate::services::connect::client::get_service_config(network)
-        .await
-        .map_err(|e| login::Error::Unexpected(e.to_string()))?;
+    // Get service config for liana-business
+    let service_config = crate::services::connect::client::get_service_config(
+        network,
+        crate::services::connect::client::BackendType::LianaBusiness,
+    )
+    .await
+    .map_err(|e| login::Error::Unexpected(e.to_string()))?;
 
     // Create auth client
     let auth_client = AuthClient::new(

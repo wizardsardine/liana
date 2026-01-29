@@ -67,3 +67,80 @@ pub const BLUE: Color = Color::from_rgb(
     0xD3 as f32 / 255.0,
     0xFC as f32 / 255.0,
 );
+
+// =============================================================================
+// BUSINESS THEME COLORS (Light Mode with Cyan-Blue accent)
+// =============================================================================
+
+// Primary accent: Cyan-Blue from lianawallet.com/business (HSL 196, 100%, 50%)
+pub const BUSINESS_BLUE: Color = Color::from_rgb(
+    0x00 as f32 / 255.0,
+    0xBF as f32 / 255.0,
+    0xFF as f32 / 255.0,
+); // #00BFFF
+
+// Darker variant for hover states (HSL 196, 100%, 40%)
+pub const BUSINESS_BLUE_DARK: Color = Color::from_rgb(
+    0x00 as f32 / 255.0,
+    0x99 as f32 / 255.0,
+    0xCC as f32 / 255.0,
+); // #0099CC
+
+// Transparent variant for highlights
+pub const TRANSPARENT_BUSINESS_BLUE: Color = Color::from_rgba(
+    0x00 as f32 / 255.0,
+    0xBF as f32 / 255.0,
+    0xFF as f32 / 255.0,
+    0.15,
+);
+
+// Light theme backgrounds
+pub const LIGHT_BG: Color = Color::from_rgb(
+    0xFF as f32 / 255.0,
+    0xFF as f32 / 255.0,
+    0xFF as f32 / 255.0,
+); // #FFFFFF - main background
+
+pub const LIGHT_BG_SECONDARY: Color = Color::from_rgb(
+    0xF9 as f32 / 255.0,
+    0xF9 as f32 / 255.0,
+    0xF9 as f32 / 255.0,
+); // #F9F9F9 - cards, panels
+
+pub const LIGHT_BG_TERTIARY: Color = Color::from_rgb(
+    0xF0 as f32 / 255.0,
+    0xF0 as f32 / 255.0,
+    0xF0 as f32 / 255.0,
+); // #F0F0F0 - disabled states
+
+// Light theme text colors
+pub const DARK_TEXT_PRIMARY: Color = Color::from_rgb(
+    0x1A as f32 / 255.0,
+    0x1A as f32 / 255.0,
+    0x1A as f32 / 255.0,
+); // #1A1A1A - primary text
+
+pub const DARK_TEXT_SECONDARY: Color = Color::from_rgb(
+    0x6B as f32 / 255.0,
+    0x6B as f32 / 255.0,
+    0x6B as f32 / 255.0,
+); // #6B6B6B - secondary text
+
+pub const DARK_TEXT_TERTIARY: Color = Color::from_rgb(
+    0x9E as f32 / 255.0,
+    0x9E as f32 / 255.0,
+    0x9E as f32 / 255.0,
+); // #9E9E9E - placeholders
+
+// Light theme borders
+pub const LIGHT_BORDER: Color = Color::from_rgb(
+    0xD9 as f32 / 255.0,
+    0xD9 as f32 / 255.0,
+    0xD9 as f32 / 255.0,
+); // #D9D9D9 - borders
+
+pub const LIGHT_BORDER_STRONG: Color = Color::from_rgb(
+    0xB3 as f32 / 255.0,
+    0xB3 as f32 / 255.0,
+    0xB3 as f32 / 255.0,
+); // #B3B3B3 - stronger borders

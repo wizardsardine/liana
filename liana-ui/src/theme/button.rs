@@ -117,7 +117,7 @@ fn button(p: &Button, status: Status) -> Style {
                 Style {
                     background: Some(Background::Color(disabled.background)),
                     text_color: Color {
-                        a: 0.2,
+                        a: 0.5,
                         r: disabled.text.r,
                         g: disabled.text.g,
                         b: disabled.text.b,
@@ -140,7 +140,7 @@ fn button(p: &Button, status: Status) -> Style {
 
                 Style {
                     text_color: Color {
-                        a: 0.2,
+                        a: 0.5,
                         ..active.text_color
                     },
                     ..active

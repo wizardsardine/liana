@@ -64,6 +64,17 @@ pub fn setup_logger(
                         && !metadata.target().starts_with("mio")
                         && !metadata.target().starts_with("ledger_transport_hid")
                         && !metadata.target().starts_with("cosmic_text")
+                        && !metadata.target().starts_with("polling")
+                        && !metadata.target().starts_with("calloop")
+                        && !metadata.target().starts_with("async_io")
+                        && !metadata.target().starts_with("rustls")
+                        && !metadata.target().starts_with("hyper")
+                        && !metadata.target().starts_with("reqwest")
+                        && !metadata.target().starts_with("tungstenite")
+                        && !metadata.target().starts_with("tokio")
+                        && !metadata.target().starts_with("iced_graphics")
+                        && !metadata.target().starts_with("iced_runtime")
+                        && !metadata.target().starts_with("iced_core")
                 })),
         )
         .init();

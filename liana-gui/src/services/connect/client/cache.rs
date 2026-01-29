@@ -71,6 +71,12 @@ pub async fn update_connect_cache(
     let mut path = network_dir.path().to_path_buf();
     path.push(CONNECT_CACHE_FILENAME);
 
+    // Create parent directory if it doesn't exist
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| ConnectCacheError::WritingFile(format!("Creating directory: {}", e)))?;
+    }
+
     let file_exists = tokio::fs::try_exists(&path).await.unwrap_or(false);
 
     let mut file = OpenOptions::new()
@@ -149,6 +155,12 @@ pub async fn filter_connect_cache(
 ) -> Result<(), ConnectCacheError> {
     let mut path = network_dir.path().to_path_buf();
     path.push(CONNECT_CACHE_FILENAME);
+
+    // Create parent directory if it doesn't exist
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| ConnectCacheError::WritingFile(format!("Creating directory: {}", e)))?;
+    }
 
     let file_exists = tokio::fs::try_exists(&path).await.unwrap_or(false);
 

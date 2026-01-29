@@ -21,7 +21,7 @@ available after some time of inactivity). You may have more than one key in eith
 the recovery path (multisig). You may have more than one recovery path.
 
 Here is an example of a Liana wallet configuration:
-- Owner's key (can always spend)
+- Wallet Manager's key (can always spend)
 - Any 2 keys from the owner's spouse and two kids (after 1 year)
 - A third party, in case [all else failed](https://wizardsardine.com/liana/plans#section-safety-net)
   (after 1 year and 3 months)

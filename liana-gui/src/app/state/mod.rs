@@ -4,7 +4,7 @@ mod label;
 mod psbt;
 mod psbts;
 mod receive;
-mod settings;
+pub mod settings;
 mod spend;
 mod transactions;
 

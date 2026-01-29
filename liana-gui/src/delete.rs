@@ -124,9 +124,12 @@ pub async fn delete_wallet(
 
     if delete_liana_connect {
         if let Some(auth) = &wallet.remote_backend_auth {
-            let service_config = get_service_config(network)
-                .await
-                .map_err(|e| DeleteError::Connect(e.to_string()))?;
+            let service_config = get_service_config(
+                network,
+                crate::services::connect::client::BackendType::LianaConnect,
+            )
+            .await
+            .map_err(|e| DeleteError::Connect(e.to_string()))?;
 
             let client = AuthClient::new(
                 service_config.auth_api_url,
