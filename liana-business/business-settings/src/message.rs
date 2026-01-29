@@ -12,6 +12,9 @@ pub enum Section {
 /// Message type for business settings UI.
 #[derive(Debug, Clone)]
 pub enum Msg {
+    /// Navigate back to settings home.
+    Home,
+
     /// Navigate to a section.
     SelectSection(Section),
 

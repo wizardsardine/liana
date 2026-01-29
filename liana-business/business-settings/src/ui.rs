@@ -61,6 +61,10 @@ impl SettingsUI<Msg> for BusinessSettingsUI {
         message: Msg,
     ) -> Task<Msg> {
         match message {
+            Msg::Home => {
+                self.current_section = None;
+                Task::none()
+            }
             Msg::SelectSection(section) => self.on_select_section(section),
             Msg::EnableFiat(enabled) => self.on_enable_fiat(enabled),
             Msg::RegisterWallet => Task::none(), // Handled in State::update()
@@ -86,6 +90,7 @@ impl SettingsUI<Msg> for BusinessSettingsUI {
     }
 
     fn reload(&mut self, _daemon: Arc<dyn Daemon + Sync + Send>, wallet: Arc<Wallet>) -> Task<Msg> {
+        self.current_section = None;
         self.wallet = wallet;
         Task::none()
     }
@@ -109,6 +114,7 @@ impl BusinessSettingsUI {
 impl State for BusinessSettingsUI {
     fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, view::Message> {
         let content = SettingsUI::view(self, cache).map(|msg| match msg {
+            Msg::Home => view::Message::Menu(Menu::Settings),
             Msg::SelectSection(Section::General) => {
                 view::Message::Settings(view::SettingsMessage::GeneralSection)
             }

@@ -175,7 +175,7 @@ fn section_header(title: &'static str) -> Element<'static, Msg> {
         .push(
             iced::widget::Button::new(text("Settings").size(30).bold())
                 .style(theme::button::transparent)
-                .on_press(Msg::SelectSection(Section::General)),
+                .on_press(Msg::Home),
         )
         .push(icon::chevron_right().size(30))
         .push(text(title).size(30).bold())
