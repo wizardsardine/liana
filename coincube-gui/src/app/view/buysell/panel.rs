@@ -326,7 +326,7 @@ impl BuySellPanel {
             // Title and subtitle
             iced::widget::column![
                 text::h3("Create an Account").color(color::WHITE),
-                text::p2_regular("Get started with your personal Bitcoin wallet. Buy, store, and manage crypto securely, all in one place.").color(color::GREY_3)
+                text::p2_regular("Create a COINCUBE account to access Buy/Sell and other features.").color(color::GREY_3)
             ]
             .spacing(10)
             .align_x(Alignment::Center),
