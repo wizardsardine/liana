@@ -14,7 +14,7 @@ use std::io::Write;
 use std::sync::Arc;
 use std::time::Duration;
 
-use iced::{clipboard, time, widget::Column, Subscription, Task};
+use iced::{clipboard, time, Subscription, Task};
 use tokio::runtime::Handle;
 use tracing::{error, info, warn};
 
@@ -1228,60 +1228,24 @@ impl App {
     }
 
     pub fn view(&self) -> Element<'_, Message> {
-        use iced::widget::{container, Stack};
-        use iced::{Alignment, Length};
-
         let view = self
             .panels
             .current()
             .unwrap_or(&self.panels.global_home)
             .view(&self.panels.current, &self.cache);
 
-        let content: Element<'_, Message> = if self.cache.network != bitcoin::Network::Bitcoin {
-            Column::with_children([
-                network_banner(self.cache.network).into(),
-                view.map(Message::View),
-            ])
-            .into()
+        let content = if self.cache.network != bitcoin::Network::Bitcoin {
+            iced::widget::column![network_banner(self.cache.network), view.map(Message::View)]
+                .into()
         } else {
             view.map(Message::View)
         };
 
         // Overlay error toast at bottom if present
         if let Some(err) = &self.error_toast {
-            use coincube_ui::{color, component::text, icon::cross_icon, theme};
-            use iced::widget::{Button, Row};
-
-            let close_btn: Element<'_, view::Message> =
-                Button::new(cross_icon().color(color::WHITE).size(18))
-                    .style(theme::button::transparent)
-                    .on_press(view::Message::DismissError)
-                    .into();
-
-            let error_toast = container(
-                Row::new()
-                    .push(container(text::p2_regular(err).color(color::WHITE)))
-                    .push(close_btn)
-                    .align_y(Alignment::Center)
-                    .spacing(15),
-            )
-            .padding(15)
-            .style(theme::notification::error)
-            .max_width(500.0);
-
-            // Bottom-center of content area (offset by sidebar width 190px)
-            let toast_overlay: Element<'_, view::Message> =
-                container(container(error_toast).padding(20))
-                    .width(Length::Fill)
-                    .height(Length::Fill)
-                    .padding(iced::Padding::new(0.0).left(190.0)) // left padding for sidebar
-                    .align_x(Alignment::Center)
-                    .align_y(Alignment::End)
-                    .into();
-
-            Stack::new()
+            iced::widget::Stack::new()
                 .push(content)
-                .push(toast_overlay.map(Message::View))
+                .push(view::error_toast_overlay(err).map(Message::View))
                 .into()
         } else {
             content

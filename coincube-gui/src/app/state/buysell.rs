@@ -334,7 +334,9 @@ impl State for BuySellPanel {
 
                 let buy_or_sell = buy_or_sell.take().unwrap_or(panel::BuyOrSell::Sell);
 
-                match mavapay_supported(country.code) {
+                match mavapay_supported(country.code)
+                    && matches!(option_env!("ENABLE_MAVAPAY"), Some("1") | Some("true"))
+                {
                     true => {
                         log::info!("[BUYSELL] Starting under Mavapay for {}", country);
 
@@ -367,21 +369,17 @@ impl State for BuySellPanel {
                         };
                     }
                     false => {
-                        #[cfg(feature = "meld")]
-                        {
-                            // initialize buysell under meld
-                            let (meld, task) = meld::MeldState::new(
-                                buy_or_sell,
-                                country,
-                                self.coincube_client.clone(),
-                            );
-                            self.step = BuySellFlowState::Meld(meld);
+                        log::info!("[BUYSELL] Starting under Meld for {}", country);
 
-                            return task.map(Message::View);
-                        };
+                        // initialize buysell under meld
+                        let (meld, task) = meld::MeldState::new(
+                            buy_or_sell,
+                            country,
+                            self.coincube_client.clone(),
+                        );
+                        self.step = BuySellFlowState::Meld(meld);
 
-                        #[cfg(not(feature = "meld"))]
-                        log::warn!("[BUYSELL] Unable to start buysell under Meld, cargo feature was disabled");
+                        return task.map(Message::View);
                     }
                 }
             }
@@ -392,7 +390,9 @@ impl State for BuySellPanel {
                     );
                 };
 
-                match mavapay_supported(country.code) {
+                match mavapay_supported(country.code)
+                    && matches!(option_env!("ENABLE_MAVAPAY"), Some("1") | Some("true"))
+                {
                     true => {
                         log::info!("Starting history view under Mavapay");
 
@@ -672,7 +672,6 @@ impl State for BuySellPanel {
                             return task.map(Message::View);
                         };
                     }
-                    #[cfg(feature = "meld")]
                     (BuySellFlowState::Meld(state), view::BuySellMessage::Meld(msg)) => {
                         if let Some(task) = state.update(msg, cache, &self.coincube_client) {
                             return task.map(Message::View);
@@ -709,7 +708,6 @@ impl State for BuySellPanel {
     }
 
     fn close(&mut self) -> Task<Message> {
-        #[cfg(feature = "meld")]
         if let BuySellFlowState::Meld(meld) = &self.step {
             if let Some(meld::MeldFlowStep::ActiveSession { active, .. }) = meld.steps.last() {
                 if let Some(strong) = std::sync::Weak::upgrade(&active.webview) {
@@ -724,11 +722,26 @@ impl State for BuySellPanel {
 
     fn subscription(&self) -> iced::Subscription<Message> {
         match &self.step {
-            #[cfg(feature = "meld")]
             BuySellFlowState::Meld(meld) => {
                 let mut subs = vec![];
 
-                if let Some(meld::MeldFlowStep::ActiveSession { .. }) = meld.steps.last() {
+                // sse subscription
+                if let Some(l) = &self.login {
+                    subs.push(
+                        crate::services::meld::MeldClient::transactions_subscription(
+                            l.token.clone(),
+                            meld.sse_retries,
+                        )
+                        .map(|meld| {
+                            Message::View(view::Message::BuySell(view::BuySellMessage::Meld(meld)))
+                        }),
+                    );
+                }
+
+                if matches!(
+                    meld.steps.last(),
+                    Some(meld::MeldFlowStep::ActiveSession { .. })
+                ) {
                     // webview subscription
                     subs.push(
                         meld.webview_manager
@@ -739,20 +752,6 @@ impl State for BuySellPanel {
                                 )))
                             }),
                     );
-
-                    // sse subscription
-                    if let Some(l) = &self.login {
-                        subs.push(
-                            crate::services::meld::MeldClient::transactions_subscription(
-                                l.token.clone(),
-                            )
-                            .map(|meld| {
-                                Message::View(view::Message::BuySell(view::BuySellMessage::Meld(
-                                    meld,
-                                )))
-                            }),
-                        );
-                    }
                 };
 
                 iced::Subscription::batch(subs)

@@ -5,8 +5,6 @@ use std::{error::Error, io::Write, path::PathBuf, process, str::FromStr};
 use iced::{Settings, Size};
 use tracing::error;
 use tracing_subscriber::filter::LevelFilter;
-extern crate serde;
-extern crate serde_json;
 
 use coincube_core::miniscript::bitcoin;
 use coincube_ui::{component::text, font, image};

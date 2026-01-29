@@ -36,7 +36,6 @@ use crate::{
         api::{ListCurrenciesResult, PriceApi, PriceApiError},
         Currency, PriceClient, PriceSource,
     },
-    VERSION,
 };
 
 use iced::window::Id;
@@ -111,7 +110,7 @@ async fn ctrl_c() -> Result<(), ()> {
 
 impl GUI {
     pub fn title(&self) -> String {
-        format!("COINCUBE v{}", VERSION)
+        format!("COINCUBE v{}", env!("CARGO_PKG_VERSION"))
     }
 
     pub fn new((config, log_level): (Config, Option<LevelFilter>)) -> (GUI, Task<Message>) {

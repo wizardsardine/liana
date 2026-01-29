@@ -7,5 +7,4 @@ pub mod keys;
 
 pub mod coincube;
 pub mod mavapay;
-#[cfg(feature = "meld")]
 pub mod meld;

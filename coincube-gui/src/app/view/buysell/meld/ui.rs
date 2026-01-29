@@ -1,3 +1,5 @@
+use std::iter::FromIterator;
+
 use coincube_core::miniscript::bitcoin;
 use coincube_ui::{color, component::*, icon, theme};
 use iced::{widget, Alignment, Length};
@@ -9,30 +11,28 @@ pub(crate) fn not_supported_ux<'a>(
 ) -> coincube_ui::widget::Element<'a, view::Message> {
     widget::column![
         widget::Space::new().height(25),
-        widget::container(
-            widget::row![
-                widget::container(icon::warning_icon().size(35).color(iced::Color::BLACK))
-                    .style(|_| { widget::container::background(color::RED) })
-                    .align_x(iced::Alignment::Center)
-                    .align_y(iced::Alignment::Center)
-                    .padding(35),
-                widget::container(
-                    text::p2_bold(format!(
-                        "Your country: {} currently isn't supported for BuySell",
-                        c
-                    ))
-                    .size(15)
-                    .color(iced::Color::WHITE)
-                )
-                .padding(25)
-            ]
-            .align_y(iced::Alignment::Center),
-        )
-        .style(|_| {
-            let mut init = widget::container::background(color::BLACK);
-            init.border = iced::Border::default().color(color::RED).width(2);
-            init
-        })
+        widget::row![
+            widget::container(icon::warning_icon().size(35).color(iced::Color::BLACK))
+                .style(|_| { widget::container::background(color::RED) })
+                .align_x(iced::Alignment::Center)
+                .align_y(iced::Alignment::Center)
+                .padding(35),
+            widget::container(
+                text::p2_bold(format!(
+                    "Your country: {} currently isn't supported for BuySell",
+                    c.name
+                ))
+                .size(15)
+                .color(iced::Color::WHITE)
+            )
+            .style(|_| {
+                let mut init = widget::container::background(color::BLACK);
+                init.border = iced::Border::default().color(color::RED).width(2);
+                init
+            })
+            .padding(25)
+        ]
+        .align_y(iced::Alignment::Center),
     ]
     .into()
 }
@@ -135,7 +135,7 @@ pub(crate) fn input_form_ux<'a>(
         .align_x(iced::Alignment::Start)
         .width(iced::Length::Fill)
         .style(|th: &theme::Theme, _| widget::text_input::Style {
-            background: th.colors.text_inputs.primary.active.background.into(),
+            background: iced::Color::BLACK.into(),
             border: iced::Border::default()
                 .width(2)
                 .rounded(0)
@@ -228,72 +228,148 @@ pub(crate) fn input_form_ux<'a>(
 pub(crate) fn quote_selection_ux<'a>(
     quotes: &'a [Quote],
     selected: Option<usize>,
-    recommended_provider: Option<&'a str>,
+    webview_pending: bool,
+    buy_or_sell: &'a view::buysell::BuyOrSell,
 ) -> coincube_ui::widget::Element<'a, view::Message> {
-    let column = widget::column![
-        text::h2("Select a preferred provider"),
-        widget::Space::new().height(12),
-        button::primary_compact(Some(icon::arrow_back()), "Go Back To Input Form")
-            .on_press(view::buysell::meld::MeldMessage::NavigateBack),
-        widget::container(widget::Space::new().height(3))
-            .style(|_| { widget::container::background(iced::Background::Color(color::GREY_3)) })
-            .width(Length::Fill)
-    ];
-
-    let quote_display = |quote: &Quote, selected: bool, recommended: bool, idx: usize| {
-        let mut base = format!("{:?}", quote);
-        if selected {
-            base.push_str(" (SELECTED)");
-        }
-
-        if recommended {
-            base.push_str(" (RECOMMENDED)");
-        }
-
-        let _card = card::simple(widget::row![
-            widget::column![
-                text::p1_regular("YOU SEND"),
-                text::h4_bold(format!(
-                    "{} {}",
-                    quote.source_amount, quote.source_currency_code
-                )),
+    // simple card UI displaying quote details
+    let quote_display = |quote: &Quote, selected: bool, idx: usize| {
+        let _card = widget::container(
+            widget::row![
+                widget::Space::new().width(30),
+                // transactions display
+                widget::row![
+                    widget::column![
+                        text::caption("YOU SEND").color(color::ORANGE),
+                        text::h3_bold(format!(
+                            "{} {}",
+                            quote.source_amount, quote.source_currency_code
+                        )),
+                    ]
+                    .align_x(iced::Alignment::Start),
+                    widget::column![
+                        text::caption("YOU RECEIVE").color(color::GREEN),
+                        text::h3_bold(format!(
+                            "{} {}",
+                            quote.destination_amount, quote.destination_currency_code
+                        )),
+                    ]
+                    .align_x(iced::Alignment::Start),
+                ]
+                .spacing(25),
+                widget::Space::new().width(iced::Length::Fill),
+                // separator
+                widget::container(widget::Space::default().width(1).height(100))
+                    .style(theme::card::border),
+                widget::Space::new().width(25),
+                // payment details
+                widget::column![
+                    text::caption("Provider").color(color::GREY_3),
+                    text::p2_medium(quote.service_provider.as_str()),
+                    widget::Space::new().height(5),
+                    text::caption("Total Fee").color(color::GREY_3),
+                    text::p2_medium(format!(
+                        "{} {}",
+                        quote.total_fee,
+                        match buy_or_sell {
+                            view::buysell::BuyOrSell::Sell => &quote.destination_currency_code,
+                            view::buysell::BuyOrSell::Buy { .. } => &quote.source_currency_code,
+                        }
+                    )),
+                    widget::Space::new().height(5),
+                    // exchange rate display
+                    quote
+                        .exchange_rate
+                        .is_some()
+                        .then_some(text::caption("Exchange Rate").color(color::GREY_3)),
+                    quote.exchange_rate.map(|rate| text::p2_medium(format!(
+                        "1 {} = {} {}",
+                        quote.source_currency_code,
+                        match buy_or_sell {
+                            view::buysell::BuyOrSell::Sell => rate,
+                            view::buysell::BuyOrSell::Buy { .. } => 1.0 / rate,
+                        },
+                        quote.destination_currency_code
+                    ))),
+                ]
+                .align_x(iced::Alignment::Start),
+                widget::Space::new().width(20),
             ]
-            .align_x(iced::Alignment::Center),
-            widget::column![
-                text::p1_regular("YOU RECEIVE"),
-                text::h4_bold(format!(
-                    "{} {}",
-                    quote.destination_amount, quote.destination_currency_code
-                )),
-            ]
-            .align_x(iced::Alignment::Center),
-            widget::container(widget::Space::default().width(5).height(iced::Length::Fill))
-                .style(theme::card::border),
-            widget::column![],
-        ]);
-
-        widget::button(_card).on_press(match selected {
-            true => view::buysell::meld::MeldMessage::DeselectQuote,
-            false => view::buysell::meld::MeldMessage::SelectQuote(idx),
+            .align_y(iced::Alignment::Center),
+        )
+        .align_x(iced::Alignment::Center)
+        .align_y(iced::Alignment::Center)
+        .width(iced::Length::Fill)
+        .style(move |_| {
+            iced::widget::container::Style::default()
+                .background(iced::Color::BLACK)
+                .color(iced::Color::WHITE)
+                .border(match selected {
+                    false => iced::Border::default()
+                        .color(color::GREY_5)
+                        .width(1)
+                        .rounded(5),
+                    true => iced::Border::default()
+                        .color(color::ORANGE)
+                        .width(3)
+                        .rounded(5),
+                })
         })
+        .height(150);
+
+        widget::button(_card)
+            .on_press(view::buysell::meld::MeldMessage::SelectQuote(idx))
+            .style(theme::button::transparent)
     };
 
-    let column = quotes
-        .iter()
-        .enumerate()
-        .fold(column, |col, (idx, quote)| {
-            col.push(quote_display(
-                quote,
-                Some(idx) == selected,
-                Some(quote.service_provider.as_str()) == recommended_provider,
-                idx,
-            ))
+    let column = widget::column![
+        // quote selector
+        widget::scrollable(widget::Column::from_iter(quotes.iter().enumerate().map(
+            |(idx, quote)| quote_display(quote, Some(idx) == selected, idx).into()
+        ),))
+        .height(320)
+        .anchor_top(),
+        // separators
+        widget::Space::new().height(10),
+        iced::widget::container(widget::Space::new().height(2))
+            .style(|_| iced::widget::container::background(iced::Background::Color(color::GREY_3)))
+            .width(Length::Fill),
+        widget::Space::new().height(10),
+        // driver buttons
+        selected.map(|s| {
+            match webview_pending {
+                true => button::primary(Some(icon::reload_icon()), "Loading Webview...").style(
+                    |th, st| {
+                        let mut base = theme::button::primary(th, st);
+                        base.border = iced::Border::default().rounded(3);
+                        base
+                    },
+                ),
+                false => button::primary(Some(icon::globe_icon()), "Start Session")
+                    .on_press(view::buysell::meld::MeldMessage::StartSessionPressed(s))
+                    .style(|th, st| {
+                        let mut base = theme::button::primary(th, st);
+                        base.border = iced::Border::default().rounded(3);
+                        base
+                    }),
+            }
+        }),
+        selected.is_none().then(|| {
+            widget::row![
+                text::h4_bold("Select a preferred provider"),
+                widget::Space::new().width(iced::Length::Fill),
+                button::primary_compact(Some(icon::arrow_back()), "Go Back To Input Form")
+                    .on_press(view::buysell::meld::MeldMessage::NavigateBack)
+                    .style(|th, st| {
+                        let mut base = theme::button::primary(th, st);
+                        base.border = iced::Border::default().rounded(0);
+                        base
+                    })
+            ]
+            .align_y(iced::Alignment::Center)
         })
-        .push(selected.map(|s| {
-            button::primary(Some(icon::globe_icon()), "Start Session")
-                .on_press(view::buysell::meld::MeldMessage::StartSessionPressed(s))
-        }))
-        .spacing(5);
+    ]
+    .width(700)
+    .spacing(5);
 
     let elem: iced::Element<view::buysell::meld::MeldMessage, theme::Theme> = column.into();
     elem.map(|m| view::Message::BuySell(view::BuySellMessage::Meld(m)))
@@ -304,7 +380,7 @@ pub(super) fn webview_ux<'a>(
     network: &'a bitcoin::Network,
 ) -> coincube_ui::widget::Element<'a, view::Message> {
     let col = iced::widget::column![
-        active.view(Length::Fixed(640.0), Length::Fixed(600.0)),
+        active.view(Length::Fixed(640.0), Length::Fixed(640.0)),
         // Network display banner
         widget::Space::new().height(Length::Fixed(15.0)),
         {

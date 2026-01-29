@@ -16,11 +16,15 @@ In addition, if you want to build the project from source, you will need:
 
 ## Development
 
-To simply run:
-cargo run --release --bin coincube
-
-To run the native with buy/sell feature, simply run:
+```bash
 cargo run --bin coincube
+```
+
+To enable Mavapay for supported countries:
+
+```bash
+ENABLE_MAVAPAY=true cargo run --package coincube-gui
+```
 
 ## Usage
 

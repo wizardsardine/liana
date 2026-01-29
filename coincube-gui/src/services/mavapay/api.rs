@@ -59,7 +59,6 @@ impl<T> From<coincube::CoincubeError> for MavapayApiResult<T> {
             coincube::CoincubeError::Network(e) => format!("Network error: {e}"),
             coincube::CoincubeError::Api(msg) => msg.clone(),
             coincube::CoincubeError::Parse(e) => format!("Parse error: {e:?}"),
-            #[cfg(feature = "meld")]
             coincube::CoincubeError::SseError(e) => format!("EventSource error: {:?}", e),
         };
         Self::Error(message)

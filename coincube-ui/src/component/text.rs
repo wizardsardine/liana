@@ -28,6 +28,13 @@ pub fn h2<'a>(content: impl Display) -> iced::widget::Text<'a, Theme> {
 pub fn h3<'a>(content: impl Display) -> iced::widget::Text<'a, Theme> {
     iced::widget::text!("{}", content)
         .shaping(Shaping::Advanced)
+        .font(font::REGULAR)
+        .size(H3_SIZE)
+}
+
+pub fn h3_bold<'a>(content: impl Display) -> iced::widget::Text<'a, Theme> {
+    iced::widget::text!("{}", content)
+        .shaping(Shaping::Advanced)
         .font(font::BOLD)
         .size(H3_SIZE)
 }
