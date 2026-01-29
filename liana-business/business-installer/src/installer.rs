@@ -8,7 +8,7 @@ use liana::miniscript::bitcoin::{self};
 use liana_gui::{
     dir::LianaDirectory,
     installer::{Installer, NextState, UserFlow},
-    services::connect::client::backend::BackendClient,
+    services::connect::client::{backend::BackendClient, BackendType},
 };
 use liana_ui::widget::Element;
 use std::{
@@ -100,6 +100,10 @@ impl Installer<'_, Message> for BusinessInstaller {
 
     fn skip_launcher() -> bool {
         true
+    }
+
+    fn backend_type() -> BackendType {
+        BackendType::LianaBusiness
     }
 
     fn exit_maybe(&mut self, _msg: &Message) -> Option<NextState> {

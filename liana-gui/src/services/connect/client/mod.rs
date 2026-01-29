@@ -31,6 +31,15 @@ pub enum BackendType {
     LianaBusiness,
 }
 
+impl BackendType {
+    pub fn user_agent(&self) -> String {
+        match self {
+            BackendType::LianaConnect => format!("liana-gui/{}", crate::VERSION),
+            BackendType::LianaBusiness => format!("liana-business/{}", crate::VERSION),
+        }
+    }
+}
+
 pub async fn get_service_config(
     network: bitcoin::Network,
     backend: BackendType,
@@ -46,7 +55,7 @@ pub async fn get_service_config(
     let client = reqwest::Client::new();
     let res: ServiceConfigResource = client
         .get(format!("{}/v1/desktop", backend_api_url))
-        .header("User-Agent", format!("liana-gui/{}", crate::VERSION))
+        .header("User-Agent", backend.user_agent())
         .send()
         .await?
         .json()

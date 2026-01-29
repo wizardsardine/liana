@@ -46,6 +46,7 @@ use crate::{
                 BackendClient, BackendWalletClient,
             },
             cache::update_connect_cache,
+            BackendType,
         },
     },
     signer::Signer,
@@ -132,6 +133,12 @@ where
     /// Override to return `true` for installers that handle auth internally.
     fn skip_launcher() -> bool {
         false
+    }
+
+    /// The backend type for this installer, used to determine user-agent
+    /// and API endpoints. Default: LianaConnect.
+    fn backend_type() -> BackendType {
+        BackendType::LianaConnect
     }
 }
 

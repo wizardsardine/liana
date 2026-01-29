@@ -12,7 +12,8 @@ use liana_gui::{
     services::connect::client::{
         auth::AuthClient,
         cache::{filter_connect_cache, update_connect_cache, Account, ConnectCache},
-        ServiceConfig, ServiceConfigResource, BUSINESS_MAINNET_API_URL, BUSINESS_SIGNET_API_URL,
+        BackendType, ServiceConfig, ServiceConfigResource, BUSINESS_MAINNET_API_URL,
+        BUSINESS_SIGNET_API_URL,
     },
 };
 use miniscript::bitcoin::Network;
@@ -124,6 +125,8 @@ pub struct Client {
     refresh_thread_handle: Option<thread::JoinHandle<()>>,
     /// Signal to stop the refresh thread on disconnect.
     refresh_stop: Arc<AtomicBool>,
+    /// User-agent string for HTTP requests, set once at construction.
+    user_agent: String,
 }
 
 impl Client {
@@ -158,6 +161,7 @@ impl Client {
             refresh_thread_handle: None,
             refresh_stop: Arc::new(AtomicBool::new(false)),
             user_id: Arc::new(Mutex::new(None)),
+            user_agent: BackendType::LianaBusiness.user_agent(),
         }
     }
 
@@ -219,6 +223,7 @@ impl Client {
         let network = self.network.unwrap_or(Network::Signet);
         let token_arc = self.token.clone();
         let stop_flag = self.refresh_stop.clone();
+        let user_agent = self.user_agent.clone();
 
         // Get auth client config before spawning thread
         let config = match get_service_config_blocking(network) {
@@ -266,6 +271,7 @@ impl Client {
                         config.auth_api_url.clone(),
                         config.auth_api_public_key.clone(),
                         email.clone(),
+                        user_agent.clone(),
                     );
 
                     match auth_client.refresh_token(&tokens.refresh_token).await {
@@ -400,6 +406,7 @@ impl Client {
                         config.auth_api_url.clone(),
                         config.auth_api_public_key.clone(),
                         account.email.clone(),
+                        self.user_agent.clone(),
                     );
 
                     match auth_client
@@ -548,6 +555,7 @@ pub struct TokenRetrievalData {
     pub email: Option<String>,
     pub network: Option<Network>,
     pub auth_client: Arc<Mutex<Option<AuthClient>>>,
+    pub user_agent: String,
 }
 
 /// Try to get a cached token, refreshing it if expired.
@@ -587,6 +595,7 @@ fn try_get_cached_token(data: &TokenRetrievalData) -> Option<String> {
                 cfg.auth_api_url,
                 cfg.auth_api_public_key,
                 email.clone(),
+                data.user_agent.clone(),
             )),
             Err(_) => None,
         }
@@ -1512,6 +1521,7 @@ impl Backend for Client {
             email: self.email.clone(),
             network: self.network,
             auth_client: self.auth_client.clone(),
+            user_agent: self.user_agent.clone(),
         };
 
         let (request_sender, request_receiver) = channel::unbounded();
@@ -1558,6 +1568,7 @@ impl Backend for Client {
         let network = self.network.unwrap_or(Network::Bitcoin);
         let email_clone = email.clone();
         let auth_client_2 = self.auth_client.clone();
+        let user_agent = self.user_agent.clone();
 
         tracing::debug!("auth_request: starting for email={}", email);
 
@@ -1597,6 +1608,7 @@ impl Backend for Client {
                 config.auth_api_url.clone(),
                 config.auth_api_public_key.clone(),
                 email_clone.clone(),
+                user_agent.clone(),
             );
 
             // Send OTP (requires async for the HTTP call)

@@ -117,6 +117,7 @@ pub struct LianaLiteLogin {
 
     connect_wallet_id: String,
     email: String,
+    backend_type: super::client::BackendType,
 
     processing: bool,
     step: ConnectionStep,
@@ -145,6 +146,7 @@ impl LianaLiteLogin {
         network: Network,
         directory_wallet_id: settings::WalletId,
         auth_cfg: settings::AuthConfig,
+        backend_type: super::client::BackendType,
     ) -> (Self, Task<Message>) {
         (
             Self {
@@ -155,6 +157,7 @@ impl LianaLiteLogin {
                 directory_wallet_id,
                 connect_wallet_id: auth_cfg.wallet_id.clone(),
                 email: auth_cfg.email.clone(),
+                backend_type,
                 auth_error: None,
                 processing: true,
             },
@@ -162,7 +165,7 @@ impl LianaLiteLogin {
                 async move {
                     let service_config = super::client::get_service_config(
                         network,
-                        super::client::BackendType::LianaConnect,
+                        backend_type,
                     )
                     .await
                     .map_err(|e| Error::Unexpected(e.to_string()))?;
@@ -170,6 +173,7 @@ impl LianaLiteLogin {
                         service_config.auth_api_url,
                         service_config.auth_api_public_key,
                         auth_cfg.email,
+                        backend_type.user_agent(),
                     );
                     connect_with_credentials(
                         client,
@@ -230,6 +234,7 @@ impl LianaLiteLogin {
                 Message::View(ViewMessage::RequestOTP) => {
                     let email = self.email.clone();
                     let network = self.network;
+                    let backend_type = self.backend_type;
                     self.processing = true;
                     self.connection_error = None;
                     self.auth_error = None;
@@ -237,7 +242,7 @@ impl LianaLiteLogin {
                         async move {
                             let config = super::client::get_service_config(
                                 network,
-                                super::client::BackendType::LianaConnect,
+                                backend_type,
                             )
                             .await
                             .map_err(|e| {
@@ -251,6 +256,7 @@ impl LianaLiteLogin {
                                 config.auth_api_url,
                                 config.auth_api_public_key,
                                 email,
+                                backend_type.user_agent(),
                             );
                             client.sign_in_otp().await?;
                             Ok((client, config.backend_api_url))

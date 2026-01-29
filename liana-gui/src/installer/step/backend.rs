@@ -198,6 +198,7 @@ impl Step for RemoteBackendLogin {
                                     config.auth_api_url,
                                     config.auth_api_public_key,
                                     email,
+                                    client::BackendType::LianaConnect.user_agent(),
                                 );
                                 client.sign_in_otp().await?;
                                 Ok((client, config.backend_api_url))
@@ -426,7 +427,12 @@ pub async fn connect_with_existing_account(
             }
         })?;
 
-    let client = AuthClient::new(config.auth_api_url, config.auth_api_public_key, email);
+    let client = AuthClient::new(
+        config.auth_api_url,
+        config.auth_api_public_key,
+        email,
+        client::BackendType::LianaConnect.user_agent(),
+    );
 
     let mut tokens = cache::Account::from_cache(&network_dir, &client.email)
         .map_err(|_| Error::Unexpected("Account must be in cache".to_string()))?
