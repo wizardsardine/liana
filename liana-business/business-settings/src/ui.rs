@@ -5,29 +5,37 @@ use std::sync::Arc;
 use iced::{Subscription, Task};
 use liana_gui::{
     app::{
-        cache::Cache, menu::Menu, message::Message, settings::SettingsUI, state::State, view,
-        wallet::Wallet, Config,
+        cache::Cache,
+        menu::Menu,
+        message::Message,
+        settings::SettingsUI,
+        state::{settings::wallet::RegisterWalletModal, State},
+        view,
+        wallet::Wallet,
+        Config,
     },
     daemon::{Daemon, DaemonBackend},
     dir::LianaDirectory,
 };
-use liana_ui::widget::Element;
+use liana_ui::widget::{modal, Element};
 
 use crate::message::{Msg, Section};
 use crate::views;
 
 /// Business-specific settings UI.
 pub struct BusinessSettingsUI {
+    pub(crate) data_dir: LianaDirectory,
     pub(crate) wallet: Arc<Wallet>,
     pub(crate) current_section: Option<Section>,
     pub(crate) fiat_enabled: bool,
     #[allow(dead_code)]
     processing: bool,
+    register_modal: Option<RegisterWalletModal>,
 }
 
 impl SettingsUI<Msg> for BusinessSettingsUI {
     fn new(
-        _data_dir: LianaDirectory,
+        data_dir: LianaDirectory,
         wallet: Arc<Wallet>,
         _daemon: Arc<dyn Daemon + Sync + Send>,
         _daemon_backend: DaemonBackend,
@@ -35,10 +43,12 @@ impl SettingsUI<Msg> for BusinessSettingsUI {
         _config: Arc<Config>,
     ) -> (Self, Task<Msg>) {
         let ui = Self {
+            data_dir,
             wallet,
             current_section: None,
             fiat_enabled: false,
             processing: false,
+            register_modal: None,
         };
         // TODO: Fetch fiat setting from backend on load
         (ui, Task::none())
@@ -53,8 +63,7 @@ impl SettingsUI<Msg> for BusinessSettingsUI {
         match message {
             Msg::SelectSection(section) => self.on_select_section(section),
             Msg::EnableFiat(enabled) => self.on_enable_fiat(enabled),
-            Msg::SelectDevice(fingerprint) => self.on_select_device(fingerprint),
-            Msg::RegisterWallet => self.on_register_wallet(),
+            Msg::RegisterWallet => Task::none(), // Handled in State::update()
         }
     }
 
@@ -68,12 +77,12 @@ impl SettingsUI<Msg> for BusinessSettingsUI {
     }
 
     fn subscription(&self) -> Subscription<Msg> {
-        // TODO: Add async-hwi service subscription when on Wallet section
         Subscription::none()
     }
 
     fn stop(&mut self) {
         self.current_section = None;
+        self.register_modal = None;
     }
 
     fn reload(&mut self, _daemon: Arc<dyn Daemon + Sync + Send>, wallet: Arc<Wallet>) -> Task<Msg> {
@@ -94,19 +103,6 @@ impl BusinessSettingsUI {
         // TODO: Save to backend
         Task::none()
     }
-
-    fn on_select_device(
-        &mut self,
-        _fingerprint: liana::miniscript::bitcoin::bip32::Fingerprint,
-    ) -> Task<Msg> {
-        // TODO: Implement when async-hwi service is available
-        Task::none()
-    }
-
-    fn on_register_wallet(&mut self) -> Task<Msg> {
-        // TODO: Implement when async-hwi service is available
-        Task::none()
-    }
 }
 
 /// State trait implementation for integration with liana-gui's App panel system.
@@ -122,10 +118,20 @@ impl State for BusinessSettingsUI {
             Msg::SelectSection(Section::About) => {
                 view::Message::Settings(view::SettingsMessage::AboutSection)
             }
-            // Internal messages that don't need to propagate
+            Msg::RegisterWallet => {
+                view::Message::Settings(view::SettingsMessage::RegisterWallet)
+            }
             _ => view::Message::Reload,
         });
-        view::dashboard(&Menu::Settings, cache, None, content)
+        let dashboard = view::dashboard(&Menu::Settings, cache, None, content);
+
+        if let Some(m) = &self.register_modal {
+            modal::Modal::new(dashboard, m.view())
+                .on_blur(Some(view::Message::Close))
+                .into()
+        } else {
+            dashboard
+        }
     }
 
     fn update(
@@ -134,24 +140,66 @@ impl State for BusinessSettingsUI {
         cache: &Cache,
         message: Message,
     ) -> Task<Message> {
-        if let Message::View(view::Message::Settings(settings_msg)) = &message {
-            let msg = match settings_msg {
-                view::SettingsMessage::GeneralSection => Some(Msg::SelectSection(Section::General)),
-                view::SettingsMessage::EditWalletSettings => {
-                    Some(Msg::SelectSection(Section::Wallet))
-                }
-                view::SettingsMessage::AboutSection => Some(Msg::SelectSection(Section::About)),
-                _ => None,
-            };
-            if let Some(m) = msg {
-                let _ = SettingsUI::update(self, daemon, cache, m);
+        match message {
+            Message::View(view::Message::Settings(view::SettingsMessage::RegisterWallet)) => {
+                self.register_modal = Some(RegisterWalletModal::new(
+                    self.data_dir.clone(),
+                    self.wallet.clone(),
+                    cache.network,
+                ));
+                Task::none()
             }
+            Message::View(view::Message::Close) => {
+                self.register_modal = None;
+                Task::none()
+            }
+            Message::WalletUpdated(ref res) => {
+                if let Ok(wallet) = res {
+                    self.wallet = wallet.clone();
+                }
+                if let Some(modal) = &mut self.register_modal {
+                    modal.update(daemon, cache, message)
+                } else {
+                    Task::none()
+                }
+            }
+            Message::HardwareWallets(_)
+            | Message::View(view::Message::SelectHardwareWallet(_))
+            | Message::View(view::Message::Reload) => {
+                if let Some(modal) = &mut self.register_modal {
+                    modal.update(daemon, cache, message)
+                } else {
+                    Task::none()
+                }
+            }
+            Message::View(view::Message::Settings(ref settings_msg)) => {
+                let msg = match settings_msg {
+                    view::SettingsMessage::GeneralSection => {
+                        Some(Msg::SelectSection(Section::General))
+                    }
+                    view::SettingsMessage::EditWalletSettings => {
+                        Some(Msg::SelectSection(Section::Wallet))
+                    }
+                    view::SettingsMessage::AboutSection => {
+                        Some(Msg::SelectSection(Section::About))
+                    }
+                    _ => None,
+                };
+                if let Some(m) = msg {
+                    let _ = SettingsUI::update(self, daemon, cache, m);
+                }
+                Task::none()
+            }
+            _ => Task::none(),
         }
-        Task::none()
     }
 
     fn subscription(&self) -> Subscription<Message> {
-        Subscription::none()
+        if let Some(modal) = &self.register_modal {
+            modal.subscription()
+        } else {
+            Subscription::none()
+        }
     }
 
     fn reload(
@@ -159,6 +207,7 @@ impl State for BusinessSettingsUI {
         daemon: Arc<dyn Daemon + Sync + Send>,
         wallet: Arc<Wallet>,
     ) -> Task<Message> {
+        self.register_modal = None;
         let _ = SettingsUI::reload(self, daemon, wallet);
         Task::none()
     }

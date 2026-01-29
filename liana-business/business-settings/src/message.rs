@@ -1,7 +1,5 @@
 //! Message types for business settings UI.
 
-use liana::miniscript::bitcoin::bip32::Fingerprint;
-
 /// Settings section for navigation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Section {
@@ -19,9 +17,6 @@ pub enum Msg {
 
     /// Toggle fiat price display.
     EnableFiat(bool),
-
-    /// Select a hardware device for registration.
-    SelectDevice(Fingerprint),
 
     /// Register wallet on selected device.
     RegisterWallet,

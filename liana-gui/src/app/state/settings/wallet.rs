@@ -343,7 +343,7 @@ impl RegisterWalletModal {
 }
 
 impl RegisterWalletModal {
-    fn view(&self) -> Element<view::Message> {
+    pub fn view(&self) -> Element<view::Message> {
         view::settings::register_wallet_modal(
             self.warning.as_ref(),
             &self.hws.list,
@@ -353,11 +353,11 @@ impl RegisterWalletModal {
         )
     }
 
-    fn subscription(&self) -> Subscription<Message> {
+    pub fn subscription(&self) -> Subscription<Message> {
         self.hws.refresh().map(Message::HardwareWallets)
     }
 
-    fn update(
+    pub fn update(
         &mut self,
         daemon: Arc<dyn Daemon + Sync + Send>,
         cache: &Cache,
@@ -424,7 +424,7 @@ impl RegisterWalletModal {
     }
 }
 
-async fn register_wallet(
+pub async fn register_wallet(
     data_dir: LianaDirectory,
     network: Network,
     hw: std::sync::Arc<dyn async_hwi::HWI + Send + Sync>,
