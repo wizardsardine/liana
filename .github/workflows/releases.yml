@@ -82,6 +82,7 @@ jobs:
         with:
           makeLatest: true
           name: Coincube v${{ env.COINCUBE_VERSION }}
+          body: Installers for Windows, macOS and Linux
           allowUpdates: true
 
       - name: Generate Icons for Installers
