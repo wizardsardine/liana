@@ -13,6 +13,12 @@ use crate::{
     services::{coincube::*, mavapay::*},
 };
 
+#[cfg(not(debug_assertions))]
+const KEYRING_SERVICE_NAME: &'static str = "io.coincube.Vault";
+
+#[cfg(debug_assertions)]
+const KEYRING_SERVICE_NAME: &'static str = "dev.coincube.Vault";
+
 impl State for BuySellPanel {
     fn view<'a>(
         &'a self,
@@ -104,7 +110,7 @@ impl State for BuySellPanel {
                 };
 
                 if self.login.as_ref().is_none() {
-                    match keyring::Entry::new("io.coincube.Vault", &self.wallet.name) {
+                    match keyring::Entry::new(KEYRING_SERVICE_NAME, &self.wallet.name) {
                         Ok(entry) => {
                             if let Ok(user_data) = entry.get_secret() {
                                 match serde_json::from_slice::<LoginResponse>(&user_data) {
@@ -192,7 +198,7 @@ impl State for BuySellPanel {
             }
             view::BuySellMessage::SetLoginState(login) => {
                 // update token in OS keyring
-                match keyring::Entry::new("io.coincube.Vault", &self.wallet.name) {
+                match keyring::Entry::new(KEYRING_SERVICE_NAME, &self.wallet.name) {
                     Ok(entry) => {
                         if let Err(e) = entry.delete_credential() {
                             log::warn!("Unable to clear previous entry from keyring: {e}");
@@ -225,7 +231,7 @@ impl State for BuySellPanel {
                 self.login = None;
 
                 // clear keyring credentials
-                if let Ok(entry) = keyring::Entry::new("io.coincube.Vault", &self.wallet.name) {
+                if let Ok(entry) = keyring::Entry::new(KEYRING_SERVICE_NAME, &self.wallet.name) {
                     if let Err(e) = entry.delete_credential() {
                         log::error!("[BUYSELL] Unable to delete credentials from OS keyring: {e:?}")
                     };
