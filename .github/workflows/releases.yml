@@ -120,7 +120,7 @@ jobs:
 
       - name: Build Windows MSI
         if: matrix.platform == 'windows'
-        run: cargo wix --package coincube-gui --profile minimal --output "target\wix\coincube-x86_64-pc-windows-msvc.msi" --include ./contrib/release/wix/main.wxs --nocapture -v
+        run: cargo wix --package coincube-gui --profile minimal --output "target/wix/coincube-${{ env.COINCUBE_VERSION }}-${{ matrix.target }}.msi" --include ./contrib/release/wix/main.wxs --nocapture -v
 
       - name: Upload Windows MSI
         if: matrix.platform == 'windows'
