@@ -323,12 +323,9 @@ pub(crate) fn quote_selection_ux<'a>(
 
     let column = widget::column![
         // quote selector
-        widget::scrollable(widget::Column::from_iter(
-            quotes
-                .into_iter()
-                .enumerate()
-                .map(|(idx, quote)| quote_display(quote, Some(idx) == selected, idx).into()),
-        ))
+        widget::scrollable(widget::Column::from_iter(quotes.iter().enumerate().map(
+            |(idx, quote)| quote_display(quote, Some(idx) == selected, idx).into()
+        ),))
         .height(320)
         .anchor_top(),
         // separators

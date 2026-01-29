@@ -22,8 +22,7 @@ jobs:
         run: cargo fmt -- --check
       - name: clippy
         run: |
-          sudo apt-get update &&
-          sudo apt-get install --allow-downgrades libudev-dev pkg-config libvulkan-dev libdbus-1-dev protobuf-compiler &&
+          sudo apt-get update && sudo apt-get install -y libudev-dev pkg-config protobuf-compiler libdbus-1-dev libvulkan-dev libglib2.0-dev
           cargo clippy --all-targets -- -D warnings
 
   unit_tests:
@@ -60,6 +59,6 @@ jobs:
       - name: Test on Rust ${{ matrix.toolchain }} (Unix)
         if: matrix.os == 'ubuntu-latest'
         run: |
-          sudo apt-get update &&
-          sudo apt-get install libudev-dev libfontconfig1-dev pkg-config libdbus-1-dev protobuf-compiler &&
+          sudo apt-get update
+          sudo apt-get install libudev-dev libfontconfig1-dev pkg-config libdbus-1-dev protobuf-compiler
           cargo test --color always -- --nocapture
