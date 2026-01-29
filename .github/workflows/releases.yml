@@ -151,7 +151,7 @@ jobs:
           cargo build --package coincube-gui --profile minimal --target ${{ matrix.target }}
 
       - name: Generate Icons for Installers
-        if: matrix.platform == 'macos'
+        if: matrix.platform != 'linux'
         run: |
           python3 -m venv .venv
           .venv/bin/pip install pillow icnsutil
