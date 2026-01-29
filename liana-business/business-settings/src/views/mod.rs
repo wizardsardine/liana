@@ -11,32 +11,6 @@ use liana_ui::{
 use crate::message::{Msg, Section};
 use crate::ui::BusinessSettingsUI;
 
-/// Shared layout wrapper for settings views.
-pub fn layout<'a, T: Into<Element<'a, Msg>>>(content: T) -> Element<'a, Msg> {
-    Container::new(
-        scrollable(
-            Column::new()
-                .push(Space::with_height(30))
-                .push(
-                    Row::new()
-                        .push(Space::with_width(Length::FillPortion(1)))
-                        .push(
-                            Container::new(content)
-                                .width(Length::FillPortion(8))
-                                .max_width(1000),
-                        )
-                        .push(Space::with_width(Length::FillPortion(1))),
-                )
-                .push(Space::with_height(30)),
-        )
-        .width(Length::Fill),
-    )
-    .style(theme::container::background)
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .into()
-}
-
 /// Settings section list view.
 pub fn list_view() -> Element<'static, Msg> {
     let header = text("Settings").size(30).bold();

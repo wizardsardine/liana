@@ -5,8 +5,8 @@ use std::sync::Arc;
 use iced::{Subscription, Task};
 use liana_gui::{
     app::{
-        cache::Cache, message::Message, settings::SettingsUI, state::State, view, wallet::Wallet,
-        Config,
+        cache::Cache, menu::Menu, message::Message, settings::SettingsUI, state::State, view,
+        wallet::Wallet, Config,
     },
     daemon::{Daemon, DaemonBackend},
     dir::LianaDirectory,
@@ -59,13 +59,12 @@ impl SettingsUI<Msg> for BusinessSettingsUI {
     }
 
     fn view<'a>(&'a self, _cache: &'a Cache) -> Element<'a, Msg> {
-        let content = match self.current_section {
+        match self.current_section {
             None => views::list_view(),
             Some(Section::General) => views::general_view(self),
             Some(Section::Wallet) => views::wallet_view(self),
             Some(Section::About) => views::about_view(),
-        };
-        views::layout(content)
+        }
     }
 
     fn subscription(&self) -> Subscription<Msg> {
@@ -113,7 +112,7 @@ impl BusinessSettingsUI {
 /// State trait implementation for integration with liana-gui's App panel system.
 impl State for BusinessSettingsUI {
     fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, view::Message> {
-        SettingsUI::view(self, cache).map(|msg| match msg {
+        let content = SettingsUI::view(self, cache).map(|msg| match msg {
             Msg::SelectSection(Section::General) => {
                 view::Message::Settings(view::SettingsMessage::GeneralSection)
             }
@@ -125,7 +124,8 @@ impl State for BusinessSettingsUI {
             }
             // Internal messages that don't need to propagate
             _ => view::Message::Reload,
-        })
+        });
+        view::dashboard(&Menu::Settings, cache, None, content)
     }
 
     fn update(
