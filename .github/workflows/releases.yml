@@ -122,7 +122,7 @@ jobs:
       - name: Build Windows MSI
         if: matrix.platform == 'windows'
         run: |
-          cargo build --package coincube-gui --profile minimal --nocapture -v --locked
+          cargo build --package coincube-gui --profile minimal --locked
           cargo wix --package coincube-gui --no-build --profile minimal --output "target/wix/coincube-${{ env.COINCUBE_VERSION }}-${{ matrix.target }}.msi" --include ./contrib/release/wix/main.wxs --nocapture -v
 
       - name: Upload Windows MSI
