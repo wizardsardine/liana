@@ -264,10 +264,10 @@ pub(crate) fn quote_selection_ux<'a>(
                 // payment details
                 widget::column![
                     text::caption("Provider").color(color::GREY_3),
-                    text::p3_medium(quote.service_provider.as_str()),
+                    text::p2_medium(quote.service_provider.as_str()),
                     widget::Space::new().height(5),
                     text::caption("Total Fee").color(color::GREY_3),
-                    text::p3_medium(format!(
+                    text::p2_medium(format!(
                         "{} {}",
                         quote.total_fee,
                         match buy_or_sell {
@@ -360,7 +360,7 @@ pub(crate) fn quote_selection_ux<'a>(
             widget::row![
                 text::h4_bold("Select a preferred provider"),
                 widget::Space::new().width(iced::Length::Fill),
-                button::secondary_compact(Some(icon::arrow_back()), "Go Back To Input Form")
+                button::primary_compact(Some(icon::arrow_back()), "Go Back To Input Form")
                     .on_press(view::buysell::meld::MeldMessage::NavigateBack)
                     .style(|th, st| {
                         let mut base = theme::button::primary(th, st);

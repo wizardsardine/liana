@@ -16,13 +16,13 @@ In addition, if you want to build the project from source, you will need:
 
 ## Development
 
-```
+```bash
 cargo run --bin coincube
 ```
 
 To enable Mavapay for supported countries:
 
-```
+```bash
 ENABLE_MAVAPAY=true cargo run --package coincube-gui
 ```
 
