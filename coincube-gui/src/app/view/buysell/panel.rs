@@ -87,8 +87,6 @@ pub struct BuySellPanel {
     pub step: BuySellFlowState,
 
     // Common fields (always present)
-    // TODO: Display errors using the globally provided facilities instead
-    pub error: Option<String>,
     pub network: bitcoin::Network,
 
     // services used by several buysell providers
@@ -110,7 +108,6 @@ impl BuySellPanel {
         BuySellPanel {
             // Start in detecting location state
             step: BuySellFlowState::DetectingLocation(false),
-            error: None,
             wallet,
             network,
             // API state
@@ -135,17 +132,6 @@ impl BuySellPanel {
                         .push(Space::new().width(Length::Fixed(8.0)))
                         .push(text::h5_regular("BUY/SELL").color(color::GREY_3))
                         .align_y(Alignment::Center),
-                )
-                // error display
-                .push(self.error.as_ref().map(|err| {
-                    Container::new(text::text(err).size(12).style(theme::text::error).center())
-                        .padding(10)
-                        .style(theme::card::invalid)
-                }))
-                .push(
-                    self.error
-                        .is_some()
-                        .then(|| Space::new().height(Length::Fixed(20.0))),
                 )
                 // render flow state
                 .push({

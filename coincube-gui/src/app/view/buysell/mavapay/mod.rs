@@ -31,7 +31,6 @@ pub enum MavapayState {
     History {
         transactions: Option<Vec<OrderTransaction>>,
         loading: bool,
-        error: Option<String>,
     },
     OrderDetail {
         transaction: OrderTransaction,
@@ -373,13 +372,11 @@ impl MavapayState {
                 MavapayState::History {
                     transactions,
                     loading,
-                    error,
                 },
                 msg,
             ) => match msg {
                 MavapayMessage::FetchTransactions => {
                     *loading = true;
-                    *error = None;
                     let client = coincube_client.clone();
 
                     let task = iced::Task::perform(
@@ -450,7 +447,6 @@ impl MavapayState {
                     *state = MavapayState::History {
                         transactions: None,
                         loading: true,
-                        error: None,
                     };
 
                     return Some(iced::Task::done(view::Message::BuySell(

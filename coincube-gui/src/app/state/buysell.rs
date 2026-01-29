@@ -89,7 +89,6 @@ impl State for BuySellPanel {
                 return Task::none();
             }
             Message::View(view::Message::DismissError) => {
-                self.error = None;
                 return Task::none();
             }
             _ => return Task::none(),
@@ -97,8 +96,6 @@ impl State for BuySellPanel {
 
         match message {
             view::BuySellMessage::ResetWidget => {
-                self.error = None;
-
                 if self.detected_country.is_none() {
                     log::warn!("Unable to reset widget, country is unknown");
                     self.step = BuySellFlowState::DetectingLocation(true);
@@ -148,8 +145,6 @@ impl State for BuySellPanel {
             }
 
             view::BuySellMessage::BackToAddressView => {
-                self.error = None;
-
                 // Extract buy_or_sell from Mavapay state and go back to Initialization
                 let buy_or_sell = match &self.step {
                     BuySellFlowState::Mavapay(mavapay_state) => match mavapay_state {
@@ -197,17 +192,23 @@ impl State for BuySellPanel {
             }
             view::BuySellMessage::SetLoginState(login) => {
                 // update token in OS keyring
-                if let Ok(entry) = keyring::Entry::new("io.coincube.Vault", &self.wallet.name) {
-                    if let Err(e) = entry.delete_credential() {
-                        log::warn!("Unable to clear previous entry from keyring: {e}");
-                    };
+                match keyring::Entry::new("io.coincube.Vault", &self.wallet.name) {
+                    Ok(entry) => {
+                        if let Err(e) = entry.delete_credential() {
+                            log::warn!("Unable to clear previous entry from keyring: {e}");
+                        };
 
-                    let bytes = serde_json::to_vec(&login).unwrap();
-                    if let Err(e) = entry.set_secret(&bytes) {
-                        log::error!("Unable to store user data in keyring: {e}");
-                    };
-                } else {
-                    self.error = Some("Unable to access OS keyring".to_string());
+                        let bytes = serde_json::to_vec(&login).unwrap();
+                        if let Err(e) = entry.set_secret(&bytes) {
+                            log::error!("Unable to store user data in keyring: {e}");
+                        };
+                    }
+                    Err(err) => {
+                        log::error!(
+                            "[BUYSELL] Unable to persist login state, keyring inaccessible: {}",
+                            err
+                        )
+                    }
                 };
 
                 // user is successfully logged in: 🥳
@@ -291,10 +292,7 @@ impl State for BuySellPanel {
                 // TODO: state/region detection for select countries
 
                 let country = match result {
-                    Ok(country) => {
-                        self.error = None;
-                        country
-                    }
+                    Ok(country) => country,
                     Err(err) => {
                         log::error!("Error detecting country via geo-ip, switching to manual country selector.\n    {}", err);
 
@@ -398,7 +396,6 @@ impl State for BuySellPanel {
 
                         self.step = BuySellFlowState::Mavapay(MavapayState::History {
                             loading: true,
-                            error: None,
                             transactions: None,
                         });
 
@@ -414,7 +411,6 @@ impl State for BuySellPanel {
             }
             view::BuySellMessage::SessionError(description, error) => {
                 let error_message = format!("{} ({})", description, error);
-                self.error = Some(error_message.clone());
 
                 // unblock UI retry buttons in step-specific flows
                 if let BuySellFlowState::Mavapay(m) = &mut self.step {
@@ -422,13 +418,8 @@ impl State for BuySellPanel {
                         MavapayState::Transaction { sending_quote, .. } => {
                             *sending_quote = false;
                         }
-                        MavapayState::History {
-                            loading,
-                            error: step_error,
-                            ..
-                        } => {
+                        MavapayState::History { loading, .. } => {
                             *loading = false;
-                            *step_error = Some(error_message);
                         }
                         MavapayState::OrderDetail { loading, .. } => {
                             *loading = false;
@@ -446,6 +437,9 @@ impl State for BuySellPanel {
                 {
                     *loading = false;
                 }
+
+                // display error using error toast
+                return iced::Task::done(Message::View(view::Message::ShowError(error_message)));
             }
 
             // state specific messages
@@ -538,7 +532,6 @@ impl State for BuySellPanel {
                             .map(|m| Message::View(view::Message::BuySell(m)));
                         }
                         view::BuySellMessage::RegistrationSuccess => {
-                            self.error = None;
                             self.step = BuySellFlowState::OtpVerification {
                                 email: email.clone(),
                                 otp: String::new(),

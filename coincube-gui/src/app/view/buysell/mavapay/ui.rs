@@ -651,74 +651,52 @@ fn history_view<'a>(state: &'a MavapayState) -> Column<'a, BuySellMessage> {
     let MavapayState::History {
         transactions,
         loading,
-        error,
     } = state
     else {
         unreachable!()
     };
 
-    let content: iced::Element<'a, BuySellMessage, theme::Theme> =
-        match (loading, transactions, error) {
-            (true, _, _) => container(
-                iced::widget::column![
-                    reload_icon().size(24).style(theme::text::secondary),
-                    Space::new().height(10),
-                    text::p2_medium("Loading transaction history...").color(color::GREY_2)
-                ]
-                .align_x(Alignment::Center),
-            )
-            .padding(40)
-            .width(Length::Fill)
-            .align_x(Alignment::Center)
-            .into(),
-            (false, _, Some(err)) => card::simple(
-                iced::widget::column![
-                    iced::widget::row![
-                        warning_icon().size(20).style(theme::text::warning),
-                        Space::new().width(10),
-                        text::p1_bold("Failed to load transaction history")
-                    ]
-                    .align_y(Alignment::Center),
-                    Space::new().height(10),
-                    text::p2_medium(err).color(color::GREY_2),
-                    Space::new().height(15),
-                    button::primary(Some(reload_icon()), "Retry")
-                        .on_press(BuySellMessage::Mavapay(MavapayMessage::FetchTransactions))
-                ]
-                .padding(20)
-                .align_x(Alignment::Center)
-                .width(Length::Fill),
-            )
-            .width(Length::Fill)
-            .into(),
-            (false, Some(transaction_list), None) if transaction_list.is_empty() => card::simple(
-                iced::widget::column![
-                    history_icon().size(48).style(theme::text::secondary),
-                    Space::new().height(15),
-                    text::p1_bold("No transactions found"),
-                    Space::new().height(5),
-                    text::p2_medium(
-                        "Your transactions will appear here once you buy or sell bitcoin."
-                    )
+    let content: iced::Element<'a, BuySellMessage, theme::Theme> = match (loading, transactions) {
+        (true, _) => container(
+            iced::widget::column![
+                reload_icon().size(24).style(theme::text::secondary),
+                Space::new().height(10),
+                text::p2_medium("Loading transaction history...").color(color::GREY_2),
+            ]
+            .align_x(Alignment::Center),
+        )
+        .padding(40)
+        .width(Length::Fill)
+        .align_x(Alignment::Center)
+        .into(),
+        (false, Some(transaction_list)) if transaction_list.is_empty() => card::simple(
+            iced::widget::column![
+                history_icon().size(48).style(theme::text::secondary),
+                Space::new().height(15),
+                text::p1_bold("No transactions found"),
+                Space::new().height(5),
+                text::p2_medium("Your transactions will appear here once you buy or sell bitcoin.")
                     .color(color::GREY_2)
-                ]
-                .padding(40)
-                .align_x(Alignment::Center)
-                .width(Length::Fill),
+            ]
+            .padding(40)
+            .align_x(Alignment::Center)
+            .width(Length::Fill),
+        )
+        .width(Length::Fill)
+        .into(),
+        (false, Some(transaction_list)) => transaction_list
+            .iter()
+            .enumerate()
+            .fold(
+                iced::widget::column![].spacing(10),
+                |col, (idx, transaction)| col.push(transaction_row(idx, transaction)),
             )
             .width(Length::Fill)
             .into(),
-            (false, Some(transaction_list), None) => transaction_list
-                .iter()
-                .enumerate()
-                .fold(
-                    iced::widget::column![].spacing(10),
-                    |col, (idx, transaction)| col.push(transaction_row(idx, transaction)),
-                )
-                .width(Length::Fill)
-                .into(),
-            (false, None, None) => container(text::p2_medium("Unexpected state")).into(),
-        };
+        (false, None) => button::primary(Some(reload_icon()), "Retry")
+            .on_press(BuySellMessage::Mavapay(MavapayMessage::FetchTransactions))
+            .into(),
+    };
 
     iced::widget::column![
         button::transparent(Some(previous_icon()), "Previous")
