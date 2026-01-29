@@ -337,6 +337,9 @@ When user arrives at wallet selection, three possible subflows based on status:
 
 ## Changelog
 
+### 2026-01-29
+- Removed General section from business-settings (fiat toggle); only Wallet and About remain
+
 ### 2026-01-26
 - Hide organizations with 0 accessible wallets from org selection view
 

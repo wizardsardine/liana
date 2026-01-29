@@ -1,6 +1,6 @@
 //! View functions for business settings UI.
 
-use iced::widget::{scrollable, Column, Container, Row, Space, Toggler};
+use iced::widget::{scrollable, Column, Container, Row, Space};
 use iced::{Alignment, Length};
 use liana_ui::{
     component::{badge, button, card, separation, text::*},
@@ -14,12 +14,6 @@ use crate::ui::BusinessSettingsUI;
 /// Settings section list view.
 pub fn list_view() -> Element<'static, Msg> {
     let header = text("Settings").size(30).bold();
-
-    let general = menu_entry(
-        "General",
-        icon::wrench_icon(),
-        Msg::SelectSection(Section::General),
-    );
 
     let wallet = menu_entry(
         "Wallet",
@@ -37,37 +31,8 @@ pub fn list_view() -> Element<'static, Msg> {
         .spacing(20)
         .width(Length::Fill)
         .push(header)
-        .push(general)
         .push(wallet)
         .push(about)
-        .into()
-}
-
-/// General settings section view.
-pub fn general_view(state: &BusinessSettingsUI) -> Element<'_, Msg> {
-    let header = section_header("General");
-
-    let fiat_card = card::simple(
-        Column::new().spacing(20).push(
-            Row::new()
-                .spacing(10)
-                .align_y(Alignment::Center)
-                .push(text("Fiat price:").bold())
-                .push(Space::with_width(Length::Fill))
-                .push(
-                    Toggler::new(state.fiat_enabled)
-                        .on_toggle(Msg::EnableFiat)
-                        .style(theme::toggler::primary),
-                ),
-        ),
-    )
-    .width(Length::Fill);
-
-    Column::new()
-        .spacing(20)
-        .push(header)
-        .push(fiat_card)
-        .width(Length::Fill)
         .into()
 }
 

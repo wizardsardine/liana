@@ -27,7 +27,6 @@ pub struct BusinessSettingsUI {
     pub(crate) data_dir: LianaDirectory,
     pub(crate) wallet: Arc<Wallet>,
     pub(crate) current_section: Option<Section>,
-    pub(crate) fiat_enabled: bool,
     #[allow(dead_code)]
     processing: bool,
     register_modal: Option<RegisterWalletModal>,
@@ -46,7 +45,6 @@ impl SettingsUI<Msg> for BusinessSettingsUI {
             data_dir,
             wallet,
             current_section: None,
-            fiat_enabled: false,
             processing: false,
             register_modal: None,
         };
@@ -66,7 +64,6 @@ impl SettingsUI<Msg> for BusinessSettingsUI {
                 Task::none()
             }
             Msg::SelectSection(section) => self.on_select_section(section),
-            Msg::EnableFiat(enabled) => self.on_enable_fiat(enabled),
             Msg::RegisterWallet => Task::none(), // Handled in State::update()
         }
     }
@@ -74,7 +71,6 @@ impl SettingsUI<Msg> for BusinessSettingsUI {
     fn view<'a>(&'a self, _cache: &'a Cache) -> Element<'a, Msg> {
         match self.current_section {
             None => views::list_view(),
-            Some(Section::General) => views::general_view(self),
             Some(Section::Wallet) => views::wallet_view(self),
             Some(Section::About) => views::about_view(),
         }
@@ -103,11 +99,6 @@ impl BusinessSettingsUI {
         Task::none()
     }
 
-    fn on_enable_fiat(&mut self, enabled: bool) -> Task<Msg> {
-        self.fiat_enabled = enabled;
-        // TODO: Save to backend
-        Task::none()
-    }
 }
 
 /// State trait implementation for integration with liana-gui's App panel system.
@@ -115,9 +106,6 @@ impl State for BusinessSettingsUI {
     fn view<'a>(&'a self, cache: &'a Cache) -> Element<'a, view::Message> {
         let content = SettingsUI::view(self, cache).map(|msg| match msg {
             Msg::Home => view::Message::Menu(Menu::Settings),
-            Msg::SelectSection(Section::General) => {
-                view::Message::Settings(view::SettingsMessage::GeneralSection)
-            }
             Msg::SelectSection(Section::Wallet) => {
                 view::Message::Settings(view::SettingsMessage::EditWalletSettings)
             }
@@ -127,7 +115,6 @@ impl State for BusinessSettingsUI {
             Msg::RegisterWallet => {
                 view::Message::Settings(view::SettingsMessage::RegisterWallet)
             }
-            _ => view::Message::Reload,
         });
         let dashboard = view::dashboard(&Menu::Settings, cache, None, content);
 
@@ -180,9 +167,6 @@ impl State for BusinessSettingsUI {
             }
             Message::View(view::Message::Settings(ref settings_msg)) => {
                 let msg = match settings_msg {
-                    view::SettingsMessage::GeneralSection => {
-                        Some(Msg::SelectSection(Section::General))
-                    }
                     view::SettingsMessage::EditWalletSettings => {
                         Some(Msg::SelectSection(Section::Wallet))
                     }

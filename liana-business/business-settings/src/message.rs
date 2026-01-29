@@ -4,7 +4,6 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Section {
     #[default]
-    General,
     Wallet,
     About,
 }
@@ -17,9 +16,6 @@ pub enum Msg {
 
     /// Navigate to a section.
     SelectSection(Section),
-
-    /// Toggle fiat price display.
-    EnableFiat(bool),
 
     /// Register wallet on selected device.
     RegisterWallet,
