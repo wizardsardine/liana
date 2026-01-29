@@ -607,15 +607,17 @@ pub fn error_toast_overlay<'a>(msg: &'a str) -> coincube_ui::widget::Element<'a,
         iced::widget::Space::new().width(190.0),
         // center toast horizontally
         iced::widget::Space::new().width(iced::Length::Fill),
-        container(text::p1_bold(msg).color(color::WHITE))
-            .width(600)
-            .height(iced::Length::Fill)
-            .padding(25)
-            .style(|_| {
-                iced::widget::container::Style::default()
-                    .background(iced::Color::BLACK)
-                    .border(iced::Border::default().width(1).color(color::RED))
-            }),
+        container(iced::widget::scrollable(
+            text::p1_bold(msg).color(color::WHITE)
+        ))
+        .width(600)
+        .height(iced::Length::Fill)
+        .padding(25)
+        .style(|_| {
+            iced::widget::container::Style::default()
+                .background(iced::Color::BLACK)
+                .border(iced::Border::default().width(1).color(color::RED))
+        }),
         iced::widget::Button::new(
             cross_icon()
                 .color(color::BLACK)
