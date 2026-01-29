@@ -55,80 +55,7 @@ impl CoincubeClient {
     }
 }
 
-// registration endpoints
 impl CoincubeClient {
-    pub async fn sign_up(&self, request: SignUpRequest) -> Result<SignUpResponse, CoincubeError> {
-        let response = {
-            let url = format!("{}{}", self.base_url, "/api/v1/auth/signup");
-            self.client
-                .post(&url)
-                .header("Content-Type", "application/json")
-                .json(&request)
-                .send()
-        }
-        .await?;
-        let response = response.check_success().await?;
-
-        Ok(response.json().await?)
-    }
-
-    pub async fn check_email_verification_status(
-        &self,
-        email: &str,
-    ) -> Result<EmailVerificationStatusResponse, CoincubeError> {
-        let request = EmailVerificationStatusRequest { email };
-
-        let response = {
-            let url = format!(
-                "{}{}",
-                self.base_url, "/api/v1/auth/email-verification-status"
-            );
-            self.client.post(&url).json(&request).send()
-        }
-        .await?;
-        let response = response.check_success().await?;
-
-        Ok(response.json().await?)
-    }
-
-    pub async fn send_verification_email(
-        &self,
-        email: &str,
-    ) -> Result<VerifyEmailResponse, CoincubeError> {
-        let request = ResendVerificationEmailRequest {
-            email: email.to_string(),
-        };
-
-        let response = {
-            let url = format!(
-                "{}{}",
-                self.base_url, "/api/v1/auth/resend-verification-email"
-            );
-            self.client.post(&url).json(&request).send()
-        }
-        .await?;
-        let response = response.check_success().await?;
-
-        Ok(response.json().await?)
-    }
-
-    pub async fn login(&self, email: &str, password: &str) -> Result<LoginResponse, CoincubeError> {
-        let request = LoginRequest {
-            provider: 1, // EmailProvider = 1
-            email: email.to_string(),
-            password: password.to_string(),
-        };
-
-        let response = {
-            let url = format!("{}{}", self.base_url, "/api/v1/auth/login");
-            self.client.post(&url).json(&request).send()
-        }
-        .await?;
-        let response = response.check_success().await?;
-
-        Ok(response.json().await?)
-    }
-
     pub async fn refresh_login(&self, refresh_token: &str) -> Result<LoginResponse, CoincubeError> {
         let request = RefreshTokenRequest { refresh_token };
 
@@ -142,14 +69,48 @@ impl CoincubeClient {
         Ok(response.json().await?)
     }
 
-    pub async fn send_password_reset_email(
-        &self,
-        email: &str,
-    ) -> Result<PasswordResetEmailResponse, CoincubeError> {
-        let request = PasswordResetEmailRequest { email };
-
+    pub async fn login_send_otp(&self, request: OtpRequest) -> Result<(), CoincubeError> {
         let response = {
-            let url = format!("{}{}", self.base_url, "/api/v1/auth/forgot-password");
+            let url = format!("{}{}", self.base_url, "/api/v1/auth/login/request-otp");
+            self.client.post(&url).json(&request).send()
+        }
+        .await?;
+        response.check_success().await?;
+
+        Ok(())
+    }
+
+    pub async fn login_verify_otp(
+        &self,
+        request: OtpVerifyRequest,
+    ) -> Result<LoginResponse, CoincubeError> {
+        let response = {
+            let url = format!("{}{}", self.base_url, "/api/v1/auth/login/verify-otp");
+            self.client.post(&url).json(&request).send()
+        }
+        .await?;
+        let response = response.check_success().await?;
+
+        Ok(response.json().await?)
+    }
+
+    pub async fn signup_send_otp(&self, request: OtpRequest) -> Result<(), CoincubeError> {
+        let response = {
+            let url = format!("{}{}", self.base_url, "/api/v1/auth/signup/request-otp");
+            self.client.post(&url).json(&request).send()
+        }
+        .await?;
+        response.check_success().await?;
+
+        Ok(())
+    }
+
+    pub async fn signup_verify_otp(
+        &self,
+        request: OtpVerifyRequest,
+    ) -> Result<LoginResponse, CoincubeError> {
+        let response = {
+            let url = format!("{}{}", self.base_url, "/api/v1/auth/signup/verify-otp");
             self.client.post(&url).json(&request).send()
         }
         .await?;

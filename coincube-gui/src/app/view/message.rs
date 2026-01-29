@@ -191,12 +191,9 @@ pub enum BuySellMessage {
     LogOut,
 
     // automatic user login
-    SubmitLogin {
-        skip_email_verification: bool,
-    },
+    SubmitLogin,
     LoginSuccess {
         login: crate::services::coincube::LoginResponse,
-        email_verified: bool,
     },
 
     // ip geolocation
@@ -207,28 +204,18 @@ pub enum BuySellMessage {
     AddressCreated(super::buysell::panel::LabelledAddress),
 
     // user Registration
-    LegalNameChanged(String),
     EmailChanged(String),
-    Password1Changed(String),
-    Password2Changed(String),
     SubmitRegistration,
     RegistrationSuccess,
 
-    // email Verification
-    SendVerificationEmail,
-    CheckEmailVerificationStatus,
-    EmailVerificationFailed,
+    // OTP Verification
+    SendOtp,
+    OtpChanged(String),
+    OtpCooldownTick,
+    VerifyOtp,
 
     // login to coincube account
-    LoginUsernameChanged(String),
-    LoginPasswordChanged(String),
     CreateNewAccount,
-    ResetPassword,
-
-    // Password Reset
-    SendPasswordResetEmail,
-    PasswordResetEmailSent(String),
-    ReturnToLogin,
 
     // Mavapay specific messages
     Mavapay(crate::services::mavapay::MavapayMessage),
