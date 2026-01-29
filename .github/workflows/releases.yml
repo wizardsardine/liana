@@ -91,9 +91,9 @@ jobs:
           pip install pillow icnsutil
           python contrib/release/macos/icns-creator.py
 
-# --------------------------------------------------
-# Linux
-# --------------------------------------------------
+      # --------------------------------------------------
+      # Linux
+      # --------------------------------------------------
 
       - name: Install Linux dependencies
         if: matrix.platform == 'linux'
@@ -111,9 +111,9 @@ jobs:
           profile: minimal
           locked: true
 
-# --------------------------------------------------
-# Windows
-# --------------------------------------------------
+      # --------------------------------------------------
+      # Windows
+      # --------------------------------------------------
 
       - name: Install Windows dependencies
         if: matrix.platform == 'windows'
@@ -121,7 +121,9 @@ jobs:
 
       - name: Build Windows MSI
         if: matrix.platform == 'windows'
-        run: cargo wix --package coincube-gui --profile minimal --output "target/wix/coincube-${{ env.COINCUBE_VERSION }}-${{ matrix.target }}.msi" --include ./contrib/release/wix/main.wxs --nocapture -v
+        run: |
+          cargo build --package coincube-gui --profile minimal --nocapture -v --locked
+          cargo wix --package coincube-gui --no-build --profile minimal --output "target/wix/coincube-${{ env.COINCUBE_VERSION }}-${{ matrix.target }}.msi" --include ./contrib/release/wix/main.wxs --nocapture -v
 
       - name: Upload Windows MSI
         if: matrix.platform == 'windows'
@@ -132,9 +134,9 @@ jobs:
           tag: ${{ github.ref }}
           overwrite: true
 
-# --------------------------------------------------
-# macOS (arm64 + x64)
-# --------------------------------------------------
+      # --------------------------------------------------
+      # macOS (arm64 + x64)
+      # --------------------------------------------------
 
       - name: Install macOS dependencies
         if: matrix.platform == 'macos'
