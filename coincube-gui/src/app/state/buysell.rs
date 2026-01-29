@@ -13,11 +13,11 @@ use crate::{
     services::{coincube::*, mavapay::*},
 };
 
-#[cfg(not(debug_assertions))]
-const KEYRING_SERVICE_NAME: &'static str = "io.coincube.Vault";
-
-#[cfg(debug_assertions)]
-const KEYRING_SERVICE_NAME: &'static str = "dev.coincube.Vault";
+const KEYRING_SERVICE_NAME: &'static str = if cfg!(debug_assertions) {
+    "dev.coincube.Vault"
+} else {
+    "io.coincube.Vault"
+};
 
 impl State for BuySellPanel {
     fn view<'a>(
