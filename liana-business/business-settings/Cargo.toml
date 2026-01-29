@@ -8,6 +8,7 @@ name = "business_settings"
 path = "src/lib.rs"
 
 [dependencies]
+async-hwi = { workspace = true }
 liana = { path = "../../liana" }
 liana-gui = { path = "../../liana-gui" }
 liana-ui = { path = "../../liana-ui" }

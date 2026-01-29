@@ -15,18 +15,28 @@ pub use liana_gui::services::fiat::Currency;
 pub use message::{Msg, Section};
 pub use ui::BusinessSettingsUI;
 
+use liana::miniscript::bitcoin;
 use liana::miniscript::bitcoin::bip32::Fingerprint;
 use liana_gui::{
-    app::settings::{
-        fiat, AuthConfig, KeySetting, ProviderKey, SettingsError, SettingsTrait, WalletId,
-        WalletSettingsTrait, SETTINGS_FILE_NAME,
+    app::{
+        self,
+        cache::{Cache, DaemonCache},
+        settings::{
+            fiat, AuthConfig, KeySetting, ProviderKey, SettingsError, SettingsTrait, WalletId,
+            WalletSettingsTrait, SETTINGS_FILE_NAME,
+        },
+        wallet::Wallet as AppWallet,
     },
-    dir::NetworkDirectory,
+    daemon::model::ListCoinsResult,
+    dir::{LianaDirectory, NetworkDirectory},
     hw::HardwareWalletConfig,
+    services::connect::client::backend::{api, BackendWalletClient},
     utils::serde::{deser_fromstr, serialize_display},
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::sync::Arc;
+use std::time::Instant;
 
 /// Business fiat price setting.
 ///
@@ -90,6 +100,92 @@ impl SettingsTrait for BusinessSettings {
 
     fn wallets_mut(&mut self) -> &mut Vec<Self::Wallet> {
         &mut self.wallets
+    }
+
+    fn create_app_for_remote_backend(
+        _wallet_id: WalletId,
+        remote_backend: BackendWalletClient,
+        wallet: api::Wallet,
+        coins: ListCoinsResult,
+        liana_dir: LianaDirectory,
+        network: bitcoin::Network,
+        config: app::Config,
+    ) -> Option<Result<(app::App<Self>, iced::Task<app::message::Message>), SettingsError>> {
+        Some((|| {
+            let hws: Vec<HardwareWalletConfig> = wallet
+                .metadata
+                .ledger_hmacs
+                .into_iter()
+                .map(|lh| HardwareWalletConfig {
+                    kind: async_hwi::DeviceKind::Ledger.to_string(),
+                    fingerprint: lh.fingerprint,
+                    token: lh.hmac,
+                })
+                .collect();
+
+            let aliases: HashMap<Fingerprint, String> = wallet
+                .metadata
+                .fingerprint_aliases
+                .into_iter()
+                .filter_map(|a| {
+                    if a.user_id == remote_backend.user_id() {
+                        Some((a.fingerprint, a.alias))
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+
+            let provider_keys: HashMap<_, _> = wallet
+                .metadata
+                .provider_keys
+                .into_iter()
+                .map(|pk| (pk.fingerprint, pk.into()))
+                .collect();
+
+            let auth_cfg = AuthConfig {
+                email: remote_backend.user_email().to_string(),
+                wallet_id: remote_backend.wallet_id(),
+                refresh_token: None,
+            };
+
+            let app_wallet = Arc::new(
+                AppWallet::new(wallet.descriptor)
+                    .with_name(wallet.name)
+                    .with_alias(wallet.metadata.wallet_alias)
+                    .with_key_aliases(aliases)
+                    .with_provider_keys(provider_keys)
+                    .with_hardware_wallets(hws)
+                    .with_remote_backend_auth(auth_cfg)
+                    .load_hotsigners(&liana_dir, network)
+                    .map_err(|e| SettingsError::Unexpected(e.to_string()))?,
+            );
+
+            let cache = Cache {
+                network,
+                datadir_path: liana_dir.clone(),
+                last_poll_at_startup: None,
+                daemon_cache: DaemonCache {
+                    coins: coins.coins,
+                    rescan_progress: None,
+                    sync_progress: 1.0,
+                    blockheight: wallet.tip_height.unwrap_or(0),
+                    last_poll_timestamp: None,
+                    last_tick: Instant::now(),
+                },
+                fiat_price: None,
+            };
+
+            Ok(app::App::new(
+                cache,
+                app_wallet,
+                config,
+                Arc::new(remote_backend),
+                liana_dir,
+                None,
+                false,
+            ))
+        })())
     }
 }
 

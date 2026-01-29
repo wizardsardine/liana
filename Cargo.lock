@@ -811,6 +811,7 @@ dependencies = [
 name = "business-settings"
 version = "0.1.0"
 dependencies = [
+ "async-hwi",
  "iced",
  "liana",
  "liana-gui",
