@@ -1,6 +1,6 @@
 [package]
 name = "coincube-gui"
-version = "1.0.0-rc1"
+version = "1.0.0-rc.2"
 readme = "README.md"
 description = "COINCUBE GUI - Secure Bitcoin wallet with multisig and inheritance"
 repository = "https://github.com/coincubetech/coincube"
