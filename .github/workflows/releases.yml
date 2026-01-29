@@ -87,7 +87,7 @@ jobs:
       - name: Generate Icons for Installers
         if: matrix.platform != 'linux'
         run: |
-          pip install --local pillow icnsutil
+          pip install pillow icnsutil
           mkdir -p contrib/icons
           python contrib/release/macos/icns-creator.py
 
