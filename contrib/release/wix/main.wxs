@@ -130,7 +130,7 @@
 
     </Feature>
 
-    <Icon Id="AppIcon" SourceFile="contrib\release\wix\Vault.ico" />
+    <Icon Id="AppIcon" SourceFile="contrib\release\wix\Coincube.ico" />
     <SetProperty Id='ARPINSTALLLOCATION' Value='[APPLICATIONFOLDER]' After='CostFinalize' />
 
     <Property Id='ARPHELPLINK' Value='https://github.com/coincubetech/coincube' />
