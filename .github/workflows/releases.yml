@@ -121,7 +121,7 @@ jobs:
 
       - name: Build Windows MSI
         if: matrix.platform == 'windows'
-        run: cargo wix --package coincube-gui --profile minimal --output "target/wix/coincube-${{ env.COINCUBE_VERSION }}-${{ matrix.target }}.msi" --include ./contrib/release/wix/main.wxs --nocapture -v
+        run: cargo wix --package coincube-gui --profile minimal --output "target/wix/coincube-${{ env.COINCUBE_VERSION }}-${{ matrix.target }}.msi" --include ./contrib/release/wix/main.wxs --nocapture --locked -v
 
       - name: Upload Windows MSI
         if: matrix.platform == 'windows'
@@ -155,7 +155,7 @@ jobs:
           PROTOC: /opt/homebrew/bin/protoc
         run: |
           rustup target add ${{ matrix.target }}
-          cargo build --package coincube-gui --profile minimal --target ${{ matrix.target }}
+          cargo build --package coincube-gui --profile minimal --target ${{ matrix.target }} --locked
 
       - name: Assemble .app bundle
         if: matrix.platform == 'macos'
