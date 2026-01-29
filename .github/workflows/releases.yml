@@ -104,7 +104,7 @@ jobs:
         with:
           package: coincube-gui
           bin: coincube
-          archive: coincube-${{ matrix.target }}
+          archive: coincube-${{ env.COINCUBE_VERSION }}-${{ matrix.target }}
           target: ${{ matrix.target }}
           include: LICENCE,README.md
           profile: minimal
@@ -127,7 +127,7 @@ jobs:
         uses: svenstaro/upload-release-action@v2
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: target/wix/coincube-x86_64-pc-windows-msvc.msi
+          file: target/wix/coincube-${{ env.COINCUBE_VERSION }}-${{ matrix.target }}.msi
           tag: ${{ github.ref }}
           overwrite: true
 
@@ -184,7 +184,7 @@ jobs:
             --icon-size 128 \
             --icon "Coincube.app" 175 120 \
             --app-drop-link 425 120 \
-            "coincube-${{ matrix.target }}.dmg" \
+            "coincube-${{ env.COINCUBE_VERSION }}-${{ matrix.target }}.dmg" \
             Coincube.app
 
       - name: Upload macOS DMG
@@ -192,7 +192,7 @@ jobs:
         uses: svenstaro/upload-release-action@v2
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: Coincube-${{ matrix.target }}.dmg
+          file: coincube-${{ env.COINCUBE_VERSION }}-${{ matrix.target }}.dmg
           tag: ${{ github.ref }}
           overwrite: true
 
