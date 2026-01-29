@@ -84,6 +84,14 @@ jobs:
           name: Coincube v${{ env.COINCUBE_VERSION }}
           allowUpdates: true
 
+      - name: Generate Icons for Installers
+        if: matrix.platform != 'linux'
+        run: |
+          python3 -m venv .venv
+          .venv/bin/pip install pillow icnsutil
+          mkdir -p contrib/icons
+          .venv/bin/python contrib/release/macos/icns-creator.py
+
 # --------------------------------------------------
 # Linux
 # --------------------------------------------------
@@ -149,14 +157,6 @@ jobs:
         run: |
           rustup target add ${{ matrix.target }}
           cargo build --package coincube-gui --profile minimal --target ${{ matrix.target }}
-
-      - name: Generate Icons for Installers
-        if: matrix.platform != 'linux'
-        run: |
-          python3 -m venv .venv
-          .venv/bin/pip install pillow icnsutil
-          mkdir -p contrib/icons
-          .venv/bin/python contrib/release/macos/icns-creator.py
 
       - name: Assemble .app bundle
         if: matrix.platform == 'macos'
