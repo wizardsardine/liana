@@ -22,7 +22,7 @@ jobs:
         run: cargo fmt -- --check
       - name: clippy
         run: |
-          sudo apt-get update && sudo apt-get install -y libudev-dev pkg-config protobuf-compiler libdbus-1-dev libvulkan-dev libglib2.0-dev
+          sudo apt-get update && sudo apt-get install -y libudev-dev pkg-config protobuf-compiler libdbus-1-dev libwebkit2gtk-4.1-dev
           cargo clippy --all-targets -- -D warnings
 
   unit_tests:
@@ -48,7 +48,9 @@ jobs:
           rustup default ${{ matrix.toolchain }}
       - name: Test on Rust ${{ matrix.toolchain }} (Windows)
         if: matrix.os == 'windows-latest'
-        run: cargo test --no-default-features
+        run: |
+          choco install protoc --yes --no-progress
+          cargo test --no-default-features
       - name: Test on Rust ${{ matrix.toolchain }} (Unix)
         if: matrix.os == 'macOS-latest'
         env:
@@ -60,5 +62,5 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: |
           sudo apt-get update
-          sudo apt-get install libudev-dev libfontconfig1-dev pkg-config libdbus-1-dev protobuf-compiler
+          sudo apt-get install -y libudev-dev libfontconfig1-dev pkg-config libdbus-1-dev protobuf-compiler libwebkit2gtk-4.1-dev
           cargo test --color always -- --nocapture
