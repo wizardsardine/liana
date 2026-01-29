@@ -51,6 +51,7 @@ pub enum MeldFlowStep {
         webview_pending: bool,
     },
     ActiveSession {
+        idempotency_set: std::collections::BTreeSet<String>,
         session: meld::api::CreateSessionResponse,
         active: iced_wry::IcedWebview,
     },
@@ -62,7 +63,6 @@ pub struct MeldState {
     pub country: &'static Country,
 
     // sse data
-    pub idempotency_set: std::collections::BTreeSet<String>,
     pub sse_retries: usize,
 
     pub webview_manager: iced_wry::IcedWebviewManager,
@@ -77,7 +77,6 @@ impl MeldState {
         let state = MeldState {
             buy_or_sell: buy_or_sell.clone(),
             country,
-            idempotency_set: std::collections::BTreeSet::new(),
             sse_retries: 0,
             webview_manager: iced_wry::IcedWebviewManager::new(),
             steps: vec![MeldFlowStep::RegionChecks],
@@ -441,8 +440,11 @@ impl MeldState {
                             *webview_pending = false;
                         }
 
-                        self.steps
-                            .push(MeldFlowStep::ActiveSession { session, active })
+                        self.steps.push(MeldFlowStep::ActiveSession {
+                            idempotency_set: std::collections::BTreeSet::new(),
+                            session,
+                            active,
+                        })
                     }
                     None => {
                         return Some(iced::Task::done(view::Message::BuySell(
@@ -468,14 +470,12 @@ impl MeldState {
             MeldMessage::SseEvent(event) => {
                 match serde_json::from_str::<meld::api::MeldEvent>(&event.data) {
                     Ok(ev) => {
-                        // check for duplicate events
-                        if !self.idempotency_set.insert(ev.event_id) {
-                            log::trace!("[MELD] Received duplicate SSE Event: {:?}", event);
-                            return None;
-                        }
-
                         // ensure event belongs to current session
-                        if let Some(MeldFlowStep::ActiveSession { session, .. }) = self.steps.last()
+                        if let Some(MeldFlowStep::ActiveSession {
+                            session,
+                            idempotency_set,
+                            ..
+                        }) = self.steps.last_mut()
                         {
                             if ev.meld_session_id != session.session_id {
                                 log::debug!(
@@ -483,6 +483,12 @@ impl MeldState {
                                     ev.meld_session_id
                                 );
 
+                                return None;
+                            }
+
+                            // check for duplicate events
+                            if !idempotency_set.insert(ev.event_id) {
+                                log::trace!("[MELD] Received duplicate SSE Event: {:?}", event);
                                 return None;
                             }
                         }
