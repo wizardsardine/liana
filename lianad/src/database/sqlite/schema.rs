@@ -1,5 +1,6 @@
 use bip329::Label;
 use liana::descriptors::LianaDescriptor;
+use payjoin::bitcoin::{consensus::Decodable, io::Cursor};
 
 use std::{convert::TryFrom, str::FromStr};
 
@@ -87,6 +88,16 @@ CREATE TABLE coins (
         ON DELETE RESTRICT
 );
 
+/* Seen Payjoin outpoints
+ *
+ * The 'created_at' field is simply the time that this outpoint is added to the table for 
+ * tracking.
+ */
+CREATE TABLE payjoin_outpoints (
+    outpoint BLOB NOT NULL PRIMARY KEY,
+    created_at INTEGER NOT NULL
+);
+
 /* A mapping from descriptor address to derivation index. Necessary until
  * we can get the derivation index from the parent descriptor from bitcoind.
  */
@@ -121,6 +132,24 @@ CREATE TABLE labels (
     item_kind INTEGER NOT NULL CHECK (item_kind IN (0,1,2)),
     item TEXT UNIQUE NOT NULL,
     value TEXT NOT NULL
+);
+
+/* Payjoin OHttpKeys */
+CREATE TABLE payjoin_ohttp_keys (
+    id INTEGER PRIMARY KEY NOT NULL,
+    relay_url TEXT UNIQUE NOT NULL,
+    timestamp INTEGER NOT NULL,
+    key BLOB NOT NULL
+);
+
+/* Payjoin receivers */
+CREATE TABLE payjoin_receivers (
+    id INTEGER PRIMARY KEY NOT NULL,
+    derivation_index INTEGER NOT NULL,
+    created_at INTEGER NOT NULL,
+    completed_at INTEGER,
+    events TEXT NOT NULL DEFAULT '[]',
+    FOREIGN KEY (derivation_index) REFERENCES addresses (derivation_index)
 );
 ";
 
@@ -453,6 +482,30 @@ impl TryFrom<&rusqlite::Row<'_>> for DbWalletTransaction {
         Ok(DbWalletTransaction {
             transaction,
             block_info,
+        })
+    }
+}
+
+/// An outpoint we have seen before in payjoin transactions
+#[derive(Clone, Debug, PartialEq)]
+pub struct DbPayjoinOutpoint {
+    pub outpoint: bitcoin::OutPoint,
+    pub created_at: Option<u32>,
+}
+
+impl TryFrom<&rusqlite::Row<'_>> for DbPayjoinOutpoint {
+    type Error = rusqlite::Error;
+
+    fn try_from(row: &rusqlite::Row) -> Result<Self, Self::Error> {
+        let outpoint: Vec<u8> = row.get(0)?;
+        let outpoint = bitcoin::OutPoint::consensus_decode(&mut Cursor::new(outpoint))
+            .expect("Outpoint should be decodable");
+
+        let created_at = row.get(1)?;
+
+        Ok(DbPayjoinOutpoint {
+            outpoint,
+            created_at,
         })
     }
 }
