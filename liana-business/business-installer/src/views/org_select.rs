@@ -102,7 +102,8 @@ pub fn org_card<'a>(
 
     let message = Some(Msg::OrgSelected(id));
 
-    menu_entry(content, message)
+    let content = row![content, Space::with_width(Length::Fill)];
+    menu_entry(content.into(), message)
 }
 
 pub fn no_org_card() -> Element<'static, Msg> {
