@@ -79,7 +79,8 @@ tracing-subscriber = "0.3.16"
 libc = "0.2"
 base64 = "0.21"
 bitcoin_hashes = "0.12"
-reqwest = { version = "0.11", default-features = false }
+payjoin = "1.0.0-rc.3"
+reqwest = { version = "0.11", default-features=false }
 rust-ini = "0.19.0"
 rfd = "0.15.1"
 fs2 = "0.4.3"

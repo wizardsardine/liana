@@ -35,7 +35,6 @@ impl Step for WalletAlias {
                         Network::Testnet => "Testnet",
                         Network::Testnet4 => "Testnet4",
                         Network::Regtest => "Regtest",
-                        _ => "",
                     }
                 );
                 self.wallet_alias.valid = true;

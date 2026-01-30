@@ -76,6 +76,7 @@ flate2 = { workspace = true, default-features = false }
 default = ["debugger"]
 debugger = []
 skip-windows-icon = []
+payjoin = ["lianad/payjoin"]
 
 [build-dependencies]
 winresource = { workspace = true }
