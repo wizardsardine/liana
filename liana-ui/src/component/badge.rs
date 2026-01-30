@@ -71,6 +71,10 @@ pub fn spent<'a, T: 'a>() -> Container<'a, T> {
     )
 }
 
+pub fn payjoin<'a, T: 'a>() -> Container<'a, T> {
+    badge_pill("  Payjoin  ", "This is a Payjoin address")
+}
+
 pub fn badge_pill<'a, T: 'a>(label: &'a str, tooltip: &'a str) -> Container<'a, T> {
     Container::new({
         tooltip::Tooltip::new(
