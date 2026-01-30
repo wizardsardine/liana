@@ -28,7 +28,6 @@ contrib/release/macos/Coincube.icns
 contrib/release/wix/Coincube.ico
 contrib/icons
 default
-COINCUBE_DEV_WALKTHROUGH.md
 
 # OS
 .DS_Store
