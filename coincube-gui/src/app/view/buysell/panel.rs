@@ -308,18 +308,22 @@ impl BuySellPanel {
             // Title and subtitle
             iced::widget::column![
                 text::h3("Create an Account").color(color::WHITE),
-                text::p2_regular("Create a COINCUBE account to access Buy/Sell and other features.").color(color::GREY_3)
+                text::p2_regular(
+                    "Create a COINCUBE account to access Buy/Sell and other features."
+                )
+                .color(color::GREY_3)
             ]
             .spacing(10)
             .align_x(Alignment::Center),
             Space::new().height(Length::Fixed(20.0)),
             // Email Input
-            text_input("Email Address", email).on_input(BuySellMessage::EmailChanged)
-            .on_submit_maybe(
-                (!*loading && valid_email).then_some(BuySellMessage::SubmitRegistration),
-            )
-            .size(16)
-            .padding(15),
+            text_input("Email Address", email)
+                .on_input(BuySellMessage::EmailChanged)
+                .on_submit_maybe(
+                    (!*loading && valid_email).then_some(BuySellMessage::SubmitRegistration),
+                )
+                .size(16)
+                .padding(15),
             Space::new().height(Length::Fixed(20.0)),
             submit_button,
         ]

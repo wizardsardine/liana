@@ -34,6 +34,12 @@ pub trait Close {
 }
 
 #[derive(Debug, Clone)]
+pub enum VaultReceiveMessage {
+    Copy(String),
+    ClearToast,
+}
+
+#[derive(Debug, Clone)]
 pub enum Message {
     Scroll(f32),
     Reload,
@@ -67,6 +73,7 @@ pub enum Message {
     Home(HomeMessage),
     LiquidOverview(LiquidOverviewMessage),
     LiquidReceive(LiquidReceiveMessage),
+    VaultReceive(VaultReceiveMessage),
     LiquidSend(LiquidSendMessage),
     LiquidSettings(LiquidSettingsMessage),
     PreselectPayment(Payment),
