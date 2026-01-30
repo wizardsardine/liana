@@ -25,8 +25,10 @@ use crate::{
         },
         Coin, CoinStatus, LabelItem,
     },
+    payjoin::db::SessionId,
 };
 use liana::descriptors::LianaDescriptor;
+use payjoin::{bitcoin::consensus::Encodable, OhttpKeys};
 
 use std::{
     cmp,
@@ -477,6 +479,34 @@ impl SqliteConn {
             Ok(())
         })
         .expect("Database must be available")
+    }
+
+    pub fn insert_outpoint_seen_before<'a>(
+        &mut self,
+        outpoints: impl IntoIterator<Item = &'a bitcoin::OutPoint>,
+    ) -> bool {
+        let mut is_duplicate = false;
+        db_exec(&mut self.conn, |db_tx| {
+            for outpoint in outpoints {
+                let mut buf = Vec::new();
+                outpoint
+                    .consensus_encode(&mut buf)
+                    .expect("Outpoint must encode");
+                let affected = db_tx.execute(
+                    "INSERT OR IGNORE INTO payjoin_outpoints (outpoint, added_at) \
+                        VALUES (?1, ?2)",
+                    rusqlite::params![buf, curr_timestamp()],
+                )?;
+
+                if affected == 0 {
+                    is_duplicate = true
+                }
+            }
+            Ok(())
+        })
+        .expect("database must be available");
+
+        is_duplicate
     }
 
     /// Remove a set of coins from the database.
@@ -962,6 +992,173 @@ impl SqliteConn {
             Ok(())
         })
         .expect("Db must not fail");
+    }
+
+    /// Fetch Payjoin OHttpKeys and their timestamp
+    pub fn payjoin_get_ohttp_keys(&mut self, relay_url: &str) -> Option<(u32, OhttpKeys)> {
+        let entries = db_query(
+            &mut self.conn,
+            "SELECT timestamp, key FROM payjoin_ohttp_keys WHERE relay_url = ?1 ORDER BY timestamp DESC LIMIT 1",
+            rusqlite::params![relay_url],
+            |row| {
+                let timestamp: u32 = row.get(0)?;
+                let ohttp_keys_ser: Vec<u8> = row.get(1)?;
+                let ohttp_keys = OhttpKeys::decode(&ohttp_keys_ser).unwrap();
+                Ok((timestamp, ohttp_keys))
+            },
+        )
+        .expect("Db must not fail");
+
+        // Check timestamp (7-days)
+        if let Some(entry) = entries.first().cloned() {
+            let now = curr_timestamp();
+            let seven_days_ago = now.saturating_sub(7 * 24 * 60 * 60);
+            if entry.0 < seven_days_ago {
+                // Delete entry
+                db_exec(&mut self.conn, |db_tx| {
+                    db_tx.execute(
+                        "DELETE FROM payjoin_ohttp_keys WHERE relay_url = ?1",
+                        rusqlite::params![relay_url],
+                    )?;
+                    Ok(())
+                })
+                .expect("Db must not fail");
+                return None;
+            } else {
+                return Some(entry);
+            }
+        }
+        None
+    }
+
+    /// Store new OHttpKeys with timestamp
+    pub fn payjoin_save_ohttp_keys(&mut self, relay_url: &str, ohttp_keys: OhttpKeys) {
+        let ohttp_keys_ser = ohttp_keys.encode().unwrap();
+        db_exec(&mut self.conn, |db_tx| {
+            db_tx.execute(
+                "INSERT INTO payjoin_ohttp_keys (relay_url, timestamp, key) VALUES (?1, ?2, ?3)",
+                rusqlite::params![relay_url, curr_timestamp(), ohttp_keys_ser],
+            )?;
+            Ok(())
+        })
+        .expect("Db must not fail");
+    }
+
+    /// Create new Receiver Session
+    pub fn save_new_payjoin_receiver_session(&mut self) -> i64 {
+        // TODO: is there a more elegant way to get the last insert row id atomically?
+        let mut id = 0i64;
+        db_exec(&mut self.conn, |db_tx| {
+            db_tx.execute(
+                "INSERT INTO payjoin_receivers (created_at) VALUES (?1)",
+                rusqlite::params![curr_timestamp()],
+            )?;
+
+            id = db_tx.last_insert_rowid();
+            Ok(())
+        })
+        .expect("Db must not fail");
+        id
+    }
+
+    /// Get all active receiver session ids
+    pub fn get_all_active_receiver_session_ids(&mut self) -> Vec<SessionId> {
+        db_query(
+            &mut self.conn,
+            "SELECT id FROM payjoin_receivers WHERE completed_at IS NULL",
+            rusqlite::params![],
+            |row| {
+                let id: i64 = row.get(0)?;
+                Ok(SessionId::new(id))
+            },
+        )
+        .expect("Db must not fail")
+    }
+
+    /// Save a Receiver Session Event
+    pub fn save_receiver_session_event(&mut self, session_id: &SessionId, event: Vec<u8>) {
+        db_exec(&mut self.conn, |db_tx| {
+            db_tx.execute(
+                "INSERT INTO payjoin_receiver_events (session_id, created_at, event) VALUES (?1, ?2, ?3)",
+                rusqlite::params![session_id.0, curr_timestamp(), event],
+            )?;
+            Ok(())
+        })
+        .expect("Db must not fail");
+    }
+
+    /// Update completed at timestamp for a Receiver Session
+    pub fn update_receiver_session_completed_at(&mut self, session_id: &SessionId) {
+        db_exec(&mut self.conn, |db_tx| {
+            db_tx.execute(
+                "UPDATE payjoin_receivers SET completed_at = ?1 WHERE id = ?2",
+                rusqlite::params![curr_timestamp(), session_id.0],
+            )?;
+            Ok(())
+        })
+        .expect("Db must not fail");
+    }
+
+    /// Load all receiver session events for a particular session id
+    pub fn load_receiver_session_events(&mut self, session_id: &SessionId) -> Vec<Vec<u8>> {
+        db_query(
+            &mut self.conn,
+            "SELECT event FROM payjoin_receiver_events WHERE session_id = ?1 ORDER BY created_at ASC",
+            rusqlite::params![session_id.0],
+            |row| {
+                let event: Vec<u8> = row.get(0)?;
+                Ok(event)
+            },
+        )
+        .expect("Db must not fail")
+    }
+
+    /// Save original txid for a sender session
+    pub fn update_receiver_session_original_txid(
+        &mut self,
+        session_id: &SessionId,
+        original_txid: &bitcoin::Txid,
+    ) {
+        db_exec(&mut self.conn, |db_tx| {
+            db_tx.execute(
+                "UPDATE payjoin_receivers SET original_txid = ?1 WHERE id = ?2",
+                rusqlite::params![original_txid[..].to_vec(), session_id.0],
+            )?;
+            Ok(())
+        })
+        .expect("Db must not fail");
+    }
+
+    /// Save proposed txid for a sender session
+    pub fn update_receiver_session_proposed_txid(
+        &mut self,
+        session_id: &SessionId,
+        proposed_txid: &bitcoin::Txid,
+    ) {
+        db_exec(&mut self.conn, |db_tx| {
+            db_tx.execute(
+                "UPDATE payjoin_receivers SET proposed_txid = ?1 WHERE id = ?2",
+                rusqlite::params![proposed_txid[..].to_vec(), session_id.0],
+            )?;
+            Ok(())
+        })
+        .expect("Db must not fail");
+    }
+
+    /// Get receiver session id from txid -- this will return the session id if the txid is a proposed payjoin txid or the original txid
+    pub fn get_payjoin_receiver_session_id(&mut self, txid: &bitcoin::Txid) -> Option<SessionId> {
+        // TODO: This should always be one row.
+        let session_id = db_query(
+            &mut self.conn,
+            "SELECT id FROM payjoin_receivers WHERE proposed_txid = ?1 or original_txid = ?1",
+            rusqlite::params![txid[..].to_vec()],
+            |row| {
+                let id: i64 = row.get(0)?;
+                Ok(SessionId::new(id))
+            },
+        )
+        .expect("Db must not fail");
+        session_id.first().cloned()
     }
 }
 

@@ -143,6 +143,10 @@ impl BitcoinInterface for DummyBitcoind {
     fn mempool_entry(&self, _: &bitcoin::Txid) -> Option<MempoolEntry> {
         None
     }
+
+    fn test_mempool_accept(&self, _rawtxs: Vec<String>) -> Vec<bool> {
+        todo!()
+    }
 }
 
 struct DummyDbState {
@@ -548,6 +552,75 @@ impl DatabaseConnection for DummyDatabase {
     }
 
     fn get_labels_bip329(&mut self, _offset: u32, _limit: u32) -> bip329::Labels {
+        todo!()
+    }
+
+    fn payjoin_get_ohttp_keys(&mut self, _ohttp_relay: &str) -> Option<(u32, payjoin::OhttpKeys)> {
+        todo!()
+    }
+
+    fn payjoin_save_ohttp_keys(&mut self, _ohttp_relay: &str, _ohttp_keys: payjoin::OhttpKeys) {
+        todo!()
+    }
+
+    fn insert_input_seen_before(&mut self, _outpoints: &[bitcoin::OutPoint]) -> bool {
+        todo!()
+    }
+
+    fn get_active_payjoin_sessions(&mut self) -> Vec<(crate::payjoin::db::SessionId, u32)> {
+        todo!()
+    }
+
+    fn save_receiver_session_event(
+        &mut self,
+        _session_id: &crate::payjoin::db::SessionId,
+        _event: Vec<u8>,
+    ) {
+        todo!()
+    }
+
+    fn load_receiver_session_events(
+        &mut self,
+        _session_id: &crate::payjoin::db::SessionId,
+    ) -> Vec<Vec<u8>> {
+        todo!()
+    }
+
+    fn save_new_payjoin_receiver_session(&mut self, _derivation_index: u32) -> i64 {
+        todo!()
+    }
+
+    fn save_receiver_session_original_txid(
+        &mut self,
+        _session_id: &crate::payjoin::db::SessionId,
+        _original_txid: &bitcoin::Txid,
+    ) {
+        todo!()
+    }
+
+    fn save_receiver_session_proposed_txid(
+        &mut self,
+        _session_id: &crate::payjoin::db::SessionId,
+        _proposed_txid: &bitcoin::Txid,
+    ) {
+        todo!()
+    }
+
+    fn get_all_active_receiver_session_ids(&mut self) -> Vec<crate::payjoin::db::SessionId> {
+        todo!()
+    }
+
+    fn update_receiver_session_completed_at(
+        &mut self,
+        _session_id: &crate::payjoin::db::SessionId,
+    ) {
+        todo!()
+    }
+
+    fn get_payjoin_receiver_session_id_from_txid(
+        &mut self,
+        _txid: &bitcoin::Txid,
+    ) -> Option<crate::payjoin::db::SessionId> {
         todo!()
     }
 }
