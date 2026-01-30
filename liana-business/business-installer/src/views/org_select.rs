@@ -212,7 +212,10 @@ pub fn org_select_view(state: &State) -> Element<'_, Msg> {
                 .filter(|wallet| {
                     !(is_ws_manager
                         && hide_finalized
-                        && matches!(wallet.effective_status(current_user_email), WalletStatus::Finalized))
+                        && matches!(
+                            wallet.effective_status(current_user_email),
+                            WalletStatus::Finalized
+                        ))
                 })
                 .count();
 

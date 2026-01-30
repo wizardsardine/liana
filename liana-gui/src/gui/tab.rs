@@ -195,8 +195,13 @@ where
                 launcher::Message::Run(datadir_path, cfg, network, settings) => {
                     let wallet_id = settings.wallet_id();
                     if let Some(auth_cfg) = settings.remote_backend_auth {
-                        let (login, command) =
-                            login::LianaLiteLogin::new(datadir_path, network, wallet_id, auth_cfg, I::backend_type());
+                        let (login, command) = login::LianaLiteLogin::new(
+                            datadir_path,
+                            network,
+                            wallet_id,
+                            auth_cfg,
+                            I::backend_type(),
+                        );
                         self.state = State::Login(Box::new(login));
                         command.map(|msg| Message::Login(Box::new(msg)))
                     } else {
@@ -210,7 +215,8 @@ where
             },
             (State::Login(l), Message::Login(msg)) => match *msg {
                 login::Message::View(login::ViewMessage::BackToLauncher(network)) => {
-                    let (launcher, command) = Launcher::new(l.datadir.clone(), Some(network), I::backend_type());
+                    let (launcher, command) =
+                        Launcher::new(l.datadir.clone(), Some(network), I::backend_type());
                     self.state = State::Launcher(Box::new(launcher));
                     command.map(|msg| Message::Launch(Box::new(msg)))
                 }
@@ -308,7 +314,8 @@ where
                             command.map(|msg| Message::Load(Box::new(msg)))
                         }
                         installer::NextState::Launcher { network, datadir } => {
-                            let (launcher, command) = Launcher::new(datadir, Some(network), I::backend_type());
+                            let (launcher, command) =
+                                Launcher::new(datadir, Some(network), I::backend_type());
                             self.state = State::Launcher(Box::new(launcher));
                             command.map(|msg| Message::Launch(Box::new(msg)))
                         }
@@ -351,8 +358,11 @@ where
             }
             (State::Loader(loader), Message::Load(msg)) => match *msg {
                 loader::Message::View(loader::ViewMessage::SwitchNetwork) => {
-                    let (launcher, command) =
-                        Launcher::new(loader.datadir_path.clone(), Some(loader.network), I::backend_type());
+                    let (launcher, command) = Launcher::new(
+                        loader.datadir_path.clone(),
+                        Some(loader.network),
+                        I::backend_type(),
+                    );
                     self.state = State::Launcher(Box::new(launcher));
                     command.map(|msg| Message::Launch(Box::new(msg)))
                 }

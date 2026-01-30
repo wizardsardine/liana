@@ -98,7 +98,6 @@ impl BusinessSettingsUI {
         self.current_section = Some(section);
         Task::none()
     }
-
 }
 
 /// State trait implementation for integration with liana-gui's App panel system.
@@ -112,9 +111,7 @@ impl State for BusinessSettingsUI {
             Msg::SelectSection(Section::About) => {
                 view::Message::Settings(view::SettingsMessage::AboutSection)
             }
-            Msg::RegisterWallet => {
-                view::Message::Settings(view::SettingsMessage::RegisterWallet)
-            }
+            Msg::RegisterWallet => view::Message::Settings(view::SettingsMessage::RegisterWallet),
         });
         let dashboard = view::dashboard(&Menu::Settings, cache, None, content);
 
@@ -170,9 +167,7 @@ impl State for BusinessSettingsUI {
                     view::SettingsMessage::EditWalletSettings => {
                         Some(Msg::SelectSection(Section::Wallet))
                     }
-                    view::SettingsMessage::AboutSection => {
-                        Some(Msg::SelectSection(Section::About))
-                    }
+                    view::SettingsMessage::AboutSection => Some(Msg::SelectSection(Section::About)),
                     _ => None,
                 };
                 if let Some(m) = msg {

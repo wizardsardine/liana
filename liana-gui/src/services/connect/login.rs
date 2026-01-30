@@ -163,12 +163,9 @@ impl LianaLiteLogin {
             },
             Task::perform(
                 async move {
-                    let service_config = super::client::get_service_config(
-                        network,
-                        backend_type,
-                    )
-                    .await
-                    .map_err(|e| Error::Unexpected(e.to_string()))?;
+                    let service_config = super::client::get_service_config(network, backend_type)
+                        .await
+                        .map_err(|e| Error::Unexpected(e.to_string()))?;
                     let client = AuthClient::new(
                         service_config.auth_api_url,
                         service_config.auth_api_public_key,
@@ -240,18 +237,17 @@ impl LianaLiteLogin {
                     self.auth_error = None;
                     return Task::perform(
                         async move {
-                            let config = super::client::get_service_config(
-                                network,
-                                backend_type,
-                            )
-                            .await
-                            .map_err(|e| {
-                                if e.status() == Some(reqwest::StatusCode::NOT_FOUND) {
-                                    Error::Unexpected("Remote servers are unresponsive".to_string())
-                                } else {
-                                    Error::Unexpected(e.to_string())
-                                }
-                            })?;
+                            let config = super::client::get_service_config(network, backend_type)
+                                .await
+                                .map_err(|e| {
+                                    if e.status() == Some(reqwest::StatusCode::NOT_FOUND) {
+                                        Error::Unexpected(
+                                            "Remote servers are unresponsive".to_string(),
+                                        )
+                                    } else {
+                                        Error::Unexpected(e.to_string())
+                                    }
+                                })?;
                             let client = AuthClient::new(
                                 config.auth_api_url,
                                 config.auth_api_public_key,

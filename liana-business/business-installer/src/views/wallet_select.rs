@@ -307,7 +307,8 @@ pub fn wallet_select_view(state: &State) -> Element<'_, Msg> {
                     .collect();
 
                 // Sort by status: Draft first, Finalized last
-                wallets_to_display.sort_by_key(|(_, wallet, _)| status_sort_priority(wallet, current_user_email));
+                wallets_to_display
+                    .sort_by_key(|(_, wallet, _)| status_sort_priority(wallet, current_user_email));
 
                 // Show message when search filter returns no results
                 if wallets_to_display.is_empty() && !search_filter.is_empty() {
