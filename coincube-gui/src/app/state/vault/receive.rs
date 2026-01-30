@@ -1,12 +1,14 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+use std::time::Duration;
 
 use coincube_core::miniscript::bitcoin::{
     bip32::{ChildNumber, Fingerprint},
     Address, Network,
 };
-use coincube_ui::{widget::modal, widget::*};
-use iced::{widget::qr_code, Subscription, Task};
+use coincube_ui::{component::toast, widget::modal, widget::*};
+use iced::{clipboard, Alignment, widget::qr_code, Subscription, Task};
+use tokio::time;
 
 use crate::daemon::model::LabelsLoader;
 use crate::dir::CoincubeDirectory;
@@ -73,6 +75,7 @@ pub struct VaultReceivePanel {
     modal: Modal,
     warning: Option<Error>,
     processing: bool,
+    toast: Option<String>,
 }
 
 impl VaultReceivePanel {
@@ -89,6 +92,7 @@ impl VaultReceivePanel {
             modal: Modal::None,
             warning: None,
             processing: false,
+            toast: None,
         }
     }
 
@@ -131,6 +135,13 @@ impl State for VaultReceivePanel {
             ),
         );
 
+        let toasts = self
+            .toast
+            .iter()
+            .map(|message| view::simple_toast(message).align_x(Alignment::Center).into())
+            .collect();
+        let content: Element<'_, view::Message> = toast::Manager::new(content, toasts).into();
+
         match &self.modal {
             Modal::VerifyAddress(m) => modal::Modal::new(content, m.view())
                 .on_blur(Some(view::Message::Close))
@@ -158,6 +169,22 @@ impl State for VaultReceivePanel {
     ) -> Task<Message> {
         let daemon = daemon.expect("Daemon required for vault receive panel");
         match message {
+            Message::View(view::Message::VaultReceive(msg)) => match msg {
+                view::VaultReceiveMessage::Copy(address) => {
+                    self.toast = Some("Copied Vault address to clipboard".to_string());
+                    let clear = Task::future(async {
+                        time::sleep(Duration::from_secs(3)).await;
+                        Message::View(view::Message::VaultReceive(
+                            view::VaultReceiveMessage::ClearToast,
+                        ))
+                    });
+                    Task::batch([clipboard::write(address), clear])
+                }
+                view::VaultReceiveMessage::ClearToast => {
+                    self.toast = None;
+                    Task::none()
+                }
+            },
             Message::View(view::Message::Label(_, _)) | Message::LabelsUpdated(_) => {
                 match self.labels_edited.update(
                     daemon.clone(),

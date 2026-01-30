@@ -25,7 +25,11 @@ use coincube_ui::{
 };
 
 use crate::{
-    app::view::{placeholder, vault::hw, vault::label},
+    app::view::{
+        message::VaultReceiveMessage,
+        placeholder,
+        vault::{hw, label},
+    },
     hw::HardwareWallet,
 };
 
@@ -66,7 +70,9 @@ pub fn address_card<'a>(
                     )
                     .push(
                         Button::new(icon::clipboard_icon().style(theme::text::secondary))
-                            .on_press(Message::Clipboard(addr))
+                            .on_press(Message::VaultReceive(
+                                VaultReceiveMessage::Copy(addr.clone()),
+                            ))
                             .style(theme::button::transparent_border),
                     )
                     .align_y(Alignment::Center),
@@ -293,8 +299,10 @@ pub fn verify_address_modal<'a>(
                                             .push(Container::new(text(address.to_string()).small()))
                                             .push(
                                                 Button::new(icon::clipboard_icon())
-                                                    .on_press(Message::Clipboard(
-                                                        address.to_string(),
+                                                    .on_press(Message::VaultReceive(
+                                                        VaultReceiveMessage::Copy(
+                                                            address.to_string(),
+                                                        ),
                                                     ))
                                                     .style(theme::button::transparent_border),
                                             )
