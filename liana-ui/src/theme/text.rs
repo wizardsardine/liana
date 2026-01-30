@@ -54,6 +54,12 @@ pub fn error(theme: &Theme) -> Style {
     }
 }
 
+pub fn accent(theme: &Theme) -> Style {
+    Style {
+        color: Some(theme.colors.text.accent),
+    }
+}
+
 pub fn custom(color: iced::Color) -> Style {
     Style { color: Some(color) }
 }

@@ -130,9 +130,12 @@ pub fn wallet_card<'a>(
     // Left side: wallet name, key count, and edit info
     let mut left_col = Column::new()
         .push(
-            row![text::h3(wallet.alias.clone()), text::p1_regular(keys)]
-                .spacing(5)
-                .align_y(Alignment::Center),
+            row![
+                text::h3(wallet.alias.clone()),
+                text::p1_medium(keys).style(theme::text::primary)
+            ]
+            .spacing(5)
+            .align_y(Alignment::Center),
         )
         .spacing(5);
 
@@ -150,7 +153,7 @@ pub fn wallet_card<'a>(
 
     // Only show role for Wallet Manager and Participant (not WS Admin)
     if !matches!(role, UserRole::WizardSardineAdmin) {
-        right_col = right_col.push(text::p2_regular(role_label(role)));
+        right_col = right_col.push(text::p2_medium(role_label(role)).style(theme::text::primary));
     }
 
     let content = Row::new()
@@ -312,8 +315,10 @@ pub fn wallet_select_view(state: &State) -> Element<'_, Msg> {
 
                 // Show message when search filter returns no results
                 if wallets_to_display.is_empty() && !search_filter.is_empty() {
-                    list_content = list_content
-                        .push(text::p1_regular("No wallets found matching your search."));
+                    list_content = list_content.push(
+                        text::p1_medium("No wallets found matching your search.")
+                            .style(theme::text::primary),
+                    );
                 } else {
                     let current_user_email_lower = current_user_email.to_lowercase();
                     // Render sorted wallets

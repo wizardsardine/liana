@@ -23,3 +23,13 @@ pub fn default(theme: &Theme) -> Style {
         fill_mode: FillMode::Full,
     }
 }
+
+/// Blue accent rule for visual emphasis.
+pub fn accent(theme: &Theme) -> Style {
+    Style {
+        color: theme.colors.text.accent,
+        width: 3,
+        radius: 2.0.into(),
+        fill_mode: FillMode::Percent(30.0),
+    }
+}

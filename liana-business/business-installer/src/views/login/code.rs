@@ -9,7 +9,7 @@ use iced::{
 use liana_ui::{
     color,
     component::{button, form, text},
-    icon,
+    icon, theme,
     widget::*,
 };
 
@@ -48,8 +48,9 @@ pub fn login_code_view(state: &State) -> Element<'_, Msg> {
         .push(liana_business)
         .push(Space::with_height(20))
         .push(row![
-            text::p1_regular("An authentication token has been emailed to "),
-            text::p1_regular(&state.views.login.email.form.value).color(color::GREEN)
+            text::p1_medium("An authentication token has been emailed to ")
+                .style(theme::text::primary),
+            text::p1_medium(&state.views.login.email.form.value).color(color::DARK_GREEN)
         ])
         .push(form)
         .push(btn_row)

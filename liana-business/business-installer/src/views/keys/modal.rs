@@ -70,7 +70,7 @@ pub fn edit_key_modal_view<'a>(
     };
     let alias_input = Column::new()
         .spacing(5)
-        .push(text::p1_regular("Key Alias"))
+        .push(text::p1_medium("Key Alias").style(theme::text::primary))
         .push(form::Form::new(
             "Enter key alias",
             &alias_value,
@@ -85,7 +85,7 @@ pub fn edit_key_modal_view<'a>(
     };
     let description_input = Column::new()
         .spacing(5)
-        .push(text::p1_regular("Key Description"))
+        .push(text::p1_medium("Key Description").style(theme::text::primary))
         .push(form::Form::new(
             "Enter description",
             &desc_value,
@@ -110,7 +110,7 @@ pub fn edit_key_modal_view<'a>(
     };
     let email_input = Column::new()
         .spacing(5)
-        .push(text::p1_regular("Email Address of the Key Manager"))
+        .push(text::p1_medium("Email Address of the Key Manager").style(theme::text::primary))
         .push(form::Form::new(
             "Enter email address",
             &email_value,
@@ -127,7 +127,7 @@ pub fn edit_key_modal_view<'a>(
     let key_type_label = Row::new()
         .spacing(5)
         .align_y(Alignment::Center)
-        .push(text::p1_regular("Key Type"))
+        .push(text::p1_medium("Key Type").style(theme::text::primary))
         .push(tooltip::tooltip(
             "Internal: keys held by your organization.\n \
                 External: keys held by third parties.\n \

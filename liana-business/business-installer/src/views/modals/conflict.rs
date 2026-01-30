@@ -2,7 +2,7 @@ use crate::state::{views::modals::ConflictModalState, Msg};
 use iced::{widget::Space, Alignment, Length};
 use liana_ui::{
     component::{button, card, text},
-    icon,
+    icon, theme,
     widget::*,
 };
 
@@ -14,7 +14,7 @@ pub fn conflict_modal_view(modal_state: &ConflictModalState) -> Element<'_, Msg>
         .push(Space::with_width(Length::Fill))
         .push(button::transparent(Some(icon::cross_icon()), "").on_press(Msg::ConflictDismiss));
 
-    let message = text::p1_regular(&modal_state.message);
+    let message = text::p1_medium(&modal_state.message).style(theme::text::primary);
 
     // Buttons - different based on whether this is a choice or info-only
     let footer = if modal_state.is_choice() {

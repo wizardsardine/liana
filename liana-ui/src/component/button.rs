@@ -1,5 +1,4 @@
-use super::text::text;
-use crate::font::MEDIUM;
+use super::text::{button_text, text};
 use crate::{theme, widget::*};
 use iced::alignment::{Horizontal, Vertical};
 use iced::widget::{button, container, row};
@@ -40,31 +39,31 @@ fn content_menu<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> Container
 }
 
 pub fn alert<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> Button<'a, T> {
-    Button::new(content(icon, text(t))).style(theme::button::destructive)
+    Button::new(content(icon, button_text(t))).style(theme::button::destructive)
 }
 
 pub fn primary<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> Button<'a, T> {
-    Button::new(content(icon, text(t).font(MEDIUM))).style(theme::button::primary)
+    Button::new(content(icon, button_text(t))).style(theme::button::primary)
 }
 
 pub fn transparent<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> Button<'a, T> {
-    Button::new(content(icon, text(t))).style(theme::button::container)
+    Button::new(content(icon, button_text(t))).style(theme::button::container)
 }
 
 pub fn secondary<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> Button<'a, T> {
-    Button::new(content(icon, text(t))).style(theme::button::secondary)
+    Button::new(content(icon, button_text(t))).style(theme::button::secondary)
 }
 
 pub fn border<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> Button<'a, T> {
-    Button::new(content(icon, text(t))).style(theme::button::secondary)
+    Button::new(content(icon, button_text(t))).style(theme::button::secondary)
 }
 
 pub fn transparent_border<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> Button<'a, T> {
-    button(content(icon, text(t))).style(theme::button::container_border)
+    button(content(icon, button_text(t))).style(theme::button::container_border)
 }
 
 pub fn link<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> Button<'a, T> {
-    Button::new(content(icon, text(t))).style(theme::button::link)
+    Button::new(content(icon, button_text(t))).style(theme::button::link)
 }
 
 fn content<'a, T: 'a>(icon: Option<Text<'a>>, text: Text<'a>) -> Container<'a, T> {

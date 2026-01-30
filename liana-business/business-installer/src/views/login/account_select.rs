@@ -6,7 +6,7 @@ use iced::{
     widget::{row, Space},
     Length,
 };
-use liana_ui::{component::text, widget::*};
+use liana_ui::{component::text, theme, widget::*};
 
 pub fn account_select_view(state: &State) -> Element<'_, Msg> {
     let accounts = &state.views.login.account_select.accounts;
@@ -46,12 +46,12 @@ pub fn account_select_view(state: &State) -> Element<'_, Msg> {
             // Show loading state for selected account
             Row::new()
                 .push(Space::with_width(Length::Fill))
-                .push(text::p2_regular("Connecting..."))
+                .push(text::p2_medium("Connecting..."))
                 .push(Space::with_width(Length::Fill))
                 .align_y(iced::Alignment::Center)
                 .into()
         } else {
-            text::p1_regular(&account.email).into()
+            text::p1_medium(&account.email).into()
         };
 
         let message = if processing {
@@ -64,10 +64,12 @@ pub fn account_select_view(state: &State) -> Element<'_, Msg> {
     }
 
     // Separator
-    list_content = list_content.push(Space::with_height(10));
+    list_content = list_content.push(Space::with_height(20));
 
     // "Connect with another email" card
-    let new_email_content: Element<'_, Msg> = text::p1_regular("Connect with another email").into();
+    let new_email_content: Element<'_, Msg> = text::p1_medium("Connect with another email")
+        .style(theme::text::primary)
+        .into();
     let new_email_message = if processing {
         None
     } else {

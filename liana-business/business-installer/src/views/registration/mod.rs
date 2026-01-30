@@ -43,7 +43,7 @@ pub fn registration_view(state: &State) -> Element<'_, Msg> {
         .padding(20)
         .push(text::h2("Register Wallet on Devices"))
         .push(
-            text::p1_regular(
+            text::p1_medium(
                 "Register the wallet descriptor on each device, or skip if unavailable.",
             )
             .style(theme::text::secondary),
@@ -98,7 +98,7 @@ fn no_devices_view<'a>() -> Element<'a, Msg> {
         .push(icon::tooltip_icon().size(60))
         .push(text::h3("No devices to register"))
         .push(
-            text::p1_regular("You don't have any devices assigned in this wallet.")
+            text::p1_medium("You don't have any devices assigned in this wallet.")
                 .style(theme::text::secondary),
         )
         .width(Length::Fill)
@@ -171,7 +171,7 @@ fn disconnected_device_card(
             Column::new()
                 .spacing(4)
                 .push(
-                    text::p1_regular(format!("Fingerprint: {}", fingerprint))
+                    text::p1_medium(format!("Fingerprint: {}", fingerprint))
                         .style(theme::text::secondary),
                 )
                 .push(text::caption(status).style(theme::text::secondary)),

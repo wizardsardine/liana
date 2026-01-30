@@ -8,6 +8,7 @@ use iced::{
 };
 use liana_ui::{
     component::{button, form, text},
+    theme,
     widget::*,
 };
 
@@ -40,9 +41,10 @@ pub fn login_email_view(state: &State) -> Element<'_, Msg> {
     let content = Column::new()
         .push(liana_business)
         .push(Space::with_height(20))
-        .push(text::p1_regular(
-            "Enter the email associated with your account",
-        ))
+        .push(
+            text::p1_medium("Enter the email associated with your account")
+                .style(theme::text::primary),
+        )
         .push(form)
         .push(btn)
         .spacing(20)

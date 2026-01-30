@@ -50,10 +50,13 @@ fn select_view<'a>(state: &'a State, modal_state: &'a XpubEntryModalState) -> El
             Row::new()
                 .spacing(10)
                 .push(icon::tooltip_icon().size(16))
-                .push(text::p2_regular(
+                .push(
+                text::p2_medium(
                     "This key already has an xpub. You can replace it by fetching from a device, \
                     importing from file, or pasting. Use the Clear button to remove it completely.",
-                )),
+                )
+                .style(theme::text::primary),
+            ),
         )
         .padding(10)
         .style(theme::card::simple)
@@ -63,7 +66,7 @@ fn select_view<'a>(state: &'a State, modal_state: &'a XpubEntryModalState) -> El
     // Validation error display - show validation result when input is present
     let validation_error = if !modal_state.xpub_input.is_empty() {
         modal_state.validate().err().map(|error| {
-            text::p2_regular(error)
+            text::p2_medium(error)
                 .style(theme::text::warning)
                 .width(Length::Fill)
         })
@@ -76,11 +79,11 @@ fn select_view<'a>(state: &'a State, modal_state: &'a XpubEntryModalState) -> El
         let input_header = Row::new()
             .spacing(10)
             .align_y(Alignment::Center)
-            .push(text::p2_regular("Current xpub:"))
+            .push(text::p2_medium("Current xpub:").style(theme::text::primary))
             .push(Space::with_width(Length::Fill));
 
         let input_value =
-            Container::new(text::p2_regular(&modal_state.xpub_input).style(theme::text::secondary))
+            Container::new(text::p2_medium(&modal_state.xpub_input).style(theme::text::secondary))
                 .padding(10)
                 .style(theme::card::simple)
                 .width(Length::Fill);
@@ -141,7 +144,9 @@ fn details_view(modal_state: &XpubEntryModalState) -> Element<'_, Msg> {
         )
     } else {
         container(
-            text::p1_regular(format_account(modal_state.selected_account)).width(Length::Fill),
+            text::p1_medium(format_account(modal_state.selected_account))
+                .style(theme::text::primary)
+                .width(Length::Fill),
         )
     }
     .width(180);
@@ -150,12 +155,12 @@ fn details_view(modal_state: &XpubEntryModalState) -> Element<'_, Msg> {
         Row::new()
             .spacing(10)
             .push(Space::with_width(Length::Fill))
-            .push(text::p1_regular("Fetching from device..."))
+            .push(text::p1_medium("Fetching from device...").style(theme::text::primary))
             .push(Space::with_width(Length::Fill)),
     );
 
     let error = modal_state.fetch_error.as_ref().map(|error| {
-        text::p2_regular(error)
+        text::p2_medium(error)
             .style(theme::text::warning)
             .width(Length::Fill)
     });
@@ -192,7 +197,7 @@ fn details_view(modal_state: &XpubEntryModalState) -> Element<'_, Msg> {
     // Validation error (e.g., wrong network)
     let validation_error = if !modal_state.xpub_input.is_empty() && !modal_state.processing {
         modal_state.validate().err().map(|error| {
-            text::p2_regular(error)
+            text::p2_medium(error)
                 .style(theme::text::warning)
                 .width(Length::Fill)
         })
@@ -206,7 +211,7 @@ fn details_view(modal_state: &XpubEntryModalState) -> Element<'_, Msg> {
         && !modal_state.processing
         && validation_error.is_none())
     .then_some({
-        Container::new(text::p2_regular(&modal_state.xpub_input).style(theme::text::secondary))
+        Container::new(text::p2_medium(&modal_state.xpub_input).style(theme::text::secondary))
             .padding(10)
             .style(theme::card::simple)
             .width(Length::Fill)
@@ -245,9 +250,10 @@ fn hw_section(state: &State) -> Element<'_, Msg> {
             .align_x(Alignment::Center)
             .push(Space::with_height(20))
             .push(icon::usb_icon().size(60))
-            .push(text::p1_regular(
-                "No hardware wallets detected. Connect a device and unlock it.",
-            ))
+            .push(
+                text::p1_medium("No hardware wallets detected. Connect a device and unlock it.")
+                    .style(theme::text::primary),
+            )
             .push(Space::with_height(20))
             .width(Length::Fill)
             .into()

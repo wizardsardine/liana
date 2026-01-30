@@ -12,7 +12,7 @@ use iced::{
     Alignment, Background, Border, Length,
 };
 use liana_connect::ws_business::{self, UserRole};
-use liana_ui::{color, component::text, icon, theme::Theme, widget::*};
+use liana_ui::{color, component::text, icon, theme, theme::Theme, widget::*};
 
 use super::{format_last_edit_info, layout_with_scrollable_list};
 
@@ -88,7 +88,8 @@ fn key_card(
 
     // Identity (optional - display email or other identity)
     let identity_str = key.identity.to_string();
-    let identity_display = (!identity_str.is_empty()).then(|| text::p2_regular(identity_str));
+    let identity_display = (!identity_str.is_empty())
+        .then(|| text::p2_medium(identity_str).style(theme::text::primary));
 
     // Key type badge
     let key_type_str = format!("{:?}", key.key_type);
@@ -106,13 +107,14 @@ fn key_card(
         .spacing(10)
         .align_y(Alignment::Center)
         .push(icon::key_icon())
-        .push(text::p1_regular(&key.alias))
+        .push(text::p1_medium(&key.alias).style(theme::text::primary))
         .push_maybe(identity_display)
         .push(Space::with_width(Length::Fill))
         .push(badge);
 
     // Description (optional)
-    let description = (!key.description.is_empty()).then(|| text::p2_regular(&key.description));
+    let description = (!key.description.is_empty())
+        .then(|| text::p2_medium(&key.description).style(theme::text::primary));
 
     // Last edit info (optional)
     let last_edit =
@@ -221,7 +223,7 @@ fn keys_visualization(state: &State) -> Element<'static, Msg> {
 
     // "Add a key" card
     let add_key_content =
-        Container::new(text::p1_regular("+ Add a key").style(liana_ui::theme::text::secondary))
+        Container::new(text::p1_medium("+ Add a key").style(liana_ui::theme::text::secondary))
             .padding(15)
             .width(Length::Fill);
 

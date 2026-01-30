@@ -31,7 +31,7 @@ fn registering_view(_modal_state: &RegistrationModalState) -> Element<'_, Msg> {
         .align_x(Alignment::Center)
         .push(text::h3("Registering Wallet"))
         .push(
-            text::p1_regular("Please confirm on your device...")
+            text::p1_medium("Please confirm on your device...")
                 .style(theme::text::secondary)
                 .align_x(Alignment::Center),
         )
@@ -56,7 +56,7 @@ fn error_view(modal_state: &RegistrationModalState) -> Element<'_, Msg> {
         .align_x(Alignment::Center)
         .push(text::h3("Registration Failed"))
         .push(
-            text::p1_regular(error_msg)
+            text::p1_medium(error_msg)
                 .style(theme::text::warning)
                 .align_x(Alignment::Center),
         )
@@ -77,7 +77,7 @@ fn confirm_coldcard_view(_modal_state: &RegistrationModalState) -> Element<'_, M
         .align_x(Alignment::Center)
         .push(text::h3("Confirm Registration"))
         .push(
-            text::p1_regular(
+            text::p1_medium(
                 "Please confirm on your Coldcard that the wallet registration completed successfully.",
             )
             .style(theme::text::secondary)

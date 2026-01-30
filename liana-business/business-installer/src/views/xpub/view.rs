@@ -11,7 +11,7 @@ use iced::{
     Alignment, Background, Border, Length,
 };
 use liana_connect::ws_business::{self, UserRole};
-use liana_ui::{color, component::text, icon, theme::Theme, widget::*};
+use liana_ui::{color, component::text, icon, theme, theme::Theme, widget::*};
 
 use crate::views::layout_with_scrollable_list;
 
@@ -106,17 +106,17 @@ fn xpub_key_card(
         .spacing(10)
         .align_y(Alignment::Center)
         .push(icon::key_icon())
-        .push(text::p1_regular(&key.alias))
-        .push(text::p1_regular(identity_str))
+        .push(text::p1_medium(&key.alias).style(theme::text::primary))
+        .push(text::p1_medium(identity_str).style(theme::text::primary))
         .push(Space::with_width(Length::Fill))
         .push(xpub_status_badge(key.xpub.is_some()));
 
     // Second row: Description
-    let description = text::p2_regular(&key.description);
+    let description = text::p2_medium(&key.description).style(theme::text::primary);
 
     // Third row: Key type
     let key_type_str = format!("{:?}", key.key_type);
-    let key_type = text::p2_regular(key_type_str);
+    let key_type = text::p2_medium(key_type_str).style(theme::text::primary);
 
     // Fourth row: Last edit info (optional)
     let edit_info = last_edit_info.map(text::caption);
@@ -200,15 +200,16 @@ pub fn xpub_view(state: &State) -> Element<'_, Msg> {
                 Column::new()
                     .spacing(5)
                     .push(text::p1_bold(keys_set_msg))
-                    .push(text::p1_regular(
+                    .push(text::p1_medium(
                         "Once the other participants complete their key setup, you'll be able to access the wallet.",
-                    )),
+                    ).style(theme::text::primary)),
             )
             .into()
     } else {
-        text::p1_regular(
+        text::p1_medium(
             "Select a key to complete its setup. You can connect a hardware device (recommended) or manually add an extended public key (xpub).",
         )
+        .style(theme::text::primary)
         .into()
     };
 
@@ -233,7 +234,8 @@ pub fn xpub_view(state: &State) -> Element<'_, Msg> {
             Some(UserRole::Participant) => "No keys assigned to you",
             _ => "No keys found",
         };
-        list_content = list_content.push(text::p1_regular(empty_message));
+        list_content =
+            list_content.push(text::p1_medium(empty_message).style(theme::text::primary));
     } else {
         // Always show key cards so users can edit/reset xpubs
         for (key_id, key) in filtered_keys {

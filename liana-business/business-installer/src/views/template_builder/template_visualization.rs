@@ -11,7 +11,7 @@ use iced::{
     Alignment, Background, Border, Length,
 };
 use liana_connect::ws_business::{self, UserRole, WalletStatus};
-use liana_ui::{color, component::text, icon, theme::Theme, widget::*};
+use liana_ui::{color, component::text, icon, theme, theme::Theme, widget::*};
 use std::collections::BTreeMap;
 
 /// Custom button style for path cards: dark grey border when not hovered, green when hovered
@@ -284,8 +284,8 @@ fn path_card(
 
     let mut content = Column::new()
         .spacing(5)
-        .push(text::p1_regular(keys_text))
-        .push(text::p2_regular(timelock_text));
+        .push(text::p1_medium(keys_text).style(theme::text::primary))
+        .push(text::p2_medium(timelock_text).style(theme::text::primary));
 
     if let Some(info) = last_edit_info {
         content = content.push(text::caption(info).style(liana_ui::theme::text::secondary));
@@ -409,7 +409,7 @@ pub fn template_visualization(state: &State) -> Element<'static, Msg> {
     // "Add a recovery path" card - only show if editable (WS Admin)
     if is_editable {
         let add_path_content = Container::new(
-            text::p1_regular("+ Add a recovery path").style(liana_ui::theme::text::secondary),
+            text::p1_medium("+ Add a recovery path").style(liana_ui::theme::text::secondary),
         )
         .padding(15)
         .width(Length::Fill);

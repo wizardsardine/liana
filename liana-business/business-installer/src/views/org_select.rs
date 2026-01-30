@@ -9,6 +9,7 @@ use iced::{
 use liana_connect::ws_business::{KeyIdentity, UserRole, Wallet, WalletStatus};
 use liana_ui::{
     component::{form, text},
+    theme,
     widget::*,
 };
 
@@ -179,9 +180,10 @@ pub fn org_select_view(state: &State) -> Element<'_, Msg> {
 
     if filtered_orgs.is_empty() && !orgs.is_empty() {
         // Show message when search filter returns no results
-        list_content = list_content.push(text::p1_regular(
-            "No organizations found matching your search.",
-        ));
+        list_content = list_content.push(
+            text::p1_medium("No organizations found matching your search.")
+                .style(theme::text::primary),
+        );
     } else if orgs.is_empty() {
         list_content = list_content.push(no_org_card());
     } else {

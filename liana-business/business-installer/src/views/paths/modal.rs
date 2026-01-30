@@ -77,12 +77,12 @@ pub fn edit_path_modal_view<'a>(
     };
 
     // Key selection section
-    let keys_label = text::p1_regular("Keys in Path:");
+    let keys_label = text::p1_medium("Keys in Path:").style(theme::text::primary);
 
     let keys_column = if state.app.keys.is_empty() {
         Column::new()
             .spacing(8)
-            .push(text::p2_regular("No keys available. Add keys first."))
+            .push(text::p2_medium("No keys available. Add keys first.").style(theme::text::primary))
     } else {
         let mut col = Column::new().spacing(8);
         for (key_id, key) in state.app.keys.iter() {
@@ -131,9 +131,11 @@ pub fn edit_path_modal_view<'a>(
         "Threshold:".to_string()
     };
     let threshold_label: Element<'_, Msg> = if threshold_enabled {
-        text::p1_regular(threshold_label_text).into()
+        text::p1_medium(threshold_label_text)
+            .style(theme::text::primary)
+            .into()
     } else {
-        text::p1_regular(threshold_label_text)
+        text::p1_medium(threshold_label_text)
             .style(theme::text::secondary)
             .into()
     };
@@ -167,7 +169,7 @@ pub fn edit_path_modal_view<'a>(
     let threshold_warning_row = threshold_warning.map(|warning| {
         Row::new()
             .push(Space::with_width(Length::Fixed(LABEL_WIDTH + 10.0)))
-            .push(text::p2_regular(warning).style(theme::text::warning))
+            .push(text::p2_medium(warning).style(theme::text::warning))
     });
 
     // Timelock validation and row (only for non-primary paths)
@@ -213,7 +215,10 @@ pub fn edit_path_modal_view<'a>(
         let timelock_row = Row::new()
             .spacing(10)
             .align_y(Alignment::Center)
-            .push(Container::new(text::p1_regular("Timelock:")).width(Length::Fixed(LABEL_WIDTH)))
+            .push(
+                Container::new(text::p1_medium("Timelock:").style(theme::text::primary))
+                    .width(Length::Fixed(LABEL_WIDTH)),
+            )
             .push(
                 Container::new(form::Form::new(
                     "0",
@@ -234,7 +239,7 @@ pub fn edit_path_modal_view<'a>(
         let timelock_warning_row = warning.map(|w| {
             Row::new()
                 .push(Space::with_width(Length::Fixed(LABEL_WIDTH + 10.0)))
-                .push(text::p2_regular(w).style(theme::text::warning))
+                .push(text::p2_medium(w).style(theme::text::warning))
         });
 
         let section = Column::new()

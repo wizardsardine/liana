@@ -27,6 +27,7 @@ pub struct Text {
     pub warning: iced::Color,
     pub success: iced::Color,
     pub error: iced::Color,
+    pub accent: iced::Color,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq)]
@@ -202,6 +203,7 @@ impl std::default::Default for Palette {
                 warning: color::ORANGE,
                 success: color::GREEN,
                 error: color::RED,
+                accent: color::BLUE,
             },
             buttons: Buttons {
                 primary: Button {
@@ -614,8 +616,9 @@ impl Palette {
                 primary: color::DARK_TEXT_PRIMARY,
                 secondary: color::DARK_TEXT_SECONDARY,
                 warning: color::ORANGE,
-                success: color::GREEN,
+                success: color::DARK_GREEN,
                 error: color::RED,
+                accent: color::BUSINESS_BLUE_DARK,
             },
             buttons: Buttons {
                 primary: Button {
@@ -642,17 +645,17 @@ impl Palette {
                 },
                 secondary: Button {
                     active: ButtonPalette {
-                        background: color::LIGHT_BG_SECONDARY,
+                        background: color::LIGHT_BLUE_TINT,
                         text: color::DARK_TEXT_SECONDARY,
-                        border: color::LIGHT_BORDER.into(),
+                        border: color::LIGHT_BORDER.into(), // Neutral border, blue appears on hover
                     },
                     hovered: ButtonPalette {
-                        background: color::LIGHT_BG_SECONDARY,
+                        background: color::LIGHT_BLUE_TINT, // Keep same background as active (like liana)
                         text: color::BUSINESS_BLUE,
                         border: color::BUSINESS_BLUE.into(),
                     },
                     pressed: Some(ButtonPalette {
-                        background: color::LIGHT_BG_SECONDARY,
+                        background: color::LIGHT_BLUE_TINT, // Keep same background
                         text: color::BUSINESS_BLUE,
                         border: color::BUSINESS_BLUE.into(),
                     }),
@@ -687,17 +690,17 @@ impl Palette {
                 transparent: Button {
                     active: ButtonPalette {
                         background: color::TRANSPARENT,
-                        text: color::DARK_TEXT_SECONDARY,
+                        text: color::DARK_TEXT_PRIMARY, // Use primary (black) for better visibility
                         border: None,
                     },
                     hovered: ButtonPalette {
                         background: color::TRANSPARENT,
-                        text: color::DARK_TEXT_PRIMARY,
+                        text: color::BUSINESS_BLUE, // Blue on hover
                         border: None,
                     },
                     pressed: Some(ButtonPalette {
                         background: color::TRANSPARENT,
-                        text: color::DARK_TEXT_PRIMARY,
+                        text: color::BUSINESS_BLUE,
                         border: None,
                     }),
                     disabled: Some(ButtonPalette {
@@ -709,7 +712,7 @@ impl Palette {
                 transparent_border: Button {
                     active: ButtonPalette {
                         background: color::TRANSPARENT,
-                        text: color::DARK_TEXT_SECONDARY,
+                        text: color::DARK_TEXT_PRIMARY, // Use primary (black) for better visibility
                         border: color::TRANSPARENT.into(),
                     },
                     hovered: ButtonPalette {
@@ -753,7 +756,7 @@ impl Palette {
                 container_border: Button {
                     active: ButtonPalette {
                         background: color::TRANSPARENT,
-                        text: color::DARK_TEXT_SECONDARY,
+                        text: color::DARK_TEXT_PRIMARY, // Use primary (black) for better visibility
                         border: color::TRANSPARENT.into(),
                     },
                     hovered: ButtonPalette {
@@ -797,7 +800,7 @@ impl Palette {
                 tab: Button {
                     active: ButtonPalette {
                         background: color::LIGHT_BG_SECONDARY,
-                        text: color::DARK_TEXT_SECONDARY,
+                        text: color::DARK_TEXT_PRIMARY, // Use primary (black) for better visibility
                         border: color::LIGHT_BORDER.into(),
                     },
                     hovered: ButtonPalette {
@@ -819,7 +822,7 @@ impl Palette {
                 link: Button {
                     active: ButtonPalette {
                         background: color::TRANSPARENT,
-                        text: color::DARK_TEXT_SECONDARY,
+                        text: color::DARK_TEXT_PRIMARY, // Use primary (black) for better visibility
                         border: color::TRANSPARENT.into(),
                     },
                     hovered: ButtonPalette {
@@ -902,9 +905,9 @@ impl Palette {
                     border: color::TRANSPARENT.into(),
                 },
                 simple: ContainerPalette {
-                    background: color::TRANSPARENT,
-                    text: color::DARK_TEXT_SECONDARY.into(),
-                    border: color::LIGHT_BORDER.into(),
+                    background: color::LIGHT_BLUE_TINT,
+                    text: color::BUSINESS_BLUE_DARK.into(),
+                    border: color::SOFT_BLUE.into(),
                 },
                 warning: ContainerPalette {
                     background: color::TRANSPARENT,
@@ -912,9 +915,9 @@ impl Palette {
                     border: color::RED.into(),
                 },
                 success: ContainerPalette {
-                    background: color::GREEN,
-                    text: color::DARK_TEXT_PRIMARY.into(),
-                    border: color::GREEN.into(),
+                    background: color::DARK_GREEN,
+                    text: color::WHITE.into(), // White text on dark green for contrast
+                    border: color::DARK_GREEN.into(),
                 },
             },
             notifications: Notifications {

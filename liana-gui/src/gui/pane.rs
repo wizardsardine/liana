@@ -181,13 +181,13 @@ where
             menu = menu.push(ContextMenu::new(
                 Into::<Element<ViewMessage>>::into(
                     Button::new(if title.len() < 20 {
-                        Row::new().push(p1_regular(title)).push(p1_regular(
+                        Row::new().push(p1_medium(title)).push(p1_medium(
                             &"                     ".to_string()[..21 - title.len()],
                         ))
                     } else {
                         Row::new()
-                            .push(p1_regular(&title[..17]))
-                            .push(p1_regular("..."))
+                            .push(p1_medium(&title[..17]))
+                            .push(p1_medium("..."))
                     })
                     .style(if i == self.focused_tab {
                         theme::button::tab_active
