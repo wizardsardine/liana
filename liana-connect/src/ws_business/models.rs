@@ -474,6 +474,42 @@ pub struct Wallet {
     pub devices: Option<Vec<Fingerprint>>,
 }
 
+impl Wallet {
+    /// Returns the effective wallet status for the given user.
+    ///
+    /// The server never sends `Registration` status. When the wallet is `Finalized`,
+    /// we infer `Registration` if the user's email matches any key in the template
+    /// and that key's fingerprint is found in `self.devices`.
+    pub fn effective_status(&self, user_email: &str) -> WalletStatus {
+        if self.status != WalletStatus::Finalized {
+            return self.status.clone();
+        }
+
+        let (template, devices) = match (&self.template, &self.devices) {
+            (Some(t), Some(d)) if !d.is_empty() => (t, d),
+            _ => return self.status.clone(),
+        };
+
+        let email_lower = user_email.to_lowercase();
+
+        for key in template.keys.values() {
+            if !matches!(&key.identity, KeyIdentity::Email(e) if e.to_lowercase() == email_lower)
+            {
+                continue;
+            }
+            if let Some(DescriptorPublicKey::MultiXPub(multi)) = &key.xpub {
+                if let Some((fp, _)) = &multi.origin {
+                    if devices.contains(fp) {
+                        return WalletStatus::Registration;
+                    }
+                }
+            }
+        }
+
+        self.status.clone()
+    }
+}
+
 #[cfg(test)]
 mod wire_format_tests {
     use super::*;

@@ -53,8 +53,9 @@ fn derive_user_role(
 const STATUS_BADGE_WIDTH: f32 = 80.0;
 
 /// Render a colored status badge for wallet status
-fn status_badge(wallet: &Wallet) -> Element<'static, Msg> {
-    if wallet.status == WalletStatus::Registration {
+fn status_badge(wallet: &Wallet, user_email: &str) -> Element<'static, Msg> {
+    let status = wallet.effective_status(user_email);
+    if status == WalletStatus::Registration {
         return Container::new(text::caption("Register"))
             .padding([4, 12])
             .width(STATUS_BADGE_WIDTH)
@@ -63,7 +64,7 @@ fn status_badge(wallet: &Wallet) -> Element<'static, Msg> {
             .into();
     }
 
-    match wallet.status {
+    match status {
         WalletStatus::Registration => unreachable!(), // Handled above
         WalletStatus::Created | WalletStatus::Drafted => Container::new(text::caption("Draft"))
             .padding([4, 12])
@@ -103,8 +104,8 @@ fn role_label(role: &UserRole) -> &'static str {
 
 /// Get sort priority for wallet status (lower = shown first)
 /// Order: Draft (0) -> Locked (1) -> Validated (2) -> Registration (3) -> Finalized (4)
-fn status_sort_priority(wallet: &Wallet) -> u8 {
-    match wallet.status {
+fn status_sort_priority(wallet: &Wallet, user_email: &str) -> u8 {
+    match wallet.effective_status(user_email) {
         WalletStatus::Created | WalletStatus::Drafted => 0,
         WalletStatus::Locked => 1,
         WalletStatus::Validated => 2,
@@ -117,6 +118,7 @@ pub fn wallet_card<'a>(
     wallet: &Wallet,
     role: &UserRole,
     last_edit_info: Option<String>,
+    user_email: &str,
 ) -> Element<'a, Msg> {
     let key_count = wallet.template.as_ref().map(|t| t.keys.len()).unwrap_or(0);
     let keys = match key_count {
@@ -141,7 +143,7 @@ pub fn wallet_card<'a>(
     // Right side: status badge and role label
     // Don't show "Manager" role - it's already in the header for WS Admin users
     let mut right_col = Column::new()
-        .push(status_badge(wallet))
+        .push(status_badge(wallet, user_email))
         .spacing(4)
         .width(STATUS_BADGE_WIDTH)
         .align_x(Alignment::Center);
@@ -276,8 +278,9 @@ pub fn wallet_select_view(state: &State) -> Element<'_, Msg> {
                         )?;
 
                         // Signers should NOT see Draft or Locked wallets
+                        let wallet_status = wallet.effective_status(current_user_email);
                         let is_draft_or_locked = matches!(
-                            wallet.status,
+                            wallet_status,
                             WalletStatus::Created | WalletStatus::Drafted | WalletStatus::Locked
                         );
                         if is_draft_or_locked && role == UserRole::Participant {
@@ -287,7 +290,7 @@ pub fn wallet_select_view(state: &State) -> Element<'_, Msg> {
                         // WizardSardineManager: optionally hide finalized wallets
                         if is_ws_admin
                             && hide_finalized
-                            && matches!(wallet.status, WalletStatus::Finalized)
+                            && matches!(wallet_status, WalletStatus::Finalized)
                         {
                             return None;
                         }
@@ -304,7 +307,7 @@ pub fn wallet_select_view(state: &State) -> Element<'_, Msg> {
                     .collect();
 
                 // Sort by status: Draft first, Finalized last
-                wallets_to_display.sort_by_key(|(_, wallet, _)| status_sort_priority(wallet));
+                wallets_to_display.sort_by_key(|(_, wallet, _)| status_sort_priority(wallet, current_user_email));
 
                 // Show message when search filter returns no results
                 if wallets_to_display.is_empty() && !search_filter.is_empty() {
@@ -321,7 +324,7 @@ pub fn wallet_select_view(state: &State) -> Element<'_, Msg> {
                             &current_user_email_lower,
                         );
 
-                        let card = wallet_card(&wallet, &role, last_edit_info);
+                        let card = wallet_card(&wallet, &role, last_edit_info, current_user_email);
                         list_content = list_content.push(card);
                     }
                 }

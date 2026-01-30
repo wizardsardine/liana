@@ -276,10 +276,11 @@ impl State {
             }
         };
         // Get wallet and check access before loading
+        let user_email = self.views.login.email.form.value.clone();
         let (wallet_status, user_role) = {
             if let (Some(wallet), Some(user)) = (self.backend.get_wallet(wallet_id), user) {
                 let role = user.role(&wallet);
-                (Some(wallet.status), role)
+                (Some(wallet.effective_status(&user_email)), role)
             } else {
                 (None, None)
             }
@@ -316,7 +317,7 @@ impl State {
 
         // Check if wallet is in registration
         if let Some(wallet) = self.backend.get_wallet(wallet_id) {
-            if wallet.status == WalletStatus::Registration {
+            if wallet.effective_status(&user_email) == WalletStatus::Registration {
                 // Registration -> Device Registration view
                 self.current_view = View::Registration;
 
@@ -1091,8 +1092,10 @@ impl State {
 
         // Update registration state if on Registration view
         if self.current_view == View::Registration {
+            let email = &self.views.login.email.form.value;
+            let wallet_status = wallet.effective_status(email);
             debug!("on_backend_wallet: on Registration view, checking status");
-            if wallet.status == WalletStatus::Registration {
+            if wallet_status == WalletStatus::Registration {
                 let devices = wallet.devices.clone().unwrap_or_default();
                 let descriptor_len = wallet.descriptor.as_ref().map(|d| d.len()).unwrap_or(0);
                 debug!(
@@ -1106,7 +1109,7 @@ impl State {
                     "on_backend_wallet: user_devices: {:?}",
                     self.views.registration.user_devices
                 );
-            } else if wallet.status == WalletStatus::Finalized {
+            } else if wallet_status == WalletStatus::Finalized {
                 debug!("on_backend_wallet: wallet is now Finalized, navigating to wallet list");
                 // All devices registered/skipped, go back to wallet selection
                 self.current_view = View::WalletSelect;
