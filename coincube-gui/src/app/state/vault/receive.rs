@@ -7,7 +7,7 @@ use coincube_core::miniscript::bitcoin::{
     Address, Network,
 };
 use coincube_ui::{component::toast, widget::modal, widget::*};
-use iced::{clipboard, Alignment, widget::qr_code, Subscription, Task};
+use iced::{clipboard, widget::qr_code, Alignment, Subscription, Task};
 use tokio::time;
 
 use crate::daemon::model::LabelsLoader;
@@ -138,7 +138,11 @@ impl State for VaultReceivePanel {
         let toasts = self
             .toast
             .iter()
-            .map(|message| view::simple_toast(message).align_x(Alignment::Center).into())
+            .map(|message| {
+                view::simple_toast(message)
+                    .align_x(Alignment::Center)
+                    .into()
+            })
             .collect();
         let content: Element<'_, view::Message> = toast::Manager::new(content, toasts).into();
 

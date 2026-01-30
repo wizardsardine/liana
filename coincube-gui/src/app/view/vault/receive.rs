@@ -70,9 +70,9 @@ pub fn address_card<'a>(
                     )
                     .push(
                         Button::new(icon::clipboard_icon().style(theme::text::secondary))
-                            .on_press(Message::VaultReceive(
-                                VaultReceiveMessage::Copy(addr.clone()),
-                            ))
+                            .on_press(Message::VaultReceive(VaultReceiveMessage::Copy(
+                                addr.clone(),
+                            )))
                             .style(theme::button::transparent_border),
                     )
                     .align_y(Alignment::Center),
