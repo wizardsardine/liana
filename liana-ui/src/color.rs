@@ -68,6 +68,12 @@ pub const BLUE: Color = Color::from_rgb(
     0xFC as f32 / 255.0,
 );
 
+pub const PAYJOIN_PINK: Color = Color::from_rgb(
+    0xC7 as f32 / 255.0,
+    0x15 as f32 / 255.0,
+    0x85 as f32 / 255.0,
+);
+
 // =============================================================================
 // BUSINESS THEME COLORS (Light Mode with Cyan-Blue accent)
 // =============================================================================
