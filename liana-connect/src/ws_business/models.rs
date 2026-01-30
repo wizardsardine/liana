@@ -493,13 +493,16 @@ impl Wallet {
         let email_lower = user_email.to_lowercase();
 
         for key in template.keys.values() {
-            if !matches!(&key.identity, KeyIdentity::Email(e) if e.to_lowercase() == email_lower)
-            {
+            if !matches!(&key.identity, KeyIdentity::Email(e) if e.to_lowercase() == email_lower) {
                 continue;
             }
-            if let Some(DescriptorPublicKey::MultiXPub(multi)) = &key.xpub {
-                if let Some((fp, _)) = &multi.origin {
-                    if devices.contains(fp) {
+            if let Some(key) = &key.xpub {
+                if let Some((fg, _)) = match key {
+                    DescriptorPublicKey::Single(k) => &k.origin,
+                    DescriptorPublicKey::XPub(k) => &k.origin,
+                    DescriptorPublicKey::MultiXPub(k) => &k.origin,
+                } {
+                    if devices.contains(fg) {
                         return WalletStatus::Registration;
                     }
                 }
