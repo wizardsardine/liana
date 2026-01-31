@@ -75,6 +75,9 @@ where
         shell: &mut Shell<'_, Message>,
         viewport: &Rectangle,
     ) {
+        if self.on_blur.is_some() {
+            return;
+        }
         self.base.as_widget_mut().update(
             &mut state.children[0],
             event,
@@ -133,6 +136,9 @@ where
         viewport: &Rectangle,
         renderer: &Renderer,
     ) -> mouse::Interaction {
+        if self.on_blur.is_some() {
+            return mouse::Interaction::default();
+        }
         self.base.as_widget().mouse_interaction(
             &state.children[0],
             layout,
