@@ -77,9 +77,8 @@ pub enum Message {
     LiquidSend(LiquidSendMessage),
     LiquidSettings(LiquidSettingsMessage),
     PreselectPayment(Payment),
-    DismissError,
     ShowError(String),
-    DismissErrorIfId(u64),
+    DismissToast(usize),
 }
 
 impl Close for Message {
@@ -193,7 +192,9 @@ pub enum BuySellMessage {
     BackToAddressView,
     SelectBuyOrSell(bool), // true = buy, false = sell
     StartSession,
-    RefreshLocalLogin(crate::services::coincube::LoginResponse),
+    RefreshLocalLogin {
+        refresh_token: String,
+    },
     SetLoginState(crate::services::coincube::LoginResponse),
     LogOut,
 

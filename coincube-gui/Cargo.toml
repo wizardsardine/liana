@@ -9,7 +9,6 @@ authors = ["Edouard Paris <m@edouard.paris>", "Coincube Team"]
 edition = "2018"
 resolver = "2"
 
-
 [package.metadata.winres]
 LegalCopyright = "Copyright © 2026"
 
@@ -38,6 +37,7 @@ iced = { version = "0.14.0", default-features = false, features = [
 	"advanced",
 	"tiny-skia",
 	"sipper",
+	"crisp",
 ] }
 image = { version = "*", default-features = false, features = ["png"] }
 iced_aw = { version = "0.13.0", features = ["context_menu"] }

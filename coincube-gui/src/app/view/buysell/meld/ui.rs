@@ -7,7 +7,7 @@ use iced::{widget, Alignment, Length};
 use crate::{app::view, services::meld::api::*};
 
 pub(crate) fn not_supported_ux<'a>(
-    c: &'a crate::services::coincube::Country,
+    msg: &'a str,
 ) -> coincube_ui::widget::Element<'a, view::Message> {
     widget::column![
         widget::Space::new().height(25),
@@ -17,20 +17,15 @@ pub(crate) fn not_supported_ux<'a>(
                 .align_x(iced::Alignment::Center)
                 .align_y(iced::Alignment::Center)
                 .padding(35),
-            widget::container(
-                text::p2_bold(format!(
-                    "Your country: {} currently isn't supported for BuySell",
-                    c.name
-                ))
-                .size(15)
-                .color(iced::Color::WHITE)
-            )
-            .style(|_| {
-                let mut init = widget::container::background(color::BLACK);
-                init.border = iced::Border::default().color(color::RED).width(2);
-                init
-            })
-            .padding(25)
+            widget::container(text::p2_bold(msg).size(15).color(iced::Color::WHITE))
+                .style(|_| {
+                    let mut init = widget::container::background(color::BLACK);
+                    init.border = iced::Border::default().color(color::RED).width(2);
+                    init
+                })
+                .align_y(iced::Alignment::Center)
+                .height(iced::Length::Fill)
+                .padding(25)
         ]
         .align_y(iced::Alignment::Center),
     ]
@@ -357,10 +352,10 @@ pub(crate) fn quote_selection_ux<'a>(
             widget::row![
                 text::h4_bold("Select a preferred provider"),
                 widget::Space::new().width(iced::Length::Fill),
-                button::primary_compact(Some(icon::arrow_back()), "Go Back To Input Form")
+                button::secondary_compact(Some(icon::arrow_back()), "Go Back To Input Form")
                     .on_press(view::buysell::meld::MeldMessage::NavigateBack)
                     .style(|th, st| {
-                        let mut base = theme::button::primary(th, st);
+                        let mut base = theme::button::secondary(th, st);
                         base.border = iced::Border::default().rounded(0);
                         base
                     })

@@ -38,7 +38,9 @@ pub enum MeldMessage {
 
 pub enum MeldFlowStep {
     RegionChecks,
-    CountryNotSupported,
+    NotSupported {
+        msg: std::borrow::Cow<'static, str>,
+    },
     InputForm {
         amount: String,
         limits: meld::api::CurrencyLimit,
@@ -61,10 +63,10 @@ pub struct MeldState {
     pub steps: Vec<MeldFlowStep>,
     pub buy_or_sell: BuyOrSell,
     pub country: &'static Country,
+    pub network: bitcoin::Network,
 
     // sse data
     pub sse_retries: usize,
-
     pub webview_manager: iced_wry::IcedWebviewManager,
 }
 
@@ -73,6 +75,7 @@ impl MeldState {
         buy_or_sell: BuyOrSell,
         country: &'static Country,
         client: CoincubeClient,
+        network: bitcoin::Network,
     ) -> (MeldState, iced::Task<view::Message>) {
         let state = MeldState {
             buy_or_sell: buy_or_sell.clone(),
@@ -80,6 +83,7 @@ impl MeldState {
             sse_retries: 0,
             webview_manager: iced_wry::IcedWebviewManager::new(),
             steps: vec![MeldFlowStep::RegionChecks],
+            network,
         };
 
         let task = iced::Task::perform(
@@ -131,14 +135,10 @@ impl MeldState {
         (state, task)
     }
 
-    pub(crate) fn view<'a>(
-        &'a self,
-        network: &'a bitcoin::Network,
-    ) -> coincube_ui::widget::Element<'a, view::Message> {
+    pub(crate) fn view<'a>(&'a self) -> coincube_ui::widget::Element<'a, view::Message> {
         match &self.steps.last() {
             None | Some(MeldFlowStep::RegionChecks) => ui::region_checks_ux(),
-            Some(MeldFlowStep::ActiveSession { active, .. }) => ui::webview_ux(active, network),
-            Some(MeldFlowStep::CountryNotSupported) => ui::not_supported_ux(self.country),
+            Some(MeldFlowStep::NotSupported { msg }) => ui::not_supported_ux(msg.as_ref()),
             Some(MeldFlowStep::InputForm {
                 amount,
                 limits,
@@ -156,6 +156,9 @@ impl MeldState {
                 selected,
                 webview_pending,
             }) => ui::quote_selection_ux(quotes, *selected, *webview_pending, &self.buy_or_sell),
+            Some(MeldFlowStep::ActiveSession { active, .. }) => {
+                ui::webview_ux(active, &self.network)
+            }
         }
     }
 
@@ -198,7 +201,13 @@ impl MeldState {
                 return Some(iced::Task::done(view::Message::ShowError(msg)));
             }
             // initialization
-            MeldMessage::CountryNotSupported => self.steps.push(MeldFlowStep::CountryNotSupported),
+            MeldMessage::CountryNotSupported => self.steps.push(MeldFlowStep::NotSupported {
+                msg: format!(
+                    "Your country: {} currently isn't supported for BuySell",
+                    self.country
+                )
+                .into(),
+            }),
             MeldMessage::SetLimits(l) => {
                 self.steps.push(MeldFlowStep::InputForm {
                     amount: l.minimum_amount.to_string(),
