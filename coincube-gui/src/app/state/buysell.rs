@@ -13,7 +13,7 @@ use crate::{
     services::{coincube::*, mavapay::*},
 };
 
-const KEYRING_SERVICE_NAME: &'static str = if cfg!(debug_assertions) {
+const KEYRING_SERVICE_NAME: &str = if cfg!(debug_assertions) {
     "dev.coincube.Vault"
 } else {
     "io.coincube.Vault"

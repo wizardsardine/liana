@@ -767,21 +767,17 @@ fn confirm_transfer_view<'a>(
                 TransferDirection::VaultToLiquid => vault_to_liquid_fees,
             };
 
-            if let Some(fees) = fees {
-                Some(
-                    Container::new(
-                        Row::new()
-                            .padding(20)
-                            .push(text("Fees:"))
-                            .push(Space::new().width(Length::Fill))
-                            .push(text(fees.to_formatted_string_with_unit(bitcoin_unit))),
-                    )
-                    .width(Length::Fill)
-                    .style(theme::card::simple),
+            fees.map(|fees| {
+                Container::new(
+                    Row::new()
+                        .padding(20)
+                        .push(text("Fees:"))
+                        .push(Space::new().width(Length::Fill))
+                        .push(text(fees.to_formatted_string_with_unit(bitcoin_unit))),
                 )
-            } else {
-                None
-            }
+                .width(Length::Fill)
+                .style(theme::card::simple)
+            })
         })
         .push(Space::new().height(3))
         .push_maybe({
