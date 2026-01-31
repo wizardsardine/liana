@@ -921,6 +921,20 @@ impl State for LiquidSend {
                     self.flow_state = LiquidSendFlowState::Sent;
                     self.prepare_response = None;
                     self.is_sending = false;
+                    let breez_client = self.breez_client.clone();
+                    return Task::perform(async move { breez_client.sync().await }, |result| {
+                        match result {
+                            Ok(()) => Message::View(view::Message::LiquidSend(
+                                view::LiquidSendMessage::RefreshRequested,
+                            )),
+                            Err(err) => Message::View(view::Message::LiquidSend(
+                                view::LiquidSendMessage::Error(format!(
+                                    "Failed to sync wallet: {}",
+                                    err
+                                )),
+                            )),
+                        }
+                    });
                 }
                 view::LiquidSendMessage::BackToHome => {
                     self.input = form::Value::default();

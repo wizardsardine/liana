@@ -23,6 +23,7 @@ pub struct VaultExportModal {
     state: ImportExportState,
     error: Option<export::Error>,
     daemon: Option<Arc<dyn Daemon + Sync + Send>>,
+    breez_client: Option<Arc<crate::app::breez::BreezClient>>,
     import_export_type: ImportExportType,
 }
 
@@ -66,6 +67,7 @@ impl VaultExportModal {
             state: ImportExportState::Init,
             error: None,
             daemon,
+            breez_client: None,
             import_export_type: export_type,
         }
     }
@@ -73,6 +75,7 @@ impl VaultExportModal {
     pub fn modal_title(&self) -> &'static str {
         match self.import_export_type {
             ImportExportType::Transactions => "Export Transactions",
+            ImportExportType::LiquidPayments => "Export Payments",
             ImportExportType::ExportPsbt(_) => "Export PSBT",
             ImportExportType::ExportXpub(_) => "Export Xpub",
             ImportExportType::ImportXpub(_) => "Import Xpub",
@@ -92,6 +95,9 @@ impl VaultExportModal {
         match &self.import_export_type {
             ImportExportType::Transactions => {
                 format!("coincube-txs-{date}.csv")
+            }
+            ImportExportType::LiquidPayments => {
+                format!("coincube-liquid-txs-{date}.csv")
             }
             ImportExportType::ExportPsbt(_) => "psbt.psbt".into(),
             ImportExportType::ExportXpub(_) | ImportExportType::ImportXpub(_) => {
@@ -321,6 +327,7 @@ impl VaultExportModal {
                     Some(iced::Subscription::run_with(
                         export::ExportSubscriptionData {
                             daemon: self.daemon.clone(),
+                            breez_client: self.breez_client.clone(),
                             path: path.to_path_buf(),
                             export_type: self.import_export_type.clone(),
                         },

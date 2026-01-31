@@ -1,4 +1,4 @@
-use breez_sdk_liquid::bitcoin::Denomination;
+use breez_sdk_liquid::{bitcoin::Denomination, model::PreparePayOnchainResponse};
 use coincube_ui::{
     color,
     component::{amount::*, button, form, text::*},
@@ -528,8 +528,22 @@ fn confirm_transfer_view<'a>(
     is_sending: bool,
     is_tx_signed: bool,
     bitcoin_unit: BitcoinDisplayUnit,
+    prepare_onchain_send_response: Option<&'a PreparePayOnchainResponse>,
+    vault_to_liquid_fees: Option<Amount>,
 ) -> Element<'a, Message> {
     const NUM_ADDR_CHARS: usize = 16;
+    let mut liquid_to_vault_fees = None;
+    let amount = Amount::from_str_in(
+        &amount.value,
+        if matches!(bitcoin_unit, BitcoinDisplayUnit::BTC) {
+            Denomination::Bitcoin
+        } else {
+            Denomination::Satoshi
+        },
+    );
+    if let Some(prepare_response) = prepare_onchain_send_response {
+        liquid_to_vault_fees = Some(Amount::from_sat(prepare_response.total_fees_sat));
+    }
 
     let content = Column::new()
         .width(Length::Fill)
@@ -727,14 +741,6 @@ fn confirm_transfer_view<'a>(
         ))
         .push(Space::new().height(Length::Fixed(20.0)))
         .push({
-            let amount = Amount::from_str_in(
-                &amount.value,
-                if matches!(bitcoin_unit, BitcoinDisplayUnit::BTC) {
-                    Denomination::Bitcoin
-                } else {
-                    Denomination::Satoshi
-                },
-            );
             Container::new(
                 Row::new()
                     .padding(20)
@@ -753,6 +759,58 @@ fn confirm_transfer_view<'a>(
             )
             .width(Length::Fill)
             .style(theme::card::simple)
+        })
+        .push(Space::new().height(3))
+        .push_maybe({
+            let fees = match direction {
+                TransferDirection::LiquidToVault => liquid_to_vault_fees,
+                TransferDirection::VaultToLiquid => vault_to_liquid_fees,
+            };
+
+            if let Some(fees) = fees {
+                Some(
+                    Container::new(
+                        Row::new()
+                            .padding(20)
+                            .push(text("Fees:"))
+                            .push(Space::new().width(Length::Fill))
+                            .push(text(fees.to_formatted_string_with_unit(bitcoin_unit))),
+                    )
+                    .width(Length::Fill)
+                    .style(theme::card::simple),
+                )
+            } else {
+                None
+            }
+        })
+        .push(Space::new().height(3))
+        .push_maybe({
+            let fees = match direction {
+                TransferDirection::LiquidToVault => liquid_to_vault_fees,
+                TransferDirection::VaultToLiquid => vault_to_liquid_fees,
+            };
+
+            if let Some(fees) = fees {
+                if let Ok(amount) = amount {
+                    Some(
+                        Container::new(
+                            Row::new()
+                                .padding(20)
+                                .push(text("Total:"))
+                                .push(Space::new().width(Length::Fill))
+                                .push(text(
+                                    (fees + amount).to_formatted_string_with_unit(bitcoin_unit),
+                                )),
+                        )
+                        .width(Length::Fill)
+                        .style(theme::card::simple),
+                    )
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
         })
         .push(Space::new().height(Length::Fixed(60.0)))
         .push(match direction {
@@ -894,6 +952,8 @@ pub struct GlobalViewConfig<'a> {
     pub onchain_receive_limit: Option<(u64, u64)>,
     pub is_sending: bool,
     pub is_tx_signed: bool,
+    pub prepare_onchain_send_response: Option<&'a PreparePayOnchainResponse>,
+    pub spend_tx_fees: Option<Amount>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -937,6 +997,8 @@ pub fn global_home_view<'a>(config: GlobalViewConfig<'a>) -> Element<'a, Message
         onchain_receive_limit,
         is_sending,
         is_tx_signed,
+        prepare_onchain_send_response,
+        spend_tx_fees,
     } = config;
 
     match current_view.step {
@@ -969,6 +1031,8 @@ pub fn global_home_view<'a>(config: GlobalViewConfig<'a>) -> Element<'a, Message
                     is_sending,
                     is_tx_signed,
                     bitcoin_unit,
+                    prepare_onchain_send_response,
+                    spend_tx_fees,
                 );
             }
         }
