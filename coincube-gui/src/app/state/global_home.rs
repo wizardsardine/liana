@@ -79,6 +79,7 @@ pub struct GlobalHome {
     is_sending: bool,
     transfer_spend_tx: Option<SpendTx>,
     transfer_signed: bool,
+    spend_tx_fees: Option<Amount>,
 }
 
 impl GlobalHome {
@@ -102,6 +103,7 @@ impl GlobalHome {
             is_sending: false,
             transfer_spend_tx: None,
             transfer_signed: false,
+            spend_tx_fees: None,
         }
     }
 
@@ -125,6 +127,7 @@ impl GlobalHome {
             is_sending: false,
             transfer_spend_tx: None,
             transfer_signed: false,
+            spend_tx_fees: None,
         }
     }
 }
@@ -168,6 +171,8 @@ impl State for GlobalHome {
                 onchain_receive_limit: self.onchain_receive_limit,
                 is_sending: self.is_sending,
                 is_tx_signed: self.transfer_signed,
+                prepare_onchain_send_response: self.prepare_onchain_send_response.as_ref(),
+                spend_tx_fees: self.spend_tx_fees,
             }),
         );
 
@@ -649,6 +654,8 @@ impl State for GlobalHome {
                                         &psbt.unsigned_tx,
                                         use_primary_path,
                                     );
+                                    let fees = psbt.fee().expect("Fees should be present");
+                                    self.spend_tx_fees = Some(fees);
 
                                     // Create minimal SpendTx
                                     let spend_tx = SpendTx {

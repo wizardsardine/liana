@@ -1158,7 +1158,8 @@ impl App {
                     SdkEvent::PaymentPending { .. }
                     | SdkEvent::PaymentSucceeded { .. }
                     | SdkEvent::PaymentFailed { .. }
-                    | SdkEvent::PaymentWaitingConfirmation { .. } => {
+                    | SdkEvent::PaymentWaitingConfirmation { .. }
+                    | SdkEvent::Synced => {
                         // Payment state changed - trigger cache update
                         return Task::batch(vec![
                             Task::done(Message::Tick),

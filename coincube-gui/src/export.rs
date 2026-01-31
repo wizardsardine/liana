@@ -168,6 +168,7 @@ impl Display for Error {
 #[derive(Debug, Clone)]
 pub enum ImportExportType {
     Transactions,
+    LiquidPayments,
     ExportPsbt(String),
     ExportXpub(String),
     ExportEncryptedDescriptor(Box<CoincubeDescriptor>),
@@ -190,6 +191,7 @@ impl ImportExportType {
     pub fn end_message(&self) -> &str {
         match self {
             ImportExportType::Transactions
+            | ImportExportType::LiquidPayments
             | ImportExportType::ExportPsbt(_)
             | ImportExportType::Descriptor(_)
             | ImportExportType::ExportProcessBackup(..)
@@ -272,6 +274,7 @@ pub struct Export {
     pub sender: Option<UnboundedSender<Progress>>,
     pub handle: Option<Arc<Mutex<JoinHandle<()>>>>,
     pub daemon: Option<Arc<dyn Daemon + Sync + Send>>,
+    pub breez_client: Option<Arc<crate::app::breez::BreezClient>>,
     pub path: Box<PathBuf>,
     pub export_type: ImportExportType,
 }
@@ -279,6 +282,7 @@ pub struct Export {
 impl Export {
     pub fn new(
         daemon: Option<Arc<dyn Daemon + Sync + Send>>,
+        breez_client: Option<Arc<crate::app::breez::BreezClient>>,
         path: Box<PathBuf>,
         export_type: ImportExportType,
     ) -> Self {
@@ -288,6 +292,7 @@ impl Export {
             sender: Some(sender),
             handle: None,
             daemon,
+            breez_client,
             path,
             export_type,
         }
@@ -298,9 +303,15 @@ impl Export {
         sender: UnboundedSender<Progress>,
         daemon: Option<Arc<dyn Daemon + Sync + Send>>,
         path: PathBuf,
+        breez_client: Option<Arc<crate::app::breez::BreezClient>>,
     ) {
         if let Err(e) = match export_type {
             ImportExportType::Transactions => export_transactions(&sender, daemon, path).await,
+            ImportExportType::LiquidPayments => {
+                let breez_client =
+                    breez_client.expect("BreezClient required for LiquidPayments export");
+                export_liquid_payments(&sender, breez_client, path).await
+            }
             ImportExportType::ExportPsbt(str) => export_string(&sender, path, str).await,
             ImportExportType::Descriptor(descriptor) => {
                 export_descriptor(&sender, path, descriptor).await
@@ -341,12 +352,13 @@ impl Export {
     pub async fn start(&mut self) {
         if let (true, Some(sender)) = (self.handle.is_none(), self.sender.take()) {
             let daemon = self.daemon.clone();
+            let breez_client = self.breez_client.clone();
             let path = self.path.clone();
 
             let cloned_sender = sender.clone();
             let export_type = self.export_type.clone();
             let handle = tokio::spawn(async move {
-                Self::export_logic(export_type, cloned_sender, daemon, *path).await;
+                Self::export_logic(export_type, cloned_sender, daemon, *path, breez_client).await;
             });
             let handle = Arc::new(Mutex::new(handle));
 
@@ -373,6 +385,7 @@ impl Export {
 /// Subscription identity is based on `export_type` discriminant and `path`.
 pub struct ExportSubscriptionData {
     pub daemon: Option<Arc<dyn Daemon + Sync + Send>>,
+    pub breez_client: Option<Arc<crate::app::breez::BreezClient>>,
     pub path: PathBuf,
     pub export_type: ImportExportType,
 }
@@ -389,6 +402,7 @@ impl std::hash::Hash for ExportSubscriptionData {
 pub fn make_export_stream(data: &ExportSubscriptionData) -> impl Stream<Item = Progress> {
     export_subscription(
         data.daemon.clone(),
+        data.breez_client.clone(),
         data.path.clone(),
         data.export_type.clone(),
     )
@@ -396,11 +410,12 @@ pub fn make_export_stream(data: &ExportSubscriptionData) -> impl Stream<Item = P
 
 pub fn export_subscription(
     daemon: Option<Arc<dyn Daemon + Sync + Send>>,
+    breez_client: Option<Arc<crate::app::breez::BreezClient>>,
     path: PathBuf,
     export_type: ImportExportType,
 ) -> impl Stream<Item = Progress> {
     iced::stream::channel(100, async move |mut output| {
-        let mut state = Export::new(daemon, Box::new(path), export_type);
+        let mut state = Export::new(daemon, breez_client, Box::new(path), export_type);
         loop {
             match state.state() {
                 Status::Init => {
@@ -592,6 +607,64 @@ pub async fn export_transactions(
         file.write_all(line.as_bytes())?;
     }
     send_progress!(sender, Progress(100.0));
+    send_progress!(sender, Ended);
+    Ok(())
+}
+
+pub async fn export_liquid_payments(
+    sender: &UnboundedSender<Progress>,
+    breez_client: Arc<crate::app::breez::BreezClient>,
+    path: PathBuf,
+) -> Result<(), Error> {
+    use breez_sdk_liquid::prelude::PaymentType;
+    use chrono::DateTime;
+
+    let mut file = open_file_write(&path).await?;
+
+    let header = "Date,PaymentType,Sending/Receiving Address,Amount,Fees,Net Amount\n";
+    file.write_all(header.as_bytes())?;
+
+    let payments = breez_client
+        .list_payments(None)
+        .await
+        .map_err(|e| Error::Daemon(e.to_string()))?;
+
+    for payment in payments {
+        let date_time = DateTime::from_timestamp(payment.timestamp as i64, 0)
+            .or_else(|| DateTime::from_timestamp_millis(payment.timestamp as i64))
+            .map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string())
+            .unwrap_or_default();
+
+        let payment_type = match payment.payment_type {
+            PaymentType::Send => "SEND",
+            PaymentType::Receive => "RECEIVE",
+        };
+
+        let address = payment
+            .destination
+            .as_ref()
+            .map(|d| format!("\"{}\"", d))
+            .unwrap_or_default();
+
+        let amount_btc = match payment.payment_type {
+            PaymentType::Send => payment.amount_sat as f64 / 100_000_000.0,
+            PaymentType::Receive => (payment.amount_sat + payment.fees_sat) as f64 / 100_000_000.0,
+        };
+
+        let fees_btc = payment.fees_sat as f64 / 100_000_000.0;
+
+        let total = match payment.payment_type {
+            PaymentType::Send => -(amount_btc + fees_btc),
+            PaymentType::Receive => amount_btc - fees_btc,
+        };
+
+        let line = format!(
+            "{},{},{},{:.8},{:.8},{:.8}\n",
+            date_time, payment_type, address, amount_btc, fees_btc, total
+        );
+        file.write_all(line.as_bytes())?;
+    }
+
     send_progress!(sender, Ended);
     Ok(())
 }

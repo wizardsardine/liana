@@ -395,6 +395,15 @@ impl BreezClient {
             .map_err(|e| BreezError::Sdk(e.to_string()))
     }
 
+    /// Manually trigger wallet synchronization with the blockchain
+    /// This is useful after payments to immediately update the balance
+    pub async fn sync(&self) -> Result<(), BreezError> {
+        self.sdk
+            .sync(false)
+            .await
+            .map_err(|e| BreezError::Sdk(e.to_string()))
+    }
+
     pub fn liquid_signer(&self) -> std::sync::Arc<std::sync::Mutex<HotSigner>> {
         self.signer.clone()
     }
