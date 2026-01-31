@@ -14,6 +14,7 @@ pub mod loader;
 pub mod logger;
 pub mod node;
 pub mod pin_entry;
+pub mod pin_input;
 pub mod services;
 pub mod signer;
 pub mod utils;

@@ -1,9 +1,6 @@
 use iced::{
     alignment::Horizontal,
-    widget::{
-        checkbox, operation::focus_next, operation::focus_previous, pick_list, scrollable, Button,
-        Space,
-    },
+    widget::{checkbox, pick_list, scrollable, Button, Space},
     Alignment, Length, Subscription, Task,
 };
 
@@ -16,6 +13,7 @@ use coincube_ui::{
 use coincubed::config::ConfigError;
 use tokio::runtime::Handle;
 
+use crate::pin_input;
 use crate::{
     app::{
         self,
@@ -57,10 +55,8 @@ pub struct Launcher {
     error: Option<String>,
     delete_cube_modal: Option<DeleteCubeModal>,
     create_cube_name: coincube_ui::component::form::Value<String>,
-    create_cube_pin: [String; 4],
-    create_cube_pin_confirm: [String; 4],
-    show_pin: bool,
-    show_pin_confirm: bool,
+    create_cube_pin: pin_input::PinInput,
+    create_cube_pin_confirm: pin_input::PinInput,
     creating_cube: bool,
 }
 
@@ -83,15 +79,8 @@ impl Launcher {
                 error: None,
                 delete_cube_modal: None,
                 create_cube_name: coincube_ui::component::form::Value::default(),
-                create_cube_pin: [String::new(), String::new(), String::new(), String::new()],
-                create_cube_pin_confirm: [
-                    String::new(),
-                    String::new(),
-                    String::new(),
-                    String::new(),
-                ],
-                show_pin: false,
-                show_pin_confirm: false,
+                create_cube_pin: pin_input::PinInput::new(),
+                create_cube_pin_confirm: pin_input::PinInput::new(),
                 creating_cube: false,
             },
             Task::perform(check_network_datadir(network_dir), Message::Checked),
@@ -139,12 +128,8 @@ impl Launcher {
                     *create_cube = show;
                     if !show {
                         self.create_cube_name = coincube_ui::component::form::Value::default();
-                        self.create_cube_pin =
-                            [String::new(), String::new(), String::new(), String::new()];
-                        self.create_cube_pin_confirm =
-                            [String::new(), String::new(), String::new(), String::new()];
-                        self.show_pin = false;
-                        self.show_pin_confirm = false;
+                        self.create_cube_pin = pin_input::PinInput::new();
+                        self.create_cube_pin_confirm = pin_input::PinInput::new();
                     }
                 }
                 Task::none()
@@ -155,55 +140,17 @@ impl Launcher {
                 self.error = None; // Clear error when user makes changes
                 Task::none()
             }
-            Message::View(ViewMessage::PinDigitChanged(index, value)) => {
-                let old_value = self.create_cube_pin[index].clone();
-
-                if value.is_empty() {
-                    self.create_cube_pin[index] = value.clone();
-                    self.error = None; // Clear error when user makes changes
-                                       // If we deleted the digit and field is now empty, move to previous input
-                    if !old_value.is_empty() && index > 0 {
-                        return focus_previous();
-                    }
-                } else if value.len() == 1 && value.chars().all(|c| c.is_ascii_digit()) {
-                    self.create_cube_pin[index] = value;
-                    self.error = None; // Clear error when user makes changes
-                                       // Auto-advance to next input when digit is entered
-                    if index < 3 {
-                        return focus_next();
-                    }
-                }
-
-                Task::none()
+            Message::View(ViewMessage::PinInput(msg)) => {
+                self.error = None;
+                self.create_cube_pin
+                    .update(msg)
+                    .map(|m| Message::View(ViewMessage::PinInput(m)))
             }
-            Message::View(ViewMessage::PinConfirmDigitChanged(index, value)) => {
-                let old_value = self.create_cube_pin_confirm[index].clone();
-
-                if value.is_empty() {
-                    self.create_cube_pin_confirm[index] = value.clone();
-                    self.error = None; // Clear error when user makes changes
-                                       // If we deleted the digit and field is now empty, move to previous input
-                    if !old_value.is_empty() && index > 0 {
-                        return focus_previous();
-                    }
-                } else if value.len() == 1 && value.chars().all(|c| c.is_ascii_digit()) {
-                    self.create_cube_pin_confirm[index] = value;
-                    self.error = None; // Clear error when user makes changes
-                                       // Auto-advance to next input when digit is entered
-                    if index < 3 {
-                        return focus_next();
-                    }
-                }
-
-                Task::none()
-            }
-            Message::View(ViewMessage::ToggleShowPin) => {
-                self.show_pin = !self.show_pin;
-                Task::none()
-            }
-            Message::View(ViewMessage::ToggleShowConfirmPin) => {
-                self.show_pin_confirm = !self.show_pin_confirm;
-                Task::none()
+            Message::View(ViewMessage::PinConfirmInput(msg)) => {
+                self.error = None;
+                self.create_cube_pin_confirm
+                    .update(msg)
+                    .map(|m| Message::View(ViewMessage::PinConfirmInput(m)))
             }
             Message::View(ViewMessage::CreateCube) => {
                 if self.creating_cube {
@@ -215,15 +162,15 @@ impl Launcher {
                 }
 
                 // Validate PIN (always required)
-                if self.create_cube_pin.iter().any(|d| d.is_empty()) {
+                if !self.create_cube_pin.is_complete() {
                     self.error = Some("Please enter all 4 PIN digits".to_string());
                     return Task::none();
                 }
-                if self.create_cube_pin_confirm.iter().any(|d| d.is_empty()) {
+                if !self.create_cube_pin_confirm.is_complete() {
                     self.error = Some("Please confirm all 4 PIN digits".to_string());
                     return Task::none();
                 }
-                if self.create_cube_pin != self.create_cube_pin_confirm {
+                if self.create_cube_pin.value() != self.create_cube_pin_confirm.value() {
                     self.error = Some("PIN codes do not match".to_string());
                     return Task::none();
                 }
@@ -231,7 +178,7 @@ impl Launcher {
                 self.creating_cube = true;
                 let network = self.network;
                 let cube_name = self.create_cube_name.value.trim().to_string();
-                let pin = self.create_cube_pin.join("");
+                let pin = self.create_cube_pin.value();
                 let datadir_path = self.datadir_path.clone();
 
                 Task::perform(
@@ -296,12 +243,8 @@ impl Launcher {
                         self.error = None;
                         // Reset form fields
                         self.create_cube_name = coincube_ui::component::form::Value::default();
-                        self.create_cube_pin =
-                            [String::new(), String::new(), String::new(), String::new()];
-                        self.create_cube_pin_confirm =
-                            [String::new(), String::new(), String::new(), String::new()];
-                        self.show_pin = false;
-                        self.show_pin_confirm = false;
+                        self.create_cube_pin = pin_input::PinInput::new();
+                        self.create_cube_pin_confirm = pin_input::PinInput::new();
                         self.reload()
                     }
                     Err(e) => {
@@ -500,8 +443,6 @@ impl Launcher {
                                             &self.create_cube_name,
                                             &self.create_cube_pin,
                                             &self.create_cube_pin_confirm,
-                                            self.show_pin,
-                                            self.show_pin_confirm,
                                             &self.error,
                                             self.creating_cube,
                                         )
@@ -529,8 +470,6 @@ impl Launcher {
                                     &self.create_cube_name,
                                     &self.create_cube_pin,
                                     &self.create_cube_pin_confirm,
-                                    self.show_pin,
-                                    self.show_pin_confirm,
                                     &self.error,
                                     self.creating_cube,
                                 ),
@@ -561,10 +500,8 @@ impl Launcher {
 
 fn create_cube_form<'a>(
     cube_name: &coincube_ui::component::form::Value<String>,
-    pin_digits: &[String; 4],
-    pin_confirm_digits: &[String; 4],
-    show_pin: bool,
-    show_pin_confirm: bool,
+    pin: &'a pin_input::PinInput,
+    pin_confirm: &'a pin_input::PinInput,
     error: &Option<String>,
     creating_cube: bool,
 ) -> Element<'a, ViewMessage> {
@@ -595,91 +532,15 @@ fn create_cube_form<'a>(
     // PIN setup section (always required)
     column = column.push(Space::new().height(Length::Fixed(10.0)));
 
-    // Enter PIN label with eye button
     let pin_label = p1_regular("Enter PIN:").style(theme::text::secondary);
-    let pin_eye_button = button::secondary(
-        Some(if show_pin {
-            icon::eye_icon()
-        } else {
-            icon::eye_slash_icon()
-        }),
-        "",
-    )
-    .on_press(ViewMessage::ToggleShowPin)
-    .width(Length::Fixed(50.0))
-    .padding(iced::Padding::new(10.0).left(15.0));
-
-    let pin_label_row = Row::new()
-        .spacing(10)
-        .align_y(Alignment::Center)
-        .push(pin_label)
-        .push(pin_eye_button);
-
-    column = column.push(pin_label_row);
-
-    // PIN inputs with consistent styling
-    let mut pin_inputs_row = Row::new().spacing(15).align_y(Alignment::Center);
-    for (i, digit) in pin_digits.iter().enumerate().take(4) {
-        let mut input = iced::widget::text_input("", digit)
-            .on_input(move |v| ViewMessage::PinDigitChanged(i, v))
-            .size(30)
-            .width(Length::Fixed(60.0));
-
-        if !show_pin {
-            input = input
-                .secure(true)
-                .padding(iced::Padding::new(15.0).left(25.0));
-        } else {
-            input = input.padding(iced::Padding::new(15.0).left(20.0));
-        }
-
-        pin_inputs_row = pin_inputs_row.push(input);
-    }
-    column = column.push(pin_inputs_row);
+    column = column.push(pin_label);
+    column = column.push(pin.view().map(ViewMessage::PinInput));
 
     column = column.push(Space::new().height(Length::Fixed(20.0)));
 
-    // Confirm PIN label with eye button
     let pin_confirm_label = p1_regular("Confirm PIN:").style(theme::text::secondary);
-    let pin_confirm_eye_button = button::secondary(
-        Some(if show_pin_confirm {
-            icon::eye_icon()
-        } else {
-            icon::eye_slash_icon()
-        }),
-        "",
-    )
-    .on_press(ViewMessage::ToggleShowConfirmPin)
-    .width(Length::Fixed(50.0))
-    .padding(iced::Padding::new(10.0).left(15.0));
-
-    let pin_confirm_label_row = Row::new()
-        .spacing(10)
-        .align_y(Alignment::Center)
-        .push(pin_confirm_label)
-        .push(pin_confirm_eye_button);
-
-    column = column.push(pin_confirm_label_row);
-
-    // Confirm PIN inputs with consistent styling
-    let mut pin_confirm_inputs_row = Row::new().spacing(15).align_y(Alignment::Center);
-    for (i, digit) in pin_confirm_digits.iter().enumerate().take(4) {
-        let mut input = iced::widget::text_input("", digit)
-            .on_input(move |v| ViewMessage::PinConfirmDigitChanged(i, v))
-            .size(30)
-            .width(Length::Fixed(60.0));
-
-        if !show_pin_confirm {
-            input = input
-                .secure(true)
-                .padding(iced::Padding::new(15.0).left(25.0));
-        } else {
-            input = input.padding(iced::Padding::new(15.0).left(20.0));
-        }
-
-        pin_confirm_inputs_row = pin_confirm_inputs_row.push(input);
-    }
-    column = column.push(pin_confirm_inputs_row);
+    column = column.push(pin_confirm_label);
+    column = column.push(pin_confirm.view().map(ViewMessage::PinConfirmInput));
 
     // Add extra padding before Create Cube button
     column = column.push(Space::new().height(Length::Fixed(20.0)));
@@ -694,8 +555,8 @@ fn create_cube_form<'a>(
     let can_create = !creating_cube
         && cube_name.valid
         && !cube_name.value.trim().is_empty()
-        && !pin_digits.iter().any(|d| d.is_empty())
-        && !pin_confirm_digits.iter().any(|d| d.is_empty());
+        && pin.is_complete()
+        && pin_confirm.is_complete();
 
     let submit_button = if creating_cube {
         iced::widget::button(
@@ -813,10 +674,8 @@ pub enum ViewMessage {
     ShowCreateCube(bool),
     CubeNameEdited(String),
     CreateCube,
-    PinDigitChanged(usize, String),
-    PinConfirmDigitChanged(usize, String),
-    ToggleShowPin,
-    ToggleShowConfirmPin,
+    PinInput(pin_input::Message),
+    PinConfirmInput(pin_input::Message),
     ShareXpubs,
     SelectNetwork(Network),
     StartInstall(Network),
@@ -832,6 +691,7 @@ pub enum DeleteCubeMessage {
     Confirm(String), // Cube ID
     DeleteLianaConnect(bool),
     Deleted,
+    PinInput(pin_input::Message),
 }
 
 struct DeleteCubeModal {
@@ -844,6 +704,8 @@ struct DeleteCubeModal {
     user_role: Option<UserRole>,
     // `None` means we were not able to determine whether wallet uses internal bitcoind.
     internal_bitcoind: Option<bool>,
+    pin_input: pin_input::PinInput,
+    pin_error: Option<String>,
 }
 
 impl DeleteCubeModal {
@@ -862,6 +724,8 @@ impl DeleteCubeModal {
             delete_liana_connect: false,
             internal_bitcoind,
             user_role: None,
+            pin_input: pin_input::PinInput::new(),
+            pin_error: None,
         };
         if let Some(wallet) = &wallet_settings {
             if let Some(auth) = &wallet.remote_backend_auth {
@@ -888,6 +752,17 @@ impl DeleteCubeModal {
                 if cube_id != self.cube.id {
                     return Task::none();
                 }
+
+                // Verify PIN before proceeding with deletion
+                if self.cube.has_pin() {
+                    let pin = self.pin_input.value();
+                    if !self.cube.verify_pin(&pin) {
+                        self.pin_error = Some("Incorrect PIN. Please try again.".to_string());
+                        self.pin_input.clear();
+                        return Task::none();
+                    }
+                }
+
                 self.warning = None;
 
                 // Delete vault if it exists
@@ -931,16 +806,24 @@ impl DeleteCubeModal {
             ))) => {
                 self.delete_liana_connect = delete;
             }
+            Message::View(ViewMessage::DeleteCube(DeleteCubeMessage::PinInput(msg))) => {
+                self.pin_error = None;
+                return self.pin_input.update(msg).map(|m| {
+                    Message::View(ViewMessage::DeleteCube(DeleteCubeMessage::PinInput(m)))
+                });
+            }
             _ => {}
         }
         Task::none()
     }
 
     fn view(&self) -> Element<Message> {
+        let pin_ready = !self.cube.has_pin() || self.pin_input.is_complete();
+        let can_delete = pin_ready && self.warning.is_none();
         let mut confirm_button = button::secondary(None, "Delete Cube")
             .width(Length::Fixed(200.0))
             .style(theme::button::destructive);
-        if self.warning.is_none() {
+        if can_delete {
             confirm_button = confirm_button.on_press(ViewMessage::DeleteCube(
                 DeleteCubeMessage::Confirm(self.cube.id.clone()),
             ));
@@ -979,61 +862,81 @@ impl DeleteCubeModal {
         };
         let help_text_3 = "WARNING: This cannot be undone.";
 
-        Into::<Element<ViewMessage>>::into(
-            card::simple(
-                Column::new()
-                    .spacing(10)
-                    .push(Container::new(
-                        h4_bold(format!("Delete Cube \"{}\"", self.cube.name))
-                        .style(theme::text::destructive)
-                        .width(Length::Fill),
-                    ))
-                    .push(Row::new().push(text(help_text_1)))
-                    .push(
-                        help_text_2
-                            .map(|t| Row::new().push(p1_regular(t).style(theme::text::secondary))),
-                    )
-                    .push(Row::new())
-                    .push(self.wallet_settings.as_ref().and_then(|w| w.remote_backend_auth.as_ref()).map(|a| {
-                        checkbox(
-                            self.delete_liana_connect,
-                        )
-                        .label(
-                                match self.user_role {
-                                    Some(UserRole::Owner) | None => "Also permanently delete the Vault wallet from Liana Connect (for all members).".to_string(),
-                                    Some(UserRole::Member) => format!("Also disassociate {} from this Liana Connect wallet.", a.email),
-                                }
-                            )
-                        .on_toggle_maybe(if !self.deleted {
-                                Some(|v| {
-                                    ViewMessage::DeleteCube(DeleteCubeMessage::DeleteLianaConnect(v))
-                                })
-                            } else {
-                                None
-                            })
-                    }))
-                    .push(Row::new().push(text(help_text_3)))
-                    .push(self.warning.as_ref().map(|w| {
-                        notification::warning(w.to_string(), w.to_string()).width(Length::Fill)
-                    }))
-                    .push(
-                        Container::new(if !self.deleted {
-                            Row::new().push(confirm_button)
-                        } else {
-                            Row::new()
-                                .spacing(10)
-                                .push(icon::square_check_icon().style(theme::text::success))
-                                .push(
-                                    text("Cube successfully deleted").style(theme::text::success),
-                                )
-                        })
-                        .align_x(Horizontal::Center)
-                        .width(Length::Fill),
-                    ),
+        let mut col = Column::new()
+            .spacing(10)
+            .push(Container::new(
+                h4_bold(format!("Delete Cube \"{}\"", self.cube.name))
+                .style(theme::text::destructive)
+                .width(Length::Fill),
+            ))
+            .push(Row::new().push(text(help_text_1)))
+            .push(
+                help_text_2
+                    .map(|t| Row::new().push(p1_regular(t).style(theme::text::secondary))),
             )
-            .width(Length::Fixed(700.0)),
-        )
-        .map(Message::View)
+            .push(Row::new())
+            .push(self.wallet_settings.as_ref().and_then(|w| w.remote_backend_auth.as_ref()).map(|a| {
+                checkbox(
+                    self.delete_liana_connect,
+                )
+                .label(
+                        match self.user_role {
+                            Some(UserRole::Owner) | None => "Also permanently delete the Vault wallet from Liana Connect (for all members).".to_string(),
+                            Some(UserRole::Member) => format!("Also disassociate {} from this Liana Connect wallet.", a.email),
+                        }
+                    )
+                .on_toggle_maybe(if !self.deleted {
+                        Some(|v| {
+                            ViewMessage::DeleteCube(DeleteCubeMessage::DeleteLianaConnect(v))
+                        })
+                    } else {
+                        None
+                    })
+            }))
+            .push(Row::new().push(text(help_text_3)));
+
+        // PIN entry section
+        if self.cube.has_pin() {
+            col = col
+                .push(Space::new().height(Length::Fixed(5.0)))
+                .push(p1_regular("Enter your PIN to confirm:").style(theme::text::secondary))
+                .push(
+                    Container::new(
+                        self.pin_input
+                            .view()
+                            .map(|m| ViewMessage::DeleteCube(DeleteCubeMessage::PinInput(m))),
+                    )
+                    .center_x(Length::Fill),
+                );
+            if let Some(err) = &self.pin_error {
+                col = col.push(
+                    Container::new(p1_regular(err).style(theme::text::error))
+                        .center_x(Length::Fill),
+                );
+            }
+        }
+
+        col = col
+            .push(
+                self.warning.as_ref().map(|w| {
+                    notification::warning(w.to_string(), w.to_string()).width(Length::Fill)
+                }),
+            )
+            .push(
+                Container::new(if !self.deleted {
+                    Row::new().push(confirm_button)
+                } else {
+                    Row::new()
+                        .spacing(10)
+                        .push(icon::square_check_icon().style(theme::text::success))
+                        .push(text("Cube successfully deleted").style(theme::text::success))
+                })
+                .align_x(Horizontal::Center)
+                .width(Length::Fill),
+            );
+
+        Into::<Element<ViewMessage>>::into(card::simple(col).width(Length::Fixed(700.0)))
+            .map(Message::View)
     }
 }
 

@@ -3,19 +3,16 @@ use coincube_ui::{
     icon, theme,
     widget::*,
 };
-use iced::{
-    widget::{operation::focus_next, operation::focus_previous, Space},
-    Alignment, Length, Task,
-};
+use iced::{widget::Space, Alignment, Length, Task};
 use std::time::Duration;
 
 use crate::app::settings::CubeSettings;
+use crate::pin_input;
 
 pub struct PinEntry {
     cube: CubeSettings,
-    pin_digits: [String; 4],
+    pin_input: pin_input::PinInput,
     error: Option<String>,
-    show_pin: bool,
     loading: bool,
     // Store what to do after successful PIN entry
     pub on_success: PinEntrySuccess,
@@ -35,20 +32,18 @@ pub enum PinEntrySuccess {
 
 #[derive(Debug, Clone)]
 pub enum Message {
-    DigitChanged(usize, String),
+    PinInput(pin_input::Message),
     Submit,
     Back,
     PinVerified,
-    ToggleShowPin,
 }
 
 impl PinEntry {
     pub fn new(cube: CubeSettings, on_success: PinEntrySuccess) -> Self {
         Self {
             cube,
-            pin_digits: [String::new(), String::new(), String::new(), String::new()],
+            pin_input: pin_input::PinInput::new(),
             error: None,
-            show_pin: false,
             loading: false,
             on_success,
         }
@@ -59,62 +54,37 @@ impl PinEntry {
     }
 
     pub fn pin(&self) -> String {
-        self.pin_digits.join("")
+        self.pin_input.value()
     }
 
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
-            Message::DigitChanged(index, value) => {
-                // Only allow single digit (0-9)
-                if value.is_empty() {
-                    self.pin_digits[index] = value.clone();
-                    self.error = None;
-
-                    // Move to previous input when deleting (either from filled or empty field)
-                    if index > 0 {
-                        return focus_previous();
-                    }
-                } else if value.len() == 1 && value.chars().all(|c| c.is_ascii_digit()) {
-                    self.pin_digits[index] = value;
-                    self.error = None;
-
-                    // Auto-advance to next input when digit is entered
-                    if index < 3 {
-                        return focus_next();
-                    }
-                }
-
-                Task::none()
+            Message::PinInput(msg) => {
+                self.error = None;
+                self.pin_input.update(msg).map(Message::PinInput)
             }
             Message::Submit => {
                 if self.loading {
                     return Task::none();
                 }
 
-                // Check if all digits are filled
-                if self.pin_digits.iter().any(|d| d.is_empty()) {
+                if !self.pin_input.is_complete() {
                     self.error = Some("Please enter all 4 digits".to_string());
                     return Task::none();
                 }
 
-                let pin = self.pin_digits.join("");
+                let pin = self.pin_input.value();
 
-                // Verify PIN
                 if self.cube.verify_pin(&pin) {
                     self.loading = true;
                     Task::perform(async {}, |_| Message::PinVerified)
                 } else {
                     self.error = Some("Incorrect PIN. Please try again.".to_string());
-                    // Clear PIN on error
-                    self.pin_digits = [String::new(), String::new(), String::new(), String::new()];
+                    self.pin_input.clear();
                     Task::none()
                 }
             }
             Message::Back | Message::PinVerified => Task::none(),
-            Message::ToggleShowPin => {
-                self.show_pin = !self.show_pin;
-                Task::none()
-            }
         }
     }
 
@@ -132,61 +102,20 @@ impl PinEntry {
             .push(Space::new().width(Length::FillPortion(8)))
             .push(Space::new().width(Length::FillPortion(2)));
 
-        // Title with eye button
         let title = h3(format!("Enter PIN for {}", self.cube.name));
-
-        // Small toggle visibility button (icon only) with padding to center icon
-        let toggle_icon_button = button::secondary(
-            Some(if self.show_pin {
-                icon::eye_icon()
-            } else {
-                icon::eye_slash_icon()
-            }),
-            "",
-        )
-        .on_press(Message::ToggleShowPin)
-        .width(Length::Fixed(50.0))
-        .padding(iced::Padding::new(10.0).left(15.0));
-
-        let title_row = Row::new()
-            .spacing(10)
-            .align_y(Alignment::Center)
-            .push(title)
-            .push(toggle_icon_button);
-
-        // PIN input fields with masking
-        let mut pin_inputs = Row::new().spacing(15).align_y(Alignment::Center);
-
-        for i in 0..4 {
-            let mut input = iced::widget::text_input("", &self.pin_digits[i])
-                .on_input(move |v| Message::DigitChanged(i, v))
-                .size(30) // Uniform font size for both modes
-                .width(Length::Fixed(60.0));
-
-            // Use secure mode when not showing PIN
-            if !self.show_pin {
-                input = input
-                    .secure(true)
-                    .padding(iced::Padding::new(15.0).left(25.0)); // More left padding to center asterisks
-            } else {
-                input = input.padding(iced::Padding::new(15.0).left(20.0)); // Original padding for numbers
-            }
-
-            pin_inputs = pin_inputs.push(input);
-        }
 
         let mut content = Column::new()
             .spacing(30)
             .width(Length::Fill)
             .align_x(Alignment::Center)
-            .push(title_row)
-            .push(pin_inputs);
+            .push(title)
+            .push(self.pin_input.view().map(Message::PinInput));
 
         if let Some(error) = &self.error {
             content = content.push(p1_regular(error).style(theme::text::error));
         }
 
-        let can_submit = !self.loading && !self.pin_digits.iter().any(|d| d.is_empty());
+        let can_submit = !self.loading && self.pin_input.is_complete();
 
         let submit_button = if self.loading {
             use coincube_ui::component::spinner;
