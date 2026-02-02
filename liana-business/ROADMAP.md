@@ -463,6 +463,8 @@ When user arrives at wallet selection, three possible subflows based on status:
 ## Changelog
 
 ### 2026-02-02
+- Fixed: Wallet manager on Keys view is now redirected to wallet edit when WS admin locks the template
+- Fixed: Wallet manager on WalletEdit view is now redirected to Xpub view when template is validated
 - Fixed: Registration view now filters devices to only show those linked to the current user's email (via key identity matching)
 - Added `Wallet::user_devices()` method to extract user-specific device fingerprints
 

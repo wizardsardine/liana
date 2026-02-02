@@ -1092,6 +1092,43 @@ impl State {
             self.load_wallet_into_app_state(&wallet);
         }
 
+        // Redirect views on WalletStatus change
+        let user_id = *self.backend.user_id.lock().expect("poisoned");
+        let current_user = user_id.and_then(|id| self.backend.get_user(id));
+        if let Some(user) = current_user {
+            if let Some(role) = user.role(&wallet) {
+                let email = &self.views.login.email.form.value;
+                let status = wallet.effective_status(email);
+                match role {
+                    UserRole::WalletManager => match (self.current_view, status) {
+                        (View::Keys, WalletStatus::Locked) => {
+                            debug!("on_backend_wallet: wallet locked while on Keys view, redirecting to wallet edit");
+                            self.current_view = View::WalletEdit;
+                            return Task::none();
+                        }
+                        (View::WalletEdit, WalletStatus::Validated) => {
+                            debug!("on_backend_wallet: wallet validated, redirecting to Xpub view");
+                            self.current_view = View::Xpub;
+                            return Task::none();
+                        }
+                        _ => {}
+                    },
+                    UserRole::WizardSardineAdmin => {
+                        if let (View::WalletEdit, WalletStatus::Validated) =
+                            (self.current_view, status)
+                        {
+                            debug!(
+                                "on_backend_wallet: wallet validated, redirecting to wallet list"
+                            );
+                            self.current_view = View::WalletSelect;
+                            self.app.selected_wallet = None;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+
         // Update registration state if on Registration view
         if self.current_view == View::Registration {
             let email = &self.views.login.email.form.value;
