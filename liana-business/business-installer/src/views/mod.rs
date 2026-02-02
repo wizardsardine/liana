@@ -168,7 +168,8 @@ pub fn layout_with_scrollable_list<'a>(
     padding_left: bool,
     previous_message: Option<Msg>,
 ) -> Element<'a, Msg> {
-    // Build the left button
+    // Build the left button (hidden when not logged in and no previous view)
+    let has_left_button = previous_message.is_some() || email.is_some();
     let left_button = if let Some(msg) = previous_message {
         button::transparent(Some(icon::previous_icon()), "Previous").on_press(msg)
     } else if email.is_some() {
@@ -198,7 +199,13 @@ pub fn layout_with_scrollable_list<'a>(
 
     let header = Row::new()
         .align_y(Alignment::Center)
-        .push(Container::new(left_button).center_x(Length::FillPortion(2)))
+        .push(if has_left_button {
+            Container::new(left_button)
+                .center_x(Length::FillPortion(2))
+                .into()
+        } else {
+            Element::from(Space::with_width(Length::FillPortion(2)))
+        })
         .push(Container::new(breadcrumb_header(breadcrumb)).width(Length::FillPortion(8)))
         .push_maybe(if progress.1 > 0 {
             Some(

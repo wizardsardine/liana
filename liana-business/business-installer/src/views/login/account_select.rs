@@ -79,7 +79,7 @@ pub fn account_select_view(state: &State) -> Element<'_, Msg> {
 
     layout_with_scrollable_list(
         (1, 4),
-        Some(""),
+        None,
         None,
         &["Login".to_string()],
         header_content,
