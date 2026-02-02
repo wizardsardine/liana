@@ -41,9 +41,6 @@ impl State {
             Msg::OrgWalletSelected(id) => self.on_org_wallet_selected(id),
 
             // Wallet selection
-            Msg::WalletSelectToggleHideFinalized(checked) => {
-                self.views.wallet_select.hide_finalized = checked;
-            }
             Msg::WalletSelectUpdateSearchFilter(filter) => {
                 self.views.wallet_select.search_filter = filter;
             }

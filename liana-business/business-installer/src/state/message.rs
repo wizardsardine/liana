@@ -22,7 +22,6 @@ pub enum Msg {
     OrgWalletSelected(Uuid),    // Select a wallet within org
 
     // Wallet selection
-    WalletSelectToggleHideFinalized(bool),  // Toggle hiding finalized wallets
     WalletSelectUpdateSearchFilter(String), // Update wallet search filter
 
     // Organization selection

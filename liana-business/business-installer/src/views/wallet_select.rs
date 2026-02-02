@@ -3,7 +3,7 @@ use crate::{
     state::{Msg, State},
 };
 use iced::{
-    widget::{checkbox, row, Space},
+    widget::{row, Space},
     Alignment, Length,
 };
 use liana_connect::ws_business::{KeyIdentity, UserRole, Wallet, WalletStatus};
@@ -216,10 +216,6 @@ pub fn wallet_select_view(state: &State) -> Element<'_, Msg> {
     if is_ws_admin && has_wallets {
         let filter_checkbox = Row::new()
             .push(Space::with_width(Length::Fill))
-            .push(
-                checkbox("Hide finalized wallets", hide_finalized)
-                    .on_toggle(Msg::WalletSelectToggleHideFinalized),
-            )
             .push(Space::with_width(Length::Fill))
             .width(Length::Fill);
         header_content = header_content.push(filter_checkbox);
