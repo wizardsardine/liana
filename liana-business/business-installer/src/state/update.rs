@@ -328,7 +328,7 @@ impl State {
 
                 // Populate registration state from wallet data
                 self.views.registration.descriptor = wallet.descriptor.clone();
-                self.views.registration.user_devices = wallet.devices.clone().unwrap_or_default();
+                self.views.registration.user_devices = wallet.user_devices(&user_email);
                 return;
             }
         }
@@ -1098,7 +1098,7 @@ impl State {
             let wallet_status = wallet.effective_status(email);
             debug!("on_backend_wallet: on Registration view, checking status");
             if wallet_status == WalletStatus::Registration {
-                let devices = wallet.devices.clone().unwrap_or_default();
+                let devices = wallet.user_devices(email);
                 let descriptor_len = wallet.descriptor.as_ref().map(|d| d.len()).unwrap_or(0);
                 debug!(
                     "on_backend_wallet: Registration with {} devices, descriptor_len={}",

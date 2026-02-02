@@ -442,6 +442,7 @@ When user arrives at wallet selection, three possible subflows based on status:
 
 ## Known Issues
 
+- [x] Registration: Device list showed all wallet devices instead of only the current user's devices
 - [ ] Registration: Multiple devices with same fingerprint - currently picks arbitrary one (should warn or let user choose)
 - [x] WS Manager role: Org list wallet count includes non-visible wallets
 - [x] Login page: Wrong email greys out "Send token" button, user stuck (dummy server issue)
@@ -460,6 +461,10 @@ When user arrives at wallet selection, three possible subflows based on status:
   - Resolution: Service abstraction handles runtime requirements
 
 ## Changelog
+
+### 2026-02-02
+- Fixed: Registration view now filters devices to only show those linked to the current user's email (via key identity matching)
+- Added `Wallet::user_devices()` method to extract user-specific device fingerprints
 
 ### 2026-01-29
 - Removed General section from business-settings (fiat toggle); only Wallet and About remain

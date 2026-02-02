@@ -511,6 +511,36 @@ impl Wallet {
 
         self.status.clone()
     }
+
+    /// Returns only the device fingerprints associated with keys matching `user_email`.
+    pub fn user_devices(&self, user_email: &str) -> Vec<Fingerprint> {
+        let (template, devices) = match (&self.template, &self.devices) {
+            (Some(t), Some(d)) if !d.is_empty() => (t, d),
+            _ => return vec![],
+        };
+
+        let email_lower = user_email.to_lowercase();
+        let mut result = Vec::new();
+
+        for key in template.keys.values() {
+            if !matches!(&key.identity, KeyIdentity::Email(e) if e.to_lowercase() == email_lower) {
+                continue;
+            }
+            if let Some(xpub) = &key.xpub {
+                if let Some((fg, _)) = match xpub {
+                    DescriptorPublicKey::Single(k) => &k.origin,
+                    DescriptorPublicKey::XPub(k) => &k.origin,
+                    DescriptorPublicKey::MultiXPub(k) => &k.origin,
+                } {
+                    if devices.contains(fg) {
+                        result.push(*fg);
+                    }
+                }
+            }
+        }
+
+        result
+    }
 }
 
 #[cfg(test)]
