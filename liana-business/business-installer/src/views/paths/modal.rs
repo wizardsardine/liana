@@ -124,23 +124,12 @@ pub fn edit_path_modal_view<'a>(
         (false, Some("Invalid threshold value"))
     };
 
-    // Threshold row
-    let threshold_label_text = if threshold_enabled {
-        format!("Threshold (1-{}):", selected_count)
-    } else {
-        "Threshold:".to_string()
-    };
-    let threshold_label: Element<'_, Msg> = if threshold_enabled {
-        text::p1_medium(threshold_label_text)
+    // Threshold row (only shown when 2+ keys are selected)
+    let threshold_row: Option<Element<'_, Msg>> = threshold_enabled.then_some({
+        let threshold_label_text = format!("Threshold (1-{}):", selected_count);
+        let threshold_label: Element<'_, Msg> = text::p1_medium(threshold_label_text)
             .style(theme::text::primary)
-            .into()
-    } else {
-        text::p1_medium(threshold_label_text)
-            .style(theme::text::secondary)
-            .into()
-    };
-
-    let threshold_row = if threshold_enabled {
+            .into();
         let threshold_value = form::Value {
             value: modal_state.threshold.clone(),
             warning: None,
@@ -158,12 +147,8 @@ pub fn edit_path_modal_view<'a>(
                 ))
                 .width(Length::Fixed(INPUT_WIDTH)),
             )
-    } else {
-        Row::new()
-            .spacing(10)
-            .align_y(Alignment::Center)
-            .push(Container::new(threshold_label).width(Length::Fixed(LABEL_WIDTH)))
-    };
+            .into()
+    });
 
     // Threshold warning (optional)
     let threshold_warning_row = threshold_warning.map(|warning| {
@@ -279,7 +264,7 @@ pub fn edit_path_modal_view<'a>(
         .push_maybe(last_edit_info)
         .push(keys_label)
         .push(keys_column)
-        .push(threshold_row)
+        .push_maybe(threshold_row)
         .push_maybe(threshold_warning_row)
         .push_maybe(timelock_section)
         .push(footer)
