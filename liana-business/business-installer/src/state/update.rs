@@ -1064,20 +1064,30 @@ impl State {
             wallet_id
         );
 
-        // Only relevant if this is the currently selected wallet
-        if self.app.selected_wallet != Some(wallet_id) {
-            debug!(
-                "on_backend_wallet: ignoring - not selected wallet (selected={:?})",
-                self.app.selected_wallet
-            );
-            return Task::none();
-        }
-
-        // Get the updated wallet from cache
+        // Get the updated wallet from cache first (needed to check org)
         let Some(wallet) = self.backend.get_wallet(wallet_id) else {
             debug!("on_backend_wallet: wallet not found in cache");
             return Task::none();
         };
+
+        // Check if wallet belongs to selected org
+        let is_selected_org = self.app.selected_org == Some(wallet.org);
+
+        // If not the selected wallet, only log and return
+        // The cache is already updated by handle_wallet(), and iced will
+        // re-render the wallet list view automatically
+        if self.app.selected_wallet != Some(wallet_id) {
+            if is_selected_org {
+                debug!("on_backend_wallet: wallet in selected org but not selected, cache updated");
+            } else {
+                debug!(
+                    "on_backend_wallet: ignoring - wallet not in selected org (wallet_org={}, selected_org={:?})",
+                    wallet.org,
+                    self.app.selected_org
+                );
+            }
+            return Task::none();
+        }
 
         debug!(
             "on_backend_wallet: wallet '{}' status={:?}, current_view={:?}",

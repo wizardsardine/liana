@@ -1209,7 +1209,15 @@ fn handle_wss_message(
             handle_org(org, orgs, wallets, users, request_sender, n_sender, n_waker)?;
         }
         Response::Wallet { wallet } => {
-            handle_wallet(wallet, wallets, users, request_sender, n_sender, n_waker)?;
+            handle_wallet(
+                wallet,
+                wallets,
+                orgs,
+                users,
+                request_sender,
+                n_sender,
+                n_waker,
+            )?;
         }
         Response::User { user } => {
             handle_user(user, users, request_sender, n_sender, n_waker)?;
@@ -1368,6 +1376,7 @@ fn handle_org(
 fn handle_wallet(
     wallet: Wallet,
     wallets: &Arc<Mutex<BTreeMap<Uuid, Wallet>>>,
+    orgs: &Arc<Mutex<BTreeMap<Uuid, Org>>>,
     users: &Arc<Mutex<BTreeMap<Uuid, User>>>,
     request_sender: &channel::Sender<Request>,
     notification_sender: &channel::Sender<Message>,
@@ -1401,6 +1410,21 @@ fn handle_wallet(
         .lock()
         .expect("poisoned")
         .insert(wallet_id, wallet.clone());
+
+    // Add wallet ID to the org's wallet set if not already present
+    {
+        let org_id = wallet.org;
+        let mut orgs_guard = orgs.lock().expect("poisoned");
+        if let Some(org) = orgs_guard.get_mut(&org_id) {
+            if org.wallets.insert(wallet_id) {
+                tracing::debug!(
+                    "handle_wallet: added wallet_id={} to org_id={} wallets set",
+                    wallet_id,
+                    org_id
+                );
+            }
+        }
+    }
 
     // If the owner user is not cached, send a fetch_user request.
     // The response will be handled automatically by handle_user().

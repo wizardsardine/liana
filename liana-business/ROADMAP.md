@@ -462,6 +462,9 @@ When user arrives at wallet selection, three possible subflows based on status:
 
 ## Changelog
 
+### 2026-02-03
+- Fixed: Wallet updates for non-selected wallets now properly update the wallet list (wallet ID added to org.wallets cache)
+
 ### 2026-02-02
 - Fixed: Wallet manager on Keys view is now redirected to wallet edit when WS admin locks the template
 - Fixed: Wallet manager on WalletEdit view is now redirected to Xpub view when template is validated
