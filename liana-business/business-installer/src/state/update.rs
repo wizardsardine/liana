@@ -1183,6 +1183,56 @@ impl State {
             }
         }
 
+        // Handle Xpub view status changes when wallet becomes Finalized
+        if self.current_view == View::Xpub {
+            let email = &self.views.login.email.form.value;
+            let wallet_status = wallet.effective_status(email);
+            debug!(
+                "on_backend_wallet: on Xpub view, effective status: {:?}",
+                wallet_status
+            );
+
+            match wallet_status {
+                WalletStatus::Registration => {
+                    debug!(
+                        "on_backend_wallet: wallet moved to Registration, transitioning from Xpub"
+                    );
+
+                    // Close xpub modal if open
+                    if self.views.xpub.modal.is_some() {
+                        self.views.xpub.close_modal();
+                    }
+
+                    // Set up registration state (mirrors on_org_wallet_selected pattern)
+                    self.views.registration.descriptor = wallet.descriptor.clone();
+                    self.views.registration.user_devices = wallet.user_devices(email);
+
+                    // Start hardware wallet listening for registration
+                    self.start_hw();
+
+                    // Navigate to Registration view
+                    self.current_view = View::Registration;
+                    return Task::none();
+                }
+                WalletStatus::Finalized => {
+                    debug!("on_backend_wallet: wallet is Finalized, signaling exit to open wallet");
+
+                    // Close xpub modal if open and stop HW listening
+                    if self.views.xpub.modal.is_some() {
+                        self.views.xpub.close_modal();
+                        self.stop_hw();
+                    }
+
+                    // Signal exit to open the main wallet application
+                    self.app.exit = true;
+                    return Task::none();
+                }
+                _ => {
+                    // Other statuses - stay on Xpub view
+                }
+            }
+        }
+
         // Close xpub modal if open (edit was successful and wallet updated)
         // The modal should be closed after successful save/clear operations
         if self.views.xpub.modal.is_some() {

@@ -465,6 +465,7 @@ When user arrives at wallet selection, three possible subflows based on status:
 ### 2026-02-03
 - Added: Delete button (trashbin icon) to remove cached accounts from account selection view
 - Fixed: Wallet updates for non-selected wallets now properly update the wallet list (wallet ID added to org.wallets cache)
+- Added: Xpub view now handles wallet status transitions - redirects to Registration or opens wallet when status becomes Finalized
 
 ### 2026-02-02
 - Fixed: Wallet manager on Keys view is now redirected to wallet edit when WS admin locks the template

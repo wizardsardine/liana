@@ -359,6 +359,28 @@ Xpub View:
                         - Account picker (changing triggers re-fetch)
                         - Error display with Retry button
                         - Save button (enabled when valid xpub)
+
+### Dynamic Status Transitions in Xpub View
+
+When on the Xpub view, wallet status updates can trigger automatic view transitions:
+
+```
++-----------------+-----------------------------+-------------------------------+
+| Effective Status| Action                      | Destination                   |
++-----------------+-----------------------------+-------------------------------+
+| Registration    | Close modal, setup state    | View::Registration            |
+|                 | start_hw()                  | (user has devices to register)|
++-----------------+-----------------------------+-------------------------------+
+| Finalized       | Close modal, stop_hw()      | app.exit = true               |
+|                 | set exit flag               | (opens main wallet app)       |
++-----------------+-----------------------------+-------------------------------+
+| Other           | Stay on Xpub view           | No change                     |
++-----------------+-----------------------------+-------------------------------+
+```
+
+Note: Server always sends `WalletStatus::Finalized`, but the app uses
+`wallet.effective_status(&user_email)` to infer `Registration` if the user
+has devices pending registration.
 ```
 
 ## Adding New Installer Features
