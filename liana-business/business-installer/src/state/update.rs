@@ -34,6 +34,7 @@ impl State {
 
             // Account selection (cached token login)
             Msg::AccountSelectConnect(email) => return self.on_account_select_connect(email),
+            Msg::AccountSelectDelete(email) => self.on_account_select_delete(email),
             Msg::AccountSelectNewEmail => return self.on_account_select_new_email(),
 
             // Org management
@@ -245,6 +246,19 @@ impl State {
         self.views.login.email.form.valid = false;
         self.views.login.email.form.warning = None;
         text_input::focus("login_email")
+    }
+
+    /// Delete a cached account (remove from UI and cache)
+    fn on_account_select_delete(&mut self, email: String) {
+        self.backend.clear_invalid_tokens(&[email.clone()]);
+        self.views
+            .login
+            .account_select
+            .accounts
+            .retain(|a| a.email != email);
+        if self.views.login.account_select.accounts.is_empty() {
+            self.views.login.current = views::LoginState::EmailEntry;
+        }
     }
 }
 

@@ -463,6 +463,7 @@ When user arrives at wallet selection, three possible subflows based on status:
 ## Changelog
 
 ### 2026-02-03
+- Added: Delete button (trashbin icon) to remove cached accounts from account selection view
 - Fixed: Wallet updates for non-selected wallets now properly update the wallet list (wallet ID added to org.wallets cache)
 
 ### 2026-02-02

@@ -1,12 +1,34 @@
 use crate::{
     state::{Msg, State},
-    views::{layout_with_scrollable_list, menu_entry},
+    views::{keys::delete_button_style, layout_with_scrollable_list},
 };
 use iced::{
     widget::{row, Space},
-    Length,
+    Alignment, Length,
 };
-use liana_ui::{component::text, theme, widget::*};
+use liana_ui::{component::text, icon, theme, widget::*};
+
+/// Create an account card that can be clicked to select the account
+fn account_card(content: Element<'_, Msg>, message: Option<Msg>) -> Element<'_, Msg> {
+    Container::new(
+        Button::new(
+            Container::new(content)
+                .align_y(Alignment::Center)
+                .align_x(Alignment::Center)
+                .width(Length::Fill)
+                .height(Length::Fill),
+        )
+        .on_press_maybe(message)
+        .padding(15)
+        .style(theme::button::container_border),
+    )
+    .style(theme::card::simple)
+    .align_x(Alignment::Center)
+    .align_y(Alignment::Center)
+    .width(500)
+    .height(80)
+    .into()
+}
 
 pub fn account_select_view(state: &State) -> Element<'_, Msg> {
     let accounts = &state.views.login.account_select.accounts;
@@ -35,7 +57,7 @@ pub fn account_select_view(state: &State) -> Element<'_, Msg> {
     // Scrollable list of accounts
     let mut list_content = Column::new().spacing(15).align_x(iced::Alignment::Center);
 
-    // Card for each cached account
+    // Card for each cached account with delete button
     for account in accounts {
         let is_selected = selected_email
             .as_ref()
@@ -54,13 +76,38 @@ pub fn account_select_view(state: &State) -> Element<'_, Msg> {
             text::p1_medium(&account.email).into()
         };
 
-        let message = if processing {
+        let card_message = if processing {
             None // Disable all cards while connecting
         } else {
             Some(Msg::AccountSelectConnect(account.email.clone()))
         };
 
-        list_content = list_content.push(menu_entry(card_content, message));
+        let account_card_element = account_card(card_content, card_message);
+
+        // Delete button - disabled while processing
+        let delete_button = Button::new(
+            Container::new(icon::trash_icon())
+                .width(Length::Fixed(20.0))
+                .height(Length::Fixed(20.0))
+                .center_x(Length::Fixed(20.0))
+                .center_y(Length::Fixed(20.0)),
+        )
+        .padding(10)
+        .on_press_maybe(if processing {
+            None
+        } else {
+            Some(Msg::AccountSelectDelete(account.email.clone()))
+        })
+        .style(delete_button_style);
+
+        // Row with account card and delete button
+        let account_row = Row::new()
+            .spacing(15)
+            .align_y(Alignment::Center)
+            .push(account_card_element)
+            .push(delete_button);
+
+        list_content = list_content.push(account_row);
     }
 
     // Separator
@@ -75,7 +122,15 @@ pub fn account_select_view(state: &State) -> Element<'_, Msg> {
     } else {
         Some(Msg::AccountSelectNewEmail)
     };
-    list_content = list_content.push(menu_entry(new_email_content, new_email_message));
+
+    // Wrap in a container to maintain alignment with account rows
+    let new_email_row = Row::new()
+        .spacing(15)
+        .align_y(Alignment::Center)
+        .push(account_card(new_email_content, new_email_message))
+        .push(Space::with_width(Length::Fixed(50.0))); // Match delete button width
+
+    list_content = list_content.push(new_email_row);
 
     layout_with_scrollable_list(
         (1, 4),

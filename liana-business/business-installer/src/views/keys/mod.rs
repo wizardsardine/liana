@@ -24,8 +24,8 @@ fn key_card_button(_theme: &Theme, status: Status) -> Style {
     bordered_button_style(status, 25.0)
 }
 
-/// Custom button style for delete button: dark grey border when not hovered, green when hovered
-fn delete_button_style(_theme: &Theme, status: Status) -> Style {
+/// Custom button style for delete button: circular with border
+pub fn delete_button_style(_theme: &Theme, status: Status) -> Style {
     bordered_button_style(status, 50.0) // Fully round
 }
 
