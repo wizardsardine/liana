@@ -1170,11 +1170,17 @@ impl State {
                     self.views.registration.user_devices
                 );
             } else if wallet_status == WalletStatus::Finalized {
-                debug!("on_backend_wallet: wallet is now Finalized, navigating to wallet list");
-                // All devices registered/skipped, go back to wallet selection
-                self.current_view = View::WalletSelect;
-                self.app.selected_wallet = None;
+                debug!("on_backend_wallet: wallet is Finalized, signaling exit to open wallet");
+
+                // Close registration modal if open and stop HW listening
+                if self.views.registration.modal.is_some() {
+                    self.views.registration.close_modal();
+                }
                 self.stop_hw();
+
+                // Signal exit to open the main wallet application
+                self.app.exit = true;
+                return Task::none();
             } else {
                 debug!(
                     "on_backend_wallet: wallet not in Registration status: {:?}",

@@ -383,6 +383,25 @@ Note: Server always sends `WalletStatus::Finalized`, but the app uses
 has devices pending registration.
 ```
 
+### Dynamic Status Transitions in Registration View
+
+When on the Registration view, wallet status updates can trigger automatic view transitions:
+
+```
++-----------------+-----------------------------+-------------------------------+
+| Effective Status| Action                      | Destination                   |
++-----------------+-----------------------------+-------------------------------+
+| Registration    | Update user_devices list    | Stay on Registration          |
+|                 |                             | (refresh device list)         |
++-----------------+-----------------------------+-------------------------------+
+| Finalized       | Close modal, stop_hw()      | app.exit = true               |
+|                 | set exit flag               | (opens main wallet app)       |
++-----------------+-----------------------------+-------------------------------+
+```
+
+When all devices are registered or skipped, the wallet's effective status becomes
+`Finalized`, triggering automatic exit to the main wallet application.
+
 ## Adding New Installer Features
 
 The following checklists are for adding features to the **Installer** (business-installer).
