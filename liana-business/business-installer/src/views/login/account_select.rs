@@ -1,6 +1,6 @@
 use crate::{
     state::{Msg, State},
-    views::{keys::delete_button_style, layout_with_scrollable_list},
+    views::{keys::delete_button_style, layout_with_scrollable_list, INSTALLER_STEPS},
 };
 use iced::{
     widget::{row, Space},
@@ -133,7 +133,7 @@ pub fn account_select_view(state: &State) -> Element<'_, Msg> {
     list_content = list_content.push(new_email_row);
 
     layout_with_scrollable_list(
-        (1, 4),
+        (1, INSTALLER_STEPS),
         None,
         None,
         &["Login".to_string()],

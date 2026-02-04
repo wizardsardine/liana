@@ -15,7 +15,7 @@ use liana_ui::{
 
 use uuid::Uuid;
 
-use super::{format_last_edit_info, layout_with_scrollable_list, menu_entry};
+use super::{format_last_edit_info, layout_with_scrollable_list, menu_entry, INSTALLER_STEPS};
 
 /// Derive the user's role for a specific wallet based on wallet data and global role
 /// Returns None if the user has no access to this wallet
@@ -246,7 +246,7 @@ pub fn org_select_view(state: &State) -> Element<'_, Msg> {
     };
 
     layout_with_scrollable_list(
-        (3, 4),
+        (3, INSTALLER_STEPS),
         Some(current_user_email),
         role_badge,
         &["Organizations".to_string()],

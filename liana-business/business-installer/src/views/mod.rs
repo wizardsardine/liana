@@ -28,6 +28,10 @@ use liana_ui::{
 };
 use uuid::Uuid;
 
+pub const INSTALLER_STEPS: usize = 5;
+pub const MENU_ENTRY_WIDTH: u16 = 500;
+pub const MENU_ENTRY_HEIGHT: u16 = 80;
+
 /// Format last edit information as "Edited by [You|email] [relative_time]".
 /// Returns None if `last_edited` is None.
 pub fn format_last_edit_info(
@@ -299,7 +303,26 @@ pub fn menu_entry(content: Element<'_, Msg>, message: Option<Msg>) -> Element<'_
     .style(theme::card::simple)
     .align_x(Alignment::Center)
     .align_y(Alignment::Center)
-    .width(500)
-    .height(80)
+    .width(MENU_ENTRY_WIDTH)
+    .height(MENU_ENTRY_HEIGHT)
+    .into()
+}
+
+/// Create a card with grey background, shadow, and hover-interactive border.
+/// This is the unified card style for key cards, path cards, and xpub cards.
+pub fn card_entry(content: Element<'_, Msg>, message: Option<Msg>, width: f32) -> Element<'_, Msg> {
+    Container::new(
+        Button::new(
+            container(content)
+                .align_y(Alignment::Center)
+                .width(Length::Fill)
+                .padding(15),
+        )
+        .on_press_maybe(message)
+        .padding(0)
+        .style(theme::button::container_border),
+    )
+    .style(theme::card::simple)
+    .width(Length::Fixed(width))
     .into()
 }

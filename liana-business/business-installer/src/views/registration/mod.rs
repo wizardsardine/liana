@@ -6,13 +6,18 @@ use crate::{
     views::layout_with_scrollable_list,
 };
 use async_hwi::service::SigningDevice;
-use iced::{Alignment, Length};
+use iced::{
+    widget::{row, Space},
+    Alignment, Length,
+};
 use liana_ui::{
     component::{button, hw, text},
     icon, theme,
     widget::*,
 };
 use miniscript::bitcoin::bip32::Fingerprint;
+
+use super::{menu_entry, INSTALLER_STEPS, MENU_ENTRY_WIDTH};
 
 /// Main registration view
 pub fn registration_view(state: &State) -> Element<'_, Msg> {
@@ -48,6 +53,11 @@ pub fn registration_view(state: &State) -> Element<'_, Msg> {
             )
             .style(theme::text::secondary),
         );
+    let header_content = row![
+        Space::with_width(Length::Fill),
+        header_content,
+        Space::with_width(Length::Fill)
+    ];
 
     // List content: device cards or info message
     let list_content = if reg_state.user_devices.is_empty() {
@@ -60,26 +70,30 @@ pub fn registration_view(state: &State) -> Element<'_, Msg> {
     let footer_content = if reg_state.user_devices.is_empty() {
         None
     } else {
+        let btn_width = 200;
+        let spacer = MENU_ENTRY_WIDTH - btn_width;
+        let skip_btn = button::secondary(None, "Skip")
+            .on_press(Msg::RegistrationSkipAll)
+            .width(btn_width);
+        let footer = row![
+            Space::with_width(Length::Fill),
+            Space::with_width(spacer),
+            skip_btn,
+            Space::with_width(Length::Fill),
+        ]
+        .align_y(Alignment::Center);
+
         Some(
-            Container::new(
-                Row::new()
-                    .push(
-                        button::secondary(None, "Skip")
-                            .on_press(Msg::RegistrationSkipAll)
-                            .width(Length::Fixed(200.0)),
-                    )
-                    .width(Length::Fill)
-                    .align_y(Alignment::Center),
-            )
-            .padding(20)
-            .width(Length::Fill)
-            .center_x(Length::Fill)
-            .into(),
+            Container::new(footer)
+                .padding(20)
+                .width(Length::Fill)
+                .center_x(Length::Fill)
+                .into(),
         )
     };
 
     layout_with_scrollable_list(
-        (0, 0),
+        (5, INSTALLER_STEPS),
         Some(current_user_email),
         None,
         &breadcrumb,

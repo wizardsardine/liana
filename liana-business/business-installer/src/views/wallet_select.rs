@@ -13,7 +13,7 @@ use liana_ui::{
     widget::*,
 };
 
-use super::{format_last_edit_info, layout_with_scrollable_list, menu_entry};
+use super::{format_last_edit_info, layout_with_scrollable_list, menu_entry, INSTALLER_STEPS};
 
 /// Derive the user's role for a specific wallet based on wallet data and global role
 /// Returns None if the user has no access to this wallet
@@ -350,7 +350,7 @@ pub fn wallet_select_view(state: &State) -> Element<'_, Msg> {
     let breadcrumb = vec![org_name, "Wallets".to_string()];
 
     layout_with_scrollable_list(
-        (4, 4),
+        (4, INSTALLER_STEPS),
         Some(&state.views.login.email.form.value),
         role_badge,
         &breadcrumb,

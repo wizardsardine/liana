@@ -1,6 +1,6 @@
 use crate::{
     state::{message::Msg, State},
-    views::layout,
+    views::{layout, INSTALLER_STEPS},
 };
 use iced::{
     widget::{row, Space},
@@ -58,7 +58,7 @@ pub fn login_code_view(state: &State) -> Element<'_, Msg> {
         .padding(40);
 
     layout(
-        (2, 4),
+        (2, INSTALLER_STEPS),
         None,
         None, // No role badge during login
         &["Login".to_string()],
