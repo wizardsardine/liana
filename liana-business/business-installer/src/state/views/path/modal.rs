@@ -1,3 +1,6 @@
+/// Maximum timelock in blocks (Bitcoin relative timelock limit)
+pub const MAX_TIMELOCK_BLOCKS: u64 = 65535;
+
 /// Timelock unit for display/input
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum TimelockUnit {
@@ -37,6 +40,11 @@ impl TimelockUnit {
         TimelockUnit::Days,
         TimelockUnit::Months,
     ];
+
+    /// Maximum value in this unit (based on MAX_TIMELOCK_BLOCKS)
+    pub fn max_value(self) -> u64 {
+        MAX_TIMELOCK_BLOCKS / self.blocks_per_unit()
+    }
 }
 
 impl std::fmt::Display for TimelockUnit {

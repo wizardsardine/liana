@@ -462,6 +462,10 @@ When user arrives at wallet selection, three possible subflows based on status:
 
 ## Changelog
 
+### 2026-02-04
+- Added timelock validation: Error shown when value exceeds 65535 blocks (Bitcoin's maximum relative timelock)
+- Added max value hint below timelock input showing maximum value for selected unit (e.g., "Max: 455 days")
+
 ### 2026-02-03
 - Added: Delete button (trashbin icon) to remove cached accounts from account selection view
 - Fixed: Wallet updates for non-selected wallets now properly update the wallet list (wallet ID added to org.wallets cache)

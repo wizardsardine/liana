@@ -1,6 +1,6 @@
 use crate::{
     state::{
-        views::path::{EditPathModalState, TimelockUnit},
+        views::path::{EditPathModalState, TimelockUnit, MAX_TIMELOCK_BLOCKS},
         Msg, State,
     },
     views::format_last_edit_info,
@@ -172,7 +172,9 @@ pub fn edit_path_modal_view<'a>(
         let (valid, warning) = if is_empty {
             (false, None)
         } else if current_blocks == 0 {
-            (false, Some("Timelock cannot be zero"))
+            (false, Some("Timelock cannot be zero".to_string()))
+        } else if current_blocks > MAX_TIMELOCK_BLOCKS {
+            (false, None)
         } else {
             // Check for duplicate timelocks
             let duplicate = state
@@ -185,7 +187,7 @@ pub fn edit_path_modal_view<'a>(
                         && secondary.timelock.blocks == current_blocks
                 });
             if duplicate {
-                (false, Some("Duplicate timelock"))
+                (false, Some("Duplicate timelock".to_string()))
             } else {
                 (true, None)
             }
@@ -227,10 +229,22 @@ pub fn edit_path_modal_view<'a>(
                 .push(text::p2_medium(w).style(theme::text::warning))
         });
 
+        let max_hint = text::caption(format!(
+            "Max: {} {}",
+            modal_state.timelock_unit.max_value(),
+            modal_state.timelock_unit
+        ))
+        .style(theme::text::secondary);
+
+        let max_hint_row = Row::new()
+            .push(Space::with_width(Length::Fixed(LABEL_WIDTH + 10.0)))
+            .push(max_hint);
+
         let section = Column::new()
             .spacing(15)
             .push(timelock_row)
-            .push_maybe(timelock_warning_row);
+            .push_maybe(timelock_warning_row)
+            .push(max_hint_row);
 
         (valid, Some(section))
     } else {
