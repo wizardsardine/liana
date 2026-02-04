@@ -1,3 +1,5 @@
+use liana_connect::ws_business::{BLOCKS_PER_DAY, BLOCKS_PER_HOUR, BLOCKS_PER_MONTH};
+
 /// Maximum timelock in blocks (Bitcoin relative timelock limit)
 pub const MAX_TIMELOCK_BLOCKS: u64 = 65535;
 
@@ -16,9 +18,9 @@ impl TimelockUnit {
     pub fn blocks_per_unit(self) -> u64 {
         match self {
             TimelockUnit::Blocks => 1,
-            TimelockUnit::Hours => 6,
-            TimelockUnit::Days => 144,
-            TimelockUnit::Months => 4380,
+            TimelockUnit::Hours => BLOCKS_PER_HOUR,
+            TimelockUnit::Days => BLOCKS_PER_DAY,
+            TimelockUnit::Months => BLOCKS_PER_MONTH,
         }
     }
 

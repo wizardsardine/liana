@@ -11,9 +11,10 @@ use std::{
 };
 use uuid::Uuid;
 
-const BLOCKS_PER_DAY: u64 = 144; // 24 * 60 / 10
-const BLOCKS_PER_MONTH: u64 = 4380; // ~30.4 days
-const BLOCKS_PER_YEAR: u64 = 52560; // ~365 days
+pub const BLOCKS_PER_HOUR: u64 = 6; // 60 / 10
+pub const BLOCKS_PER_DAY: u64 = 144; // 24 * 60 / 10
+pub const BLOCKS_PER_MONTH: u64 = 4380; // ~30.4 days
+pub const BLOCKS_PER_YEAR: u64 = 52560; // ~365 days
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum WalletStatus {

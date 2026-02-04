@@ -8,7 +8,7 @@ use crate::{
 use iced::Task;
 use liana_connect::ws_business::{
     self, Key, KeyIdentity, PolicyTemplate, SecondaryPath, SpendingPath, Timelock, UserRole,
-    Wallet, WalletStatus,
+    Wallet, WalletStatus, BLOCKS_PER_DAY,
 };
 use liana_ui::widget::text_input;
 use miniscript::bitcoin::bip32::Fingerprint;
@@ -697,10 +697,10 @@ impl State {
                     if let Ok(value) = value_str.parse::<u64>() {
                         modal_state.timelock_unit.to_blocks(value)
                     } else {
-                        144 // Default 1 day
+                        BLOCKS_PER_DAY // Default 1 day
                     }
                 } else {
-                    144 // Default 1 day
+                    BLOCKS_PER_DAY // Default 1 day
                 };
 
                 let new_path = ws_business::SpendingPath::new(false, threshold_n, selected_keys);

@@ -10,7 +10,9 @@ use iced::{
     },
     Alignment, Background, Border, Length,
 };
-use liana_connect::ws_business::{self, UserRole, WalletStatus};
+use liana_connect::ws_business::{
+    self, UserRole, WalletStatus, BLOCKS_PER_DAY, BLOCKS_PER_HOUR, BLOCKS_PER_MONTH,
+};
 use liana_ui::{color, component::text, icon, theme, theme::Theme, widget::*};
 use std::collections::BTreeMap;
 
@@ -67,11 +69,6 @@ const PRIMARY_COLOR: &str = "#00BFFF"; // Business Blue
 const PATH_CARD_WIDTH: f32 = 600.0;
 // r_shape icon width that precedes path cards (adds visual offset for "Add recovery" button alignment)
 const R_SHAPE_WIDTH: f32 = 60.0;
-
-// Timelock conversion constants (1 block ≈ 10 minutes)
-const BLOCKS_PER_HOUR: u64 = 6;
-const BLOCKS_PER_DAY: u64 = 144;
-const BLOCKS_PER_MONTH: u64 = 4380;
 
 // Generate color from blue to purple gradient based on index and total count
 // Recovery path 1 should be between blue and purple (not the same as primary blue)
