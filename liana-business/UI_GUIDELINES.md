@@ -117,6 +117,24 @@ menu_entry(
 
 Dimensions: 500px width × 80px height, bordered card style.
 
+## Card Entries
+
+Use `card_entry()` for cards with grey background and shadow (keys, paths, xpub):
+
+```rust
+card_entry(
+    content.into(),
+    Some(Message::KeyEdit(key_id)),  // None for read-only
+    600.0,  // width
+)
+```
+
+Features:
+- Grey background (`LIGHT_BG_SECONDARY`)
+- Shadow effect
+- Blue border on hover (via `theme::button::container_border`)
+- Pass `None` as message for read-only display
+
 ## Status Badges
 
 ### Wallet Status

@@ -14,66 +14,53 @@ use iced::{
 use liana_connect::ws_business::{self, UserRole};
 use liana_ui::{color, component::text, icon, theme, theme::Theme, widget::*};
 
-use super::{format_last_edit_info, layout_with_scrollable_list};
+use super::{card_entry, format_last_edit_info, layout_with_scrollable_list};
 
 // Card width constant (matching path cards)
 const KEY_CARD_WIDTH: f32 = 600.0;
 
-/// Custom button style for key cards: dark grey border when not hovered, green when hovered
-fn key_card_button(_theme: &Theme, status: Status) -> Style {
-    bordered_button_style(status, 25.0)
-}
-
-/// Custom button style for delete button: circular with border
+/// Custom button style for delete button: circular with grey background and shadow
 pub fn delete_button_style(_theme: &Theme, status: Status) -> Style {
-    bordered_button_style(status, 50.0) // Fully round
-}
+    use iced::{Color, Shadow, Vector};
 
-/// Shared bordered button style with configurable border radius
-fn bordered_button_style(status: Status, radius: f32) -> Style {
-    let border_inactive = color::LIGHT_BORDER;
+    let background = color::LIGHT_BG_SECONDARY;
     let border_active = color::BUSINESS_BLUE_DARK;
+    let shadow = Shadow {
+        color: Color::from_rgba(0.0, 0.0, 0.0, 0.15),
+        offset: Vector::new(0.0, 2.0),
+        blur_radius: 8.0,
+    };
 
     match status {
         Status::Active => Style {
-            background: Some(Background::Color(color::TRANSPARENT)),
+            background: Some(Background::Color(background)),
             text_color: color::DARK_TEXT_SECONDARY,
             border: Border {
-                radius: radius.into(),
+                radius: 50.0.into(),
                 width: 1.0,
-                color: border_inactive,
+                color: color::TRANSPARENT,
             },
-            ..Default::default()
+            shadow,
         },
-        Status::Hovered => Style {
-            background: Some(Background::Color(color::TRANSPARENT)),
+        Status::Hovered | Status::Pressed => Style {
+            background: Some(Background::Color(background)),
             text_color: color::BUSINESS_BLUE_DARK,
             border: Border {
-                radius: radius.into(),
+                radius: 50.0.into(),
                 width: 1.0,
                 color: border_active,
             },
-            ..Default::default()
-        },
-        Status::Pressed => Style {
-            background: Some(Background::Color(color::TRANSPARENT)),
-            text_color: color::BUSINESS_BLUE_DARK,
-            border: Border {
-                radius: radius.into(),
-                width: 1.0,
-                color: border_active,
-            },
-            ..Default::default()
+            shadow,
         },
         Status::Disabled => Style {
-            background: Some(Background::Color(color::TRANSPARENT)),
+            background: Some(Background::Color(background)),
             text_color: color::DARK_TEXT_TERTIARY,
             border: Border {
-                radius: radius.into(),
+                radius: 50.0.into(),
                 width: 1.0,
-                color: border_inactive,
+                color: color::TRANSPARENT,
             },
-            ..Default::default()
+            shadow,
         },
     }
 }
@@ -126,14 +113,7 @@ fn key_card(
         .push_maybe(description)
         .push_maybe(last_edit);
 
-    let card_content = Container::new(content).padding(15).width(Length::Fill);
-
-    Button::new(card_content)
-        .padding(0)
-        .width(Length::Fixed(KEY_CARD_WIDTH))
-        .on_press(Msg::KeyEdit(key_id))
-        .style(key_card_button)
-        .into()
+    card_entry(content.into(), Some(Msg::KeyEdit(key_id)), KEY_CARD_WIDTH)
 }
 
 pub fn keys_view(state: &State) -> Element<'_, Msg> {
@@ -222,16 +202,9 @@ fn keys_visualization(state: &State) -> Element<'static, Msg> {
         .collect();
 
     // "Add a key" card
-    let add_key_content =
-        Container::new(text::p1_medium("+ Add a key").style(liana_ui::theme::text::secondary))
-            .padding(15)
-            .width(Length::Fill);
+    let add_key_content = text::p1_medium("+ Add a key").style(liana_ui::theme::text::secondary);
 
-    let add_key_card = Button::new(add_key_content)
-        .padding(0)
-        .width(Length::Fixed(KEY_CARD_WIDTH))
-        .on_press(Msg::KeyAdd)
-        .style(key_card_button);
+    let add_key_card = card_entry(add_key_content.into(), Some(Msg::KeyAdd), KEY_CARD_WIDTH);
 
     // Build the column with all elements
     let mut column = Column::new()

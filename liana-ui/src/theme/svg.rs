@@ -17,3 +17,9 @@ impl Catalog for Theme {
 pub fn default(_theme: &Theme, _status: Status) -> Style {
     Style { color: None }
 }
+
+pub fn accent(theme: &Theme, _status: Status) -> Style {
+    Style {
+        color: Some(theme.colors.general.accent),
+    }
+}

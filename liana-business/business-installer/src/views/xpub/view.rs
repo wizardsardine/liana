@@ -1,71 +1,14 @@
 use crate::{
     backend::Backend,
     state::{Msg, State},
-    views::format_last_edit_info,
+    views::{card_entry, format_last_edit_info, layout_with_scrollable_list},
 };
-use iced::{
-    widget::{
-        button::{Status, Style},
-        Space,
-    },
-    Alignment, Background, Border, Length,
-};
+use iced::{widget::Space, Alignment, Length};
 use liana_connect::ws_business::{self, UserRole};
-use liana_ui::{color, component::text, icon, theme, theme::Theme, widget::*};
-
-use crate::views::layout_with_scrollable_list;
+use liana_ui::{component::text, icon, theme, widget::*};
 
 // Card width constant (matching keys view)
 const KEY_CARD_WIDTH: f32 = 600.0;
-
-/// Custom button style for key cards: light border when not hovered, blue when hovered
-fn key_card_button(_theme: &Theme, status: Status) -> Style {
-    let border_inactive = color::LIGHT_BORDER;
-    let border_active = color::BUSINESS_BLUE_DARK;
-
-    match status {
-        Status::Active => Style {
-            background: Some(Background::Color(color::TRANSPARENT)),
-            text_color: color::DARK_TEXT_SECONDARY,
-            border: Border {
-                radius: 25.0.into(),
-                width: 1.0,
-                color: border_inactive,
-            },
-            ..Default::default()
-        },
-        Status::Hovered => Style {
-            background: Some(Background::Color(color::TRANSPARENT)),
-            text_color: color::BUSINESS_BLUE_DARK,
-            border: Border {
-                radius: 25.0.into(),
-                width: 1.0,
-                color: border_active,
-            },
-            ..Default::default()
-        },
-        Status::Pressed => Style {
-            background: Some(Background::Color(color::TRANSPARENT)),
-            text_color: color::BUSINESS_BLUE_DARK,
-            border: Border {
-                radius: 25.0.into(),
-                width: 1.0,
-                color: border_active,
-            },
-            ..Default::default()
-        },
-        Status::Disabled => Style {
-            background: Some(Background::Color(color::TRANSPARENT)),
-            text_color: color::DARK_TEXT_TERTIARY,
-            border: Border {
-                radius: 25.0.into(),
-                width: 1.0,
-                color: border_inactive,
-            },
-            ..Default::default()
-        },
-    }
-}
 
 /// Create a status badge for xpub population status
 fn xpub_status_badge(has_xpub: bool) -> Element<'static, Msg> {
@@ -128,16 +71,11 @@ fn xpub_key_card(
         .push_maybe(edit_info)
         .spacing(5);
 
-    // Wrap card content - use Fill width so Button controls the final width
-    let card_content = Container::new(content).padding(15).width(Length::Fill);
-
-    // Make card clickable
-    Button::new(card_content)
-        .padding(0)
-        .width(Length::Fixed(KEY_CARD_WIDTH))
-        .on_press(Msg::XpubSelectKey(key_id))
-        .style(key_card_button)
-        .into()
+    card_entry(
+        content.into(),
+        Some(Msg::XpubSelectKey(key_id)),
+        KEY_CARD_WIDTH,
+    )
 }
 
 pub fn xpub_view(state: &State) -> Element<'_, Msg> {

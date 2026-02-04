@@ -35,6 +35,7 @@ pub struct General {
     pub background: iced::Color,
     pub foreground: iced::Color,
     pub scrollable: iced::Color,
+    pub accent: iced::Color,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq)]
@@ -196,6 +197,7 @@ impl std::default::Default for Palette {
                 background: color::LIGHT_BLACK,
                 foreground: color::BLACK,
                 scrollable: color::GREY_7,
+                accent: color::GREEN,
             },
             text: Text {
                 primary: color::WHITE,
@@ -611,6 +613,7 @@ impl Palette {
                 background: color::LIGHT_BG,
                 foreground: color::LIGHT_BG_SECONDARY,
                 scrollable: color::LIGHT_BORDER,
+                accent: color::BUSINESS_BLUE,
             },
             text: Text {
                 primary: color::DARK_TEXT_PRIMARY,
@@ -777,24 +780,24 @@ impl Palette {
                 },
                 menu: Button {
                     active: ButtonPalette {
-                        background: color::TRANSPARENT,
+                        background: color::LIGHT_BG_SECONDARY,
                         text: color::DARK_TEXT_PRIMARY,
-                        border: color::TRANSPARENT.into(),
+                        border: color::LIGHT_BG_SECONDARY.into(),
                     },
                     hovered: ButtonPalette {
-                        background: color::LIGHT_BG_SECONDARY,
+                        background: color::LIGHT_BG_TERTIARY,
                         text: color::DARK_TEXT_PRIMARY,
-                        border: color::TRANSPARENT.into(),
+                        border: color::LIGHT_BG_TERTIARY.into(),
                     },
                     pressed: Some(ButtonPalette {
-                        background: color::LIGHT_BG_SECONDARY,
-                        text: color::DARK_TEXT_PRIMARY,
-                        border: color::TRANSPARENT.into(),
+                        background: color::BUSINESS_BLUE,
+                        text: color::WHITE,
+                        border: color::BUSINESS_BLUE.into(),
                     }),
                     disabled: Some(ButtonPalette {
-                        background: color::TRANSPARENT,
+                        background: color::LIGHT_BG_SECONDARY,
                         text: color::DARK_TEXT_TERTIARY,
-                        border: color::TRANSPARENT.into(),
+                        border: color::LIGHT_BG_SECONDARY.into(),
                     }),
                 },
                 tab: Button {

@@ -467,6 +467,7 @@ When user arrives at wallet selection, three possible subflows based on status:
 - Fixed: Wallet updates for non-selected wallets now properly update the wallet list (wallet ID added to org.wallets cache)
 - Added: Xpub view now handles wallet status transitions - redirects to Registration or opens wallet when status becomes Finalized
 - Fixed: Registration view now exits installer and opens wallet when all devices are registered (was incorrectly navigating to wallet list)
+- UI: Unified card and button styling - all cards (keys, xpub, paths) and delete buttons now use grey background with shadow, matching org/wallet list cards
 
 ### 2026-02-02
 - Fixed: Wallet manager on Keys view is now redirected to wallet edit when WS admin locks the template

@@ -1,7 +1,7 @@
 use crate::{
     backend::Backend,
     state::{message::Msg, State},
-    views::format_last_edit_info,
+    views::{card_entry, format_last_edit_info},
 };
 use iced::{
     widget::{
@@ -14,77 +14,49 @@ use liana_connect::ws_business::{self, UserRole, WalletStatus};
 use liana_ui::{color, component::text, icon, theme, theme::Theme, widget::*};
 use std::collections::BTreeMap;
 
-/// Custom button style for path cards: dark grey border when not hovered, green when hovered
-fn path_card_button(_theme: &Theme, status: Status) -> Style {
-    bordered_button_style(status, 25.0)
-}
-
-/// Custom button style for delete button: dark grey border when not hovered, green when hovered
+/// Custom button style for delete button: circular with grey background and shadow
 fn delete_button_style(_theme: &Theme, status: Status) -> Style {
-    bordered_button_style(status, 50.0) // Fully round
-}
+    use iced::{Color, Shadow, Vector};
 
-/// Shared bordered button style with configurable border radius
-fn bordered_button_style(status: Status, radius: f32) -> Style {
-    let border_inactive = color::LIGHT_BORDER;
+    let background = color::LIGHT_BG_SECONDARY;
     let border_active = color::BUSINESS_BLUE_DARK;
+    let shadow = Shadow {
+        color: Color::from_rgba(0.0, 0.0, 0.0, 0.15),
+        offset: Vector::new(0.0, 2.0),
+        blur_radius: 8.0,
+    };
 
     match status {
         Status::Active => Style {
-            background: Some(Background::Color(color::TRANSPARENT)),
+            background: Some(Background::Color(background)),
             text_color: color::DARK_TEXT_SECONDARY,
             border: Border {
-                radius: radius.into(),
+                radius: 50.0.into(),
                 width: 1.0,
-                color: border_inactive,
+                color: color::TRANSPARENT,
             },
-            ..Default::default()
+            shadow,
         },
-        Status::Hovered => Style {
-            background: Some(Background::Color(color::TRANSPARENT)),
+        Status::Hovered | Status::Pressed => Style {
+            background: Some(Background::Color(background)),
             text_color: color::BUSINESS_BLUE_DARK,
             border: Border {
-                radius: radius.into(),
+                radius: 50.0.into(),
                 width: 1.0,
                 color: border_active,
             },
-            ..Default::default()
-        },
-        Status::Pressed => Style {
-            background: Some(Background::Color(color::TRANSPARENT)),
-            text_color: color::BUSINESS_BLUE_DARK,
-            border: Border {
-                radius: radius.into(),
-                width: 1.0,
-                color: border_active,
-            },
-            ..Default::default()
+            shadow,
         },
         Status::Disabled => Style {
-            background: Some(Background::Color(color::TRANSPARENT)),
+            background: Some(Background::Color(background)),
             text_color: color::DARK_TEXT_TERTIARY,
             border: Border {
-                radius: radius.into(),
+                radius: 50.0.into(),
                 width: 1.0,
-                color: border_inactive,
+                color: color::TRANSPARENT,
             },
-            ..Default::default()
+            shadow,
         },
-    }
-}
-
-/// Container style for read-only path cards (matches button border style)
-fn path_card_container_style(_theme: &Theme) -> iced::widget::container::Style {
-    use iced::widget::container;
-    container::Style {
-        text_color: Some(color::DARK_TEXT_SECONDARY),
-        background: Some(Background::Color(color::TRANSPARENT)),
-        border: Border {
-            radius: 25.0.into(),
-            width: 1.0,
-            color: color::LIGHT_BORDER,
-        },
-        ..Default::default()
     }
 }
 
@@ -291,24 +263,14 @@ fn path_card(
         content = content.push(text::caption(info).style(liana_ui::theme::text::secondary));
     }
 
-    // Wrap card content - use Fill width so Button controls the final width
-    let card_content = Container::new(content).padding(15).width(Length::Fill);
-
-    // Make clickable only if editable
-    if is_editable {
-        Button::new(card_content)
-            .padding(0)
-            .width(Length::Fixed(PATH_CARD_WIDTH))
-            .on_press(Msg::TemplateEditPath(is_primary, path_index))
-            .style(path_card_button)
-            .into()
+    // Use card_entry with optional message for editable vs read-only
+    let message = if is_editable {
+        Some(Msg::TemplateEditPath(is_primary, path_index))
     } else {
-        // Read-only: display with border styling (no click handler)
-        card_content
-            .width(Length::Fixed(PATH_CARD_WIDTH))
-            .style(path_card_container_style)
-            .into()
-    }
+        None
+    };
+
+    card_entry(content.into(), message, PATH_CARD_WIDTH)
 }
 
 pub fn template_visualization(state: &State) -> Element<'static, Msg> {
@@ -408,17 +370,14 @@ pub fn template_visualization(state: &State) -> Element<'static, Msg> {
 
     // "Add a recovery path" card - only show if editable (WS Admin)
     if is_editable {
-        let add_path_content = Container::new(
-            text::p1_medium("+ Add a recovery path").style(liana_ui::theme::text::secondary),
-        )
-        .padding(15)
-        .width(Length::Fill);
+        let add_path_content =
+            text::p1_medium("+ Add a recovery path").style(liana_ui::theme::text::secondary);
 
-        let add_path_card = Button::new(add_path_content)
-            .padding(0)
-            .width(Length::Fixed(PATH_CARD_WIDTH))
-            .on_press(Msg::TemplateNewPathModal)
-            .style(path_card_button);
+        let add_path_card = card_entry(
+            add_path_content.into(),
+            Some(Msg::TemplateNewPathModal),
+            PATH_CARD_WIDTH,
+        );
 
         // Spacer aligns with r_shape icons above (R_SHAPE_WIDTH) + row spacing (15)
         let add_path_row = Row::new()

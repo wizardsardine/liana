@@ -166,11 +166,8 @@ fn clickable_device_card(
         Some("Ready to register"),
     );
 
-    Button::new(content)
-        .style(theme::button::secondary)
-        .width(Length::Fill)
-        .on_press(Msg::RegistrationSelectDevice(fingerprint))
-        .into()
+    let message = Some(Msg::RegistrationSelectDevice(fingerprint));
+    menu_entry(content.into(), message)
 }
 
 fn disconnected_device_card(
@@ -191,9 +188,5 @@ fn disconnected_device_card(
                 .push(text::caption(status).style(theme::text::secondary)),
         );
 
-    Container::new(content)
-        .padding(15)
-        .width(Length::Fill)
-        .style(theme::card::border)
-        .into()
+    menu_entry(content.into(), None)
 }
