@@ -283,6 +283,35 @@ field can be:
 - An [Xpub Object](#xpub-object) when setting/updating the key
 - `null` when clearing/removing the xpub
 
+#### `device_registered`
+Report that a device has registered the wallet descriptor.
+
+**Request:**
+```json
+{
+  "type": "device_registered",
+  "token": "<auth_token>",
+  "request_id": "<uuid>",
+  "payload": {
+    "wallet_id": "<uuid>",
+    "infos": <RegistrationInfos>
+  }
+}
+```
+
+**Response:** [`wallet`](#wallet-notification)
+
+**Maps to:** `Response::Wallet { wallet: Wallet }`
+
+**Note:** The `infos.registered` field should be `true`. The `infos.proof_of_registration`
+field should contain the HMAC (hex-encoded) for Ledger devices, or `null` for other
+devices. See [RegistrationInfos Object](#registrationinfos-object) for the structure.
+
+**Note:** This request is only valid when the wallet is in `Registration(Pending)` status
+and the user owns the device being registered (the `infos.user` must match the
+authenticated user, and the `infos.fingerprint` must be assigned to that user in the
+`registered_devices` map).
+
 ### User Management
 
 #### `fetch_user`
@@ -365,7 +394,13 @@ Clients should fetch and cache User objects separately.
 - `"Drafted"`: Draft by WS manager
 - `"Locked"`: Locked by WS manager, ready for owner validation
 - `"Validated"`: Policy validated by owner, keys metadata not yet completed
+- `{"Registration": {"Pending": {...}}}`: Descriptor generated, awaiting device registration
+- `{"Registration": "Registered"}`: All devices have registered the descriptor
 - `"Finalized"`: All key metadata filled, ready for production
+
+**Note:** The `Registration` status has two sub-states:
+- `Pending`: Contains the generated `descriptor` string and `registered_devices` map
+- `Registered`: All devices have successfully registered the descriptor
 
 **Note:** The `template` field is optional and may be `null` for newly created wallets.
 
@@ -439,6 +474,30 @@ Used in `edit_xpub` request payloads:
 
 **Note:** When `source` is `"file"`:
 - `file_name` optionally contains the original filename
+
+### RegistrationInfos Object
+
+Used in `device_registered` request payloads and in wallet registration status:
+
+```json
+{
+  "user": "<uuid>",
+  "fingerprint": "<fingerprint>",
+  "registered": <boolean>,
+  "registered_alias": "<string>" | null,
+  "proof_of_registration": [<number>, ...] | null
+}
+```
+
+**Note:** The `registered_alias` field contains the wallet name/alias used when registering
+the descriptor on the hardware device. This is populated after successful device registration.
+
+**Note:** The `proof_of_registration` field contains the HMAC as an array of bytes for Ledger
+devices, or `null` for other device types. This field is only populated after successful
+device registration.
+
+**Note:** The `fingerprint` field is the hardware wallet master key fingerprint in
+hex format (e.g., "d34db33f").
 
 ### SpendingPath Object
 
@@ -592,6 +651,8 @@ user modifies the wallet).
 - `"Drafted"`: Draft by WS manager
 - `"Locked"`: Locked by WS manager, ready for owner validation
 - `"Validated"`: Policy validated by owner, keys metadata not yet completed
+- `{"Registration": {"Pending": {...}}}`: Descriptor generated, awaiting device registration
+- `{"Registration": "Registered"}`: All devices have registered the descriptor
 - `"Finalized"`: All key metadata filled, ready for production
 
 ### `user` Notification
@@ -757,7 +818,7 @@ This flow demonstrates the complete sequence for establishing a connection and l
 initial data. Upon connection, the server sends unsolicited Org notifications for all
 organizations the user belongs to. The client then fetches wallets and users.
 
-**Actor:** Any authenticated user (WSManager, Owner, or Participant)
+**Actor:** Any authenticated user (WS Admin, Wallet Manager, or Participant)
 
 ```
 // Step 1: Establish connection
@@ -858,7 +919,7 @@ updated template.
 
 #### Add Key Flow
 
-**Actor:** WSManager or Owner
+**Actor:** WS Admin or Wallet Manager
 
 **Precondition:** Wallet exists with status "Drafted"
 
@@ -889,7 +950,7 @@ Server -> Client: Response::Wallet { wallet: Wallet { /* updated wallet with new
 
 #### Edit Key Flow
 
-**Actor:** WSManager or Owner
+**Actor:** WS Admin or Wallet Manager
 
 **Precondition:** Wallet exists with the key to be modified and wallet must be
 in "Drafted" status.
@@ -916,7 +977,7 @@ Server -> Client: Response::Wallet { wallet: Wallet { /* updated wallet with mod
 
 #### Remove Key Flow
 
-**Actor:** WSManager or Owner
+**Actor:** WS Admin or Wallet Manager
 
 **Precondition:** Wallet exists with the key to be removed, key is not referenced in
 any spending path and wallet must be in "Drafted" status.
@@ -949,7 +1010,7 @@ Path operations are performed by modifying the `template.primary_path` or
 
 #### Add Path Flow
 
-**Actor:** WSManager
+**Actor:** WS Admin
 
 **Precondition:** Wallet exists with keys that will be referenced in the new path and
 wallet must be in "Drafted" status.
@@ -983,7 +1044,7 @@ Server -> Client: Response::Wallet { wallet: Wallet { /* updated wallet with new
 
 #### Edit Path Flow
 
-**Actor:** WSManager 
+**Actor:** WS Admin 
 
 **Precondition:** Wallet exists with the path to be modified wallet must be in
 "Drafted" status.
@@ -1012,7 +1073,7 @@ Server -> Client: Response::Wallet { wallet: Wallet { /* updated wallet with mod
 
 #### Remove Path Flow
 
-**Actor:** WSManager
+**Actor:** WS Admin
 
 **Precondition:** Wallet exists with secondary path(s) to be removed wallet must
 be in "Drafted" status)
@@ -1039,22 +1100,22 @@ Server -> Client: Response::Wallet { wallet: Wallet { /* updated wallet without 
 
 Wallet status transitions are performed by changing the `status` field in a wallet
 and sending an `EditWallet` request. The valid transitions are:
-- `Created` → `Drafted` (WSManager creates initial template)
-- `Drafted` → `Locked` (WSManager locks policy for owner validation)
-- `Locked` → `Drafted` (WSManager unlocks to make changes)
-- `Locked` → `Validated` (Owner validates the policy)
+- `Created` → `Drafted` (WS Admin creates initial template)
+- `Drafted` → `Locked` (WS Admin locks policy for owner validation)
+- `Locked` → `Drafted` (WS Admin unlocks to make changes)
+- `Locked` → `Validated` (Wallet Manager validates the policy)
 - `Validated` → `Finalized` (All keys have xpubs, this state chase must be done
 either server side or from admin panel)
 
 #### Lock Wallet Flow
 
-**Actor:** WSManager
+**Actor:** WS Admin
 
 **Precondition:** Wallet is in "Drafted" status with complete policy template (at
 least a recovery path)
 
 ```
-// WSManager locks wallet for owner validation
+// WS Admin locks wallet for owner validation
 Client -> Server: Request::EditWallet {
     wallet: Wallet {
         id: "wallet-uuid-001",
@@ -1069,12 +1130,12 @@ Server -> Client: Response::Wallet { wallet: Wallet { status: WalletStatus::Lock
 
 #### Unlock Wallet Flow
 
-**Actor:** WSManager
+**Actor:** WS Admin
 
 **Precondition:** Wallet is in "Locked" status
 
 ```
-// WSManager unlocks wallet to make changes
+// WS Admin unlocks wallet to make changes
 Client -> Server: Request::EditWallet {
     wallet: Wallet {
         id: "wallet-uuid-001",
@@ -1089,12 +1150,12 @@ Server -> Client: Response::Wallet { wallet: Wallet { status: WalletStatus::Draf
 
 #### Validate Wallet Flow
 
-**Actor:** Owner
+**Actor:** Wallet Manager
 
 **Precondition:** Wallet is in "Locked" status
 
 ```
-// Owner validates the wallet policy
+// Wallet Manager validates the wallet policy
 Client -> Server: Request::EditWallet {
     wallet: Wallet {
         id: "wallet-uuid-001",
@@ -1115,7 +1176,7 @@ wallet object.
 
 #### Add Xpub Flow
 
-**Actor:** WSManager, Owner, or Participant (wallet must be in "Validated" status or
+**Actor:** WS Admin, Wallet Manager, or Participant (wallet must be in "Validated" status or
 later)
 
 **Precondition:** Wallet exists with the key to receive the xpub
@@ -1147,7 +1208,7 @@ Server -> Client: Response::Wallet {
 
 #### Edit Xpub Flow
 
-**Actor:** WSManager, Owner, or Participant
+**Actor:** WS Admin, Wallet Manager, or Participant
 
 **Precondition:** Wallet exists with key that already has an xpub
 and wallet must be in "Validated" status. 
@@ -1172,7 +1233,7 @@ Server -> Client: Response::Wallet { wallet: Wallet { /* key 0 xpub updated */ }
 
 #### Clear Xpub Flow
 
-**Actor:** WSManager, Owner, or Participant
+**Actor:** WS Admin, Wallet Manager, or Participant
 
 **Precondition:** Wallet exists with key that has an xpub to be cleared
 and wallet must be in "Validated" status. 
@@ -1189,6 +1250,104 @@ Client -> Server: Request::EditXpub {
 Server -> Client: Response::Wallet { wallet: Wallet { /* key 0 xpub is now None */ } }
 ```
 
+### Device Registration Flow
+
+After the owner validates the wallet, the server transitions the wallet to
+`Registration(Pending)` status with a generated descriptor. Each participant with
+Internal keys must register the descriptor on their hardware devices.
+
+**Actor:** Participant with Internal keys
+
+**Precondition:** Wallet is in `Registration(Pending)` status, user has devices to register
+
+```
+// Step 1: Receive wallet with Registration status (after validation)
+Server -> Client: Response::Wallet {
+    wallet: Wallet {
+        id: "wallet-uuid-001",
+        status: WalletStatus::Registration(RegistrationStatus::Pending {
+            descriptor: "wsh(or_d(multi(2,[d34db33f/48'/0'/0'/2']xpub.../0/*,...),and_v(...)))",
+            registered_devices: {
+                "d34db33f": RegistrationInfos {
+                    user: "user-uuid-001",
+                    fingerprint: "d34db33f",
+                    registered: false,
+                    registered_alias: None,
+                    proof_of_registration: None,
+                },
+                "cafebabe": RegistrationInfos {
+                    user: "user-uuid-002",
+                    fingerprint: "cafebabe",
+                    registered: false,
+                    registered_alias: None,
+                    proof_of_registration: None,
+                },
+            },
+        }),
+        ...
+    }
+}
+
+// Step 2: User connects hardware device (fingerprint: d34db33f)
+// Client detects device via HwiService, matches fingerprint to registered_devices
+
+// Step 3: User initiates registration on device
+// Client calls async-hwi register_wallet() which prompts user to confirm on device
+
+// Step 4: After successful registration, client reports to server
+Client -> Server: Request::DeviceRegistered {
+    wallet_id: "wallet-uuid-001",
+    infos: RegistrationInfos {
+        user: "user-uuid-001",
+        fingerprint: "d34db33f",
+        registered: true,
+        registered_alias: Some("My Wallet"),  // Alias used for registration
+        proof_of_registration: Some("a1b2c3d4..."),  // HMAC for Ledger, None for others
+    },
+}
+
+// Step 5: Server updates registration status and responds
+Server -> Client: Response::Wallet {
+    wallet: Wallet {
+        id: "wallet-uuid-001",
+        status: WalletStatus::Registration(RegistrationStatus::Pending {
+            descriptor: "wsh(...)",
+            registered_devices: {
+                "d34db33f": RegistrationInfos {
+                    user: "user-uuid-001",
+                    fingerprint: "d34db33f",
+                    registered: true,  // Now registered
+                    registered_alias: Some("My Wallet"),
+                    proof_of_registration: Some("a1b2c3d4..."),
+                },
+                "cafebabe": RegistrationInfos {
+                    user: "user-uuid-002",
+                    fingerprint: "cafebabe",
+                    registered: false,  // Still waiting
+                    registered_alias: None,
+                    proof_of_registration: None,
+                },
+            },
+        }),
+        ...
+    }
+}
+
+// Step 6: When ALL devices are registered, server transitions to Registered
+// (After user-uuid-002 also registers their device)
+Server -> Client: Response::Wallet {
+    wallet: Wallet {
+        id: "wallet-uuid-001",
+        status: WalletStatus::Registration(RegistrationStatus::Registered),
+        ...
+    }
+}
+```
+
+**Note:** The `proof_of_registration` field is only populated for Ledger devices (HMAC
+hex string). For other device types (BitBox02, Coldcard, Jade, Specter), this field
+should be `null`.
+
 ### Notification Flows (Unsolicited)
 
 When another user modifies a wallet, organization, or user that you have access to,
@@ -1197,7 +1356,7 @@ a `request_id`, distinguishing them from responses to your own requests.
 
 #### Receiving Key Change Notification
 
-**Scenario:** Another WSManager (user-uuid-002) edits a key in a wallet that you
+**Scenario:** Another WS Admin (user-uuid-002) edits a key in a wallet that you
 (user-uuid-001) have access to.
 
 ```
@@ -1477,6 +1636,10 @@ pub enum Request {
         xpub: Option<Xpub>,
     },
     FetchUser { id: Uuid },
+    DeviceRegistered {
+        wallet_id: Uuid,
+        infos: RegistrationInfos,
+    },
 }
 ```
 

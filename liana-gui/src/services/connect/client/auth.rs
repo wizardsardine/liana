@@ -42,6 +42,7 @@ pub struct AuthClient {
     url: String,
     api_public_key: String,
     pub email: String,
+    user_agent: String,
 }
 
 #[derive(Debug, Clone)]
@@ -79,13 +80,18 @@ impl From<NotSuccessResponseInfo> for AuthError {
 }
 
 impl AuthClient {
-    pub fn new(url: String, api_public_key: String, email: String) -> Self {
+    pub fn new(url: String, api_public_key: String, email: String, user_agent: String) -> Self {
         AuthClient {
             http: reqwest::Client::new(),
             url,
             api_public_key,
             email,
+            user_agent,
         }
+    }
+
+    pub fn user_agent(&self) -> &str {
+        &self.user_agent
     }
 
     fn request<U: IntoUrl>(&self, method: Method, url: U) -> RequestBuilder {
@@ -94,7 +100,7 @@ impl AuthClient {
             .request(method, url)
             .header("apikey", &self.api_public_key)
             .header("Content-Type", "application/json")
-            .header("User-Agent", format!("liana-gui/{}", crate::VERSION));
+            .header("User-Agent", &self.user_agent);
         tracing::debug!("Sending http request: {:?}", req);
         req
     }
@@ -137,7 +143,7 @@ impl AuthClient {
             .post(format!("{}/auth/v1/verify", self.url))
             .header("apikey", &self.api_public_key)
             .header("Content-Type", "application/json")
-            .header("User-Agent", format!("liana-gui/{}", crate::VERSION))
+            .header("User-Agent", &self.user_agent)
             .json(&VerifyOtp {
                 email: &self.email,
                 token,
@@ -163,7 +169,7 @@ impl AuthClient {
             ))
             .header("apikey", &self.api_public_key)
             .header("Content-Type", "application/json")
-            .header("User-Agent", format!("liana-gui/{}", crate::VERSION))
+            .header("User-Agent", &self.user_agent)
             .json(&RefreshToken { refresh_token })
             .send()
             .await?

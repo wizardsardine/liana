@@ -71,7 +71,7 @@ where
             )
         } else {
             // Normal flow: start with Launcher
-            let (launcher, command) = Launcher::new(directory, network);
+            let (launcher, command) = Launcher::new(directory, network, I::backend_type());
             (
                 State::Launcher(Box::new(launcher)),
                 command.map(|msg| Message::Launch(Box::new(msg))),
@@ -195,8 +195,13 @@ where
                 launcher::Message::Run(datadir_path, cfg, network, settings) => {
                     let wallet_id = settings.wallet_id();
                     if let Some(auth_cfg) = settings.remote_backend_auth {
-                        let (login, command) =
-                            login::LianaLiteLogin::new(datadir_path, network, wallet_id, auth_cfg);
+                        let (login, command) = login::LianaLiteLogin::new(
+                            datadir_path,
+                            network,
+                            wallet_id,
+                            auth_cfg,
+                            I::backend_type(),
+                        );
                         self.state = State::Login(Box::new(login));
                         command.map(|msg| Message::Login(Box::new(msg)))
                     } else {
@@ -210,7 +215,8 @@ where
             },
             (State::Login(l), Message::Login(msg)) => match *msg {
                 login::Message::View(login::ViewMessage::BackToLauncher(network)) => {
-                    let (launcher, command) = Launcher::new(l.datadir.clone(), Some(network));
+                    let (launcher, command) =
+                        Launcher::new(l.datadir.clone(), Some(network), I::backend_type());
                     self.state = State::Launcher(Box::new(launcher));
                     command.map(|msg| Message::Launch(Box::new(msg)))
                 }
@@ -276,6 +282,7 @@ where
                                 network,
                                 directory_wallet_id,
                                 auth_cfg,
+                                I::backend_type(),
                             );
                             self.state = State::Login(Box::new(login));
                             command.map(|msg| Message::Login(Box::new(msg)))
@@ -307,7 +314,8 @@ where
                             command.map(|msg| Message::Load(Box::new(msg)))
                         }
                         installer::NextState::Launcher { network, datadir } => {
-                            let (launcher, command) = Launcher::new(datadir, Some(network));
+                            let (launcher, command) =
+                                Launcher::new(datadir, Some(network), I::backend_type());
                             self.state = State::Launcher(Box::new(launcher));
                             command.map(|msg| Message::Launch(Box::new(msg)))
                         }
@@ -328,6 +336,7 @@ where
                                         network,
                                         wallet_id_clone.clone(),
                                         email_clone.clone(),
+                                        I::backend_type(),
                                     )
                                     .await
                                 },
@@ -349,8 +358,11 @@ where
             }
             (State::Loader(loader), Message::Load(msg)) => match *msg {
                 loader::Message::View(loader::ViewMessage::SwitchNetwork) => {
-                    let (launcher, command) =
-                        Launcher::new(loader.datadir_path.clone(), Some(loader.network));
+                    let (launcher, command) = Launcher::new(
+                        loader.datadir_path.clone(),
+                        Some(loader.network),
+                        I::backend_type(),
+                    );
                     self.state = State::Launcher(Box::new(launcher));
                     command.map(|msg| Message::Launch(Box::new(msg)))
                 }
@@ -419,6 +431,7 @@ where
                             .remote_backend_auth
                             .clone()
                             .expect("Must be a liana-connect wallet"),
+                        I::backend_type(),
                     );
                     self.state = State::Login(Box::new(login));
                     command.map(|msg| Message::Login(Box::new(msg)))
@@ -493,6 +506,7 @@ where
                                     network,
                                     directory_wallet_id,
                                     auth_cfg,
+                                    I::backend_type(),
                                 );
                                 self.state = State::Login(Box::new(login));
                                 command.map(|msg| Message::Login(Box::new(msg)))
@@ -518,6 +532,7 @@ where
                             network,
                             directory_wallet_id,
                             auth_cfg,
+                            I::backend_type(),
                         );
                         self.state = State::Login(Box::new(login));
                         command.map(|msg| Message::Login(Box::new(msg)))
@@ -677,6 +692,7 @@ async fn connect_for_business(
     network: bitcoin::Network,
     wallet_id: String,
     email: String,
+    backend_type: crate::services::connect::client::BackendType,
 ) -> Result<
     (
         BackendWalletClient,
@@ -687,16 +703,18 @@ async fn connect_for_business(
 > {
     use crate::app::cache::coins_to_cache;
 
-    // Get service config for liana-business (uses LIANA_BUSINESS_* env vars)
-    let service_config = crate::services::connect::client::get_service_config(network)
-        .await
-        .map_err(|e| login::Error::Unexpected(e.to_string()))?;
+    // Get service config
+    let service_config =
+        crate::services::connect::client::get_service_config(network, backend_type)
+            .await
+            .map_err(|e| login::Error::Unexpected(e.to_string()))?;
 
     // Create auth client
     let auth_client = AuthClient::new(
         service_config.auth_api_url,
         service_config.auth_api_public_key,
         email.clone(),
+        backend_type.user_agent(),
     );
 
     // Get tokens from cache

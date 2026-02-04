@@ -3,7 +3,7 @@
 //! This module contains the core domain types used by Liana Connect
 //! for representing organizations, wallets, users, and policy templates.
 
-use miniscript::DescriptorPublicKey;
+use miniscript::{bitcoin::bip32::Fingerprint, DescriptorPublicKey};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -11,17 +11,25 @@ use std::{
 };
 use uuid::Uuid;
 
-const BLOCKS_PER_DAY: u64 = 144; // 24 * 60 / 10
-const BLOCKS_PER_MONTH: u64 = 4380; // ~30.4 days
-const BLOCKS_PER_YEAR: u64 = 52560; // ~365 days
+pub const BLOCKS_PER_HOUR: u64 = 6; // 60 / 10
+pub const BLOCKS_PER_DAY: u64 = 144; // 24 * 60 / 10
+pub const BLOCKS_PER_MONTH: u64 = 4380; // ~30.4 days
+pub const BLOCKS_PER_YEAR: u64 = 52560; // ~365 days
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum WalletStatus {
-    Created,   // Empty
-    Drafted,   // Draft by WS manager
-    Locked,    // Locked by WS manager, ready for owner validation
-    Validated, // Policy validated by owner, keys metadata not yet completed
-    Finalized, // All key metadata filled, ready for prod
+    /// Empty
+    Created,
+    /// Draft by WS manager
+    Drafted,
+    /// Locked by WS manager, ready for owner validation
+    Locked,
+    /// Policy validated by owner, keys metadata not yet completed
+    Validated,
+    /// Descriptor generated, ready to register on signing device
+    Registration,
+    /// All key metadata filled, ready for prod
+    Finalized,
 }
 
 impl Display for WalletStatus {
@@ -426,8 +434,29 @@ impl User {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RegistrationInfos {
+    pub user: Uuid,
+    pub fingerprint: Fingerprint,
+    pub registered: bool,
+    pub registered_alias: Option<String>,
+    pub proof_of_registration: Option<Vec<u8>>,
+}
+
+impl RegistrationInfos {
+    pub fn new(user: Uuid, fingerprint: Fingerprint) -> Self {
+        Self {
+            user,
+            fingerprint,
+            registered: false,
+            registered_alias: None,
+            proof_of_registration: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Wallet {
-    pub alias: String,
+    pub alias: String, // MAX 64 chars
     pub org: Uuid,
     pub owner: Uuid,
     pub id: Uuid,
@@ -438,6 +467,81 @@ pub struct Wallet {
     pub last_edited: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_editor: Option<Uuid>,
+    /// Descriptor string - set during registration phase (status == Registration)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub descriptor: Option<String>,
+    /// Device fingerprints pending registration - only set during registration phase
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub devices: Option<Vec<Fingerprint>>,
+}
+
+impl Wallet {
+    /// Returns the effective wallet status for the given user.
+    ///
+    /// The server never sends `Registration` status. When the wallet is `Finalized`,
+    /// we infer `Registration` if the user's email matches any key in the template
+    /// and that key's fingerprint is found in `self.devices`.
+    pub fn effective_status(&self, user_email: &str) -> WalletStatus {
+        if self.status != WalletStatus::Finalized {
+            return self.status.clone();
+        }
+
+        let (template, devices) = match (&self.template, &self.devices) {
+            (Some(t), Some(d)) if !d.is_empty() => (t, d),
+            _ => return self.status.clone(),
+        };
+
+        let email_lower = user_email.to_lowercase();
+
+        for key in template.keys.values() {
+            if !matches!(&key.identity, KeyIdentity::Email(e) if e.to_lowercase() == email_lower) {
+                continue;
+            }
+            if let Some(key) = &key.xpub {
+                if let Some((fg, _)) = match key {
+                    DescriptorPublicKey::Single(k) => &k.origin,
+                    DescriptorPublicKey::XPub(k) => &k.origin,
+                    DescriptorPublicKey::MultiXPub(k) => &k.origin,
+                } {
+                    if devices.contains(fg) {
+                        return WalletStatus::Registration;
+                    }
+                }
+            }
+        }
+
+        self.status.clone()
+    }
+
+    /// Returns only the device fingerprints associated with keys matching `user_email`.
+    pub fn user_devices(&self, user_email: &str) -> Vec<Fingerprint> {
+        let (template, devices) = match (&self.template, &self.devices) {
+            (Some(t), Some(d)) if !d.is_empty() => (t, d),
+            _ => return vec![],
+        };
+
+        let email_lower = user_email.to_lowercase();
+        let mut result = Vec::new();
+
+        for key in template.keys.values() {
+            if !matches!(&key.identity, KeyIdentity::Email(e) if e.to_lowercase() == email_lower) {
+                continue;
+            }
+            if let Some(xpub) = &key.xpub {
+                if let Some((fg, _)) = match xpub {
+                    DescriptorPublicKey::Single(k) => &k.origin,
+                    DescriptorPublicKey::XPub(k) => &k.origin,
+                    DescriptorPublicKey::MultiXPub(k) => &k.origin,
+                } {
+                    if devices.contains(fg) {
+                        result.push(*fg);
+                    }
+                }
+            }
+        }
+
+        result
+    }
 }
 
 #[cfg(test)]
@@ -484,7 +588,7 @@ mod wire_format_tests {
             (WalletStatus::Finalized, "Finalized"),
         ];
         for (status, expected) in cases {
-            let json = serde_json::to_value(status).unwrap();
+            let json = serde_json::to_value(&status).unwrap();
             assert_eq!(json, expected, "WalletStatus::{:?}", status);
         }
     }
@@ -692,6 +796,8 @@ mod wire_format_tests {
             template: None,
             last_edited: Some(12345),
             last_editor: Some(test_uuid(4)),
+            descriptor: None,
+            devices: None,
         };
         let json = serde_json::to_string(&wallet).expect("serialize");
         let parsed: Wallet = serde_json::from_str(&json).expect("deserialize");
@@ -887,6 +993,8 @@ mod wire_format_tests {
             template: None,
             last_edited: None,
             last_editor: None,
+            descriptor: None,
+            devices: None,
         };
 
         assert_eq!(parsed, expected);
@@ -985,6 +1093,8 @@ mod wire_format_tests {
             }),
             last_edited: None,
             last_editor: None,
+            descriptor: None,
+            devices: None,
         };
 
         assert_eq!(parsed, expected);
@@ -1342,11 +1452,12 @@ mod wire_format_tests {
             (r#""Drafted""#, WalletStatus::Drafted),
             (r#""Locked""#, WalletStatus::Locked),
             (r#""Validated""#, WalletStatus::Validated),
+            (r#""Registration""#, WalletStatus::Registration),
             (r#""Finalized""#, WalletStatus::Finalized),
         ];
 
         // Verify count matches enum variant count (catches new variants)
-        assert_eq!(cases.len(), 5, "test must cover all WalletStatus variants");
+        assert_eq!(cases.len(), 6, "test must cover all WalletStatus variants");
 
         for (json_str, expected) in cases {
             // Test deserialization

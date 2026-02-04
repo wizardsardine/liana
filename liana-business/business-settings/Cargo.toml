@@ -1,0 +1,17 @@
+[package]
+name = "business-settings"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "business_settings"
+path = "src/lib.rs"
+
+[dependencies]
+async-hwi = { workspace = true }
+liana = { path = "../../liana" }
+liana-gui = { path = "../../liana-gui" }
+liana-ui = { path = "../../liana-ui" }
+iced = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }

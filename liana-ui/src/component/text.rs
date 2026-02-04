@@ -106,6 +106,13 @@ pub fn text<'a>(content: impl Display) -> iced::widget::Text<'a, Theme> {
     p1_regular(content)
 }
 
+/// Text for use inside buttons - no color style applied so button can control color
+pub fn button_text<'a>(content: impl Display) -> iced::widget::Text<'a, Theme> {
+    iced::widget::text!("{}", content)
+        .shaping(Shaping::Advanced)
+        .font(font::MEDIUM)
+}
+
 pub trait Text {
     fn bold(self) -> Self;
     fn small(self) -> Self;

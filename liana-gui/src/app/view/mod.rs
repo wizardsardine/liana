@@ -25,7 +25,6 @@ use iced::{
 };
 
 use liana_ui::{
-    color,
     component::{button, text::*},
     icon::{
         coins_icon, cross_icon, history_icon, home_icon, receive_icon, recovery_icon, send_icon,
@@ -41,7 +40,7 @@ use crate::app::{cache::Cache, error::Error, menu::Menu};
 fn menu_green_bar<'a, T: 'a>() -> Container<'a, T> {
     Container::new(Space::with_width(Length::Fixed(2.0)))
         .height(Length::Fixed(50.0))
-        .style(theme::container::custom(color::GREEN))
+        .style(theme::container::menu_bar)
 }
 
 pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
@@ -158,7 +157,8 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
                         Container::new(
                             liana_grey_logo()
                                 .height(Length::Fixed(120.0))
-                                .width(Length::Fixed(60.0)),
+                                .width(Length::Fixed(60.0))
+                                .style(theme::svg::accent),
                         )
                         .padding(10),
                     )
@@ -302,7 +302,8 @@ pub fn small_sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message
                         Container::new(
                             liana_grey_logo()
                                 .height(Length::Fixed(120.0))
-                                .width(Length::Fixed(60.0)),
+                                .width(Length::Fixed(60.0))
+                                .style(theme::svg::accent),
                         )
                         .padding(10),
                     )

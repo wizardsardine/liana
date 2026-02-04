@@ -36,6 +36,13 @@ pub fn border(theme: &Theme) -> Style {
     }
 }
 
+pub fn menu_bar(theme: &Theme) -> Style {
+    Style {
+        background: Some(Background::Color(theme.colors.general.accent)),
+        ..Default::default()
+    }
+}
+
 pub fn custom(color: iced::Color) -> Box<dyn Fn(&Theme) -> Style> {
     Box::new(move |_theme: &Theme| Style {
         background: Some(Background::Color(color)),

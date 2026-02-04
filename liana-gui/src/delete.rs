@@ -8,7 +8,7 @@ use crate::{
         client::{
             auth::AuthClient,
             cache::{self, ConnectCacheError},
-            get_service_config,
+            get_service_config, BackendType,
         },
         login::{connect_with_credentials, BackendState},
     },
@@ -105,6 +105,7 @@ pub async fn delete_wallet(
     network_dir: &NetworkDirectory,
     wallet: &WalletSettings,
     delete_liana_connect: bool,
+    backend_type: BackendType,
 ) -> Result<(), DeleteError> {
     let wallet_id = wallet.wallet_id();
     let lianad_directory = network_dir.lianad_data_directory(&wallet_id);
@@ -124,7 +125,7 @@ pub async fn delete_wallet(
 
     if delete_liana_connect {
         if let Some(auth) = &wallet.remote_backend_auth {
-            let service_config = get_service_config(network)
+            let service_config = get_service_config(network, backend_type)
                 .await
                 .map_err(|e| DeleteError::Connect(e.to_string()))?;
 
@@ -132,6 +133,7 @@ pub async fn delete_wallet(
                 service_config.auth_api_url,
                 service_config.auth_api_public_key,
                 auth.email.to_string(),
+                backend_type.user_agent(),
             );
             if let BackendState::WalletExists(client, _, _) = connect_with_credentials(
                 client,

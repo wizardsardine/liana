@@ -55,13 +55,14 @@ fn request<U: IntoUrl>(
     method: Method,
     url: U,
     access_token: &str,
+    user_agent: &str,
 ) -> RequestBuilder {
     let req = http
         .request(method, url)
         .header("Authorization", format!("Bearer {}", access_token))
         .header("Content-Type", "application/json")
         .header("Liana-Version", format!("{}", crate::VERSION))
-        .header("User-Agent", format!("liana-gui/{}", crate::VERSION));
+        .header("User-Agent", user_agent);
     tracing::debug!("Sending http request: {:?}", req);
     req
 }
@@ -92,6 +93,7 @@ impl BackendClient {
             Method::GET,
             format!("{}/v1/me", url),
             &credentials.access_token,
+            auth_client.user_agent(),
         )
         .send()
         .await?;
@@ -154,6 +156,7 @@ impl BackendClient {
             method,
             format!("{}{}", self.url, uri),
             access_token,
+            self.auth_client.user_agent(),
         ))
         .send()
         .await?;
@@ -190,6 +193,7 @@ impl BackendClient {
             method,
             format!("{}{}", self.url, uri),
             access_token,
+            self.auth_client.user_agent(),
         ))
         .send()
         .await?;

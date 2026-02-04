@@ -22,7 +22,7 @@ use crate::{
     dir::{LianaDirectory, NetworkDirectory},
     installer::UserFlow,
     services::connect::{
-        client::{auth::AuthClient, backend::api::UserRole, get_service_config},
+        client::{auth::AuthClient, backend::api::UserRole, get_service_config, BackendType},
         login::{connect_with_credentials, BackendState},
     },
 };
@@ -52,10 +52,15 @@ pub struct Launcher {
     pub datadir_path: LianaDirectory,
     error: Option<String>,
     delete_wallet_modal: Option<DeleteWalletModal>,
+    backend_type: BackendType,
 }
 
 impl Launcher {
-    pub fn new(datadir_path: LianaDirectory, network: Option<Network>) -> (Self, Task<Message>) {
+    pub fn new(
+        datadir_path: LianaDirectory,
+        network: Option<Network>,
+        backend_type: BackendType,
+    ) -> (Self, Task<Message>) {
         let network = network.unwrap_or(
             NETWORKS
                 .iter()
@@ -72,6 +77,7 @@ impl Launcher {
                 datadir_path: datadir_path.clone(),
                 error: None,
                 delete_wallet_modal: None,
+                backend_type,
             },
             Task::perform(check_network_datadir(network_dir), Message::Checked),
         )
@@ -131,6 +137,7 @@ impl Launcher {
                         wallet_datadir,
                         wallets[i].clone(),
                         internal_bitcoind,
+                        self.backend_type,
                     ));
                 }
                 Task::none()
@@ -471,6 +478,7 @@ struct DeleteWalletModal {
     user_role: Option<UserRole>,
     // `None` means we were not able to determine whether wallet uses internal bitcoind.
     internal_bitcoind: Option<bool>,
+    backend_type: BackendType,
 }
 
 impl DeleteWalletModal {
@@ -479,6 +487,7 @@ impl DeleteWalletModal {
         network_directory: NetworkDirectory,
         wallet_settings: WalletSettings,
         internal_bitcoind: Option<bool>,
+        backend_type: BackendType,
     ) -> Self {
         let mut modal = Self {
             network,
@@ -489,12 +498,14 @@ impl DeleteWalletModal {
             delete_liana_connect: false,
             internal_bitcoind,
             user_role: None,
+            backend_type,
         };
         if let Some(auth) = &modal.wallet_settings.remote_backend_auth {
             match Handle::current().block_on(check_membership(
                 modal.network,
                 &modal.network_directory,
                 auth,
+                modal.backend_type,
             )) {
                 Err(e) => {
                     modal.warning = Some(e);
@@ -519,6 +530,7 @@ impl DeleteWalletModal {
                     &self.network_directory,
                     &self.wallet_settings,
                     self.delete_liana_connect,
+                    self.backend_type,
                 )) {
                     self.warning = Some(e);
                 } else {
@@ -641,8 +653,9 @@ pub async fn check_membership(
     network: Network,
     network_dir: &NetworkDirectory,
     auth: &AuthConfig,
+    backend_type: BackendType,
 ) -> Result<Option<UserRole>, DeleteError> {
-    let service_config = get_service_config(network)
+    let service_config = get_service_config(network, backend_type)
         .await
         .map_err(|e| DeleteError::Connect(e.to_string()))?;
 
@@ -651,6 +664,7 @@ pub async fn check_membership(
             service_config.auth_api_url,
             service_config.auth_api_public_key,
             auth.email.to_string(),
+            backend_type.user_agent(),
         ),
         auth.wallet_id.clone(),
         service_config.backend_api_url,
