@@ -43,10 +43,15 @@ pub fn template_builder_view(state: &State) -> Element<'_, Msg> {
 
     // "Manage Keys" button: WS Admin or Wallet Manager, only on Draft status
     // Once the wallet is Locked/Validated/Finalized, keys cannot be managed
-    if (is_ws_manager || is_owner) && is_draft {
-        buttons_row = buttons_row.push(
-            button::secondary(Some(icon::key_icon()), "Manage Keys").on_press(Msg::NavigateToKeys),
-        );
+    if is_draft {
+        let (icon, txt) = (Some(icon::key_icon()), "Manage Keys");
+        if is_ws_manager {
+            buttons_row =
+                buttons_row.push(button::secondary(icon, txt).on_press(Msg::NavigateToKeys));
+        } else if is_owner {
+            buttons_row =
+                buttons_row.push(button::primary(icon, txt).on_press(Msg::NavigateToKeys));
+        }
     }
 
     // WS Admin on Draft: "Lock Template" (if valid)
