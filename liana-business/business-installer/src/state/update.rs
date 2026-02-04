@@ -588,8 +588,12 @@ impl State {
                     && blocks % TimelockUnit::Days.blocks_per_unit() == 0
                 {
                     (TimelockUnit::Days, TimelockUnit::Days.from_blocks(blocks))
-                } else {
+                } else if blocks >= TimelockUnit::Hours.blocks_per_unit()
+                    && blocks % TimelockUnit::Hours.blocks_per_unit() == 0
+                {
                     (TimelockUnit::Hours, TimelockUnit::Hours.from_blocks(blocks))
+                } else {
+                    (TimelockUnit::Blocks, blocks)
                 };
 
                 self.views.paths.edit_path_modal = Some(views::EditPathModalState {
