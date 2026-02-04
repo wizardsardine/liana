@@ -3,7 +3,7 @@ use crate::state::{
     Msg as Message, SharedWaker, State,
 };
 use crossbeam::channel::{self};
-use iced::{keyboard, Subscription, Task};
+use iced::Task;
 use liana::miniscript::bitcoin::{self};
 use liana_gui::{
     dir::LianaDirectory,
@@ -133,65 +133,6 @@ impl Installer<'_, Message> for BusinessInstaller {
             });
         }
         None
-    }
-
-    fn subscription(&self) -> Subscription<Message> {
-        let orgs = self.state.backend.orgs.clone();
-        let wallets = self.state.backend.wallets.clone();
-        let users = self.state.backend.users.clone();
-        let user_id = self.state.backend.user_id.clone();
-
-        iced::event::listen().map(move |event| {
-            if let iced::Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. }) = event
-            {
-                if modifiers.control() {
-                    match key.as_ref() {
-                        keyboard::Key::Character("o") => {
-                            if let Ok(orgs) = orgs.lock() {
-                                println!("=== Organizations ({}) ===", orgs.len());
-                                for (id, org) in orgs.iter() {
-                                    println!(
-                                        "  {} - {} (wallets: {})",
-                                        id,
-                                        org.name,
-                                        org.wallets.len()
-                                    );
-                                }
-                            }
-                        }
-                        keyboard::Key::Character("w") => {
-                            if let Ok(wallets) = wallets.lock() {
-                                println!("=== Wallets ({}) ===", wallets.len());
-                                for (id, wallet) in wallets.iter() {
-                                    println!(
-                                        "  {} - {} (status: {:?})",
-                                        id, wallet.alias, wallet.status
-                                    );
-                                }
-                            }
-                        }
-                        keyboard::Key::Character("u") => {
-                            if let Ok(uid) = user_id.lock() {
-                                if let Some(uid) = *uid {
-                                    if let Ok(users) = users.lock() {
-                                        if let Some(user) = users.get(&uid) {
-                                            println!("=== Current User ===");
-                                            println!("{:#?}", user);
-                                        } else {
-                                            println!("=== Current User: not found in cache ===");
-                                        }
-                                    }
-                                } else {
-                                    println!("=== Current User: not logged in ===");
-                                }
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-            }
-            Message::Update
-        })
     }
 }
 

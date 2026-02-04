@@ -1603,25 +1603,37 @@ impl Backend for Client {
                 "auth_request: fetching service config for network={:?}",
                 network
             );
-            let config = match get_service_config_blocking(network) {
-                Ok(cfg) => {
-                    tracing::debug!(
-                        "auth_request: got config auth_api_url={} backend_api_url={}",
-                        cfg.auth_api_url,
-                        cfg.backend_api_url
-                    );
-                    cfg
-                }
-                Err(e) => {
-                    tracing::debug!("auth_request: failed to get service config: {:?}", e);
-                    Client::send_notif(
-                        &notif_sender,
-                        &notif_waker,
-                        Notification::AuthCodeFail.into(),
-                    );
-                    return;
-                }
-            };
+            let config =
+                match tokio::task::spawn_blocking(move || get_service_config_blocking(network))
+                    .await
+                {
+                    Ok(Ok(cfg)) => {
+                        tracing::debug!(
+                            "auth_request: got config auth_api_url={} backend_api_url={}",
+                            cfg.auth_api_url,
+                            cfg.backend_api_url
+                        );
+                        cfg
+                    }
+                    Ok(Err(e)) => {
+                        tracing::debug!("auth_request: failed to get service config: {:?}", e);
+                        Client::send_notif(
+                            &notif_sender,
+                            &notif_waker,
+                            Notification::AuthCodeFail.into(),
+                        );
+                        return;
+                    }
+                    Err(e) => {
+                        tracing::debug!("auth_request: spawn_blocking failed: {:?}", e);
+                        Client::send_notif(
+                            &notif_sender,
+                            &notif_waker,
+                            Notification::AuthCodeFail.into(),
+                        );
+                        return;
+                    }
+                };
 
             // Create auth client
             tracing::debug!(
