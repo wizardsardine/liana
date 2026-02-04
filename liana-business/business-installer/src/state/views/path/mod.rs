@@ -1,6 +1,6 @@
 pub mod modal;
 
-pub use modal::{EditPathModalState, TimelockUnit, MAX_TIMELOCK_BLOCKS};
+pub use modal::{EditPathModalState, TimelockUnit};
 
 /// Paths view state
 #[derive(Debug, Clone, Default)]

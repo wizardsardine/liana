@@ -671,7 +671,8 @@ impl State {
                     // Handle timelock (only for secondary paths)
                     if let Some(value_str) = &modal_state.timelock_value {
                         if let Ok(value) = value_str.parse::<u64>() {
-                            secondary.timelock.blocks = modal_state.timelock_unit.to_blocks(value);
+                            secondary.timelock.blocks =
+                                modal_state.timelock_unit.to_blocks_capped(value);
                         }
                     }
                 }
@@ -695,7 +696,7 @@ impl State {
 
                 let blocks = if let Some(value_str) = &modal_state.timelock_value {
                     if let Ok(value) = value_str.parse::<u64>() {
-                        modal_state.timelock_unit.to_blocks(value)
+                        modal_state.timelock_unit.to_blocks_capped(value)
                     } else {
                         BLOCKS_PER_DAY // Default 1 day
                     }
@@ -1395,7 +1396,7 @@ impl State {
                         .timelock_value
                         .as_ref()
                         .and_then(|v| v.parse::<u64>().ok())
-                        .map(|v| modal.timelock_unit.to_blocks(v))
+                        .map(|v| modal.timelock_unit.to_blocks_capped(v))
                         .unwrap_or(0);
 
                     if modal_keys != server_keys

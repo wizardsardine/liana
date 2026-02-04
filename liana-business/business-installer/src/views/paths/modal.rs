@@ -1,6 +1,6 @@
 use crate::{
     state::{
-        views::path::{EditPathModalState, TimelockUnit, MAX_TIMELOCK_BLOCKS},
+        views::path::{EditPathModalState, TimelockUnit},
         Msg, State,
     },
     views::format_last_edit_info,
@@ -163,18 +163,25 @@ pub fn edit_path_modal_view<'a>(
     } else if let Some(value_str) = &modal_state.timelock_value {
         let is_empty = value_str.is_empty();
 
-        let current_blocks = if let Ok(value) = value_str.parse::<u64>() {
-            modal_state.timelock_unit.to_blocks(value)
-        } else {
-            0
-        };
+        // Parse the input value and compute capped blocks for duplicate detection
+        let parsed_value = value_str.parse::<u64>().ok();
+        let current_blocks = parsed_value
+            .map(|v| modal_state.timelock_unit.to_blocks_capped(v))
+            .unwrap_or(0);
 
         let (valid, warning) = if is_empty {
             (false, None)
         } else if current_blocks == 0 {
             (false, Some("Timelock cannot be zero".to_string()))
-        } else if current_blocks > MAX_TIMELOCK_BLOCKS {
-            (false, None)
+        } else if parsed_value.is_some_and(|v| v > modal_state.timelock_unit.max_value()) {
+            (
+                false,
+                Some(format!(
+                    "Max {} {}",
+                    modal_state.timelock_unit.max_value(),
+                    modal_state.timelock_unit
+                )),
+            )
         } else {
             // Check for duplicate timelocks
             let duplicate = state

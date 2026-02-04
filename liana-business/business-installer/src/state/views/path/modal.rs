@@ -35,6 +35,11 @@ impl TimelockUnit {
         value * self.blocks_per_unit()
     }
 
+    /// Convert a value in this unit to blocks, capping at MAX_TIMELOCK_BLOCKS
+    pub fn to_blocks_capped(self, value: u64) -> u64 {
+        self.to_blocks(value).min(MAX_TIMELOCK_BLOCKS)
+    }
+
     /// All available units
     pub const ALL: [TimelockUnit; 4] = [
         TimelockUnit::Blocks,
@@ -45,7 +50,12 @@ impl TimelockUnit {
 
     /// Maximum value in this unit (based on MAX_TIMELOCK_BLOCKS)
     pub fn max_value(self) -> u64 {
-        MAX_TIMELOCK_BLOCKS / self.blocks_per_unit()
+        match self {
+            // Allow 15 months even though 15*4380=65700 slightly exceeds MAX_TIMELOCK_BLOCKS
+            // The actual block value will be capped when saving via to_blocks_capped()
+            TimelockUnit::Months => 15,
+            _ => MAX_TIMELOCK_BLOCKS / self.blocks_per_unit(),
+        }
     }
 }
 
