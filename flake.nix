@@ -32,6 +32,12 @@
           rootPath = ./.;
         };
 
+        lianaBusinessPackages = import ./nix/liana-business.nix {
+          inherit craneLib pkgs lib;
+          lipo = lipo.packages.${system}.lipo;
+          rootPath = ./.;
+        };
+
         # Common build inputs for all shells
         commonBuildInputs = with pkgs; [
           expat
@@ -76,7 +82,10 @@
         };
 
       in {
-        packages = lianaPackages;
+        packages = {
+          liana = lianaPackages;
+          liana-business = lianaBusinessPackages;
+        };
 
         devShells = {
           minimal = minimalShell;
