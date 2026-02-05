@@ -913,9 +913,9 @@ impl Palette {
                     border: color::SOFT_BLUE.into(),
                 },
                 warning: ContainerPalette {
-                    background: color::TRANSPARENT,
-                    text: color::RED.into(),
-                    border: color::RED.into(),
+                    background: color::AMBER,
+                    text: color::WHITE.into(),
+                    border: color::AMBER.into(),
                 },
                 success: ContainerPalette {
                     background: color::DARK_GREEN,

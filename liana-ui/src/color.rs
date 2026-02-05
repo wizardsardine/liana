@@ -165,3 +165,9 @@ pub const LIGHT_BORDER_STRONG: Color = Color::from_rgb(
     0x7A as f32 / 255.0,
     0x7A as f32 / 255.0,
 ); // #7A7A7A
+
+pub const AMBER: Color = Color::from_rgb(
+    0xFC as f32 / 255.0,
+    0xC1 as f32 / 255.0,
+    0x07 as f32 / 255.0,
+); // #FCC107
