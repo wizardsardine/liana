@@ -337,7 +337,7 @@ Fetch user by ID.
 
 ### User Object
 
-NOTE: role can have WizardSardineManager | Admin | Signer values. Wallet ownership
+NOTE: role can have WizardSardineAdmin | WalletManager | Participant values. Wallet ownership
 must only be inferred from Wallet.owner.
 
 ```json
@@ -352,9 +352,9 @@ must only be inferred from Wallet.owner.
 ```
 
 **Note:** The `role` field can be one of the following values:
-- `"WizardSardineManager"`: WizardSardine Manager role
-- `"Admin"`: Admin role
-- `"Signer"`: Signer role
+- `"WizardSardineAdmin"`: WizardSardine Admin role
+- `"WalletManager"`: Wallet Manager role (customer)
+- `"Participant"`: Participant role (customer)
 
 **Note:** This structure is used only in `user` response messages. When a User is
 referenced from other entities (e.g., `Wallet.owner`), only the UUID is included.
@@ -818,7 +818,7 @@ This flow demonstrates the complete sequence for establishing a connection and l
 initial data. Upon connection, the server sends unsolicited Org notifications for all
 organizations the user belongs to. The client then fetches wallets and users.
 
-**Actor:** Any authenticated user (WS Admin, Wallet Manager, or Participant)
+**Actor:** Any authenticated user (WizardSardineAdmin, WalletManager, or Participant)
 
 ```
 // Step 1: Establish connection
@@ -905,7 +905,7 @@ Server -> Client: Response::User {
         name: "John Smith",
         uuid: "user-uuid-001",
         email: "ceo@acme.com",
-        role: UserRole::Admin,
+        role: UserRole::Participant,
         ...
     }
 }
@@ -919,7 +919,7 @@ updated template.
 
 #### Add Key Flow
 
-**Actor:** WS Admin or Wallet Manager
+**Actor:** WizardSardineAdmin or WalletManager
 
 **Precondition:** Wallet exists with status "Drafted"
 
@@ -950,7 +950,7 @@ Server -> Client: Response::Wallet { wallet: Wallet { /* updated wallet with new
 
 #### Edit Key Flow
 
-**Actor:** WS Admin or Wallet Manager
+**Actor:** WizardSardineAdmin or WalletManager
 
 **Precondition:** Wallet exists with the key to be modified and wallet must be
 in "Drafted" status.
@@ -977,7 +977,7 @@ Server -> Client: Response::Wallet { wallet: Wallet { /* updated wallet with mod
 
 #### Remove Key Flow
 
-**Actor:** WS Admin or Wallet Manager
+**Actor:** WizardSardineAdmin or WalletManager
 
 **Precondition:** Wallet exists with the key to be removed, key is not referenced in
 any spending path and wallet must be in "Drafted" status.
@@ -1010,7 +1010,7 @@ Path operations are performed by modifying the `template.primary_path` or
 
 #### Add Path Flow
 
-**Actor:** WS Admin
+**Actor:** WizardSardineAdmin
 
 **Precondition:** Wallet exists with keys that will be referenced in the new path and
 wallet must be in "Drafted" status.
@@ -1044,7 +1044,7 @@ Server -> Client: Response::Wallet { wallet: Wallet { /* updated wallet with new
 
 #### Edit Path Flow
 
-**Actor:** WS Admin 
+**Actor:** WizardSardineAdmin 
 
 **Precondition:** Wallet exists with the path to be modified wallet must be in
 "Drafted" status.
@@ -1073,7 +1073,7 @@ Server -> Client: Response::Wallet { wallet: Wallet { /* updated wallet with mod
 
 #### Remove Path Flow
 
-**Actor:** WS Admin
+**Actor:** WizardSardineAdmin
 
 **Precondition:** Wallet exists with secondary path(s) to be removed wallet must
 be in "Drafted" status)
@@ -1100,22 +1100,22 @@ Server -> Client: Response::Wallet { wallet: Wallet { /* updated wallet without 
 
 Wallet status transitions are performed by changing the `status` field in a wallet
 and sending an `EditWallet` request. The valid transitions are:
-- `Created` → `Drafted` (WS Admin creates initial template)
-- `Drafted` → `Locked` (WS Admin locks policy for owner validation)
-- `Locked` → `Drafted` (WS Admin unlocks to make changes)
+- `Created` → `Drafted` (WisardSardineAdmin creates initial template)
+- `Drafted` → `Locked` (WisardSardineAdmin locks policy for owner validation)
+- `Locked` → `Drafted` (WisardSardineAdmin unlocks to make changes)
 - `Locked` → `Validated` (Wallet Manager validates the policy)
 - `Validated` → `Finalized` (All keys have xpubs, this state chase must be done
 either server side or from admin panel)
 
 #### Lock Wallet Flow
 
-**Actor:** WS Admin
+**Actor:** WisardSardineAdmin
 
 **Precondition:** Wallet is in "Drafted" status with complete policy template (at
 least a recovery path)
 
 ```
-// WS Admin locks wallet for owner validation
+// WisardSardineAdmin locks wallet for owner validation
 Client -> Server: Request::EditWallet {
     wallet: Wallet {
         id: "wallet-uuid-001",
@@ -1130,12 +1130,12 @@ Server -> Client: Response::Wallet { wallet: Wallet { status: WalletStatus::Lock
 
 #### Unlock Wallet Flow
 
-**Actor:** WS Admin
+**Actor:** WisardSardineAdmin
 
 **Precondition:** Wallet is in "Locked" status
 
 ```
-// WS Admin unlocks wallet to make changes
+// WisardSardineAdmin unlocks wallet to make changes
 Client -> Server: Request::EditWallet {
     wallet: Wallet {
         id: "wallet-uuid-001",
@@ -1176,7 +1176,7 @@ wallet object.
 
 #### Add Xpub Flow
 
-**Actor:** WS Admin, Wallet Manager, or Participant (wallet must be in "Validated" status or
+**Actor:** WisardSardineAdmin, Wallet Manager, or Participant (wallet must be in "Validated" status or
 later)
 
 **Precondition:** Wallet exists with the key to receive the xpub
@@ -1208,7 +1208,7 @@ Server -> Client: Response::Wallet {
 
 #### Edit Xpub Flow
 
-**Actor:** WS Admin, Wallet Manager, or Participant
+**Actor:** WisardSardineAdmin, Wallet Manager, or Participant
 
 **Precondition:** Wallet exists with key that already has an xpub
 and wallet must be in "Validated" status. 
@@ -1233,7 +1233,7 @@ Server -> Client: Response::Wallet { wallet: Wallet { /* key 0 xpub updated */ }
 
 #### Clear Xpub Flow
 
-**Actor:** WS Admin, Wallet Manager, or Participant
+**Actor:** WisardSardineAdmin, Wallet Manager, or Participant
 
 **Precondition:** Wallet exists with key that has an xpub to be cleared
 and wallet must be in "Validated" status. 
@@ -1356,7 +1356,7 @@ a `request_id`, distinguishing them from responses to your own requests.
 
 #### Receiving Key Change Notification
 
-**Scenario:** Another WS Admin (user-uuid-002) edits a key in a wallet that you
+**Scenario:** Another WisardSardineAdmin (user-uuid-002) edits a key in a wallet that you
 (user-uuid-001) have access to.
 
 ```
@@ -1502,10 +1502,10 @@ Client -> Server: Request::FetchUser { id: "user-uuid-012" }
 
 Server -> Client: Response::User {
     user: User {
-        name: "Alice Admin",
+        name: "Alice Manager",
         uuid: "user-uuid-010",
         email: "admin@newcorp.com",
-        role: UserRole::Admin,
+        role: UserRole::WalletManager,
         ...
     }
 }
@@ -1515,7 +1515,7 @@ Server -> Client: Response::User {
         name: "Bob Backup",
         uuid: "user-uuid-011",
         email: "backup@newcorp.com",
-        role: UserRole::WizardSardineManager,
+        role: UserRole::WizardSardineAdmin,
         ...
     }
 }
@@ -1525,7 +1525,7 @@ Server -> Client: Response::User {
         name: "Charlie Checker",
         uuid: "user-uuid-012",
         email: "checker@newcorp.com",
-        role: UserRole::Signer,
+        role: UserRole::Participant,
         ...
     }
 }
