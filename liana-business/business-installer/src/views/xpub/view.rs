@@ -29,7 +29,7 @@ fn xpub_status_badge(has_xpub: bool) -> Element<'static, Msg> {
         .into()
     } else {
         Container::new(
-            Container::new(text::caption("⚠ Not Set"))
+            Container::new(text::caption("Not Set"))
                 .padding([4, 12])
                 .style(liana_ui::theme::pill::warning)
                 .width(Length::Fill)
@@ -50,10 +50,10 @@ fn xpub_key_card(
     let identity_str = key.identity.to_string();
     let header_row = Row::new()
         .spacing(10)
-        .align_y(Alignment::Center)
+        .align_y(Alignment::End)
         .push(icon::key_icon())
-        .push(text::p1_medium(&key.alias).style(theme::text::primary))
-        .push(text::p1_medium(identity_str).style(theme::text::accent))
+        .push(text::h3(&key.alias).style(theme::text::primary))
+        .push(text::p2_medium(identity_str).style(theme::text::accent))
         .push(Space::with_width(Length::Fill))
         .push(xpub_status_badge(key.xpub.is_some()));
 

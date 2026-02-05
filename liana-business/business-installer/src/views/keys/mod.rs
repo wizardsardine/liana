@@ -92,9 +92,9 @@ fn key_card(
     // Header row: |<icon>|<Key_name>|<identity>|<spacer>|<key_type_badge>
     let header_row = Row::new()
         .spacing(10)
-        .align_y(Alignment::Center)
+        .align_y(Alignment::End)
         .push(icon::key_icon())
-        .push(text::p1_medium(&key.alias).style(theme::text::primary))
+        .push(text::h3(&key.alias).style(theme::text::primary))
         .push_maybe(identity_display)
         .push(Space::with_width(Length::Fill))
         .push(badge);
