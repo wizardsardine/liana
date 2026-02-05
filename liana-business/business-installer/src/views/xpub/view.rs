@@ -3,7 +3,10 @@ use crate::{
     state::{Msg, State},
     views::{card_entry, format_last_edit_info, layout_with_scrollable_list},
 };
-use iced::{widget::Space, Alignment, Length};
+use iced::{
+    widget::{row, Space},
+    Alignment, Length,
+};
 use liana_connect::ws_business::{self, UserRole};
 use liana_ui::{component::text, icon, theme, widget::*};
 
@@ -83,7 +86,9 @@ pub fn xpub_view(state: &State) -> Element<'_, Msg> {
     let user_role = &state.app.current_user_role;
 
     // Determine if user is WS Admin
-    let is_ws_manager = matches!(user_role, Some(UserRole::WizardSardineAdmin));
+    let is_ws_admin = matches!(user_role, Some(UserRole::WizardSardineAdmin));
+    // or Wallet Manager
+    let is_wallet_manager = matches!(user_role, Some(UserRole::WalletManager));
 
     // Build breadcrumb: org_name > wallet_name > Key Information
     let org_name = state
@@ -102,30 +107,23 @@ pub fn xpub_view(state: &State) -> Element<'_, Msg> {
 
     // Filter keys based on role (needed before header to determine waiting state)
     let current_user_email_lower = current_user_email.to_lowercase();
-    let filtered_keys: Vec<(u8, &ws_business::Key)> = state
-        .app
-        .keys
-        .iter()
-        .filter(|(_id, key)| {
-            // For signers: only show keys matching their identity
-            // For WizardSardineManager/Admin: show all keys
-            match user_role.as_ref() {
-                Some(UserRole::Participant) => {
-                    key.identity.to_string().to_lowercase() == current_user_email_lower
-                }
-                Some(UserRole::WizardSardineAdmin) | Some(UserRole::WalletManager) | None => true,
-            }
-        })
-        .map(|(id, key)| (*id, key))
-        .collect();
+    let mut owned_keys = Vec::new();
+    let mut non_owned_keys = Vec::new();
+    state.app.keys.iter().for_each(|(id, key)| {
+        if key.identity.to_string().to_lowercase() == current_user_email_lower {
+            owned_keys.push((id, key));
+        } else {
+            non_owned_keys.push((id, key));
+        }
+    });
 
     // Check if all user's keys are already set (for waiting state)
-    let all_keys_set =
-        !filtered_keys.is_empty() && filtered_keys.iter().all(|(_, key)| key.xpub.is_some());
+    let all_keys_set = owned_keys.iter().all(|(_, key)| key.xpub.is_some())
+        && non_owned_keys.iter().all(|(_, key)| key.xpub.is_some());
 
     // Fixed header content - show waiting message if all keys are set
     let instruction: Element<'_, Msg> = if all_keys_set {
-        let keys_set_msg = if filtered_keys.len() == 1 {
+        let keys_set_msg = if owned_keys.len() == 1 {
             "Your key is set."
         } else {
             "Your keys are set."
@@ -145,7 +143,7 @@ pub fn xpub_view(state: &State) -> Element<'_, Msg> {
             .into()
     } else {
         text::p1_medium(
-            "Select a key to complete its setup. You can connect a hardware device (recommended) or manually add an extended public key (xpub).",
+            "Select a key to complete its setup. Keys can be set up by each key manager individually, or by the wallet manager on their behalf. You can connect a hardware device (recommended) or manually add an extended public key (xpub).",
         )
         .style(theme::text::primary)
         .into()
@@ -166,7 +164,7 @@ pub fn xpub_view(state: &State) -> Element<'_, Msg> {
         .align_x(Alignment::Center)
         .push(Space::with_height(20));
 
-    if filtered_keys.is_empty() {
+    if owned_keys.is_empty() {
         // Empty state: no keys match filter
         let empty_message = match user_role.as_ref() {
             Some(UserRole::Participant) => "No keys assigned to you",
@@ -175,8 +173,16 @@ pub fn xpub_view(state: &State) -> Element<'_, Msg> {
         list_content =
             list_content.push(text::p1_medium(empty_message).style(theme::text::primary));
     } else {
+        list_content = list_content.push(
+            row![
+                Space::with_width(10),
+                text::h3("Your keys:").style(theme::text::primary),
+                Space::with_width(Length::Fill)
+            ]
+            .width(KEY_CARD_WIDTH),
+        );
         // Always show key cards so users can edit/reset xpubs
-        for (key_id, key) in filtered_keys {
+        for (key_id, key) in owned_keys {
             let last_edit_info = format_last_edit_info(
                 key.last_edited,
                 key.last_editor,
@@ -184,17 +190,35 @@ pub fn xpub_view(state: &State) -> Element<'_, Msg> {
                 &current_user_email_lower,
             );
 
-            list_content = list_content.push(xpub_key_card(key_id, key, last_edit_info));
+            list_content = list_content.push(xpub_key_card(*key_id, key, last_edit_info));
+        }
+    }
+
+    if is_wallet_manager {
+        list_content = list_content.push(Space::with_height(20)).push(
+            row![
+                Space::with_width(10),
+                text::h3("Other participants' keys:").style(theme::text::primary),
+                Space::with_width(Length::Fill)
+            ]
+            .width(KEY_CARD_WIDTH),
+        );
+        // Always show key cards so users can edit/reset xpubs
+        for (key_id, key) in non_owned_keys {
+            let last_edit_info = format_last_edit_info(
+                key.last_edited,
+                key.last_editor,
+                state,
+                &current_user_email_lower,
+            );
+
+            list_content = list_content.push(xpub_key_card(*key_id, key, last_edit_info));
         }
     }
 
     list_content = list_content.push(Space::with_height(50));
 
-    let role_badge = if is_ws_manager {
-        Some("WS Admin")
-    } else {
-        None
-    };
+    let role_badge = if is_ws_admin { Some("WS Admin") } else { None };
 
     layout_with_scrollable_list(
         (0, 0), // No progress indicator
