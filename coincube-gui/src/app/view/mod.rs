@@ -7,6 +7,8 @@ pub mod settings;
 
 pub mod vault;
 
+use std::iter::FromIterator;
+
 pub use liquid::*;
 pub use message::*;
 pub use vault::fiat::FiatAmountConverter;
@@ -599,45 +601,53 @@ pub fn placeholder<'a, T: Into<Element<'a, Message>>>(
         .into()
 }
 
-pub fn error_toast_overlay<'a>(msg: &'a str) -> coincube_ui::widget::Element<'a, Message> {
+pub fn error_toast_overlay<'a, I: Iterator<Item = (usize, &'a str)>>(
+    iter: I,
+) -> coincube_ui::widget::Element<'a, Message> {
     use coincube_ui::{color, component::text, icon::cross_icon};
 
-    let error_toast = iced::widget::row![
-        // represent space covered by the dashboard
-        iced::widget::Space::new().width(190.0),
-        // center toast horizontally
-        iced::widget::Space::new().width(iced::Length::Fill),
-        container(iced::widget::scrollable(
-            text::p1_bold(msg).color(color::WHITE)
-        ))
-        .width(600)
-        .height(iced::Length::Fill)
-        .padding(25)
-        .style(|_| {
-            iced::widget::container::Style::default()
-                .background(iced::Color::BLACK)
-                .border(iced::Border::default().width(1).color(color::RED))
-        }),
-        iced::widget::Button::new(
-            cross_icon()
-                .color(color::BLACK)
-                .size(36)
-                .align_x(iced::Alignment::Center)
+    let toast = |id: usize, content: &str| {
+        const WIDGET_HEIGHT: u32 = 80;
+        iced::widget::row![
+            container(text::p1_bold(content).color(color::WHITE))
+                .width(600)
+                .height(WIDGET_HEIGHT)
+                .padding(15)
                 .align_y(iced::Alignment::Center)
-                .height(iced::Length::Fill)
-        )
-        .height(iced::Length::Fill)
-        .width(60)
-        .style(|_, _| iced::widget::button::Style::default().with_background(color::RED))
-        .on_press(Message::DismissError),
-        iced::widget::Space::new().width(iced::Length::Fill),
-    ]
-    .height(90)
-    .align_y(Alignment::Center);
+                .style(|_| {
+                    iced::widget::container::Style::default()
+                        .background(iced::Color::BLACK)
+                        .border(iced::Border::default().width(1).color(color::RED))
+                }),
+            iced::widget::Button::new(
+                cross_icon()
+                    .color(color::BLACK)
+                    .size(36)
+                    .align_x(iced::Alignment::Center)
+                    .align_y(iced::Alignment::Center)
+                    .height(iced::Length::Fill)
+            )
+            .height(WIDGET_HEIGHT)
+            .width(60)
+            .style(|_, _| iced::widget::button::Style::default().with_background(color::RED))
+            .on_press(Message::DismissToast(id))
+        ]
+    };
 
+    let centered = iced::widget::row![
+        // offset the toast by the space covered by the dashboard
+        iced::widget::Space::new().width(190.0),
+        // center toasts horizontally
+        iced::widget::Space::new().width(iced::Length::Fill),
+        iced::widget::Column::from_iter(iter.map(|(id, content)| toast(id, content).into()))
+            .spacing(10),
+        iced::widget::Space::new().width(iced::Length::Fill),
+    ];
+
+    // full screen positioning
     let column = iced::widget::column![
         iced::widget::Space::new().height(iced::Length::Fill),
-        error_toast,
+        centered,
         iced::widget::Space::new().height(25),
     ];
 

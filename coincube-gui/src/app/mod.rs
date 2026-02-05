@@ -415,8 +415,8 @@ pub struct App {
     config: Arc<Config>,
     datadir: CoincubeDirectory,
     panels: Panels,
-    error_toast: Option<String>, // Global error toast message
-    error_toast_id: u64,         // ID for race condition prevention
+    errors: std::collections::BinaryHeap<(usize, std::time::Instant, String)>,
+    current_error_id: usize,
 }
 
 impl App {
@@ -470,8 +470,8 @@ impl App {
                 cube_settings,
                 config: config_arc,
                 datadir: data_dir,
-                error_toast: None,
-                error_toast_id: 0,
+                errors: std::collections::BinaryHeap::with_capacity(8),
+                current_error_id: 256,
             },
             cmd,
         )
@@ -527,8 +527,8 @@ impl App {
                 cube_settings,
                 config: config_arc,
                 datadir,
-                error_toast: None,
-                error_toast_id: 0,
+                errors: std::collections::BinaryHeap::with_capacity(8),
+                current_error_id: 256,
             },
             cmd,
         )
@@ -536,20 +536,6 @@ impl App {
 
     pub fn wallet_id(&self) -> Option<WalletId> {
         self.wallet.as_ref().map(|w| w.id())
-    }
-
-    /// Sets a global error toast and returns an auto-dismiss timer task (8 seconds)
-    pub fn show_error_toast(&mut self, message: String) -> Task<Message> {
-        self.error_toast_id += 1;
-        let current_id = self.error_toast_id;
-        self.error_toast = Some(message);
-        Task::perform(
-            async move {
-                tokio::time::sleep(Duration::from_secs(8)).await;
-                current_id
-            },
-            |id| Message::View(view::Message::DismissErrorIfId(id)),
-        )
     }
 
     pub fn title(&self) -> &str {
@@ -912,19 +898,19 @@ impl App {
 
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
-            Message::View(view::Message::DismissError) => {
-                self.error_toast = None;
-                return Task::none();
+            Message::View(view::Message::DismissToast(id)) => {
+                self.errors.retain(|(i, ..)| *i != id);
             }
-            Message::View(view::Message::ShowError(error_msg)) => {
-                return self.show_error_toast(error_msg);
-            }
-            Message::View(view::Message::DismissErrorIfId(id)) => {
-                // Only dismiss if ID matches current toast (prevents race condition)
-                if id == self.error_toast_id {
-                    self.error_toast = None;
-                }
-                return Task::none();
+            Message::View(view::Message::ShowError(msg)) => {
+                self.errors
+                    .push((self.current_error_id, std::time::Instant::now(), msg));
+                self.current_error_id += 1;
+
+                let id = self.current_error_id - 1;
+                return Task::perform(
+                    async move { tokio::time::sleep(Duration::from_secs(8)).await },
+                    move |_| Message::View(view::Message::DismissToast(id)),
+                );
             }
             Message::SettingsSaved => {
                 // Settings saved - reload unit preference and fiat_price from cube settings
@@ -1243,13 +1229,17 @@ impl App {
         };
 
         // Overlay error toast at bottom if present
-        if let Some(err) = &self.error_toast {
-            iced::widget::Stack::new()
+        match self.errors.is_empty() {
+            true => content,
+            false => iced::widget::Stack::new()
                 .push(content)
-                .push(view::error_toast_overlay(err).map(Message::View))
-                .into()
-        } else {
-            content
+                .push(
+                    view::error_toast_overlay(
+                        self.errors.iter().map(|(id, _, msg)| (*id, msg.as_str())),
+                    )
+                    .map(Message::View),
+                )
+                .into(),
         }
     }
 

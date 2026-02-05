@@ -1,4 +1,3 @@
-use iced::Task;
 use std::sync::Arc;
 
 use crate::{
@@ -47,7 +46,7 @@ impl State for BuySellPanel {
         daemon: Option<Arc<dyn Daemon + Sync + Send>>,
         cache: &Cache,
         message: Message,
-    ) -> Task<Message> {
+    ) -> iced::Task<Message> {
         let message = match message {
             Message::View(view::Message::BuySell(message)) => message,
             // modal for any generated address
@@ -69,7 +68,7 @@ impl State for BuySellPanel {
                     );
                 }
 
-                return Task::none();
+                return iced::Task::none();
             }
             Message::View(view::Message::ShowQrCode(_)) => {
                 if let BuySellFlowState::Initialization {
@@ -85,19 +84,16 @@ impl State for BuySellPanel {
                     }
                 }
 
-                return Task::none();
+                return iced::Task::none();
             }
             Message::View(view::Message::Close) => {
                 if let BuySellFlowState::Initialization { modal, .. } = &mut self.step {
                     *modal = super::vault::receive::Modal::None;
                 }
 
-                return Task::none();
+                return iced::Task::none();
             }
-            Message::View(view::Message::DismissError) => {
-                return Task::none();
-            }
-            _ => return Task::none(),
+            _ => return iced::Task::none(),
         };
 
         match message {
@@ -120,7 +116,9 @@ impl State for BuySellPanel {
                                         // check if token is valid
                                         return iced::Task::done(Message::View(
                                             view::Message::BuySell(
-                                                view::BuySellMessage::RefreshLocalLogin(l),
+                                                view::BuySellMessage::RefreshLocalLogin {
+                                                    refresh_token: l.refresh_token,
+                                                },
                                             ),
                                         ));
                                     }
@@ -175,11 +173,11 @@ impl State for BuySellPanel {
             }
 
             // login states
-            view::BuySellMessage::RefreshLocalLogin(login) => {
+            view::BuySellMessage::RefreshLocalLogin { refresh_token } => {
                 let client = self.coincube_client.clone();
 
-                return Task::perform(
-                    async move { client.refresh_login(&login.refresh_token).await },
+                return iced::Task::perform(
+                    async move { client.refresh_login(&refresh_token).await },
                     |res| match res {
                         Ok(l) => {
                             log::info!("Refresh token still valid, login token regenerated");
@@ -246,7 +244,7 @@ impl State for BuySellPanel {
 
             // Forward clipboard action to parent message handler
             view::BuySellMessage::Clipboard(text) => {
-                return Task::done(Message::View(view::Message::Clipboard(text)));
+                return iced::Task::done(Message::View(view::Message::Clipboard(text)));
             }
 
             // initialization flow: for creating a new address and setting panel mode (buy or sell)
@@ -266,7 +264,7 @@ impl State for BuySellPanel {
             }
             view::BuySellMessage::CreateNewAddress => {
                 let daemon = daemon.expect("Daemon must be available for BuySell panel");
-                return Task::perform(
+                return iced::Task::perform(
                     async move { daemon.get_new_address().await },
                     |res: Result<_, _>| match res {
                         Ok(out) => Message::View(view::Message::BuySell(
@@ -305,7 +303,7 @@ impl State for BuySellPanel {
                         self.step = BuySellFlowState::DetectingLocation(true);
                         self.detected_country = None;
 
-                        return Task::done(Message::View(view::Message::BuySell(
+                        return iced::Task::done(Message::View(view::Message::BuySell(
                             view::BuySellMessage::SessionError(
                                 "Unable to automatically determine location",
                                 "please select manually below".to_string(),
@@ -318,7 +316,7 @@ impl State for BuySellPanel {
                 log::info!("Country = {}, ISO = {}", country.name, country.code);
                 self.detected_country = Some(country);
 
-                return Task::done(Message::View(view::Message::BuySell(
+                return iced::Task::done(Message::View(view::Message::BuySell(
                     view::BuySellMessage::ResetWidget,
                 )));
             }
@@ -327,7 +325,7 @@ impl State for BuySellPanel {
             view::BuySellMessage::StartSession => {
                 let BuySellFlowState::Initialization { buy_or_sell, .. } = &mut self.step else {
                     log::error!("`StartSession` must be always called during the Initialization Flow Stage, skipping...");
-                    return Task::none();
+                    return iced::Task::none();
                 };
 
                 let Some(country) = self.detected_country else {
@@ -358,16 +356,16 @@ impl State for BuySellPanel {
                         });
 
                         if country.code != "KE" {
-                            return Task::batch([
-                                Task::done(Message::View(view::Message::BuySell(
+                            return iced::Task::batch([
+                                iced::Task::done(Message::View(view::Message::BuySell(
                                     view::BuySellMessage::Mavapay(MavapayMessage::GetBanks),
                                 ))),
-                                Task::done(Message::View(view::Message::BuySell(
+                                iced::Task::done(Message::View(view::Message::BuySell(
                                     view::BuySellMessage::Mavapay(MavapayMessage::GetPrice),
                                 ))),
                             ]);
                         } else {
-                            return Task::done(Message::View(view::Message::BuySell(
+                            return iced::Task::done(Message::View(view::Message::BuySell(
                                 view::BuySellMessage::Mavapay(MavapayMessage::GetPrice),
                             )));
                         };
@@ -380,6 +378,7 @@ impl State for BuySellPanel {
                             buy_or_sell,
                             country,
                             self.coincube_client.clone(),
+                            self.network,
                         );
                         self.step = BuySellFlowState::Meld(meld);
 
@@ -405,7 +404,7 @@ impl State for BuySellPanel {
                             transactions: None,
                         });
 
-                        return Task::done(Message::View(view::Message::BuySell(
+                        return iced::Task::done(Message::View(view::Message::BuySell(
                             view::BuySellMessage::Mavapay(MavapayMessage::FetchTransactions),
                         )));
                     }
@@ -416,8 +415,6 @@ impl State for BuySellPanel {
                 }
             }
             view::BuySellMessage::SessionError(description, error) => {
-                let error_message = format!("{} ({})", description, error);
-
                 // unblock UI retry buttons in step-specific flows
                 if let BuySellFlowState::Mavapay(m) = &mut self.step {
                     match m {
@@ -445,7 +442,10 @@ impl State for BuySellPanel {
                 }
 
                 // display error using error toast
-                return iced::Task::done(Message::View(view::Message::ShowError(error_message)));
+                return iced::Task::done(Message::View(view::Message::ShowError(format!(
+                    "{} ({})",
+                    description, error
+                ))));
             }
 
             // state specific messages
@@ -457,14 +457,14 @@ impl State for BuySellPanel {
                         view::BuySellMessage::SubmitLogin,
                     ) => {
                         if *loading {
-                            return Task::none();
+                            return iced::Task::none();
                         }
                         *loading = true;
 
                         let client = self.coincube_client.clone();
                         let email = email.to_string();
 
-                        return Task::perform(
+                        return iced::Task::perform(
                             async move {
                                 let send_otp_request = OtpRequest {
                                     email: email.clone(),
@@ -484,8 +484,9 @@ impl State for BuySellPanel {
                     (BuySellFlowState::Login { email, loading }, view::BuySellMessage::SendOtp) => {
                         if !*loading {
                             // Ignore stale callback from a previous OTP resend
-                            return Task::none();
+                            return iced::Task::none();
                         }
+
                         self.step = BuySellFlowState::OtpVerification {
                             email: email.clone(),
                             otp: String::new(),
@@ -493,20 +494,20 @@ impl State for BuySellPanel {
                             is_signup: false,
                             cooldown: 30,
                         };
-                        return Task::none();
                     }
                     (
                         BuySellFlowState::OtpVerification { .. } | BuySellFlowState::Login { .. },
                         view::BuySellMessage::LoginSuccess { login },
                     ) => {
                         log::info!("Successfully logged in user: {}", &login.user.email);
+
                         self.step = BuySellFlowState::Initialization {
                             modal: state::vault::receive::Modal::None,
                             buy_or_sell_selected: None,
                             buy_or_sell: None,
                         };
 
-                        return Task::done(Message::View(view::Message::BuySell(
+                        return iced::Task::done(Message::View(view::Message::BuySell(
                             view::BuySellMessage::SetLoginState(login),
                         )));
                     }
@@ -516,7 +517,7 @@ impl State for BuySellPanel {
 
                         view::BuySellMessage::SubmitRegistration => {
                             if *loading {
-                                return Task::none();
+                                return iced::Task::none();
                             }
                             *loading = true;
 
@@ -525,7 +526,7 @@ impl State for BuySellPanel {
                                 email: email.clone(),
                             };
 
-                            return Task::perform(
+                            return iced::Task::perform(
                                 async move { client.signup_send_otp(send_otp_request).await },
                                 |result| match result {
                                     Ok(_) => view::BuySellMessage::RegistrationSuccess,
@@ -570,7 +571,7 @@ impl State for BuySellPanel {
                         }
                         view::BuySellMessage::SendOtp => {
                             if *cooldown > 0 {
-                                return Task::none();
+                                return iced::Task::none();
                             }
                             *cooldown = 30;
 
@@ -587,7 +588,7 @@ impl State for BuySellPanel {
                             };
                             let is_signup = *is_signup;
 
-                            return Task::perform(
+                            return iced::Task::perform(
                                 async move {
                                     if is_signup {
                                         client.signup_send_otp(send_otp_request).await
@@ -596,21 +597,24 @@ impl State for BuySellPanel {
                                     }
                                 },
                                 |result| match result {
-                                    Ok(_) => view::Message::DismissError,
-                                    Err(e) => {
-                                        view::Message::BuySell(view::BuySellMessage::SessionError(
+                                    Ok(_) => None,
+                                    Err(e) => Some(view::Message::BuySell(
+                                        view::BuySellMessage::SessionError(
                                             "Unable to send OTP",
                                             e.to_string(),
-                                        ))
-                                    }
+                                        ),
+                                    )),
                                 },
                             )
-                            .map(Message::View);
+                            .then(|msg| match msg {
+                                Some(msg) => iced::Task::done(Message::View(msg)),
+                                None => iced::Task::none(),
+                            });
                         }
                         view::BuySellMessage::OtpChanged(o) => *otp = o,
                         view::BuySellMessage::VerifyOtp => {
                             if otp.is_empty() || *sending {
-                                return Task::none();
+                                return iced::Task::none();
                             }
 
                             let client = self.coincube_client.clone();
@@ -621,7 +625,7 @@ impl State for BuySellPanel {
                             *sending = true;
                             let is_signup = *is_signup;
 
-                            return Task::perform(
+                            return iced::Task::perform(
                                 async move {
                                     if is_signup {
                                         client.signup_verify_otp(verify_otp_request).await
@@ -684,20 +688,20 @@ impl State for BuySellPanel {
             }
         };
 
-        Task::none()
+        iced::Task::none()
     }
 
     fn reload(
         &mut self,
         _daemon: Option<Arc<dyn Daemon + Sync + Send>>,
         _wallet: Option<Arc<crate::app::wallet::Wallet>>,
-    ) -> Task<Message> {
+    ) -> iced::Task<Message> {
         match self.detected_country {
-            Some(_) => Task::none(),
+            Some(_) => iced::Task::none(),
             None => {
                 let client = self.coincube_client.clone();
 
-                Task::perform(async move { client.locate().await }, |result| {
+                iced::Task::perform(async move { client.locate().await }, |result| {
                     Message::View(view::Message::BuySell(
                         view::BuySellMessage::CountryDetected(result.map_err(|e| e.to_string())),
                     ))
@@ -706,7 +710,7 @@ impl State for BuySellPanel {
         }
     }
 
-    fn close(&mut self) -> Task<Message> {
+    fn close(&mut self) -> iced::Task<Message> {
         if let BuySellFlowState::Meld(meld) = &self.step {
             if let Some(meld::MeldFlowStep::ActiveSession { active, .. }) = meld.steps.last() {
                 if let Some(strong) = std::sync::Weak::upgrade(&active.webview) {
@@ -716,7 +720,7 @@ impl State for BuySellPanel {
             }
         }
 
-        Task::none()
+        iced::Task::none()
     }
 
     fn subscription(&self) -> iced::Subscription<Message> {

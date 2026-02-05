@@ -149,7 +149,7 @@ impl BuySellPanel {
                         BuySellFlowState::Mavapay(state) => super::mavapay::ui::form(state),
 
                         // meld
-                        BuySellFlowState::Meld(state) => state.view(&self.network),
+                        BuySellFlowState::Meld(state) => state.view(),
                     }
                 });
 
