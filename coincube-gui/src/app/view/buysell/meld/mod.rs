@@ -172,7 +172,18 @@ impl MeldState {
             MeldMessage::NavigateBack => {
                 self.steps.pop();
             }
-            MeldMessage::SessionError(err, description) => {
+            MeldMessage::SessionError(mut err, description) => {
+                #[derive(serde::Deserialize)]
+                struct ErrorExtractor {
+                    message: String,
+                }
+
+                // attempt to extract message from JSON response
+                if let Ok(ErrorExtractor { message }) = serde_json::from_str::<ErrorExtractor>(&err)
+                {
+                    err = message;
+                };
+
                 let msg = match description {
                     "QUOTE_ACQUISITION_FAILED" => {
                         if let Some(MeldFlowStep::InputForm {
@@ -182,7 +193,7 @@ impl MeldState {
                             *sending_request = false;
                         }
 
-                        format!("[MELD] (Unable to acquire Quotes from API): {}", err)
+                        format!("MELD | Unable to acquire Quotes from API | {}", err)
                     }
                     "WEBVIEW_INIT_FAILURE" => {
                         // reset webview loading state
@@ -193,9 +204,9 @@ impl MeldState {
                             *webview_pending = false;
                         }
 
-                        format!("[MELD] (Unable to start webview): {}", err)
+                        format!("MELD | {}", err)
                     }
-                    desc => format!("[MELD] ({}): {}", desc, err),
+                    desc => format!("MELD | {} | {}", desc, err),
                 };
 
                 return Some(iced::Task::done(view::Message::ShowError(msg)));
