@@ -8,7 +8,7 @@ use iced::{
     Alignment, Length,
 };
 use liana_connect::ws_business::{self, UserRole};
-use liana_ui::{component::text, icon, theme, widget::*};
+use liana_ui::{color, component::text, icon, theme, widget::*};
 
 // Card width constant (matching keys view)
 const KEY_CARD_WIDTH: f32 = 600.0;
@@ -52,8 +52,12 @@ fn xpub_key_card(
         .spacing(10)
         .align_y(Alignment::Center)
         .push(icon::key_icon())
-        .push(text::p1_medium(&key.alias).style(theme::text::primary))
-        .push(text::p1_medium(identity_str).style(theme::text::primary))
+        .push(text::h3(&key.alias).style(theme::text::primary))
+        .push(
+            text::h3(identity_str)
+                .style(theme::text::primary)
+                .color(color::DARK_GREEN),
+        )
         .push(Space::with_width(Length::Fill))
         .push(xpub_status_badge(key.xpub.is_some()));
 
