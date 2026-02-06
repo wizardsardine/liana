@@ -1,5 +1,3 @@
-#![cfg(not(target_os = "windows"))]
-
 use lianad::config::Config;
 
 use std::{
@@ -11,7 +9,14 @@ use std::{
 
 use serde_json::Value as Json;
 
+#[cfg(not(target_os = "windows"))]
 use std::os::unix::net::UnixStream;
+
+#[cfg(target_os = "windows")]
+fn main() {
+    eprintln!("liana-cli: Windows support not implemented");
+    process::exit(1);
+}
 
 // Exits with error
 fn show_usage() {
@@ -109,6 +114,7 @@ fn trimmed(mut vec: Vec<u8>, bytes_read: usize) -> Vec<u8> {
     vec
 }
 
+#[cfg(not(target_os = "windows"))]
 fn main() {
     let args = env::args().collect();
     let (conf_file, raw, method, params) = parse_args(args);
