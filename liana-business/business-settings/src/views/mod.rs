@@ -70,6 +70,14 @@ pub fn wallet_view(state: &BusinessSettingsUI) -> Element<'_, Msg> {
                     .spacing(10)
                     .push(Space::with_width(Length::Fill))
                     .push(
+                        button::secondary(Some(icon::backup_icon()), "Encrypted descriptor")
+                            .on_press(Msg::ExportEncryptedDescriptor),
+                    )
+                    .push(
+                        button::secondary(Some(icon::clipboard_icon()), "Copy")
+                            .on_press(Msg::CopyDescriptor),
+                    )
+                    .push(
                         button::secondary(Some(icon::chip_icon()), "Register on device")
                             .on_press(Msg::RegisterWallet),
                     ),
