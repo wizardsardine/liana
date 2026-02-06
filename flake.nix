@@ -167,6 +167,7 @@
           libsoup_3
           pango
           pkg-config
+          protobuf
           udev
           wayland
           libxkbcommon
