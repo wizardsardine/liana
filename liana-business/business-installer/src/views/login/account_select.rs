@@ -113,21 +113,15 @@ pub fn account_select_view(state: &State) -> Element<'_, Msg> {
     // Separator
     list_content = list_content.push(Space::with_height(20));
 
-    // "Connect with another email" card
-    let new_email_content: Element<'_, Msg> = text::p1_medium("Connect with another email")
-        .style(theme::text::primary)
-        .into();
-    let new_email_message = if processing {
-        None
-    } else {
-        Some(Msg::AccountSelectNewEmail)
-    };
+    // "Connect with another email" button
+    let new_email = liana_ui::component::button::secondary(None, "Connect with another email")
+        .on_press(Msg::AccountSelectNewEmail);
 
     // Wrap in a container to maintain alignment with account rows
     let new_email_row = Row::new()
         .spacing(15)
         .align_y(Alignment::Center)
-        .push(account_card(new_email_content, new_email_message))
+        .push(new_email)
         .push(Space::with_width(Length::Fixed(50.0))); // Match delete button width
 
     list_content = list_content.push(new_email_row);
