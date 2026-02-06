@@ -2,6 +2,7 @@
 
 use iced::widget::{scrollable, Column, Container, Row, Space};
 use iced::{Alignment, Length};
+use liana_gui::app::view::settings::display_policy;
 use liana_ui::{
     component::{badge, button, card, separation, text::*},
     icon, theme,
@@ -40,6 +41,16 @@ pub fn list_view() -> Element<'static, Msg> {
 pub fn wallet_view(state: &BusinessSettingsUI) -> Element<'_, Msg> {
     let header = section_header("Wallet");
 
+    // Policy display
+    let policy = state.wallet.main_descriptor.policy();
+    let policy_card = card::simple(display_policy(
+        policy,
+        state.wallet.keys_aliases.clone(),
+        &state.wallet.provider_keys,
+    ))
+    .width(Length::Fill);
+
+    // Descriptor display
     let descriptor = state.wallet.main_descriptor.to_string();
     let descriptor_card = card::simple(
         Column::new()
@@ -71,6 +82,7 @@ pub fn wallet_view(state: &BusinessSettingsUI) -> Element<'_, Msg> {
         .spacing(20)
         .push(header)
         .push(descriptor_card)
+        .push(policy_card)
         .width(Length::Fill)
         .into()
 }
