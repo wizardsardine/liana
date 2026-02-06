@@ -39,7 +39,7 @@ impl State {
 
             // Org management
             Msg::OrgSelected(id) => self.on_org_selected(id),
-            Msg::OrgWalletSelected(id) => self.on_org_wallet_selected(id),
+            Msg::OrgWalletSelected(id) => return self.on_org_wallet_selected(id),
 
             // Wallet selection
             Msg::WalletSelectUpdateSearchFilter(filter) => {
@@ -270,7 +270,7 @@ impl State {
             self.current_view = View::WalletSelect;
         }
     }
-    fn on_org_wallet_selected(&mut self, wallet_id: Uuid) {
+    fn on_org_wallet_selected(&mut self, wallet_id: Uuid) -> Task<Msg> {
         // Extract user_id first to avoid borrow conflict with mutex guard
         let user_id = *self.backend.user_id.lock().expect("poisoned");
         let user = match user_id {
@@ -283,7 +283,7 @@ impl State {
                     "Error",
                     "User session not found. Please log in again or contact WizardSardine",
                 );
-                return;
+                return Task::none();
             }
         };
         // Get wallet and check access before loading
@@ -309,7 +309,7 @@ impl State {
                 "Access Error",
                 "You do not have access to this wallet. Contact WizardSardine.",
             );
-            return;
+            return Task::none();
         }
 
         // Store user role for the selected wallet
@@ -340,7 +340,7 @@ impl State {
                 // Populate registration state from wallet data
                 self.views.registration.descriptor = wallet.descriptor.clone();
                 self.views.registration.user_devices = wallet.user_devices(&user_email);
-                return;
+                return Task::none();
             }
         }
 
@@ -356,7 +356,9 @@ impl State {
             }
             Some(WalletStatus::Finalized) => {
                 // Final -> Signal exit to Wallet GUI
+                // Return Task::done to generate a follow-up message that triggers exit_maybe
                 self.app.exit = true;
+                return Task::done(Msg::Update);
             }
             Some(WalletStatus::Created)
             | Some(WalletStatus::Drafted)
@@ -369,6 +371,7 @@ impl State {
                 self.current_view = View::WalletEdit;
             }
         }
+        Task::none()
     }
 }
 
@@ -1184,8 +1187,9 @@ impl State {
                 self.stop_hw();
 
                 // Signal exit to open the main wallet application
+                // Return Task::done to generate a follow-up message that triggers exit_maybe
                 self.app.exit = true;
-                return Task::none();
+                return Task::done(Msg::Update);
             } else {
                 debug!(
                     "on_backend_wallet: wallet not in Registration status: {:?}",
@@ -1235,8 +1239,9 @@ impl State {
                     }
 
                     // Signal exit to open the main wallet application
+                    // Return Task::done to generate a follow-up message that triggers exit_maybe
                     self.app.exit = true;
-                    return Task::none();
+                    return Task::done(Msg::Update);
                 }
                 _ => {
                     // Other statuses - stay on Xpub view
