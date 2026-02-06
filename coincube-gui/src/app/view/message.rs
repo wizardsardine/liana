@@ -211,6 +211,16 @@ pub enum BuySellMessage {
     CreateNewAddress,
     AddressCreated(super::buysell::panel::LabelledAddress),
 
+    // existing address selection
+    FetchExistingAddresses,
+    ExistingAddressesFetched {
+        addresses: Result<Vec<super::buysell::panel::LabelledAddress>, String>,
+        continue_from: Option<coincube_core::miniscript::bitcoin::bip32::ChildNumber>,
+    },
+    LoadMoreAddresses,
+    ToggleAddressPicker,
+    SelectExistingAddress(super::buysell::panel::LabelledAddress),
+
     // user Registration
     EmailChanged(String),
     SubmitRegistration,
