@@ -9,10 +9,12 @@ are:
 
 - [`fontconfig`](https://www.freedesktop.org/wiki/Software/fontconfig/) for access to fonts (On Debian/Ubuntu `apt install libfontconfig1-dev`)
 - [`libudev-dev`](https://www.freedesktop.org/software/systemd/man/libudev.html) to communicate with devices through USB (On Debian/Ubuntu `apt install libudev-dev`)
+- [`libwebkit2gtk-4.1-dev`](https://webkitgtk.org/) for web content rendering (On Debian/Ubuntu `apt install libwebkit2gtk-4.1-dev`)
 
 In addition, if you want to build the project from source, you will need:
 
 - [`pkg-config`](https://www.freedesktop.org/wiki/Software/pkg-config/) (On Debian/Ubuntu `apt install pkg-config`)
+- [`protobuf-compiler`](https://developers.google.com/protocol-buffers/docs/reference/cpp-generated) for protobuf compilation (On Debian/Ubuntu `apt install protobuf-compiler`)
 
 ## Development
 
