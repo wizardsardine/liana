@@ -30,7 +30,7 @@ pub fn liquid_overview_view<'a>(
 
     let fiat_balance = fiat_converter.as_ref().map(|c| c.convert(btc_balance));
 
-    content = content.push(h3("Balance")).push(
+    content = content.push(h3("Balance").bold()).push(
         Column::new()
             .spacing(5)
             .push(amount_with_size_and_unit(

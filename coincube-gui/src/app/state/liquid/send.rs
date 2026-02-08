@@ -1,5 +1,6 @@
 use std::convert::TryInto;
 use std::sync::Arc;
+use std::time::Duration;
 
 use breez_sdk_liquid::model::PaymentDetails;
 use breez_sdk_liquid::prelude::Payment;
@@ -972,7 +973,11 @@ impl State for LiquidSend {
     }
 
     fn subscription(&self) -> iced::Subscription<Message> {
-        iced::Subscription::none()
+        if self.is_sending {
+            iced::time::every(Duration::from_millis(50)).map(|_| Message::Tick)
+        } else {
+            iced::Subscription::none()
+        }
     }
 
     fn reload(

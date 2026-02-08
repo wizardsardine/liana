@@ -11,6 +11,7 @@ pub mod hw;
 pub mod installer;
 pub mod launcher;
 pub mod loader;
+pub mod loading;
 pub mod logger;
 pub mod node;
 pub mod pin_entry;

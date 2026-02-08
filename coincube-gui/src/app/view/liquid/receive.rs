@@ -56,16 +56,9 @@ pub fn liquid_receive_view<'a>(
     }
 
     if loading {
-        content = content.push(
-            Container::new(
-                Column::new()
-                    .spacing(20)
-                    .align_x(Alignment::Center)
-                    .push(text("Generating address...").size(18)),
-            )
-            .width(Length::Fill)
-            .center_x(Length::Fill),
-        );
+        content = content.push(crate::loading::loading_indicator(Some(
+            "Generating Address",
+        )));
     } else if let (Some(addr), Some(qr)) = (address, qr_data) {
         // Lightning invoices contain more data, so use smaller cell size
         let cell_size = if *receive_method == ReceiveMethod::Lightning {

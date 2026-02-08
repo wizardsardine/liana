@@ -34,7 +34,7 @@ pub fn liquid_transactions_view<'a>(
     // Header row with Transactions heading and Export button (matching Vault style)
     content = content.push(
         Row::new()
-            .push(Container::new(h3("Transactions")))
+            .push(Container::new(h3("Transactions").bold()))
             .push(Space::new().width(Length::Fill))
             .push(
                 button::secondary(Some(icon::backup_icon()), "Export")
