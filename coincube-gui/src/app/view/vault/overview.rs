@@ -86,7 +86,7 @@ pub fn vault_overview_view<'a>(
     let fiat_balance = fiat_converter.as_ref().map(|c| c.convert(*balance));
     let fiat_unconfirmed = fiat_converter.map(|c| c.convert(*unconfirmed_balance));
     Column::new()
-        .push(h3("Balance"))
+        .push(h3("Balance").bold())
         .push(
             Column::new()
                 .push(

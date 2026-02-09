@@ -53,7 +53,7 @@ pub fn transactions_view<'a>(
         Column::new()
             .push(
                 Row::new()
-                    .push(Container::new(h3("Transactions")))
+                    .push(Container::new(h3("Transactions").bold()))
                     .push(Space::new().width(Length::Fill))
                     .push(
                         button::secondary(Some(icon::backup_icon()), "Export")

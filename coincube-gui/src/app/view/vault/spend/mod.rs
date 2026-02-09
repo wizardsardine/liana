@@ -196,7 +196,7 @@ pub fn create_spend_tx<'a>(
         menu,
         cache,
         Column::new()
-            .push(h3("Balance"))
+            .push(h3("Balance").bold())
             .push(
                 Column::new()
                     .push(

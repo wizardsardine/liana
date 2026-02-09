@@ -4,7 +4,7 @@ use std::time::Duration;
 use coincube_core::miniscript::bitcoin::{Amount, Denomination};
 use coincube_ui::component::{form, toast};
 use coincube_ui::widget::*;
-use iced::{clipboard, widget::qr_code, Task};
+use iced::{clipboard, widget::qr_code, Subscription, Task};
 
 use crate::app::settings::unit::BitcoinDisplayUnit;
 use crate::app::view::{LiquidReceiveMessage, ReceiveMethod};
@@ -320,6 +320,14 @@ impl State for LiquidReceive {
     ) -> Task<Message> {
         self.fetch_limits()
     }
+
+    fn subscription(&self) -> Subscription<Message> {
+        if self.loading {
+            iced::time::every(Duration::from_millis(50)).map(|_| Message::Tick)
+        } else {
+            Subscription::none()
+        }
+    }
 }
 
 impl LiquidReceive {
@@ -339,6 +347,7 @@ impl LiquidReceive {
 
     fn generate_lightning(&mut self, bitcoin_unit: BitcoinDisplayUnit) -> Task<Message> {
         self.loading = true;
+
         let client = self.breez_client.clone();
 
         // Check for empty input first
@@ -403,6 +412,7 @@ impl LiquidReceive {
 
     fn generate_onchain(&mut self) -> Task<Message> {
         self.loading = true;
+
         let client = self.breez_client.clone();
 
         Task::perform(Self::generate_onchain_address(client), |result| {

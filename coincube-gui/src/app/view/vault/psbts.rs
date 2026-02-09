@@ -73,7 +73,7 @@ pub fn psbts_view(spend_txs: &[SpendTx], bitcoin_unit: BitcoinDisplayUnit) -> El
             Row::new()
                 .align_y(Alignment::Center)
                 .spacing(10)
-                .push(Container::new(h3("PSBTs")).width(Length::Fill))
+                .push(Container::new(h3("PSBTs").bold()).width(Length::Fill))
                 .push(
                     button::secondary(Some(icon::restore_icon()), "Import")
                         .on_press(Message::ImportPsbt),

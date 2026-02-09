@@ -58,7 +58,7 @@ pub fn psbt_view<'a>(
                 Row::new()
                     .align_y(Alignment::Center)
                     .spacing(10)
-                    .push(Container::new(h3("PSBT")).width(Length::Fill))
+                    .push(Container::new(h3("PSBT").bold()).width(Length::Fill))
                     .push(if !tx.sigs.recovery_paths().is_empty() {
                         Some(badge::recovery())
                     } else {

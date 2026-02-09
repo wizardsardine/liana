@@ -20,12 +20,12 @@ use iced::{
     Alignment, Background, Length,
 };
 
-use crate::app::cache::Cache;
 use crate::app::menu::Menu;
 use crate::app::state::liquid::send::{LiquidSendFlowState, Modal};
 use crate::app::view::{
     self, vault::fiat::FiatAmount, FiatAmountConverter, LiquidSendMessage, Message,
 };
+use crate::{app::cache::Cache, loading::loading_indicator};
 
 pub struct LiquidSendFlowConfig<'a> {
     pub flow_state: &'a LiquidSendFlowState,
@@ -144,7 +144,7 @@ pub fn liquid_send_view<'a>(
     // Balance section - left justified
     let fiat_balance = fiat_converter.as_ref().map(|c| c.convert(btc_balance));
 
-    content = content.push(h3("Balance")).push(
+    content = content.push(h3("Balance").bold()).push(
         Column::new()
             .spacing(5)
             .push(amount_with_size_and_unit(
@@ -928,6 +928,10 @@ pub fn final_check_page<'a>(
     } else {
         send_button.on_press(LiquidSendMessage::ConfirmSend)
     });
+
+    if is_sending {
+        content = content.push(loading_indicator(None))
+    }
 
     Column::new()
         .push(header)

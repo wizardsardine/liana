@@ -38,7 +38,7 @@ pub fn recovery<'a>(
         menu,
         cache,
         Column::new()
-            .push(Container::new(h3("Recovery")).width(Length::Fill))
+            .push(Container::new(h3("Recovery").bold()).width(Length::Fill))
             .push(Container::new(text(INFO_TEXT)))
             .push(Space::new().height(Length::Fixed(20.0)))
             .push(

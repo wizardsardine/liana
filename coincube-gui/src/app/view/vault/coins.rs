@@ -29,7 +29,7 @@ pub fn coins_view<'a>(
     bitcoin_unit: BitcoinDisplayUnit,
 ) -> Element<'a, Message> {
     Column::new()
-        .push(Container::new(h3("Coins")).width(Length::Fill))
+        .push(Container::new(h3("Coins").bold()).width(Length::Fill))
         .push(coins.is_empty().then(|| {
             placeholder(
                 coins_icon().size(80),

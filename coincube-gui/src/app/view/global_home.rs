@@ -1065,7 +1065,7 @@ pub fn global_home_view<'a>(config: GlobalViewConfig<'a>) -> Element<'a, Message
             Row::new()
                 .spacing(0)
                 .width(Length::Fill)
-                .push(h3("Wallets"))
+                .push(h3("Wallets").bold())
                 .push(
                     Button::new(if balance_masked {
                         eye_slash_icon()
