@@ -50,16 +50,17 @@ fn derive_user_role(
 }
 
 /// Fixed width for status badges to ensure alignment
-const STATUS_BADGE_WIDTH: f32 = 80.0;
+const STATUS_BADGE_WIDTH: f32 = 90.0;
 
 /// Render a colored status badge for wallet status
 fn status_badge(wallet: &Wallet, user_email: &str) -> Element<'static, Msg> {
     let status = wallet.effective_status(user_email);
+    let width = STATUS_BADGE_WIDTH;
     if status == WalletStatus::Registration {
         return Container::new(text::caption("Register"))
             .padding([4, 12])
-            .width(STATUS_BADGE_WIDTH)
-            .center_x(STATUS_BADGE_WIDTH)
+            .width(width)
+            .center_x(width)
             .style(theme::pill::warning)
             .into();
     }
@@ -68,26 +69,26 @@ fn status_badge(wallet: &Wallet, user_email: &str) -> Element<'static, Msg> {
         WalletStatus::Registration => unreachable!(), // Handled above
         WalletStatus::Created | WalletStatus::Drafted => Container::new(text::caption("Draft"))
             .padding([4, 12])
-            .width(STATUS_BADGE_WIDTH)
-            .center_x(STATUS_BADGE_WIDTH)
+            .width(width)
+            .center_x(width)
             .style(theme::pill::simple)
             .into(),
-        WalletStatus::Locked => Container::new(text::caption("Locked"))
+        WalletStatus::Locked => Container::new(text::caption("To Approve"))
             .padding([4, 12])
-            .width(STATUS_BADGE_WIDTH)
-            .center_x(STATUS_BADGE_WIDTH)
-            .style(theme::pill::simple)
+            .width(width)
+            .center_x(width)
+            .style(theme::pill::warning)
             .into(),
         WalletStatus::Validated => Container::new(text::caption("Set keys"))
             .padding([4, 12])
-            .width(STATUS_BADGE_WIDTH)
-            .center_x(STATUS_BADGE_WIDTH)
+            .width(width)
+            .center_x(width)
             .style(theme::pill::warning)
             .into(),
         WalletStatus::Finalized => Container::new(text::caption("Active"))
             .padding([4, 12])
-            .width(STATUS_BADGE_WIDTH)
-            .center_x(STATUS_BADGE_WIDTH)
+            .width(width)
+            .center_x(width)
             .style(theme::pill::success)
             .into(),
     }
