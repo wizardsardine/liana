@@ -7,7 +7,6 @@ use iced::{
     Length,
 };
 use liana_ui::{
-    color,
     component::{button, form, text},
     icon, theme,
     widget::*,
@@ -50,7 +49,7 @@ pub fn login_code_view(state: &State) -> Element<'_, Msg> {
         .push(row![
             text::p1_medium("An authentication token has been emailed to ")
                 .style(theme::text::primary),
-            text::p1_medium(&state.views.login.email.form.value).color(color::DARK_GREEN)
+            text::p1_medium(&state.views.login.email.form.value).style(theme::text::accent)
         ])
         .push(form)
         .push(btn_row)
