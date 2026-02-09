@@ -29,7 +29,7 @@ EOF
 
 # We need to set RUSTC_BOOTSTRAP=1 as a workaround to be able to use unstable
 # features in the GUI dependencies
-for package_name in "lianad" "liana-gui"; do
+for package_name in "lianad" "liana-gui" "liana-business"; do
     RUSTC_BOOTSTRAP=1 cargo zigbuild -vvv \
         --color always \
         --frozen \
@@ -41,7 +41,7 @@ for package_name in "lianad" "liana-gui"; do
         --target-dir "/out"
 done
 
-for bin_name in "liana-gui" "lianad" "liana-cli"; do
+for bin_name in "liana-gui" "lianad" "liana-cli" "liana-business"; do
     # Assume 64bits. Even bitcoind doesn't ship 32bits binaries for x86.
     # FIXME: is there a cleaner way than using patchelf for this?
     patchelf --set-interpreter /lib64/ld-linux-x86-64.so.2 "/out/x86_64-unknown-linux-gnu/release/$bin_name"
