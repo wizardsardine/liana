@@ -356,7 +356,8 @@ impl State {
             }
             Some(WalletStatus::Finalized) => {
                 // Final -> Signal exit to Wallet GUI
-                // Return Task::done to generate a follow-up message that triggers exit_maybe
+                // Show loading view before exiting
+                self.current_view = View::Loading;
                 self.app.exit = true;
                 return Task::done(Msg::Update);
             }
@@ -865,6 +866,10 @@ impl State {
                 self.current_view = View::WalletSelect;
                 Task::none()
             }
+            View::Loading => {
+                // Cannot navigate back from loading state
+                Task::none()
+            }
         }
     }
 }
@@ -1187,7 +1192,8 @@ impl State {
                 self.stop_hw();
 
                 // Signal exit to open the main wallet application
-                // Return Task::done to generate a follow-up message that triggers exit_maybe
+                // Show loading view before exiting
+                self.current_view = View::Loading;
                 self.app.exit = true;
                 return Task::done(Msg::Update);
             } else {
@@ -1239,7 +1245,8 @@ impl State {
                     }
 
                     // Signal exit to open the main wallet application
-                    // Return Task::done to generate a follow-up message that triggers exit_maybe
+                    // Show loading view before exiting
+                    self.current_view = View::Loading;
                     self.app.exit = true;
                     return Task::done(Msg::Update);
                 }

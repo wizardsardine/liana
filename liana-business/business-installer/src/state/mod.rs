@@ -3,8 +3,8 @@ use crate::{
     client::Client,
     state::app::AppState,
     views::{
-        keys_view, login_view, modals, org_select_view, registration_view, template_builder_view,
-        wallet_select_view, xpub_view,
+        keys_view, loading_view, login_view, modals, org_select_view, registration_view,
+        template_builder_view, wallet_select_view, xpub_view,
     },
 };
 use async_hwi::{bitbox::NoiseConfig, service::HwiService};
@@ -38,6 +38,7 @@ pub enum View {
     Xpub,
     Keys,
     Registration,
+    Loading,
 }
 
 /// Main application state
@@ -160,6 +161,7 @@ impl State {
             View::Xpub => xpub_view(self),
             View::Keys => keys_view(self),
             View::Registration => registration_view(self),
+            View::Loading => loading_view(),
         };
 
         // Overlay modals if any are open
