@@ -53,7 +53,7 @@ fn xpub_key_card(
         .align_y(Alignment::Center)
         .push(icon::key_icon())
         .push(text::p1_medium(&key.alias).style(theme::text::primary))
-        .push(text::p1_medium(identity_str).style(theme::text::primary))
+        .push(text::p1_medium(identity_str).style(theme::text::accent))
         .push(Space::with_width(Length::Fill))
         .push(xpub_status_badge(key.xpub.is_some()));
 

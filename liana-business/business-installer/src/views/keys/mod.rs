@@ -76,7 +76,7 @@ fn key_card(
     // Identity (optional - display email or other identity)
     let identity_str = key.identity.to_string();
     let identity_display = (!identity_str.is_empty())
-        .then(|| text::p2_medium(identity_str).style(theme::text::primary));
+        .then(|| text::p2_medium(identity_str).style(theme::text::accent));
 
     // Key type badge
     let key_type_str = format!("{:?}", key.key_type);
