@@ -5,7 +5,7 @@ use crate::{
     state::{message::Msg, State},
     views::layout_with_scrollable_list,
 };
-use async_hwi::service::SigningDevice;
+use async_hwi::service::{is_compatible_with_tapminiscript, SigningDevice};
 use iced::{
     widget::{column, row, Row, Space},
     Alignment, Length,
@@ -153,7 +153,11 @@ fn device_list_view(state: &State) -> Element<'_, Msg> {
         let card = match connected_device {
             Some(SigningDevice::Supported(hw)) => {
                 // Connected and ready to register - clickable
-                key_card(*fingerprint, Some(*hw.kind()), true, alias)
+                if is_compatible_with_tapminiscript(hw.kind(), hw.version()) {
+                    key_card(*fingerprint, Some(*hw.kind()), true, alias)
+                } else {
+                    key_card(*fingerprint, None, true, alias)
+                }
             }
             Some(_) => {
                 // Connected but locked/unsupported

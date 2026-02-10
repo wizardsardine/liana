@@ -21,9 +21,7 @@ use tracing::{debug, warn};
 
 #[derive(Debug, Clone)]
 pub enum UnsupportedReason {
-    Version {
-        minimal_supported_version: &'static str,
-    },
+    Version { minimal_supported_version: String },
     Method(&'static str),
     NotPartOfWallet(Fingerprint),
     WrongNetwork,
@@ -626,7 +624,8 @@ fn refresh(mut state: State) -> impl Stream<Item = HardwareWalletMessage> {
                                             kind: device.device_kind(),
                                             version: Some(version),
                                             reason: UnsupportedReason::Version {
-                                                minimal_supported_version: "Edge firmware v6.2.1",
+                                                minimal_supported_version: "Edge firmware v6.2.1"
+                                                    .to_string(),
                                             },
                                         });
                                     }
@@ -754,7 +753,7 @@ async fn handle_ledger_device<'a, T: async_hwi::ledger::Transport + Sync + Send 
                     kind: device.device_kind(),
                     version: Some(version),
                     reason: UnsupportedReason::Version {
-                        minimal_supported_version: "2.1.0",
+                        minimal_supported_version: "2.1.0".to_string(),
                     },
                 })
             }
@@ -911,6 +910,14 @@ const DEVICES_COMPATIBLE_WITH_TAPMINISCRIPT: [(DeviceKind, Option<Version>); 5] 
         }),
     ),
 ];
+
+pub fn min_taproot_version(kind: &DeviceKind) -> Option<Version> {
+    let map: HashMap<DeviceKind, Option<Version>> = DEVICES_COMPATIBLE_WITH_TAPMINISCRIPT
+        .iter()
+        .cloned()
+        .collect();
+    map.get(kind).cloned().flatten()
+}
 
 pub fn is_compatible_with_tapminiscript(
     device_kind: &DeviceKind,
