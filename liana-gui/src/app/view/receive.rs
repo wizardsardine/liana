@@ -37,6 +37,7 @@ use super::message::Message;
 fn address_card<'a>(
     row_index: usize,
     address: &'a bitcoin::Address,
+    maybe_bip21: Option<String>,
     labels: &'a HashMap<String, String>,
     labels_editing: &'a HashMap<String, form::Value<String>>,
 ) -> Container<'a, Message> {
@@ -55,7 +56,15 @@ fn address_card<'a>(
                             scrollable(
                                 Column::new()
                                     .push(Space::with_height(Length::Fixed(10.0)))
-                                    .push(p2_regular(address).small().style(theme::text::secondary))
+                                    .push(
+                                        p2_regular(
+                                            maybe_bip21
+                                                .map(|bip21| bip21.to_string())
+                                                .unwrap_or(addr.clone()),
+                                        )
+                                        .small()
+                                        .style(theme::text::secondary),
+                                    )
                                     // Space between the address and the scrollbar
                                     .push(Space::with_height(Length::Fixed(10.0))),
                             )
@@ -83,7 +92,7 @@ fn address_card<'a>(
                     .push(Space::with_width(Length::Fill))
                     .push(
                         button::secondary(None, "Show QR Code")
-                            .on_press(Message::ShowQrCode(row_index)),
+                            .on_press(Message::ShowQrCode(row_index, maybe_bip21)),
                     ),
             )
             .spacing(10),
@@ -129,7 +138,7 @@ pub fn receive<'a>(
                     Column::new().spacing(10).width(Length::Fill),
                     |col, (i, address)| {
                         addresses_count += 1;
-                        col.push(address_card(i, address, labels, labels_editing))
+                        col.push(address_card(i, address, None, labels, labels_editing))
                     },
                 )),
         )
@@ -229,6 +238,7 @@ pub fn receive<'a>(
                         Button::new(address_card(
                             addresses_count + i,
                             address,
+                            None,
                             prev_labels,
                             labels_editing,
                         ))
@@ -348,6 +358,7 @@ pub fn verify_address_modal<'a>(
 }
 
 pub fn qr_modal<'a>(qr: &'a qr_code::Data, address: &'a String) -> Element<'a, Message> {
+    let max_width = if address.len() > 64 { 600 } else { 400 };
     Column::new()
         .push(
             Row::new()
@@ -361,6 +372,6 @@ pub fn qr_modal<'a>(qr: &'a qr_code::Data, address: &'a String) -> Element<'a, M
         .push(Space::with_height(Length::Fixed(15.0)))
         .push(Container::new(text(address).size(15)).center_x(Length::Fill))
         .width(Length::Fill)
-        .max_width(400)
+        .max_width(max_width)
         .into()
 }

@@ -18,6 +18,7 @@ use liana::miniscript::bitcoin::{
 };
 use lianad::bip329::Labels;
 use lianad::commands::UpdateDerivIndexesResult;
+use lianad::payjoin::types::PayjoinStatus;
 use lianad::{
     commands::{CoinStatus, LabelItem, TransactionInfo},
     config::Config,
@@ -118,6 +119,8 @@ pub trait Daemon: Debug {
         limit: usize,
         start_index: Option<ChildNumber>,
     ) -> Result<model::ListRevealedAddressesResult, DaemonError>;
+    async fn receive_payjoin(&self) -> Result<model::GetAddressResult, DaemonError>;
+    async fn get_payjoin_info(&self, txid: &Txid) -> Result<PayjoinStatus, DaemonError>;
     async fn update_deriv_indexes(
         &self,
         receive: Option<u32>,
@@ -212,6 +215,10 @@ pub trait Daemon: Debug {
                 .cloned()
                 .collect();
 
+            let payjoin_status = self
+                .get_payjoin_info(&tx.psbt.unsigned_tx.compute_txid())
+                .await?;
+
             spend_txs.push(model::SpendTx::new(
                 tx.updated_at,
                 tx.psbt,
@@ -219,6 +226,7 @@ pub trait Daemon: Debug {
                 &info.descriptors.main,
                 &curve,
                 info.network,
+                Some(payjoin_status),
             ));
         }
         load_labels(self, &mut spend_txs).await?;
