@@ -149,6 +149,13 @@ else
 
         unzip ../contrib/release/debian/package.zip
         sed -i "s/VERSION_PLACEHOLDER/$VERSION/g" ./package/DEBIAN/control
+        sed -i "s/Liana/LianaBusiness/g" ./package/DEBIAN/control
+        sed -i "s/liana/liana-business/g" ./package/DEBIAN/control
+        sed -i "s/Liana/LianaBusiness/g" ./package/usr/share/applications/Liana.desktop
+        sed -i "s/liana-gui/liana-business/g" ./package/usr/share/applications/Liana.desktop
+        sed -i "s/liana-icon/liana-business-icon/g" ./package/usr/share/applications/Liana.desktop
+        cp ../contrib/liana-business/liana-business-icon.png ./package/usr/share/icons/liana-business-icon.png
+        mv ./package/usr/share/applications/Liana.desktop ./package/usr/share/applications/LianaBusiness.desktop
         cp "$BUILD_DIR/x86_64-unknown-linux-gnu/release/liana-business" ../README.md ./package/usr/bin/
         DIRNAME="$LIANA_PREFIX-1_amd64"
         mv ./package "$DIRNAME"
@@ -176,6 +183,7 @@ else
         mv "$LIANA_PREFIX-aarch64-apple-darwin.tar.gz" "$RELEASE_DIR"
 
         unzip ../contrib/release/macos/Liana.app.zip
+        cp ../contrib/liana-business/liana-business.icns ./Liana.app/Contents/Resources/LianaBusiness.icns
         sed -i "s/VERSION_PLACEHOLDER/$VERSION/g" ./Liana.app/Contents/Info.plist
         sed -i "s/Liana/LianaBusiness/g" ./Liana.app/Contents/Info.plist
         sed -i "s/liana/liana-business/g" ./Liana.app/Contents/Info.plist
