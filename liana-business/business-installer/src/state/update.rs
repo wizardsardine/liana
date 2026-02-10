@@ -297,8 +297,6 @@ impl State {
             }
         };
 
-        tracing::error!("wallet_status: {wallet_status:?}");
-
         // Log error if user has no role in this wallet
         if user_role.is_none() {
             tracing::error!(
