@@ -259,7 +259,7 @@ impl LianaInstaller {
                                 .expect("There is always a step")
                                 .update(
                                     &mut self.hws,
-                                    // We notify downstream that the the list have been updated
+                                    // We notify downstream that the list have been updated
                                     Message::HardwareWalletUpdate,
                                 );
                         }
