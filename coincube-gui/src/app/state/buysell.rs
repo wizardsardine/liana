@@ -26,6 +26,18 @@ impl State for BuySellPanel {
     ) -> coincube_ui::widget::Element<'a, view::Message> {
         let inner = view::dashboard(menu, cache, self.view());
 
+        // Wrap with toast if Meld state has an active toast
+        let inner = if let BuySellFlowState::Meld(meld) = &self.step {
+            let toasts = if let Some(msg) = &meld.toast {
+                vec![view::simple_toast(msg).into()]
+            } else {
+                vec![]
+            };
+            coincube_ui::component::toast::Manager::new(inner, toasts).into()
+        } else {
+            inner
+        };
+
         if let BuySellFlowState::Initialization { modal, .. } = &self.step {
             let overlay = match modal {
                 super::vault::receive::Modal::VerifyAddress(m) => m.view(),
@@ -848,6 +860,12 @@ impl State for BuySellPanel {
                             return task.map(Message::View);
                         }
                     }
+
+                    // ClearToast can arrive after navigating away from Meld; safe to ignore
+                    (
+                        _,
+                        view::BuySellMessage::Meld(view::buysell::meld::MeldMessage::ClearToast),
+                    ) => {}
 
                     (step, msg) => {
                         log::warn!("Current {:?} has ignored message: {:?}", step.name(), msg)

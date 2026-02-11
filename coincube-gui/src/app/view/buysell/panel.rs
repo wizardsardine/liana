@@ -125,6 +125,12 @@ impl BuySellPanel {
 
     pub fn view<'a>(&'a self) -> iced::Element<'a, ViewMessage, theme::Theme> {
         let column = {
+            let show_start_over = matches!(
+                &self.step,
+                BuySellFlowState::Meld(super::meld::MeldState { steps, .. })
+                    if matches!(steps.last(), Some(super::meld::MeldFlowStep::ActiveSession { .. }))
+            );
+
             let column = Column::new()
                 // COINCUBE branding
                 .push(
@@ -139,6 +145,10 @@ impl BuySellPanel {
                         .push(text::h5_regular("BUY/SELL").color(color::GREY_3))
                         .align_y(Alignment::Center),
                 )
+                .push(show_start_over.then(|| {
+                    button::secondary_compact(Some(arrow_back()), "Start Over")
+                        .on_press(ViewMessage::BuySell(BuySellMessage::ResetWidget))
+                }))
                 // render flow state
                 .push({
                     match &self.step {
