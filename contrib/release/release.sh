@@ -188,7 +188,8 @@ else
         sed -i "s/Liana/LianaBusiness/g" ./Liana.app/Contents/Info.plist
         sed -i "s/liana/liana-business/g" ./Liana.app/Contents/Info.plist
         cp "$NIX_BUILD_DIR/universal2-apple-darwin/liana-business" ./Liana.app/Contents/MacOS/LianaBusiness
-        zip_archive "$LIANA_PREFIX-macos-noncodesigned.zip" Liana.app
+        mv Liana.app LianaBusiness.app
+        zip_archive "$LIANA_PREFIX-macos-noncodesigned.zip" LianaBusiness.app
         mv "$LIANA_PREFIX-macos-noncodesigned.zip" "$RELEASE_DIR/"
     )
 fi

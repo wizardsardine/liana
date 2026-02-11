@@ -122,9 +122,11 @@ sign_with_rcodesign() {
 
     cd "$RELEASE_BUILD_DIR"
     if [ "$TARGET" = "liana" ]; then
-        chmod u+w ./Liana.app/Contents/MacOS/Liana
+        APP_BUNDLE="Liana.app"
+        chmod u+w "./$APP_BUNDLE/Contents/MacOS/Liana"
     else
-        chmod u+w ./Liana.app/Contents/MacOS/LianaBusiness
+        APP_BUNDLE="LianaBusiness.app"
+        chmod u+w "./$APP_BUNDLE/Contents/MacOS/LianaBusiness"
     fi
 
     rcodesign sign \
@@ -132,14 +134,14 @@ sign_with_rcodesign() {
         --code-signature-flags runtime \
         --pem-source "$CODESIGN_KEY" \
         --der-source "$CODESIGN_CERT" \
-        Liana.app/
+        "$APP_BUNDLE/"
 
     rcodesign notary-submit \
         --max-wait-seconds 600 \
         --api-key-path "$NOTARY_API_CREDS_FILE" \
-        --staple Liana.app
+        --staple "$APP_BUNDLE"
 
-    zip_archive "$LIANA_PREFIX-macos.zip" Liana.app
+    zip_archive "$LIANA_PREFIX-macos.zip" "$APP_BUNDLE"
     mv "$LIANA_PREFIX-macos.zip" "$RELEASE_DIR/"
     sha256sum "$RELEASE_DIR/$LIANA_PREFIX-macos.zip" | sed "s|$RELEASE_DIR/||" | tee -a "$RELEASE_DIR/$LIANA_PREFIX-shasums.txt"
 }
