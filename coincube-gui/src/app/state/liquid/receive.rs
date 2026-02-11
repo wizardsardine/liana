@@ -53,7 +53,7 @@ impl LiquidReceive {
         description: Option<String>,
     ) -> Result<String, String> {
         let response = client
-            .receive_invoice(amount, description)
+            .receive_invoice(Some(amount), description)
             .await
             .map_err(|e| e.to_string())?;
 

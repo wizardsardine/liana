@@ -30,11 +30,11 @@ use crate::{
 };
 
 pub enum State {
-    Launcher(Box<Launcher>),
-    Installer(Box<Installer>),
-    Loader(Box<Loader>),
-    Login(Box<login::CoincubeLiteLogin>),
-    PinEntry(Box<crate::pin_entry::PinEntry>),
+    Launcher(Launcher),
+    Installer(Installer),
+    Loader(Loader),
+    Login(login::CoincubeLiteLogin),
+    PinEntry(crate::pin_entry::PinEntry),
     App(App),
 }
 
@@ -44,21 +44,18 @@ impl State {
         network: Option<bitcoin::Network>,
     ) -> (Self, Task<Message>) {
         let (launcher, command) = Launcher::new(directory, network);
-        (
-            State::Launcher(Box::new(launcher)),
-            command.map(|msg| Message::Launch(Box::new(msg))),
-        )
+        (State::Launcher(launcher), command.map(Message::Launch))
     }
 }
 
 #[derive(Debug)]
 pub enum Message {
-    Launch(Box<launcher::Message>),
-    Install(Box<installer::Message>),
-    Load(Box<loader::Message>),
-    Run(Box<app::Message>),
-    Login(Box<login::Message>),
-    PinEntry(Box<crate::pin_entry::Message>),
+    Launch(launcher::Message),
+    Install(installer::Message),
+    Load(loader::Message),
+    Run(app::Message),
+    Login(login::Message),
+    PinEntry(crate::pin_entry::Message),
     RemoteBackendBreezLoaded {
         wallet_settings: WalletSettings,
         backend_client: BackendWalletClient,
@@ -129,7 +126,7 @@ impl Tab {
     pub fn on_tick(&mut self) -> Task<Message> {
         // currently the Tick is only used by the app
         if let State::App(app) = &mut self.state {
-            app.on_tick().map(|msg| Message::Run(Box::new(msg)))
+            app.on_tick().map(Message::Run)
         } else {
             Task::none()
         }
@@ -137,7 +134,7 @@ impl Tab {
 
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match (&mut self.state, message) {
-            (State::Launcher(l), Message::Launch(msg)) => match *msg {
+            (State::Launcher(l), Message::Launch(msg)) => match msg {
                 launcher::Message::Install(datadir, network, init) => {
                     if !datadir.exists() {
                         // datadir is created right before launching the installer
@@ -153,8 +150,8 @@ impl Tab {
                     }
                     let (install, command) =
                         Installer::new(datadir, network, None, init, false, None, None);
-                    self.state = State::Installer(Box::new(install));
-                    command.map(|msg| Message::Install(Box::new(msg)))
+                    self.state = State::Installer(install);
+                    command.map(Message::Install)
                 }
                 launcher::Message::Run(datadir_path, cfg, network, cube) => {
                     // PIN is always required - determine what to do after PIN verification
@@ -180,40 +177,16 @@ impl Tab {
                         wallet_settings,
                     };
 
-                    let pin_entry = crate::pin_entry::PinEntry::new(cube, on_success);
-                    self.state = State::PinEntry(Box::new(pin_entry));
+                    self.state = State::PinEntry(crate::pin_entry::PinEntry::new(cube, on_success));
                     Task::none()
                 }
-                launcher::Message::BreezClientLoaded {
-                    config,
-                    datadir,
-                    network,
-                    cube,
-                    breez_client,
-                } => {
-                    match breez_client {
-                        Ok(breez) => {
-                            let (app, command) =
-                                App::new_without_wallet(breez, config, datadir, network, cube);
-                            self.state = State::App(app);
-                            command.map(|msg| Message::Run(Box::new(msg)))
-                        }
-                        Err(e) => {
-                            tracing::error!("Failed to load BreezClient: {}", e);
-                            // BreezClient failed to load - return to launcher
-                            let (launcher, command) = Launcher::new(datadir.clone(), Some(network));
-                            self.state = State::Launcher(Box::new(launcher));
-                            command.map(|msg| Message::Launch(Box::new(msg)))
-                        }
-                    }
-                }
-                _ => l.update(*msg).map(|msg| Message::Launch(Box::new(msg))),
+                _ => l.update(msg).map(Message::Launch),
             },
-            (State::Login(l), Message::Login(msg)) => match *msg {
+            (State::Login(l), Message::Login(msg)) => match msg {
                 login::Message::View(login::ViewMessage::BackToLauncher(network)) => {
                     let (launcher, command) = Launcher::new(l.datadir.clone(), Some(network));
-                    self.state = State::Launcher(Box::new(launcher));
-                    command.map(|msg| Message::Launch(Box::new(msg)))
+                    self.state = State::Launcher(launcher);
+                    command.map(|msg| Message::Launch(msg))
                 }
                 login::Message::Install(remote_backend) => {
                     let (install, command) = Installer::new(
@@ -225,8 +198,8 @@ impl Tab {
                         None,
                         None, // No breez_client from login screen
                     );
-                    self.state = State::Installer(Box::new(install));
-                    command.map(|msg| Message::Install(Box::new(msg)))
+                    self.state = State::Installer(install);
+                    command.map(Message::Install)
                 }
                 login::Message::Run(Ok((backend_client, wallet, coins))) => {
                     let config = app::Config::from_file(
@@ -270,10 +243,10 @@ impl Tab {
                         )),
                     })
                 }
-                _ => l.update(*msg).map(|msg| Message::Login(Box::new(msg))),
+                _ => l.update(msg).map(Message::Login),
             },
             (State::Installer(i), Message::Install(msg)) => {
-                if let installer::Message::Exit(settings, internal_bitcoind) = *msg {
+                if let installer::Message::Exit(settings, internal_bitcoind) = msg {
                     // Associate wallet with cube
                     let network_dir = i.datadir.network_directory(i.network);
                     let wallet_id = settings.wallet_id();
@@ -286,15 +259,15 @@ impl Tab {
                                 .await
                         },
                         move |result| {
-                            Message::Install(Box::new(installer::Message::CubeSaved(
+                            Message::Install(installer::Message::CubeSaved(
                                 result,
                                 settings.clone(),
                                 internal_bitcoind.clone(),
-                            )))
+                            ))
                         },
                     )
                 } else if let installer::Message::CubeSaved(result, settings, internal_bitcoind) =
-                    *msg
+                    msg
                 {
                     // Handle cube save failure
                     let cube = match result {
@@ -303,7 +276,7 @@ impl Tab {
                             error!("Aborting loader transition due to cube save failure");
                             return i
                                 .update(installer::Message::CubeSaveFailed(err))
-                                .map(|msg| Message::Install(Box::new(msg)));
+                                .map(Message::Install);
                         }
                     };
 
@@ -314,8 +287,8 @@ impl Tab {
                             *settings,
                             i.breez_client.clone(),
                         );
-                        self.state = State::Login(Box::new(login));
-                        command.map(|msg| Message::Login(Box::new(msg)))
+                        self.state = State::Login(login);
+                        command.map(Message::Login)
                     } else {
                         let cfg = app::Config::from_file(
                             &i.datadir
@@ -335,10 +308,10 @@ impl Tab {
                             cube.clone(),
                             i.breez_client.clone(), // Pass pre-loaded BreezClient from installer
                         );
-                        self.state = State::Loader(Box::new(loader));
-                        command.map(|msg| Message::Load(Box::new(msg)))
+                        self.state = State::Loader(loader);
+                        command.map(Message::Load)
                     }
-                } else if let installer::Message::BackToApp(network) = *msg {
+                } else if let installer::Message::BackToApp(network) = msg {
                     // Go back to app without vault using stored cube settings and breez_client
                     if let Some(cube) = &i.cube_settings {
                         if let Some(breez) = &i.breez_client {
@@ -359,7 +332,7 @@ impl Tab {
                                 cube.clone(),
                             );
                             self.state = State::App(app);
-                            command.map(|msg| Message::Run(Box::new(msg)))
+                            command.map(Message::Run)
                         } else {
                             error!(
                                 "BackToApp called but no BreezClient stored - should not happen"
@@ -367,26 +340,26 @@ impl Tab {
                             // Fallback: go to launcher
                             let (launcher, command) =
                                 Launcher::new(i.destination_path(), Some(network));
-                            self.state = State::Launcher(Box::new(launcher));
-                            command.map(|msg| Message::Launch(Box::new(msg)))
+                            self.state = State::Launcher(launcher);
+                            command.map(Message::Launch)
                         }
                     } else {
                         // No cube settings stored, go to launcher
                         let (launcher, command) =
                             Launcher::new(i.destination_path(), Some(network));
-                        self.state = State::Launcher(Box::new(launcher));
-                        command.map(|msg| Message::Launch(Box::new(msg)))
+                        self.state = State::Launcher(launcher);
+                        command.map(Message::Launch)
                     }
                 } else {
-                    i.update(*msg).map(|msg| Message::Install(Box::new(msg)))
+                    i.update(msg).map(Message::Install)
                 }
             }
-            (State::Loader(loader), Message::Load(msg)) => match *msg {
+            (State::Loader(loader), Message::Load(msg)) => match msg {
                 loader::Message::View(loader::ViewMessage::SwitchNetwork) => {
                     let (launcher, command) =
                         Launcher::new(loader.datadir_path.clone(), Some(loader.network));
-                    self.state = State::Launcher(Box::new(launcher));
-                    command.map(|msg| Message::Launch(Box::new(msg)))
+                    self.state = State::Launcher(launcher);
+                    command.map(|msg| Message::Launch(msg))
                 }
                 loader::Message::View(loader::ViewMessage::SetupVault) => {
                     // Launch installer for vault setup from loader - should return to app on Previous
@@ -399,8 +372,8 @@ impl Tab {
                         Some(loader.cube_settings.clone()), // pass cube settings for returning
                         loader.breez_client.clone(), // pass breez_client to avoid re-entering PIN
                     );
-                    self.state = State::Installer(Box::new(install));
-                    command.map(|msg| Message::Install(Box::new(msg)))
+                    self.state = State::Installer(install);
+                    command.map(|msg| Message::Install(msg))
                 }
                 loader::Message::Synced(Ok((
                     wallet,
@@ -422,40 +395,38 @@ impl Tab {
                             },
                             |r| {
                                 let r = r.map_err(loader::Error::RestoreBackup);
-                                Message::Load(Box::new(loader::Message::App(
+                                Message::Load(loader::Message::App(
                                     r, /* restored_from_backup */ true,
-                                )))
+                                ))
                             },
                         )
                     } else {
                         // Check if BreezClient is already loaded
                         if let Some(breez) = loader.breez_client.clone() {
                             // Use pre-loaded BreezClient (came from PIN entry path)
-                            return Task::done(Message::Load(Box::new(
-                                loader::Message::BreezLoaded {
-                                    breez,
-                                    cache,
-                                    wallet,
-                                    config: loader.gui_config.clone(),
-                                    daemon,
-                                    datadir: loader.datadir_path.clone(),
-                                    bitcoind,
-                                    restored_from_backup: false,
-                                    cube_settings,
-                                },
-                            )));
+                            return Task::done(Message::Load(loader::Message::BreezLoaded {
+                                breez,
+                                cache,
+                                wallet,
+                                config: loader.gui_config.clone(),
+                                daemon,
+                                datadir: loader.datadir_path.clone(),
+                                bitcoind,
+                                restored_from_backup: false,
+                                cube_settings,
+                            }));
                         }
 
                         // ERROR: BreezClient should have been pre-loaded after PIN entry
                         // With mandatory PINs, this path should never execute
                         error!("Loader Synced missing pre-loaded BreezClient - architectural bug");
-                        Task::done(Message::Load(Box::new(loader::Message::App(
+                        Task::done(Message::Load(loader::Message::App(
                             Err(loader::Error::Unexpected(
                                 "BreezClient missing - should have been pre-loaded after PIN entry. \
                                  Liquid wallet is encrypted and cannot be loaded without PIN.".to_string()
                             )),
                             false,
-                        ))))
+                        )))
                     }
                 }
                 loader::Message::App(
@@ -465,7 +436,7 @@ impl Tab {
                     // Check if BreezClient is already loaded
                     if let Some(breez) = loader.breez_client.clone() {
                         // Use pre-loaded BreezClient (came from PIN entry path)
-                        return Task::done(Message::Load(Box::new(loader::Message::BreezLoaded {
+                        return Task::done(Message::Load(loader::Message::BreezLoaded {
                             breez,
                             cache,
                             wallet,
@@ -475,20 +446,20 @@ impl Tab {
                             bitcoind,
                             restored_from_backup,
                             cube_settings: loader.cube_settings.clone(),
-                        })));
+                        }));
                     }
 
                     // ERROR: BreezClient should have been pre-loaded after PIN entry
                     // With mandatory PINs, this path should never execute
                     error!("Loader App missing pre-loaded BreezClient - architectural bug");
-                    Task::done(Message::Load(Box::new(loader::Message::App(
+                    Task::done(Message::Load(loader::Message::App(
                         Err(loader::Error::Unexpected(
                             "BreezClient missing - should have been pre-loaded after PIN entry. \
                              Liquid wallet is encrypted and cannot be loaded without PIN."
                                 .to_string(),
                         )),
                         restored_from_backup,
-                    ))))
+                    )))
                 }
                 loader::Message::BreezLoaded {
                     breez,
@@ -513,18 +484,17 @@ impl Tab {
                         cube_settings,
                     );
                     self.state = State::App(app);
-                    command.map(|msg| Message::Run(Box::new(msg)))
+                    command.map(Message::Run)
                 }
                 loader::Message::App(Err(e), _) => {
                     tracing::error!("Failed to import backup: {e}");
                     Task::none()
                 }
 
-                _ => loader.update(*msg).map(|msg| Message::Load(Box::new(msg))),
+                _ => loader.update(msg).map(Message::Load),
             },
             (State::App(app), Message::Run(msg)) => {
-                let app_msg = *msg;
-                match app_msg {
+                match msg {
                     app::Message::View(app::view::Message::SetupVault) => {
                         // Launch installer for vault setup from app - should return to app on Previous
                         let (install, command) = Installer::new(
@@ -536,13 +506,13 @@ impl Tab {
                             Some(app.cube_settings().clone()), // pass cube settings for returning
                             Some(app.breez_client()), // pass breez_client to avoid re-entering PIN
                         );
-                        self.state = State::Installer(Box::new(install));
-                        command.map(|msg| Message::Install(Box::new(msg)))
+                        self.state = State::Installer(install);
+                        command.map(Message::Install)
                     }
-                    _ => app.update(app_msg).map(|msg| Message::Run(Box::new(msg))),
+                    m => app.update(m).map(Message::Run),
                 }
             }
-            (State::PinEntry(pin_entry), Message::PinEntry(msg)) => match *msg {
+            (State::PinEntry(pin_entry), Message::PinEntry(msg)) => match msg {
                 crate::pin_entry::Message::PinVerified => {
                     // After PIN verification, load BreezClient before routing to App/Loader/Login
                     match &pin_entry.on_success {
@@ -631,12 +601,10 @@ impl Tab {
                         },
                         Some(network),
                     );
-                    self.state = State::Launcher(Box::new(launcher));
-                    command.map(|msg| Message::Launch(Box::new(msg)))
+                    self.state = State::Launcher(launcher);
+                    command.map(Message::Launch)
                 }
-                _ => pin_entry
-                    .update(*msg)
-                    .map(|msg| Message::PinEntry(Box::new(msg))),
+                m => pin_entry.update(m).map(Message::PinEntry),
             },
             (
                 _,
@@ -665,13 +633,13 @@ impl Tab {
                         ) {
                             Ok((app, command)) => {
                                 self.state = State::App(app);
-                                command.map(|msg| Message::Run(Box::new(msg)))
+                                command.map(Message::Run)
                             }
                             Err(e) => {
                                 tracing::error!("Failed to create app with remote backend: {}", e);
                                 let (launcher, command) = Launcher::new(datadir, Some(network));
-                                self.state = State::Launcher(Box::new(launcher));
-                                command.map(|msg| Message::Launch(Box::new(msg)))
+                                self.state = State::Launcher(launcher);
+                                command.map(Message::Launch)
                             }
                         }
                     }
@@ -679,8 +647,8 @@ impl Tab {
                         // Failed to load BreezClient - return to launcher with error
                         tracing::error!("Failed to load BreezClient for remote backend: {}", e);
                         let (launcher, command) = Launcher::new(datadir, Some(network));
-                        self.state = State::Launcher(Box::new(launcher));
-                        command.map(|msg| Message::Launch(Box::new(msg)))
+                        self.state = State::Launcher(launcher);
+                        command.map(Message::Launch)
                     }
                 }
             }
@@ -709,8 +677,8 @@ impl Tab {
                                     wallet_settings.clone(),
                                     Some(breez), // Pass pre-loaded BreezClient
                                 );
-                                self.state = State::Login(Box::new(login));
-                                command.map(|msg| Message::Login(Box::new(msg)))
+                                self.state = State::Login(login);
+                                command.map(Message::Login)
                             } else {
                                 // Local wallet: Pass pre-loaded BreezClient to Loader
                                 let (loader, command) = Loader::new(
@@ -723,53 +691,24 @@ impl Tab {
                                     cube,
                                     Some(breez), // Pass pre-loaded BreezClient
                                 );
-                                self.state = State::Loader(Box::new(loader));
-                                command.map(|msg| Message::Load(Box::new(msg)))
+                                self.state = State::Loader(loader);
+                                command.map(Message::Load)
                             }
                         } else {
                             // No Vault - create App directly with BreezClient
                             let (app, command) =
                                 App::new_without_wallet(breez, config, datadir, network, cube);
                             self.state = State::App(app);
-                            command.map(|msg| Message::Run(Box::new(msg)))
+                            command.map(Message::Run)
                         }
                     }
                     Err(e) => {
                         tracing::error!("Failed to load BreezClient after PIN: {}", e);
                         // BreezClient failed to load - return to launcher
                         let (launcher, command) = Launcher::new(datadir.clone(), Some(network));
-                        self.state = State::Launcher(Box::new(launcher));
-                        command.map(|msg| Message::Launch(Box::new(msg)))
+                        self.state = State::Launcher(launcher);
+                        command.map(Message::Launch)
                     }
-                }
-            }
-            (_, Message::Launch(msg)) => {
-                // Handle BreezClientLoaded from any state (e.g., after PIN entry)
-                if let launcher::Message::BreezClientLoaded {
-                    config,
-                    datadir,
-                    network,
-                    cube,
-                    breez_client,
-                } = *msg
-                {
-                    match breez_client {
-                        Ok(breez) => {
-                            let (app, command) =
-                                App::new_without_wallet(breez, config, datadir, network, cube);
-                            self.state = State::App(app);
-                            command.map(|msg| Message::Run(Box::new(msg)))
-                        }
-                        Err(e) => {
-                            tracing::error!("Failed to load BreezClient: {}", e);
-                            // BreezClient failed to load - return to launcher
-                            let (launcher, command) = Launcher::new(datadir.clone(), Some(network));
-                            self.state = State::Launcher(Box::new(launcher));
-                            command.map(|msg| Message::Launch(Box::new(msg)))
-                        }
-                    }
-                } else {
-                    Task::none()
                 }
             }
             _ => Task::none(),
@@ -778,10 +717,10 @@ impl Tab {
 
     pub fn subscription(&self) -> Subscription<Message> {
         match &self.state {
-            State::Installer(v) => v.subscription().map(|msg| Message::Install(Box::new(msg))),
-            State::Loader(v) => v.subscription().map(|msg| Message::Load(Box::new(msg))),
-            State::App(v) => v.subscription().map(|msg| Message::Run(Box::new(msg))),
-            State::Launcher(v) => v.subscription().map(|msg| Message::Launch(Box::new(msg))),
+            State::Installer(v) => v.subscription().map(Message::Install),
+            State::Loader(v) => v.subscription().map(Message::Load),
+            State::App(v) => v.subscription().map(Message::Run),
+            State::Launcher(v) => v.subscription().map(Message::Launch),
             State::Login(_) => Subscription::none(),
             State::PinEntry(_) => Subscription::none(),
         }
@@ -789,12 +728,12 @@ impl Tab {
 
     pub fn view(&self) -> Element<Message> {
         match &self.state {
-            State::Installer(v) => v.view().map(|msg| Message::Install(Box::new(msg))),
-            State::App(v) => v.view().map(|msg| Message::Run(Box::new(msg))),
-            State::Launcher(v) => v.view().map(|msg| Message::Launch(Box::new(msg))),
-            State::Loader(v) => v.view().map(|msg| Message::Load(Box::new(msg))),
-            State::Login(v) => v.view().map(|msg| Message::Login(Box::new(msg))),
-            State::PinEntry(v) => v.view().map(|msg| Message::PinEntry(Box::new(msg))),
+            State::Installer(v) => v.view().map(Message::Install),
+            State::App(v) => v.view().map(Message::Run),
+            State::Launcher(v) => v.view().map(Message::Launch),
+            State::Loader(v) => v.view().map(Message::Load),
+            State::Login(v) => v.view().map(Message::Login),
+            State::PinEntry(v) => v.view().map(Message::PinEntry),
         }
     }
 

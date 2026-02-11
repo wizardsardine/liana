@@ -170,7 +170,7 @@ impl Panels {
             liquid_send: LiquidSend::new(breez_client.clone()),
             liquid_receive: LiquidReceive::new(breez_client.clone()),
             liquid_transactions: LiquidTransactions::new(breez_client.clone()),
-            liquid_settings: LiquidSettings::new(breez_client),
+            liquid_settings: LiquidSettings::new(breez_client.clone()),
             global_settings: {
                 let network_dir = data_dir.network_directory(cache.network);
                 let settings_file = settings::Settings::from_file(&network_dir).ok();
@@ -237,6 +237,7 @@ impl Panels {
             buy_sell: Some(crate::app::view::buysell::BuySellPanel::new(
                 cache.network,
                 wallet,
+                breez_client,
             )),
         }
     }
@@ -251,6 +252,7 @@ impl Panels {
         data_dir: CoincubeDirectory,
         internal_bitcoind: Option<&Bitcoind>,
         config: Arc<Config>,
+        breez_client: Arc<BreezClient>,
     ) {
         self.vault_overview = Some(VaultOverview::new(
             wallet.clone(),
@@ -317,6 +319,7 @@ impl Panels {
         self.buy_sell = Some(crate::app::view::buysell::BuySellPanel::new(
             cache.network,
             wallet,
+            breez_client,
         ));
     }
 
@@ -1044,6 +1047,7 @@ impl App {
                             self.datadir.clone(),
                             self.internal_bitcoind.as_ref(),
                             self.config.clone(),
+                            self.breez_client.clone(),
                         );
                     }
                 }

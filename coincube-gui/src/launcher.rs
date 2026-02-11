@@ -657,14 +657,6 @@ pub enum Message {
         CubeSettings,
     ),
     CubeCreated(Result<CubeSettings, String>),
-    BreezClientLoaded {
-        config: app::config::Config,
-        datadir: CoincubeDirectory,
-        network: Network,
-        cube: CubeSettings,
-        breez_client:
-            Result<std::sync::Arc<crate::app::breez::BreezClient>, crate::app::breez::BreezError>,
-    },
 }
 
 #[derive(Debug, Clone)]

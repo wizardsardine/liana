@@ -47,6 +47,7 @@ pub fn liquid_receive_view<'a>(
             description_input,
             bitcoin_unit,
             lightning_limits,
+            loading,
         ));
     } else {
         // For on-chain, only show generate button if no address is displayed
@@ -295,6 +296,7 @@ fn input_fields<'a>(
     description_input: &'a str,
     bitcoin_unit: BitcoinDisplayUnit,
     lightning_limits: Option<(u64, u64)>,
+    loading: bool,
 ) -> Element<'a, LiquidReceiveMessage> {
     let mut amount_field = Column::new()
         .spacing(5)
@@ -359,7 +361,9 @@ fn input_fields<'a>(
     };
 
     let generate_btn = button::primary(None, "Generate Invoice")
-        .on_press_maybe(is_amount_valid.then_some(LiquidReceiveMessage::GenerateAddress))
+        .on_press_maybe(
+            (is_amount_valid && !loading).then_some(LiquidReceiveMessage::GenerateAddress),
+        )
         .width(Length::Fill)
         .padding(5);
 

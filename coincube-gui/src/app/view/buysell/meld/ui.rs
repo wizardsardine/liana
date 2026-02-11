@@ -1,6 +1,5 @@
 use std::iter::FromIterator;
 
-use coincube_core::miniscript::bitcoin;
 use coincube_ui::{color, component::*, icon, theme};
 use iced::{widget, Alignment, Length};
 
@@ -61,22 +60,28 @@ pub(crate) fn region_checks_ux() -> coincube_ui::widget::Element<'static, view::
 }
 
 pub(crate) fn input_form_ux<'a>(
-    current_amount_str: &'a str,
-    limits: &'a CurrencyLimit,
-    balance: &'a bitcoin::Amount,
-    buy_or_sell: &'a view::buysell::BuyOrSell,
-    sending_request: bool,
+    state: &'a super::MeldState,
 ) -> coincube_ui::widget::Element<'a, view::Message> {
-    let amount_is_crypto = matches!(buy_or_sell, view::buysell::BuyOrSell::Sell);
-    let mut amount = 0f64;
+    let Some(super::MeldFlowStep::AmountInputForm {
+        amount,
+        limits,
+        btc_balance,
+        processing_request,
+    }) = state.steps.last()
+    else {
+        unreachable!()
+    };
+
+    let amount_is_crypto = matches!(state.buy_or_sell, view::buysell::BuyOrSell::Sell);
+    let mut amount_parsed = 0f64;
 
     // form validation
     let mut validation_messages: Vec<std::borrow::Cow<'static, str>> = vec![];
 
-    match current_amount_str.parse::<f64>() {
+    match amount.parse::<f64>() {
         Err(_) => validation_messages.push("Improper number input".into()),
         Ok(ca) if ca.is_finite() => {
-            amount = ca;
+            amount_parsed = ca;
 
             if ca > limits.maximum_amount {
                 validation_messages.push(
@@ -98,12 +103,12 @@ pub(crate) fn input_form_ux<'a>(
                 )
             }
 
-            if ca > balance.to_btc() && !cfg!(debug_assertions) && amount_is_crypto {
+            if ca > btc_balance.to_btc() && !cfg!(debug_assertions) && amount_is_crypto {
                 validation_messages.push(
                     format!(
                         "Input Amount of {} is greater than your BTC balance of {}",
-                        current_amount_str,
-                        balance.to_btc()
+                        amount,
+                        btc_balance.to_btc()
                     )
                     .into(),
                 )
@@ -112,7 +117,7 @@ pub(crate) fn input_form_ux<'a>(
         Ok(_) => validation_messages.push("Now how did you manage to input that?".into()),
     };
 
-    let amount_input = widget::text_input(&limits.currency_code, current_amount_str)
+    let amount_input = widget::text_input(&limits.currency_code, amount)
         .on_input(|am| {
             view::Message::BuySell(view::BuySellMessage::Meld(
                 view::buysell::meld::MeldMessage::SetAmount(am),
@@ -124,31 +129,35 @@ pub(crate) fn input_form_ux<'a>(
             validation_messages
                 .is_empty()
                 .then_some(view::Message::BuySell(view::BuySellMessage::Meld(
-                    view::buysell::meld::MeldMessage::SubmitInputForm(amount),
+                    view::buysell::meld::MeldMessage::SubmitInputAmount(amount_parsed),
                 ))),
         )
         .align_x(iced::Alignment::Start)
         .width(iced::Length::Fill)
-        .style(|th: &theme::Theme, st| {
-            let mut base = theme::text_input::primary(th, st);
-            base.background = iced::Color::BLACK.into();
-            base.border = iced::Border::default()
+        .style(|th: &theme::Theme, _| widget::text_input::Style {
+            background: iced::Color::BLACK.into(),
+            border: iced::Border::default()
                 .width(2)
                 .rounded(0)
-                .color(color::GREY_4);
-            base
+                .color(color::GREY_4),
+            icon: th.colors.text_inputs.primary.active.icon,
+            placeholder: th.colors.text_inputs.primary.active.placeholder,
+            value: th.colors.text_inputs.primary.active.value,
+            selection: th.colors.text_inputs.primary.active.selection,
         })
         .font(iced::font::Font::MONOSPACE);
 
-    let validation_messages_ui = validation_messages
-        .iter()
-        .map(|msg| widget::container(text::p2_medium(msg)))
-        .fold(
-            widget::column![]
-                .align_x(iced::Alignment::Center)
-                .spacing(15),
-            |col, msg| col.push(msg),
-        );
+    let validation_messages_ui = || {
+        validation_messages
+            .iter()
+            .map(|msg| widget::container(text::p2_medium(msg)))
+            .fold(
+                widget::column![]
+                    .align_x(iced::Alignment::Center)
+                    .spacing(15),
+                |col, msg| col.push(msg),
+            )
+    };
 
     widget::column![
         widget::Space::new().height(25),
@@ -159,7 +168,7 @@ pub(crate) fn input_form_ux<'a>(
             .width(iced::Length::Fill),
         widget::row![
             amount_input,
-            amount_is_crypto.then(|| button::primary_compact(None, "MAX")
+            amount_is_crypto.then(|| widget::button("MAX")
                 .on_press(view::Message::BuySell(view::BuySellMessage::Meld(
                     view::buysell::meld::MeldMessage::SetMaxAmount,
                 )))
@@ -175,19 +184,22 @@ pub(crate) fn input_form_ux<'a>(
         ]
         .height(iced::Length::Shrink),
         widget::Space::new().height(10),
-        (!validation_messages.is_empty()).then_some(validation_messages_ui),
+        (!validation_messages.is_empty()).then(validation_messages_ui),
         // submit
         validation_messages.is_empty().then_some(
             button::primary(
                 Some(icon::enter_box_icon()),
-                match sending_request {
-                    true => "Please Wait...",
-                    false => "Get Quotes",
+                match amount_is_crypto {
+                    true => match processing_request {
+                        true => "Getting Quotes...",
+                        false => "Get Quotes",
+                    },
+                    false => "Select/Generate an Address for Deposit",
                 }
             )
-            .on_press_maybe((!sending_request).then_some(view::Message::BuySell(
-                view::BuySellMessage::Meld(view::buysell::meld::MeldMessage::SubmitInputForm(
-                    amount
+            .on_press_maybe((!*processing_request).then_some(view::Message::BuySell(
+                view::BuySellMessage::Meld(view::buysell::meld::MeldMessage::SubmitInputAmount(
+                    amount_parsed
                 ))
             )))
             .style(|th, st| {
@@ -215,6 +227,309 @@ pub(crate) fn input_form_ux<'a>(
     ]
     .align_x(iced::Alignment::Center)
     .width(400)
+    .into()
+}
+
+pub(crate) fn address_selection_ux<'a>(
+    state: &'a super::MeldState,
+) -> coincube_ui::widget::Element<'a, view::Message> {
+    let Some(super::MeldFlowStep::AddressSelection {
+        deposit_address,
+        existing_addresses,
+        addresses_continue_from,
+        address_picker_open,
+        was_picked_from_existing_addresses,
+        processing_request,
+        ..
+    }) = state.steps.last()
+    else {
+        unreachable!()
+    };
+
+    // Initial loading state (no addresses loaded yet)
+    let address_picker = || {
+        match existing_addresses.as_deref() {
+            // simple loading spinner
+            None => card::simple(
+                widget::row![
+                    text::p1_regular("Loading addresses"),
+                    widget::container(spinner::typing_text_carousel(
+                        "...",
+                        true,
+                        std::time::Duration::from_millis(500),
+                        text::p1_regular,
+                    ))
+                ]
+                .spacing(10)
+                .align_y(Alignment::Center),
+            ),
+            Some([]) => card::simple(
+                widget::row![
+                    widget::container(widget::Space::new())
+                        .style(|_| {
+                            widget::container::background(iced::Background::Color(color::GREY_3))
+                        })
+                        .height(Length::Fixed(1.0))
+                        .width(Length::Fill),
+                    text::p1_regular("Generating a new address for deposit..").color(color::GREY_2),
+                    widget::container(widget::Space::new())
+                        .style(|_| {
+                            widget::container::background(iced::Background::Color(color::GREY_3))
+                        })
+                        .height(Length::Fixed(1.0))
+                        .width(Length::Fill),
+                ]
+                .spacing(10)
+                .align_y(Alignment::Center),
+            ),
+            Some(addresses) => {
+                // dropdown header button
+                let dropdown_header = widget::Button::new(
+                    widget::row![
+                        text::p2_regular("Pick an existing address")
+                            .width(Length::Fill)
+                            .color(color::GREY_2),
+                        if *address_picker_open {
+                            icon::up_icon()
+                        } else {
+                            icon::down_icon()
+                        }
+                        .size(14)
+                        .style(theme::text::secondary),
+                    ]
+                    .align_y(Alignment::Center),
+                )
+                .on_press(view::Message::BuySell(view::BuySellMessage::Meld(
+                    view::buysell::meld::MeldMessage::ToggleAddressPicker,
+                )))
+                .padding([12, 16])
+                .width(Length::Fill)
+                .style(theme::button::secondary);
+
+                // existing addresses list (only shown when expanded)
+                let dropdown_content = || {
+                    let addresses_list = widget::Column::from_iter(
+                        addresses.iter().enumerate().map(|(idx, addr)| {
+                            let label_text = addr.label.clone();
+                            let addr_str = addr.address.to_string();
+                            widget::Button::new(
+                                widget::column![
+                                    label_text
+                                        .map(|l| { text::p2_regular(l).color(color::GREY_2) }),
+                                    text::p2_regular(addr_str).width(Length::Fill)
+                                ]
+                                .spacing(2),
+                            )
+                            .on_press(view::Message::BuySell(view::BuySellMessage::Meld(
+                                view::buysell::meld::MeldMessage::SelectExistingAddress(idx),
+                            )))
+                            .padding([8, 12])
+                            .width(Length::Fill)
+                            .style(theme::button::menu)
+                            .into()
+                        }),
+                    )
+                    // Add "Load more" at the end
+                    .push(addresses_continue_from.is_some().then(|| {
+                        widget::Button::new(
+                            widget::container(
+                                widget::row![
+                                    text::p2_regular("Load more").color(color::ORANGE),
+                                    icon::down_icon().size(12).style(|_| widget::text::Style {
+                                        color: Some(color::ORANGE),
+                                    })
+                                ]
+                                .spacing(8)
+                                .align_y(Alignment::Center),
+                            )
+                            .width(Length::Fill)
+                            .align_x(Alignment::Center),
+                        )
+                        .on_press(view::Message::BuySell(view::BuySellMessage::Meld(
+                            view::buysell::meld::MeldMessage::LoadMoreAddresses,
+                        )))
+                        .padding([8, 12])
+                        .width(Length::Fill)
+                        .style(theme::button::transparent_border)
+                    }))
+                    .spacing(2);
+
+                    widget::container(
+                        widget::scrollable(addresses_list).direction(
+                            widget::scrollable::Direction::Vertical(
+                                widget::scrollable::Scrollbar::new()
+                                    .width(4)
+                                    .scroller_width(4),
+                            ),
+                        ),
+                    )
+                    .padding(5)
+                    .max_height(180.0)
+                    .style(theme::card::simple)
+                    .width(Length::Fill)
+                };
+
+                card::simple(
+                    widget::column![
+                        text::h3("Select a Deposit Address")
+                            .width(iced::Length::Fill)
+                            .align_x(iced::Alignment::Center)
+                            .align_y(iced::Alignment::Center),
+                        widget::Space::new().height(5),
+                        dropdown_header,
+                        address_picker_open.then(dropdown_content),
+                        // fancy textual separator
+                        widget::row![
+                            widget::container(widget::Space::new())
+                                .style(|_| {
+                                    widget::container::background(iced::Background::Color(
+                                        color::GREY_3,
+                                    ))
+                                })
+                                .height(Length::Fixed(1.0))
+                                .width(Length::Fill),
+                            text::p2_regular("or").color(color::GREY_2),
+                            widget::container(widget::Space::new())
+                                .style(|_| {
+                                    widget::container::background(iced::Background::Color(
+                                        color::GREY_3,
+                                    ))
+                                })
+                                .height(Length::Fixed(1.0))
+                                .width(Length::Fill),
+                        ]
+                        .spacing(10)
+                        .align_y(Alignment::Center),
+                        // generates a new address
+                        button::secondary(Some(icon::plus_icon()), "Generate New Address")
+                            .on_press(view::Message::BuySell(view::BuySellMessage::Meld(
+                                view::buysell::meld::MeldMessage::CreateNewAddress,
+                            )))
+                            .width(iced::Length::Fill),
+                    ]
+                    .spacing(10),
+                )
+            }
+        }
+        .width(Length::Fill)
+    };
+
+    match deposit_address {
+        None => address_picker(),
+        // allows user to verify an address and proceed with the UX flow
+        Some((address, qr_code_data)) => card::simple(
+            widget::column![
+                widget::column![
+                    text::caption(match was_picked_from_existing_addresses {
+                        true => "YOUR SELECTED ADDRESS: ",
+                        false => "GENERATED ADDRESS: ",
+                    })
+                    .color(color::BLUE)
+                    .width(iced::Length::Fill)
+                    .align_y(iced::Alignment::Center),
+                    widget::row![
+                        widget::container(
+                            widget::text(address)
+                                .font(iced::font::Font {
+                                    weight: iced::font::Weight::Medium,
+                                    ..iced::font::Font::MONOSPACE
+                                })
+                                .size(15)
+                        )
+                        .style(|_| {
+                            widget::container::Style::default()
+                                .background(color::WHITE)
+                                .color(color::BLACK)
+                                .border(iced::Border::default().width(0))
+                        })
+                        .align_x(iced::Alignment::Center)
+                        .width(iced::Length::Fill)
+                        .padding(7),
+                        widget::button(
+                            icon::clipboard_icon()
+                                .color(color::WHITE)
+                                .size(17)
+                                .width(38)
+                        )
+                        .on_press(view::Message::BuySell(view::BuySellMessage::Meld(
+                            view::buysell::meld::MeldMessage::CopyAddressToClipboard
+                        )))
+                        .style(|th, st| {
+                            let mut base = theme::button::secondary(th, st);
+                            base.border = iced::Border::default().rounded(0).width(0);
+                            base.background = Some(color::GREY_6.into());
+                            base
+                        })
+                        .padding(6)
+                    ]
+                    .spacing(1)
+                ]
+                .align_x(iced::Alignment::Start)
+                .spacing(2),
+                // qr code for scanning
+                widget::container(widget::qr_code(qr_code_data).cell_size(8).style(|_| {
+                    widget::qr_code::Style {
+                        background: color::WHITE,
+                        cell: color::BLACK,
+                    }
+                }))
+                .padding(10)
+                .width(iced::Length::Fill)
+                .align_x(iced::Alignment::Center)
+                .align_y(iced::Alignment::Center)
+                .style(|_| {
+                    widget::container::Style::default()
+                        .background(color::WHITE)
+                        .color(iced::Color::BLACK)
+                }),
+                // dash
+                widget::row![
+                    button::secondary_compact(Some(icon::arrow_back()), "Go Back")
+                        .on_press(view::Message::BuySell(view::BuySellMessage::Meld(
+                            view::buysell::meld::MeldMessage::NavigateBack
+                        )))
+                        .style(|th, st| {
+                            let mut base = theme::button::secondary(th, st);
+                            base.border = iced::Border::default().rounded(0);
+                            base
+                        }),
+                    widget::Space::new().width(iced::Length::Fill),
+                    // submit
+                    match processing_request {
+                        true => {
+                            button::primary_compact(Some(icon::clock_icon()), "Fetching Quotes")
+                        }
+                        false => {
+                            button::primary_compact(Some(icon::arrow_return_right()), "Proceed")
+                                .on_press(view::Message::BuySell(view::BuySellMessage::Meld(
+                                    view::buysell::meld::MeldMessage::GetQuotes,
+                                )))
+                        }
+                    }
+                    .style(|th, st| {
+                        let mut base = theme::button::primary(th, st);
+                        base.border = iced::Border::default().rounded(0);
+                        base
+                    })
+                ]
+                .align_y(iced::Alignment::Center)
+            ]
+            .spacing(10),
+        )
+        .height(iced::Length::Shrink)
+        .width(800)
+        .style(|_| {
+            widget::container::Style::default()
+                .background(color::BLACK)
+                .color(iced::Color::WHITE)
+                .border(
+                    iced::Border::default()
+                        .color(color::GREY_4)
+                        .width(1)
+                        .rounded(5),
+                )
+        }),
+    }
     .into()
 }
 
@@ -293,7 +608,7 @@ pub(crate) fn quote_selection_ux<'a>(
         .align_y(iced::Alignment::Center)
         .width(iced::Length::Fill)
         .style(move |_| {
-            iced::widget::container::Style::default()
+            widget::container::Style::default()
                 .background(iced::Color::BLACK)
                 .color(iced::Color::WHITE)
                 .border(match selected {
@@ -323,8 +638,8 @@ pub(crate) fn quote_selection_ux<'a>(
         .anchor_top(),
         // separators
         widget::Space::new().height(10),
-        iced::widget::container(widget::Space::new().height(2))
-            .style(|_| iced::widget::container::background(iced::Background::Color(color::GREY_3)))
+        widget::container(widget::Space::new().height(2))
+            .style(|_| widget::container::background(iced::Background::Color(color::GREY_3)))
             .width(Length::Fill),
         widget::Space::new().height(10),
         // driver buttons
@@ -338,7 +653,7 @@ pub(crate) fn quote_selection_ux<'a>(
                     },
                 ),
                 false => button::primary(Some(icon::globe_icon()), "Start Session")
-                    .on_press(view::buysell::meld::MeldMessage::StartSessionPressed(s))
+                    .on_press(view::buysell::meld::MeldMessage::ConfirmSelectedQuote(s))
                     .style(|th, st| {
                         let mut base = theme::button::primary(th, st);
                         base.border = iced::Border::default().rounded(3);
@@ -392,7 +707,7 @@ pub(crate) fn region_selection_ux<'a>(
         .align_y(iced::Alignment::Center)
         .width(iced::Length::Fill)
         .style(move |_| {
-            iced::widget::container::Style::default()
+            widget::container::Style::default()
                 .background(iced::Color::BLACK)
                 .color(iced::Color::WHITE)
                 .border(match is_selected {
@@ -474,8 +789,8 @@ pub(crate) fn region_selection_ux<'a>(
         widget::Space::new().height(5),
         widget::scrollable(region_list).height(300).anchor_top(),
         widget::Space::new().height(10),
-        iced::widget::container(widget::Space::new().height(2))
-            .style(|_| iced::widget::container::background(iced::Background::Color(color::GREY_3)))
+        widget::container(widget::Space::new().height(2))
+            .style(|_| widget::container::background(iced::Background::Color(color::GREY_3)))
             .width(Length::Fill),
         widget::Space::new().height(10),
         selected.map(|_| {
@@ -497,9 +812,9 @@ pub(crate) fn region_selection_ux<'a>(
 
 pub(super) fn webview_ux<'a>(
     active: &'a iced_wry::IcedWebview,
-    wallet_address: Option<String>,
+    wallet_address: Option<&'a str>,
 ) -> coincube_ui::widget::Element<'a, view::Message> {
-    let col = iced::widget::column![
+    let col = widget::column![
         active.view(Length::Fixed(640.0), Length::Fixed(640.0)),
         wallet_address.map(|addr| {
             widget::column![
@@ -522,9 +837,7 @@ pub(super) fn webview_ux<'a>(
                             })
                             .font(iced::font::Font::MONOSPACE),
                         widget::Button::new(icon::clipboard_icon().style(theme::text::secondary),)
-                            .on_press(view::BuySellMessage::Meld(super::MeldMessage::CopyAddress(
-                                addr,
-                            )))
+                            .on_press(view::BuySellMessage::Meld(super::MeldMessage::CopyAddressToClipboard))
                             .style(theme::button::transparent_border)
                             .padding([6, 10]),
                     ]
