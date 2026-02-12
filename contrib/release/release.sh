@@ -100,7 +100,7 @@ if [ "$TARGET" = "liana" ]; then
 
         unzip ../contrib/release/debian/package.zip
         sed -i "s/VERSION_PLACEHOLDER/$VERSION/g" ./package/DEBIAN/control
-        cp "$BUILD_DIR/x86_64-unknown-linux-gnu/release/lianad" "$BUILD_DIR/x86_64-unknown-linux-gnu/release/liana-cli" "$BUILD_DIR/x86_64-unknown-linux-gnu/release/liana-gui" ../README.md ./package/usr/bin/
+        cp "$BUILD_DIR/x86_64-unknown-linux-gnu/release/lianad" "$BUILD_DIR/x86_64-unknown-linux-gnu/release/liana-cli" "$BUILD_DIR/x86_64-unknown-linux-gnu/release/liana-gui" ./package/usr/bin/
         DIRNAME="$LIANA_PREFIX-1_amd64"
         mv ./package "$DIRNAME"
         dpkg-deb -Zxz --build --root-owner-group "$DIRNAME"
@@ -156,7 +156,7 @@ else
         sed -i "s/liana-icon/liana-business-icon/g" ./package/usr/share/applications/Liana.desktop
         cp ../contrib/liana-business/liana-business-icon.png ./package/usr/share/icons/liana-business-icon.png
         mv ./package/usr/share/applications/Liana.desktop ./package/usr/share/applications/LianaBusiness.desktop
-        cp "$BUILD_DIR/x86_64-unknown-linux-gnu/release/liana-business" ../README.md ./package/usr/bin/
+        cp "$BUILD_DIR/x86_64-unknown-linux-gnu/release/liana-business" ./package/usr/bin/
         DIRNAME="$LIANA_PREFIX-1_amd64"
         mv ./package "$DIRNAME"
         dpkg-deb -Zxz --build --root-owner-group "$DIRNAME"
