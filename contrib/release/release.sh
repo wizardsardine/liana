@@ -154,6 +154,7 @@ else
         sed -i "s/Liana/LianaBusiness/g" ./package/usr/share/applications/Liana.desktop
         sed -i "s/liana-gui/liana-business/g" ./package/usr/share/applications/Liana.desktop
         sed -i "s/liana-icon/liana-business-icon/g" ./package/usr/share/applications/Liana.desktop
+        rm ./package/usr/share/icons/liana-icon.png
         cp ../contrib/liana-business/liana-business-icon.png ./package/usr/share/icons/liana-business-icon.png
         mv ./package/usr/share/applications/Liana.desktop ./package/usr/share/applications/LianaBusiness.desktop
         cp "$BUILD_DIR/x86_64-unknown-linux-gnu/release/liana-business" ./package/usr/bin/
