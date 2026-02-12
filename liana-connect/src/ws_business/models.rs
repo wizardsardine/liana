@@ -16,7 +16,7 @@ pub const BLOCKS_PER_DAY: u64 = 144; // 24 * 60 / 10
 pub const BLOCKS_PER_MONTH: u64 = 4380; // ~30.4 days
 pub const BLOCKS_PER_YEAR: u64 = 52560; // ~365 days
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum WalletStatus {
     /// Empty
     Created,
@@ -483,12 +483,12 @@ impl Wallet {
     /// and that key's fingerprint is found in `self.devices`.
     pub fn effective_status(&self, user_email: &str) -> WalletStatus {
         if self.status != WalletStatus::Finalized {
-            return self.status.clone();
+            return self.status;
         }
 
         let (template, devices) = match (&self.template, &self.devices) {
             (Some(t), Some(d)) if !d.is_empty() => (t, d),
-            _ => return self.status.clone(),
+            _ => return self.status,
         };
 
         let email_lower = user_email.to_lowercase();
@@ -510,7 +510,7 @@ impl Wallet {
             }
         }
 
-        self.status.clone()
+        self.status
     }
 
     /// Returns only the device fingerprints associated with keys matching `user_email`.
@@ -588,7 +588,7 @@ mod wire_format_tests {
             (WalletStatus::Finalized, "Finalized"),
         ];
         for (status, expected) in cases {
-            let json = serde_json::to_value(&status).unwrap();
+            let json = serde_json::to_value(status).unwrap();
             assert_eq!(json, expected, "WalletStatus::{:?}", status);
         }
     }
