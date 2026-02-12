@@ -20,3 +20,6 @@ tokio = { workspace = true, features = ["signal"] }
 log = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
+
+[build-dependencies]
+winresource = { workspace = true }
