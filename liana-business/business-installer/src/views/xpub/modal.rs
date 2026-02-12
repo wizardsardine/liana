@@ -2,12 +2,13 @@ use crate::state::{
     views::{ModalStep, XpubEntryModalState},
     Msg, State,
 };
-use async_hwi::service::{SigningDevice, UnsupportedReason};
+use async_hwi::service::SigningDevice;
 use iced::{
     alignment::Vertical,
     widget::{container, pick_list, row, Space},
     Alignment, Length,
 };
+use liana_gui::hw::{is_compatible_with_tapminiscript, min_taproot_version, UnsupportedReason};
 use liana_ui::{
     component::{
         button, card, hw,
@@ -354,8 +355,38 @@ fn extract_device_data(device: &SigningDevice<Msg>) -> DeviceRenderData {
     let kind = device.kind();
     let fingerprint = device.fingerprint();
 
+    fn translate_reason(reason: &async_hwi::service::UnsupportedReason) -> UnsupportedReason {
+        match reason {
+            async_hwi::service::UnsupportedReason::Version {
+                minimal_supported_version,
+            } => UnsupportedReason::Version {
+                minimal_supported_version: (*minimal_supported_version).into(),
+            },
+            async_hwi::service::UnsupportedReason::Method(m) => UnsupportedReason::Method(m),
+            async_hwi::service::UnsupportedReason::NotPartOfWallet(fg) => {
+                UnsupportedReason::NotPartOfWallet(*fg)
+            }
+            async_hwi::service::UnsupportedReason::WrongNetwork => UnsupportedReason::WrongNetwork,
+            async_hwi::service::UnsupportedReason::AppIsNotOpen => UnsupportedReason::AppIsNotOpen,
+        }
+    }
+
     let state = match device {
-        SigningDevice::Supported(_) => DeviceState::Supported,
+        SigningDevice::Supported(hw) => {
+            if is_compatible_with_tapminiscript(hw.kind(), hw.version()) {
+                DeviceState::Supported
+            } else {
+                let minimal_supported_version = min_taproot_version(hw.kind())
+                    .map(|v| v.to_string())
+                    .unwrap_or_default();
+                DeviceState::Unsupported {
+                    version: hw.version().cloned(),
+                    reason: UnsupportedReason::Version {
+                        minimal_supported_version,
+                    },
+                }
+            }
+        }
         SigningDevice::Locked { pairing_code, .. } => DeviceState::Locked {
             pairing_code: pairing_code.clone(),
         },
@@ -363,7 +394,7 @@ fn extract_device_data(device: &SigningDevice<Msg>) -> DeviceRenderData {
             version, reason, ..
         } => DeviceState::Unsupported {
             version: version.clone(),
-            reason: reason.clone(),
+            reason: translate_reason(reason),
         },
     };
 

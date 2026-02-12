@@ -5,13 +5,14 @@ use crate::{
     state::{message::Msg, State},
     views::layout_with_scrollable_list,
 };
-use async_hwi::service::SigningDevice;
+use async_hwi::service::{is_compatible_with_tapminiscript, SigningDevice};
 use iced::{
-    widget::{row, Space},
+    widget::{column, row, Row, Space},
     Alignment, Length,
 };
+use liana_connect::ws_business::Wallet;
 use liana_ui::{
-    component::{button, hw, text},
+    component::{button, text},
     icon, theme,
     widget::*,
 };
@@ -120,14 +121,29 @@ fn no_devices_view<'a>() -> Element<'a, Msg> {
         .into()
 }
 
+fn alias_from_fg(wallet: &Wallet, fg: Fingerprint) -> Option<String> {
+    for key in wallet.template.as_ref()?.keys.values() {
+        if key.fingerprint() == Some(fg) {
+            return Some(key.alias.clone());
+        }
+    }
+    None
+}
+
 fn device_list_view(state: &State) -> Element<'_, Msg> {
     let reg_state = &state.views.registration;
     let connected_devices = state.hw.list();
 
     // Build list of device cards
     let mut cards = Column::new().spacing(10).padding([0, 20]);
+    let wallet = state.selected_wallet();
 
     for fingerprint in &reg_state.user_devices {
+        let alias = wallet
+            .as_ref()
+            .and_then(|w| alias_from_fg(w, *fingerprint))
+            .unwrap_or_default();
+
         // Check if this device is connected
         let connected_device = connected_devices.values().find(|d| match d {
             SigningDevice::Supported(hw) => hw.fingerprint() == fingerprint,
@@ -137,15 +153,19 @@ fn device_list_view(state: &State) -> Element<'_, Msg> {
         let card = match connected_device {
             Some(SigningDevice::Supported(hw)) => {
                 // Connected and ready to register - clickable
-                clickable_device_card(*fingerprint, *hw.kind())
+                if is_compatible_with_tapminiscript(hw.kind(), hw.version()) {
+                    key_card(*fingerprint, Some(*hw.kind()), true, alias)
+                } else {
+                    key_card(*fingerprint, None, true, alias)
+                }
             }
             Some(_) => {
                 // Connected but locked/unsupported
-                disconnected_device_card(*fingerprint, "Device locked or unsupported")
+                key_card(*fingerprint, None, true, alias)
             }
             None => {
                 // Not connected
-                disconnected_device_card(*fingerprint, "Connect device to register")
+                key_card(*fingerprint, None, false, alias)
             }
         };
 
@@ -155,38 +175,50 @@ fn device_list_view(state: &State) -> Element<'_, Msg> {
     cards.into()
 }
 
-fn clickable_device_card(
-    fingerprint: Fingerprint,
-    device_kind: async_hwi::DeviceKind,
-) -> Element<'static, Msg> {
-    let content = hw::supported_hardware_wallet(
-        device_kind,
-        None::<&str>,
-        fingerprint,
-        Some("Ready to register"),
-    );
-
-    let message = Some(Msg::RegistrationSelectDevice(fingerprint));
-    menu_entry(content.into(), message)
+fn device_kind(kind: async_hwi::DeviceKind) -> String {
+    let binding = kind.to_string();
+    let mut chars = binding.chars();
+    match chars.next() {
+        None => String::new(),
+        Some(c) => c.to_uppercase().to_string() + chars.as_str(),
+    }
 }
 
-fn disconnected_device_card(
+fn key_card(
     fingerprint: Fingerprint,
-    status: &'static str,
+    kind: Option<async_hwi::DeviceKind>,
+    device_connected: bool,
+    alias: String,
 ) -> Element<'static, Msg> {
-    let content = Row::new()
-        .spacing(10)
-        .align_y(Alignment::Center)
-        .push(icon::key_icon().size(24).style(theme::text::secondary))
-        .push(
-            Column::new()
-                .spacing(4)
-                .push(
-                    text::p1_medium(format!("Fingerprint: {}", fingerprint))
-                        .style(theme::text::secondary),
-                )
-                .push(text::caption(status).style(theme::text::secondary)),
-        );
+    let fg = text::p1_medium(format!("#{fingerprint}"));
+    let fg_row = if let Some(device) = kind {
+        row![text::p1_bold(device_kind(device)), fg].spacing(5)
+    } else {
+        row![fg]
+    };
 
-    menu_entry(content.into(), None)
+    let left = column![text::h3(alias), fg_row];
+    let right = if kind.is_some() {
+        "Register"
+    } else if device_connected {
+        "Device not supported or locked"
+    } else {
+        "Connect the associated device to register"
+    };
+    let right = text::p1_medium(right);
+
+    let message = kind
+        .is_some()
+        .then_some(Msg::RegistrationSelectDevice(fingerprint));
+
+    let content = Container::new(
+        Row::new()
+            .push(left)
+            .push(Space::with_width(Length::Fill))
+            .push(right)
+            .push(Space::with_width(Length::Fill))
+            .align_y(Alignment::Center),
+    )
+    .into();
+    menu_entry(content, message)
 }

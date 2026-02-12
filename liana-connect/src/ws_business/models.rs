@@ -3,7 +3,11 @@
 //! This module contains the core domain types used by Liana Connect
 //! for representing organizations, wallets, users, and policy templates.
 
-use miniscript::{bitcoin::bip32::Fingerprint, DescriptorPublicKey};
+use miniscript::{
+    bitcoin::bip32::Fingerprint,
+    descriptor::{DescriptorMultiXKey, DescriptorXKey, SinglePub},
+    DescriptorPublicKey,
+};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -231,6 +235,26 @@ pub struct Key {
     pub last_edited: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_editor: Option<Uuid>,
+}
+
+impl Key {
+    pub fn fingerprint(&self) -> Option<Fingerprint> {
+        match self.xpub.as_ref()? {
+            DescriptorPublicKey::Single(SinglePub {
+                origin: Some((fg, _)),
+                ..
+            }) => Some(*fg),
+            DescriptorPublicKey::XPub(DescriptorXKey {
+                origin: Some((fg, _)),
+                ..
+            }) => Some(*fg),
+            DescriptorPublicKey::MultiXPub(DescriptorMultiXKey {
+                origin: Some((fg, _)),
+                ..
+            }) => Some(*fg),
+            _ => None,
+        }
+    }
 }
 
 /// Represents a timelock duration in blocks
