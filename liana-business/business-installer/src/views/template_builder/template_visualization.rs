@@ -251,14 +251,14 @@ fn path_card(
         Some(tl) => format_timelock_human(tl),
     };
 
-    let mut content = Column::new()
-        .spacing(5)
-        .push(text::p1_medium(keys_text).style(theme::text::primary))
-        .push(text::p2_medium(timelock_text).style(theme::text::primary));
+    let last_edit_info =
+        last_edit_info.map(|info| text::caption(info).style(liana_ui::theme::text::secondary));
 
-    if let Some(info) = last_edit_info {
-        content = content.push(text::caption(info).style(liana_ui::theme::text::secondary));
-    }
+    let content = Column::new()
+        .push(text::h3(keys_text).style(theme::text::primary))
+        .push(text::p2_medium(timelock_text).style(theme::text::primary))
+        .push_maybe(last_edit_info)
+        .spacing(5);
 
     // Use card_entry with optional message for editable vs read-only
     let message = if is_editable {
