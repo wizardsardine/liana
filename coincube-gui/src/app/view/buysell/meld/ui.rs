@@ -372,36 +372,41 @@ pub(crate) fn quote_selection_ux<'a>(
 
 pub(super) fn webview_ux<'a>(
     active: &'a iced_wry::IcedWebview,
-    network: &'a bitcoin::Network,
+    wallet_address: Option<String>,
 ) -> coincube_ui::widget::Element<'a, view::Message> {
     let col = iced::widget::column![
         active.view(Length::Fixed(640.0), Length::Fixed(640.0)),
-        // Network display banner
-        widget::Space::new().height(Length::Fixed(15.0)),
-        {
-            let (network_name, network_color) = match network {
-                bitcoin::Network::Bitcoin => ("Bitcoin Mainnet", color::GREEN),
-                bitcoin::Network::Testnet => ("Bitcoin Testnet", color::ORANGE),
-                bitcoin::Network::Testnet4 => ("Bitcoin Testnet4", color::ORANGE),
-                bitcoin::Network::Signet => ("Bitcoin Signet", color::BLUE),
-                bitcoin::Network::Regtest => ("Bitcoin Regtest", color::RED),
-            };
-
-            iced::widget::row![
-                // currently selected bitcoin network display
-                text::text("Network: ").size(12).color(color::GREY_3),
-                text::text(network_name).size(12).color(network_color),
-                // render a button that closes the webview
-                widget::Space::new().width(Length::Fixed(20.0)),
-                {
-                    button::secondary(Some(icon::arrow_back()), "Start Over")
-                        .on_press(view::BuySellMessage::ResetWidget)
-                        .width(iced::Length::Fixed(300.0))
-                }
-            ]
-            .spacing(5)
-            .align_y(Alignment::Center)
-        }
+        wallet_address.map(|addr| {
+            widget::container(
+                widget::row![
+                    widget::text_input("", &addr)
+                        .size(12)
+                        .padding([6, 10])
+                        .width(Length::Fill)
+                        .style(|_, _| widget::text_input::Style {
+                            background: color::BLACK.into(),
+                            border: iced::Border::default()
+                                .width(1)
+                                .rounded(0)
+                                .color(color::GREY_5),
+                            icon: color::WHITE,
+                            placeholder: color::GREY_3,
+                            value: color::WHITE,
+                            selection: color::ORANGE,
+                        })
+                        .font(iced::font::Font::MONOSPACE),
+                    widget::Button::new(icon::clipboard_icon().style(theme::text::secondary),)
+                        .on_press(view::BuySellMessage::Meld(super::MeldMessage::CopyAddress(
+                            addr,
+                        )))
+                        .style(theme::button::transparent_border)
+                        .padding([6, 10]),
+                ]
+                .spacing(4)
+                .align_y(Alignment::Center),
+            )
+            .width(Length::Fixed(640.0))
+        }),
     ];
 
     let elem: iced::Element<view::BuySellMessage, theme::Theme> = col.into();

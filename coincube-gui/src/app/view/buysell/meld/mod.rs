@@ -34,6 +34,9 @@ pub enum MeldMessage {
     EventSourceConnected,
     EventSourceDisconnected(String),
     SseEvent(reqwest_sse::Event),
+    // Clipboard
+    CopyAddress(String),
+    ClearToast,
 }
 
 pub enum MeldFlowStep {
@@ -68,6 +71,9 @@ pub struct MeldState {
     // sse data
     pub sse_retries: usize,
     pub webview_manager: iced_wry::IcedWebviewManager,
+
+    // toast notification
+    pub toast: Option<String>,
 }
 
 impl MeldState {
@@ -84,6 +90,7 @@ impl MeldState {
             webview_manager: iced_wry::IcedWebviewManager::new(),
             steps: vec![MeldFlowStep::RegionChecks],
             network,
+            toast: None,
         };
 
         let task = iced::Task::perform(
@@ -157,7 +164,11 @@ impl MeldState {
                 webview_pending,
             }) => ui::quote_selection_ux(quotes, *selected, *webview_pending, &self.buy_or_sell),
             Some(MeldFlowStep::ActiveSession { active, .. }) => {
-                ui::webview_ux(active, &self.network)
+                let wallet_address = match &self.buy_or_sell {
+                    BuyOrSell::Buy { address } => Some(address.address.to_string()),
+                    BuyOrSell::Sell => None,
+                };
+                ui::webview_ux(active, wallet_address)
             }
         }
     }
@@ -550,6 +561,17 @@ impl MeldState {
                         )
                     }
                 }
+            }
+            MeldMessage::CopyAddress(address) => {
+                self.toast = Some("Copied address to clipboard".to_string());
+                let clear = iced::Task::perform(
+                    async { tokio::time::sleep(std::time::Duration::from_secs(3)).await },
+                    |_| view::Message::BuySell(view::BuySellMessage::Meld(MeldMessage::ClearToast)),
+                );
+                return Some(iced::Task::batch([iced::clipboard::write(address), clear]));
+            }
+            MeldMessage::ClearToast => {
+                self.toast = None;
             }
         };
 
