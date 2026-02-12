@@ -95,20 +95,24 @@ Options:
 pub fn args_to_config(
     args: &[Arg],
     default_network: Option<Network>,
+    app_name: String,
 ) -> Result<Config, Box<dyn Error>> {
+    let app_name = app_name.to_string();
     match args {
         [] => {
             let datadir_path = LianaDirectory::new_default().unwrap();
-            Ok(Config::new(datadir_path, default_network))
+            Ok(Config::new(datadir_path, default_network, app_name))
         }
         [Arg::Network(network)] => {
             let datadir_path = LianaDirectory::new_default().unwrap();
-            Ok(Config::new(datadir_path, Some(*network)))
+            Ok(Config::new(datadir_path, Some(*network), app_name))
         }
-        [Arg::DatadirPath(datadir_path)] => Ok(Config::new(datadir_path.clone(), default_network)),
+        [Arg::DatadirPath(datadir_path)] => {
+            Ok(Config::new(datadir_path.clone(), default_network, app_name))
+        }
         [Arg::DatadirPath(datadir_path), Arg::Network(network)]
         | [Arg::Network(network), Arg::DatadirPath(datadir_path)] => {
-            Ok(Config::new(datadir_path.clone(), Some(*network)))
+            Ok(Config::new(datadir_path.clone(), Some(*network), app_name))
         }
         _ => Err("Unknown args combination".into()),
     }

@@ -42,7 +42,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         Some(default_network),
     )?;
 
-    let config = args_to_config(&args, Some(default_network))?;
+    let config = args_to_config(&args, Some(default_network), "Liana Business".into())?;
     let log_level = parse_log_level()?;
 
     let settings = create_app_settings("LianaBusiness");

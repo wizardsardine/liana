@@ -32,7 +32,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         None,
     )?;
 
-    let config = args_to_config(&args, None)?;
+    let config = args_to_config(&args, None, "Liana".into())?;
     let log_level = parse_log_level()?;
 
     setup_panic_hook(&config.liana_directory);
