@@ -1912,11 +1912,6 @@ impl State {
                         );
                     }
 
-                    // Update local state
-                    if let Some(key) = self.app.keys.get_mut(&key_id) {
-                        key.xpub = Some(xpub);
-                    }
-
                     // Send to backend
                     if let Some(wallet_id) = self.app.selected_wallet {
                         self.backend.edit_xpub(wallet_id, Some(xpub_data), key_id);
@@ -1939,11 +1934,6 @@ impl State {
     fn on_xpub_clear(&mut self) -> Task<Msg> {
         if let Some(modal) = &self.views.xpub.modal {
             let key_id = modal.key_id;
-
-            // Update local state
-            if let Some(key) = self.app.keys.get_mut(&key_id) {
-                key.xpub = None;
-            }
 
             // Send to backend (None means clear/delete the xpub)
             if let Some(wallet_id) = self.app.selected_wallet {
