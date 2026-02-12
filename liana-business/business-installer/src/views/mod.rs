@@ -1,4 +1,5 @@
 pub mod keys;
+pub mod loading;
 pub mod login;
 pub mod modals;
 pub mod org_select;
@@ -9,6 +10,7 @@ pub mod wallet_select;
 pub mod xpub;
 
 pub use keys::keys_view;
+pub use loading::loading_view;
 pub use login::login_view;
 pub use org_select::org_select_view;
 pub use registration::registration_view;
