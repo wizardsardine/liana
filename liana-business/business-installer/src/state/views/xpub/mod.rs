@@ -60,6 +60,11 @@ pub struct XpubEntryModalState {
 
     /// Actual source of the current xpub input (for audit)
     pub input_source: Option<XpubInputSource>,
+
+    /// Whether the paste xpub card is expanded (showing input + paste button)
+    pub paste_expanded: bool,
+    /// Form value for the paste xpub input field (with validation state)
+    pub form_xpub: liana_ui::component::form::Value<String>,
 }
 
 impl XpubEntryModalState {
@@ -90,6 +95,8 @@ impl XpubEntryModalState {
             fetch_error: None,
             network,
             input_source: None,
+            paste_expanded: false,
+            form_xpub: liana_ui::component::form::Value::default(),
         }
     }
 

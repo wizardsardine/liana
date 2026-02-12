@@ -8,17 +8,18 @@ use iced::{
     widget::{container, pick_list, row, Space},
     Alignment, Length,
 };
+use liana_connect::ws_business::UserRole;
 use liana_gui::hw::{is_compatible_with_tapminiscript, min_taproot_version, UnsupportedReason};
 use liana_ui::{
     component::{
-        button, card, hw,
+        button, card, hw, modal,
         text::{self, p1_bold},
         tooltip,
     },
     icon, theme,
     widget::*,
 };
-use miniscript::bitcoin::bip32::ChildNumber;
+use miniscript::bitcoin::{bip32::ChildNumber, Network};
 
 /// Render the xpub entry modal if it's open
 pub fn xpub_modal_view(state: &State) -> Option<Element<'_, Msg>> {
@@ -95,12 +96,14 @@ fn select_view<'a>(state: &'a State, modal_state: &'a XpubEntryModalState) -> El
             .push(input_value)
     });
 
+    let is_wallet_manager = matches!(state.app.current_user_role, Some(UserRole::WalletManager));
+
     let content = Column::new()
         .push(header)
         .push_maybe(xpub_status)
         .push(hw_section(state))
         .push_maybe(input_display)
-        .push(other_options(modal_state))
+        .push(other_options(modal_state, is_wallet_manager))
         .push_maybe(validation_error)
         .push(footer_buttons(modal_state))
         .spacing(15)
@@ -406,7 +409,7 @@ fn extract_device_data(device: &SigningDevice<Msg>) -> DeviceRenderData {
 }
 
 /// Render the "Other options" collapsible section
-fn other_options(modal_state: &XpubEntryModalState) -> Element<'_, Msg> {
+fn other_options(modal_state: &XpubEntryModalState, is_wallet_manager: bool) -> Element<'_, Msg> {
     // Collapsible header button
     let header_text = if modal_state.options_collapsed {
         "Other options ▼"
@@ -421,15 +424,23 @@ fn other_options(modal_state: &XpubEntryModalState) -> Element<'_, Msg> {
                 .on_press(Msg::XpubLoadFromFile)
                 .width(Length::Fill);
 
-        let paste_button =
-            button::secondary(Some(icon::clipboard_icon()), "Paste extended public key")
-                .on_press(Msg::XpubPaste)
-                .width(Length::Fill);
+        let mut col = Column::new().spacing(10).push(file_button);
 
-        Column::new()
-            .spacing(10)
-            .push(file_button)
-            .push(paste_button)
+        if is_wallet_manager {
+            let paste_xpub = modal::collapsible_input_button(
+                modal_state.paste_expanded,
+                Some(icon::paste_icon()),
+                "Paste extended public key".to_string(),
+                example_xpub_placeholder(modal_state.network),
+                &modal_state.form_xpub,
+                Some(Msg::XpubUpdateInput),
+                Some(|| Msg::XpubPaste),
+                || Msg::XpubSelectEnterXpub,
+            );
+            col = col.push(paste_xpub);
+        }
+
+        col
     });
 
     Column::new()
@@ -437,6 +448,18 @@ fn other_options(modal_state: &XpubEntryModalState) -> Element<'_, Msg> {
         .push(header_btn)
         .push_maybe(expanded_content)
         .into()
+}
+
+/// Example xpub placeholder for the input field
+fn example_xpub_placeholder(network: Network) -> String {
+    format!(
+        "[aabbccdd/42'/0']{}pub6DAkq8LWw91WGgUGnkR...",
+        if network == Network::Bitcoin {
+            "x"
+        } else {
+            "t"
+        }
+    )
 }
 
 /// Render the footer action buttons (Select step only)

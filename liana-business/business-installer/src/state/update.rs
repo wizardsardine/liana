@@ -104,6 +104,7 @@ impl State {
             Msg::XpubRetry => return self.on_xpub_retry(),
             Msg::XpubLoadFromFile => return self.on_xpub_load_from_file(),
             Msg::XpubFileLoaded(result) => self.on_xpub_file_loaded(result),
+            Msg::XpubSelectEnterXpub => self.on_xpub_select_enter_xpub(),
             Msg::XpubPaste => return self.on_xpub_paste(),
             Msg::XpubPasted(xpub) => self.on_xpub_pasted(xpub),
             Msg::XpubUpdateAccount(account) => return self.on_xpub_update_account(account),
@@ -1623,7 +1624,10 @@ impl State {
     /// Update xpub input text
     fn on_xpub_update_input(&mut self, input: String) {
         if let Some(modal) = self.views.xpub.modal_mut() {
+            modal.form_xpub.value = input.clone();
             modal.update_input(input);
+            modal.form_xpub.valid = modal.validate().is_ok();
+            modal.input_source = Some(views::XpubInputSource::Pasted);
         }
     }
 
@@ -1809,6 +1813,13 @@ impl State {
         }
     }
 
+    /// Expand the paste xpub card
+    fn on_xpub_select_enter_xpub(&mut self) {
+        if let Some(modal) = self.views.xpub.modal_mut() {
+            modal.paste_expanded = true;
+        }
+    }
+
     /// Handle paste xpub from clipboard
     fn on_xpub_paste(&mut self) -> Task<Msg> {
         use iced::clipboard;
@@ -1833,6 +1844,8 @@ impl State {
     fn on_xpub_pasted(&mut self, xpub: String) {
         debug!(source = "pasted", "Xpub pasted from clipboard");
         if let Some(modal) = self.views.xpub.modal_mut() {
+            modal.form_xpub.value = xpub.clone();
+            modal.form_xpub.valid = modal.validate().is_ok();
             modal.update_input(xpub);
             modal.input_source = Some(views::XpubInputSource::Pasted);
         }
