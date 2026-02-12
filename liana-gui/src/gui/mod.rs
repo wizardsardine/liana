@@ -134,7 +134,7 @@ where
     M: Clone + Send + 'static,
 {
     pub fn title(&self) -> String {
-        format!("Liana v{}", VERSION)
+        format!("{} v{}", self.config.app_name, VERSION)
     }
 
     pub fn new(
@@ -651,13 +651,19 @@ where
 pub struct Config {
     pub liana_directory: LianaDirectory,
     network: Option<bitcoin::Network>,
+    app_name: String,
 }
 
 impl Config {
-    pub fn new(liana_directory: LianaDirectory, network: Option<bitcoin::Network>) -> Self {
+    pub fn new(
+        liana_directory: LianaDirectory,
+        network: Option<bitcoin::Network>,
+        app_name: String,
+    ) -> Self {
         Self {
             liana_directory,
             network,
+            app_name,
         }
     }
 }
