@@ -6,6 +6,8 @@ let
       fileset = lib.fileset.unions [
         (craneLib.fileset.commonCargoSources rootPath)
         (lib.fileset.maybeMissing (rootPath + "/liana-ui/static"))
+        (rootPath + "/liana-business/build.rs")
+        (rootPath + "/liana-ui/static/logos/liana-business.ico")
       ];
     };
     strictDeps = true;
@@ -14,6 +16,8 @@ let
     cargoVendorDir = craneLib.vendorCargoDeps {
       src = rootPath;
     };
+    # Skip liana-gui icon so liana-business can use its own
+    LIANA_SKIP_GUI_ICON = "1";
   };
 
   lianaBusinessInfo = craneLib.crateNameFromCargoToml { cargoToml = rootPath + "/liana-business/Cargo.toml"; };
@@ -21,6 +25,9 @@ let
   x86_64-pc-windows-gnu = craneLib.buildPackage {
     inherit (commonBuildSettings) src strictDeps doCheck;
     inherit (lianaBusinessInfo) pname version;
+
+    # Disable crane's deps caching to ensure build.rs link directives are processed
+    cargoArtifacts = null;
 
     SOURCE_DATE_EPOCH = 1;
     CARGO_BUILD_TARGET = "x86_64-pc-windows-gnu";

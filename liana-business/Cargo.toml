@@ -3,6 +3,9 @@ name = "liana-business"
 version = "0.1.0"
 edition = "2021"
 
+[package.metadata.winresource]
+LegalCopyright = "Copyright © 2025"
+
 [[bin]]
 name = "liana-business"
 path = "src/main.rs"
@@ -20,3 +23,6 @@ tokio = { workspace = true, features = ["signal"] }
 log = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
+
+[build-dependencies]
+winresource = { workspace = true }
