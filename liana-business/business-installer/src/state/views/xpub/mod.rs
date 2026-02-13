@@ -49,6 +49,8 @@ pub struct XpubEntryModalState {
 
     /// Whether the "Other options" section is collapsed
     pub options_collapsed: bool,
+    /// Whether the "Paste extended public key" input is expanded
+    pub paste_expanded: bool,
 
     /// Current modal step (Select device or Details)
     pub step: ModalStep,
@@ -86,6 +88,7 @@ impl XpubEntryModalState {
             selected_account: ChildNumber::from_hardened_idx(0)
                 .expect("hardcoded valid account index"),
             options_collapsed: true, // Start with options collapsed
+            paste_expanded: false,
             step: ModalStep::default(),
             fetch_error: None,
             network,

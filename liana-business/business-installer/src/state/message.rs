@@ -87,6 +87,7 @@ pub enum Msg {
     XpubRetry,                                                  // Retry fetch after error
     XpubLoadFromFile,                                           // Trigger file picker
     XpubFileLoaded(Result<(String, String), String>),           // (content, filename) or error
+    XpubSelectPaste,                                            // Toggle paste input expanded
     XpubPaste,                                                  // Trigger paste from clipboard
     XpubPasted(String),                                         // Xpub pasted from clipboard
     XpubUpdateAccount(miniscript::bitcoin::bip32::ChildNumber), // Change account (triggers re-fetch)
