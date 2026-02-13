@@ -1,6 +1,9 @@
 fn main() {
     let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
-    if target_os == "windows" {
+    // Only compile Windows resources when building liana-gui directly,
+    // not when it's being built as a dependency of another crate (e.g., liana-business).
+    let is_primary_package = std::env::var("CARGO_PRIMARY_PACKAGE").is_ok();
+    if target_os == "windows" && is_primary_package {
         let mut res = winresource::WindowsResource::new();
         res.set_icon("../liana-ui/static/logos/liana.ico");
 
