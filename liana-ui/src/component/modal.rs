@@ -108,8 +108,7 @@ where
         form::Form::new_disabled(&input_placeholder, input_value)
     }
     .padding(10);
-    let paste =
-        paste_message.map(|m| Button::new(icon::paste_icon()).on_press(m()));
+    let paste = paste_message.map(|m| Button::new(icon::paste_icon()).on_press(m()));
 
     if collapsed {
         let icon = icon.map(|i| i.style(theme::text::primary));

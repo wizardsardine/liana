@@ -103,7 +103,13 @@ fn select_view<'a>(state: &'a State, modal_state: &'a XpubEntryModalState) -> El
         .push_maybe(xpub_status)
         .push(hw_section(state))
         .push_maybe(input_display)
-        .push(other_options(modal_state))
+        .push(other_options(
+            modal_state,
+            matches!(
+                state.app.current_user_role,
+                Some(liana_connect::ws_business::UserRole::WalletManager)
+            ),
+        ))
         .push_maybe(validation_error)
         .push(footer_buttons(modal_state))
         .spacing(15)
@@ -284,12 +290,8 @@ struct DeviceRenderData {
 
 enum DeviceState {
     Supported,
-    Locked {
-        pairing_code: Option<String>,
-    },
-    Unsupported {
-        reason: UnsupportedReason,
-    },
+    Locked { pairing_code: Option<String> },
+    Unsupported { reason: UnsupportedReason },
 }
 
 /// Render a device card based on its state (Supported, Locked, or Unsupported)
@@ -334,9 +336,7 @@ fn device_card(data: DeviceRenderData) -> Element<'static, Msg> {
                 UnsupportedReason::NotPartOfWallet(fg) => {
                     format!("Not part of this wallet (#{fg})")
                 }
-                UnsupportedReason::WrongNetwork => {
-                    "Wrong network in device settings".to_string()
-                }
+                UnsupportedReason::WrongNetwork => "Wrong network in device settings".to_string(),
                 UnsupportedReason::Version {
                     minimal_supported_version,
                 } => {
@@ -424,7 +424,7 @@ fn extract_device_data(device: &SigningDevice<Msg>) -> DeviceRenderData {
 }
 
 /// Render the "Other options" collapsible section
-fn other_options(modal_state: &XpubEntryModalState) -> Element<'_, Msg> {
+fn other_options(modal_state: &XpubEntryModalState, is_wallet_manager: bool) -> Element<'_, Msg> {
     let collapsed = modal_state.options_collapsed;
 
     let section_header = modal::optional_section(
@@ -443,26 +443,29 @@ fn other_options(modal_state: &XpubEntryModalState) -> Element<'_, Msg> {
             Some(|| Msg::XpubLoadFromFile),
         );
 
-        let form_xpub = form::Value {
-            value: modal_state.xpub_input.clone(),
-            warning: None,
-            valid: true,
-        };
-        let paste_input: Element<'_, Msg> = modal::collapsible_input_button(
-            modal_state.paste_expanded,
-            Some(icon::paste_icon()),
-            "Paste an extended public key".to_string(),
-            "xpub...".to_string(),
-            &form_xpub,
-            Some(Msg::XpubUpdateInput),
-            Some(|| Msg::XpubPaste),
-            || Msg::XpubSelectPaste,
-        );
+        let paste_input = is_wallet_manager.then(|| {
+            let form_xpub = form::Value {
+                value: modal_state.xpub_input.clone(),
+                warning: None,
+                valid: true,
+            };
+            let input: Element<'_, Msg> = modal::collapsible_input_button(
+                modal_state.paste_expanded,
+                Some(icon::paste_icon()),
+                "Paste an extended public key".to_string(),
+                "xpub...".to_string(),
+                &form_xpub,
+                Some(Msg::XpubUpdateInput),
+                Some(|| Msg::XpubPaste),
+                || Msg::XpubSelectPaste,
+            );
+            input
+        });
 
         Column::new()
             .spacing(modal::V_SPACING)
             .push(file_button)
-            .push(paste_input)
+            .push_maybe(paste_input)
     });
 
     Column::new()
