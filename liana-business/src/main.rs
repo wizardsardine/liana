@@ -32,13 +32,23 @@ pub type LianaBusiness = GUI<BusinessInstaller, BusinessSettings, Message>;
 fn main() -> Result<(), Box<dyn Error>> {
     use bitcoin::Network::{Bitcoin, Signet};
 
-    // FIXME: change before release
-    let default_network = Signet;
+    let default_network = Bitcoin;
+
+    // Check if Signet is enabled via environment variable
+    let signet_enabled = std::env::var("LIANA_BUSINESS_SIGNET")
+        .map(|v| v == "1")
+        .unwrap_or(false);
+
+    let available_networks: Vec<bitcoin::Network> = if signet_enabled {
+        vec![Bitcoin, Signet]
+    } else {
+        vec![Bitcoin]
+    };
 
     let args = parse_args(
         std::env::args().collect(),
         VERSION,
-        &[Bitcoin, Signet],
+        &available_networks,
         Some(default_network),
     )?;
 
