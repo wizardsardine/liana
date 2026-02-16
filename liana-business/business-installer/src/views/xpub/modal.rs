@@ -316,7 +316,10 @@ fn device_card(data: DeviceRenderData) -> Element<'static, Msg> {
         }
         DeviceState::Locked { pairing_code } => {
             // Locked device - show as locked, not clickable
-            let card_content = hw::locked_hardware_wallet(kind, pairing_code);
+            let card_content = match kind {
+                async_hwi::DeviceKind::Jade => hw::taproot_not_supported_device(kind),
+                _ => hw::locked_hardware_wallet(kind, pairing_code),
+            };
 
             Button::new(card_content)
                 .style(theme::button::secondary)
@@ -334,11 +337,14 @@ fn device_card(data: DeviceRenderData) -> Element<'static, Msg> {
                 }
                 UnsupportedReason::Version {
                     minimal_supported_version,
-                } => hw::unsupported_version_hardware_wallet(
-                    kind,
-                    version.as_ref(),
-                    minimal_supported_version,
-                ),
+                } => match kind {
+                    async_hwi::DeviceKind::Jade => hw::taproot_not_supported_device(kind),
+                    _ => hw::unsupported_version_hardware_wallet(
+                        kind,
+                        version.as_ref(),
+                        minimal_supported_version,
+                    ),
+                },
                 _ => hw::unsupported_hardware_wallet(kind, version.as_ref()),
             };
 
