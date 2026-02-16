@@ -502,6 +502,19 @@ pub fn unsupported_version_hardware_wallet<'a, T: 'static, K: Display, V: Displa
     .padding(10)
 }
 
+pub fn taproot_not_supported_device<'a, T: 'static, K: Display>(kind: K) -> Container<'a, T> {
+    container(
+        row(vec![column(vec![
+            text::p1_bold("This device do not support taproot miniscript").into(),
+            text::caption(kind.to_string()).into(),
+        ])
+        .width(Length::Fill)
+        .into()])
+        .align_y(Alignment::Center),
+    )
+    .padding(10)
+}
+
 pub fn sign_success_hot_signer<'a, T: 'a, F: Display>(
     fingerprint: F,
     alias: Option<impl Into<Cow<'a, str>> + Display>,
