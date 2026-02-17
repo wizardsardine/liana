@@ -110,6 +110,11 @@ impl State for BuySellPanel {
 
         match message {
             view::BuySellMessage::ResetWidget => {
+                // Clear the native webview before dropping the Meld state
+                if let BuySellFlowState::Meld(meld) = &mut self.step {
+                    meld.clear_active_webview();
+                }
+
                 if self.detected_country.is_none() {
                     log::warn!("Unable to reset widget, country is unknown");
                     self.step = BuySellFlowState::DetectingLocation(true);
