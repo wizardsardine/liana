@@ -11,7 +11,7 @@ use iced::{
 use liana_gui::hw::{is_compatible_with_tapminiscript, min_taproot_version, UnsupportedReason};
 use liana_ui::{
     component::{
-        button, card, hw,
+        button, card, form, modal,
         text::{self, p1_bold},
         tooltip,
     },
@@ -19,6 +19,17 @@ use liana_ui::{
     widget::*,
 };
 use miniscript::bitcoin::bip32::ChildNumber;
+
+type FnMsg = fn() -> Msg;
+
+/// Capitalize the first letter of a string
+fn capitalize_first(s: &str) -> String {
+    let mut chars = s.chars();
+    match chars.next() {
+        None => String::new(),
+        Some(c) => c.to_uppercase().to_string() + chars.as_str(),
+    }
+}
 
 /// Render the xpub entry modal if it's open
 pub fn xpub_modal_view(state: &State) -> Option<Element<'_, Msg>> {
@@ -31,19 +42,11 @@ pub fn xpub_modal_view(state: &State) -> Option<Element<'_, Msg>> {
 
 /// Render the Select view - shows device list and other options
 fn select_view<'a>(state: &'a State, modal_state: &'a XpubEntryModalState) -> Element<'a, Msg> {
-    // Header with title and close button
-    let header = Row::new()
-        .spacing(10)
-        .align_y(Alignment::Center)
-        .push(text::h3(format!(
-            "Select key source - {}",
-            modal_state.key_alias
-        )))
-        .push(Space::with_width(Length::Fill))
-        .push(
-            button::transparent(Some(icon::cross_icon().size(32)), "")
-                .on_press(Msg::XpubCancelModal),
-        );
+    let header = modal::header(
+        Some(format!("Select key source - {}", modal_state.key_alias)),
+        None::<FnMsg>,
+        Some(|| Msg::XpubCancelModal),
+    );
 
     // Show current xpub status if one exists
     let xpub_status = modal_state.current_xpub.is_some().then_some(
@@ -100,29 +103,29 @@ fn select_view<'a>(state: &'a State, modal_state: &'a XpubEntryModalState) -> El
         .push_maybe(xpub_status)
         .push(hw_section(state))
         .push_maybe(input_display)
-        .push(other_options(modal_state))
+        .push(other_options(
+            modal_state,
+            matches!(
+                state.app.current_user_role,
+                Some(liana_connect::ws_business::UserRole::WalletManager)
+            ),
+        ))
         .push_maybe(validation_error)
         .push(footer_buttons(modal_state))
         .spacing(15)
-        .padding(20.0)
-        .width(Length::Fixed(600.0));
+        .align_x(Alignment::Center)
+        .width(modal::MODAL_WIDTH);
 
     card::modal(content).into()
 }
 
 /// Render the Details view - shows account picker and fetch status
 fn details_view(modal_state: &XpubEntryModalState) -> Element<'_, Msg> {
-    // Header with back button and close button
-    let header = Row::new()
-        .spacing(10)
-        .align_y(Alignment::Center)
-        .push(button::transparent(Some(icon::previous_icon()), "").on_press(Msg::XpubDeviceBack))
-        .push(text::h3(&modal_state.key_alias))
-        .push(Space::with_width(Length::Fill))
-        .push(
-            button::transparent(Some(icon::cross_icon().size(32)), "")
-                .on_press(Msg::XpubCancelModal),
-        );
+    let header = modal::header(
+        Some(modal_state.key_alias.clone()),
+        Some(|| Msg::XpubDeviceBack),
+        Some(|| Msg::XpubCancelModal),
+    );
 
     // Account selection picker
     let accounts: Vec<_> = (0..10)
@@ -280,72 +283,78 @@ fn hw_section(state: &State) -> Element<'_, Msg> {
 /// Extracted device data for rendering (avoids lifetime issues with local BTreeMap)
 struct DeviceRenderData {
     kind: async_hwi::DeviceKind,
+    version: Option<async_hwi::Version>,
     fingerprint: Option<miniscript::bitcoin::bip32::Fingerprint>,
     state: DeviceState,
 }
 
 enum DeviceState {
     Supported,
-    Locked {
-        pairing_code: Option<String>,
-    },
-    Unsupported {
-        version: Option<async_hwi::Version>,
-        reason: UnsupportedReason,
-    },
+    Locked { pairing_code: Option<String> },
+    Unsupported { reason: UnsupportedReason },
 }
 
 /// Render a device card based on its state (Supported, Locked, or Unsupported)
 /// Clicking a supported device opens the Details step
 fn device_card(data: DeviceRenderData) -> Element<'static, Msg> {
-    let kind = data.kind;
+    let kind_name = capitalize_first(&data.kind.to_string());
+    let name = match &data.version {
+        Some(v) => format!("{kind_name} {v}"),
+        None => kind_name,
+    };
 
     match data.state {
         DeviceState::Supported => {
             let fp = data.fingerprint.expect("supported device has fingerprint");
-
-            // Build the device card content using liana-ui hw component
-            let card_content = hw::supported_hardware_wallet(kind, None::<&str>, fp, None::<&str>);
-
-            // Wrap in a button - clicking opens Details step
-            Button::new(card_content)
-                .style(theme::button::secondary)
-                .width(Length::Fill)
-                .on_press(Msg::XpubSelectDevice(fp))
-                .into()
+            modal::key_entry(
+                Some(icon::usb_drive_icon()),
+                name,
+                Some(format!("#{fp}")),
+                None,
+                None,
+                None,
+                Some(move || Msg::XpubSelectDevice(fp)),
+            )
         }
         DeviceState::Locked { pairing_code } => {
-            // Locked device - show as locked, not clickable
-            let card_content = hw::locked_hardware_wallet(kind, pairing_code);
-
-            Button::new(card_content)
-                .style(theme::button::secondary)
-                .width(Length::Fill)
-                .into()
+            let message = match pairing_code {
+                Some(code) => format!("Locked, check code: {code}"),
+                None => "Please unlock the device".to_string(),
+            };
+            modal::key_entry(
+                Some(icon::usb_drive_icon()),
+                name,
+                None,
+                None,
+                None,
+                Some(message),
+                None::<fn() -> Msg>,
+            )
         }
-        DeviceState::Unsupported { version, reason } => {
-            // Unsupported device - show appropriate message based on reason
-            let card_content: Container<'_, Msg> = match &reason {
+        DeviceState::Unsupported { reason } => {
+            let message = match &reason {
                 UnsupportedReason::NotPartOfWallet(fg) => {
-                    hw::unrelated_hardware_wallet(kind, version.as_ref(), fg)
+                    format!("Not part of this wallet (#{fg})")
                 }
-                UnsupportedReason::WrongNetwork => {
-                    hw::wrong_network_hardware_wallet(kind, version.as_ref())
-                }
+                UnsupportedReason::WrongNetwork => "Wrong network in device settings".to_string(),
                 UnsupportedReason::Version {
                     minimal_supported_version,
-                } => hw::unsupported_version_hardware_wallet(
-                    kind,
-                    version.as_ref(),
-                    minimal_supported_version,
-                ),
-                _ => hw::unsupported_hardware_wallet(kind, version.as_ref()),
+                } => {
+                    format!("Unsupported firmware, upgrade to > {minimal_supported_version}")
+                }
+                UnsupportedReason::Method(m) => format!("Unsupported method: {m}"),
+                UnsupportedReason::AppIsNotOpen => "Please open the app on device".to_string(),
             };
-
-            Button::new(card_content)
-                .style(theme::button::secondary)
-                .width(Length::Fill)
-                .into()
+            let fp_str = data.fingerprint.map(|fp| format!("#{fp}"));
+            modal::key_entry(
+                Some(icon::usb_drive_icon()),
+                name,
+                fp_str,
+                None,
+                None,
+                Some(message),
+                None::<fn() -> Msg>,
+            )
         }
     }
 }
@@ -371,71 +380,99 @@ fn extract_device_data(device: &SigningDevice<Msg>) -> DeviceRenderData {
         }
     }
 
-    let state = match device {
+    let (version, state) = match device {
         SigningDevice::Supported(hw) => {
+            let version = hw.version().cloned();
             if is_compatible_with_tapminiscript(hw.kind(), hw.version()) {
-                DeviceState::Supported
+                (version, DeviceState::Supported)
             } else {
                 let minimal_supported_version = min_taproot_version(hw.kind())
                     .map(|v| v.to_string())
                     .unwrap_or_default();
-                DeviceState::Unsupported {
-                    version: hw.version().cloned(),
-                    reason: UnsupportedReason::Version {
-                        minimal_supported_version,
+                (
+                    version,
+                    DeviceState::Unsupported {
+                        reason: UnsupportedReason::Version {
+                            minimal_supported_version,
+                        },
                     },
-                }
+                )
             }
         }
-        SigningDevice::Locked { pairing_code, .. } => DeviceState::Locked {
-            pairing_code: pairing_code.clone(),
-        },
+        SigningDevice::Locked { pairing_code, .. } => (
+            None,
+            DeviceState::Locked {
+                pairing_code: pairing_code.clone(),
+            },
+        ),
         SigningDevice::Unsupported {
             version, reason, ..
-        } => DeviceState::Unsupported {
-            version: version.clone(),
-            reason: translate_reason(reason),
-        },
+        } => (
+            version.clone(),
+            DeviceState::Unsupported {
+                reason: translate_reason(reason),
+            },
+        ),
     };
 
     DeviceRenderData {
         kind: *kind,
+        version,
         fingerprint,
         state,
     }
 }
 
 /// Render the "Other options" collapsible section
-fn other_options(modal_state: &XpubEntryModalState) -> Element<'_, Msg> {
-    // Collapsible header button
-    let header_text = if modal_state.options_collapsed {
-        "Other options ▼"
-    } else {
-        "Other options ▲"
-    };
-    let header_btn = button::transparent(None, header_text).on_press(Msg::XpubToggleOptions);
+fn other_options(modal_state: &XpubEntryModalState, is_wallet_manager: bool) -> Element<'_, Msg> {
+    let collapsed = modal_state.options_collapsed;
 
-    let expanded_content = (!modal_state.options_collapsed).then(|| {
-        let file_button =
-            button::secondary(Some(icon::import_icon()), "Import extended public key file")
-                .on_press(Msg::XpubLoadFromFile)
-                .width(Length::Fill);
+    let section_header = modal::optional_section(
+        collapsed,
+        "Other options".to_string(),
+        || Msg::XpubToggleOptions,
+        || Msg::XpubToggleOptions,
+    );
 
-        let paste_button =
-            button::secondary(Some(icon::clipboard_icon()), "Paste extended public key")
-                .on_press(Msg::XpubPaste)
-                .width(Length::Fill);
+    let expanded_content = (!collapsed).then(|| {
+        let file_button: Element<'_, Msg> = modal::button_entry(
+            Some(icon::import_icon()),
+            "Import extended public key file",
+            None,
+            None,
+            Some(|| Msg::XpubLoadFromFile),
+        );
+
+        let paste_input = is_wallet_manager.then(|| {
+            let form_xpub = form::Value {
+                value: modal_state.xpub_input.clone(),
+                warning: None,
+                valid: true,
+            };
+            let input: Element<'_, Msg> = modal::collapsible_input_button(
+                modal_state.paste_expanded,
+                Some(icon::paste_icon()),
+                "Paste an extended public key".to_string(),
+                "xpub...".to_string(),
+                &form_xpub,
+                Some(Msg::XpubUpdateInput),
+                Some(|| Msg::XpubPaste),
+                || Msg::XpubSelectPaste,
+            );
+            input
+        });
 
         Column::new()
-            .spacing(10)
+            .spacing(modal::V_SPACING)
             .push(file_button)
-            .push(paste_button)
+            .push_maybe(paste_input)
     });
 
     Column::new()
-        .spacing(10)
-        .push(header_btn)
+        .spacing(modal::V_SPACING)
+        .push(section_header)
         .push_maybe(expanded_content)
+        .width(modal::BTN_W)
         .into()
 }
 

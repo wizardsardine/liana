@@ -104,6 +104,7 @@ impl State {
             Msg::XpubRetry => return self.on_xpub_retry(),
             Msg::XpubLoadFromFile => return self.on_xpub_load_from_file(),
             Msg::XpubFileLoaded(result) => self.on_xpub_file_loaded(result),
+            Msg::XpubSelectPaste => self.on_xpub_select_paste(),
             Msg::XpubPaste => return self.on_xpub_paste(),
             Msg::XpubPasted(xpub) => self.on_xpub_pasted(xpub),
             Msg::XpubUpdateAccount(account) => return self.on_xpub_update_account(account),
@@ -1956,6 +1957,16 @@ impl State {
     fn on_xpub_toggle_options(&mut self) {
         if let Some(modal) = self.views.xpub.modal_mut() {
             modal.options_collapsed = !modal.options_collapsed;
+        }
+    }
+
+    fn on_xpub_select_paste(&mut self) {
+        if let Some(modal) = self.views.xpub.modal_mut() {
+            modal.paste_expanded = !modal.paste_expanded;
+            if modal.paste_expanded {
+                modal.xpub_input.clear();
+                modal.input_source = None;
+            }
         }
     }
 

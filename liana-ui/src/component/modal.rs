@@ -108,16 +108,14 @@ where
         form::Form::new_disabled(&input_placeholder, input_value)
     }
     .padding(10);
-    let paste =
-        paste_message.map(|m| Button::new(icon::paste_icon().color(color::BLACK)).on_press(m()));
-
-    let icon = icon.map(|i| i.color(color::WHITE));
+    let paste = paste_message.map(|m| Button::new(icon::paste_icon()).on_press(m()));
 
     if collapsed {
+        let icon = icon.map(|i| i.style(theme::text::primary));
         let line = Row::new().push(form).push_maybe(paste).spacing(V_SPACING);
         let col = Column::new()
             .push(row![
-                text::p1_regular(label).color(color::WHITE),
+                text::p1_regular(label).style(theme::text::primary),
                 Space::with_width(Length::Fill)
             ])
             .push(line);
