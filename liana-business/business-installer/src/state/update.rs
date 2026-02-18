@@ -2291,9 +2291,10 @@ impl State {
             self.backend.device_registered(wallet_id, infos);
         }
 
-        // Clear the device list
-        self.views.registration.user_devices.clear();
-
-        Task::none()
+        // Stop HW listening and transition directly to loading
+        self.stop_hw();
+        self.current_view = View::Loading;
+        self.app.exit = true;
+        Task::done(Msg::Update)
     }
 }
