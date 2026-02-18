@@ -12,8 +12,12 @@ pub enum MeldMessage {
     NavigateBack,
     SessionError(String, &'static str),
     // Meld API messages
-    SetLimits(meld::api::CurrencyLimit),
+    SetLimits(meld::api::CurrencyLimit, Vec<meld::api::MeldRegion>),
     CountryNotSupported,
+    // Region selection
+    SetRegionFilter(String),
+    SelectRegion(usize),
+    ConfirmRegion,
     // Input form
     SetAmount(String),
     SetMaxAmount,
@@ -44,6 +48,10 @@ pub enum MeldFlowStep {
     NotSupported {
         msg: std::borrow::Cow<'static, str>,
     },
+    RegionSelection {
+        selected: Option<usize>,
+        filter: String,
+    },
     InputForm {
         amount: String,
         limits: meld::api::CurrencyLimit,
@@ -67,6 +75,9 @@ pub struct MeldState {
     pub buy_or_sell: BuyOrSell,
     pub country: &'static Country,
     pub network: bitcoin::Network,
+    pub regions: Vec<meld::api::MeldRegion>,
+    pub selected_region: Option<usize>,
+    pub limits: Option<meld::api::CurrencyLimit>,
 
     // sse data
     pub sse_retries: usize,
@@ -90,6 +101,9 @@ impl MeldState {
             webview_manager: iced_wry::IcedWebviewManager::new(),
             steps: vec![MeldFlowStep::RegionChecks],
             network,
+            regions: Vec::new(),
+            selected_region: None,
+            limits: None,
             toast: None,
         };
 
@@ -98,8 +112,13 @@ impl MeldState {
                 let meld_client = meld::MeldClient(&client);
                 let countries = meld_client.get_supported_countries().await?;
 
-                if !countries.iter().any(|c| c.country_code == country.code) {
-                    return Err(CoincubeError::Api("COUNTRY_NOT_SUPPORTED".to_string()));
+                let matching_country = countries
+                    .into_iter()
+                    .find(|c| c.country_code == country.code);
+
+                let regions = match &matching_country {
+                    Some(c) => c.regions.clone().unwrap_or_default(),
+                    None => return Err(CoincubeError::Api("COUNTRY_NOT_SUPPORTED".to_string())),
                 };
 
                 // fetch limits
@@ -116,12 +135,12 @@ impl MeldState {
                     }
                 }?;
 
-                Ok(limits.first().cloned())
+                Ok(limits.first().cloned().map(|l| (l, regions)))
             },
             |res| match res {
-                Ok(Some(l)) => {
-                    view::Message::BuySell(view::BuySellMessage::Meld(MeldMessage::SetLimits(l)))
-                }
+                Ok(Some((l, regions))) => view::Message::BuySell(view::BuySellMessage::Meld(
+                    MeldMessage::SetLimits(l, regions),
+                )),
                 Ok(None) => view::Message::BuySell(view::BuySellMessage::Meld(
                     MeldMessage::CountryNotSupported,
                 )),
@@ -142,10 +161,36 @@ impl MeldState {
         (state, task)
     }
 
+    fn selected_state_code(&self) -> Option<String> {
+        self.selected_region
+            .and_then(|idx| self.regions.get(idx).map(|r| r.region_code.clone()))
+    }
+
+    fn push_input_form(&mut self, cache: &Cache) {
+        let limits = self
+            .limits
+            .clone()
+            .expect("limits must be set before input form");
+        self.steps.push(MeldFlowStep::InputForm {
+            amount: limits.minimum_amount.to_string(),
+            limits,
+            btc_balance: cache
+                .coins()
+                .iter()
+                .filter(|c| c.block_height.is_some() && c.is_from_self)
+                .map(|c| c.amount)
+                .sum(),
+            sending_request: false,
+        });
+    }
+
     pub(crate) fn view<'a>(&'a self) -> coincube_ui::widget::Element<'a, view::Message> {
         match &self.steps.last() {
             None | Some(MeldFlowStep::RegionChecks) => ui::region_checks_ux(),
             Some(MeldFlowStep::NotSupported { msg }) => ui::not_supported_ux(msg.as_ref()),
+            Some(MeldFlowStep::RegionSelection { selected, filter }) => {
+                ui::region_selection_ux(&self.regions, *selected, filter)
+            }
             Some(MeldFlowStep::InputForm {
                 amount,
                 limits,
@@ -181,6 +226,9 @@ impl MeldState {
     ) -> Option<iced::Task<view::Message>> {
         match msg {
             MeldMessage::NavigateBack => {
+                if let Some(MeldFlowStep::ActiveSession { active, .. }) = self.steps.last() {
+                    self.webview_manager.clear_view(active);
+                }
                 self.steps.pop();
             }
             MeldMessage::SessionError(mut err, description) => {
@@ -230,18 +278,52 @@ impl MeldState {
                 )
                 .into(),
             }),
-            MeldMessage::SetLimits(l) => {
-                self.steps.push(MeldFlowStep::InputForm {
-                    amount: l.minimum_amount.to_string(),
-                    limits: l,
-                    btc_balance: cache
-                        .coins()
-                        .iter()
-                        .filter(|c| c.block_height.is_some() && c.is_from_self)
-                        .map(|c| c.amount)
-                        .sum(),
-                    sending_request: false,
-                });
+            MeldMessage::SetLimits(l, regions) => {
+                self.regions = regions;
+                self.limits = Some(l);
+
+                if matches!(self.steps.last(), Some(MeldFlowStep::RegionChecks)) {
+                    self.steps.pop();
+                }
+
+                if !self.regions.is_empty() {
+                    self.steps.push(MeldFlowStep::RegionSelection {
+                        selected: None,
+                        filter: String::new(),
+                    });
+                } else {
+                    self.push_input_form(cache);
+                }
+            }
+            // Region Selection
+            MeldMessage::SetRegionFilter(f) => {
+                if let Some(MeldFlowStep::RegionSelection {
+                    filter, selected, ..
+                }) = self.steps.last_mut()
+                {
+                    *filter = f;
+                    *selected = None;
+                }
+            }
+            MeldMessage::SelectRegion(idx) => {
+                if let Some(MeldFlowStep::RegionSelection { selected, .. }) = self.steps.last_mut()
+                {
+                    if *selected == Some(idx) {
+                        *selected = None
+                    } else {
+                        *selected = Some(idx)
+                    }
+                }
+            }
+            MeldMessage::ConfirmRegion => {
+                if let Some(&MeldFlowStep::RegionSelection {
+                    selected: Some(idx),
+                    ..
+                }) = self.steps.last()
+                {
+                    self.selected_region = Some(idx);
+                    self.push_input_form(cache);
+                }
             }
             // input form
             MeldMessage::SetAmount(a) => {
@@ -269,15 +351,15 @@ impl MeldState {
                     let buy_or_sell = self.buy_or_sell.clone();
                     let country = self.country;
                     let client = client.clone();
+                    let state_code = self.selected_state_code();
 
                     let task = iced::Task::perform(
                         async move {
-                            // TODO: include us state-code input (if in the US)
                             let req = match buy_or_sell.clone() {
                                 BuyOrSell::Sell => meld::api::GetQuotesRequest {
                                     session_type: meld::api::SessionType::Sell,
                                     country_code: country.code,
-                                    state_code: None,
+                                    state_code: state_code.as_deref(),
                                     destination_currency: country.currency.code,
                                     source_currency: "BTC",
                                     source_amount,
@@ -286,7 +368,7 @@ impl MeldState {
                                 BuyOrSell::Buy { address } => meld::api::GetQuotesRequest {
                                     session_type: meld::api::SessionType::Buy,
                                     country_code: country.code,
-                                    state_code: None,
+                                    state_code: state_code.as_deref(),
                                     destination_currency: "BTC",
                                     source_currency: country.currency.code,
                                     source_amount,
@@ -383,11 +465,10 @@ impl MeldState {
                     ..
                 }) = self.steps.last_mut()
                 {
-                    if let Some(quote) = quotes.get(selected) {
+                    if let Some(quote) = quotes.get(selected).cloned() {
                         *webview_pending = true;
-
                         return Some(iced::Task::done(view::Message::BuySell(
-                            view::BuySellMessage::Meld(MeldMessage::CreateSession(quote.clone())),
+                            view::BuySellMessage::Meld(MeldMessage::CreateSession(quote)),
                         )));
                     }
                 }
@@ -397,6 +478,8 @@ impl MeldState {
                     "[MELD] Starting session for provider: {:?}",
                     pick.service_provider
                 );
+
+                let state_code = self.selected_state_code();
 
                 // setup request
                 let coincube_client = client.clone();
@@ -415,7 +498,7 @@ impl MeldState {
                             source_currency: &pick.source_currency_code,
                             destination_currency: &pick.destination_currency_code,
                             country_code: country.code,
-                            state_code: None,
+                            state_code: state_code.as_deref(),
                             wallet_address: match buy_or_sell {
                                 BuyOrSell::Sell => None,
                                 BuyOrSell::Buy { address } => Some(address.address.to_string()),
@@ -576,5 +659,12 @@ impl MeldState {
         };
 
         None
+    }
+
+    /// Clears the active webview if one exists.
+    pub fn clear_active_webview(&mut self) {
+        if let Some(MeldFlowStep::ActiveSession { active, .. }) = self.steps.last() {
+            self.webview_manager.clear_view(active);
+        }
     }
 }

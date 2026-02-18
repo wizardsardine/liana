@@ -129,16 +129,14 @@ pub(crate) fn input_form_ux<'a>(
         )
         .align_x(iced::Alignment::Start)
         .width(iced::Length::Fill)
-        .style(|th: &theme::Theme, _| widget::text_input::Style {
-            background: iced::Color::BLACK.into(),
-            border: iced::Border::default()
+        .style(|th: &theme::Theme, st| {
+            let mut base = theme::text_input::primary(th, st);
+            base.background = iced::Color::BLACK.into();
+            base.border = iced::Border::default()
                 .width(2)
                 .rounded(0)
-                .color(color::GREY_4),
-            icon: th.colors.text_inputs.primary.active.icon,
-            placeholder: th.colors.text_inputs.primary.active.placeholder,
-            value: th.colors.text_inputs.primary.active.value,
-            selection: th.colors.text_inputs.primary.active.selection,
+                .color(color::GREY_4);
+            base
         })
         .font(iced::font::Font::MONOSPACE);
 
@@ -228,7 +226,7 @@ pub(crate) fn quote_selection_ux<'a>(
 ) -> coincube_ui::widget::Element<'a, view::Message> {
     // simple card UI displaying quote details
     let quote_display = |quote: &Quote, selected: bool, idx: usize| {
-        let _card = widget::container(
+        let card = widget::container(
             widget::row![
                 widget::Space::new().width(30),
                 // transactions display
@@ -311,7 +309,7 @@ pub(crate) fn quote_selection_ux<'a>(
         })
         .height(150);
 
-        widget::button(_card)
+        widget::button(card)
             .on_press(view::buysell::meld::MeldMessage::SelectQuote(idx))
             .style(theme::button::transparent)
     };
@@ -370,6 +368,133 @@ pub(crate) fn quote_selection_ux<'a>(
     elem.map(|m| view::Message::BuySell(view::BuySellMessage::Meld(m)))
 }
 
+pub(crate) fn region_selection_ux<'a>(
+    regions: &'a [MeldRegion],
+    selected: Option<usize>,
+    filter: &'a str,
+) -> coincube_ui::widget::Element<'a, view::Message> {
+    let region_card = |region: &MeldRegion, is_selected: bool, idx: usize| {
+        let card = widget::container(
+            widget::row![
+                widget::Space::new().width(30),
+                widget::column![
+                    text::h3_bold(&region.name),
+                    text::caption(&region.region_code).color(color::GREY_3),
+                ]
+                .align_x(iced::Alignment::Start),
+                widget::Space::new().width(iced::Length::Fill),
+                is_selected.then(|| icon::check_icon().size(20).color(color::ORANGE)),
+                widget::Space::new().width(20),
+            ]
+            .align_y(iced::Alignment::Center),
+        )
+        .align_x(iced::Alignment::Center)
+        .align_y(iced::Alignment::Center)
+        .width(iced::Length::Fill)
+        .style(move |_| {
+            iced::widget::container::Style::default()
+                .background(iced::Color::BLACK)
+                .color(iced::Color::WHITE)
+                .border(match is_selected {
+                    false => iced::Border::default()
+                        .color(color::GREY_5)
+                        .width(1)
+                        .rounded(5),
+                    true => iced::Border::default()
+                        .color(color::ORANGE)
+                        .width(3)
+                        .rounded(5),
+                })
+        })
+        .padding([15, 0]);
+
+        widget::button(card)
+            .on_press(view::buysell::meld::MeldMessage::SelectRegion(idx))
+            .style(theme::button::transparent)
+    };
+
+    let filter_lower = filter.to_lowercase();
+    let filtered_regions: Vec<(usize, &MeldRegion)> = regions
+        .iter()
+        .enumerate()
+        .filter(|(_, r)| {
+            filter.is_empty()
+                || r.name.to_lowercase().contains(&filter_lower)
+                || r.region_code.to_lowercase().contains(&filter_lower)
+        })
+        .collect();
+
+    let search_input = widget::text_input("Search regions...", filter)
+        .on_input(view::buysell::meld::MeldMessage::SetRegionFilter)
+        .size(14)
+        .padding([8, 12])
+        .width(iced::Length::Fill)
+        .style(|th: &theme::Theme, st| {
+            let mut base = theme::text_input::primary(th, st);
+            base.background = iced::Color::BLACK.into();
+            base.border = iced::Border::default()
+                .width(1)
+                .rounded(5)
+                .color(color::GREY_4);
+            base
+        })
+        .font(iced::font::Font::MONOSPACE);
+
+    let region_list = if filtered_regions.is_empty() {
+        widget::column![
+            widget::Space::new().height(20),
+            text::p2_medium("No regions match your search").color(color::GREY_3),
+            widget::Space::new().height(20),
+        ]
+        .align_x(iced::Alignment::Center)
+        .width(iced::Length::Fill)
+    } else {
+        widget::Column::from_iter(
+            filtered_regions
+                .iter()
+                .map(|(idx, region)| region_card(region, Some(*idx) == selected, *idx).into()),
+        )
+    };
+
+    let column = widget::column![
+        widget::row![
+            text::h4_bold("Select your region"),
+            widget::Space::new().width(iced::Length::Fill),
+            button::secondary_compact(Some(icon::arrow_back()), "Go Back")
+                .on_press(view::buysell::meld::MeldMessage::NavigateBack)
+                .style(|th, st| {
+                    let mut base = theme::button::secondary(th, st);
+                    base.border = iced::Border::default().rounded(0);
+                    base
+                })
+        ]
+        .align_y(iced::Alignment::Center),
+        widget::Space::new().height(5),
+        search_input,
+        widget::Space::new().height(5),
+        widget::scrollable(region_list).height(300).anchor_top(),
+        widget::Space::new().height(10),
+        iced::widget::container(widget::Space::new().height(2))
+            .style(|_| iced::widget::container::background(iced::Background::Color(color::GREY_3)))
+            .width(Length::Fill),
+        widget::Space::new().height(10),
+        selected.map(|_| {
+            button::primary(Some(icon::globe_icon()), "Continue")
+                .on_press(view::buysell::meld::MeldMessage::ConfirmRegion)
+                .style(|th, st| {
+                    let mut base = theme::button::primary(th, st);
+                    base.border = iced::Border::default().rounded(3);
+                    base
+                })
+        }),
+    ]
+    .width(700)
+    .spacing(5);
+
+    let elem: iced::Element<view::buysell::meld::MeldMessage, theme::Theme> = column.into();
+    elem.map(|m| view::Message::BuySell(view::BuySellMessage::Meld(m)))
+}
+
 pub(super) fn webview_ux<'a>(
     active: &'a iced_wry::IcedWebview,
     wallet_address: Option<String>,
@@ -377,35 +502,47 @@ pub(super) fn webview_ux<'a>(
     let col = iced::widget::column![
         active.view(Length::Fixed(640.0), Length::Fixed(640.0)),
         wallet_address.map(|addr| {
-            widget::container(
-                widget::row![
-                    widget::text_input("", &addr)
-                        .size(12)
-                        .padding([6, 10])
-                        .width(Length::Fill)
-                        .style(|_, _| widget::text_input::Style {
-                            background: color::BLACK.into(),
-                            border: iced::Border::default()
-                                .width(1)
-                                .rounded(0)
-                                .color(color::GREY_5),
-                            icon: color::WHITE,
-                            placeholder: color::GREY_3,
-                            value: color::WHITE,
-                            selection: color::ORANGE,
-                        })
-                        .font(iced::font::Font::MONOSPACE),
-                    widget::Button::new(icon::clipboard_icon().style(theme::text::secondary),)
-                        .on_press(view::BuySellMessage::Meld(super::MeldMessage::CopyAddress(
-                            addr,
-                        )))
-                        .style(theme::button::transparent_border)
-                        .padding([6, 10]),
-                ]
-                .spacing(4)
-                .align_y(Alignment::Center),
-            )
-            .width(Length::Fixed(640.0))
+            widget::column![
+                widget::container(
+                    widget::row![
+                        widget::text_input("", &addr)
+                            .size(12)
+                            .padding([6, 10])
+                            .width(Length::Fill)
+                            .style(|_, _| widget::text_input::Style {
+                                background: color::BLACK.into(),
+                                border: iced::Border::default()
+                                    .width(1)
+                                    .rounded(0)
+                                    .color(color::GREY_5),
+                                icon: color::WHITE,
+                                placeholder: color::GREY_3,
+                                value: color::WHITE,
+                                selection: color::ORANGE,
+                            })
+                            .font(iced::font::Font::MONOSPACE),
+                        widget::Button::new(icon::clipboard_icon().style(theme::text::secondary),)
+                            .on_press(view::BuySellMessage::Meld(super::MeldMessage::CopyAddress(
+                                addr,
+                            )))
+                            .style(theme::button::transparent_border)
+                            .padding([6, 10]),
+                    ]
+                    .spacing(4)
+                    .align_y(Alignment::Center),
+                )
+                .width(Length::Fixed(640.0)),
+                if cfg!(target_os = "macos") {
+                    widget::container(
+                        text::caption("Keyboard shortcuts are not supported in the webview. Right-click the input field to paste.")
+                            .color(color::GREY_3)
+                    )
+                    .width(Length::Fixed(640.0))
+                    .padding([4, 0])
+                } else {
+                    widget::container(widget::Space::new())
+                },
+            ]
         }),
     ];
 
