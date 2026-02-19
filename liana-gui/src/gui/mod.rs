@@ -514,6 +514,13 @@ where
                 let mut need_cached = HashMap::<(pane_grid::Pane, usize), FiatPrice>::new();
                 for (&pane_id, pane) in self.panes.iter() {
                     for tab in pane.tabs.iter() {
+                        // Skip remote backend wallets — they fetch fiat via App::on_tick.
+                        if tab
+                            .wallet()
+                            .is_some_and(|w| w.remote_backend_auth.is_some())
+                        {
+                            continue;
+                        }
                         if let Some(sett) = tab
                             .wallet()
                             .and_then(|w| w.fiat_price_setting.as_ref())

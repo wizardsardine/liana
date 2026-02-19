@@ -173,6 +173,12 @@ pub trait Daemon: Debug {
         Ok(())
     }
 
+    /// Returns fiat exchange rates from the backend.
+    /// Keys are currency pair strings like "BTCEUR", values are the rates.
+    async fn get_fiat_rates(&self) -> Result<HashMap<String, f64>, DaemonError> {
+        Err(DaemonError::NotImplemented)
+    }
+
     // List spend transactions, optionally filtered to the specified `txids`.
     // Set `txids` to `None` for no filter (passing an empty slice returns no transactions).
     async fn list_spend_transactions(
