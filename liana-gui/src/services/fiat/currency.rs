@@ -24,6 +24,7 @@ macro_rules! currency_enum {
                 }
             }
         }
+
     };
 }
 

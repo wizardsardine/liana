@@ -1,6 +1,6 @@
 //! View functions for business settings UI.
 
-use iced::widget::{scrollable, Column, Container, Row, Space};
+use iced::widget::{pick_list, scrollable, Column, Container, Row, Space, Toggler};
 use iced::{Alignment, Length};
 use liana_ui::{
     component::{badge, button, card, separation, text::*},
@@ -21,6 +21,12 @@ pub fn list_view() -> Element<'static, Msg> {
         Msg::SelectSection(Section::Wallet),
     );
 
+    let general = menu_entry(
+        "General",
+        icon::wrench_icon(),
+        Msg::SelectSection(Section::General),
+    );
+
     let about = menu_entry(
         "About",
         icon::tooltip_icon(),
@@ -31,6 +37,7 @@ pub fn list_view() -> Element<'static, Msg> {
         .spacing(20)
         .width(Length::Fill)
         .push(header)
+        .push(general)
         .push(wallet)
         .push(about)
         .into()
@@ -71,6 +78,52 @@ pub fn wallet_view(state: &BusinessSettingsUI) -> Element<'_, Msg> {
         .spacing(20)
         .push(header)
         .push(descriptor_card)
+        .width(Length::Fill)
+        .into()
+}
+
+/// General settings section view with fiat price configuration.
+pub fn general_view(fiat_enabled: bool, currency: crate::BackendCurrency) -> Element<'static, Msg> {
+    let header = section_header("General");
+
+    let fiat_card = card::simple(
+        Column::new()
+            .spacing(20)
+            .push(
+                Row::new()
+                    .spacing(10)
+                    .align_y(Alignment::Center)
+                    .push(text("Fiat price:").bold())
+                    .push(Space::with_width(Length::Fill))
+                    .push(
+                        Toggler::new(fiat_enabled)
+                            .on_toggle(Msg::FiatEnable)
+                            .style(theme::toggler::primary),
+                    ),
+            )
+            .push_maybe(fiat_enabled.then_some(
+                Row::new()
+                    .spacing(20)
+                    .align_y(Alignment::Center)
+                    .push(text("Currency:").bold())
+                    .push(Space::with_width(Length::Fill))
+                    .push(
+                        pick_list(
+                            crate::ALL_BACKEND_CURRENCIES,
+                            Some(currency),
+                            Msg::FiatCurrencyEdited,
+                        )
+                        .style(theme::pick_list::primary)
+                        .padding(10),
+                    ),
+            )),
+    )
+    .width(Length::Fill);
+
+    Column::new()
+        .spacing(20)
+        .push(header)
+        .push(fiat_card)
         .width(Length::Fill)
         .into()
 }

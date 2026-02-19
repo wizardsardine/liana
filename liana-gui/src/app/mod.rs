@@ -400,13 +400,88 @@ impl<S: SettingsTrait> App<S> {
                 Message::UpdateDaemonCache,
             ));
         }
+
+        // Fiat price fetching from backend (for remote backend wallets).
+        let is_remote = self.daemon.backend().is_remote();
+        let has_fiat_setting = self.wallet.fiat_price_setting.as_ref().is_some_and(|s| s.is_enabled);
+        tracing::trace!(
+            "Fiat check: is_remote={}, has_fiat_setting={}",
+            is_remote,
+            has_fiat_setting
+        );
+        if is_remote {
+            if let Some(sett) = self
+                .wallet
+                .fiat_price_setting
+                .as_ref()
+                .filter(|s| s.is_enabled)
+            {
+                let currency = sett.currency;
+                let is_stale = !self.cache.fiat_price.as_ref().is_some_and(|p| {
+                    p.currency() == currency
+                        && p.requested_at().elapsed() <= Duration::from_secs(300)
+                });
+                tracing::trace!(
+                    "Fiat: enabled={}, currency={}, is_stale={}",
+                    sett.is_enabled,
+                    currency,
+                    is_stale
+                );
+                if is_stale {
+                    tracing::trace!("Fiat: fetching rates from backend");
+                    let daemon = self.daemon.clone();
+                    let source = sett.source;
+                    tasks.push(Task::perform(
+                        async move {
+                            use crate::services::fiat::api::{GetPriceResult, PriceApiError};
+                            let request = cache::FiatPriceRequest::new(source, currency);
+                            match daemon.get_fiat_rates().await {
+                                Ok(rates) => {
+                                    tracing::trace!("Fiat: got rates from backend: {:?}", rates);
+                                    let key = format!("BTC{}", currency);
+                                    let res = rates
+                                        .get(&key)
+                                        .copied()
+                                        .ok_or_else(|| {
+                                            PriceApiError::CannotParseData(format!(
+                                                "No rate for {}",
+                                                key
+                                            ))
+                                        })
+                                        .map(|value| GetPriceResult {
+                                            value,
+                                            updated_at: None,
+                                        });
+                                    cache::FiatPrice { res, request }
+                                }
+                                Err(e) => {
+                                    tracing::trace!("Fiat: backend error: {}", e);
+                                    cache::FiatPrice {
+                                        res: Err(PriceApiError::RequestFailed(e.to_string())),
+                                        request,
+                                    }
+                                }
+                            }
+                        },
+                        |fiat_price| Message::Fiat(FiatMessage::GetPriceResult(fiat_price)),
+                    ));
+                }
+            }
+        }
+
         Task::batch(tasks)
     }
 
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::Fiat(FiatMessage::GetPriceResult(fiat_price)) => {
-                if self.wallet.fiat_price_is_relevant(&fiat_price)
+                let relevant = self.wallet.fiat_price_is_relevant(&fiat_price);
+                tracing::trace!(
+                    "Fiat: GetPriceResult received, relevant={}, res={:?}",
+                    relevant,
+                    fiat_price.res.as_ref().map(|r| r.value)
+                );
+                if relevant
                     // make sure we only update if the price is newer than the cached one
                     && !self.cache.fiat_price.as_ref().is_some_and(|cached| {
                         cached.source() == fiat_price.source()
@@ -414,6 +489,7 @@ impl<S: SettingsTrait> App<S> {
                             && cached.requested_at() >= fiat_price.requested_at()
                     })
                 {
+                    tracing::trace!("Fiat: caching price");
                     self.cache.fiat_price = Some(fiat_price);
                     Task::perform(async {}, |_| Message::CacheUpdated)
                 } else {
