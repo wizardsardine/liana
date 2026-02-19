@@ -1091,6 +1091,11 @@ impl Daemon for BackendWalletClient {
             .await
     }
 
+    async fn get_fiat_rates(&self) -> Result<HashMap<String, f64>, DaemonError> {
+        let res: api::NetworkInfo = self.inner.request(Method::GET, "/v1/network", |r| r).await?;
+        Ok(res.rates.into_iter().map(|(k, v)| (k, v as f64)).collect())
+    }
+
     async fn get_labels_bip329(&self, offset: u32, limit: u32) -> Result<Labels, DaemonError> {
         let res: api::Labels = self
             .inner
