@@ -5,6 +5,7 @@ use std::iter::FromIterator;
 use async_trait::async_trait;
 use lianad::bip329::Labels;
 use lianad::commands::{GetLabelsBip329Result, UpdateDerivIndexesResult};
+use lianad::payjoin::types::PayjoinStatus;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -105,6 +106,18 @@ impl<C: Client + Send + Sync + Debug> Daemon for Lianad<C> {
                 json!(start_index), // a `null` argument is parsed as `None` by the command
             ]),
         )
+    }
+
+    async fn receive_payjoin(&self) -> Result<GetAddressResult, DaemonError> {
+        self.call("receivepayjoin", Option::<Request>::None)
+    }
+
+    async fn get_payjoin_info(&self, txid: &Txid) -> Result<PayjoinStatus, DaemonError> {
+        self.call("getpayjoininfo", Some(vec![txid.to_string()]))
+    }
+
+    async fn get_active_payjoin_sessions(&self) -> Result<Vec<u32>, DaemonError> {
+        self.call("getactivepayjoinsessions", Option::<Request>::None)
     }
 
     async fn update_deriv_indexes(

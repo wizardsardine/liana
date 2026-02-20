@@ -37,8 +37,10 @@ use super::message::Message;
 fn address_card<'a>(
     row_index: usize,
     address: &'a bitcoin::Address,
+    maybe_bip21: Option<String>,
     labels: &'a HashMap<String, String>,
     labels_editing: &'a HashMap<String, form::Value<String>>,
+    is_payjoin: bool,
 ) -> Container<'a, Message> {
     let addr = address.to_string();
     card::simple(
@@ -55,7 +57,27 @@ fn address_card<'a>(
                             scrollable(
                                 Column::new()
                                     .push(Space::with_height(Length::Fixed(10.0)))
-                                    .push(p2_regular(address).small().style(theme::text::secondary))
+                                    .push(
+                                        Row::new()
+                                            .spacing(5)
+                                            .push(if is_payjoin {
+                                                p2_regular("Payjoin ")
+                                                    .small()
+                                                    .style(theme::text::payjoin)
+                                            } else {
+                                                p2_regular("")
+                                            })
+                                            .push(
+                                                p2_regular(
+                                                    maybe_bip21
+                                                        .clone()
+                                                        .map(|bip21| bip21.to_string())
+                                                        .unwrap_or(addr.clone()),
+                                                )
+                                                .small()
+                                                .style(theme::text::secondary),
+                                            ),
+                                    )
                                     // Space between the address and the scrollbar
                                     .push(Space::with_height(Length::Fixed(10.0))),
                             )
@@ -83,7 +105,7 @@ fn address_card<'a>(
                     .push(Space::with_width(Length::Fill))
                     .push(
                         button::secondary(None, "Show QR Code")
-                            .on_press(Message::ShowQrCode(row_index)),
+                            .on_press(Message::ShowQrCode(row_index, maybe_bip21)),
                     ),
             )
             .spacing(10),
@@ -94,11 +116,15 @@ fn address_card<'a>(
 pub fn receive<'a>(
     addresses: &'a [bitcoin::Address],
     labels: &'a HashMap<String, String>,
+    derivation_indexes: &'a [liana::miniscript::bitcoin::bip32::ChildNumber],
+    bip21_map: &'a HashMap<liana::miniscript::bitcoin::bip32::ChildNumber, String>,
     prev_addresses: &'a [bitcoin::Address],
+    prev_derivation_indexes: &'a [liana::miniscript::bitcoin::bip32::ChildNumber],
     prev_labels: &'a HashMap<String, String>,
     show_prev_addresses: bool,
     selected: &'a HashSet<bitcoin::Address>,
     labels_editing: &'a HashMap<String, form::Value<String>>,
+    active_payjoin_sessions: &'a HashSet<liana::miniscript::bitcoin::bip32::ChildNumber>,
     is_last_page: bool,
     processing: bool,
 ) -> Element<'a, Message> {
@@ -110,15 +136,23 @@ pub fn receive<'a>(
             Row::new()
                 .align_y(Alignment::Center)
                 .push(Container::new(h3("Receive")).width(Length::Fill))
-                .push({
-                    let (icon, label) = (Some(icon::plus_icon()), "Generate address");
-                    if addresses.is_empty() {
-                        button::primary(icon, label)
-                    } else {
-                        button::secondary(icon, label)
-                    }
-                    .on_press(Message::NextReceiveAddress)
-                }),
+                .push(
+                    Row::new()
+                        .spacing(10)
+                        .push({
+                            let (icon, label) = (Some(icon::plus_icon()), "Generate address");
+                            if addresses.is_empty() {
+                                button::primary(icon, label)
+                            } else {
+                                button::secondary(icon, label)
+                            }
+                            .on_press(Message::NextReceiveAddress)
+                        })
+                        .push(
+                            button::secondary(Some(icon::plus_icon()), "Receive Payjoin")
+                                .on_press(Message::ReceivePayjoin),
+                        ),
+                ),
         )
         .push(text("Always generate a new address for each deposit."))
         .push(
@@ -129,7 +163,22 @@ pub fn receive<'a>(
                     Column::new().spacing(10).width(Length::Fill),
                     |col, (i, address)| {
                         addresses_count += 1;
-                        col.push(address_card(i, address, labels, labels_editing))
+                        // i is already the correct index since we're iterating forwards then reversing
+                        let is_payjoin = derivation_indexes
+                            .get(i)
+                            .map(|idx| active_payjoin_sessions.contains(idx))
+                            .unwrap_or(false);
+                        let maybe_bip21 = derivation_indexes
+                            .get(i)
+                            .and_then(|idx| bip21_map.get(idx).cloned());
+                        col.push(address_card(
+                            i,
+                            address,
+                            maybe_bip21,
+                            labels,
+                            labels_editing,
+                            is_payjoin,
+                        ))
                     },
                 )),
         )
@@ -162,35 +211,48 @@ pub fn receive<'a>(
                 // prev addresses are already ordered in descending order
                 Column::new().spacing(10).width(Length::Fill),
                 |col, (i, address)| {
+                    let is_payjoin = prev_derivation_indexes
+                        .get(i)
+                        .map(|idx| active_payjoin_sessions.contains(idx))
+                        .unwrap_or(false);
                     col.push(if !selected.contains(address) {
                         Button::new(
                             Row::new()
                                 .spacing(10)
-                                .push(
-                                    {
-                                        let addr = address.to_string();
-                                        let addr_len = addr.chars().count();
-                                        Container::new(
-                                            p2_regular(if addr_len > 2 * NUM_ADDR_CHARS {
-                                                format!(
-                                                    "{}...{}",
-                                                    addr.chars()
-                                                        .take(NUM_ADDR_CHARS)
-                                                        .collect::<String>(),
-                                                    addr.chars()
-                                                        .skip(addr_len - NUM_ADDR_CHARS)
-                                                        .collect::<String>(),
-                                                )
+                                .push({
+                                    let addr = address.to_string();
+                                    let addr_len = addr.chars().count();
+                                    Container::new(
+                                        Row::new()
+                                            .spacing(5)
+                                            .push(if is_payjoin {
+                                                p2_regular("Payjoin ")
+                                                    .small()
+                                                    .style(theme::text::payjoin)
                                             } else {
-                                                addr
+                                                p2_regular("")
                                             })
-                                            .small()
-                                            .style(theme::text::secondary),
-                                        )
-                                    }
-                                    .padding(10)
-                                    .width(Length::Fixed(350.0)),
-                                )
+                                            .push(
+                                                p2_regular(if addr_len > 2 * NUM_ADDR_CHARS {
+                                                    format!(
+                                                        "{}...{}",
+                                                        addr.chars()
+                                                            .take(NUM_ADDR_CHARS)
+                                                            .collect::<String>(),
+                                                        addr.chars()
+                                                            .skip(addr_len - NUM_ADDR_CHARS)
+                                                            .collect::<String>(),
+                                                    )
+                                                } else {
+                                                    addr
+                                                })
+                                                .small()
+                                                .style(theme::text::secondary),
+                                            )
+                                            .padding(10)
+                                            .width(Length::Fixed(350.0)),
+                                    )
+                                })
                                 .push(
                                     Container::new(
                                         scrollable(
@@ -226,11 +288,17 @@ pub fn receive<'a>(
                         .style(theme::button::secondary)
                     } else {
                         // Continue the row index from those of generated addresses above.
+                        let is_payjoin = prev_derivation_indexes
+                            .get(i)
+                            .map(|idx| active_payjoin_sessions.contains(idx))
+                            .unwrap_or(false);
                         Button::new(address_card(
                             addresses_count + i,
                             address,
+                            None,
                             prev_labels,
                             labels_editing,
+                            is_payjoin,
                         ))
                         .padding(0) // so that button & card borders match
                         .on_press(Message::SelectAddress(address.clone()))
@@ -348,6 +416,7 @@ pub fn verify_address_modal<'a>(
 }
 
 pub fn qr_modal<'a>(qr: &'a qr_code::Data, address: &'a String) -> Element<'a, Message> {
+    let max_width = if address.len() > 64 { 600 } else { 400 };
     Column::new()
         .push(
             Row::new()
@@ -361,6 +430,6 @@ pub fn qr_modal<'a>(qr: &'a qr_code::Data, address: &'a String) -> Element<'a, M
         .push(Space::with_height(Length::Fixed(15.0)))
         .push(Container::new(text(address).size(15)).center_x(Length::Fill))
         .width(Length::Fill)
-        .max_width(400)
+        .max_width(max_width)
         .into()
 }

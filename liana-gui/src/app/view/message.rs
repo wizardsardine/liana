@@ -22,6 +22,7 @@ pub enum Message {
     SelectPayment(OutPoint),
     Label(Vec<String>, LabelMessage),
     NextReceiveAddress,
+    ReceivePayjoin,
     ToggleShowPreviousAddresses,
     SelectAddress(Address),
     Settings(SettingsMessage),
@@ -32,12 +33,13 @@ pub enum Message {
     Previous,
     SelectHardwareWallet(usize),
     CreateRbf(CreateRbfMessage),
-    ShowQrCode(usize),
+    ShowQrCode(usize, Option<String>),
     ImportExport(ImportExportMessage),
     HideRescanWarning,
     ExportPsbt,
     ImportPsbt,
     OpenUrl(String),
+    PayjoinInitiate,
 }
 
 impl Close for Message {
@@ -66,6 +68,7 @@ pub enum CreateSpendMessage {
     Generate,
     SendMaxToRecipient(usize),
     Clear,
+    Bip21Edited(usize, String),
 }
 
 #[derive(Debug, Clone)]
@@ -87,6 +90,8 @@ pub enum SpendTxMessage {
     EditPsbt,
     PsbtEdited(String),
     Next,
+    SendPayjoin,
+    PayjoinInitiated,
 }
 
 #[derive(Debug, Clone)]

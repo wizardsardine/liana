@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::str::FromStr;
 use std::sync::Arc;
 
 use iced::{widget::qr_code, Subscription, Task};
@@ -41,11 +42,20 @@ pub struct Addresses {
     list: Vec<Address>,
     derivation_indexes: Vec<ChildNumber>,
     labels: HashMap<String, String>,
+    bip21: HashMap<ChildNumber, String>,
 }
 
 impl Addresses {
     pub fn is_empty(&self) -> bool {
         self.list.is_empty() && self.derivation_indexes.is_empty() && self.labels.is_empty()
+    }
+
+    pub fn push(&mut self, address: Address, derivation_index: ChildNumber, bip21: Option<String>) {
+        self.list.push(address);
+        self.derivation_indexes.push(derivation_index);
+        if let Some(b) = bip21 {
+            self.bip21.insert(derivation_index, b);
+        }
     }
 }
 
@@ -73,6 +83,7 @@ pub struct ReceivePanel {
     modal: Modal,
     warning: Option<Error>,
     processing: bool,
+    active_payjoin_sessions: HashSet<ChildNumber>,
 }
 
 impl ReceivePanel {
@@ -89,6 +100,7 @@ impl ReceivePanel {
             modal: Modal::None,
             warning: None,
             processing: false,
+            active_payjoin_sessions: HashSet::new(),
         }
     }
 
@@ -122,11 +134,15 @@ impl State for ReceivePanel {
             view::receive::receive(
                 &self.addresses.list,
                 &self.addresses.labels,
+                &self.addresses.derivation_indexes,
+                &self.addresses.bip21,
                 &self.prev_addresses.list,
+                &self.prev_addresses.derivation_indexes,
                 &self.prev_addresses.labels,
                 self.show_prev_addresses,
                 &self.selected,
                 self.labels_edited.cache(),
+                &self.active_payjoin_sessions,
                 self.prev_continue_from.is_none(),
                 self.processing,
             ),
@@ -177,8 +193,19 @@ impl State for ReceivePanel {
                 match res {
                     Ok((address, derivation_index)) => {
                         self.warning = None;
-                        self.addresses.list.push(address);
-                        self.addresses.derivation_indexes.push(derivation_index);
+                        self.addresses.push(address, derivation_index, None);
+                    }
+                    Err(e) => self.warning = Some(e),
+                }
+                Task::none()
+            }
+            Message::ReceivePayjoin(res) => {
+                self.processing = false;
+                match res {
+                    Ok((address, derivation_index, bip21)) => {
+                        self.warning = None;
+                        self.addresses
+                            .push(address.clone(), derivation_index, bip21);
                     }
                     Err(e) => self.warning = Some(e),
                 }
@@ -215,6 +242,19 @@ impl State for ReceivePanel {
                     Message::ReceiveAddress,
                 )
             }
+            Message::View(view::Message::ReceivePayjoin) => {
+                let daemon = daemon.clone();
+                Task::perform(
+                    async move {
+                        daemon
+                            .receive_payjoin()
+                            .await
+                            .map(|res| (res.address, res.derivation_index, res.bip21))
+                            .map_err(|e| e.into())
+                    },
+                    Message::ReceivePayjoin,
+                )
+            }
             Message::View(view::Message::ToggleShowPreviousAddresses) => {
                 self.show_prev_addresses = !self.show_prev_addresses;
                 Task::none()
@@ -243,8 +283,8 @@ impl State for ReceivePanel {
                                 if entry.index == 0.into() {
                                     continue;
                                 }
-                                self.prev_addresses.list.push(entry.address.clone());
-                                self.prev_addresses.derivation_indexes.push(entry.index);
+                                self.prev_addresses
+                                    .push(entry.address.clone(), entry.index, None);
                                 if let Some(label) = &entry.label {
                                     self.prev_addresses.labels.insert(
                                         LabelItem::from(entry.address.clone()).to_string(),
@@ -259,6 +299,20 @@ impl State for ReceivePanel {
                         self.warning = Some(e);
                     }
                 };
+                Task::none()
+            }
+            Message::ActivePayjoinSessions(res) => {
+                match res {
+                    Ok(indexes) => {
+                        self.active_payjoin_sessions = indexes
+                            .into_iter()
+                            .map(|i| ChildNumber::from_normal_idx(i).unwrap())
+                            .collect();
+                    }
+                    Err(e) => {
+                        log::error!("Failed to load active payjoin sessions: {:?}", e);
+                    }
+                }
                 Task::none()
             }
             Message::View(view::Message::Next) => {
@@ -286,9 +340,21 @@ impl State for ReceivePanel {
                     Task::none()
                 }
             }
-            Message::View(view::Message::ShowQrCode(i)) => {
-                if let (Some(address), Some(index)) = (self.address(i), self.derivation_index(i)) {
-                    if let Some(modal) = ShowQrCodeModal::new(address, *index) {
+            Message::View(view::Message::ShowQrCode(i, bip21)) => {
+                if let Some(address) = self.address(i) {
+                    if bip21.is_some() {
+                        if let Some(modal) =
+                            ShowQrCodeModal::new(&bip21.clone().unwrap_or(address.to_string()))
+                        {
+                            self.modal = Modal::ShowQrCode(modal);
+                        } else {
+                            tracing::error!(
+                                "Failed to create QR modal for BIP21 '{:?}' (address {})",
+                                bip21,
+                                address
+                            );
+                        }
+                    } else if let Some(modal) = ShowQrCodeModal::new(&address.to_string()) {
                         self.modal = Modal::ShowQrCode(modal);
                     }
                 }
@@ -311,15 +377,28 @@ impl State for ReceivePanel {
     ) -> Task<Message> {
         let data_dir = self.data_dir.clone();
         *self = Self::new(data_dir, wallet);
-        Task::perform(
-            async move {
-                daemon
-                    .list_revealed_addresses(false, true, PREV_ADDRESSES_PAGE_SIZE, None)
-                    .await
-                    .map_err(|e| e.into())
-            },
-            |res| Message::RevealedAddresses(res, None),
-        )
+        let daemon1 = daemon.clone();
+        let daemon2 = daemon.clone();
+        Task::batch([
+            Task::perform(
+                async move {
+                    daemon1
+                        .list_revealed_addresses(false, true, PREV_ADDRESSES_PAGE_SIZE, None)
+                        .await
+                        .map_err(|e| e.into())
+                },
+                |res| Message::RevealedAddresses(res, None),
+            ),
+            Task::perform(
+                async move {
+                    daemon2
+                        .get_active_payjoin_sessions()
+                        .await
+                        .map_err(|e| e.into())
+                },
+                Message::ActivePayjoinSessions,
+            ),
+        ])
     }
 }
 
@@ -420,13 +499,21 @@ pub struct ShowQrCodeModal {
 }
 
 impl ShowQrCodeModal {
-    pub fn new(address: &Address, index: ChildNumber) -> Option<Self> {
-        qr_code::Data::new(format!("bitcoin:{}?index={}", address, index))
-            .ok()
-            .map(|qr_code| Self {
+    pub fn new(address: &str) -> Option<Self> {
+        if Address::from_str(address).is_ok() {
+            qr_code::Data::new(format!("bitcoin:{}", address))
+                .ok()
+                .map(|qr_code| Self {
+                    qr_code,
+                    address: address.to_string(),
+                })
+        } else {
+            // Already in bip21 format
+            qr_code::Data::new(address).ok().map(|qr_code| Self {
                 qr_code,
                 address: address.to_string(),
             })
+        }
     }
 
     fn view(&self) -> Element<view::Message> {
@@ -481,10 +568,17 @@ mod tests {
                 })),
             ),
             (
+                Some(
+                    json!({"method": "getactivepayjoinsessions", "params": Option::<Request>::None}),
+                ),
+                Ok(json!(Vec::<u32>::new())),
+            ),
+            (
                 Some(json!({"method": "getnewaddress", "params": Option::<Request>::None})),
                 Ok(json!(GetAddressResult::new(
                     addr.clone(),
-                    ChildNumber::from_normal_idx(0).unwrap()
+                    ChildNumber::from_normal_idx(0).unwrap(),
+                    None
                 ))),
             ),
         ]);

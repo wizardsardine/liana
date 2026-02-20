@@ -133,6 +133,11 @@ pub trait BitcoinInterface: Send {
     ///
     /// Returns `None` if the transaction is not in the mempool.
     fn mempool_entry(&self, txid: &bitcoin::Txid) -> Option<MempoolEntry>;
+
+    /// Test if given raw txs will be accepted by mempool.
+    ///
+    /// Returns `None` if the transaction is not in the mempool.
+    fn test_mempool_accept(&self, rawtxs: Vec<String>) -> Vec<bool>;
 }
 
 impl BitcoinInterface for d::BitcoinD {
@@ -402,6 +407,10 @@ impl BitcoinInterface for d::BitcoinD {
     fn mempool_entry(&self, txid: &bitcoin::Txid) -> Option<MempoolEntry> {
         self.mempool_entry(txid)
     }
+
+    fn test_mempool_accept(&self, rawtxs: Vec<String>) -> Vec<bool> {
+        self.test_mempool_accept(rawtxs)
+    }
 }
 
 impl BitcoinInterface for electrum::Electrum {
@@ -589,6 +598,10 @@ impl BitcoinInterface for electrum::Electrum {
     fn tip_time(&self) -> Option<u32> {
         self.client().tip_time().ok()
     }
+
+    fn test_mempool_accept(&self, _rawtxs: Vec<String>) -> Vec<bool> {
+        todo!()
+    }
 }
 
 // FIXME: do we need to repeat the entire trait implementation? Isn't there a nicer way?
@@ -693,6 +706,10 @@ impl BitcoinInterface for sync::Arc<sync::Mutex<dyn BitcoinInterface + 'static>>
 
     fn mempool_entry(&self, txid: &bitcoin::Txid) -> Option<MempoolEntry> {
         self.lock().unwrap().mempool_entry(txid)
+    }
+
+    fn test_mempool_accept(&self, rawtxs: Vec<String>) -> Vec<bool> {
+        self.lock().unwrap().test_mempool_accept(rawtxs)
     }
 }
 

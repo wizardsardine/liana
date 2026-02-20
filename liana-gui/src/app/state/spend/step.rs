@@ -1,7 +1,7 @@
 use std::{
     cmp::Ordering,
     collections::{HashMap, HashSet},
-    convert::TryInto,
+    convert::{TryFrom, TryInto},
     iter::FromIterator,
     str::FromStr,
     sync::Arc,
@@ -17,9 +17,10 @@ use liana::{
     },
     spend::{SpendCreationError, DUST_OUTPUT_SATS, MAX_FEERATE},
 };
-use lianad::commands::ListCoinsEntry;
+use lianad::{commands::ListCoinsEntry, payjoin::types::PayjoinStatus};
 
 use liana_ui::{component::form, widget::Element};
+use payjoin::Uri;
 
 use crate::{
     app::{
@@ -1091,6 +1092,23 @@ impl SaveSpend {
 impl Step for SaveSpend {
     fn load(&mut self, _coins: &[Coin], _tip_height: i32, draft: &TransactionDraft) {
         let (psbt, warnings) = draft.generated.clone().unwrap();
+
+        let recipient = draft.recipients.first().expect("one recipient");
+        let bip21 = format!(
+            "bitcoin:{}?amount={}",
+            recipient.address.value, recipient.amount.value
+        );
+
+        let payjoin_status = if let Ok(uri) = Uri::try_from(bip21.as_str()) {
+            if uri.assume_checked().extras.pj_is_supported() {
+                Some(PayjoinStatus::Pending)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
         let mut tx = SpendTx::new(
             None,
             psbt,
@@ -1098,6 +1116,7 @@ impl Step for SaveSpend {
             &self.wallet.main_descriptor,
             &self.curve,
             draft.network,
+            payjoin_status,
         );
         tx.labels.clone_from(&draft.labels);
 

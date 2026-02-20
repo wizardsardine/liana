@@ -23,8 +23,7 @@ pub struct Poller {
     bit: sync::Arc<sync::Mutex<dyn BitcoinInterface>>,
     db: sync::Arc<sync::Mutex<dyn DatabaseInterface>>,
     secp: secp256k1::Secp256k1<secp256k1::VerifyOnly>,
-    // The receive and change descriptors (in this order).
-    descs: [descriptors::SinglePathLianaDesc; 2],
+    desc: descriptors::LianaDescriptor,
 }
 
 impl Poller {
@@ -34,10 +33,6 @@ impl Poller {
         desc: descriptors::LianaDescriptor,
     ) -> Poller {
         let secp = secp256k1::Secp256k1::verification_only();
-        let descs = [
-            desc.receive_descriptor().clone(),
-            desc.change_descriptor().clone(),
-        ];
 
         // On first startup the tip may be NULL. Make sure it's set as the poller relies on it.
         looper::maybe_initialize_tip(&bit, &db);
@@ -46,7 +41,7 @@ impl Poller {
             bit,
             db,
             secp,
-            descs,
+            desc,
         }
     }
 
@@ -108,7 +103,7 @@ impl Poller {
                     // poll too soon.
                     last_poll = Some(time::Instant::now());
                     if synced {
-                        looper::poll(&mut self.bit, &self.db, &self.secp, &self.descs);
+                        looper::poll(&mut self.bit, &self.db, &self.secp, &self.desc);
                     } else {
                         log::warn!("Skipped poll as block chain is still synchronizing.");
                     }
@@ -142,7 +137,7 @@ impl Poller {
                 }
             }
 
-            looper::poll(&mut self.bit, &self.db, &self.secp, &self.descs);
+            looper::poll(&mut self.bit, &self.db, &self.secp, &self.desc);
         }
     }
 }

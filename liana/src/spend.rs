@@ -58,6 +58,8 @@ pub enum SpendCreationError {
     SanityCheckFailure(Psbt),
     FetchingTransaction(bitcoin::OutPoint),
     CoinSelection(InsufficientFunds),
+    //TODO: wrap a more specific error
+    InvalidBip21,
 }
 
 impl fmt::Display for SpendCreationError {
@@ -87,6 +89,7 @@ impl fmt::Display for SpendCreationError {
                 "BUG! Please report this. Failed sanity checks for PSBT '{}'.",
                 psbt
             ),
+            Self::InvalidBip21 => write!(f, "Invalid BIP21"),
         }
     }
 }
