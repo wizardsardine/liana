@@ -9,7 +9,7 @@ authors = ["Edouard Paris <m@edouard.paris>"]
 edition = "2018"
 resolver = "2"
 
-[package.metadata.winres]
+[package.metadata.winresource]
 LegalCopyright = "Copyright © 2025"
 
 [[bin]]
