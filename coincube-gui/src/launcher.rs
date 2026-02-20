@@ -4,16 +4,16 @@ use iced::{
     Alignment, Length, Subscription, Task,
 };
 
-use coincube_core::miniscript::bitcoin::Network;
+use coincube_core::{bip39, miniscript::bitcoin::Network};
 use coincube_ui::{
     component::{button, card, network_banner, notification, spinner, text::*},
     icon, image, theme,
-    widget::{modal::Modal, Column, Container, Element, Row},
+    widget::{modal::Modal, CheckBox, Column, Container, Element, Row},
 };
 use coincubed::config::ConfigError;
 use tokio::runtime::Handle;
 
-use crate::pin_input;
+use crate::{app::view, pin_input};
 use crate::{
     app::{
         self,
@@ -45,6 +45,7 @@ pub enum State {
         create_cube: bool,
     },
     NoCube,
+    RecoveryInput,
 }
 
 pub struct Launcher {
@@ -57,7 +58,9 @@ pub struct Launcher {
     create_cube_name: coincube_ui::component::form::Value<String>,
     create_cube_pin: pin_input::PinInput,
     create_cube_pin_confirm: pin_input::PinInput,
+    recover_liquid_wallet: bool,
     creating_cube: bool,
+    recovery_words: [String; 12],
 }
 
 impl Launcher {
@@ -81,7 +84,9 @@ impl Launcher {
                 create_cube_name: coincube_ui::component::form::Value::default(),
                 create_cube_pin: pin_input::PinInput::new(),
                 create_cube_pin_confirm: pin_input::PinInput::new(),
+                recover_liquid_wallet: false,
                 creating_cube: false,
+                recovery_words: Default::default(),
             },
             Task::perform(check_network_datadir(network_dir), Message::Checked),
         )
@@ -181,7 +186,7 @@ impl Launcher {
                 let pin = self.create_cube_pin.value();
                 let datadir_path = self.datadir_path.clone();
 
-                Task::perform(
+                let without_recovery = Task::perform(
                     async move {
                         // Generate Liquid wallet HotSigner
                         let liquid_signer = HotSigner::generate(network).map_err(|e| {
@@ -233,7 +238,19 @@ impl Launcher {
                         .map_err(|e| e.to_string())
                     },
                     Message::CubeCreated,
-                )
+                );
+
+                if self.recover_liquid_wallet {
+                    // Enter recovery flow - show recovery input UI
+                    self.creating_cube = false;
+                    return Task::done(Message::StartRecovery);
+                } else {
+                    return without_recovery;
+                }
+            }
+            Message::StartRecovery => {
+                self.state = State::RecoveryInput;
+                Task::none()
             }
             Message::CubeCreated(res) => {
                 self.creating_cube = false;
@@ -354,6 +371,116 @@ impl Launcher {
                     Task::none()
                 }
             }
+            Message::View(ViewMessage::ToggleRecoveryCheckBox) => {
+                self.recover_liquid_wallet = !self.recover_liquid_wallet;
+                Task::none()
+            }
+            Message::View(ViewMessage::RecoveryWordInput { index, word }) => {
+                if index < 12 {
+                    self.recovery_words[index] = word;
+                }
+                Task::none()
+            }
+            Message::View(ViewMessage::SubmitRecovery) => {
+                let words = self.recovery_words.join(" ");
+                match bip39::Mnemonic::parse_in(bip39::Language::English, words) {
+                    Ok(mnemonic) => {
+                        log::info!("{}", mnemonic);
+
+                        if self.creating_cube {
+                            return Task::none();
+                        }
+
+                        if self.create_cube_name.value.trim().is_empty() {
+                            return Task::none();
+                        }
+
+                        // Validate PIN (always required)
+                        if !self.create_cube_pin.is_complete() {
+                            self.error = Some("Please enter all 4 PIN digits".to_string());
+                            return Task::none();
+                        }
+                        if !self.create_cube_pin_confirm.is_complete() {
+                            self.error = Some("Please confirm all 4 PIN digits".to_string());
+                            return Task::none();
+                        }
+                        if self.create_cube_pin.value() != self.create_cube_pin_confirm.value() {
+                            self.error = Some("PIN codes do not match".to_string());
+                            return Task::none();
+                        }
+
+                        self.creating_cube = true;
+                        let network = self.network;
+                        let cube_name = self.create_cube_name.value.trim().to_string();
+                        let pin = self.create_cube_pin.value();
+                        let datadir_path = self.datadir_path.clone();
+
+                        Task::perform(
+                            async move {
+                                // Generate Liquid wallet HotSigner
+                                let liquid_signer =
+                                    HotSigner::from_mnemonic(network, mnemonic).unwrap();
+                                log::info!("HEY THERE 1");
+                                // Create secp context for fingerprint calculation
+                                let secp =
+                                    coincube_core::miniscript::bitcoin::secp256k1::Secp256k1::new();
+                                let liquid_fingerprint = liquid_signer.fingerprint(&secp);
+
+                                log::info!("HEY THERE 2");
+                                // Store Liquid wallet mnemonic (encrypted with PIN if provided)
+                                let network_dir = datadir_path.network_directory(network);
+                                network_dir.init().map_err(|e| {
+                                    format!("Failed to create network directory: {}", e)
+                                })?;
+
+                                log::info!("HEY THERE 3");
+                                // Use a timestamp for the Liquid wallet storage
+                                let timestamp = chrono::Utc::now().timestamp();
+                                let liquid_checksum = format!("liquid_{}", timestamp);
+
+                                log::info!("HEY THERE 4");
+                                // Store Liquid wallet mnemonic encrypted with PIN (always required)
+                                liquid_signer
+                                    .store_encrypted(
+                                        datadir_path.path(),
+                                        network,
+                                        &secp,
+                                        Some((liquid_checksum, timestamp)),
+                                        Some(&pin),
+                                    )
+                                    .map_err(|e| {
+                                        format!("Failed to store Liquid wallet mnemonic: {}", e)
+                                    })?;
+
+                                log::info!("HEY THERE 5");
+                                tracing::info!("Liquid wallet signer created and stored (encrypted with PIN) with fingerprint: {}", liquid_fingerprint);
+
+                                // Create Cube settings with Liquid wallet signer reference and PIN
+                                let cube = CubeSettings::new(cube_name, network)
+                                    .with_liquid_signer(liquid_fingerprint)
+                                    .with_pin(&pin)
+                                    .map_err(|e| format!("Failed to hash PIN: {}", e))?;
+
+                                log::info!("HEY THERE 6");
+                                // Save Cube settings to settings file
+                                settings::update_settings_file(&network_dir, |mut settings| {
+                                    settings.cubes.push(cube.clone());
+                                    Some(settings)
+                                })
+                                .await
+                                .map(|_| cube)
+                                .map_err(|e| e.to_string())
+                            },
+                            Message::CubeCreated,
+                        )
+                    }
+                    Err(error) => {
+                        self.error = Some(error.to_string());
+                        Task::none()
+                    }
+                }
+            }
+
             _ => {
                 if let Some(modal) = &mut self.delete_cube_modal {
                     return modal.update(message);
@@ -437,6 +564,7 @@ impl Launcher {
                                 }
                             })
                             .push(match &self.state {
+                                State::RecoveryInput => recovery_input_view(&self.recovery_words),
                                 State::Cubes { cubes, create_cube } => {
                                     if *create_cube {
                                         create_cube_form(
@@ -445,6 +573,7 @@ impl Launcher {
                                             &self.create_cube_pin_confirm,
                                             &self.error,
                                             self.creating_cube,
+                                            self.recover_liquid_wallet,
                                         )
                                     } else {
                                         let mut col =
@@ -472,6 +601,7 @@ impl Launcher {
                                     &self.create_cube_pin_confirm,
                                     &self.error,
                                     self.creating_cube,
+                                    self.recover_liquid_wallet,
                                 ),
                             })
                             .align_x(Alignment::Center),
@@ -504,6 +634,7 @@ fn create_cube_form<'a>(
     pin_confirm: &'a pin_input::PinInput,
     error: &Option<String>,
     creating_cube: bool,
+    recover_liquid_wallet: bool,
 ) -> Element<'a, ViewMessage> {
     use coincube_ui::component::form;
     use std::time::Duration;
@@ -542,14 +673,21 @@ fn create_cube_form<'a>(
     column = column.push(pin_confirm_label);
     column = column.push(pin_confirm.view().map(ViewMessage::PinConfirmInput));
 
-    // Add extra padding before Create Cube button
-    column = column.push(Space::new().height(Length::Fixed(20.0)));
+    column = column.push(Space::new().height(Length::Fixed(10.0)));
 
     // Show error above the button
     if let Some(err) = error {
         column = column.push(p1_regular(err).style(theme::text::error));
     }
 
+    column = column.push(
+        CheckBox::new(recover_liquid_wallet)
+            .label("Recover Liquid Wallet")
+            .on_toggle(|_| ViewMessage::ToggleRecoveryCheckBox)
+            .size(20),
+    );
+
+    column = column.push(Space::new().height(Length::Fixed(10.0)));
     // Determine if button should be enabled
     // PIN is always required, so all PIN fields must be filled
     let can_create = !creating_cube
@@ -636,6 +774,86 @@ fn cubes_list_item<'a>(cube: &CubeSettings, i: usize) -> Element<'a, ViewMessage
     .into()
 }
 
+fn recovery_input_view(recovery_words: &[String; 12]) -> Element<ViewMessage> {
+    use coincube_ui::widget::{Row, TextInput};
+
+    // Create the mnemonic input grid (3 rows x 4 columns)
+    let mut grid = Column::new().spacing(30).align_x(Alignment::Center);
+
+    for row in 0..3 {
+        let mut row_widget = Row::new().spacing(40).align_y(Alignment::Center);
+
+        for col in 0..4 {
+            let index = row * 4 + col;
+            let word_value = &recovery_words[index];
+            let placeholder = format!("{}.", index + 1);
+
+            let text_input = TextInput::new(&placeholder, word_value)
+                .on_input(move |input| ViewMessage::RecoveryWordInput { index, word: input })
+                .padding(12)
+                .width(Length::Fixed(150.0))
+                .style(theme::text_input::primary);
+
+            row_widget = row_widget.push(text_input);
+        }
+
+        grid = grid.push(row_widget);
+    }
+
+    // Check if all words are filled
+    let all_filled = recovery_words.iter().all(|w| !w.trim().is_empty());
+
+    Column::new()
+        .spacing(20)
+        .width(Length::Fill)
+        .align_x(Alignment::Center)
+        .push(h4_bold("Enter Recovery Phrase"))
+        .push(
+            Row::new()
+                .width(Length::Fill)
+                .align_y(Alignment::Center)
+                .push(Space::new().width(Length::Fill))
+                .push(
+                    Container::new(
+                        p1_regular(
+                            "Enter your 12-word recovery phrase to restore your Liquid wallet.",
+                        )
+                        .align_x(iced::alignment::Horizontal::Center),
+                    )
+                    .width(Length::Fixed(700.0))
+                    .align_x(iced::alignment::Horizontal::Center),
+                )
+                .push(Space::new().width(Length::Fill)),
+        )
+        .push(Space::new().height(Length::Fixed(24.0)))
+        .push(
+            Row::new()
+                .width(Length::Fill)
+                .align_y(Alignment::Center)
+                .push(Space::new().width(Length::Fill))
+                .push(grid)
+                .push(Space::new().width(Length::Fill)),
+        )
+        .push(Space::new().height(Length::Fixed(24.0)))
+        .push(
+            Row::new()
+                .width(Length::Fill)
+                .align_y(Alignment::Center)
+                .push(Space::new().width(Length::Fill))
+                .push(
+                    button::primary(None, "Recover Wallet")
+                        .width(Length::Fixed(300.0))
+                        .on_press_maybe(if all_filled {
+                            Some(ViewMessage::SubmitRecovery)
+                        } else {
+                            None
+                        }),
+                )
+                .push(Space::new().width(Length::Fill)),
+        )
+        .into()
+}
+
 fn has_existing_wallet(data_dir: &CoincubeDirectory, network: Network) -> bool {
     data_dir
         .path()
@@ -656,6 +874,7 @@ pub enum Message {
         Network,
         CubeSettings,
     ),
+    StartRecovery,
     CubeCreated(Result<CubeSettings, String>),
     BreezClientLoaded {
         config: app::config::Config,
@@ -682,6 +901,9 @@ pub enum ViewMessage {
     Check,
     Run(usize),
     DeleteCube(DeleteCubeMessage),
+    ToggleRecoveryCheckBox,
+    RecoveryWordInput { index: usize, word: String },
+    SubmitRecovery,
 }
 
 #[derive(Debug, Clone)]
