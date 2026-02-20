@@ -3516,6 +3516,7 @@ dependencies = [
  "libc",
  "log",
  "open",
+ "payjoin",
  "reqwest 0.11.27",
  "rfd",
  "rust-ini",
