@@ -663,6 +663,10 @@ impl Daemon for BackendWalletClient {
         unimplemented!()
     }
 
+    async fn get_active_payjoin_sessions(&self) -> Result<Vec<u32>, DaemonError> {
+        unimplemented!()
+    }
+
     async fn update_deriv_indexes(
         &self,
         _receive: Option<u32>,

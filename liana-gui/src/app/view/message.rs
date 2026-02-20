@@ -22,6 +22,7 @@ pub enum Message {
     SelectPayment(OutPoint),
     Label(Vec<String>, LabelMessage),
     NextReceiveAddress,
+    ReceivePayjoin,
     ToggleShowPreviousAddresses,
     SelectAddress(Address),
     Settings(SettingsMessage),

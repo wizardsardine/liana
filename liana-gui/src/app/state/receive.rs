@@ -42,11 +42,20 @@ pub struct Addresses {
     list: Vec<Address>,
     derivation_indexes: Vec<ChildNumber>,
     labels: HashMap<String, String>,
+    bip21: HashMap<ChildNumber, String>,
 }
 
 impl Addresses {
     pub fn is_empty(&self) -> bool {
         self.list.is_empty() && self.derivation_indexes.is_empty() && self.labels.is_empty()
+    }
+
+    pub fn push(&mut self, address: Address, derivation_index: ChildNumber, bip21: Option<String>) {
+        self.list.push(address);
+        self.derivation_indexes.push(derivation_index);
+        if let Some(b) = bip21 {
+            self.bip21.insert(derivation_index, b);
+        }
     }
 }
 
@@ -74,6 +83,7 @@ pub struct ReceivePanel {
     modal: Modal,
     warning: Option<Error>,
     processing: bool,
+    active_payjoin_sessions: HashSet<ChildNumber>,
 }
 
 impl ReceivePanel {
@@ -90,6 +100,7 @@ impl ReceivePanel {
             modal: Modal::None,
             warning: None,
             processing: false,
+            active_payjoin_sessions: HashSet::new(),
         }
     }
 
@@ -123,11 +134,15 @@ impl State for ReceivePanel {
             view::receive::receive(
                 &self.addresses.list,
                 &self.addresses.labels,
+                &self.addresses.derivation_indexes,
+                &self.addresses.bip21,
                 &self.prev_addresses.list,
+                &self.prev_addresses.derivation_indexes,
                 &self.prev_addresses.labels,
                 self.show_prev_addresses,
                 &self.selected,
                 self.labels_edited.cache(),
+                &self.active_payjoin_sessions,
                 self.prev_continue_from.is_none(),
                 self.processing,
             ),
@@ -178,8 +193,19 @@ impl State for ReceivePanel {
                 match res {
                     Ok((address, derivation_index)) => {
                         self.warning = None;
-                        self.addresses.list.push(address);
-                        self.addresses.derivation_indexes.push(derivation_index);
+                        self.addresses.push(address, derivation_index, None);
+                    }
+                    Err(e) => self.warning = Some(e),
+                }
+                Task::none()
+            }
+            Message::ReceivePayjoin(res) => {
+                self.processing = false;
+                match res {
+                    Ok((address, derivation_index, bip21)) => {
+                        self.warning = None;
+                        self.addresses
+                            .push(address.clone(), derivation_index, bip21);
                     }
                     Err(e) => self.warning = Some(e),
                 }
@@ -216,6 +242,19 @@ impl State for ReceivePanel {
                     Message::ReceiveAddress,
                 )
             }
+            Message::View(view::Message::ReceivePayjoin) => {
+                let daemon = daemon.clone();
+                Task::perform(
+                    async move {
+                        daemon
+                            .receive_payjoin()
+                            .await
+                            .map(|res| (res.address, res.derivation_index, res.bip21))
+                            .map_err(|e| e.into())
+                    },
+                    Message::ReceivePayjoin,
+                )
+            }
             Message::View(view::Message::ToggleShowPreviousAddresses) => {
                 self.show_prev_addresses = !self.show_prev_addresses;
                 Task::none()
@@ -244,8 +283,8 @@ impl State for ReceivePanel {
                                 if entry.index == 0.into() {
                                     continue;
                                 }
-                                self.prev_addresses.list.push(entry.address.clone());
-                                self.prev_addresses.derivation_indexes.push(entry.index);
+                                self.prev_addresses
+                                    .push(entry.address.clone(), entry.index, None);
                                 if let Some(label) = &entry.label {
                                     self.prev_addresses.labels.insert(
                                         LabelItem::from(entry.address.clone()).to_string(),
@@ -260,6 +299,20 @@ impl State for ReceivePanel {
                         self.warning = Some(e);
                     }
                 };
+                Task::none()
+            }
+            Message::ActivePayjoinSessions(res) => {
+                match res {
+                    Ok(indexes) => {
+                        self.active_payjoin_sessions = indexes
+                            .into_iter()
+                            .map(|i| ChildNumber::from_normal_idx(i).unwrap())
+                            .collect();
+                    }
+                    Err(e) => {
+                        log::error!("Failed to load active payjoin sessions: {:?}", e);
+                    }
+                }
                 Task::none()
             }
             Message::View(view::Message::Next) => {
@@ -324,15 +377,28 @@ impl State for ReceivePanel {
     ) -> Task<Message> {
         let data_dir = self.data_dir.clone();
         *self = Self::new(data_dir, wallet);
-        Task::perform(
-            async move {
-                daemon
-                    .list_revealed_addresses(false, true, PREV_ADDRESSES_PAGE_SIZE, None)
-                    .await
-                    .map_err(|e| e.into())
-            },
-            |res| Message::RevealedAddresses(res, None),
-        )
+        let daemon1 = daemon.clone();
+        let daemon2 = daemon.clone();
+        Task::batch([
+            Task::perform(
+                async move {
+                    daemon1
+                        .list_revealed_addresses(false, true, PREV_ADDRESSES_PAGE_SIZE, None)
+                        .await
+                        .map_err(|e| e.into())
+                },
+                |res| Message::RevealedAddresses(res, None),
+            ),
+            Task::perform(
+                async move {
+                    daemon2
+                        .get_active_payjoin_sessions()
+                        .await
+                        .map_err(|e| e.into())
+                },
+                Message::ActivePayjoinSessions,
+            ),
+        ])
     }
 }
 
@@ -502,10 +568,17 @@ mod tests {
                 })),
             ),
             (
+                Some(
+                    json!({"method": "getactivepayjoinsessions", "params": Option::<Request>::None}),
+                ),
+                Ok(json!(Vec::<u32>::new())),
+            ),
+            (
                 Some(json!({"method": "getnewaddress", "params": Option::<Request>::None})),
                 Ok(json!(GetAddressResult::new(
                     addr.clone(),
-                    ChildNumber::from_normal_idx(0).unwrap()
+                    ChildNumber::from_normal_idx(0).unwrap(),
+                    None
                 ))),
             ),
         ]);

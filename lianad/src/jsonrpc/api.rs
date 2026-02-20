@@ -503,6 +503,11 @@ fn get_payjoin_info(control: &DaemonControl, params: Params) -> Result<serde_jso
     Ok(serde_json::json!(&res))
 }
 
+fn get_active_payjoin_sessions(control: &DaemonControl) -> Result<serde_json::Value, Error> {
+    let res = control.get_active_payjoin_sessions()?;
+    Ok(serde_json::json!(&res))
+}
+
 /// Handle an incoming JSONRPC2 request.
 pub fn handle_request(control: &mut DaemonControl, req: Request) -> Result<Response, Error> {
     let result = match req.method.as_str() {
@@ -617,6 +622,7 @@ pub fn handle_request(control: &mut DaemonControl, req: Request) -> Result<Respo
                 .ok_or_else(|| Error::invalid_params("Missing 'txid' parameter."))?;
             get_payjoin_info(control, params)?
         }
+        "getactivepayjoinsessions" => get_active_payjoin_sessions(control)?,
         _ => {
             return Err(Error::method_not_found());
         }

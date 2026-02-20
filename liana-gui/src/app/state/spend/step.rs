@@ -1093,13 +1093,11 @@ impl Step for SaveSpend {
     fn load(&mut self, _coins: &[Coin], _tip_height: i32, draft: &TransactionDraft) {
         let (psbt, warnings) = draft.generated.clone().unwrap();
 
-        let bip21 = draft
-            .recipients
-            .first()
-            .expect("one recipient")
-            .bip21
-            .value
-            .clone();
+        let recipient = draft.recipients.first().expect("one recipient");
+        let bip21 = format!(
+            "bitcoin:{}?amount={}",
+            recipient.address.value, recipient.amount.value
+        );
 
         let payjoin_status = if let Ok(uri) = Uri::try_from(bip21.as_str()) {
             if uri.assume_checked().extras.pj_is_supported() {

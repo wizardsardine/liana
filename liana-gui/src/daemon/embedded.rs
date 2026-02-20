@@ -138,6 +138,15 @@ impl Daemon for EmbeddedDaemon {
         .await
     }
 
+    async fn get_active_payjoin_sessions(&self) -> Result<Vec<u32>, DaemonError> {
+        self.command(|daemon| {
+            daemon
+                .get_active_payjoin_sessions()
+                .map_err(|e| DaemonError::Unexpected(e.to_string()))
+        })
+        .await
+    }
+
     async fn update_deriv_indexes(
         &self,
         receive: Option<u32>,

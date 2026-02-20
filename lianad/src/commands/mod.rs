@@ -411,7 +411,7 @@ impl DaemonControl {
             .derive(new_index, &self.secp)
             .address(self.config.bitcoin_config.network);
 
-        let persister = ReceiverPersister::new(Arc::new(self.db.clone()));
+        let persister = ReceiverPersister::new(Arc::new(self.db.clone()), new_index.into());
         let session = ReceiverBuilder::new(address.clone(), PAYJOIN_DIRECTORY, ohttp_keys.clone())
             .map_err(|e| CommandError::IntoUrlError(e.to_string()))?
             .build()
@@ -438,6 +438,13 @@ impl DaemonControl {
         }
 
         Ok(PayjoinStatus::Unknown)
+    }
+
+    /// Get all active payjoin receiver sessions with their derivation indexes
+    pub fn get_active_payjoin_sessions(&self) -> Result<Vec<u32>, CommandError> {
+        let mut db_conn = self.db.connection();
+        let sessions = db_conn.get_active_payjoin_sessions();
+        Ok(sessions.into_iter().map(|(_, idx)| idx).collect())
     }
 
     /// Update derivation indexes

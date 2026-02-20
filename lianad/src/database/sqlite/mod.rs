@@ -45,7 +45,7 @@ use miniscript::bitcoin::{
     secp256k1,
 };
 
-const DB_VERSION: i64 = 8;
+const DB_VERSION: i64 = 9;
 
 /// Last database version for which Bitcoin transactions were not stored in database. In practice
 /// this meant we relied on the bitcoind watchonly wallet to store them for us.
@@ -1044,23 +1044,6 @@ impl SqliteConn {
         .expect("Db must not fail");
     }
 
-    /// Create new Receiver Session
-    pub fn save_new_payjoin_receiver_session(&mut self) -> i64 {
-        // TODO: is there a more elegant way to get the last insert row id atomically?
-        let mut id = 0i64;
-        db_exec(&mut self.conn, |db_tx| {
-            db_tx.execute(
-                "INSERT INTO payjoin_receivers (created_at) VALUES (?1)",
-                rusqlite::params![curr_timestamp()],
-            )?;
-
-            id = db_tx.last_insert_rowid();
-            Ok(())
-        })
-        .expect("Db must not fail");
-        id
-    }
-
     /// Get all active receiver session ids
     pub fn get_all_active_receiver_session_ids(&mut self) -> Vec<SessionId> {
         db_query(
@@ -1113,7 +1096,7 @@ impl SqliteConn {
         .expect("Db must not fail")
     }
 
-    /// Save original txid for a sender session
+    /// Save original txid for a receiver session
     pub fn update_receiver_session_original_txid(
         &mut self,
         session_id: &SessionId,
@@ -1129,8 +1112,8 @@ impl SqliteConn {
         .expect("Db must not fail");
     }
 
-    /// Save proposed txid for a sender session
-    pub fn update_receiver_session_proposed_txid(
+    /// Save proposed txid for a receiver session
+    pub fn save_receiver_session_proposed_txid(
         &mut self,
         session_id: &SessionId,
         proposed_txid: &bitcoin::Txid,
@@ -1145,10 +1128,12 @@ impl SqliteConn {
         .expect("Db must not fail");
     }
 
-    /// Get receiver session id from txid -- this will return the session id if the txid is a proposed payjoin txid or the original txid
-    pub fn get_payjoin_receiver_session_id(&mut self, txid: &bitcoin::Txid) -> Option<SessionId> {
-        // TODO: This should always be one row.
-        let session_id = db_query(
+    /// Get receiver session id from txid
+    pub fn get_payjoin_receiver_session_id_from_txid(
+        &mut self,
+        txid: &bitcoin::Txid,
+    ) -> Option<SessionId> {
+        db_query(
             &mut self.conn,
             "SELECT id FROM payjoin_receivers WHERE proposed_txid = ?1 or original_txid = ?1",
             rusqlite::params![txid[..].to_vec()],
@@ -1157,8 +1142,40 @@ impl SqliteConn {
                 Ok(SessionId::new(id))
             },
         )
+        .ok()
+        .and_then(|v| v.into_iter().next())
+    }
+
+    /// Create new Receiver Session
+    pub fn save_new_payjoin_receiver_session(&mut self, derivation_index: u32) -> i64 {
+        // TODO: is there a more elegant way to get the last insert row id atomically?
+        let mut id = 0i64;
+        db_exec(&mut self.conn, |db_tx| {
+            db_tx.execute(
+                "INSERT INTO payjoin_receivers (derivation_index, created_at) VALUES (?1, ?2)",
+                rusqlite::params![derivation_index, curr_timestamp()],
+            )?;
+
+            id = db_tx.last_insert_rowid();
+            Ok(())
+        })
         .expect("Db must not fail");
-        session_id.first().cloned()
+        id
+    }
+
+    /// Get all active receiver session ids with their derivation indexes
+    pub fn get_active_payjoin_sessions(&mut self) -> Vec<(SessionId, u32)> {
+        db_query(
+            &mut self.conn,
+            "SELECT id, derivation_index FROM payjoin_receivers WHERE completed_at IS NULL AND derivation_index IS NOT NULL",
+            rusqlite::params![],
+            |row| {
+                let id: i64 = row.get(0)?;
+                let derivation_index: u32 = row.get(1)?;
+                Ok((SessionId::new(id), derivation_index))
+            },
+        )
+        .expect("Db must not fail")
     }
 }
 
