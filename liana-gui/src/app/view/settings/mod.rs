@@ -1128,6 +1128,13 @@ pub fn wallet_settings<'a>(
     )
     .width(Length::Fill);
 
+    // Convert form values to HashMap for display_policy
+    let aliases_map: HashMap<Fingerprint, String> = keys_aliases
+        .iter()
+        .filter(|(_, v)| !v.value.is_empty())
+        .map(|(fg, v)| (*fg, v.value.clone()))
+        .collect();
+
     dashboard(
         &Menu::Settings,
         cache,
@@ -1139,7 +1146,7 @@ pub fn wallet_settings<'a>(
             .push(
                 card::simple(display_policy(
                     descriptor.policy(),
-                    keys_aliases,
+                    aliases_map,
                     provider_keys,
                 ))
                 .width(Length::Fill),
@@ -1148,15 +1155,18 @@ pub fn wallet_settings<'a>(
     )
 }
 
-fn display_policy<'a>(
+/// Display wallet policy in human-readable format.
+///
+/// Shows primary path and recovery paths with thresholds, key names, and timelocks.
+pub fn display_policy<M: 'static>(
     policy: LianaPolicy,
-    keys_aliases: &'a [(Fingerprint, form::Value<String>)],
-    provider_keys: &'a HashMap<Fingerprint, ProviderKey>,
-) -> Element<'a, Message> {
+    keys_aliases: HashMap<Fingerprint, String>,
+    provider_keys: &HashMap<Fingerprint, ProviderKey>,
+) -> Element<'_, M> {
     let (primary_threshold, primary_keys) = policy.primary_path().thresh_origins();
     let recovery_paths = policy.recovery_paths();
 
-    // The iteration over an HashMap keys can have a different order at each refresh
+    // The iteration over a HashMap keys can have a different order at each refresh
     let mut primary_keys: Vec<Fingerprint> = primary_keys.into_keys().collect();
     primary_keys.sort();
 
@@ -1181,22 +1191,19 @@ fn display_policy<'a>(
                     .iter()
                     .enumerate()
                     .fold(Row::new().spacing(5), |row, (i, k)| {
-                        let content = if let Some(alias) = keys_aliases
-                            .iter()
-                            .find(|(fg, a)| fg == k && !a.value.is_empty())
-                            .map(|(_, f)| &f.value)
-                        {
-                            Container::new(
-                                iced_tooltip::Tooltip::new(
-                                    text(alias).bold(),
-                                    text(k.to_string()),
-                                    iced_tooltip::Position::Bottom,
+                        let content =
+                            if let Some(alias) = keys_aliases.get(k).filter(|a| !a.is_empty()) {
+                                Container::new(
+                                    iced_tooltip::Tooltip::new(
+                                        text(alias).bold(),
+                                        text(k.to_string()),
+                                        iced_tooltip::Position::Bottom,
+                                    )
+                                    .style(theme::card::simple),
                                 )
-                                .style(theme::card::simple),
-                            )
-                        } else {
-                            Container::new(text(format!("[{}]", k)).bold())
-                        };
+                            } else {
+                                Container::new(text(format!("[{}]", k)).bold())
+                            };
                         if primary_keys.len() == 1 || i == primary_keys.len() - 1 {
                             row.push(content)
                         } else if i <= primary_keys.len() - 2 {
@@ -1211,7 +1218,7 @@ fn display_policy<'a>(
     for (i, (sequence, recovery_path)) in recovery_paths.iter().enumerate() {
         let (threshold, recovery_keys) = recovery_path.thresh_origins();
 
-        // The iteration over an HashMap keys can have a different order at each refresh
+        // Sort for consistent ordering
         let mut recovery_keys: Vec<Fingerprint> = recovery_keys.into_keys().collect();
         recovery_keys.sort();
 
@@ -1234,22 +1241,19 @@ fn display_policy<'a>(
                 .push(recovery_keys.iter().enumerate().fold(
                     Row::new().spacing(5),
                     |row, (i, k)| {
-                        let content = if let Some(alias) = keys_aliases
-                            .iter()
-                            .find(|(fg, a)| fg == k && !a.value.is_empty())
-                            .map(|(_, f)| &f.value)
-                        {
-                            Container::new(
-                                iced_tooltip::Tooltip::new(
-                                    text(alias).bold(),
-                                    text(k.to_string()),
-                                    iced_tooltip::Position::Bottom,
+                        let content =
+                            if let Some(alias) = keys_aliases.get(k).filter(|a| !a.is_empty()) {
+                                Container::new(
+                                    iced_tooltip::Tooltip::new(
+                                        text(alias).bold(),
+                                        text(k.to_string()),
+                                        iced_tooltip::Position::Bottom,
+                                    )
+                                    .style(theme::card::simple),
                                 )
-                                .style(theme::card::simple),
-                            )
-                        } else {
-                            Container::new(text(format!("[{}]", k)).bold())
-                        };
+                            } else {
+                                Container::new(text(format!("[{}]", k)).bold())
+                            };
                         if recovery_keys.len() == 1 || i == recovery_keys.len() - 1 {
                             row.push(content)
                         } else if i <= recovery_keys.len() - 2 {
@@ -1291,8 +1295,8 @@ fn display_policy<'a>(
         .into()
 }
 
-/// returns y,m,d
-fn expire_message_units(sequence: u32) -> Vec<String> {
+/// Converts a block sequence to human-readable time units (y, m, d, h, m).
+pub fn expire_message_units(sequence: u32) -> Vec<String> {
     let mut n_minutes = sequence * 10;
     let n_years = n_minutes / 525960;
     n_minutes -= n_years * 525960;
