@@ -1,21 +1,26 @@
 # Start using Liana
 
-This documents how to install and start using Liana. If you just want to quickly try Liana on
+This documents how to install and start using Liana. If you just want to quickly try Liana on 
 Bitcoin Signet, check out [this guide](TRY.md) instead.
 
 
 ### Installing the software
 
-The recommended installation method for regular users is to download [an executable software release
-from our website](https://wizardsardine.com/liana/). If you prefer to build the project from source,
-see [`BUILD.md`](BUILD.md) instead.
+The recommended installation method for regular users is to download [an executable software 
+release from our website](https://wizardsardine.com/liana/). Liana is simple to use and should be 
+straightforward by just launching the executable on your computer, and following the in-app 
+instructions.
 
-We recommend you verify the software you downloaded against a PGP signature made by Edouard Paris
-using his key `5B63F3B97699C7EEF3B040B19B7F629A53E77B83`. For now the PGP signatures for the
-binaries downloaded on our website are only available on the [Github release
-page](https://github.com/wizardsardine/liana/releases). Find the `.asc` file in the list
-corresponding to the binary you downloaded. Edouard's key is available elsewhere for cross-checking,
-such as on [his personal website](https://edouard.paris).
+If you prefer to build the project from source, see [`BUILD.md`](BUILD.md) instead.
+
+We recommend you verify the software you downloaded against a PGP signature made by Edouard Paris 
+using his key `5B63F3B97699C7EEF3B040B19B7F629A53E77B83`. For now the PGP signatures for the 
+binaries downloaded on our website are only available on the [Github release 
+page](https://github.com/wizardsardine/liana/releases). Find the shasums.txt and corresponding 
+`.asc` file in the list corresponding to the version you downloaded. Edouard's key is available 
+elsewhere for cross-checking, such as on [the Wizardsardine 
+website](https://wizardsardine.com/pgp_security_ed.txt) or [his personal 
+website](https://edouard.paris).
 
 For Arch users, a `liana-bin` is also available at the [AUR](https://aur.archlinux.org/). You can
 install it using your favourite wrapper (eg `paru -S liana-bin` or `yay -S liana-bin`), or manually:
@@ -63,14 +68,18 @@ The installer will guide you through a few steps:
 - Making sure your backup your descriptor and register it on your signing device
 - Configuring the connection to the Bitcoin network
 
-Once you've been through these steps, your Liana wallet will open.
+Once you've been through these steps, your Liana wallet will open and be ready to use.
 
-You might have to wait for Bitcoin Core to perform its initial block download. When using Liana, the
-connection to the Bitcoin network is established by using a full node. This means you are fully
-sovereign: you are not trusting a third party to get your onchain data. This does come with a
-drawback: you have to wait for Bitcoin Core to download and validate the historical block chain. But
-fear not! This is just a one time cost. Also, the full node is pruned so it will not use more than
-20GB of disk space.
+You might have to wait for Bitcoin Core to perform its initial block download. When using Liana, the 
+connection to the Bitcoin network is established by using a full node (recommended), connecting to 
+an Electrum server you control, or using the Liana Connect service (fastest). This means you can be 
+fully sovereign: you are not trusting a third party to get your onchain data if you use your own 
+node. This does come with a drawback: you have to wait for Bitcoin Core to download and validate the 
+historical block chain, or to have an Electrum server already set up. But fear not! Liana offers you 
+a one-click option to install and configure a Bitcoin Core node, pruned so it will not use more than
+30GB of disk space (currently).
+The Liana Connect option is great to be able to use the wallet right away, without any 
+syncronization time. It comes at reduced privacy compared to running your own node.
 
 #### Using the daemon
 
@@ -81,9 +90,10 @@ which is currently possible through the Bitcoin Core daemon (`bitcoind`) or an E
 
 The chosen Bitcoin backend must be available while Liana is running.
 
-If using `bitcoind`, it must be running on your machine for the desired network (mainnet, signet, testnet, testnet4 or
-regtest). Note that testnet4 will only be available if Bitcoin Core version 28.0 or later is used. It may be pruned 
-(this may affect block chain rescans) up to the maximum (around 550MB of blocks).
+If using `bitcoind`, it must be running on your machine for the desired network (mainnet, signet, 
+testnet, testnet4 or regtest). Note that testnet4 will only be available if Bitcoin Core version 
+28.0 or later is used. It may be pruned (this may affect block chain rescans) up to the maximum 
+(around 550MB of blocks).
 
 The minimum supported version of Bitcoin Core is `24.0.1` (if you want to use Taproot it's `26.0`).
 If you don't have Bitcoin Core installed on your machine yet, you can download it
@@ -198,7 +208,8 @@ script from our
 ```
 $ ../maintainer-tools/verify-commits/verify-commits.py liana
 ...
-There is a valid path from "9490159e7ca69678bb6995cd56d09b0a65a5b484" to da9149ccde5bf99cb70769b792fd003b079fc9ed where all commits are signed!
+There is a valid path from "9490159e7ca69678bb6995cd56d09b0a65a5b484" to 
+da9149ccde5bf99cb70769b792fd003b079fc9ed where all commits are signed!
 ```
 It's worth mentioning we didn't invent anything here: we're just reusing the [great
 tooling](https://github.com/bitcoin-core/bitcoin-maintainer-tools) developed by the Bitcoin Core
