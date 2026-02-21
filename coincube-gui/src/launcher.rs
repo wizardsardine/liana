@@ -13,7 +13,7 @@ use coincube_ui::{
 use coincubed::config::ConfigError;
 use tokio::runtime::Handle;
 
-use crate::{app::view, pin_input};
+use crate::pin_input;
 use crate::{
     app::{
         self,
@@ -135,6 +135,11 @@ impl Launcher {
                         self.create_cube_name = coincube_ui::component::form::Value::default();
                         self.create_cube_pin = pin_input::PinInput::new();
                         self.create_cube_pin_confirm = pin_input::PinInput::new();
+                        // Clear recovery words when exiting create cube flow
+                        for word in &mut self.recovery_words {
+                            word.clear();
+                            word.shrink_to_fit();
+                        }
                     }
                 }
                 Task::none()
@@ -262,9 +267,19 @@ impl Launcher {
                         self.create_cube_name = coincube_ui::component::form::Value::default();
                         self.create_cube_pin = pin_input::PinInput::new();
                         self.create_cube_pin_confirm = pin_input::PinInput::new();
+                        // Explicitly clear recovery words to prevent mnemonic from lingering in memory
+                        for word in &mut self.recovery_words {
+                            word.clear();
+                            word.shrink_to_fit();
+                        }
                         self.reload()
                     }
                     Err(e) => {
+                        // Clear recovery words on error too
+                        for word in &mut self.recovery_words {
+                            word.clear();
+                            word.shrink_to_fit();
+                        }
                         self.error = Some(format!("Failed to create Cube: {}", e));
                         Task::none()
                     }
@@ -385,7 +400,7 @@ impl Launcher {
                 let words = self.recovery_words.join(" ");
                 match bip39::Mnemonic::parse_in(bip39::Language::English, words) {
                     Ok(mnemonic) => {
-                        log::info!("{}", mnemonic);
+                        log::info!("Mnemonic parsed successfully");
 
                         if self.creating_cube {
                             return Task::none();
@@ -418,27 +433,24 @@ impl Launcher {
                         Task::perform(
                             async move {
                                 // Generate Liquid wallet HotSigner
-                                let liquid_signer =
-                                    HotSigner::from_mnemonic(network, mnemonic).unwrap();
-                                log::info!("HEY THERE 1");
+                                let liquid_signer = HotSigner::from_mnemonic(network, mnemonic)
+                                    .map_err(|e| format!("Failed to restore from mnemonic: {}", e))?;
+
                                 // Create secp context for fingerprint calculation
                                 let secp =
                                     coincube_core::miniscript::bitcoin::secp256k1::Secp256k1::new();
                                 let liquid_fingerprint = liquid_signer.fingerprint(&secp);
 
-                                log::info!("HEY THERE 2");
                                 // Store Liquid wallet mnemonic (encrypted with PIN if provided)
                                 let network_dir = datadir_path.network_directory(network);
                                 network_dir.init().map_err(|e| {
                                     format!("Failed to create network directory: {}", e)
                                 })?;
 
-                                log::info!("HEY THERE 3");
                                 // Use a timestamp for the Liquid wallet storage
                                 let timestamp = chrono::Utc::now().timestamp();
                                 let liquid_checksum = format!("liquid_{}", timestamp);
 
-                                log::info!("HEY THERE 4");
                                 // Store Liquid wallet mnemonic encrypted with PIN (always required)
                                 liquid_signer
                                     .store_encrypted(
@@ -452,7 +464,6 @@ impl Launcher {
                                         format!("Failed to store Liquid wallet mnemonic: {}", e)
                                     })?;
 
-                                log::info!("HEY THERE 5");
                                 tracing::info!("Liquid wallet signer created and stored (encrypted with PIN) with fingerprint: {}", liquid_fingerprint);
 
                                 // Create Cube settings with Liquid wallet signer reference and PIN
@@ -461,7 +472,6 @@ impl Launcher {
                                     .with_pin(&pin)
                                     .map_err(|e| format!("Failed to hash PIN: {}", e))?;
 
-                                log::info!("HEY THERE 6");
                                 // Save Cube settings to settings file
                                 settings::update_settings_file(&network_dir, |mut settings| {
                                     settings.cubes.push(cube.clone());
@@ -475,6 +485,11 @@ impl Launcher {
                         )
                     }
                     Err(error) => {
+                        // Clear recovery words on error
+                        for word in &mut self.recovery_words {
+                            word.clear();
+                            word.shrink_to_fit();
+                        }
                         self.error = Some(error.to_string());
                         Task::none()
                     }
