@@ -434,7 +434,9 @@ impl Launcher {
                             async move {
                                 // Generate Liquid wallet HotSigner
                                 let liquid_signer = HotSigner::from_mnemonic(network, mnemonic)
-                                    .map_err(|e| format!("Failed to restore from mnemonic: {}", e))?;
+                                    .map_err(|e| {
+                                        format!("Failed to restore from mnemonic: {}", e)
+                                    })?;
 
                                 // Create secp context for fingerprint calculation
                                 let secp =
@@ -494,6 +496,17 @@ impl Launcher {
                         Task::none()
                     }
                 }
+            }
+            Message::View(ViewMessage::CancelRecovery) => {
+                for word in &mut self.recovery_words {
+                    word.clear();
+                    word.shrink_to_fit();
+                }
+                self.create_cube_name = coincube_ui::component::form::Value::default();
+                self.create_cube_pin = pin_input::PinInput::new();
+                self.create_cube_pin_confirm = pin_input::PinInput::new();
+                self.error = None;
+                self.reload()
             }
 
             _ => {
@@ -853,11 +866,17 @@ fn recovery_input_view(recovery_words: &[String; 12]) -> Element<ViewMessage> {
         .push(
             Row::new()
                 .width(Length::Fill)
+                .spacing(15)
                 .align_y(Alignment::Center)
                 .push(Space::new().width(Length::Fill))
                 .push(
+                    button::secondary(None, "Cancel")
+                        .width(Length::Fixed(145.0))
+                        .on_press(ViewMessage::CancelRecovery),
+                )
+                .push(
                     button::primary(None, "Recover Wallet")
-                        .width(Length::Fixed(300.0))
+                        .width(Length::Fixed(145.0))
                         .on_press_maybe(if all_filled {
                             Some(ViewMessage::SubmitRecovery)
                         } else {
@@ -919,6 +938,7 @@ pub enum ViewMessage {
     ToggleRecoveryCheckBox,
     RecoveryWordInput { index: usize, word: String },
     SubmitRecovery,
+    CancelRecovery,
 }
 
 #[derive(Debug, Clone)]
