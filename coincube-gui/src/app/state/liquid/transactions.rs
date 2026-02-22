@@ -1,15 +1,19 @@
 use std::convert::TryInto;
 use std::sync::Arc;
 
-use breez_sdk_liquid::prelude::Payment;
+use breez_sdk_liquid::model::RefundRequest;
+use breez_sdk_liquid::prelude::{Payment, RefundableSwap};
 use coincube_core::miniscript::bitcoin::Amount;
+use coincube_ui::component::form;
 use coincube_ui::widget::*;
 use iced::Task;
 
+use crate::app::view::FeeratePriority;
 use crate::app::{breez::BreezClient, cache::Cache, menu::Menu, state::State};
 use crate::app::{message::Message, view, wallet::Wallet};
 use crate::daemon::Daemon;
 use crate::export::{ImportExportMessage, ImportExportState};
+use crate::services::feeestimation::fee_estimation::FeeEstimator;
 
 #[derive(Debug)]
 enum LiquidTransactionsModal {
@@ -20,10 +24,15 @@ enum LiquidTransactionsModal {
 pub struct LiquidTransactions {
     breez_client: Arc<BreezClient>,
     payments: Vec<Payment>,
+    refundables: Vec<RefundableSwap>,
     selected_payment: Option<Payment>,
+    selected_refundable: Option<RefundableSwap>,
     loading: bool,
     balance: Amount,
     modal: LiquidTransactionsModal,
+    refund_address: form::Value<String>,
+    refund_feerate: form::Value<String>,
+    fee_estimator: FeeEstimator,
 }
 
 impl LiquidTransactions {
@@ -31,10 +40,15 @@ impl LiquidTransactions {
         Self {
             breez_client,
             payments: Vec::new(),
+            refundables: Vec::new(),
             selected_payment: None,
+            selected_refundable: None,
             loading: false,
             balance: Amount::ZERO,
             modal: LiquidTransactionsModal::None,
+            refund_address: form::Value::default(),
+            refund_feerate: form::Value::default(),
+            fee_estimator: FeeEstimator::new(),
         }
     }
 
@@ -70,12 +84,25 @@ impl State for LiquidTransactions {
                 cache,
                 view::liquid::transaction_detail_view(payment, fiat_converter, cache.bitcoin_unit),
             )
+        } else if let Some(refundable) = &self.selected_refundable {
+            view::dashboard(
+                menu,
+                cache,
+                view::liquid::refundable_detail_view(
+                    refundable,
+                    fiat_converter,
+                    cache.bitcoin_unit,
+                    &self.refund_address,
+                    &self.refund_feerate,
+                ),
+            )
         } else {
             view::dashboard(
                 menu,
                 cache,
                 view::liquid::liquid_transactions_view(
                     &self.payments,
+                    &self.refundables,
                     &self.balance,
                     fiat_converter,
                     self.loading,
@@ -129,14 +156,32 @@ impl State for LiquidTransactions {
                 self.loading = false;
                 Task::done(Message::View(view::Message::ShowError(e.to_string())))
             }
+            Message::RefundablesLoaded(Ok(refundables)) => {
+                self.refundables = refundables;
+                Task::none()
+            }
+            Message::RefundablesLoaded(Err(e)) => {
+                Task::done(Message::View(view::Message::ShowError(e.to_string())))
+            }
             Message::View(view::Message::Select(i)) => {
                 self.selected_payment = self.payments.get(i).cloned();
+                self.selected_refundable = None;
+                Task::none()
+            }
+            Message::View(view::Message::SelectRefundable(i)) => {
+                self.selected_refundable = self.refundables.get(i).cloned();
+                self.selected_payment = None;
+                self.refund_address = form::Value::default();
+                self.refund_feerate = form::Value::default();
                 Task::none()
             }
             Message::View(view::Message::Reload) => self.reload(None, None),
             Message::View(view::Message::Close) => {
                 self.selected_payment = None;
+                self.selected_refundable = None;
                 self.modal = LiquidTransactionsModal::None;
+                self.refund_address = form::Value::default();
+                self.refund_feerate = form::Value::default();
                 Task::none()
             }
             Message::View(view::Message::PreselectPayment(payment)) => {
@@ -209,6 +254,106 @@ impl State for LiquidTransactions {
                 self.modal = LiquidTransactionsModal::None;
                 Task::none()
             }
+            Message::View(view::Message::RefundAddressEdited(address)) => {
+                self.refund_address.value = address;
+                let breez_client = self.breez_client.clone();
+                let addr = self.refund_address.value.clone();
+                Task::perform(
+                    async move { breez_client.validate_input(addr).await },
+                    |input_type| {
+                        Message::View(view::Message::RefundAddressValidated(matches!(
+                            input_type,
+                            Some(breez_sdk_liquid::InputType::BitcoinAddress { .. })
+                        )))
+                    },
+                )
+            }
+            Message::View(view::Message::RefundAddressValidated(is_valid)) => {
+                self.refund_address.valid = is_valid;
+                if !is_valid && !self.refund_address.value.is_empty() {
+                    self.refund_address.warning = Some("Invalid Bitcoin address");
+                } else {
+                    self.refund_address.warning = None;
+                }
+                Task::none()
+            }
+            Message::View(view::Message::RefundFeerateEdited(feerate)) => {
+                self.refund_feerate.value = feerate;
+                self.refund_feerate.valid = true;
+                self.refund_feerate.warning = None;
+                Task::none()
+            }
+            Message::View(view::Message::RefundFeeratePrioritySelected(priority)) => {
+                let fee_estimator = self.fee_estimator.clone();
+                Task::perform(
+                    async move {
+                        let rate: Option<usize> = match priority {
+                            FeeratePriority::Low => {
+                                fee_estimator.get_low_priority_rate().await.ok()
+                            }
+                            FeeratePriority::Medium => {
+                                fee_estimator.get_mid_priority_rate().await.ok()
+                            }
+                            FeeratePriority::High => {
+                                fee_estimator.get_high_priority_rate().await.ok()
+                            }
+                        };
+                        rate
+                    },
+                    move |rate: Option<usize>| {
+                        if let Some(rate) = rate {
+                            Message::View(view::Message::RefundFeerateEdited(rate.to_string()))
+                        } else {
+                            Message::View(view::Message::ShowError(
+                                "Failed to fetch fee rate".to_string(),
+                            ))
+                        }
+                    },
+                )
+            }
+            Message::View(view::Message::SubmitRefund) => {
+                if let Some(refundable) = &self.selected_refundable {
+                    let breez_client = self.breez_client.clone();
+                    let swap_address = refundable.swap_address.clone();
+                    let refund_address = self.refund_address.value.clone();
+                    let fee_rate = self.refund_feerate.value.parse::<u32>().unwrap_or(1);
+
+                    Task::perform(
+                        async move {
+                            breez_client
+                                .refund_onchain_tx(RefundRequest {
+                                    swap_address,
+                                    refund_address,
+                                    fee_rate_sat_per_vbyte: fee_rate,
+                                })
+                                .await
+                        },
+                        Message::RefundCompleted,
+                    )
+                } else {
+                    Task::none()
+                }
+            }
+            Message::RefundCompleted(Ok(response)) => {
+                log::info!("Refund completed successfully: {:?}", response);
+                self.selected_refundable = None;
+                self.refund_address = form::Value::default();
+                self.refund_feerate = form::Value::default();
+                Task::batch(vec![
+                    Task::done(Message::View(view::Message::Close)),
+                    Task::done(Message::View(view::Message::ShowError(format!(
+                        "Refund transaction broadcast: {}",
+                        response.refund_tx_id
+                    )))),
+                ])
+            }
+            Message::RefundCompleted(Err(e)) => {
+                log::error!("Refund failed: {:?}", e);
+                Task::done(Message::View(view::Message::ShowError(format!(
+                    "Refund failed: {}",
+                    e
+                ))))
+            }
             _ => Task::none(),
         }
     }
@@ -220,11 +365,19 @@ impl State for LiquidTransactions {
     ) -> Task<Message> {
         self.loading = true;
         self.selected_payment = None;
+        self.selected_refundable = None;
         let client = self.breez_client.clone();
+        let client2 = self.breez_client.clone();
 
-        Task::perform(
-            async move { client.list_payments(None).await },
-            Message::PaymentsLoaded,
-        )
+        Task::batch(vec![
+            Task::perform(
+                async move { client.list_payments(None).await },
+                Message::PaymentsLoaded,
+            ),
+            Task::perform(
+                async move { client2.list_refundables().await },
+                Message::RefundablesLoaded,
+            ),
+        ])
     }
 }

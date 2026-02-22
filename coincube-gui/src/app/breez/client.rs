@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use breez_sdk_liquid::{
     bitcoin::Network,
-    model::{LightningPaymentLimitsResponse, OnchainPaymentLimitsResponse},
+    model::{LightningPaymentLimitsResponse, OnchainPaymentLimitsResponse, RefundResponse},
     prelude as breez, InputType,
 };
 use coincube_core::{
@@ -353,6 +353,13 @@ impl BreezClient {
             .map_err(|e| BreezError::Sdk(e.to_string()))
     }
 
+    pub async fn list_refundables(&self) -> Result<Vec<breez::RefundableSwap>, BreezError> {
+        self.sdk
+            .list_refundables()
+            .await
+            .map_err(|e| BreezError::Sdk(e.to_string()))
+    }
+
     pub async fn fetch_payment_proposed_fees(
         &self,
         swap_id: &str,
@@ -400,6 +407,22 @@ impl BreezClient {
     pub async fn sync(&self) -> Result<(), BreezError> {
         self.sdk
             .sync(false)
+            .await
+            .map_err(|e| BreezError::Sdk(e.to_string()))
+    }
+    pub async fn rescan_onchain_swaps(&self) -> Result<(), BreezError> {
+        self.sdk
+            .rescan_onchain_swaps()
+            .await
+            .map_err(|e| BreezError::Sdk(e.to_string()))
+    }
+
+    pub async fn refund_onchain_tx(
+        &self,
+        refund_request: breez::RefundRequest,
+    ) -> Result<RefundResponse, BreezError> {
+        self.sdk
+            .refund(&refund_request)
             .await
             .map_err(|e| BreezError::Sdk(e.to_string()))
     }
