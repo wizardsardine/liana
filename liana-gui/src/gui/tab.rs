@@ -106,6 +106,7 @@ pub struct BusinessConnectResult {
             crate::services::connect::client::backend::BackendWalletClient,
             crate::services::connect::client::backend::api::Wallet,
             lianad::commands::ListCoinsResult,
+            crate::services::connect::client::backend::api::UserSettings,
         ),
         login::Error,
     >,
@@ -230,7 +231,7 @@ where
                     self.state = State::Installer(*install);
                     command.map(|msg| Message::Install(Box::new(msg)))
                 }
-                login::Message::Run(Ok((backend_client, wallet, coins))) => {
+                login::Message::Run(Ok((backend_client, wallet, coins, user_settings))) => {
                     let config = app::Config::from_file(
                         &l.datadir
                             .network_directory(l.network)
@@ -245,6 +246,7 @@ where
                         backend_client,
                         wallet,
                         coins,
+                        user_settings,
                         l.datadir.clone(),
                         l.network,
                         config,
@@ -450,7 +452,7 @@ where
                 } = conn_result;
 
                 match result {
-                    Ok((backend_client, wallet, coins)) => {
+                    Ok((backend_client, wallet, coins, user_settings)) => {
                         // Success! Create App directly
                         let config_path = datadir
                             .network_directory(network)
@@ -479,6 +481,7 @@ where
                             backend_client,
                             wallet,
                             coins,
+                            user_settings,
                             datadir.clone(),
                             network,
                             config,
@@ -698,6 +701,7 @@ async fn connect_for_business(
         BackendWalletClient,
         api::Wallet,
         lianad::commands::ListCoinsResult,
+        api::UserSettings,
     ),
     login::Error,
 > {
@@ -756,5 +760,11 @@ async fn connect_for_business(
         .await
         .map_err(|e| login::Error::Unexpected(e.to_string()))?;
 
-    Ok((wallet_client, wallet, coins))
+    // Get settings
+    let settings = wallet_client
+        .get_wallet_settings()
+        .await
+        .map_err(|e| login::Error::Unexpected(e.to_string()))?;
+
+    Ok((wallet_client, wallet, coins, settings))
 }

@@ -70,12 +70,13 @@ pub trait SettingsTrait: Clone + Default + Serialize + DeserializeOwned + Send +
     /// This method allows the generic `Tab<I, S, M>` to handle the Login -> App
     /// transition in a type-safe way without unsafe code.
     #[allow(unused_variables)]
-    #[allow(clippy::type_complexity)]
+    #[allow(clippy::type_complexity, clippy::too_many_arguments)]
     fn create_app_for_remote_backend(
         wallet_id: WalletId,
         remote_backend: BackendWalletClient,
         wallet: api::Wallet,
         coins: ListCoinsResult,
+        user_settings: api::UserSettings,
         liana_dir: LianaDirectory,
         network: bitcoin::Network,
         config: app::Config,
@@ -159,6 +160,7 @@ impl SettingsTrait for LianaSettings {
         remote_backend: BackendWalletClient,
         wallet: api::Wallet,
         coins: ListCoinsResult,
+        _user_settings: api::UserSettings,
         liana_dir: LianaDirectory,
         network: bitcoin::Network,
         config: app::Config,

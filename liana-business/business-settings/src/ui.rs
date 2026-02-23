@@ -3,13 +3,12 @@
 use std::sync::Arc;
 
 use iced::{Subscription, Task};
-use liana::miniscript::bitcoin::Network;
 use liana_gui::{
     app::{
         cache::Cache,
         menu::Menu,
         message::Message,
-        settings::{fiat::PriceSetting, update_settings_file, SettingsError, SettingsUI},
+        settings::{fiat::PriceSetting, SettingsError, SettingsUI},
         state::{settings::wallet::RegisterWalletModal, State},
         view,
         wallet::Wallet,
@@ -21,7 +20,7 @@ use liana_gui::{
 use liana_ui::widget::{modal, Element};
 
 use crate::message::{Msg, Section};
-use crate::{views, BusinessSettings};
+use crate::views;
 
 /// Business-specific settings UI.
 pub struct BusinessSettingsUI {
@@ -40,30 +39,6 @@ fn wallet_fiat_setting_or_default(wallet: &Wallet) -> PriceSetting {
         .as_ref()
         .cloned()
         .unwrap_or_default()
-}
-
-async fn update_business_fiat_setting(
-    data_dir: LianaDirectory,
-    network: Network,
-    wallet: Arc<Wallet>,
-    new_setting: PriceSetting,
-) -> Result<Arc<Wallet>, SettingsError> {
-    let mut wallet = wallet.as_ref().clone();
-    wallet = wallet.with_fiat_price_setting(Some(new_setting.clone()));
-    let network_dir = data_dir.network_directory(network);
-    let wallet_id = wallet.id();
-    update_settings_file::<BusinessSettings, _>(&network_dir, |mut settings| {
-        if let Some(ws) = settings
-            .wallets
-            .iter_mut()
-            .find(|w| w.wallet_id() == wallet_id)
-        {
-            ws.fiat_price = Some(new_setting);
-        }
-        settings
-    })
-    .await?;
-    Ok(Arc::new(wallet))
 }
 
 impl SettingsUI<Msg> for BusinessSettingsUI {
@@ -125,11 +100,7 @@ impl SettingsUI<Msg> for BusinessSettingsUI {
         self.register_modal = None;
     }
 
-    fn reload(
-        &mut self,
-        _daemon: Arc<dyn Daemon + Sync + Send>,
-        wallet: Arc<Wallet>,
-    ) -> Task<Msg> {
+    fn reload(&mut self, _daemon: Arc<dyn Daemon + Sync + Send>, wallet: Arc<Wallet>) -> Task<Msg> {
         self.current_section = None;
         self.fiat_setting = wallet_fiat_setting_or_default(&wallet);
         self.wallet = wallet;
@@ -144,14 +115,40 @@ impl BusinessSettingsUI {
         Task::none()
     }
 
-    fn save_fiat_setting(&self, cache: &Cache) -> Task<Message> {
+    fn save_fiat_setting(&self, daemon: Arc<dyn Daemon + Sync + Send>) -> Task<Message> {
         let wallet = self.wallet.clone();
         let setting = self.fiat_setting.clone();
-        let network = cache.network;
-        let datadir = self.data_dir.clone();
+
+        // Convert PriceSetting to backend FiatCurrency
+        let fiat_currency = if !setting.is_enabled {
+            liana_gui::services::connect::client::backend::api::FiatCurrency::None
+        } else {
+            match crate::BackendCurrency::try_from(setting.currency) {
+                Ok(crate::BackendCurrency::USD) => {
+                    liana_gui::services::connect::client::backend::api::FiatCurrency::USD
+                }
+                Ok(crate::BackendCurrency::EUR) => {
+                    liana_gui::services::connect::client::backend::api::FiatCurrency::EUR
+                }
+                Err(_) => liana_gui::services::connect::client::backend::api::FiatCurrency::None,
+            }
+        };
+
         Task::perform(
-            async move { update_business_fiat_setting(datadir, network, wallet, setting).await },
-            |res| Message::WalletUpdated(res.map_err(Into::into)),
+            async move {
+                // Update backend only (no local file for business)
+                daemon
+                    .update_wallet_settings(fiat_currency)
+                    .await
+                    .map_err(|e| SettingsError::Unexpected(e.to_string()))?;
+                // Return updated wallet with new fiat setting
+                let mut w = wallet.as_ref().clone();
+                w = w.with_fiat_price_setting(Some(setting));
+                Ok::<_, SettingsError>(Arc::new(w))
+            },
+            |res: Result<Arc<Wallet>, SettingsError>| {
+                Message::WalletUpdated(res.map_err(Into::into))
+            },
         )
     }
 }
@@ -232,11 +229,11 @@ impl State for BusinessSettingsUI {
                 match fiat_msg {
                     view::FiatMessage::Enable(enabled) => {
                         self.fiat_setting.is_enabled = *enabled;
-                        self.save_fiat_setting(cache)
+                        self.save_fiat_setting(daemon)
                     }
                     view::FiatMessage::CurrencyEdited(currency) => {
                         self.fiat_setting.currency = *currency;
-                        self.save_fiat_setting(cache)
+                        self.save_fiat_setting(daemon)
                     }
                     _ => Task::none(),
                 }
