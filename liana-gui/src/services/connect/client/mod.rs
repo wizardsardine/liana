@@ -10,7 +10,7 @@ const DEFAULT_CONNECT_SIGNET_URL: &str = "https://api.connect.signet.lianawallet
 const DEFAULT_CONNECT_MAINNET_URL: &str = "https://api.connect.lianawallet.com";
 
 pub const BUSINESS_MAINNET_API_URL: &str = "https://api.connect.lianawallet.com";
-pub const BUSINESS_SIGNET_API_URL: &str = "https://api.connect.signet.lianawallet.com";
+pub const BUSINESS_SIGNET_API_URL: &str = "http://91.134.255.99:8080";
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct ServiceConfigResource {

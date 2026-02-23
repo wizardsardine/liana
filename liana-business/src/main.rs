@@ -33,9 +33,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     use bitcoin::Network::{Bitcoin, Signet};
 
     // Check if Signet is enabled via environment variable
-    let signet_enabled = std::env::var("LIANA_BUSINESS_SIGNET")
-        .map(|v| v == "1")
-        .unwrap_or(false);
+    let signet_enabled = true;
 
     // When LIANA_BUSINESS_SIGNET=1, default to Signet (no --signet flag needed)
     let default_network = if signet_enabled { Signet } else { Bitcoin };
