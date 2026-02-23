@@ -120,6 +120,10 @@ impl<C: Client + Send + Sync + Debug> Daemon for Lianad<C> {
         self.call("getactivepayjoinsessions", Option::<Request>::None)
     }
 
+    async fn get_payjoin_bip21(&self, derivation_index: u32) -> Result<Option<String>, DaemonError> {
+        self.call("getpayjoinbip21", Some(vec![derivation_index.to_string()]))
+    }
+
     async fn update_deriv_indexes(
         &self,
         receive: Option<u32>,

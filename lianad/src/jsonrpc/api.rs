@@ -508,6 +508,17 @@ fn get_active_payjoin_sessions(control: &DaemonControl) -> Result<serde_json::Va
     Ok(serde_json::json!(&res))
 }
 
+fn get_payjoin_bip21(control: &DaemonControl, params: Params) -> Result<serde_json::Value, Error> {
+    let derivation_index = params
+        .get(0, "derivation_index")
+        .ok_or_else(|| Error::invalid_params("Missing 'derivation_index' parameter."))?
+        .as_u64()
+        .ok_or_else(|| Error::invalid_params("Invalid 'derivation_index' parameter."))?
+        as u32;
+    let res = control.get_payjoin_bip21(derivation_index)?;
+    Ok(serde_json::json!(&res))
+}
+
 /// Handle an incoming JSONRPC2 request.
 pub fn handle_request(control: &mut DaemonControl, req: Request) -> Result<Response, Error> {
     let result = match req.method.as_str() {
@@ -623,6 +634,12 @@ pub fn handle_request(control: &mut DaemonControl, req: Request) -> Result<Respo
             get_payjoin_info(control, params)?
         }
         "getactivepayjoinsessions" => get_active_payjoin_sessions(control)?,
+        "getpayjoinbip21" => {
+            let params = req
+                .params
+                .ok_or_else(|| Error::invalid_params("Missing 'derivation_index' parameter."))?;
+            get_payjoin_bip21(control, params)?
+        }
         _ => {
             return Err(Error::method_not_found());
         }

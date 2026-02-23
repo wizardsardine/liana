@@ -412,17 +412,13 @@ impl DaemonControl {
             .address(self.config.bitcoin_config.network);
 
         let persister = ReceiverPersister::new(Arc::new(self.db.clone()), new_index.into());
-        let session = ReceiverBuilder::new(address.clone(), PAYJOIN_DIRECTORY, ohttp_keys.clone())
+        let _session = ReceiverBuilder::new(address.clone(), PAYJOIN_DIRECTORY, ohttp_keys)
             .map_err(|e| CommandError::IntoUrlError(e.to_string()))?
             .build()
             .save(&persister)
             .unwrap();
 
-        Ok(GetAddressResult::new(
-            address,
-            new_index,
-            Some(session.pj_uri().to_string()),
-        ))
+        Ok(GetAddressResult::new(address, new_index, None))
     }
 
     /// Get Payjoin URI (BIP21) and its sender/receiver status by txid
@@ -445,6 +441,33 @@ impl DaemonControl {
         let mut db_conn = self.db.connection();
         let sessions = db_conn.get_active_payjoin_sessions();
         Ok(sessions.into_iter().map(|(_, idx)| idx).collect())
+    }
+
+    /// Get payjoin BIP21 URI for a specific derivation index
+    pub fn get_payjoin_bip21(&self, derivation_index: u32) -> Result<Option<String>, CommandError> {
+        let mut db_conn = self.db.connection();
+
+        let ohttp_keys = if let Some(entry) = db_conn.payjoin_get_ohttp_keys(OHTTP_RELAY) {
+            entry.1
+        } else {
+            return Ok(None);
+        };
+
+        let address = self
+            .config
+            .main_descriptor
+            .receive_descriptor()
+            .derive(derivation_index.into(), &self.secp)
+            .address(self.config.bitcoin_config.network);
+
+        let persister = ReceiverPersister::new(Arc::new(self.db.clone()), derivation_index);
+        let session = ReceiverBuilder::new(address, PAYJOIN_DIRECTORY, ohttp_keys)
+            .map_err(|e| CommandError::IntoUrlError(e.to_string()))?
+            .build()
+            .save(&persister)
+            .unwrap();
+
+        Ok(Some(session.pj_uri().to_string()))
     }
 
     /// Update derivation indexes

@@ -1148,7 +1148,6 @@ impl SqliteConn {
 
     /// Create new Receiver Session
     pub fn save_new_payjoin_receiver_session(&mut self, derivation_index: u32) -> i64 {
-        // TODO: is there a more elegant way to get the last insert row id atomically?
         let mut id = 0i64;
         db_exec(&mut self.conn, |db_tx| {
             db_tx.execute(
