@@ -403,7 +403,11 @@ impl<S: SettingsTrait> App<S> {
 
         // Fiat price fetching from backend (for remote backend wallets).
         let is_remote = self.daemon.backend().is_remote();
-        let has_fiat_setting = self.wallet.fiat_price_setting.as_ref().is_some_and(|s| s.is_enabled);
+        let has_fiat_setting = self
+            .wallet
+            .fiat_price_setting
+            .as_ref()
+            .is_some_and(|s| s.is_enabled);
         tracing::trace!(
             "Fiat check: is_remote={}, has_fiat_setting={}",
             is_remote,
