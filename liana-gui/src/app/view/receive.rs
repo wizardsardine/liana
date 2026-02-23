@@ -17,7 +17,7 @@ use liana::miniscript::bitcoin::{
 
 use liana_ui::{
     component::{
-        button, card, form,
+        badge, button, card, form,
         text::{self, *},
     },
     icon, theme,
@@ -58,25 +58,14 @@ fn address_card<'a>(
                                 Column::new()
                                     .push(Space::with_height(Length::Fixed(10.0)))
                                     .push(
-                                        Row::new()
-                                            .spacing(5)
-                                            .push(if is_payjoin {
-                                                p2_regular("Payjoin ")
-                                                    .small()
-                                                    .style(theme::text::payjoin)
-                                            } else {
-                                                p2_regular("")
-                                            })
-                                            .push(
-                                                p2_regular(
-                                                    maybe_bip21
-                                                        .clone()
-                                                        .map(|bip21| bip21.to_string())
-                                                        .unwrap_or(addr.clone()),
-                                                )
-                                                .small()
-                                                .style(theme::text::secondary),
-                                            ),
+                                        p2_regular(
+                                            maybe_bip21
+                                                .clone()
+                                                .map(|bip21| bip21.to_string())
+                                                .unwrap_or(addr.clone()),
+                                        )
+                                        .small()
+                                        .style(theme::text::secondary),
                                     )
                                     // Space between the address and the scrollbar
                                     .push(Space::with_height(Length::Fixed(10.0))),
@@ -89,6 +78,11 @@ fn address_card<'a>(
                         )
                         .width(Length::Fill),
                     )
+                    .push(if is_payjoin {
+                        badge::payjoin()
+                    } else {
+                        Container::new(p2_regular("").small())
+                    })
                     .push(
                         Button::new(icon::clipboard_icon().style(theme::text::secondary))
                             .on_press(Message::Clipboard(addr))
@@ -225,13 +219,6 @@ pub fn receive<'a>(
                                     Container::new(
                                         Row::new()
                                             .spacing(5)
-                                            .push(if is_payjoin {
-                                                p2_regular("Payjoin ")
-                                                    .small()
-                                                    .style(theme::text::payjoin)
-                                            } else {
-                                                p2_regular("")
-                                            })
                                             .push(
                                                 p2_regular(if addr_len > 2 * NUM_ADDR_CHARS {
                                                     format!(
@@ -252,6 +239,11 @@ pub fn receive<'a>(
                                             .padding(10)
                                             .width(Length::Fixed(350.0)),
                                     )
+                                })
+                                .push(if is_payjoin {
+                                    badge::payjoin()
+                                } else {
+                                    Container::new(p2_regular("").small())
                                 })
                                 .push(
                                     Container::new(
