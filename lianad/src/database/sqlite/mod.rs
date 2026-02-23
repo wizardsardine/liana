@@ -45,7 +45,7 @@ use miniscript::bitcoin::{
     secp256k1,
 };
 
-const DB_VERSION: i64 = 9;
+const DB_VERSION: i64 = 10;
 
 /// Last database version for which Bitcoin transactions were not stored in database. In practice
 /// this meant we relied on the bitcoind watchonly wallet to store them for us.
@@ -1147,12 +1147,12 @@ impl SqliteConn {
     }
 
     /// Create new Receiver Session
-    pub fn save_new_payjoin_receiver_session(&mut self, derivation_index: u32) -> i64 {
+    pub fn save_new_payjoin_receiver_session(&mut self, derivation_index: u32, bip21: &str) -> i64 {
         let mut id = 0i64;
         db_exec(&mut self.conn, |db_tx| {
             db_tx.execute(
-                "INSERT INTO payjoin_receivers (derivation_index, created_at) VALUES (?1, ?2)",
-                rusqlite::params![derivation_index, curr_timestamp()],
+                "INSERT INTO payjoin_receivers (derivation_index, bip21, created_at) VALUES (?1, ?2, ?3)",
+                rusqlite::params![derivation_index, bip21, curr_timestamp()],
             )?;
 
             id = db_tx.last_insert_rowid();
@@ -1160,6 +1160,31 @@ impl SqliteConn {
         })
         .expect("Db must not fail");
         id
+    }
+
+    /// Get bip21 for a receiver session by derivation index
+    pub fn get_payjoin_receiver_bip21(&mut self, derivation_index: u32) -> Option<String> {
+        db_query(
+            &mut self.conn,
+            "SELECT bip21 FROM payjoin_receivers WHERE derivation_index = ?1 AND bip21 IS NOT NULL",
+            rusqlite::params![derivation_index],
+            |row| row.get(0),
+        )
+        .expect("Db must not fail")
+        .into_iter()
+        .next()
+    }
+
+    /// Update bip21 for a receiver session
+    pub fn update_payjoin_receiver_bip21(&mut self, derivation_index: u32, bip21: &str) {
+        db_exec(&mut self.conn, |db_tx| {
+            db_tx.execute(
+                "UPDATE payjoin_receivers SET bip21 = ?1 WHERE derivation_index = ?2",
+                rusqlite::params![bip21, derivation_index],
+            )?;
+            Ok(())
+        })
+        .expect("Db must not fail");
     }
 
     /// Get all active receiver session ids with their derivation indexes

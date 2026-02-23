@@ -37,9 +37,9 @@ pub(crate) struct ReceiverPersister {
 }
 
 impl ReceiverPersister {
-    pub fn new(db: Arc<dyn DatabaseInterface>, derivation_index: u32) -> Self {
+    pub fn new(db: Arc<dyn DatabaseInterface>, derivation_index: u32, bip21: &str) -> Self {
         let mut db_conn = db.connection();
-        let session_id = db_conn.save_new_payjoin_receiver_session(derivation_index);
+        let session_id = db_conn.save_new_payjoin_receiver_session(derivation_index, bip21);
         Self {
             db,
             session_id: SessionId(session_id),

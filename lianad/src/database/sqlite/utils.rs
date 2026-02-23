@@ -495,6 +495,16 @@ fn migrate_v8_to_v9(conn: &mut rusqlite::Connection) -> Result<(), SqliteDbError
     Ok(())
 }
 
+fn migrate_v9_to_v10(conn: &mut rusqlite::Connection) -> Result<(), SqliteDbError> {
+    db_exec(conn, |db_tx| {
+        db_tx.execute("ALTER TABLE payjoin_receivers ADD COLUMN bip21 TEXT", [])?;
+        db_tx.execute("UPDATE version SET version = 10", [])?;
+        Ok(())
+    })?;
+
+    Ok(())
+}
+
 /// Check the database version and if necessary apply the migrations to upgrade it to the current
 /// one. The `bitcoin_txs` parameter is here for the migration from versions 4 and earlier, which
 /// did not store the Bitcoin transactions in database, to versions 5 and later, which do. For a
@@ -562,6 +572,11 @@ pub fn maybe_apply_migration(
                 log::warn!("Upgrading database from version 8 to version 9.");
                 migrate_v8_to_v9(&mut conn)?;
                 log::warn!("Migration from database version 8 to version 9 successful.");
+            }
+            9 => {
+                log::warn!("Upgrading database from version 9 to version 10.");
+                migrate_v9_to_v10(&mut conn)?;
+                log::warn!("Migration from database version 9 to version 10 successful.");
             }
             _ => return Err(SqliteDbError::UnsupportedVersion(version)),
         }

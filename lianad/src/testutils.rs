@@ -586,7 +586,15 @@ impl DatabaseConnection for DummyDatabase {
         todo!()
     }
 
-    fn save_new_payjoin_receiver_session(&mut self, _derivation_index: u32) -> i64 {
+    fn save_new_payjoin_receiver_session(&mut self, _derivation_index: u32, _bip21: &str) -> i64 {
+        todo!()
+    }
+
+    fn get_payjoin_receiver_bip21(&mut self, _derivation_index: u32) -> Option<String> {
+        todo!()
+    }
+
+    fn update_payjoin_receiver_bip21(&mut self, _derivation_index: u32, _bip21: &str) {
         todo!()
     }
 

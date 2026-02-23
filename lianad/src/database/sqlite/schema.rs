@@ -146,6 +146,7 @@ CREATE TABLE payjoin_ohttp_keys (
 CREATE TABLE payjoin_receivers (
     id INTEGER PRIMARY KEY NOT NULL,
     derivation_index INTEGER,
+    bip21 TEXT,
     original_txid BLOB,
     proposed_txid BLOB,
     created_at INTEGER NOT NULL,

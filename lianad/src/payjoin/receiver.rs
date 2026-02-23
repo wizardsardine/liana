@@ -11,7 +11,7 @@ use payjoin::{
         self, consensus::encode::serialize_hex, psbt::Input, secp256k1, OutPoint, Sequence, TxIn,
         Weight,
     },
-    persist::OptionalTransitionOutcome,
+    persist::{OptionalTransitionOutcome, SessionPersister},
     receive::{
         v2::{
             replay_event_log, Initialized, MaybeInputsOwned, MaybeInputsSeen, OutputsUnknown,
@@ -341,11 +341,20 @@ fn process_receiver_session(
         ReceiveSession::WantsInputs(proposal) => {
             contribute_inputs(proposal, &persister, db_conn, desc, secp)?
         }
+        ReceiveSession::WantsFeeRange(proposal) => {
+            apply_fee_range(proposal, &persister, db_conn, secp)?;
+        }
         ReceiveSession::ProvisionalProposal(proposal) => {
             finalize_proposal(proposal, &persister, db_conn, secp)?
         }
         ReceiveSession::PayjoinProposal(proposal) => send_payjoin_proposal(proposal, &persister)?,
-        _ => return Err(format!("Unexpected receiver state: {:?}", state).into()),
+        ReceiveSession::Closed(_) | ReceiveSession::HasReplyableError(_) => {
+            log::info!("Payjoin session completed or expired, marking as closed");
+            persister.close()?;
+        }
+        ReceiveSession::Monitor(_) => {
+            log::debug!("Payjoin session in monitoring state");
+        }
     }
     Ok(())
 }

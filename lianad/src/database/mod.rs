@@ -204,7 +204,13 @@ pub trait DatabaseConnection {
     fn payjoin_save_ohttp_keys(&mut self, ohttp_relay: &str, ohttp_keys: OhttpKeys);
 
     /// Save Receiver Session
-    fn save_new_payjoin_receiver_session(&mut self, derivation_index: u32) -> i64;
+    fn save_new_payjoin_receiver_session(&mut self, derivation_index: u32, bip21: &str) -> i64;
+
+    /// Get bip21 for a receiver session by derivation index
+    fn get_payjoin_receiver_bip21(&mut self, derivation_index: u32) -> Option<String>;
+
+    /// Update bip21 for a receiver session
+    fn update_payjoin_receiver_bip21(&mut self, derivation_index: u32, bip21: &str);
 
     /// Get active payjoin sessions with their derivation indexes
     fn get_active_payjoin_sessions(&mut self) -> Vec<(SessionId, u32)>;
@@ -479,8 +485,16 @@ impl DatabaseConnection for SqliteConn {
         self.payjoin_save_ohttp_keys(ohttp_relay, ohttp_keys)
     }
 
-    fn save_new_payjoin_receiver_session(&mut self, derivation_index: u32) -> i64 {
-        self.save_new_payjoin_receiver_session(derivation_index)
+    fn save_new_payjoin_receiver_session(&mut self, derivation_index: u32, bip21: &str) -> i64 {
+        self.save_new_payjoin_receiver_session(derivation_index, bip21)
+    }
+
+    fn get_payjoin_receiver_bip21(&mut self, derivation_index: u32) -> Option<String> {
+        self.get_payjoin_receiver_bip21(derivation_index)
+    }
+
+    fn update_payjoin_receiver_bip21(&mut self, derivation_index: u32, bip21: &str) {
+        self.update_payjoin_receiver_bip21(derivation_index, bip21)
     }
 
     fn get_active_payjoin_sessions(&mut self) -> Vec<(SessionId, u32)> {
