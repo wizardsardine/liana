@@ -124,6 +124,7 @@ impl SettingsTrait for BusinessSettings {
         remote_backend: BackendWalletClient,
         wallet: api::Wallet,
         coins: ListCoinsResult,
+        user_settings: api::UserSettings,
         liana_dir: LianaDirectory,
         network: bitcoin::Network,
         config: app::Config,
@@ -166,6 +167,21 @@ impl SettingsTrait for BusinessSettings {
                 refresh_token: None,
             };
 
+            // Convert backend FiatCurrency to fiat::PriceSetting
+            let fiat_price_setting = match user_settings.fiat_currency {
+                api::FiatCurrency::None => None,
+                api::FiatCurrency::USD => Some(fiat::PriceSetting {
+                    source: liana_gui::services::fiat::PriceSource::default(),
+                    currency: liana_gui::services::fiat::Currency::USD,
+                    is_enabled: true,
+                }),
+                api::FiatCurrency::EUR => Some(fiat::PriceSetting {
+                    source: liana_gui::services::fiat::PriceSource::default(),
+                    currency: liana_gui::services::fiat::Currency::EUR,
+                    is_enabled: true,
+                }),
+            };
+
             let app_wallet = Arc::new(
                 AppWallet::new(wallet.descriptor)
                     .with_name(wallet.name)
@@ -174,11 +190,7 @@ impl SettingsTrait for BusinessSettings {
                     .with_provider_keys(provider_keys)
                     .with_hardware_wallets(hws)
                     .with_remote_backend_auth(auth_cfg)
-                    .with_fiat_price_setting(Some(fiat::PriceSetting {
-                        source: liana_gui::services::fiat::PriceSource::default(),
-                        currency: liana_gui::services::fiat::Currency::USD,
-                        is_enabled: true,
-                    }))
+                    .with_fiat_price_setting(fiat_price_setting)
                     .load_hotsigners(&liana_dir, network)
                     .map_err(|e| SettingsError::Unexpected(e.to_string()))?,
             );

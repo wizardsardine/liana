@@ -179,6 +179,14 @@ pub trait Daemon: Debug {
         Err(DaemonError::NotImplemented)
     }
 
+    /// Updates the user's wallet settings on the backend.
+    async fn update_wallet_settings(
+        &self,
+        _fiat_currency: crate::services::connect::client::backend::api::FiatCurrency,
+    ) -> Result<(), DaemonError> {
+        Err(DaemonError::NotImplemented)
+    }
+
     // List spend transactions, optionally filtered to the specified `txids`.
     // Set `txids` to `None` for no filter (passing an empty slice returns no transactions).
     async fn list_spend_transactions(

@@ -101,22 +101,24 @@ pub fn general_view(fiat_enabled: bool, currency: crate::BackendCurrency) -> Ele
                             .style(theme::toggler::primary),
                     ),
             )
-            .push_maybe(fiat_enabled.then_some(
-                Row::new()
-                    .spacing(20)
-                    .align_y(Alignment::Center)
-                    .push(text("Currency:").bold())
-                    .push(Space::with_width(Length::Fill))
-                    .push(
-                        pick_list(
-                            crate::ALL_BACKEND_CURRENCIES,
-                            Some(currency),
-                            Msg::FiatCurrencyEdited,
-                        )
-                        .style(theme::pick_list::primary)
-                        .padding(10),
-                    ),
-            )),
+            .push_maybe(
+                fiat_enabled.then_some(
+                    Row::new()
+                        .spacing(20)
+                        .align_y(Alignment::Center)
+                        .push(text("Currency:").bold())
+                        .push(Space::with_width(Length::Fill))
+                        .push(
+                            pick_list(
+                                crate::ALL_BACKEND_CURRENCIES,
+                                Some(currency),
+                                Msg::FiatCurrencyEdited,
+                            )
+                            .style(theme::pick_list::primary)
+                            .padding(10),
+                        ),
+                ),
+            ),
     )
     .width(Length::Fill);
 
