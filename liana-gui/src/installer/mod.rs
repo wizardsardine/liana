@@ -140,6 +140,11 @@ where
     fn backend_type() -> BackendType {
         BackendType::LianaConnect
     }
+
+    /// Called when a RunLianaBusiness connection fails.
+    /// Should store the error to display in a banner.
+    /// Default: no-op
+    fn set_connection_error(&mut self, _error: String, _email: String) {}
 }
 
 pub struct LianaInstaller {
