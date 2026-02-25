@@ -134,6 +134,12 @@ impl Installer<'_, Message> for BusinessInstaller {
         }
         None
     }
+
+    fn set_connection_error(&mut self, error: String, email: String) {
+        self.state.connection_error = Some(error);
+        // Store email for cleanup when user clicks "Back to login"
+        self.state.views.login.account_select.selected_email = Some(email);
+    }
 }
 
 struct NotifListener {

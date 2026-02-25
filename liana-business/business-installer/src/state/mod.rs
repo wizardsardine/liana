@@ -64,6 +64,8 @@ pub struct State {
     /// Shared BitBox noise config for pairing persistence (kept for potential future use)
     #[allow(dead_code)]
     bitbox_config: Arc<dyn NoiseConfig>,
+    /// Error from RunLianaBusiness connection failure
+    pub connection_error: Option<String>,
 }
 
 impl State {
@@ -115,6 +117,7 @@ impl State {
             hw_sender,
             _hw_bridge_handle: Some(hw_bridge_handle),
             bitbox_config,
+            connection_error: None,
         }
     }
 
@@ -154,7 +157,8 @@ impl State {
 
     /// Render the current view with modals
     pub fn view(&self) -> Element<'_, Message> {
-        let content = match self.route() {
+        let has_error = self.connection_error.is_some();
+        let view_content = match self.route() {
             View::Login => login_view(self),
             View::OrgSelect => org_select_view(self),
             View::WalletSelect => wallet_select_view(self),
@@ -162,7 +166,24 @@ impl State {
             View::Xpub => xpub_view(self),
             View::Keys => keys_view(self),
             View::Registration => registration_view(self),
-            View::Loading => loading_view(),
+            View::Loading => loading_view(has_error),
+        };
+
+        // Wrap content with connection error banner if present
+        let content: Element<'_, Message> = if let Some(error) = &self.connection_error {
+            use iced::widget::Column;
+            use iced::Length;
+            use liana_ui::component::notification;
+
+            Column::new()
+                .push(
+                    notification::warning("Connection failed".to_string(), error.clone())
+                        .width(Length::Fill),
+                )
+                .push(view_content)
+                .into()
+        } else {
+            view_content
         };
 
         // Overlay modals if any are open

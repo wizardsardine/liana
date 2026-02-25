@@ -67,6 +67,7 @@ pub enum Msg {
     NavigateToOrgSelect,    // Navigate to org selection
     NavigateToWalletSelect, // Navigate to wallet selection
     NavigateBack,           // Navigate back
+    BackToLogin,            // Go back to login after connection error
 
     // Backend
     BackendNotif(crate::backend::Notification), // Backend notification received

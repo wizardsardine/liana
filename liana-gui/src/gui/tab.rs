@@ -518,24 +518,12 @@ where
                         }
                     }
                     Err(e) => {
-                        // Connection failed, fall back to login flow
+                        // Connection failed - show error in banner and let user go back to login
                         tracing::warn!("Business connection failed, falling back to login: {}", e);
-                        let auth_cfg = crate::app::settings::AuthConfig {
-                            email,
-                            wallet_id,
-                            refresh_token: None,
-                        };
-                        let directory_wallet_id =
-                            crate::app::settings::WalletId::new(auth_cfg.wallet_id.clone(), None);
-                        let (login, command) = login::LianaLiteLogin::new(
-                            datadir,
-                            network,
-                            directory_wallet_id,
-                            auth_cfg,
-                            I::backend_type(),
-                        );
-                        self.state = State::Login(Box::new(login));
-                        command.map(|msg| Message::Login(Box::new(msg)))
+                        if let State::Installer(installer) = &mut self.state {
+                            installer.set_connection_error(e.to_string(), email);
+                        }
+                        Task::none()
                     }
                 }
             }
