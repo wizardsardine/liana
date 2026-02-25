@@ -1090,11 +1090,11 @@ impl SelectKeySource {
         let support_taproot = device.3;
         let mut enabled = true;
         let message = match (state, support_taproot, self.taproot) {
-            (_, false, true) => Some("This device do not support taproot".to_string()),
             (HwState::Locked { pairing_code }, _, _) => Some(match pairing_code {
                 Some(code) => format!("Pairing code: {code}"),
                 None => "Please unlock the device".to_string(),
             }),
+            (_, false, true) => Some("This device does not support taproot".to_string()),
             (HwState::Unsupported(ur), _, _) => {
                 enabled = false;
                 match ur {
