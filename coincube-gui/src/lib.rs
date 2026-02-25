@@ -22,17 +22,14 @@ pub mod utils;
 
 use coincubed::ApiVersion;
 
-pub const VERSION: ApiVersion = ApiVersion {
-    major: 13,
-    minor: 0,
-};
+pub const VERSION: ApiVersion = ApiVersion(env!("CARGO_PKG_VERSION"));
 
 #[cfg(test)]
 mod tests {
     #[test]
     fn gui_version() {
         // coincube-gui major version should always be superior or equal to coincubed version.
-        let coincubed_version = coincubed::VERSION.major;
-        assert!(super::VERSION.major >= coincubed_version);
+        let coincubed_version = coincubed::VERSION.major();
+        assert!(super::VERSION.major() >= coincubed_version);
     }
 }

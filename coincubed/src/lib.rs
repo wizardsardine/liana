@@ -68,25 +68,29 @@ pub fn setup_panic_hook() {
 }
 
 #[derive(Debug, Clone)]
-pub struct ApiVersion {
-    pub major: u32,
-    pub minor: u32,
+pub struct ApiVersion<'a>(pub &'a str);
+
+impl ApiVersion<'_> {
+    pub fn major(&self) -> u32 {
+        self.0
+            .split('.')
+            .next()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0)
+    }
 }
 
-impl fmt::Display for ApiVersion {
+impl fmt::Display for ApiVersion<'_> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         if cfg!(debug_assertions) {
-            write!(f, "{}.{}-dev", self.major, self.minor)
+            write!(f, "{}-dev", self.0)
         } else {
-            write!(f, "{}.{}", self.major, self.minor)
+            write!(f, "{}", self.0)
         }
     }
 }
 
-pub const VERSION: ApiVersion = ApiVersion {
-    major: 13,
-    minor: 0,
-};
+pub const VERSION: ApiVersion = ApiVersion(env!("CARGO_PKG_VERSION"));
 
 #[derive(Debug)]
 pub enum StartupError {
