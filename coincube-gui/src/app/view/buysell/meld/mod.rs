@@ -607,22 +607,19 @@ impl MeldState {
                 return Some(task);
             }
             MeldMessage::ReceivedQuotes(mut quotes) => {
-                let (deposit_address, processing) = match self.steps.last_mut() {
-                    Some(MeldFlowStep::AddressSelection {
-                        processing_request,
-                        deposit_address,
-                        ..
-                    }) => (deposit_address.as_ref().map(|(a, _)| a), processing_request),
+                match self.steps.last_mut() {
                     Some(MeldFlowStep::AmountInputForm {
                         processing_request, ..
-                    }) => (None, processing_request),
+                    })
+                    | Some(MeldFlowStep::AddressSelection {
+                        processing_request, ..
+                    }) => *processing_request = false,
                     _ => {
                         log::warn!("[MELD] Ignoring `GetQuotes` message, not in a valid state",);
                         return None;
                     }
                 };
 
-                *processing = false;
                 log::trace!("[MELD] Successfully received quotes: {}", quotes.len(),);
 
                 match quotes.as_slice() {
