@@ -278,7 +278,7 @@ impl MeldState {
                     None => {
                         // automatically skip to input form
                         self.steps.push(MeldFlowStep::AmountInputForm {
-                            amount: String::new(),
+                            amount: limits.minimum_amount.to_string(),
                             limits,
                             btc_balance: cache
                                 .coins()
@@ -322,7 +322,7 @@ impl MeldState {
                 }) = self.steps.last()
                 {
                     self.steps.push(MeldFlowStep::AmountInputForm {
-                        amount: String::new(),
+                        amount: limits.minimum_amount.to_string(),
                         limits: limits.clone(),
                         btc_balance: cache
                             .coins()
