@@ -359,7 +359,7 @@ impl Tab {
                     let (launcher, command) =
                         Launcher::new(loader.datadir_path.clone(), Some(loader.network));
                     self.state = State::Launcher(launcher);
-                    command.map(|msg| Message::Launch(msg))
+                    command.map(Message::Launch)
                 }
                 loader::Message::View(loader::ViewMessage::SetupVault) => {
                     // Launch installer for vault setup from loader - should return to app on Previous
@@ -373,7 +373,7 @@ impl Tab {
                         loader.breez_client.clone(), // pass breez_client to avoid re-entering PIN
                     );
                     self.state = State::Installer(install);
-                    command.map(|msg| Message::Install(msg))
+                    command.map(Message::Install)
                 }
                 loader::Message::Synced(Ok((
                     wallet,

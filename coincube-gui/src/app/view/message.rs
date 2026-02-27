@@ -190,7 +190,7 @@ pub enum BuySellMessage {
     SessionError(&'static str, String), // inline description + runtime error
     ResetWidget,
     BackToAddressView,
-    SelectBuyOrSell(super::buysell::BuyOrSell), // true = buy, false = sell
+    SelectBuyOrSell(super::buysell::BuyOrSell),
     StartSession,
     RefreshLogin {
         refresh_token: String,

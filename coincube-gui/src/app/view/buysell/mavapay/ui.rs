@@ -303,7 +303,7 @@ fn transactions_form<'a>(state: &'a MavapayState) -> Column<'a, BuySellMessage> 
                         // TODO: onchain sell currently unsupported, lightning integration will be required to proceed
                         button::primary(Some(send_icon()), "Deposit BTC (Currently Unsupported)")
                     }
-                    BuyOrSell::Buy { .. } => match sending_quote {
+                    BuyOrSell::Buy => match sending_quote {
                         true => button::primary(Some(reload_icon()), "Processing Quote..."),
                         false => {
                             button::primary(Some(card_icon()), "Proceed to Payment")
@@ -344,7 +344,7 @@ fn transactions_form<'a>(state: &'a MavapayState) -> Column<'a, BuySellMessage> 
             // header text
             text::h4_bold(match buy_or_sell {
                 BuyOrSell::Sell => "Sell Bitcoin to Fiat Money",
-                BuyOrSell::Buy { .. } => "Buy Bitcoin using Fiat Money",
+                BuyOrSell::Buy => "Buy Bitcoin using Fiat Money",
             })
             .color(color::WHITE)
             .center(),
@@ -552,7 +552,7 @@ fn order_success_view<'a>(
             "Withdrawal Complete",
             "Your Bitcoin has been successfully sent to your wallet.",
         ),
-        BuyOrSell::Buy { .. } => (
+        BuyOrSell::Buy => (
             "Purchase Complete",
             "Your Bitcoin has been successfully sent to your wallet",
         ),

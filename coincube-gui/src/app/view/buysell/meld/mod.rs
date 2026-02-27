@@ -40,7 +40,7 @@ pub enum MeldMessage {
     // Quote selection
     SelectQuote(usize),
     ConfirmSelectedQuote(usize),
-    CreateSession(usize),
+    CreateSession(Box<meld::api::Quote>),
     SessionCreated(meld::api::CreateSessionResponse),
     // Webview specific messages
     CreateWebviewSession(
@@ -146,7 +146,7 @@ impl MeldState {
                             .get_crypto_sell_limits(country.currency.code, country.code)
                             .await
                     }
-                    BuyOrSell::Buy { .. } => {
+                    BuyOrSell::Buy => {
                         meld_client
                             .get_fiat_purchase_limits(country.currency.code, country.code)
                             .await
@@ -633,9 +633,12 @@ impl MeldState {
                             )),
                         )));
                     }
-                    [_] => {
+                    [quote] => {
+                        // skip directly to create session without picking a quote
                         return Some(iced::Task::done(view::Message::BuySell(
-                            view::BuySellMessage::Meld(MeldMessage::CreateSession(0)),
+                            view::BuySellMessage::Meld(MeldMessage::CreateSession(Box::new(
+                                quote.clone(),
+                            ))),
                         )));
                     }
                     _ => {
@@ -662,30 +665,21 @@ impl MeldState {
             }
             MeldMessage::ConfirmSelectedQuote(selected) => {
                 if let Some(MeldFlowStep::QuoteSelection {
-                    webview_pending, ..
+                    webview_pending,
+                    quotes,
+                    ..
                 }) = self.steps.last_mut()
                 {
                     *webview_pending = true;
 
-                    return Some(iced::Task::done(view::Message::BuySell(
-                        view::BuySellMessage::Meld(MeldMessage::CreateSession(selected)),
-                    )));
+                    if let Some(quote) = quotes.get(selected).cloned() {
+                        return Some(iced::Task::done(view::Message::BuySell(
+                            view::BuySellMessage::Meld(MeldMessage::CreateSession(Box::new(quote))),
+                        )));
+                    }
                 }
             }
-            MeldMessage::CreateSession(pick) => {
-                let Some(quotes) = self.steps.iter().rev().find_map(|a| match a {
-                    MeldFlowStep::QuoteSelection { quotes, .. } => Some(quotes),
-                    _ => None,
-                }) else {
-                    log::error!("Unable to create session, cannot find `QuoteSelection` data");
-                    return None;
-                };
-
-                let Some(quote) = quotes.get(pick).cloned() else {
-                    log::error!("Quote Index: {} is out of bounds", pick);
-                    return None;
-                };
-
+            MeldMessage::CreateSession(quote) => {
                 log::info!(
                     "[MELD] Starting session for provider: {:?}",
                     quote.service_provider

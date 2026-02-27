@@ -580,7 +580,7 @@ pub(crate) fn quote_selection_ux<'a>(
                         quote.total_fee,
                         match buy_or_sell {
                             view::buysell::BuyOrSell::Sell => &quote.destination_currency_code,
-                            view::buysell::BuyOrSell::Buy { .. } => &quote.source_currency_code,
+                            view::buysell::BuyOrSell::Buy => &quote.source_currency_code,
                         }
                     )),
                     widget::Space::new().height(5),
@@ -594,7 +594,7 @@ pub(crate) fn quote_selection_ux<'a>(
                         quote.source_currency_code,
                         match buy_or_sell {
                             view::buysell::BuyOrSell::Sell => rate,
-                            view::buysell::BuyOrSell::Buy { .. } => 1.0 / rate,
+                            view::buysell::BuyOrSell::Buy => 1.0 / rate,
                         },
                         quote.destination_currency_code
                     ))),
@@ -665,7 +665,7 @@ pub(crate) fn quote_selection_ux<'a>(
             widget::row![
                 text::h4_bold("Select a preferred provider"),
                 widget::Space::new().width(iced::Length::Fill),
-                button::secondary_compact(Some(icon::arrow_back()), "Go Back To Input Form")
+                button::secondary_compact(Some(icon::arrow_back()), "Navigate Back")
                     .on_press(view::buysell::meld::MeldMessage::NavigateBack)
                     .style(|th, st| {
                         let mut base = theme::button::secondary(th, st);
@@ -733,6 +733,7 @@ pub(crate) fn region_selection_ux<'a>(
         .iter()
         .enumerate()
         .filter(|(_, r)| {
+            // TODO: use levenshtein distance to sort regions using filter
             filter.is_empty()
                 || r.name.to_lowercase().contains(&filter_lower)
                 || r.region_code.to_lowercase().contains(&filter_lower)
@@ -772,36 +773,36 @@ pub(crate) fn region_selection_ux<'a>(
     };
 
     let column = widget::column![
-        widget::row![
-            text::h4_bold("Select your region"),
-            widget::Space::new().width(iced::Length::Fill),
-            button::secondary_compact(Some(icon::arrow_back()), "Go Back")
-                .on_press(view::buysell::meld::MeldMessage::NavigateBack)
-                .style(|th, st| {
-                    let mut base = theme::button::secondary(th, st);
-                    base.border = iced::Border::default().rounded(0);
-                    base
-                })
-        ]
-        .align_y(iced::Alignment::Center),
         widget::Space::new().height(5),
         search_input,
         widget::Space::new().height(5),
-        widget::scrollable(region_list).height(300).anchor_top(),
+        widget::scrollable(region_list)
+            .height(300)
+            .anchor_top()
+            .spacing(5),
         widget::Space::new().height(10),
         widget::container(widget::Space::new().height(2))
             .style(|_| widget::container::background(iced::Background::Color(color::GREY_3)))
             .width(Length::Fill),
         widget::Space::new().height(10),
-        selected.map(|_| {
-            button::primary(Some(icon::globe_icon()), "Continue")
-                .on_press(view::buysell::meld::MeldMessage::ConfirmRegion)
-                .style(|th, st| {
-                    let mut base = theme::button::primary(th, st);
-                    base.border = iced::Border::default().rounded(3);
+        match selected {
+            Some(_) => {
+                button::primary(Some(icon::globe_icon()), "Continue")
+                    .on_press(view::buysell::meld::MeldMessage::ConfirmRegion)
+                    .style(|th, st| {
+                        let mut base = theme::button::primary(th, st);
+                        base.border = iced::Border::default().rounded(2);
+                        base
+                    })
+            }
+            None => {
+                button::primary(Some(icon::cross_icon()), "Select Your Region").style(|th, st| {
+                    let mut base = theme::button::secondary(th, st);
+                    base.border = iced::Border::default().rounded(2);
                     base
                 })
-        }),
+            }
+        },
     ]
     .width(700)
     .spacing(5);
@@ -815,7 +816,7 @@ pub(super) fn webview_ux<'a>(
     wallet_address: Option<&'a str>,
 ) -> coincube_ui::widget::Element<'a, view::Message> {
     let col = widget::column![
-        active.view(Length::Fixed(640.0), Length::Fixed(640.0)),
+        active.view(Length::Fixed(640.0), Length::Fixed(600.0)),
         wallet_address.map(|addr| {
             widget::column![
                 widget::container(
@@ -845,16 +846,14 @@ pub(super) fn webview_ux<'a>(
                     .align_y(Alignment::Center),
                 )
                 .width(Length::Fixed(640.0)),
-                if cfg!(target_os = "macos") {
+                cfg!(target_os = "macos").then(|| {
                     widget::container(
-                        text::caption("Keyboard shortcuts are not supported in the webview. Right-click the input field to paste.")
+                        text::caption("Keyboard shortcuts are problematic in the webview. Right-click the input field to paste.")
                             .color(color::GREY_3)
                     )
                     .width(Length::Fixed(640.0))
                     .padding([4, 0])
-                } else {
-                    widget::container(widget::Space::new())
-                },
+                }),
             ]
         }),
     ];
