@@ -1,6 +1,6 @@
 use iced::{
     alignment::Horizontal,
-    widget::{checkbox, pick_list, scrollable, Button, Space},
+    widget::{checkbox, pick_list, scrollable, Button, Space, Toggler},
     Alignment, Length, Subscription, Task,
 };
 
@@ -17,7 +17,7 @@ use crate::pin_input;
 use crate::{
     app::{
         self,
-        settings::{self, AuthConfig, CubeSettings, WalletSettings},
+        settings::{self, global::GlobalSettings, AuthConfig, CubeSettings, WalletSettings},
     },
     delete::{delete_wallet, DeleteError},
     dir::{CoincubeDirectory, NetworkDirectory},
@@ -61,6 +61,7 @@ pub struct Launcher {
     recover_liquid_wallet: bool,
     creating_cube: bool,
     recovery_words: [String; 12],
+    developer_mode: bool,
 }
 
 impl Launcher {
@@ -73,6 +74,7 @@ impl Launcher {
                 .unwrap_or(Network::Bitcoin),
         );
         let network_dir = datadir_path.network_directory(network);
+        let developer_mode = GlobalSettings::load_developer_mode(&GlobalSettings::path(&datadir_path));
         (
             Self {
                 state: State::Unchecked,
@@ -87,6 +89,7 @@ impl Launcher {
                 recover_liquid_wallet: false,
                 creating_cube: false,
                 recovery_words: Default::default(),
+                developer_mode,
             },
             Task::perform(check_network_datadir(network_dir), Message::Checked),
         )
@@ -338,6 +341,16 @@ impl Launcher {
                 let network_dir = self.datadir_path.network_directory(self.network);
                 Task::perform(check_network_datadir(network_dir), Message::Checked)
             }
+            Message::View(ViewMessage::ToggleDeveloperMode(enabled)) => {
+                self.developer_mode = enabled;
+                let path = GlobalSettings::path(&self.datadir_path);
+                if let Err(e) = GlobalSettings::update_developer_mode(&path, enabled) {
+                    self.error = Some(format!("Failed to update developer mode: {}", e));
+                } else {
+                    self.error = None;
+                }
+                Task::none()
+            }
             Message::View(ViewMessage::DeleteCube(DeleteCubeMessage::Deleted)) => {
                 // Close modal and reload cubes - Checked will determine the correct state
                 self.delete_cube_modal = None;
@@ -519,11 +532,6 @@ impl Launcher {
     }
 
     pub fn view(&self) -> Element<Message> {
-        let developer_mode = match &self.state {
-            State::Cubes { cubes, .. } => cubes.iter().any(|cube| cube.developer_mode),
-            _ => false,
-        };
-
         let content = Into::<Element<ViewMessage>>::into(scrollable(
             Column::new()
                 .push(
@@ -552,7 +560,19 @@ impl Launcher {
                         } else {
                             None
                         })
-                        .push(if developer_mode {
+                        .push(
+                            Row::new()
+                                .spacing(10)
+                                .align_y(Alignment::Center)
+                                .push(text("Developer mode").style(theme::text::secondary))
+                                .push(
+                                    Toggler::new(self.developer_mode)
+                                        .on_toggle(ViewMessage::ToggleDeveloperMode)
+                                        .width(50)
+                                        .style(theme::toggler::orange),
+                                ),
+                        )
+                        .push(if self.developer_mode {
                             Some(
                                 button::xpubs_button(None, "Share Xpubs")
                                     .on_press(ViewMessage::ShareXpubs),
@@ -560,7 +580,7 @@ impl Launcher {
                         } else {
                             None
                         })
-                        .push(if developer_mode {
+                        .push(if self.developer_mode {
                             Some(
                                 pick_list(
                                     self.displayed_networks.as_slice(),
@@ -949,6 +969,7 @@ pub enum ViewMessage {
     Run(usize),
     DeleteCube(DeleteCubeMessage),
     ToggleRecoveryCheckBox,
+    ToggleDeveloperMode(bool),
     RecoveryWordInput { index: usize, word: String },
     SubmitRecovery,
     CancelRecovery,

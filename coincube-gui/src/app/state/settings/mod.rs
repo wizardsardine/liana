@@ -28,7 +28,6 @@ pub struct SettingsState {
     cube_id: String,
     current_price_setting: PriceSetting,
     current_unit_setting: crate::app::settings::unit::UnitSetting,
-    current_developer_mode: bool,
 }
 
 impl SettingsState {
@@ -36,14 +35,12 @@ impl SettingsState {
         cube_id: String,
         price_setting: PriceSetting,
         unit_setting: crate::app::settings::unit::UnitSetting,
-        developer_mode: bool,
     ) -> Self {
         Self {
             setting: None,
             cube_id,
             current_price_setting: price_setting,
             current_unit_setting: unit_setting,
-            current_developer_mode: developer_mode,
         }
     }
 }
@@ -62,7 +59,6 @@ impl State for SettingsState {
                         self.cube_id.clone(),
                         self.current_price_setting.clone(),
                         self.current_unit_setting.clone(),
-                        self.current_developer_mode,
                     )
                     .into(),
                 );
@@ -85,7 +81,6 @@ impl State for SettingsState {
                 ) {
                     if let Some(cube) = settings.cubes.iter().find(|c| c.id == self.cube_id) {
                         self.current_unit_setting = cube.unit_setting.clone();
-                        self.current_developer_mode = cube.developer_mode;
                         if let Some(price_setting) = cube.fiat_price.clone() {
                             self.current_price_setting = price_setting;
                         }

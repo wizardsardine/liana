@@ -156,7 +156,6 @@ pub enum SettingsMessage {
     Save,
     GeneralSection,
     DisplayUnitChanged(BitcoinDisplayUnit),
-    DeveloperModeToggled(bool),
     Fiat(FiatMessage),
 }
 

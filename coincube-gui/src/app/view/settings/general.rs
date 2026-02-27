@@ -19,7 +19,6 @@ pub fn general_section<'a>(
     cache: &'a cache::Cache,
     new_price_setting: &'a PriceSetting,
     new_unit_setting: &'a UnitSetting,
-    developer_mode: bool,
     currencies_list: &'a [Currency],
 ) -> Element<'a, Message> {
     dashboard(
@@ -28,28 +27,9 @@ pub fn general_section<'a>(
         Column::new()
             .spacing(20)
             .push(super::header("General", SettingsMessage::GeneralSection))
-            .push(developer_mode_toggle(developer_mode))
             .push(bitcoin_display_unit(new_unit_setting))
             .push(fiat_price(new_price_setting, currencies_list)),
     )
-}
-
-pub fn developer_mode_toggle<'a>(enabled: bool) -> Element<'a, Message> {
-    card::simple(
-        Row::new()
-            .spacing(20)
-            .align_y(Alignment::Center)
-            .push(text("Developer Mode:").bold())
-            .push(Space::new().width(Length::Fill))
-            .push(
-                Toggler::new(enabled)
-                    .on_toggle(|value| SettingsMessage::DeveloperModeToggled(value).into())
-                    .width(50)
-                    .style(theme::toggler::orange),
-            ),
-    )
-    .width(Length::Fill)
-    .into()
 }
 
 pub fn bitcoin_display_unit<'a>(new_unit_setting: &'a UnitSetting) -> Element<'a, Message> {

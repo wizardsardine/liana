@@ -140,8 +140,6 @@ pub struct CubeSettings {
     /// Bitcoin display unit preference for this cube
     #[serde(default)]
     pub unit_setting: unit::UnitSetting,
-    #[serde(default)]
-    pub developer_mode: bool,
     /// Fiat price display preference for this cube
     #[serde(default, deserialize_with = "ok_or_none")]
     pub fiat_price: Option<fiat::PriceSetting>,
@@ -160,7 +158,6 @@ impl CubeSettings {
             backed_up: false,
             mfa_done: false,
             unit_setting: unit::UnitSetting::default(),
-            developer_mode: false,
             fiat_price: None,
         }
     }
@@ -547,6 +544,8 @@ pub mod global {
     pub struct GlobalSettings {
         pub bitbox: Option<BitboxSettings>,
         pub window_config: Option<WindowConfig>,
+        #[serde(default)]
+        pub developer_mode: bool,
     }
 
     impl GlobalSettings {
@@ -579,6 +578,21 @@ pub mod global {
             let mut ret = None;
             Self::update(path, |s| ret = s.bitbox.clone(), false)?;
             Ok(ret)
+        }
+
+        pub fn load_developer_mode(path: &PathBuf) -> bool {
+            let mut ret = false;
+            if let Err(e) = Self::update(path, |s| ret = s.developer_mode, false) {
+                tracing::error!("Failed to load developer mode setting: {e}");
+            }
+            ret
+        }
+
+        pub fn update_developer_mode(
+            path: &PathBuf,
+            developer_mode: bool,
+        ) -> Result<(), super::SettingsError> {
+            Self::update(path, |s| s.developer_mode = developer_mode, true)
         }
 
         pub fn update_bitbox_settings(
@@ -634,6 +648,7 @@ pub mod global {
             if !exists
                 && global_settings.bitbox.is_none()
                 && global_settings.window_config.is_none()
+                && !global_settings.developer_mode
             {
                 write = false;
             }
