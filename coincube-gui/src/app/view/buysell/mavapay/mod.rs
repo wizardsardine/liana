@@ -272,7 +272,7 @@ impl MavapayState {
                                 }
                                 Err(e) => {
                                     view::Message::BuySell(view::BuySellMessage::SessionError(
-                                        "Unable to create a new address",
+                                        "Unable to acquire new invoice",
                                         e.to_string(),
                                     ))
                                 }
