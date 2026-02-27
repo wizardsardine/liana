@@ -248,9 +248,9 @@ impl Launcher {
                 if self.recover_liquid_wallet {
                     // Enter recovery flow - show recovery input UI
                     self.creating_cube = false;
-                    return Task::done(Message::StartRecovery);
+                    Task::done(Message::StartRecovery);
                 } else {
-                    return without_recovery;
+                    without_recovery;
                 }
             }
             Message::StartRecovery => {
