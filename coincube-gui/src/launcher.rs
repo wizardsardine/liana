@@ -11,7 +11,6 @@ use coincube_ui::{
     widget::{modal::Modal, CheckBox, Column, Container, Element, Row},
 };
 use coincubed::config::ConfigError;
-use std::collections::BTreeSet;
 use tokio::runtime::Handle;
 
 use crate::pin_input;
@@ -54,30 +53,12 @@ fn bip39_suggestions(prefix: &str, limit: usize) -> Vec<String> {
         return Vec::new();
     }
 
-    let prefix = prefix.to_lowercase();
-    let mut suggestions = BTreeSet::new();
-    let language = bip39::Language::English;
-
-    let mut probes = Vec::new();
-    if prefix.len() >= 3 {
-        probes.push(prefix.clone());
-    }
-    for c1 in 'a'..='z' {
-        probes.push(format!("{}{}", prefix, c1));
-    }
-
-    'outer: for probe in probes {
-        for word in language.words_by_prefix(&probe) {
-            if word.starts_with(&prefix) {
-                suggestions.insert(word.to_string());
-            }
-            if suggestions.len() >= limit {
-                break 'outer;
-            }
-        }
-    }
-
-    suggestions.into_iter().take(limit).collect()
+    bip39::Language::English
+        .words_by_prefix(&prefix.to_lowercase())
+        .iter()
+        .take(limit)
+        .map(|word| (*word).to_string())
+        .collect()
 }
 
 pub struct Launcher {
@@ -944,9 +925,8 @@ fn recovery_input_view(
 
         let row = index / 4;
         let col = index % 4;
-        let top_offset = row as f32 * (INPUT_ROW_HEIGHT + GRID_ROW_SPACING)
-            + INPUT_ROW_HEIGHT
-            + OVERLAY_TOP_GAP;
+        let top_offset =
+            row as f32 * (INPUT_ROW_HEIGHT + GRID_ROW_SPACING) + INPUT_ROW_HEIGHT + OVERLAY_TOP_GAP;
         let left_offset = col as f32 * (INPUT_WIDTH + GRID_COL_SPACING);
 
         Some(
