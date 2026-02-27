@@ -1,6 +1,6 @@
 use iced::{
     alignment::Horizontal,
-    widget::{checkbox, pick_list, scrollable, Button, Space},
+    widget::{checkbox, pick_list, scrollable, Button, Space, Stack},
     Alignment, Length, Subscription, Task,
 };
 
@@ -11,6 +11,7 @@ use coincube_ui::{
     widget::{modal::Modal, CheckBox, Column, Container, Element, Row},
 };
 use coincubed::config::ConfigError;
+use std::collections::BTreeSet;
 use tokio::runtime::Handle;
 
 use crate::pin_input;
@@ -48,6 +49,37 @@ pub enum State {
     RecoveryInput,
 }
 
+fn bip39_suggestions(prefix: &str, limit: usize) -> Vec<String> {
+    if prefix.is_empty() || limit == 0 {
+        return Vec::new();
+    }
+
+    let prefix = prefix.to_lowercase();
+    let mut suggestions = BTreeSet::new();
+    let language = bip39::Language::English;
+
+    let mut probes = Vec::new();
+    if prefix.len() >= 3 {
+        probes.push(prefix.clone());
+    }
+    for c1 in 'a'..='z' {
+        probes.push(format!("{}{}", prefix, c1));
+    }
+
+    'outer: for probe in probes {
+        for word in language.words_by_prefix(&probe) {
+            if word.starts_with(&prefix) {
+                suggestions.insert(word.to_string());
+            }
+            if suggestions.len() >= limit {
+                break 'outer;
+            }
+        }
+    }
+
+    suggestions.into_iter().take(limit).collect()
+}
+
 pub struct Launcher {
     state: State,
     displayed_networks: Vec<Network>,
@@ -61,6 +93,7 @@ pub struct Launcher {
     recover_liquid_wallet: bool,
     creating_cube: bool,
     recovery_words: [String; 12],
+    recovery_active_index: Option<usize>,
 }
 
 impl Launcher {
@@ -87,6 +120,7 @@ impl Launcher {
                 recover_liquid_wallet: false,
                 creating_cube: false,
                 recovery_words: Default::default(),
+                recovery_active_index: None,
             },
             Task::perform(check_network_datadir(network_dir), Message::Checked),
         )
@@ -140,6 +174,7 @@ impl Launcher {
                             word.clear();
                             word.shrink_to_fit();
                         }
+                        self.recovery_active_index = None;
                     }
                 }
                 Task::none()
@@ -248,13 +283,14 @@ impl Launcher {
                 if self.recover_liquid_wallet {
                     // Enter recovery flow - show recovery input UI
                     self.creating_cube = false;
-                    Task::done(Message::StartRecovery);
+                    Task::done(Message::StartRecovery)
                 } else {
-                    without_recovery;
+                    without_recovery
                 }
             }
             Message::StartRecovery => {
                 self.state = State::RecoveryInput;
+                self.recovery_active_index = None;
                 Task::none()
             }
             Message::CubeCreated(res) => {
@@ -272,6 +308,7 @@ impl Launcher {
                             word.clear();
                             word.shrink_to_fit();
                         }
+                        self.recovery_active_index = None;
                         self.reload()
                     }
                     Err(e) => {
@@ -280,6 +317,7 @@ impl Launcher {
                             word.clear();
                             word.shrink_to_fit();
                         }
+                        self.recovery_active_index = None;
                         self.error = Some(format!("Failed to create Cube: {}", e));
                         Task::none()
                     }
@@ -392,7 +430,37 @@ impl Launcher {
             }
             Message::View(ViewMessage::RecoveryWordInput { index, word }) => {
                 if index < 12 {
+                    let normalized = word
+                        .chars()
+                        .filter(|c| c.is_ascii_alphabetic())
+                        .collect::<String>()
+                        .to_lowercase();
+
+                    let mut valid_prefix = String::new();
+                    for ch in normalized.chars() {
+                        let mut next = valid_prefix.clone();
+                        next.push(ch);
+                        if bip39_suggestions(&next, 1).is_empty() {
+                            break;
+                        }
+                        valid_prefix = next;
+                    }
+
+                    self.recovery_words[index] = valid_prefix.clone();
+                    self.recovery_active_index = if valid_prefix.is_empty() {
+                        None
+                    } else {
+                        Some(index)
+                    };
+                    self.error = None;
+                }
+                Task::none()
+            }
+            Message::View(ViewMessage::SelectRecoverySuggestion { index, word }) => {
+                if index < 12 {
                     self.recovery_words[index] = word;
+                    self.recovery_active_index = None;
+                    self.error = None;
                 }
                 Task::none()
             }
@@ -492,6 +560,7 @@ impl Launcher {
                             word.clear();
                             word.shrink_to_fit();
                         }
+                        self.recovery_active_index = None;
                         self.error = Some(error.to_string());
                         Task::none()
                     }
@@ -502,6 +571,7 @@ impl Launcher {
                     word.clear();
                     word.shrink_to_fit();
                 }
+                self.recovery_active_index = None;
                 self.create_cube_name = coincube_ui::component::form::Value::default();
                 self.create_cube_pin = pin_input::PinInput::new();
                 self.create_cube_pin_confirm = pin_input::PinInput::new();
@@ -592,7 +662,10 @@ impl Launcher {
                                 }
                             })
                             .push(match &self.state {
-                                State::RecoveryInput => recovery_input_view(&self.recovery_words),
+                                State::RecoveryInput => recovery_input_view(
+                                    &self.recovery_words,
+                                    self.recovery_active_index,
+                                ),
                                 State::Cubes { cubes, create_cube } => {
                                     if *create_cube {
                                         create_cube_form(
@@ -802,8 +875,19 @@ fn cubes_list_item<'a>(cube: &CubeSettings, i: usize) -> Element<'a, ViewMessage
     .into()
 }
 
-fn recovery_input_view(recovery_words: &[String; 12]) -> Element<ViewMessage> {
+fn recovery_input_view(
+    recovery_words: &[String; 12],
+    active_index: Option<usize>,
+) -> Element<ViewMessage> {
     use coincube_ui::widget::{Row, TextInput};
+
+    const INPUT_WIDTH: f32 = 150.0;
+    const INPUT_ROW_HEIGHT: f32 = 46.0;
+    const GRID_COL_SPACING: f32 = 40.0;
+    const GRID_ROW_SPACING: f32 = 30.0;
+    const OVERLAY_TOP_GAP: f32 = 6.0;
+    const GRID_WIDTH: f32 = (INPUT_WIDTH * 4.0) + (GRID_COL_SPACING * 3.0);
+    const OVERLAY_BOTTOM_RESERVE: f32 = 220.0;
 
     // Create the mnemonic input grid (3 rows x 4 columns)
     let mut grid = Column::new().spacing(30).align_x(Alignment::Center);
@@ -819,7 +903,7 @@ fn recovery_input_view(recovery_words: &[String; 12]) -> Element<ViewMessage> {
             let text_input = TextInput::new(&placeholder, word_value)
                 .on_input(move |input| ViewMessage::RecoveryWordInput { index, word: input })
                 .padding(12)
-                .width(Length::Fixed(150.0))
+                .width(Length::Fixed(INPUT_WIDTH))
                 .style(theme::text_input::primary);
 
             row_widget = row_widget.push(text_input);
@@ -828,8 +912,121 @@ fn recovery_input_view(recovery_words: &[String; 12]) -> Element<ViewMessage> {
         grid = grid.push(row_widget);
     }
 
+    let suggestions_overlay: Option<Element<ViewMessage>> = active_index.and_then(|index| {
+        let word_value = recovery_words.get(index)?;
+        if word_value.len() < 2 {
+            return None;
+        }
+
+        let suggestions: Vec<String> = bip39_suggestions(word_value, 12)
+            .into_iter()
+            .filter(|s| s != word_value)
+            .take(6)
+            .collect();
+        if suggestions.is_empty() {
+            return None;
+        }
+
+        let suggestion_list = suggestions.into_iter().fold(
+            Column::new().spacing(2).width(Length::Fill),
+            |col, suggestion| {
+                col.push(
+                    iced::widget::button(text(suggestion.clone()))
+                        .style(theme::button::secondary)
+                        .width(Length::Fill)
+                        .on_press(ViewMessage::SelectRecoverySuggestion {
+                            index,
+                            word: suggestion,
+                        }),
+                )
+            },
+        );
+
+        let row = index / 4;
+        let col = index % 4;
+        let top_offset = row as f32 * (INPUT_ROW_HEIGHT + GRID_ROW_SPACING)
+            + INPUT_ROW_HEIGHT
+            + OVERLAY_TOP_GAP;
+        let left_offset = col as f32 * (INPUT_WIDTH + GRID_COL_SPACING);
+
+        Some(
+            Column::new()
+                .push(Space::new().height(Length::Fixed(top_offset)))
+                .push(
+                    Row::new()
+                        .push(Space::new().width(Length::Fill))
+                        .push(
+                            Container::new(
+                                Row::new()
+                                    .push(Space::new().width(Length::Fixed(left_offset)))
+                                    .push(
+                                        Container::new(suggestion_list)
+                                            .width(Length::Fixed(INPUT_WIDTH))
+                                            .padding(6)
+                                            .style(theme::card::simple),
+                                    )
+                                    .push(Space::new().width(Length::Fill)),
+                            )
+                            .width(Length::Fixed(GRID_WIDTH)),
+                        )
+                        .push(Space::new().width(Length::Fill)),
+                )
+                .into(),
+        )
+    });
+
+    let overlay_layer: Element<ViewMessage> = suggestions_overlay.unwrap_or_else(|| {
+        Container::new(Space::new())
+            .width(Length::Fill)
+            .height(Length::Shrink)
+            .into()
+    });
+
     // Check if all words are filled
-    let all_filled = recovery_words.iter().all(|w| !w.trim().is_empty());
+    let all_filled = recovery_words.iter().all(|w| {
+        let word = w.trim();
+        !word.is_empty() && bip39::Language::English.find_word(word).is_some()
+    });
+
+    let grid_row: Element<ViewMessage> = Row::new()
+        .width(Length::Fill)
+        .align_y(Alignment::Center)
+        .push(Space::new().width(Length::Fill))
+        .push(grid)
+        .push(Space::new().width(Length::Fill))
+        .into();
+
+    let actions_row: Element<ViewMessage> = Row::new()
+        .width(Length::Fill)
+        .spacing(15)
+        .align_y(Alignment::Center)
+        .push(Space::new().width(Length::Fill))
+        .push(
+            button::secondary(None, "Cancel")
+                .width(Length::Fixed(145.0))
+                .on_press(ViewMessage::CancelRecovery),
+        )
+        .push(
+            button::primary(None, "Recover Wallet")
+                .width(Length::Fixed(145.0))
+                .on_press_maybe(if all_filled {
+                    Some(ViewMessage::SubmitRecovery)
+                } else {
+                    None
+                }),
+        )
+        .push(Space::new().width(Length::Fill))
+        .into();
+
+    let section_base: Element<ViewMessage> = Column::new()
+        .push(grid_row)
+        .push(Space::new().height(Length::Fixed(24.0)))
+        .push(actions_row)
+        .push(Space::new().height(Length::Fixed(OVERLAY_BOTTOM_RESERVE)))
+        .into();
+
+    let section_with_overlay: Element<ViewMessage> =
+        Stack::new().push(section_base).push(overlay_layer).into();
 
     Column::new()
         .spacing(20)
@@ -854,37 +1051,7 @@ fn recovery_input_view(recovery_words: &[String; 12]) -> Element<ViewMessage> {
                 .push(Space::new().width(Length::Fill)),
         )
         .push(Space::new().height(Length::Fixed(24.0)))
-        .push(
-            Row::new()
-                .width(Length::Fill)
-                .align_y(Alignment::Center)
-                .push(Space::new().width(Length::Fill))
-                .push(grid)
-                .push(Space::new().width(Length::Fill)),
-        )
-        .push(Space::new().height(Length::Fixed(24.0)))
-        .push(
-            Row::new()
-                .width(Length::Fill)
-                .spacing(15)
-                .align_y(Alignment::Center)
-                .push(Space::new().width(Length::Fill))
-                .push(
-                    button::secondary(None, "Cancel")
-                        .width(Length::Fixed(145.0))
-                        .on_press(ViewMessage::CancelRecovery),
-                )
-                .push(
-                    button::primary(None, "Recover Wallet")
-                        .width(Length::Fixed(145.0))
-                        .on_press_maybe(if all_filled {
-                            Some(ViewMessage::SubmitRecovery)
-                        } else {
-                            None
-                        }),
-                )
-                .push(Space::new().width(Length::Fill)),
-        )
+        .push(section_with_overlay)
         .into()
 }
 
@@ -937,6 +1104,7 @@ pub enum ViewMessage {
     DeleteCube(DeleteCubeMessage),
     ToggleRecoveryCheckBox,
     RecoveryWordInput { index: usize, word: String },
+    SelectRecoverySuggestion { index: usize, word: String },
     SubmitRecovery,
     CancelRecovery,
 }
