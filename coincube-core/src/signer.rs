@@ -147,7 +147,7 @@ fn create_file(path: &path::Path) -> Result<fs::File, std::io::Error> {
 }
 
 impl HotSigner {
-    fn from_mnemonic(
+    pub fn from_mnemonic(
         network: bitcoin::Network,
         mnemonic: bip39::Mnemonic,
     ) -> Result<Self, SignerError> {
