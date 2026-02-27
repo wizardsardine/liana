@@ -40,7 +40,6 @@ async fn update_price_setting(
                 settings.cubes.iter().map(|c| &c.id).collect::<Vec<_>>()
             );
         }
-        // Always return Some to prevent file deletion
         Some(settings)
     })
     .await;
@@ -57,6 +56,40 @@ async fn update_price_setting(
                 e
             )))
         }
+    }
+}
+
+async fn update_developer_mode_setting(
+    data_dir: CoincubeDirectory,
+    network: Network,
+    cube_id: String,
+    developer_mode: bool,
+) -> Result<(), Error> {
+    let network_dir = data_dir.network_directory(network);
+    let mut cube_found = false;
+    let result = update_settings_file(&network_dir, |mut settings| {
+        if let Some(cube) = settings.cubes.iter_mut().find(|c| c.id == cube_id) {
+            cube.developer_mode = developer_mode;
+            cube_found = true;
+        } else {
+            tracing::error!(
+                "Cube not found with id: {} - cannot save developer mode",
+                cube_id
+            );
+        }
+        Some(settings)
+    })
+    .await;
+
+    match result {
+        Ok(()) if cube_found => Ok(()),
+        Ok(()) => Err(Error::Unexpected(
+            "Cube not found in settings file".to_string(),
+        )),
+        Err(e) => Err(Error::Unexpected(format!(
+            "Failed to update settings: {}",
+            e
+        ))),
     }
 }
 
@@ -106,6 +139,7 @@ pub struct GeneralSettingsState {
     cube_id: String,
     new_price_setting: PriceSetting,
     new_unit_setting: UnitSetting,
+    developer_mode: bool,
     currencies: Vec<Currency>,
     error: Option<Error>,
 }
@@ -117,11 +151,17 @@ impl From<GeneralSettingsState> for Box<dyn State> {
 }
 
 impl GeneralSettingsState {
-    pub fn new(cube_id: String, price_setting: PriceSetting, unit_setting: UnitSetting) -> Self {
+    pub fn new(
+        cube_id: String,
+        price_setting: PriceSetting,
+        unit_setting: UnitSetting,
+        developer_mode: bool,
+    ) -> Self {
         Self {
             cube_id,
             new_price_setting: price_setting,
             new_unit_setting: unit_setting,
+            developer_mode,
             currencies: Vec::new(),
             error: None,
         }
@@ -135,6 +175,7 @@ impl State for GeneralSettingsState {
             cache,
             &self.new_price_setting,
             &self.new_unit_setting,
+            self.developer_mode,
             &self.currencies,
         )
     }
@@ -204,6 +245,7 @@ impl State for GeneralSettingsState {
                             cube.unit_setting.display_unit
                         );
                         self.new_unit_setting = cube.unit_setting.clone();
+                        self.developer_mode = cube.developer_mode;
                         tracing::info!(
                             "GeneralSettingsState: new_unit_setting now set to: {:?}",
                             self.new_unit_setting.display_unit
@@ -234,6 +276,7 @@ impl State for GeneralSettingsState {
                         );
                         self.new_unit_setting = cube.unit_setting.clone();
                         self.new_price_setting = cube.fiat_price.clone().unwrap_or_default();
+                        self.developer_mode = cube.developer_mode;
                     } else {
                         tracing::warn!(
                             "Could not revert settings: Cube not found with id: {}",
@@ -348,6 +391,23 @@ impl State for GeneralSettingsState {
                             tracing::error!("Unit setting save failed: {:?}", e);
                             Message::SettingsSaveFailed(e)
                         }
+                    },
+                );
+            }
+            Message::View(view::Message::Settings(
+                view::SettingsMessage::DeveloperModeToggled(enabled),
+            )) => {
+                self.developer_mode = enabled;
+                let cube_id = self.cube_id.clone();
+                let network = cache.network;
+                let datadir_path = cache.datadir_path.clone();
+                return Task::perform(
+                    async move {
+                        update_developer_mode_setting(datadir_path, network, cube_id, enabled).await
+                    },
+                    |res| match res {
+                        Ok(()) => Message::SettingsSaved,
+                        Err(e) => Message::SettingsSaveFailed(e),
                     },
                 );
             }

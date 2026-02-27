@@ -104,17 +104,23 @@ impl Panels {
             global_settings: {
                 let network_dir = datadir.network_directory(network);
                 let settings_file = settings::Settings::from_file(&network_dir).ok();
-                let (price_setting, unit_setting) = settings_file
+                let (price_setting, unit_setting, developer_mode) = settings_file
                     .as_ref()
                     .and_then(|s| s.cubes.iter().find(|c| c.id == cube_id))
                     .map(|c| {
                         (
                             c.fiat_price.clone().unwrap_or_default(),
                             c.unit_setting.clone(),
+                            c.developer_mode,
                         )
                     })
                     .unwrap_or_default();
-                GeneralSettingsState::new(cube_id.clone(), price_setting, unit_setting)
+                GeneralSettingsState::new(
+                    cube_id.clone(),
+                    price_setting,
+                    unit_setting,
+                    developer_mode,
+                )
             },
             // All vault panels are None - no vault exists
             vault_overview: None,
@@ -174,17 +180,23 @@ impl Panels {
             global_settings: {
                 let network_dir = data_dir.network_directory(cache.network);
                 let settings_file = settings::Settings::from_file(&network_dir).ok();
-                let (price_setting, unit_setting) = settings_file
+                let (price_setting, unit_setting, developer_mode) = settings_file
                     .as_ref()
                     .and_then(|s| s.cubes.iter().find(|c| c.id == cube_id))
                     .map(|c| {
                         (
                             c.fiat_price.clone().unwrap_or_default(),
                             c.unit_setting.clone(),
+                            c.developer_mode,
                         )
                     })
                     .unwrap_or_default();
-                GeneralSettingsState::new(cube_id.clone(), price_setting, unit_setting)
+                GeneralSettingsState::new(
+                    cube_id.clone(),
+                    price_setting,
+                    unit_setting,
+                    developer_mode,
+                )
             },
             coins: Some(CoinsPanel::new(
                 cache.coins(),

@@ -140,6 +140,8 @@ pub struct CubeSettings {
     /// Bitcoin display unit preference for this cube
     #[serde(default)]
     pub unit_setting: unit::UnitSetting,
+    #[serde(default)]
+    pub developer_mode: bool,
     /// Fiat price display preference for this cube
     #[serde(default, deserialize_with = "ok_or_none")]
     pub fiat_price: Option<fiat::PriceSetting>,
@@ -158,6 +160,7 @@ impl CubeSettings {
             backed_up: false,
             mfa_done: false,
             unit_setting: unit::UnitSetting::default(),
+            developer_mode: false,
             fiat_price: None,
         }
     }

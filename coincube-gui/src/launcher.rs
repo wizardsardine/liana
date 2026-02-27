@@ -248,9 +248,9 @@ impl Launcher {
                 if self.recover_liquid_wallet {
                     // Enter recovery flow - show recovery input UI
                     self.creating_cube = false;
-                    Task::done(Message::StartRecovery);
+                    Task::done(Message::StartRecovery)
                 } else {
-                    without_recovery;
+                    without_recovery
                 }
             }
             Message::StartRecovery => {
@@ -519,6 +519,11 @@ impl Launcher {
     }
 
     pub fn view(&self) -> Element<Message> {
+        let developer_mode = match &self.state {
+            State::Cubes { cubes, .. } => cubes.iter().any(|cube| cube.developer_mode),
+            _ => false,
+        };
+
         let content = Into::<Element<ViewMessage>>::into(scrollable(
             Column::new()
                 .push(
@@ -547,19 +552,27 @@ impl Launcher {
                         } else {
                             None
                         })
-                        .push(
-                            button::xpubs_button(None, "Share Xpubs")
-                                .on_press(ViewMessage::ShareXpubs),
-                        )
-                        .push(
-                            pick_list(
-                                self.displayed_networks.as_slice(),
-                                Some(self.network),
-                                ViewMessage::SelectNetwork,
+                        .push(if developer_mode {
+                            Some(
+                                button::xpubs_button(None, "Share Xpubs")
+                                    .on_press(ViewMessage::ShareXpubs),
                             )
-                            .style(theme::pick_list::primary)
-                            .padding(10),
-                        )
+                        } else {
+                            None
+                        })
+                        .push(if developer_mode {
+                            Some(
+                                pick_list(
+                                    self.displayed_networks.as_slice(),
+                                    Some(self.network),
+                                    ViewMessage::SelectNetwork,
+                                )
+                                .style(theme::pick_list::primary)
+                                .padding(10),
+                            )
+                        } else {
+                            None
+                        })
                         .align_y(Alignment::Center)
                         .padding(100),
                 )
