@@ -66,16 +66,21 @@ pub struct Launcher {
 
 impl Launcher {
     pub fn new(datadir_path: CoincubeDirectory, network: Option<Network>) -> (Self, Task<Message>) {
-        let network = network.unwrap_or(
+        let developer_mode =
+            GlobalSettings::load_developer_mode(&GlobalSettings::path(&datadir_path));
+        let selected_network = network.unwrap_or(
             NETWORKS
                 .iter()
                 .find(|net| has_existing_wallet(&datadir_path, **net))
                 .cloned()
                 .unwrap_or(Network::Bitcoin),
         );
+        let network = if developer_mode {
+            selected_network
+        } else {
+            Network::Bitcoin
+        };
         let network_dir = datadir_path.network_directory(network);
-        let developer_mode =
-            GlobalSettings::load_developer_mode(&GlobalSettings::path(&datadir_path));
         (
             Self {
                 state: State::Unchecked,
