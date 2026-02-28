@@ -262,7 +262,7 @@ impl State for LiquidTransactions {
                 let breez_client = self.breez_client.clone();
                 let addr = self.refund_address.value.clone();
                 Task::perform(
-                    async move { 
+                    async move {
                         let result = breez_client.validate_input(addr).await;
                         result
                     },
