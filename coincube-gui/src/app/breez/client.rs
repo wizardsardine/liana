@@ -215,15 +215,15 @@ impl BreezClient {
 
     pub async fn receive_invoice(
         &self,
-        amount: Amount,
+        amount: Option<Amount>,
         description: Option<String>,
     ) -> Result<breez::ReceivePaymentResponse, BreezError> {
         let prepare = self
             .sdk
             .prepare_receive_payment(&breez::PrepareReceiveRequest {
                 payment_method: breez::PaymentMethod::Bolt11Invoice,
-                amount: Some(breez::ReceiveAmount::Bitcoin {
-                    payer_amount_sat: amount.to_sat(),
+                amount: amount.map(|a| breez::ReceiveAmount::Bitcoin {
+                    payer_amount_sat: a.to_sat(),
                 }),
             })
             .await

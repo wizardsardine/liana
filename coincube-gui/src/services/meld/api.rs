@@ -79,8 +79,9 @@ pub struct GetQuotesRequest<'a> {
     pub source_currency: &'a str,
     pub destination_currency: &'a str,
     pub country_code: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub state_code: Option<&'a str>,
-    pub wallet_address: Option<String>,
+    pub wallet_address: Option<&'a str>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -119,8 +120,9 @@ pub struct CreateSessionRequest<'a> {
     pub source_currency: &'a str,
     pub destination_currency: &'a str,
     pub country_code: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub state_code: Option<&'a str>,
-    pub wallet_address: Option<String>,
+    pub wallet_address: Option<&'a str>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -129,7 +131,6 @@ pub struct CreateSessionResponse {
     pub session_id: String,
     pub widget_url: String,
     pub service_provider_widget_url: Option<String>,
-    pub provider: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

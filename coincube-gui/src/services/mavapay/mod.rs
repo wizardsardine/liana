@@ -17,12 +17,16 @@ pub enum MavapayMessage {
     BankAccountNameChanged(String),
     BankSelected(usize),
     TransferSpeedChanged(OnchainTransferSpeed),
-    CreateQuote,
+
+    GetQuote,
     QuoteCreated(GetQuoteResponse),
     GetPrice,
+    GetLightningInvoice,
+    LightningInvoiceReceived(String),
     PriceReceived(GetPriceResponse),
     GetBanks,
     BanksReceived(MavapayBanks),
+
     FetchTransactions,
     TransactionsReceived(Vec<OrderTransaction>),
     SelectTransaction(usize),
@@ -42,4 +46,5 @@ pub enum MavapayMessage {
 #[inline(always)]
 pub fn mavapay_supported(iso_code: &str) -> bool {
     ["NG", "KE", "ZA"].contains(&iso_code)
+        && matches!(option_env!("ENABLE_MAVAPAY"), Some("1") | Some("true"))
 }

@@ -167,7 +167,7 @@ fn checkout_form<'a>(state: &'a MavapayState) -> Column<'a, BuySellMessage> {
             iced::widget::column![
                 text::h4_bold("Checkout"),
                 match buy_or_sell {
-                    BuyOrSell::Buy { address: _ } => {
+                    BuyOrSell::Buy => {
                         container(
                         iced::widget::column![
                             text::p1_bold("Complete Your Order"),
@@ -224,7 +224,7 @@ fn checkout_form<'a>(state: &'a MavapayState) -> Column<'a, BuySellMessage> {
 fn transactions_form<'a>(state: &'a MavapayState) -> Column<'a, BuySellMessage> {
     let MavapayState::Transaction {
         sat_amount,
-        btc_price: current_price,
+        btc_price: btc_price_in_unit_currency,
         buy_or_sell,
         country,
         transfer_speed,
@@ -235,7 +235,7 @@ fn transactions_form<'a>(state: &'a MavapayState) -> Column<'a, BuySellMessage> 
         unreachable!()
     };
 
-    let input_form = match current_price {
+    let input_form = match btc_price_in_unit_currency {
         Some(price) => Container::new(
             iced::widget::column![
                 Space::new().height(17),
@@ -249,11 +249,7 @@ fn transactions_form<'a>(state: &'a MavapayState) -> Column<'a, BuySellMessage> 
                         .color(color::GREY_2),
                         Space::new().height(5),
                         iced_aw::number_input(
-                            &{
-                                *sat_amount as f64
-                                    * (price.btc_price_in_unit_currency / 100_000_000.0)
-                            }
-                            .round(),
+                            &{ *sat_amount as f64 * (*price / 100_000_000.0) }.round(),
                             ..,
                             |a| { BuySellMessage::Mavapay(MavapayMessage::FiatAmountChanged(a)) }
                         )
@@ -305,13 +301,13 @@ fn transactions_form<'a>(state: &'a MavapayState) -> Column<'a, BuySellMessage> 
                     // TODO: ensure user has BTC balance to satisfy quote
                     BuyOrSell::Sell => {
                         // TODO: onchain sell currently unsupported, lightning integration will be required to proceed
-                        button::primary(Some(send_icon()), "Send Bitcoin (Currently Unsupported)")
+                        button::primary(Some(send_icon()), "Deposit BTC (Currently Unsupported)")
                     }
-                    BuyOrSell::Buy { .. } => match sending_quote {
+                    BuyOrSell::Buy => match sending_quote {
                         true => button::primary(Some(reload_icon()), "Processing Quote..."),
                         false => {
                             button::primary(Some(card_icon()), "Proceed to Payment")
-                                .on_press(BuySellMessage::Mavapay(MavapayMessage::CreateQuote))
+                                .on_press(BuySellMessage::Mavapay(MavapayMessage::GetQuote))
                         }
                     },
                 }
@@ -348,7 +344,7 @@ fn transactions_form<'a>(state: &'a MavapayState) -> Column<'a, BuySellMessage> 
             // header text
             text::h4_bold(match buy_or_sell {
                 BuyOrSell::Sell => "Sell Bitcoin to Fiat Money",
-                BuyOrSell::Buy { .. } => "Buy Bitcoin using Fiat Money",
+                BuyOrSell::Buy => "Buy Bitcoin using Fiat Money",
             })
             .color(color::WHITE)
             .center(),
@@ -556,7 +552,7 @@ fn order_success_view<'a>(
             "Withdrawal Complete",
             "Your Bitcoin has been successfully sent to your wallet.",
         ),
-        BuyOrSell::Buy { .. } => (
+        BuyOrSell::Buy => (
             "Purchase Complete",
             "Your Bitcoin has been successfully sent to your wallet",
         ),
