@@ -116,11 +116,7 @@ impl From<GeneralSettingsState> for Box<dyn State> {
 }
 
 impl GeneralSettingsState {
-    pub fn new(
-        cube_id: String,
-        price_setting: PriceSetting,
-        unit_setting: UnitSetting,
-    ) -> Self {
+    pub fn new(cube_id: String, price_setting: PriceSetting, unit_setting: UnitSetting) -> Self {
         Self {
             cube_id,
             new_price_setting: price_setting,

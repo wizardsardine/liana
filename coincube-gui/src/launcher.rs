@@ -74,7 +74,8 @@ impl Launcher {
                 .unwrap_or(Network::Bitcoin),
         );
         let network_dir = datadir_path.network_directory(network);
-        let developer_mode = GlobalSettings::load_developer_mode(&GlobalSettings::path(&datadir_path));
+        let developer_mode =
+            GlobalSettings::load_developer_mode(&GlobalSettings::path(&datadir_path));
         (
             Self {
                 state: State::Unchecked,
@@ -125,6 +126,12 @@ impl Launcher {
                 })
             }
             Message::View(ViewMessage::ShareXpubs) => {
+                if !self.developer_mode {
+                    tracing::debug!(
+                        "Ignoring ShareXpubs action because developer mode is disabled"
+                    );
+                    return Task::none();
+                }
                 let datadir_path = self.datadir_path.clone();
                 let network = self.network;
                 Task::perform(async move { (datadir_path, network) }, |(d, n)| {
@@ -337,18 +344,33 @@ impl Launcher {
                 Task::none()
             }
             Message::View(ViewMessage::SelectNetwork(network)) => {
+                if !self.developer_mode {
+                    tracing::debug!(
+                        "Ignoring SelectNetwork action because developer mode is disabled"
+                    );
+                    return Task::none();
+                }
                 self.network = network;
                 let network_dir = self.datadir_path.network_directory(self.network);
                 Task::perform(check_network_datadir(network_dir), Message::Checked)
             }
             Message::View(ViewMessage::ToggleDeveloperMode(enabled)) => {
+                let previous_developer_mode = self.developer_mode;
                 self.developer_mode = enabled;
                 let path = GlobalSettings::path(&self.datadir_path);
                 if let Err(e) = GlobalSettings::update_developer_mode(&path, enabled) {
+                    self.developer_mode = previous_developer_mode;
                     self.error = Some(format!("Failed to update developer mode: {}", e));
                 } else {
                     self.error = None;
                 }
+
+                if !enabled && self.network != Network::Bitcoin {
+                    self.network = Network::Bitcoin;
+                    let network_dir = self.datadir_path.network_directory(self.network);
+                    return Task::perform(check_network_datadir(network_dir), Message::Checked);
+                }
+
                 Task::none()
             }
             Message::View(ViewMessage::DeleteCube(DeleteCubeMessage::Deleted)) => {
