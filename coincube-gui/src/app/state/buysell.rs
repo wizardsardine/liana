@@ -5,7 +5,7 @@ use crate::{
         cache::Cache,
         menu::Menu,
         message::Message,
-        state::{self, State},
+        state::State,
         view::{self, buysell::*},
     },
     daemon::Daemon,
@@ -24,33 +24,7 @@ impl State for BuySellPanel {
         menu: &'a Menu,
         cache: &'a Cache,
     ) -> coincube_ui::widget::Element<'a, view::Message> {
-        let inner = view::dashboard(menu, cache, self.view());
-
-        // Wrap with toast if Meld state has an active toast
-        let inner = if let BuySellFlowState::Meld(meld) = &self.step {
-            let toasts = if let Some(msg) = &meld.toast {
-                vec![view::simple_toast(msg).into()]
-            } else {
-                vec![]
-            };
-            coincube_ui::component::toast::Manager::new(inner, toasts).into()
-        } else {
-            inner
-        };
-
-        if let BuySellFlowState::Initialization { modal, .. } = &self.step {
-            let overlay = match modal {
-                super::vault::receive::Modal::VerifyAddress(m) => m.view(),
-                super::vault::receive::Modal::ShowQrCode(m) => m.view(),
-                super::vault::receive::Modal::None => return inner,
-            };
-
-            coincube_ui::widget::modal::Modal::new(inner, overlay)
-                .on_blur(Some(view::Message::Close))
-                .into()
-        } else {
-            inner
-        }
+        view::dashboard(menu, cache, self.view())
     }
 
     fn update(
@@ -61,60 +35,11 @@ impl State for BuySellPanel {
     ) -> iced::Task<Message> {
         let message = match message {
             Message::View(view::Message::BuySell(message)) => message,
-            // modal for any generated address
-            Message::View(view::Message::Select(_)) => {
-                if let BuySellFlowState::Initialization {
-                    buy_or_sell: Some(panel::BuyOrSell::Buy { address }),
-                    modal,
-                    ..
-                } = &mut self.step
-                {
-                    *modal = super::vault::receive::Modal::VerifyAddress(
-                        super::vault::receive::VerifyAddressModal::new(
-                            cache.datadir_path.clone(),
-                            self.wallet.clone(),
-                            cache.network,
-                            address.address.clone(),
-                            address.index,
-                        ),
-                    );
-                }
-
-                return iced::Task::none();
-            }
-            Message::View(view::Message::ShowQrCode(_)) => {
-                if let BuySellFlowState::Initialization {
-                    buy_or_sell: Some(panel::BuyOrSell::Buy { address }),
-                    modal,
-                    ..
-                } = &mut self.step
-                {
-                    if let Some(new) =
-                        super::vault::receive::ShowQrCodeModal::new(&address.address, address.index)
-                    {
-                        *modal = super::vault::receive::Modal::ShowQrCode(new);
-                    }
-                }
-
-                return iced::Task::none();
-            }
-            Message::View(view::Message::Close) => {
-                if let BuySellFlowState::Initialization { modal, .. } = &mut self.step {
-                    *modal = super::vault::receive::Modal::None;
-                }
-
-                return iced::Task::none();
-            }
             _ => return iced::Task::none(),
         };
 
         match message {
             view::BuySellMessage::ResetWidget => {
-                // Clear the native webview before dropping the Meld state
-                if let BuySellFlowState::Meld(meld) = &mut self.step {
-                    meld.clear_active_webview();
-                }
-
                 if self.detected_country.is_none() {
                     log::warn!("Unable to reset widget, country is unknown");
                     self.step = BuySellFlowState::DetectingLocation(true);
@@ -133,7 +58,7 @@ impl State for BuySellPanel {
                                         // check if token is valid
                                         return iced::Task::done(Message::View(
                                             view::Message::BuySell(
-                                                view::BuySellMessage::RefreshLocalLogin {
+                                                view::BuySellMessage::RefreshLogin {
                                                     refresh_token: l.refresh_token,
                                                 },
                                             ),
@@ -156,21 +81,14 @@ impl State for BuySellPanel {
                         loading: false,
                     };
                 } else {
-                    // User is already logged in and has a country detected - reset to initialization
-                    self.step = BuySellFlowState::Initialization {
-                        modal: state::vault::receive::Modal::None,
-                        buy_or_sell_selected: None,
-                        buy_or_sell: None,
-                        existing_addresses: None,
-                        addresses_loading: false,
-                        addresses_continue_from: None,
-                        address_picker_open: false,
-                    };
+                    // User is already logged in and has a country detected - reset to ModeSelect
+                    self.step = BuySellFlowState::ModeSelect { buy_or_sell: None };
                 }
             }
 
+            // TODO: Use array of steps, similar to MeldState
             view::BuySellMessage::BackToAddressView => {
-                // Extract buy_or_sell from Mavapay state and go back to Initialization
+                // Extract buy_or_sell from Mavapay state and go back to ModeSelect
                 let buy_or_sell = match &self.step {
                     BuySellFlowState::Mavapay(mavapay_state) => match mavapay_state {
                         view::buysell::MavapayState::Transaction { buy_or_sell, .. } => {
@@ -184,21 +102,11 @@ impl State for BuySellPanel {
                     _ => None,
                 };
 
-                self.step = BuySellFlowState::Initialization {
-                    modal: state::vault::receive::Modal::None,
-                    buy_or_sell_selected: buy_or_sell
-                        .as_ref()
-                        .map(|b| matches!(b, view::buysell::panel::BuyOrSell::Buy { .. })),
-                    buy_or_sell,
-                    existing_addresses: None,
-                    addresses_loading: false,
-                    addresses_continue_from: None,
-                    address_picker_open: false,
-                };
+                self.step = BuySellFlowState::ModeSelect { buy_or_sell };
             }
 
             // login states
-            view::BuySellMessage::RefreshLocalLogin { refresh_token } => {
+            view::BuySellMessage::RefreshLogin { refresh_token } => {
                 let client = self.coincube_client.clone();
 
                 return iced::Task::perform(
@@ -241,18 +149,10 @@ impl State for BuySellPanel {
                 };
 
                 // user is successfully logged in: 🥳
-                self.coincube_client = CoincubeClient::new(Some(login.token.clone()));
+                self.coincube_client.set_token(&login.token);
                 self.login = Some(login);
 
-                self.step = BuySellFlowState::Initialization {
-                    modal: state::vault::receive::Modal::None,
-                    buy_or_sell_selected: None,
-                    buy_or_sell: None,
-                    existing_addresses: None,
-                    addresses_loading: false,
-                    addresses_continue_from: None,
-                    address_picker_open: false,
-                };
+                self.step = BuySellFlowState::ModeSelect { buy_or_sell: None };
             }
             view::BuySellMessage::LogOut => {
                 self.login = None;
@@ -276,199 +176,17 @@ impl State for BuySellPanel {
                 return iced::Task::done(Message::View(view::Message::Clipboard(text)));
             }
 
-            // initialization flow: for creating a new address and setting panel mode (buy or sell)
+            // ModeSelect: setting panel mode (buy or sell)
             view::BuySellMessage::SelectBuyOrSell(bs) => {
-                if let BuySellFlowState::Initialization {
-                    buy_or_sell_selected,
-                    existing_addresses,
-                    addresses_loading,
-                    ..
-                } = &mut self.step
-                {
-                    if *buy_or_sell_selected == Some(bs) {
-                        // toggle off
-                        *buy_or_sell_selected = None;
+                if let BuySellFlowState::ModeSelect { buy_or_sell } = &mut self.step {
+                    let bs = Some(bs);
+
+                    // toggle
+                    if buy_or_sell == &bs {
+                        *buy_or_sell = None;
                     } else {
-                        *buy_or_sell_selected = Some(bs);
-                        // When Buy mode is selected, fetch existing addresses if not already loaded
-                        if bs && existing_addresses.is_none() && !*addresses_loading {
-                            return iced::Task::done(Message::View(view::Message::BuySell(
-                                view::BuySellMessage::FetchExistingAddresses,
-                            )));
-                        }
+                        *buy_or_sell = bs;
                     }
-                }
-            }
-            view::BuySellMessage::CreateNewAddress => {
-                let daemon = daemon.expect("Daemon must be available for BuySell panel");
-                return iced::Task::perform(
-                    async move { daemon.get_new_address().await },
-                    |res: Result<_, _>| match res {
-                        Ok(out) => Message::View(view::Message::BuySell(
-                            view::BuySellMessage::AddressCreated(
-                                view::buysell::panel::LabelledAddress {
-                                    address: out.address,
-                                    index: out.derivation_index,
-                                    label: None,
-                                },
-                            ),
-                        )),
-                        Err(e) => Message::View(view::Message::BuySell(
-                            view::BuySellMessage::SessionError(
-                                "Unable to create a new address",
-                                e.to_string(),
-                            ),
-                        )),
-                    },
-                );
-            }
-            view::BuySellMessage::AddressCreated(address) => {
-                if let BuySellFlowState::Initialization { buy_or_sell, .. } = &mut self.step {
-                    *buy_or_sell = Some(panel::BuyOrSell::Buy { address })
-                }
-            }
-            view::BuySellMessage::FetchExistingAddresses => {
-                if let BuySellFlowState::Initialization {
-                    addresses_loading, ..
-                } = &mut self.step
-                {
-                    *addresses_loading = true;
-                } else {
-                    return iced::Task::none();
-                }
-                let daemon = daemon.expect("Daemon must be available for BuySell panel");
-                return iced::Task::perform(
-                    async move { daemon.list_revealed_addresses(false, false, 20, None).await },
-                    |res| match res {
-                        Ok(result) => {
-                            let addresses: Vec<panel::LabelledAddress> = result
-                                .addresses
-                                .into_iter()
-                                // A new wallet always has index 0 "revealed", but we ignore it
-                                // as it was not generated by the user.
-                                .filter(|entry| entry.index != 0.into())
-                                .map(|entry| panel::LabelledAddress {
-                                    address: entry.address,
-                                    index: entry.index,
-                                    label: entry.label,
-                                })
-                                .collect();
-                            Message::View(view::Message::BuySell(
-                                view::BuySellMessage::ExistingAddressesFetched {
-                                    addresses: Ok(addresses),
-                                    continue_from: result.continue_from,
-                                },
-                            ))
-                        }
-                        Err(e) => Message::View(view::Message::BuySell(
-                            view::BuySellMessage::ExistingAddressesFetched {
-                                addresses: Err(e.to_string()),
-                                continue_from: None,
-                            },
-                        )),
-                    },
-                );
-            }
-            view::BuySellMessage::LoadMoreAddresses => {
-                let start_index = if let BuySellFlowState::Initialization {
-                    addresses_loading,
-                    addresses_continue_from,
-                    ..
-                } = &mut self.step
-                {
-                    if addresses_continue_from.is_none() {
-                        return iced::Task::none();
-                    }
-                    *addresses_loading = true;
-                    *addresses_continue_from
-                } else {
-                    return iced::Task::none();
-                };
-                let daemon = daemon.expect("Daemon must be available for BuySell panel");
-                return iced::Task::perform(
-                    async move {
-                        daemon
-                            .list_revealed_addresses(false, false, 20, start_index)
-                            .await
-                    },
-                    |res| match res {
-                        Ok(result) => {
-                            let addresses: Vec<panel::LabelledAddress> = result
-                                .addresses
-                                .into_iter()
-                                // A new wallet always has index 0 "revealed", but we ignore it
-                                // as it was not generated by the user.
-                                .filter(|entry| entry.index != 0.into())
-                                .map(|entry| panel::LabelledAddress {
-                                    address: entry.address,
-                                    index: entry.index,
-                                    label: entry.label,
-                                })
-                                .collect();
-                            Message::View(view::Message::BuySell(
-                                view::BuySellMessage::ExistingAddressesFetched {
-                                    addresses: Ok(addresses),
-                                    continue_from: result.continue_from,
-                                },
-                            ))
-                        }
-                        Err(e) => Message::View(view::Message::BuySell(
-                            view::BuySellMessage::ExistingAddressesFetched {
-                                addresses: Err(e.to_string()),
-                                continue_from: None,
-                            },
-                        )),
-                    },
-                );
-            }
-            view::BuySellMessage::ExistingAddressesFetched {
-                addresses: result,
-                continue_from,
-            } => {
-                if let BuySellFlowState::Initialization {
-                    existing_addresses,
-                    addresses_loading,
-                    addresses_continue_from,
-                    ..
-                } = &mut self.step
-                {
-                    *addresses_loading = false;
-                    match result {
-                        Ok(new_addresses) => {
-                            *addresses_continue_from = continue_from;
-                            if let Some(ref mut addrs) = existing_addresses {
-                                addrs.extend(new_addresses);
-                            } else {
-                                *existing_addresses = Some(new_addresses);
-                            }
-                        }
-                        Err(e) => {
-                            log::error!("Failed to fetch existing addresses: {}", e);
-                            return iced::Task::done(Message::View(view::Message::ShowError(
-                                format!("Failed to load addresses: {}", e),
-                            )));
-                        }
-                    }
-                }
-            }
-            view::BuySellMessage::SelectExistingAddress(address) => {
-                if let BuySellFlowState::Initialization {
-                    buy_or_sell,
-                    address_picker_open,
-                    ..
-                } = &mut self.step
-                {
-                    *buy_or_sell = Some(panel::BuyOrSell::Buy { address });
-                    *address_picker_open = false;
-                }
-            }
-            view::BuySellMessage::ToggleAddressPicker => {
-                if let BuySellFlowState::Initialization {
-                    address_picker_open,
-                    ..
-                } = &mut self.step
-                {
-                    *address_picker_open = !*address_picker_open;
                 }
             }
 
@@ -504,7 +222,7 @@ impl State for BuySellPanel {
 
             // session management
             view::BuySellMessage::StartSession => {
-                let BuySellFlowState::Initialization { buy_or_sell, .. } = &mut self.step else {
+                let BuySellFlowState::ModeSelect { buy_or_sell, .. } = &mut self.step else {
                     log::error!("`StartSession` must be always called during the Initialization Flow Stage, skipping...");
                     return iced::Task::none();
                 };
@@ -517,19 +235,17 @@ impl State for BuySellPanel {
 
                 let buy_or_sell = buy_or_sell.take().unwrap_or(panel::BuyOrSell::Sell);
 
-                match mavapay_supported(country.code)
-                    && matches!(option_env!("ENABLE_MAVAPAY"), Some("1") | Some("true"))
-                {
+                match mavapay_supported(country.code) {
                     true => {
                         log::info!("[BUYSELL] Starting under Mavapay for {}", country);
 
                         // initialize buysell under Mavapay
                         self.step = BuySellFlowState::Mavapay(MavapayState::Transaction {
                             buy_or_sell,
-                            country: country.clone(),
+                            country,
                             sat_amount: 6000,
-                            beneficiary: None,
                             transfer_speed: OnchainTransferSpeed::Fast,
+                            ln_invoice: None,
                             banks: None,
                             selected_bank: None,
                             btc_price: None,
@@ -574,9 +290,7 @@ impl State for BuySellPanel {
                     );
                 };
 
-                match mavapay_supported(country.code)
-                    && matches!(option_env!("ENABLE_MAVAPAY"), Some("1") | Some("true"))
-                {
+                match mavapay_supported(country.code) {
                     true => {
                         log::info!("Starting history view under Mavapay");
 
@@ -682,15 +396,7 @@ impl State for BuySellPanel {
                     ) => {
                         log::info!("Successfully logged in user: {}", &login.user.email);
 
-                        self.step = BuySellFlowState::Initialization {
-                            modal: state::vault::receive::Modal::None,
-                            buy_or_sell_selected: None,
-                            buy_or_sell: None,
-                            existing_addresses: None,
-                            addresses_loading: false,
-                            addresses_continue_from: None,
-                            address_picker_open: false,
-                        };
+                        self.step = BuySellFlowState::ModeSelect { buy_or_sell: None };
 
                         return iced::Task::done(Message::View(view::Message::BuySell(
                             view::BuySellMessage::SetLoginState(login),
@@ -856,21 +562,18 @@ impl State for BuySellPanel {
                         }
                     },
                     (BuySellFlowState::Mavapay(state), view::BuySellMessage::Mavapay(msg)) => {
-                        if let Some(task) = state.update(msg, &self.coincube_client) {
+                        if let Some(task) =
+                            state.update(msg, &self.coincube_client, &self.breez_client)
+                        {
                             return task.map(Message::View);
                         };
                     }
                     (BuySellFlowState::Meld(state), view::BuySellMessage::Meld(msg)) => {
-                        if let Some(task) = state.update(msg, cache, &self.coincube_client) {
+                        if let Some(task) = state.update(msg, cache, daemon, &self.coincube_client)
+                        {
                             return task.map(Message::View);
                         }
                     }
-
-                    // ClearToast can arrive after navigating away from Meld; safe to ignore
-                    (
-                        _,
-                        view::BuySellMessage::Meld(view::buysell::meld::MeldMessage::ClearToast),
-                    ) => {}
 
                     (step, msg) => {
                         log::warn!("Current {:?} has ignored message: {:?}", step.name(), msg)

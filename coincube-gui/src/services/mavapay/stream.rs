@@ -120,7 +120,7 @@ pub fn transaction_stream(
                                             };
                                         }
                                         Ok(None) => {
-                                            log::info!("[Mavapay] EventSource exiting safely");
+                                            log::info!("[MAVAPAY] EventSource exiting safely");
                                             break;
                                         }
                                         Err(err) => {

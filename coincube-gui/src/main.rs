@@ -119,7 +119,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         position: iced::window::Position::Centered,
         min_size: Some(Size {
             width: 1024.0,
-            height: 768.0,
+            height: 800.0,
         }),
         exit_on_close_request: false,
         ..Default::default()

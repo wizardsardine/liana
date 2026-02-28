@@ -40,7 +40,6 @@ async fn update_price_setting(
                 settings.cubes.iter().map(|c| &c.id).collect::<Vec<_>>()
             );
         }
-        // Always return Some to prevent file deletion
         Some(settings)
     })
     .await;

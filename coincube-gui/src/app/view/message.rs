@@ -203,36 +203,22 @@ pub enum BuySellMessage {
     SessionError(&'static str, String), // inline description + runtime error
     ResetWidget,
     BackToAddressView,
-    SelectBuyOrSell(bool), // true = buy, false = sell
+    SelectBuyOrSell(super::buysell::BuyOrSell),
     StartSession,
-    RefreshLocalLogin {
+    RefreshLogin {
         refresh_token: String,
     },
     SetLoginState(crate::services::coincube::LoginResponse),
     LogOut,
+
+    // ip geolocation
+    CountryDetected(Result<&'static crate::services::coincube::Country, String>),
 
     // automatic user login
     SubmitLogin,
     LoginSuccess {
         login: crate::services::coincube::LoginResponse,
     },
-
-    // ip geolocation
-    CountryDetected(Result<&'static crate::services::coincube::Country, String>),
-
-    // recipient address generation
-    CreateNewAddress,
-    AddressCreated(super::buysell::panel::LabelledAddress),
-
-    // existing address selection
-    FetchExistingAddresses,
-    ExistingAddressesFetched {
-        addresses: Result<Vec<super::buysell::panel::LabelledAddress>, String>,
-        continue_from: Option<coincube_core::miniscript::bitcoin::bip32::ChildNumber>,
-    },
-    LoadMoreAddresses,
-    ToggleAddressPicker,
-    SelectExistingAddress(super::buysell::panel::LabelledAddress),
 
     // user Registration
     EmailChanged(String),

@@ -37,10 +37,6 @@ const CONFIG_KEY: &str = "config";
 const SETTINGS_KEY: &str = "settings";
 const COINCUBE_VERSION_KEY: &str = "coincube_version";
 
-pub fn coincube_version() -> String {
-    format!("{}.{}", VERSION.major, VERSION.minor)
-}
-
 #[derive(Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub struct Backup {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -134,7 +130,7 @@ impl Backup {
         sender: &UnboundedSender<Progress>,
     ) -> Result<Self, Error> {
         let mut proprietary = serde_json::Map::new();
-        proprietary.insert(COINCUBE_VERSION_KEY.to_string(), coincube_version().into());
+        proprietary.insert(COINCUBE_VERSION_KEY.to_string(), VERSION.0.into());
 
         let name = wallet.name.clone();
         let descriptor = wallet.main_descriptor.to_string();
