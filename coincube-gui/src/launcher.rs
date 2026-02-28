@@ -1,6 +1,6 @@
 use iced::{
     alignment::Horizontal,
-    widget::{checkbox, pick_list, scrollable, Button, Space},
+    widget::{checkbox, pick_list, scrollable, Button, Space, Toggler},
     Alignment, Length, Subscription, Task,
 };
 
@@ -17,7 +17,7 @@ use crate::pin_input;
 use crate::{
     app::{
         self,
-        settings::{self, AuthConfig, CubeSettings, WalletSettings},
+        settings::{self, global::GlobalSettings, AuthConfig, CubeSettings, WalletSettings},
     },
     delete::{delete_wallet, DeleteError},
     dir::{CoincubeDirectory, NetworkDirectory},
@@ -61,17 +61,25 @@ pub struct Launcher {
     recover_liquid_wallet: bool,
     creating_cube: bool,
     recovery_words: [String; 12],
+    developer_mode: bool,
 }
 
 impl Launcher {
     pub fn new(datadir_path: CoincubeDirectory, network: Option<Network>) -> (Self, Task<Message>) {
-        let network = network.unwrap_or(
+        let developer_mode =
+            GlobalSettings::load_developer_mode(&GlobalSettings::path(&datadir_path));
+        let selected_network = network.unwrap_or(
             NETWORKS
                 .iter()
                 .find(|net| has_existing_wallet(&datadir_path, **net))
                 .cloned()
                 .unwrap_or(Network::Bitcoin),
         );
+        let network = if developer_mode {
+            selected_network
+        } else {
+            Network::Bitcoin
+        };
         let network_dir = datadir_path.network_directory(network);
         (
             Self {
@@ -87,6 +95,7 @@ impl Launcher {
                 recover_liquid_wallet: false,
                 creating_cube: false,
                 recovery_words: Default::default(),
+                developer_mode,
             },
             Task::perform(check_network_datadir(network_dir), Message::Checked),
         )
@@ -122,6 +131,12 @@ impl Launcher {
                 })
             }
             Message::View(ViewMessage::ShareXpubs) => {
+                if !self.developer_mode {
+                    tracing::debug!(
+                        "Ignoring ShareXpubs action because developer mode is disabled"
+                    );
+                    return Task::none();
+                }
                 let datadir_path = self.datadir_path.clone();
                 let network = self.network;
                 Task::perform(async move { (datadir_path, network) }, |(d, n)| {
@@ -248,9 +263,9 @@ impl Launcher {
                 if self.recover_liquid_wallet {
                     // Enter recovery flow - show recovery input UI
                     self.creating_cube = false;
-                    Task::done(Message::StartRecovery);
+                    Task::done(Message::StartRecovery)
                 } else {
-                    without_recovery;
+                    without_recovery
                 }
             }
             Message::StartRecovery => {
@@ -334,9 +349,34 @@ impl Launcher {
                 Task::none()
             }
             Message::View(ViewMessage::SelectNetwork(network)) => {
+                if !self.developer_mode {
+                    tracing::debug!(
+                        "Ignoring SelectNetwork action because developer mode is disabled"
+                    );
+                    return Task::none();
+                }
                 self.network = network;
                 let network_dir = self.datadir_path.network_directory(self.network);
                 Task::perform(check_network_datadir(network_dir), Message::Checked)
+            }
+            Message::View(ViewMessage::ToggleDeveloperMode(enabled)) => {
+                let previous_developer_mode = self.developer_mode;
+                self.developer_mode = enabled;
+                let path = GlobalSettings::path(&self.datadir_path);
+                if let Err(e) = GlobalSettings::update_developer_mode(&path, enabled) {
+                    self.developer_mode = previous_developer_mode;
+                    self.error = Some(format!("Failed to update developer mode: {}", e));
+                } else {
+                    self.error = None;
+                }
+
+                if !enabled && self.network != Network::Bitcoin {
+                    self.network = Network::Bitcoin;
+                    let network_dir = self.datadir_path.network_directory(self.network);
+                    return Task::perform(check_network_datadir(network_dir), Message::Checked);
+                }
+
+                Task::none()
             }
             Message::View(ViewMessage::DeleteCube(DeleteCubeMessage::Deleted)) => {
                 // Close modal and reload cubes - Checked will determine the correct state
@@ -548,18 +588,38 @@ impl Launcher {
                             None
                         })
                         .push(
-                            button::xpubs_button(None, "Share Xpubs")
-                                .on_press(ViewMessage::ShareXpubs),
+                            Row::new()
+                                .spacing(10)
+                                .align_y(Alignment::Center)
+                                .push(text("Developer mode").style(theme::text::secondary))
+                                .push(
+                                    Toggler::new(self.developer_mode)
+                                        .on_toggle(ViewMessage::ToggleDeveloperMode)
+                                        .width(50)
+                                        .style(theme::toggler::orange),
+                                ),
                         )
-                        .push(
-                            pick_list(
-                                self.displayed_networks.as_slice(),
-                                Some(self.network),
-                                ViewMessage::SelectNetwork,
+                        .push(if self.developer_mode {
+                            Some(
+                                button::xpubs_button(None, "Share Xpubs")
+                                    .on_press(ViewMessage::ShareXpubs),
                             )
-                            .style(theme::pick_list::primary)
-                            .padding(10),
-                        )
+                        } else {
+                            None
+                        })
+                        .push(if self.developer_mode {
+                            Some(
+                                pick_list(
+                                    self.displayed_networks.as_slice(),
+                                    Some(self.network),
+                                    ViewMessage::SelectNetwork,
+                                )
+                                .style(theme::pick_list::primary)
+                                .padding(10),
+                            )
+                        } else {
+                            None
+                        })
                         .align_y(Alignment::Center)
                         .padding(100),
                 )
@@ -928,6 +988,7 @@ pub enum ViewMessage {
     Run(usize),
     DeleteCube(DeleteCubeMessage),
     ToggleRecoveryCheckBox,
+    ToggleDeveloperMode(bool),
     RecoveryWordInput { index: usize, word: String },
     SubmitRecovery,
     CancelRecovery,
