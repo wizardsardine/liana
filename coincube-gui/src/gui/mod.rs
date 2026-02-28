@@ -110,7 +110,10 @@ async fn ctrl_c() -> Result<(), ()> {
 
 impl GUI {
     pub fn title(&self) -> String {
-        format!("COINCUBE v{}", env!("CARGO_PKG_VERSION"))
+        match cfg!(debug_assertions) {
+            true => format!("COINCUBE v{} (development)", env!("CARGO_PKG_VERSION")),
+            false => format!("COINCUBE v{}", env!("CARGO_PKG_VERSION")),
+        }
     }
 
     pub fn new((config, log_level): (Config, Option<LevelFilter>)) -> (GUI, Task<Message>) {
@@ -329,8 +332,8 @@ impl GUI {
             Message::Pane(p, pane::Message::Tab(t, tab::Message::Launch(msg))) => {
                 let mut tasks = Vec::new();
                 if let launcher::Message::View(launcher::ViewMessage::DeleteCube(
-                    launcher::DeleteCubeMessage::Confirm(_cube_id),
-                )) = msg.as_ref()
+                    launcher::DeleteCubeMessage::Confirm(..),
+                )) = &msg
                 {
                     // When a cube is deleted, close all App and Loader tabs since they won't be valid anymore
                     let mut panes_to_close = Vec::<pane_grid::Pane>::new();
@@ -360,16 +363,14 @@ impl GUI {
                                 tasks.push(l.reload().map(move |msg| {
                                     Message::Pane(
                                         id,
-                                        pane::Message::Tab(
-                                            tab_id,
-                                            tab::Message::Launch(Box::new(msg)),
-                                        ),
+                                        pane::Message::Tab(tab_id, tab::Message::Launch(msg)),
                                     )
                                 }));
                             }
                         }
                     }
                 }
+
                 if let Some(pane) = self.panes.get_mut(p) {
                     tasks.push(
                         pane.update(
@@ -378,20 +379,17 @@ impl GUI {
                         )
                         .map(move |msg| Message::Pane(p, msg)),
                     );
-                }
+                };
+
                 Task::batch(tasks)
             }
             Message::Pane(i, msg) => {
                 match msg {
                     // Handle ListCurrencies requests separately.
                     pane::Message::Tab(tab_id, tab::Message::Run(inner))
-                        if matches!(
-                            inner.as_ref(),
-                            AppMessage::Fiat(AppFiatMessage::ListCurrencies(_))
-                        ) =>
+                        if matches!(inner, AppMessage::Fiat(AppFiatMessage::ListCurrencies(_))) =>
                     {
-                        let AppMessage::Fiat(AppFiatMessage::ListCurrencies(source)) = *inner
-                        else {
+                        let AppMessage::Fiat(AppFiatMessage::ListCurrencies(source)) = inner else {
                             tracing::error!("Unexpected message type after unboxing");
                             return Task::none();
                         };

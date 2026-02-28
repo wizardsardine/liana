@@ -8,6 +8,9 @@ default-members = ["coincube-core", "coincubed", "coincube-gui", "coincube-ui"]
 # Resolve secp256k1-zkp MuSig2 types needed by boltz-client (Breez SDK dependency)
 secp256k1-zkp = { git = "https://github.com/breez/rust-secp256k1-zkp.git", rev = "eac2e479255a6e32b5588bc25ee53c642fdd8395" }
 
+[patch."https://github.com/breez/rusqlite_migration"]
+rusqlite_migration = { git = "https://github.com/sokorototo/rusqlite_migration", branch = "rusqlite-v0.38.0" }
+
 [profile.minimal]
 inherits = "release"
 opt-level = "z"

@@ -40,7 +40,7 @@ pub fn liquid_settings_view<'a>(
     flow_state: &'a LiquidSettingsFlowState,
 ) -> Element<'a, Message> {
     match flow_state {
-        LiquidSettingsFlowState::MainMenu { backed_up, mfa } => main_menu_view(*backed_up, *mfa),
+        LiquidSettingsFlowState::MainMenu { backed_up } => main_menu_view(*backed_up),
         LiquidSettingsFlowState::BackupWallet(BackupWalletState::Intro(checked)) => {
             backup_intro_view(*checked)
         }
@@ -62,7 +62,7 @@ pub fn liquid_settings_view<'a>(
     }
 }
 
-fn main_menu_view(backed_up: bool, mfa: bool) -> Element<'static, Message> {
+fn main_menu_view(backed_up: bool) -> Element<'static, Message> {
     let backup = settings_section(
         "Back up your wallet",
         "Protect your wallet by creating and safely storing a recovery phrase.",
@@ -88,25 +88,6 @@ fn main_menu_view(backed_up: bool, mfa: bool) -> Element<'static, Message> {
         )),
     );
 
-    let mfa = settings_section(
-        "Two-factor authentication method",
-        "Manage your two-factor authentication settings to enhance account security.",
-        icon::phone_icon(),
-        icon::arrow_right(),
-        if !mfa {
-            CapsuleState::Danger
-        } else {
-            CapsuleState::Success
-        },
-        if !mfa {
-            icon::warning_icon()
-        } else {
-            icon::check_icon()
-        },
-        if !mfa { "Disabled" } else { "Completed" },
-        Message::Settings(crate::app::view::SettingsMessage::GeneralSection),
-    );
-
     let header = Button::new(text("Settings").size(30).bold())
         .style(theme::button::transparent)
         .on_press(Message::Menu(crate::app::menu::Menu::Liquid(
@@ -119,7 +100,6 @@ fn main_menu_view(backed_up: bool, mfa: bool) -> Element<'static, Message> {
         .push(header)
         .push(Space::new().height(Length::Fixed(20.0)))
         .push(backup)
-        .push(mfa)
         .into()
 }
 

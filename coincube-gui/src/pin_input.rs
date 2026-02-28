@@ -1,5 +1,4 @@
 use coincube_ui::{
-    component::button,
     icon,
     widget::{Element, Row},
 };
@@ -14,7 +13,7 @@ use iced::{
 #[derive(Default)]
 pub struct PinInput {
     pub digits: [String; 4],
-    pub show: bool,
+    pub hidden: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -27,7 +26,7 @@ impl PinInput {
     pub fn new() -> Self {
         Self {
             digits: [String::new(), String::new(), String::new(), String::new()],
-            show: false,
+            hidden: true,
         }
     }
 
@@ -67,7 +66,7 @@ impl PinInput {
                 Task::none()
             }
             Message::ToggleShow => {
-                self.show = !self.show;
+                self.hidden = !self.hidden;
                 Task::none()
             }
         }
@@ -78,33 +77,29 @@ impl PinInput {
         let mut pin_inputs = Row::new().spacing(15).align_y(Alignment::Center);
 
         for i in 0..4 {
-            let mut input = iced::widget::text_input("", &self.digits[i])
-                .on_input(move |v| Message::DigitChanged(i, v))
+            let input = iced::widget::text_input("", &self.digits[i])
                 .size(30)
-                .width(Length::Fixed(60.0));
-
-            if !self.show {
-                input = input
-                    .secure(true)
-                    .padding(iced::Padding::new(15.0).left(25.0));
-            } else {
-                input = input.padding(iced::Padding::new(15.0).left(20.0));
-            }
+                .width(Length::Fixed(60.0))
+                .align_x(iced::Alignment::Center)
+                .padding(15)
+                .secure(self.hidden)
+                .on_input(move |v| Message::DigitChanged(i, v));
 
             pin_inputs = pin_inputs.push(input);
         }
 
-        let toggle_button = button::secondary(
-            Some(if self.show {
+        let toggle_button = iced::widget::button(
+            if self.hidden {
                 icon::eye_icon()
             } else {
                 icon::eye_slash_icon()
-            }),
-            "",
+            }
+            .align_x(iced::Alignment::Center)
+            .align_y(iced::Alignment::Center),
         )
         .on_press(Message::ToggleShow)
         .width(Length::Fixed(50.0))
-        .padding(iced::Padding::new(10.0).left(15.0));
+        .padding(15);
 
         Row::new()
             .spacing(10)

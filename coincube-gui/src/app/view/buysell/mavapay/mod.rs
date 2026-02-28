@@ -1,30 +1,40 @@
 pub mod ui;
 
-use crate::app::view;
-use crate::app::view::buysell::panel::{self, BuyOrSell};
-use crate::services::mavapay::{MavapayClient, MavapayMessage};
-use crate::services::{coincube::*, mavapay::api::*};
+use crate::app::{
+    breez::BreezClient,
+    view::{
+        self,
+        buysell::panel::{self, BuyOrSell},
+    },
+};
+
+use crate::services::{
+    coincube::*,
+    mavapay::{api::*, MavapayClient, MavapayMessage},
+};
 
 #[derive(Debug)]
 pub enum MavapayState {
     Transaction {
         buy_or_sell: BuyOrSell,
-        country: Country,
-        beneficiary: Option<Beneficiary>,
         sat_amount: u64, // Unit Amount in BTCSAT
+        transfer_speed: OnchainTransferSpeed,
+        btc_price: Option<f64>, // btc_price_in_unit_currency
+        country: &'static Country,
+        // buy-mode
+        ln_invoice: Option<String>,
+        // sell-mode
         banks: Option<MavapayBanks>,
         selected_bank: Option<usize>,
-        transfer_speed: OnchainTransferSpeed,
-        btc_price: Option<GetPriceResponse>,
+        // request state lock
         sending_quote: bool,
     },
     Checkout {
         sat_amount: u64,
         buy_or_sell: BuyOrSell,
-        beneficiary: Option<Beneficiary>,
         quote: GetQuoteResponse,
         fulfilled_order: Option<GetOrderResponse>,
-        country: Country,
+        country: &'static Country,
         /// Order ID for SSE transaction status updates
         stream_order_id: Option<String>,
     },
@@ -44,11 +54,9 @@ impl MavapayState {
         &mut self,
         msg: MavapayMessage,
         coincube_client: &CoincubeClient,
+        breez_client: &std::sync::Arc<BreezClient>,
     ) -> Option<iced::Task<view::Message>> {
-        // rust is weird, man
-        let mut state = self;
-
-        match (&mut state, msg) {
+        match (&mut *self, msg) {
             // transactions form
             (
                 MavapayState::Transaction {
@@ -57,9 +65,9 @@ impl MavapayState {
                     country,
                     banks,
                     buy_or_sell,
-                    beneficiary,
                     transfer_speed,
                     sending_quote,
+                    ln_invoice,
                     ..
                 },
                 msg,
@@ -71,7 +79,7 @@ impl MavapayState {
                     MavapayMessage::SatAmountChanged(sats) => *sat_amount = sats.round() as _,
                     MavapayMessage::FiatAmountChanged(fiat) => match btc_price {
                         Some(price) => {
-                            let sat_price = price.btc_price_in_unit_currency / 100_000_000.0;
+                            let sat_price = *price / 100_000_000.0;
                             *sat_amount = (fiat / sat_price).round() as _
                         }
                         None => log::warn!("Unable to update BTC amount, BTC price is unknown"),
@@ -79,7 +87,7 @@ impl MavapayState {
                     MavapayMessage::TransferSpeedChanged(s) => *transfer_speed = s,
 
                     // TODO: Beneficiary specific form inputs
-                    MavapayMessage::CreateQuote => {
+                    MavapayMessage::GetQuote => {
                         *sending_quote = true;
                         let local_currency = match country.code {
                             "KE" => MavapayUnitCurrency::KenyanShillingCent,
@@ -93,29 +101,30 @@ impl MavapayState {
                                 amount: *sat_amount,
                                 source_currency: MavapayUnitCurrency::BitcoinSatoshi,
                                 target_currency: local_currency,
-                                // TODO: Mavapay only supports lightning transactions for selling BTC, meaning we are currently blocked by the breeze integration
-                                payment_method: MavapayPaymentMethod::Lightning,
+                                // the currency denomination of the `amount` field
                                 payment_currency: MavapayUnitCurrency::BitcoinSatoshi,
                                 // automatically deposit fiat funds in beneficiary account
                                 speed: transfer_speed.clone(),
                                 autopayout: true,
                                 customer_internal_fee: Some(0),
-                                beneficiary: beneficiary.clone(),
+                                payment_method: MavapayPaymentMethod::Lightning,
+                                // TODO: dynamically initialize a beneficiary
+                                beneficiary: None,
                             },
-                            panel::BuyOrSell::Buy { address } => {
+                            panel::BuyOrSell::Buy => {
                                 GetQuoteRequest {
                                     amount: *sat_amount,
                                     source_currency: local_currency,
                                     target_currency: MavapayUnitCurrency::BitcoinSatoshi,
-                                    // TODO: Currently, Kenyan beneficiaries are not supported by Mavapay, as only BankTransfer is currently supported by `onchain` buy
-                                    payment_method: MavapayPaymentMethod::BankTransfer,
+                                    // the currency denomination of the `amount` field
                                     payment_currency: MavapayUnitCurrency::BitcoinSatoshi,
                                     speed: transfer_speed.clone(),
                                     autopayout: true,
                                     customer_internal_fee: None,
-                                    beneficiary: Some(Beneficiary::Onchain {
-                                        on_chain_address: address.address.to_string(),
-                                    }),
+                                    // TODO: Currently, Kenyan beneficiaries are not supported by `onchain` buy
+                                    payment_method: MavapayPaymentMethod::BankTransfer,
+                                    // TODO: dynamically initialize a beneficiary
+                                    beneficiary: None,
                                 }
                             }
                         };
@@ -136,7 +145,7 @@ impl MavapayState {
 
                                 // Step 2: Save quote to coincube-api (fallible)
                                 match coincube_client.save_quote(&quote.id, &quote).await {
-                                    Ok(_) => log::info!(
+                                    Ok(_) => log::trace!(
                                         "[COINCUBE] Successfully saved quote: {}",
                                         quote.id
                                     ),
@@ -170,13 +179,12 @@ impl MavapayState {
                         // Set up SSE stream for transaction status updates
                         if let Some(order_id) = quote.order_id.clone() {
                             // switch to checkout
-                            *state = MavapayState::Checkout {
+                            *self = MavapayState::Checkout {
                                 sat_amount: *sat_amount,
                                 buy_or_sell: buy_or_sell.clone(),
-                                beneficiary: beneficiary.clone(),
                                 quote,
                                 fulfilled_order: None,
-                                country: country.clone(),
+                                country,
                                 stream_order_id: Some(order_id),
                             };
                         } else {
@@ -235,11 +243,54 @@ impl MavapayState {
 
                         return Some(task);
                     }
+                    MavapayMessage::GetLightningInvoice => {
+                        if matches!(buy_or_sell, BuyOrSell::Sell) {
+                            return None;
+                        }
 
-                    MavapayMessage::PriceReceived(price) => *btc_price = Some(price),
+                        let breez_client = breez_client.clone();
+                        let amount = Some(breez_sdk_liquid::bitcoin::Amount::from_sat(*sat_amount));
+
+                        let task = iced::Task::perform(
+                            async move {
+                                match breez_client
+                                    .receive_invoice(
+                                        amount,
+                                        Some("Coincube-Buysell Mavapay Invoice".into()),
+                                    )
+                                    .await
+                                {
+                                    Ok(res) => Ok(res.destination),
+                                    Err(e) => Err(e.to_string()),
+                                }
+                            },
+                            |res| match res {
+                                Ok(ln_invoice) => {
+                                    view::Message::BuySell(view::BuySellMessage::Mavapay(
+                                        MavapayMessage::LightningInvoiceReceived(ln_invoice),
+                                    ))
+                                }
+                                Err(e) => {
+                                    view::Message::BuySell(view::BuySellMessage::SessionError(
+                                        "Unable to acquire new invoice",
+                                        e.to_string(),
+                                    ))
+                                }
+                            },
+                        );
+
+                        return Some(task);
+                    }
+
+                    MavapayMessage::PriceReceived(res) => {
+                        *btc_price = Some(res.btc_price_in_unit_currency)
+                    }
                     MavapayMessage::BanksReceived(b) => *banks = Some(b),
+                    MavapayMessage::LightningInvoiceReceived(invoice) => {
+                        *ln_invoice = Some(invoice)
+                    }
 
-                    msg => log::warn!("Current {:?} has ignored message: {:?}", *state, msg),
+                    msg => log::warn!("Current {:?} has ignored message: {:?}", *self, msg),
                 }
             }
             // checkout form
@@ -365,7 +416,7 @@ impl MavapayState {
                 }
 
                 msg => {
-                    log::warn!("Current {:?} has ignored message: {:?}", *state, msg)
+                    log::warn!("Current {:?} has ignored message: {:?}", *self, msg)
                 }
             },
             (
@@ -426,7 +477,7 @@ impl MavapayState {
                     )
                     .map(view::Message::BuySell);
 
-                    *state = MavapayState::OrderDetail {
+                    *self = MavapayState::OrderDetail {
                         transaction: transaction.clone(),
                         order: None,
                         loading: true,
@@ -435,7 +486,7 @@ impl MavapayState {
                     return Some(task);
                 }
                 msg => {
-                    log::warn!("Current {:?} has ignored message: {:?}", *state, msg)
+                    log::warn!("Current {:?} has ignored message: {:?}", *self, msg)
                 }
             },
             (MavapayState::OrderDetail { order, loading, .. }, msg) => match msg {
@@ -444,7 +495,7 @@ impl MavapayState {
                     *loading = false;
                 }
                 MavapayMessage::BackToHistory => {
-                    *state = MavapayState::History {
+                    *self = MavapayState::History {
                         transactions: None,
                         loading: true,
                     };
@@ -454,7 +505,7 @@ impl MavapayState {
                     )));
                 }
                 msg => {
-                    log::warn!("Current {:?} has ignored message: {:?}", *state, msg)
+                    log::warn!("Current {:?} has ignored message: {:?}", *self, msg)
                 }
             },
         }

@@ -104,34 +104,33 @@ impl Pane {
         app_msg: impl Into<app::Message>,
         cfg: &Config,
     ) -> Task<Message> {
-        self.update(
-            Message::Tab(tab_id, tab::Message::Run(Box::new(app_msg.into()))),
-            cfg,
-        )
+        self.update(Message::Tab(tab_id, tab::Message::Run(app_msg.into())), cfg)
     }
 
     pub fn update(&mut self, message: Message, cfg: &Config) -> Task<Message> {
         match message {
-            Message::Tab(id, msg) => self
-                .tabs
-                .iter_mut()
-                .find(|t| t.id == id)
-                .map(|t| t.update(msg).map(move |msg| Message::Tab(id, msg)))
-                .unwrap_or(Task::none()),
+            Message::Tab(id, msg) => {
+                return self
+                    .tabs
+                    .iter_mut()
+                    .find(|t| t.id == id)
+                    .map(|t| t.update(msg).map(move |msg| Message::Tab(id, msg)))
+                    .unwrap_or(Task::none());
+            }
             Message::View(ViewMessage::FocusTab(i)) => {
                 if i < self.tabs.len() {
                     self.focused_tab = i;
                 }
-                Task::none()
             }
-            Message::View(ViewMessage::AddTab) => self.add_tab(cfg),
+            Message::View(ViewMessage::AddTab) => return self.add_tab(cfg),
             Message::View(ViewMessage::CloseTab(i)) => {
                 self.close_tab(i);
-                Task::none()
             }
             // handle by the pane grid update.
-            Message::View(ViewMessage::SplitTab(_)) => Task::none(),
-        }
+            Message::View(ViewMessage::SplitTab(_)) => {}
+        };
+
+        Task::none()
     }
 
     pub fn subscription(&self) -> Subscription<Message> {

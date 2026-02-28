@@ -13,10 +13,15 @@ fn main() {
         };
     }
 
-    // Windows resource configuration from master
     #[cfg(windows)]
-    winresource::WindowsResource::new()
-        .set_icon("../coincube-ui/static/logos/coincube-cc.ico")
-        .compile()
-        .unwrap();
+    {
+        // increase stack size to 8MB
+        println!("cargo:rustc-link-arg-bins=/STACK:8000000");
+
+        // Windows resource configuration from master
+        winresource::WindowsResource::new()
+            .set_icon("../coincube-ui/static/logos/coincube-cc.ico")
+            .compile()
+            .unwrap();
+    }
 }

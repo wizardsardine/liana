@@ -1,30 +1,25 @@
-use std::time::Duration;
-
 use iced::{
-    widget::{container, pick_list, scrollable, text_input, Space},
+    widget::{container, pick_list, text_input, Space},
     Alignment, Length,
 };
 
 use coincube_core::miniscript::bitcoin;
 use coincube_ui::{
     color,
-    component::{button, card, spinner, text},
+    component::{button, text},
     icon::*,
     theme,
     widget::*,
 };
 
-use crate::app::{
-    self,
-    view::{BuySellMessage, Message as ViewMessage},
-};
+use crate::app::view::{BuySellMessage, Message as ViewMessage};
 
 use crate::services::coincube::*;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum BuyOrSell {
     Sell,
-    Buy { address: LabelledAddress },
+    Buy,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -58,16 +53,8 @@ pub enum BuySellFlowState {
     },
     /// Logs in a user to their existing coincube account (email only)
     Login { email: String, loading: bool },
-    /// Renders an interface to either generate a new address for bitcoin deposit, or skip to selling BTC
-    Initialization {
-        modal: app::state::vault::receive::Modal,
-        buy_or_sell_selected: Option<bool>,
-        buy_or_sell: Option<BuyOrSell>, // `buy` mode always has an address included for deposit
-        existing_addresses: Option<Vec<LabelledAddress>>, // None = not loaded, Some([]) = empty
-        addresses_loading: bool,
-        addresses_continue_from: Option<bitcoin::bip32::ChildNumber>, // For pagination
-        address_picker_open: bool, // Whether the address dropdown is expanded
-    },
+    /// Sets the mode for the panel before initializing the sub-states
+    ModeSelect { buy_or_sell: Option<BuyOrSell> },
     /// Nigeria, Kenya and South Africa, ie Mavapay supported countries
     Mavapay(super::mavapay::MavapayState),
     /// Utilize Meld for countries not supported by Mavapay
@@ -81,7 +68,7 @@ impl BuySellFlowState {
             BuySellFlowState::Register { .. } => "Register",
             BuySellFlowState::OtpVerification { .. } => "OtpVerification",
             BuySellFlowState::Login { .. } => "Login",
-            BuySellFlowState::Initialization { .. } => "Initialization",
+            BuySellFlowState::ModeSelect { .. } => "ModeSelect",
             BuySellFlowState::Mavapay(..) => "Mavapay",
             BuySellFlowState::Meld { .. } => "Meld",
         }
@@ -97,6 +84,7 @@ pub struct BuySellPanel {
 
     // services used by several buysell providers
     pub coincube_client: crate::services::coincube::CoincubeClient,
+    pub breez_client: std::sync::Arc<crate::app::breez::BreezClient>,
     pub detected_country: Option<&'static crate::services::coincube::Country>,
 
     // coincube session information, restored from OS keyring
@@ -110,6 +98,7 @@ impl BuySellPanel {
     pub fn new(
         network: bitcoin::Network,
         wallet: std::sync::Arc<crate::app::wallet::Wallet>,
+        breez_client: std::sync::Arc<crate::app::breez::BreezClient>,
     ) -> Self {
         BuySellPanel {
             // Start in detecting location state
@@ -117,7 +106,8 @@ impl BuySellPanel {
             wallet,
             network,
             // API state
-            coincube_client: crate::services::coincube::CoincubeClient::new(None),
+            coincube_client: crate::services::coincube::CoincubeClient::new(),
+            breez_client,
             detected_country: None,
             login: None,
         }
@@ -150,23 +140,20 @@ impl BuySellPanel {
                         .on_press(ViewMessage::BuySell(BuySellMessage::ResetWidget))
                 }))
                 // render flow state
-                .push({
-                    match &self.step {
-                        // user management
-                        BuySellFlowState::Login { .. } => self.login_ux(),
-                        BuySellFlowState::Register { .. } => self.registration_ux(),
-                        BuySellFlowState::OtpVerification { .. } => self.otp_verification_ux(),
+                .push(match &self.step {
+                    // user management
+                    BuySellFlowState::Login { .. } => self.login_ux(),
+                    BuySellFlowState::Register { .. } => self.registration_ux(),
+                    BuySellFlowState::OtpVerification { .. } => self.otp_verification_ux(),
 
-                        // init
-                        BuySellFlowState::DetectingLocation(..) => self.geolocation_ux(),
-                        BuySellFlowState::Initialization { .. } => self.initialization_ux(),
+                    BuySellFlowState::DetectingLocation(..) => self.geolocation_ux(),
+                    BuySellFlowState::ModeSelect { .. } => self.mode_select_ux(),
 
-                        // mavapay
-                        BuySellFlowState::Mavapay(state) => super::mavapay::ui::form(state),
+                    // mavapay
+                    BuySellFlowState::Mavapay(state) => super::mavapay::ui::form(state),
 
-                        // meld
-                        BuySellFlowState::Meld(state) => state.view(),
-                    }
+                    // meld
+                    BuySellFlowState::Meld(state) => state.view(),
                 });
 
             column
@@ -193,15 +180,15 @@ impl BuySellPanel {
             unreachable!();
         };
 
-        let valid_email = email.contains('.') && email.contains('@');
+        let valid_email = email.contains('.') && email.contains('@') && email.len() >= 5;
 
-        let submit_button: iced::Element<BuySellMessage, theme::Theme> = if *loading {
+        let submit_button = if *loading {
             iced::widget::button(
                 Container::new(
                     Row::new()
                         .spacing(5)
                         .align_y(Alignment::Center)
-                        .push(text::text("Signing in").size(16))
+                        .push(text::text("Signing In").size(16))
                         .push(
                             Container::new(spinner::typing_text_carousel(
                                 "...",
@@ -218,12 +205,10 @@ impl BuySellPanel {
             .width(Length::Fill)
             .height(Length::Fixed(44.0))
             .style(theme::button::primary)
-            .into()
         } else {
             button::primary(None, "Continue")
                 .on_press_maybe(valid_email.then_some(BuySellMessage::SubmitLogin))
                 .width(Length::Fill)
-                .into()
         };
 
         let col = iced::widget::column![
@@ -233,7 +218,7 @@ impl BuySellPanel {
             // input field
             text_input("Email", email)
                 .on_input(BuySellMessage::EmailChanged)
-                .on_submit_maybe((!*loading && valid_email).then_some(BuySellMessage::SubmitLogin),)
+                .on_submit_maybe((!*loading && valid_email).then_some(BuySellMessage::SubmitLogin))
                 .size(16)
                 .padding(15),
             Space::new().height(Length::Fixed(15.0)),
@@ -268,9 +253,9 @@ impl BuySellPanel {
             unreachable!();
         };
 
-        let valid_email = email.contains('.') && email.contains('@');
+        let valid_email = email.contains('.') && email.contains('@') && email.len() >= 5;
 
-        let submit_button: iced::Element<BuySellMessage, theme::Theme> = if *loading {
+        let submit_button: iced::Element<ViewMessage, theme::Theme> = if *loading {
             iced::widget::button(
                 Container::new(
                     Row::new()
@@ -296,13 +281,15 @@ impl BuySellPanel {
             .into()
         } else {
             button::primary(None, "Continue")
-                .on_press_maybe(valid_email.then_some(BuySellMessage::SubmitRegistration))
+                .on_press_maybe(
+                    valid_email.then_some(ViewMessage::BuySell(BuySellMessage::SubmitRegistration)),
+                )
                 .width(Length::Fill)
                 .into()
         };
 
         // TODO: include form validation messages
-        let col = iced::widget::column![
+        iced::widget::column![
             // Top bar with previous
             Button::new(
                 Row::new()
@@ -319,24 +306,25 @@ impl BuySellPanel {
                 shadow: iced::Shadow::default(),
                 snap: true
             })
-            .on_press_maybe((!*loading).then_some(BuySellMessage::ResetWidget)),
+            .on_press_maybe(
+                (!*loading).then_some(ViewMessage::BuySell(BuySellMessage::ResetWidget))
+            ),
             Space::new().height(Length::Fixed(10.0)),
             // Title and subtitle
             iced::widget::column![
                 text::h3("Create an Account").color(color::WHITE),
-                text::p2_regular(
-                    "Create a COINCUBE account to access Buy/Sell and other features."
-                )
-                .color(color::GREY_3)
+                text::p2_regular("Create a COINCUBE account to access Buy/Sell and other features")
+                    .color(color::GREY_3)
             ]
             .spacing(10)
             .align_x(Alignment::Center),
             Space::new().height(Length::Fixed(20.0)),
             // Email Input
             text_input("Email Address", email)
-                .on_input(BuySellMessage::EmailChanged)
+                .on_input(|i| ViewMessage::BuySell(BuySellMessage::EmailChanged(i)))
                 .on_submit_maybe(
-                    (!*loading && valid_email).then_some(BuySellMessage::SubmitRegistration),
+                    (!*loading && valid_email)
+                        .then_some(ViewMessage::BuySell(BuySellMessage::SubmitRegistration)),
                 )
                 .size(16)
                 .padding(15),
@@ -346,10 +334,8 @@ impl BuySellPanel {
         .align_x(Alignment::Center)
         .spacing(5)
         .max_width(500)
-        .width(Length::Fill);
-
-        let elem: iced::Element<BuySellMessage, theme::Theme> = col.into();
-        elem.map(ViewMessage::BuySell)
+        .width(Length::Fill)
+        .into()
     }
 
     fn otp_verification_ux<'a>(
@@ -492,405 +478,75 @@ impl BuySellPanel {
         elem.map(ViewMessage::BuySell)
     }
 
-    fn initialization_ux<'a>(&'a self) -> iced::Element<'a, ViewMessage, theme::Theme> {
-        let BuySellFlowState::Initialization {
-            buy_or_sell_selected,
-            buy_or_sell,
-            existing_addresses,
-            addresses_loading,
-            addresses_continue_from,
-            address_picker_open,
-            ..
-        } = &self.step
-        else {
+    fn mode_select_ux<'a>(&'a self) -> iced::Element<'a, ViewMessage, theme::Theme> {
+        let BuySellFlowState::ModeSelect { buy_or_sell } = &self.step else {
             unreachable!()
         };
 
-        let mut column = Column::new();
-        column = match buy_or_sell {
-            Some(BuyOrSell::Buy { address }) => {
-                let address_text = address.to_string();
-
-                Column::new()
-                    .push(
-                        button::transparent(Some(previous_icon()), "Previous")
-                            .width(Length::Shrink)
-                            .on_press(ViewMessage::BuySell(BuySellMessage::ResetWidget)),
-                    )
-                    .push(
-                        Column::new()
-                            .push(Space::new().height(Length::Fixed(15.0)))
-                            .push(
-                                text::p1_italic(
-                                    "Bitcoin will be deposited in the following address",
-                                )
-                                .color(color::GREY_2),
-                            )
-                            .push(
-                                card::simple(
-                                    Column::new()
-                                        .push(
-                                            Container::new(
-                                                scrollable(
-                                                    Column::new()
-                                                        .push(
-                                                            Space::new()
-                                                                .height(Length::Fixed(10.0)),
-                                                        )
-                                                        .push(
-                                                            text::Text::small(text::p2_regular(
-                                                                &address_text,
-                                                            ))
-                                                            .style(theme::text::secondary),
-                                                        )
-                                                        // Space between the address and the scrollbar
-                                                        .push(
-                                                            Space::new()
-                                                                .height(Length::Fixed(10.0)),
-                                                        ),
-                                                )
-                                                .direction(scrollable::Direction::Horizontal(
-                                                    scrollable::Scrollbar::new()
-                                                        .width(2)
-                                                        .scroller_width(2),
-                                                )),
-                                            )
-                                            .width(Length::Fill),
-                                        )
-                                        .push(
-                                            Row::new()
-                                                .push(
-                                                    button::secondary(
-                                                        None,
-                                                        "Verify on hardware device",
-                                                    )
-                                                    .on_press(ViewMessage::Select(0)),
-                                                )
-                                                .push(Space::new().width(Length::Fill))
-                                                .push(
-                                                    Button::new(
-                                                        qr_code_icon()
-                                                            .style(theme::text::secondary),
-                                                    )
-                                                    .on_press(ViewMessage::ShowQrCode(0))
-                                                    .style(theme::button::transparent_border),
-                                                )
-                                                .push(
-                                                    Button::new(
-                                                        clipboard_icon()
-                                                            .style(theme::text::secondary),
-                                                    )
-                                                    .on_press(ViewMessage::Clipboard(address_text))
-                                                    .style(theme::button::transparent_border),
-                                                )
-                                                .align_y(Alignment::Center),
-                                        )
-                                        .spacing(10),
-                                )
-                                .width(Length::Fill),
-                            ),
-                    )
-                    .push(
-                        button::primary(Some(globe_icon()), "Continue")
-                            .on_press_maybe(
-                                self.detected_country
-                                    .is_some()
-                                    .then_some(ViewMessage::BuySell(BuySellMessage::StartSession)),
-                            )
-                            .width(iced::Length::Fill),
-                    )
-                    .spacing(12)
-                    .max_width(640)
-                    .width(Length::Fill)
-            }
-            _ => column
-                .push({
-                    Column::new()
-                        .push(
-                            button::secondary(
-                                Some(bitcoin_icon()),
-                                "Buy Bitcoin using Fiat Currencies",
-                            )
-                            .on_press(ViewMessage::BuySell(BuySellMessage::SelectBuyOrSell(true)))
-                            .style({
-                                match buy_or_sell_selected {
-                                    Some(true) => coincube_ui::theme::button::primary,
-                                    _ => coincube_ui::theme::button::secondary,
-                                }
-                            })
-                            .padding(35)
-                            .width(iced::Length::Fill),
-                        )
-                        .push(
-                            button::secondary(
-                                Some(dollar_icon()),
-                                "Sell Bitcoin to a Fiat Currency",
-                            )
-                            .on_press(ViewMessage::BuySell(BuySellMessage::SelectBuyOrSell(false)))
-                            .style({
-                                match buy_or_sell_selected {
-                                    Some(false) => coincube_ui::theme::button::primary,
-                                    _ => coincube_ui::theme::button::secondary,
-                                }
-                            })
-                            .padding(35)
-                            .width(iced::Length::Fill),
-                        )
-                        .spacing(15)
-                        .padding(5)
-                })
-                .push(
-                    iced::widget::container(Space::new().height(3))
-                        .style(|_| {
-                            iced::widget::container::background(iced::Background::Color(
-                                color::GREY_3,
-                            ))
-                        })
-                        .width(Length::Fill),
-                )
-                .push({
-                    // Show address selection UI when Buy mode is selected
-                    (matches!(buy_or_sell_selected, Some(true))).then(
-                        || -> iced::Element<'_, ViewMessage, theme::Theme> {
-                            let generate_btn =
-                                button::secondary(Some(plus_icon()), "Generate New Address")
-                                    .on_press(ViewMessage::BuySell(
-                                        BuySellMessage::CreateNewAddress,
-                                    ))
-                                    .width(iced::Length::Fill);
-
-                            // Initial loading state (no addresses loaded yet)
-                            if *addresses_loading && existing_addresses.is_none() {
-                                return card::simple(
-                                    Row::new()
-                                        .spacing(10)
-                                        .align_y(Alignment::Center)
-                                        .push(text::p1_regular("Loading addresses"))
-                                        .push(
-                                            container(spinner::typing_text_carousel(
-                                                "...",
-                                                true,
-                                                Duration::from_millis(500),
-                                                text::p1_regular,
-                                            ))
-                                            .width(Length::Fixed(25.0)),
-                                        ),
-                                )
-                                .width(Length::Fill)
-                                .into();
-                            }
-
-                            if let Some(addresses) =
-                                existing_addresses.as_ref().filter(|a| !a.is_empty())
-                            {
-                                // Dropdown header button
-                                let dropdown_icon = if *address_picker_open {
-                                    up_icon().size(14).style(theme::text::secondary)
-                                } else {
-                                    down_icon().size(14).style(theme::text::secondary)
-                                };
-
-                                let dropdown_header = iced::widget::Button::new(
-                                    Row::new()
-                                        .align_y(Alignment::Center)
-                                        .push(
-                                            text::p2_regular("Select an existing address")
-                                                .width(Length::Fill)
-                                                .color(color::GREY_2),
-                                        )
-                                        .push(dropdown_icon),
-                                )
-                                .on_press(ViewMessage::BuySell(BuySellMessage::ToggleAddressPicker))
-                                .padding([12, 16])
-                                .width(Length::Fill)
-                                .style(theme::button::secondary);
-
-                                // Build address list items (only shown when expanded)
-                                let dropdown_content: Option<
-                                    iced::Element<'_, ViewMessage, theme::Theme>,
-                                > = if *address_picker_open {
-                                    let mut address_list = Column::new().spacing(2);
-                                    for addr in addresses.iter() {
-                                        let addr_clone = addr.clone();
-                                        let label_text = addr.label.clone();
-                                        let addr_str = addr.address.to_string();
-
-                                        address_list = address_list.push(
-                                            iced::widget::Button::new(
-                                                Column::new()
-                                                    .spacing(2)
-                                                    .push_maybe(label_text.map(|l| {
-                                                        text::p2_regular(l).color(color::GREY_2)
-                                                    }))
-                                                    .push(
-                                                        text::p2_regular(addr_str)
-                                                            .width(Length::Fill),
-                                                    ),
-                                            )
-                                            .on_press(ViewMessage::BuySell(
-                                                BuySellMessage::SelectExistingAddress(addr_clone),
-                                            ))
-                                            .padding([8, 12])
-                                            .width(Length::Fill)
-                                            .style(theme::button::menu),
-                                        );
-                                    }
-
-                                    // Add "Load more" at the end
-                                    if addresses_continue_from.is_some() || *addresses_loading {
-                                        let load_more_content: iced::Element<
-                                            '_,
-                                            ViewMessage,
-                                            theme::Theme,
-                                        > = if *addresses_loading {
-                                            Row::new()
-                                                .spacing(8)
-                                                .align_y(Alignment::Center)
-                                                .push(
-                                                    text::p2_regular("Loading")
-                                                        .color(color::ORANGE),
-                                                )
-                                                .push(
-                                                    container(spinner::typing_text_carousel(
-                                                        "...",
-                                                        true,
-                                                        Duration::from_millis(500),
-                                                        |s| {
-                                                            text::p2_regular(s).color(color::ORANGE)
-                                                        },
-                                                    ))
-                                                    .width(Length::Fixed(20.0)),
-                                                )
-                                                .into()
-                                        } else {
-                                            Row::new()
-                                                .spacing(8)
-                                                .align_y(Alignment::Center)
-                                                .push(
-                                                    text::p2_regular("Load more")
-                                                        .color(color::ORANGE),
-                                                )
-                                                .push(down_icon().size(12).style(|_| {
-                                                    iced::widget::text::Style {
-                                                        color: Some(color::ORANGE),
-                                                    }
-                                                }))
-                                                .into()
-                                        };
-
-                                        address_list = address_list.push(
-                                            iced::widget::Button::new(
-                                                container(load_more_content)
-                                                    .width(Length::Fill)
-                                                    .align_x(Alignment::Center),
-                                            )
-                                            .on_press_maybe((!*addresses_loading).then_some(
-                                                ViewMessage::BuySell(
-                                                    BuySellMessage::LoadMoreAddresses,
-                                                ),
-                                            ))
-                                            .padding([8, 12])
-                                            .width(Length::Fill)
-                                            .style(theme::button::transparent_border),
-                                        );
-                                    }
-
-                                    Some(
-                                        container(
-                                            scrollable(address_list).direction(
-                                                scrollable::Direction::Vertical(
-                                                    scrollable::Scrollbar::new()
-                                                        .width(4)
-                                                        .scroller_width(4),
-                                                ),
-                                            ),
-                                        )
-                                        .padding(5)
-                                        .max_height(180.0)
-                                        .style(theme::card::simple)
-                                        .width(Length::Fill)
-                                        .into(),
-                                    )
-                                } else {
-                                    None
-                                };
-
-                                card::simple(
-                                    Column::new()
-                                        .spacing(10)
-                                        .push(dropdown_header)
-                                        .push_maybe(dropdown_content)
-                                        .push(
-                                            Row::new()
-                                                .spacing(10)
-                                                .align_y(Alignment::Center)
-                                                .push(
-                                                    container(Space::new())
-                                                        .style(|_| {
-                                                            iced::widget::container::background(
-                                                                iced::Background::Color(
-                                                                    color::GREY_3,
-                                                                ),
-                                                            )
-                                                        })
-                                                        .height(Length::Fixed(1.0))
-                                                        .width(Length::Fill),
-                                                )
-                                                .push(text::p2_regular("or").color(color::GREY_2))
-                                                .push(
-                                                    container(Space::new())
-                                                        .style(|_| {
-                                                            iced::widget::container::background(
-                                                                iced::Background::Color(
-                                                                    color::GREY_3,
-                                                                ),
-                                                            )
-                                                        })
-                                                        .height(Length::Fixed(1.0))
-                                                        .width(Length::Fill),
-                                                ),
-                                        )
-                                        .push(generate_btn),
-                                )
-                                .width(Length::Fill)
-                                .into()
-                            } else {
-                                generate_btn.into()
-                            }
-                        },
-                    )
-                })
-                .push({
-                    (matches!(buy_or_sell_selected, Some(false))).then(|| {
-                        button::secondary(Some(globe_icon()), "Continue")
-                            .on_press_maybe(
-                                self.detected_country
-                                    .is_some()
-                                    .then_some(ViewMessage::BuySell(BuySellMessage::StartSession)),
-                            )
-                            .width(iced::Length::Fill)
+        iced::widget::column![
+            // mode select ux
+            iced::widget::column![
+                button::secondary(Some(bitcoin_icon()), "Buy Bitcoin using Fiat Currencies",)
+                    .on_press(ViewMessage::BuySell(BuySellMessage::SelectBuyOrSell(
+                        BuyOrSell::Buy,
+                    )))
+                    .style({
+                        match buy_or_sell {
+                            Some(BuyOrSell::Buy) => coincube_ui::theme::button::primary,
+                            _ => coincube_ui::theme::button::secondary,
+                        }
                     })
-                })
-                .push({
-                    buy_or_sell_selected.is_none().then(|| {
-                        iced::widget::row![
-                            button::secondary(Some(history_icon()), "View Order History")
-                                .on_press(ViewMessage::BuySell(BuySellMessage::ViewHistory))
-                                .width(iced::Length::Fill),
-                            button::secondary(Some(escape_icon()), "Log Out")
-                                .on_press(ViewMessage::BuySell(BuySellMessage::LogOut))
-                                .width(iced::Length::Fill)
-                        ]
-                        .spacing(10)
+                    .padding(35)
+                    .width(iced::Length::Fill),
+                button::secondary(Some(dollar_icon()), "Sell Bitcoin to a Fiat Currency")
+                    .on_press(ViewMessage::BuySell(BuySellMessage::SelectBuyOrSell(
+                        BuyOrSell::Sell,
+                    )))
+                    .style({
+                        match buy_or_sell {
+                            Some(BuyOrSell::Sell) => coincube_ui::theme::button::primary,
+                            _ => coincube_ui::theme::button::secondary,
+                        }
                     })
+                    .padding(35)
+                    .width(iced::Length::Fill),
+            ]
+            .spacing(15)
+            .padding(5),
+            // separator
+            iced::widget::container(Space::new().height(3))
+                .style(|_| {
+                    iced::widget::container::background(iced::Background::Color(color::GREY_3))
                 })
-                .align_x(Alignment::Center)
-                .spacing(12)
-                .max_width(640)
                 .width(Length::Fill),
-        };
-
-        column.into()
+            // history view
+            buy_or_sell.is_none().then(|| {
+                iced::widget::row![
+                    button::secondary(Some(history_icon()), "View Order History")
+                        .on_press(ViewMessage::BuySell(BuySellMessage::ViewHistory))
+                        .width(iced::Length::Fill),
+                    button::secondary(Some(escape_icon()), "Log Out")
+                        .on_press(ViewMessage::BuySell(BuySellMessage::LogOut))
+                        .width(iced::Length::Fill)
+                ]
+                .spacing(10)
+            }),
+            // submit
+            buy_or_sell.is_some().then(|| {
+                button::secondary(Some(globe_icon()), "Continue")
+                    .on_press_maybe(
+                        self.detected_country
+                            .is_some()
+                            .then_some(ViewMessage::BuySell(BuySellMessage::StartSession)),
+                    )
+                    .width(iced::Length::Fill)
+            })
+        ]
+        .align_x(Alignment::Center)
+        .spacing(12)
+        .max_width(640)
+        .width(Length::Fill)
+        .into()
     }
 
     fn geolocation_ux<'a>(&'a self) -> iced::Element<'a, ViewMessage, theme::Theme> {

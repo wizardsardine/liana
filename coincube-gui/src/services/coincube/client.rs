@@ -10,15 +10,7 @@ pub struct CoincubeClient {
 }
 
 impl CoincubeClient {
-    pub fn new(user_jwt: Option<String>) -> Self {
-        let mut headers = reqwest::header::HeaderMap::new();
-        if let Some(jwt) = user_jwt {
-            headers.append(
-                "Authorization",
-                reqwest::header::HeaderValue::from_str(&format!("Bearer {}", jwt)).unwrap(),
-            );
-        }
-
+    pub fn new() -> Self {
         #[cfg(debug_assertions)]
         let base_url = "https://dev-api.coincube.io";
 
@@ -27,11 +19,28 @@ impl CoincubeClient {
 
         Self {
             client: reqwest::ClientBuilder::new()
-                .default_headers(headers)
+                .timeout(std::time::Duration::from_secs(5))
+                .https_only(true)
                 .build()
                 .unwrap(),
             base_url,
         }
+    }
+
+    /// A JWT is needed for some authenticated endpoints, acquired after a user successfully logs in
+    pub fn set_token(&mut self, token: &str) {
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.append(
+            "Authorization",
+            reqwest::header::HeaderValue::from_str(&format!("Bearer {}", token)).unwrap(),
+        );
+
+        self.client = reqwest::ClientBuilder::new()
+            .timeout(std::time::Duration::from_secs(5))
+            .https_only(true)
+            .default_headers(headers)
+            .build()
+            .unwrap();
     }
 
     /// Save a Mavapay quote to coincube-api

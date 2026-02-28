@@ -25,7 +25,7 @@ pub enum BackupWalletState {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum LiquidSettingsFlowState {
-    MainMenu { backed_up: bool, mfa: bool },
+    MainMenu { backed_up: bool },
     BackupWallet(BackupWalletState),
 }
 
@@ -49,10 +49,10 @@ fn generate_random_word_indices(mnemonic_len: usize) -> Option<[usize; 3]> {
 
 impl LiquidSettings {
     pub fn new(breez_client: Arc<BreezClient>) -> Self {
-        let (backed_up, mfa) = fetch_main_menu_state(breez_client.clone());
+        let backed_up = fetch_main_menu_state(breez_client.clone());
         Self {
             breez_client,
-            flow_state: LiquidSettingsFlowState::MainMenu { backed_up, mfa },
+            flow_state: LiquidSettingsFlowState::MainMenu { backed_up },
         }
     }
 }
@@ -130,10 +130,10 @@ impl State for LiquidSettings {
                         };
                     }
                     view::BackupWalletMessage::PreviousStep => {
-                        let (backed_up, mfa) = fetch_main_menu_state(self.breez_client.clone());
+                        let backed_up = fetch_main_menu_state(self.breez_client.clone());
                         self.flow_state = match &self.flow_state {
                             LiquidSettingsFlowState::BackupWallet(BackupWalletState::Intro(_)) => {
-                                LiquidSettingsFlowState::MainMenu { backed_up, mfa }
+                                LiquidSettingsFlowState::MainMenu { backed_up }
                             }
                             LiquidSettingsFlowState::BackupWallet(
                                 BackupWalletState::RecoveryPhrase,
@@ -146,12 +146,11 @@ impl State for LiquidSettings {
                                 BackupWalletState::RecoveryPhrase,
                             ),
                             LiquidSettingsFlowState::BackupWallet(BackupWalletState::Completed) => {
-                                LiquidSettingsFlowState::MainMenu { backed_up, mfa }
+                                LiquidSettingsFlowState::MainMenu { backed_up }
                             }
-                            LiquidSettingsFlowState::MainMenu { backed_up, mfa } => {
+                            LiquidSettingsFlowState::MainMenu { backed_up } => {
                                 LiquidSettingsFlowState::MainMenu {
                                     backed_up: *backed_up,
-                                    mfa: *mfa,
                                 }
                             }
                         };
@@ -275,8 +274,8 @@ impl State for LiquidSettings {
                 LiquidSettingsMessage::SettingsUpdated,
             )) => {
                 // Settings file was updated, refresh the state
-                let (backed_up, mfa) = fetch_main_menu_state(self.breez_client.clone());
-                self.flow_state = LiquidSettingsFlowState::MainMenu { backed_up, mfa };
+                let backed_up = fetch_main_menu_state(self.breez_client.clone());
+                self.flow_state = LiquidSettingsFlowState::MainMenu { backed_up };
             }
             _ => {}
         }
@@ -289,19 +288,18 @@ impl State for LiquidSettings {
         _wallet: Option<Arc<Wallet>>,
     ) -> Task<Message> {
         // Reset to main menu when reloading (e.g., clicking Settings in breadcrumb)
-        let (backed_up, mfa) = fetch_main_menu_state(self.breez_client.clone());
-        self.flow_state = LiquidSettingsFlowState::MainMenu { backed_up, mfa };
+        let backed_up = fetch_main_menu_state(self.breez_client.clone());
+        self.flow_state = LiquidSettingsFlowState::MainMenu { backed_up };
         Task::none()
     }
 }
 
-/// Fetches the main menu state (backed_up, mfa) from settings file.
+/// Fetches the main menu state (backed_up) from settings file.
 /// Uses spawn_blocking to avoid blocking the async runtime if file I/O hangs.
-fn fetch_main_menu_state(breez_client: Arc<BreezClient>) -> (bool, bool) {
+fn fetch_main_menu_state(breez_client: Arc<BreezClient>) -> bool {
     // Run blocking I/O in a blocking context to prevent hanging the async runtime
     tokio::task::block_in_place(|| {
         let mut backed_up = false;
-        let mut mfa = false;
         let secp = coincube_core::miniscript::bitcoin::secp256k1::Secp256k1::new();
         let fingerprint = breez_client
             .liquid_signer()
@@ -319,7 +317,6 @@ fn fetch_main_menu_state(breez_client: Arc<BreezClient>) -> (bool, bool) {
                         });
                         if let Some(cube) = cube {
                             backed_up = cube.backed_up;
-                            mfa = cube.mfa_done;
                         }
                     }
                     Err(e) => {
@@ -331,6 +328,6 @@ fn fetch_main_menu_state(breez_client: Arc<BreezClient>) -> (bool, bool) {
                 tracing::error!("Failed to get CoincubeDirectory: {}", e);
             }
         }
-        (backed_up, mfa)
+        backed_up
     })
 }
