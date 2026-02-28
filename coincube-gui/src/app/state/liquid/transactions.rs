@@ -33,6 +33,7 @@ pub struct LiquidTransactions {
     refund_address: form::Value<String>,
     refund_feerate: form::Value<String>,
     fee_estimator: FeeEstimator,
+    refunding: bool,
 }
 
 impl LiquidTransactions {
@@ -49,6 +50,7 @@ impl LiquidTransactions {
             refund_address: form::Value::default(),
             refund_feerate: form::Value::default(),
             fee_estimator: FeeEstimator::new(),
+            refunding: false,
         }
     }
 
@@ -94,6 +96,7 @@ impl State for LiquidTransactions {
                     cache.bitcoin_unit,
                     &self.refund_address,
                     &self.refund_feerate,
+                    self.refunding,
                 ),
             )
         } else {
@@ -259,7 +262,10 @@ impl State for LiquidTransactions {
                 let breez_client = self.breez_client.clone();
                 let addr = self.refund_address.value.clone();
                 Task::perform(
-                    async move { breez_client.validate_input(addr).await },
+                    async move { 
+                        let result = breez_client.validate_input(addr).await;
+                        result
+                    },
                     |input_type| {
                         Message::View(view::Message::RefundAddressValidated(matches!(
                             input_type,
@@ -289,13 +295,16 @@ impl State for LiquidTransactions {
                     async move {
                         let rate: Option<usize> = match priority {
                             FeeratePriority::Low => {
-                                fee_estimator.get_low_priority_rate().await.ok()
+                                let result = fee_estimator.get_low_priority_rate().await;
+                                result.ok()
                             }
                             FeeratePriority::Medium => {
-                                fee_estimator.get_mid_priority_rate().await.ok()
+                                let result = fee_estimator.get_mid_priority_rate().await;
+                                result.ok()
                             }
                             FeeratePriority::High => {
-                                fee_estimator.get_high_priority_rate().await.ok()
+                                let result = fee_estimator.get_high_priority_rate().await;
+                                result.ok()
                             }
                         };
                         rate
@@ -313,6 +322,7 @@ impl State for LiquidTransactions {
             }
             Message::View(view::Message::SubmitRefund) => {
                 if let Some(refundable) = &self.selected_refundable {
+                    self.refunding = true;
                     let breez_client = self.breez_client.clone();
                     let swap_address = refundable.swap_address.clone();
                     let refund_address = self.refund_address.value.clone();
@@ -320,35 +330,31 @@ impl State for LiquidTransactions {
 
                     Task::perform(
                         async move {
-                            breez_client
+                            let result = breez_client
                                 .refund_onchain_tx(RefundRequest {
-                                    swap_address,
-                                    refund_address,
+                                    swap_address: swap_address.clone(),
+                                    refund_address: refund_address.clone(),
                                     fee_rate_sat_per_vbyte: fee_rate,
                                 })
-                                .await
+                                .await;
+                            result
                         },
                         Message::RefundCompleted,
                     )
                 } else {
+                    log::error!(target: "refund_debug", "SubmitRefund called but no refundable selected");
                     Task::none()
                 }
             }
-            Message::RefundCompleted(Ok(response)) => {
-                log::info!("Refund completed successfully: {:?}", response);
+            Message::RefundCompleted(Ok(_response)) => {
+                self.refunding = false;
                 self.selected_refundable = None;
                 self.refund_address = form::Value::default();
                 self.refund_feerate = form::Value::default();
-                Task::batch(vec![
-                    Task::done(Message::View(view::Message::Close)),
-                    Task::done(Message::View(view::Message::ShowError(format!(
-                        "Refund transaction broadcast: {}",
-                        response.refund_tx_id
-                    )))),
-                ])
+                Task::done(Message::View(view::Message::Close))
             }
             Message::RefundCompleted(Err(e)) => {
-                log::error!("Refund failed: {:?}", e);
+                self.refunding = false;
                 Task::done(Message::View(view::Message::ShowError(format!(
                     "Refund failed: {}",
                     e
