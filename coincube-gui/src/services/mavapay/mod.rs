@@ -8,33 +8,46 @@ pub use stream::TransactionUpdate;
 
 #[derive(Debug, Clone)]
 pub enum MavapayMessage {
-    // transactions
+    // TODO: integrate into `MavapayFlowStep` widgets
+    NavigateBack,
+
+    // general
+    TransferSpeedChanged(OnchainTransferSpeed),
     FiatAmountChanged(f64),
     SatAmountChanged(f64),
     NormalizeAmounts,
-    PaymentMethodChanged(MavapayPaymentMethod),
-    BankAccountNumberChanged(String),
-    BankAccountNameChanged(String),
-    BankSelected(usize),
-    TransferSpeedChanged(OnchainTransferSpeed),
-
-    GetQuote,
-    QuoteCreated(GetQuoteResponse),
     GetPrice,
-    GetLightningInvoice,
-    LightningInvoiceReceived(String),
     PriceReceived(GetPriceResponse),
+
+    // sell input form
     GetBanks,
     BanksReceived(MavapayBanks),
+    GetLiquidWalletBalance,
+    ReceivedLiquidWalletBalance(u64),
+    VerifyNgnBankDetails,
+    VerifiedNgnBankDetails(NgnCustomerDetails),
+    BeneficiaryFieldUpdate(&'static str, String),
 
+    // used in both sell and buy modes
+    CreateQuote,
+    SendQuote(GetQuoteRequest),
+    QuoteCreated(GetQuoteResponse),
+
+    // buy input form
+    GenerateLightningInvoice,
+    WriteInvoiceToClipboard,
+    LightningInvoiceReceived(String),
+
+    // transactions history widget
     FetchTransactions,
     TransactionsReceived(Vec<OrderTransaction>),
     SelectTransaction(usize),
     OrderReceived(GetOrderResponse),
-    BackToHistory,
+
     // checkout
     SimulatePayIn,
     QuoteFulfilled(GetOrderResponse),
+
     // SSE stream events
     TransactionUpdated(TransactionUpdate),
     StreamConnected,
@@ -46,5 +59,8 @@ pub enum MavapayMessage {
 #[inline(always)]
 pub fn mavapay_supported(iso_code: &str) -> bool {
     ["NG", "KE", "ZA"].contains(&iso_code)
-        && matches!(option_env!("ENABLE_MAVAPAY"), Some("1") | Some("true"))
+        && matches!(
+            std::env::var("ENABLE_MAVAPAY").as_deref(),
+            Ok("1") | Ok("true")
+        )
 }

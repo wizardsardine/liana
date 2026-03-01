@@ -243,6 +243,7 @@ fn vault_incoming_transfer_card<'a>(
     .into()
 }
 
+#[allow(clippy::too_many_arguments)]
 fn wallet_card<'a>(
     wallet_type: WalletType,
     balance: &Amount,
@@ -381,8 +382,8 @@ fn wallet_card<'a>(
 }
 
 fn transfer_direction_card<'a>(
-    title: &str,
-    description: &str,
+    title: &'a str,
+    description: &'a str,
     direction: TransferDirection,
     is_selected: bool,
 ) -> Element<'a, Message> {
@@ -492,7 +493,7 @@ fn select_transfer_direction_view<'a>(
 }
 
 fn balance_summary_card<'a>(
-    wallet_name: &str,
+    wallet_name: &'a str,
     is_liquid: bool,
     balance: &Amount,
     fiat_converter: Option<FiatAmountConverter>,
@@ -1120,8 +1121,7 @@ pub fn transfer_successful_view<'a>(
                 .push(Space::new().width(Length::Fill))
                 .push(
                     Row::new().spacing(5).push(
-                        text(format!(
-                            "{}",
+                        text(
                             if matches!(direction, TransferDirection::LiquidToVault)
                                 && pending_vault_incoming
                                     .map(|p| p.stage != IncomingTransferStage::Completed)
@@ -1144,8 +1144,8 @@ pub fn transfer_successful_view<'a>(
                                         "Liquid"
                                     }
                                 )
-                            }
-                        ))
+                            },
+                        )
                         .size(20),
                     ),
                 )

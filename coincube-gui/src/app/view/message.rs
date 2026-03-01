@@ -205,7 +205,6 @@ pub enum BuySellMessage {
     // state management
     SessionError(&'static str, String), // inline description + runtime error
     ResetWidget,
-    BackToAddressView,
     SelectBuyOrSell(super::buysell::BuyOrSell),
     StartSession,
     RefreshLogin {

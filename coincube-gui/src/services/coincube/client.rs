@@ -25,7 +25,7 @@ impl CoincubeClient {
 
         Self {
             client: reqwest::ClientBuilder::new()
-                .timeout(std::time::Duration::from_secs(5))
+                .timeout(std::time::Duration::from_secs(20))
                 .https_only(true)
                 .build()
                 .unwrap(),
@@ -42,7 +42,7 @@ impl CoincubeClient {
         );
 
         self.client = reqwest::ClientBuilder::new()
-            .timeout(std::time::Duration::from_secs(5))
+            .timeout(std::time::Duration::from_secs(20))
             .https_only(true)
             .default_headers(headers)
             .build()

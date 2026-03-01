@@ -34,10 +34,7 @@ impl<'de, T: Deserialize<'de>> Deserialize<'de> for MavapayApiResult<T> {
                         .to_string();
                     return Ok(MavapayApiResult::Error(message));
                 }
-                _ => {
-                    // Status field exists but is not a wrapper status
-                    // This is likely a direct object with a status field, parse as T
-                }
+                st => unreachable!("Unknown status: {}", st),
             }
         }
 
@@ -265,12 +262,15 @@ pub enum Beneficiary {
     Lightning {
         ln_invoice: String,
     },
+    LightningAddress {
+        ln_address: String,
+    },
     Onchain {
         on_chain_address: String,
     },
     NGN {
+        bank_account_name: Option<String>,
         bank_account_number: String,
-        bank_account_name: String,
         bank_code: String,
         bank_name: String,
     },
@@ -280,6 +280,19 @@ pub enum Beneficiary {
         bank_account_number: String,
     },
     KES(KenyanBeneficiary),
+}
+impl Beneficiary {
+    pub(crate) fn format(&self) -> &'static str {
+        match self {
+            Beneficiary::Lightning { .. } => "lnInvoice",
+            Beneficiary::LightningAddress { .. } => "lnAddress",
+            Beneficiary::Onchain { .. } => "onChainAddress",
+            Beneficiary::NGN { .. } => "ngn",
+            Beneficiary::ZAR { .. } => "zar",
+            Beneficiary::KES(KenyanBeneficiary::PayToBill { .. }) => "kesPayToBill",
+            Beneficiary::KES(KenyanBeneficiary::PayToPhone { .. }) => "kesPayToPhone",
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -306,11 +319,17 @@ pub enum MavapayBanks {
     SouthAfrican(Vec<String>),
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct NigerianBank {
     pub bank_name: String,
     pub nip_bank_code: String,
+}
+
+impl std::fmt::Display for NigerianBank {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}: {}", self.bank_name, self.nip_bank_code)
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -320,7 +339,15 @@ pub struct GetPriceResponse {
     pub btc_price_in_unit_currency: f64,
 }
 
-#[derive(Debug, Serialize, Clone, PartialEq)]
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NgnCustomerDetails {
+    pub account_name: String,
+    pub account_number: String,
+    pub bank_code: String,
+}
+
+#[derive(Debug, Serialize, Copy, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub enum OnchainTransferSpeed {
     Slow,
@@ -349,7 +376,7 @@ impl OnchainTransferSpeed {
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct GetQuoteRequest {
     pub amount: u64,
@@ -361,8 +388,8 @@ pub struct GetQuoteRequest {
     pub autopayout: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub customer_internal_fee: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub beneficiary: Option<Beneficiary>,
+    pub beneficiary_format: &'static str,
+    pub beneficiary: Beneficiary,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

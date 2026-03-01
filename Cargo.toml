@@ -18,9 +18,3 @@ lto = "thin"
 strip = true
 codegen-units = 1
 panic = "abort"
-
-[profile.dev.package.iced]
-opt-level = 3
-
-[profile.minimal.package.iced]
-opt-level = 3

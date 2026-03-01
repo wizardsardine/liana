@@ -41,7 +41,7 @@ use crate::{
     },
 };
 
-fn header(title: &str, msg: SettingsMessage) -> Row<'static, Message> {
+fn header<'a>(title: &'a str, msg: SettingsMessage) -> Row<'a, Message> {
     Row::new()
         .spacing(10)
         .align_y(Alignment::Center)
@@ -58,12 +58,12 @@ fn header(title: &str, msg: SettingsMessage) -> Row<'static, Message> {
         )
 }
 
-fn settings_section(
-    title: &str,
+fn settings_section<'a>(
+    title: &'a str,
     tool_tip: Option<&'static str>,
     icon: coincube_ui::widget::Text<'static>,
     msg: Message,
-) -> Container<'static, Message> {
+) -> Container<'a, Message> {
     let tt = tool_tip.map(tooltip);
     Container::new(
         Button::new(
@@ -84,12 +84,12 @@ fn settings_section(
     .style(theme::card::simple)
 }
 
-fn export_section(
-    title: &str,
-    description: &str,
+fn export_section<'a>(
+    title: &'a str,
+    description: &'a str,
     icon: coincube_ui::widget::Text<'static>,
     msg: Message,
-) -> Container<'static, Message> {
+) -> Container<'a, Message> {
     Container::new(
         Button::new(
             Row::new()
@@ -158,7 +158,7 @@ pub fn list<'a>(menu: &'a Menu, cache: &'a Cache, is_remote_backend: bool) -> El
     )
 }
 
-pub fn link<'a>(url: &str, link_text: &'static str) -> Element<'a, Message> {
+pub fn link<'a>(url: &'a str, link_text: &'static str) -> Element<'a, Message> {
     iced_tooltip::Tooltip::new(
         button::link(Some(icon::link_icon()), link_text)
             .on_press(Message::OpenUrl(url.to_string())),

@@ -19,7 +19,7 @@ use crate::export::{Error, ImportExportMessage, ImportExportType};
 pub fn export_modal<'a, Message: From<ImportExportMessage> + Clone + 'static>(
     state: &ImportExportState,
     error: Option<&'a Error>,
-    title: &str,
+    title: &'a str,
     import_export_type: &ImportExportType,
 ) -> Element<'a, Message> {
     let cancel = match state {
