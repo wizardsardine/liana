@@ -5,8 +5,8 @@ use super::currency::Currency;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub enum PriceSource {
-    #[default]
     CoinGecko,
+    #[default]
     MempoolSpace,
 }
 
@@ -115,5 +115,13 @@ impl PriceSource {
                 .collect(),
         };
         Ok(ListCurrenciesResult { currencies })
+    }
+
+    /// Returns the User-Agent header to use in requests, if any.
+    pub fn user_agent(&self) -> Option<String> {
+        match self {
+            Self::CoinGecko => Some(format!("liana-gui/{}", crate::VERSION)),
+            Self::MempoolSpace => None,
+        }
     }
 }
