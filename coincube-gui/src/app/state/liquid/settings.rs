@@ -101,9 +101,10 @@ impl State for LiquidSettings {
                             LiquidSettingsFlowState::BackupWallet(
                                 BackupWalletState::RecoveryPhrase,
                             ) => {
-                                let mnemonic = self
-                                    .breez_client
-                                    .liquid_signer()
+                                let Some(signer) = self.breez_client.liquid_signer() else {
+                                    return Task::none();
+                                };
+                                let mnemonic = signer
                                     .lock()
                                     .expect("Mutex Lock Poisoned")
                                     .words();
@@ -191,9 +192,10 @@ impl State for LiquidSettings {
                         ) = &self.flow_state
                         {
                             // Get the actual mnemonic words
-                            let mnemonic = self
-                                .breez_client
-                                .liquid_signer()
+                            let Some(signer) = self.breez_client.liquid_signer() else {
+                                return Task::none();
+                            };
+                            let mnemonic = signer
                                 .lock()
                                 .expect("Mutex Lock Poisoned")
                                 .words();
@@ -231,12 +233,14 @@ impl State for LiquidSettings {
                     }
                     view::BackupWalletMessage::Complete => {
                         let breez_client = self.breez_client.clone();
+                        let Some(signer) = breez_client.liquid_signer() else {
+                            return Task::none();
+                        };
                         return Task::perform(
                             async move {
                                 let secp =
                                     coincube_core::miniscript::bitcoin::secp256k1::Secp256k1::new();
-                                let fingerprint = breez_client
-                                    .liquid_signer()
+                                let fingerprint = signer
                                     .lock()
                                     .expect("Mutex Lock Poisoned")
                                     .fingerprint(&secp);
@@ -300,9 +304,11 @@ fn fetch_main_menu_state(breez_client: Arc<BreezClient>) -> bool {
     // Run blocking I/O in a blocking context to prevent hanging the async runtime
     tokio::task::block_in_place(|| {
         let mut backed_up = false;
+        let Some(signer) = breez_client.liquid_signer() else {
+            return backed_up;
+        };
         let secp = coincube_core::miniscript::bitcoin::secp256k1::Secp256k1::new();
-        let fingerprint = breez_client
-            .liquid_signer()
+        let fingerprint = signer
             .lock()
             .expect("Mutex Lock Poisoned")
             .fingerprint(&secp);

@@ -168,22 +168,39 @@ impl breez::Signer for HotSignerAdapter {
 
 #[derive(Clone)]
 pub struct BreezClient {
-    sdk: Arc<breez::LiquidSdk>,
-    signer: Arc<Mutex<HotSigner>>,
+    sdk: Option<Arc<breez::LiquidSdk>>,
+    signer: Option<Arc<Mutex<HotSigner>>>,
     network: Network,
 }
 
 impl std::fmt::Debug for BreezClient {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("BreezClient")
-            .field("sdk", &"<LiquidSdk>")
-            .field("signer", &"<HotSigner>")
+            .field("sdk", &self.sdk.as_ref().map(|_| "<LiquidSdk>"))
+            .field("signer", &self.signer.as_ref().map(|_| "<HotSigner>"))
             .field("network", &self.network)
             .finish()
     }
 }
 
 impl BreezClient {
+    /// Create a disconnected client for networks where Breez SDK is not supported.
+    /// All SDK methods will return `BreezError::NetworkNotSupported`.
+    pub fn disconnected(network: Network) -> Self {
+        Self {
+            sdk: None,
+            signer: None,
+            network,
+        }
+    }
+
+    /// Returns a reference to the inner SDK, or `NetworkNotSupported` if disconnected.
+    fn get_sdk(&self) -> Result<&Arc<breez::LiquidSdk>, BreezError> {
+        self.sdk
+            .as_ref()
+            .ok_or_else(|| BreezError::NetworkNotSupported(self.network))
+    }
+
     /// Connect to Breez SDK using an external signer (HotSigner)
     pub async fn connect_with_signer(
         cfg: BreezConfig,
@@ -200,14 +217,14 @@ impl BreezClient {
             .map_err(|e| BreezError::Connection(e.to_string()))?;
 
         Ok(Self {
-            sdk,
-            signer,
+            sdk: Some(sdk),
+            signer: Some(signer),
             network: cfg.network,
         })
     }
 
     pub async fn info(&self) -> Result<breez::GetInfoResponse, BreezError> {
-        self.sdk
+        self.get_sdk()?
             .get_info()
             .await
             .map_err(|e| BreezError::Sdk(e.to_string()))
@@ -218,8 +235,8 @@ impl BreezClient {
         amount: Option<Amount>,
         description: Option<String>,
     ) -> Result<breez::ReceivePaymentResponse, BreezError> {
-        let prepare = self
-            .sdk
+        let sdk = self.get_sdk()?;
+        let prepare = sdk
             .prepare_receive_payment(&breez::PrepareReceiveRequest {
                 payment_method: breez::PaymentMethod::Bolt11Invoice,
                 amount: amount.map(|a| breez::ReceiveAmount::Bitcoin {
@@ -229,7 +246,7 @@ impl BreezClient {
             .await
             .map_err(|e| BreezError::Sdk(e.to_string()))?;
 
-        self.sdk
+        sdk
             .receive_payment(&breez::ReceivePaymentRequest {
                 prepare_response: prepare,
                 description,
@@ -244,8 +261,8 @@ impl BreezClient {
         &self,
         amount_sat: Option<u64>,
     ) -> Result<breez::ReceivePaymentResponse, BreezError> {
-        let prepare = self
-            .sdk
+        let sdk = self.get_sdk()?;
+        let prepare = sdk
             .prepare_receive_payment(&breez::PrepareReceiveRequest {
                 payment_method: breez::PaymentMethod::BitcoinAddress,
                 amount: amount_sat.map(|sat| breez::ReceiveAmount::Bitcoin {
@@ -255,7 +272,7 @@ impl BreezClient {
             .await
             .map_err(|e| BreezError::Sdk(e.to_string()))?;
 
-        self.sdk
+        sdk
             .receive_payment(&breez::ReceivePaymentRequest {
                 prepare_response: prepare,
                 description: None,
@@ -271,8 +288,8 @@ impl BreezClient {
         invoice: String,
         amount_sat: Option<u64>,
     ) -> Result<breez::SendPaymentResponse, BreezError> {
-        let prepare = self
-            .sdk
+        let sdk = self.get_sdk()?;
+        let prepare = sdk
             .prepare_send_payment(&breez::PrepareSendRequest {
                 destination: invoice,
                 amount: amount_sat.map(|sat| breez::PayAmount::Bitcoin {
@@ -284,7 +301,7 @@ impl BreezClient {
             .await
             .map_err(|e| BreezError::Sdk(e.to_string()))?;
 
-        self.sdk
+        sdk
             .send_payment(&breez::SendPaymentRequest {
                 prepare_response: prepare,
                 payer_note: None,
@@ -298,7 +315,7 @@ impl BreezClient {
         &self,
         request: &breez::PrepareSendRequest,
     ) -> Result<breez::PrepareSendResponse, BreezError> {
-        self.sdk
+        self.get_sdk()?
             .prepare_send_payment(request)
             .await
             .map_err(|e| BreezError::Sdk(e.to_string()))
@@ -308,7 +325,7 @@ impl BreezClient {
         &self,
         request: &breez::PreparePayOnchainRequest,
     ) -> Result<breez::PreparePayOnchainResponse, BreezError> {
-        self.sdk
+        self.get_sdk()?
             .prepare_pay_onchain(request)
             .await
             .map_err(|e| BreezError::Sdk(e.to_string()))
@@ -318,7 +335,7 @@ impl BreezClient {
         &self,
         request: &breez::PayOnchainRequest,
     ) -> Result<breez::SendPaymentResponse, BreezError> {
-        self.sdk
+        self.get_sdk()?
             .pay_onchain(request)
             .await
             .map_err(|e| BreezError::Sdk(e.to_string()))
@@ -328,7 +345,7 @@ impl BreezClient {
         &self,
         request: &breez::SendPaymentRequest,
     ) -> Result<breez::SendPaymentResponse, BreezError> {
-        self.sdk
+        self.get_sdk()?
             .send_payment(request)
             .await
             .map_err(|e| BreezError::Sdk(e.to_string()))
@@ -338,7 +355,7 @@ impl BreezClient {
         &self,
         limit: Option<u32>,
     ) -> Result<Vec<breez::Payment>, BreezError> {
-        self.sdk
+        self.get_sdk()?
             .list_payments(&breez::ListPaymentsRequest {
                 filters: None,
                 states: None,
@@ -357,7 +374,7 @@ impl BreezClient {
         &self,
         swap_id: &str,
     ) -> Result<breez::FetchPaymentProposedFeesResponse, BreezError> {
-        self.sdk
+        self.get_sdk()?
             .fetch_payment_proposed_fees(&breez::FetchPaymentProposedFeesRequest {
                 swap_id: swap_id.to_string(),
             })
@@ -369,27 +386,27 @@ impl BreezClient {
         &self,
         response: breez::FetchPaymentProposedFeesResponse,
     ) -> Result<(), BreezError> {
-        self.sdk
+        self.get_sdk()?
             .accept_payment_proposed_fees(&breez::AcceptPaymentProposedFeesRequest { response })
             .await
             .map_err(|e| BreezError::Sdk(e.to_string()))
     }
 
     pub async fn validate_input(&self, input: String) -> Option<InputType> {
-        self.sdk.parse(&input).await.ok()
+        self.sdk.as_ref()?.parse(&input).await.ok()
     }
 
     pub async fn fetch_lightning_limits(
         &self,
     ) -> Result<LightningPaymentLimitsResponse, BreezError> {
-        self.sdk
+        self.get_sdk()?
             .fetch_lightning_limits()
             .await
             .map_err(|e| BreezError::Sdk(e.to_string()))
     }
 
     pub async fn fetch_onchain_limits(&self) -> Result<OnchainPaymentLimitsResponse, BreezError> {
-        self.sdk
+        self.get_sdk()?
             .fetch_onchain_limits()
             .await
             .map_err(|e| BreezError::Sdk(e.to_string()))
@@ -398,13 +415,13 @@ impl BreezClient {
     /// Manually trigger wallet synchronization with the blockchain
     /// This is useful after payments to immediately update the balance
     pub async fn sync(&self) -> Result<(), BreezError> {
-        self.sdk
+        self.get_sdk()?
             .sync(false)
             .await
             .map_err(|e| BreezError::Sdk(e.to_string()))
     }
 
-    pub fn liquid_signer(&self) -> std::sync::Arc<std::sync::Mutex<HotSigner>> {
+    pub fn liquid_signer(&self) -> Option<Arc<Mutex<HotSigner>>> {
         self.signer.clone()
     }
 
@@ -437,15 +454,20 @@ fn make_breez_stream(state: &BreezSubscriptionState) -> impl Stream<Item = breez
     iced::stream::channel(
         100,
         move |mut output: iced::futures::channel::mpsc::Sender<breez::SdkEvent>| async move {
+            let Some(sdk) = client.sdk.clone() else {
+                std::future::pending::<()>().await;
+                return;
+            };
+
             let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
             let listener = BreezEventListener { sender };
 
-            if let Ok(id) = client.sdk.add_event_listener(Box::new(listener)).await {
+            if let Ok(id) = sdk.add_event_listener(Box::new(listener)).await {
                 while let Some(event) = receiver.recv().await {
                     let _ = output.send(event).await;
                 }
 
-                let _ = client.sdk.remove_event_listener(id).await;
+                let _ = sdk.remove_event_listener(id).await;
             }
 
             std::future::pending().await
