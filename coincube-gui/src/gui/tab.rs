@@ -702,6 +702,41 @@ impl Tab {
                             command.map(Message::Run)
                         }
                     }
+                    Err(app::breez::BreezError::NetworkNotSupported(_)) => {
+                        // Liquid wallet is not supported on this network — create a
+                        // disconnected client so the rest of the app continues normally.
+                        let breez = Arc::new(app::breez::BreezClient::disconnected(network));
+                        if let Some(wallet_settings) = wallet_settings {
+                            if wallet_settings.remote_backend_auth.is_some() {
+                                let (login, command) = login::CoincubeLiteLogin::new(
+                                    datadir.clone(),
+                                    network,
+                                    wallet_settings.clone(),
+                                    Some(breez),
+                                );
+                                self.state = State::Login(login);
+                                command.map(Message::Login)
+                            } else {
+                                let (loader, command) = Loader::new(
+                                    datadir.clone(),
+                                    config.clone(),
+                                    network,
+                                    internal_bitcoind.clone(),
+                                    backup.clone(),
+                                    Some(wallet_settings.clone()),
+                                    cube,
+                                    Some(breez),
+                                );
+                                self.state = State::Loader(loader);
+                                command.map(Message::Load)
+                            }
+                        } else {
+                            let (app, command) =
+                                App::new_without_wallet(breez, config, datadir, network, cube);
+                            self.state = State::App(app);
+                            command.map(Message::Run)
+                        }
+                    }
                     Err(e) => {
                         tracing::error!("Failed to load BreezClient after PIN: {}", e);
                         // BreezClient failed to load - return to launcher

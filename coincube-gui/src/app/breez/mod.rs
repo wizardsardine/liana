@@ -14,6 +14,7 @@ use std::sync::{Arc, Mutex};
 
 #[derive(Debug, Clone)]
 pub enum BreezError {
+    NetworkNotSupported(Network),
     Connection(String),
     Sdk(String),
     SignerNotFound(Fingerprint),
@@ -23,6 +24,9 @@ pub enum BreezError {
 impl std::fmt::Display for BreezError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            BreezError::NetworkNotSupported(n) => {
+                write!(f, "Liquid wallet is not supported on {} network", n)
+            }
             BreezError::Connection(msg) => write!(f, "failed to connect Breez SDK: {}", msg),
             BreezError::Sdk(msg) => write!(f, "SDK request failed: {}", msg),
             BreezError::SignerNotFound(fp) => {
@@ -35,13 +39,23 @@ impl std::fmt::Display for BreezError {
 
 impl std::error::Error for BreezError {}
 
-/// Load BreezClient from datadir using the Liquid wallet signer fingerprint
+/// Load BreezClient from datadir using the Liquid wallet signer fingerprint.
+/// Returns `Err(BreezError::NetworkNotSupported)` for non-mainnet/retest networks so
+/// the caller can create a disconnected `BreezClient` instead of an error.
 pub async fn load_breez_client(
     datadir: &Path,
     network: Network,
     liquid_signer_fingerprint: Fingerprint,
     password: &str,
 ) -> Result<Arc<BreezClient>, BreezError> {
+    // Breez SDK (Liquid) supports mainnet and regtest.  Testnet, Testnet4 and
+    // Signet are not supported — return NetworkNotSupported so the caller can
+    // create a disconnected client and keep the rest of the app running normally.
+    match network {
+        Network::Bitcoin | Network::Regtest => {}
+        _ => return Err(BreezError::NetworkNotSupported(network)),
+    }
+
     // Load only the specific signer by fingerprint (more efficient and secure)
     let liquid_signer = HotSigner::from_datadir_by_fingerprint(
         datadir,

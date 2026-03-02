@@ -36,7 +36,7 @@ fn header(title: &str) -> Element<'static, Message> {
 }
 
 pub fn liquid_settings_view<'a>(
-    liquid_signer: Arc<Mutex<HotSigner>>,
+    liquid_signer: Option<Arc<Mutex<HotSigner>>>,
     flow_state: &'a LiquidSettingsFlowState,
 ) -> Element<'a, Message> {
     match flow_state {
@@ -45,12 +45,12 @@ pub fn liquid_settings_view<'a>(
             backup_intro_view(*checked)
         }
         LiquidSettingsFlowState::BackupWallet(BackupWalletState::RecoveryPhrase) => {
-            match liquid_signer.lock() {
-                Ok(guard) => recovery_phrase_view(guard.words()),
-                Err(_) => {
-                    // Mutex is poisoned, show error view
-                    error_view()
-                }
+            match liquid_signer {
+                None => error_view(),
+                Some(signer) => match signer.lock() {
+                    Ok(guard) => recovery_phrase_view(guard.words()),
+                    Err(_) => error_view(),
+                },
             }
         }
         LiquidSettingsFlowState::BackupWallet(BackupWalletState::Verification {
