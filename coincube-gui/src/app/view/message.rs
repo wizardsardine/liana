@@ -9,6 +9,13 @@ use crate::{
     services::fiat::{Currency, PriceSource},
 };
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum FeeratePriority {
+    Low,
+    Medium,
+    High,
+}
+
 use breez_sdk_liquid::prelude::{
     InputType, Payment, PreparePayOnchainResponse, PrepareSendResponse,
 };
@@ -50,6 +57,12 @@ pub enum Message {
     SetupVault,
     Close,
     Select(usize),
+    SelectRefundable(usize),
+    RefundAddressEdited(String),
+    RefundAddressValidated(bool),
+    RefundFeerateEdited(String),
+    RefundFeeratePrioritySelected(FeeratePriority),
+    SubmitRefund,
     SelectPayment(OutPoint),
     Label(Vec<String>, LabelMessage),
     NextReceiveAddress,

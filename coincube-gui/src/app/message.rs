@@ -72,6 +72,8 @@ pub enum Message {
     RbfModal(Box<HistoryTransaction>, bool, Result<HashSet<Txid>, Error>),
     Export(ImportExportMessage),
     PaymentsLoaded(Result<Vec<breez_sdk_liquid::prelude::Payment>, BreezError>),
+    RefundablesLoaded(Result<Vec<breez_sdk_liquid::prelude::RefundableSwap>, BreezError>),
+    RefundCompleted(Result<breez_sdk_liquid::model::RefundResponse, BreezError>),
     BreezInfo(Result<breez_sdk_liquid::prelude::GetInfoResponse, BreezError>),
     BreezEvent(breez_sdk_liquid::prelude::SdkEvent),
     SettingsSaved,
