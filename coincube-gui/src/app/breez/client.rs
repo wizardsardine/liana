@@ -368,7 +368,7 @@ impl BreezClient {
     }
 
     pub async fn list_refundables(&self) -> Result<Vec<breez::RefundableSwap>, BreezError> {
-        self.sdk
+        self.get_sdk()?
             .list_refundables()
             .await
             .map_err(|e| BreezError::Sdk(e.to_string()))
@@ -425,7 +425,7 @@ impl BreezClient {
             .map_err(|e| BreezError::Sdk(e.to_string()))
     }
     pub async fn rescan_onchain_swaps(&self) -> Result<(), BreezError> {
-        self.sdk
+        self.get_sdk()?
             .rescan_onchain_swaps()
             .await
             .map_err(|e| BreezError::Sdk(e.to_string()))
@@ -435,7 +435,7 @@ impl BreezClient {
         &self,
         refund_request: breez::RefundRequest,
     ) -> Result<RefundResponse, BreezError> {
-        self.sdk
+        self.get_sdk()?
             .refund(&refund_request)
             .await
             .map_err(|e| BreezError::Sdk(e.to_string()))
