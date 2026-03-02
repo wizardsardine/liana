@@ -87,6 +87,7 @@ impl State {
             Msg::NavigateToOrgSelect => self.on_navigate_to_org_select(),
             Msg::NavigateToWalletSelect => self.on_navigate_to_wallet_select(),
             Msg::NavigateBack => return self.on_navigate_back(),
+            Msg::BackToLogin => return self.on_back_to_login(),
 
             // Backend
             Msg::BackendNotif(notif) => return self.on_backend_notif(notif),
@@ -1065,6 +1066,50 @@ impl State {
         self.app.global_user_role = None;
         self.app.reconnecting = false;
         self.app.exit = false;
+
+        // Navigate to login view
+        self.current_view = View::Login;
+
+        // Focus email input if going to EmailEntry
+        if self.views.login.current == views::LoginState::EmailEntry {
+            text_input::focus("login_email")
+        } else {
+            Task::none()
+        }
+    }
+
+    /// Handle "Back to login" button click after connection error
+    fn on_back_to_login(&mut self) -> Task<Msg> {
+        // Clear the connection error banner
+        self.connection_error = None;
+
+        // Get and clear the failed email
+        let failed_email = self
+            .views
+            .login
+            .account_select
+            .selected_email
+            .take()
+            .unwrap_or_default();
+
+        // Clear the failed token from cache
+        if !failed_email.is_empty() {
+            self.backend.clear_invalid_tokens(&[failed_email.clone()]);
+        }
+
+        // Remove the failed account from the current list
+        self.views
+            .login
+            .account_select
+            .accounts
+            .retain(|a| a.email != failed_email);
+
+        // Decide next login state based on remaining accounts
+        if self.views.login.account_select.accounts.is_empty() {
+            self.views.login.current = views::LoginState::EmailEntry;
+        } else {
+            self.views.login.current = views::LoginState::AccountSelect;
+        }
 
         // Navigate to login view
         self.current_view = View::Login;
