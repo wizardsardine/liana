@@ -104,10 +104,7 @@ impl State for LiquidSettings {
                                 let Some(signer) = self.breez_client.liquid_signer() else {
                                     return Task::none();
                                 };
-                                let mnemonic = signer
-                                    .lock()
-                                    .expect("Mutex Lock Poisoned")
-                                    .words();
+                                let mnemonic = signer.lock().expect("Mutex Lock Poisoned").words();
 
                                 match generate_random_word_indices(mnemonic.len()) {
                                     Some(word_indices) => LiquidSettingsFlowState::BackupWallet(
@@ -195,10 +192,7 @@ impl State for LiquidSettings {
                             let Some(signer) = self.breez_client.liquid_signer() else {
                                 return Task::none();
                             };
-                            let mnemonic = signer
-                                .lock()
-                                .expect("Mutex Lock Poisoned")
-                                .words();
+                            let mnemonic = signer.lock().expect("Mutex Lock Poisoned").words();
 
                             // Verify each word matches the correct position in the mnemonic
                             // word_indices are 1-based, mnemonic array is 0-based

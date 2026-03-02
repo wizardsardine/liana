@@ -246,15 +246,14 @@ impl BreezClient {
             .await
             .map_err(|e| BreezError::Sdk(e.to_string()))?;
 
-        sdk
-            .receive_payment(&breez::ReceivePaymentRequest {
-                prepare_response: prepare,
-                description,
-                payer_note: None,
-                description_hash: None,
-            })
-            .await
-            .map_err(|e| BreezError::Sdk(e.to_string()))
+        sdk.receive_payment(&breez::ReceivePaymentRequest {
+            prepare_response: prepare,
+            description,
+            payer_note: None,
+            description_hash: None,
+        })
+        .await
+        .map_err(|e| BreezError::Sdk(e.to_string()))
     }
 
     pub async fn receive_onchain(
@@ -272,15 +271,14 @@ impl BreezClient {
             .await
             .map_err(|e| BreezError::Sdk(e.to_string()))?;
 
-        sdk
-            .receive_payment(&breez::ReceivePaymentRequest {
-                prepare_response: prepare,
-                description: None,
-                payer_note: None,
-                description_hash: None,
-            })
-            .await
-            .map_err(|e| BreezError::Sdk(e.to_string()))
+        sdk.receive_payment(&breez::ReceivePaymentRequest {
+            prepare_response: prepare,
+            description: None,
+            payer_note: None,
+            description_hash: None,
+        })
+        .await
+        .map_err(|e| BreezError::Sdk(e.to_string()))
     }
 
     pub async fn pay_invoice(
@@ -301,14 +299,13 @@ impl BreezClient {
             .await
             .map_err(|e| BreezError::Sdk(e.to_string()))?;
 
-        sdk
-            .send_payment(&breez::SendPaymentRequest {
-                prepare_response: prepare,
-                payer_note: None,
-                use_asset_fees: None,
-            })
-            .await
-            .map_err(|e| BreezError::Sdk(e.to_string()))
+        sdk.send_payment(&breez::SendPaymentRequest {
+            prepare_response: prepare,
+            payer_note: None,
+            use_asset_fees: None,
+        })
+        .await
+        .map_err(|e| BreezError::Sdk(e.to_string()))
     }
 
     pub async fn prepare_send_payment(
