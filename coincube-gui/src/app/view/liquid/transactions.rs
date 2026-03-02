@@ -367,6 +367,7 @@ pub fn refundable_detail_view<'a>(
     bitcoin_unit: coincube_ui::component::amount::BitcoinDisplayUnit,
     refund_address: &'a form::Value<String>,
     refund_feerate: &'a form::Value<String>,
+    refunding: bool,
 ) -> Element<'a, Message> {
     let btc_amount = Amount::from_sat(refundable.amount_sat);
 
@@ -517,8 +518,8 @@ pub fn refundable_detail_view<'a>(
                 )
                 .push(
                     Row::new().spacing(10).push(
-                        button::primary(None, "Refund")
-                            .on_press_maybe(if can_refund {
+                        button::primary(None, if refunding { "Refund..." } else { "Refund" })
+                            .on_press_maybe(if can_refund && !refunding {
                                 Some(Message::SubmitRefund)
                             } else {
                                 None
