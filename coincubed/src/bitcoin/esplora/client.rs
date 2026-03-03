@@ -45,15 +45,24 @@ impl Client {
     }
 
     /// Get the current chain tip (height + hash).
+    ///
+    /// Fetches the tip hash first, then resolves its height via `get_block_status` so both
+    /// values come from the same point-in-time snapshot, avoiding a TOCTOU mismatch.
     pub fn chain_tip(&self) -> Result<BlockChainTip, Error> {
-        let height = self
-            .0
-            .get_height()
-            .map_err(|e| Error::Client(Box::new(e)))?;
         let hash = self
             .0
             .get_tip_hash()
             .map_err(|e| Error::Client(Box::new(e)))?;
+        let status = self
+            .0
+            .get_block_status(&hash)
+            .map_err(|e| Error::Client(Box::new(e)))?;
+        let height = status.height.ok_or_else(|| {
+            Error::Client(Box::new(esplora_client::Error::HttpResponse {
+                status: 404,
+                message: format!("tip block {} is not in best chain", hash),
+            }))
+        })?;
         Ok(BlockChainTip {
             hash,
             height: height as i32,

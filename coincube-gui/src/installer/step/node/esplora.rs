@@ -14,11 +14,16 @@ use crate::{
 #[derive(Clone, Default)]
 pub struct DefineEsplora {
     address: form::Value<String>,
+    placeholder: String,
 }
 
 impl DefineEsplora {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn load_context(&mut self, ctx: &Context) {
+        self.placeholder = super::super::super::relay_url(ctx.network);
     }
 
     pub fn can_try_ping(&self) -> bool {
@@ -53,7 +58,7 @@ impl DefineEsplora {
     }
 
     pub fn view(&self) -> Element<Message> {
-        view::define_esplora(&self.address)
+        view::define_esplora(&self.address, &self.placeholder)
     }
 
     pub fn ping(&self) -> Result<(), Error> {

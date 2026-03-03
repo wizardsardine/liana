@@ -1288,11 +1288,14 @@ pub fn define_electrum<'a>(
     Column::new().push(col_address).spacing(50).into()
 }
 
-pub fn define_esplora<'a>(address: &form::Value<String>) -> Element<'a, Message> {
+pub fn define_esplora<'a>(
+    address: &form::Value<String>,
+    placeholder: &'a str,
+) -> Element<'a, Message> {
     let col_address = Column::new()
         .push(text("Esplora URL:").bold())
         .push(
-            form::Form::new_trimmed(super::RELAY_URL, address, |msg| {
+            form::Form::new_trimmed(placeholder, address, |msg| {
                 Message::DefineNode(DefineNode::DefineEsplora(DefineEsplora::ConfigFieldEdited(
                     esplora::ConfigField::Address,
                     msg,

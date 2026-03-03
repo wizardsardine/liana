@@ -141,7 +141,7 @@ impl Step for CoincubeRelayStep {
                 CoincubeRelayMsg::OtpEdited(value) => {
                     self.otp.value = value.trim().to_string();
                     self.otp.valid = true;
-                    if self.otp.value.len() == 6 {
+                    if self.otp.value.len() == 6 && !self.processing {
                         let client = self.client.clone();
                         let email = self.email.value.clone();
                         let otp = self.otp.value.clone();

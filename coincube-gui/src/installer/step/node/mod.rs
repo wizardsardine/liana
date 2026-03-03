@@ -65,9 +65,7 @@ impl NodeDefinition {
             NodeDefinition::Electrum(_) => {
                 // noop for now
             }
-            NodeDefinition::Esplora(_) => {
-                // noop for now
-            }
+            NodeDefinition::Esplora(def) => def.load_context(ctx),
         }
     }
 
