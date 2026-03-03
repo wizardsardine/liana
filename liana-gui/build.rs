@@ -1,7 +1,9 @@
 fn main() {
     let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
     // Skip icon if LIANA_SKIP_GUI_ICON env var is set (used by liana-business nix build)
-    let skip_icon = std::env::var("LIANA_SKIP_GUI_ICON").is_ok();
+    // or if the skip-windows-icon feature is enabled (used by liana-business cargo build)
+    let skip_icon = std::env::var("LIANA_SKIP_GUI_ICON").is_ok()
+        || std::env::var("CARGO_FEATURE_SKIP_WINDOWS_ICON").is_ok();
 
     if target_os == "windows" && !skip_icon {
         let mut res = winresource::WindowsResource::new();

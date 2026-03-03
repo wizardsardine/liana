@@ -10,7 +10,7 @@ path = "src/lib.rs"
 [dependencies]
 async-hwi = { workspace = true }
 liana = { path = "../../liana" }
-liana-gui = { path = "../../liana-gui" }
+liana-gui = { path = "../../liana-gui", features = ["skip-windows-icon"] }
 liana-ui = { path = "../../liana-ui" }
 iced = { workspace = true }
 serde = { workspace = true }
