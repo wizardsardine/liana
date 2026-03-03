@@ -287,6 +287,7 @@ pub fn port_is_valid(port: &u16) -> bool {
 
 pub struct SelectBitcoindTypeStep {
     use_external: bool,
+    use_relay: bool,
 }
 
 impl Default for SelectBitcoindTypeStep {
@@ -303,7 +304,10 @@ impl From<SelectBitcoindTypeStep> for Box<dyn Step> {
 
 impl SelectBitcoindTypeStep {
     pub fn new() -> Self {
-        Self { use_external: true }
+        Self {
+            use_external: true,
+            use_relay: false,
+        }
     }
 }
 
@@ -316,6 +320,11 @@ impl Step for SelectBitcoindTypeStep {
             match msg {
                 message::SelectBitcoindTypeMsg::UseExternal(selected) => {
                     self.use_external = selected;
+                    self.use_relay = false;
+                }
+                message::SelectBitcoindTypeMsg::UseRelay => {
+                    self.use_external = true;
+                    self.use_relay = true;
                 }
             };
             return Task::perform(async {}, |_| Message::Next);
@@ -332,6 +341,7 @@ impl Step for SelectBitcoindTypeStep {
             ctx.internal_bitcoind_config = None;
         }
         ctx.bitcoind_is_external = self.use_external;
+        ctx.use_coincube_relay = self.use_relay;
         true
     }
 

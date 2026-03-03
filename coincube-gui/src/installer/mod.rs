@@ -6,6 +6,12 @@ mod prompt;
 mod step;
 mod view;
 
+#[cfg(debug_assertions)]
+const RELAY_URL: &str = "https://dev-api.coincube.io/api/v1/esplora/bitcoin/mainnet";
+
+#[cfg(not(debug_assertions))]
+const RELAY_URL: &str = concat!(env!("COINCUBE_API_URL"), "/api/v1/esplora/bitcoin/mainnet");
+
 use coincube_core::miniscript::bitcoin::{self, Network};
 use coincube_ui::{
     component::network_banner,
@@ -49,10 +55,10 @@ use crate::{
 pub use descriptor::{KeySource, KeySourceKind, PathKind, PathSequence};
 pub use message::Message;
 use step::{
-    BackupDescriptor, BackupMnemonic, ChooseBackend, ChooseDescriptorTemplate, DefineDescriptor,
-    DefineNode, DescriptorTemplateDescription, Final, ImportDescriptor, ImportRemoteWallet,
-    InternalBitcoindStep, RecoverMnemonic, RegisterDescriptor, RemoteBackendLogin,
-    SelectBitcoindTypeStep, ShareXpubs, Step, WalletAlias,
+    BackupDescriptor, BackupMnemonic, ChooseBackend, CoincubeRelayStep, ChooseDescriptorTemplate,
+    DefineDescriptor, DefineNode, DescriptorTemplateDescription, Final, ImportDescriptor,
+    ImportRemoteWallet, InternalBitcoindStep, RecoverMnemonic, RegisterDescriptor,
+    RemoteBackendLogin, SelectBitcoindTypeStep, ShareXpubs, Step, WalletAlias,
 };
 
 #[derive(Debug, Clone)]
@@ -128,14 +134,16 @@ impl Installer {
         let context = Context::new(
             network,
             destination_path.clone(),
-            remote_backend.map(RemoteBackend::WithoutWallet).unwrap_or(
-                if matches!(network, Network::Bitcoin | Network::Signet) {
-                    RemoteBackend::Undefined
-                } else {
-                    // The step for choosing the backend will be skipped.
-                    RemoteBackend::None
-                },
-            ),
+            remote_backend.map(RemoteBackend::WithoutWallet).unwrap_or_else(|| {
+                match (&user_flow, network) {
+                    // CreateWallet no longer has a ChooseBackend step; always local.
+                    (UserFlow::CreateWallet, _) => RemoteBackend::None,
+                    // AddWallet still has ChooseBackend which transitions away from Undefined.
+                    (_, Network::Bitcoin | Network::Signet) => RemoteBackend::Undefined,
+                    // Non-mainnet/signet AddWallet skips backend choice.
+                    _ => RemoteBackend::None,
+                }
+            }),
         );
         let mut installer = Installer {
             network,
@@ -153,12 +161,10 @@ impl Installer {
                     BackupMnemonic::new(signer.clone()).into(),
                     BackupDescriptor::default().into(),
                     RegisterDescriptor::new_create_wallet().into(),
-                    ChooseBackend::new(network).into(),
-                    RemoteBackendLogin::new(network, destination_path.network_directory(network))
-                        .into(),
                     SelectBitcoindTypeStep::new().into(),
                     InternalBitcoindStep::new(&context.coincube_directory).into(),
-                    DefineNode::default().into(),
+                    CoincubeRelayStep::new().into(),
+                    DefineNode::new(crate::node::NodeType::Esplora).into(),
                     WalletAlias::default().into(),
                     Final::new().into(),
                 ],
@@ -173,6 +179,7 @@ impl Installer {
                     RegisterDescriptor::new_import_wallet().into(),
                     SelectBitcoindTypeStep::new().into(),
                     InternalBitcoindStep::new(&context.coincube_directory).into(),
+                    CoincubeRelayStep::new().into(),
                     DefineNode::default().into(),
                     WalletAlias::default().into(),
                     Final::new().into(),
@@ -862,6 +869,7 @@ pub enum Error {
     Settings(SettingsError),
     Bitcoind(String),
     Electrum(String),
+    Esplora(String),
     CannotCreateDatadir(String),
     CannotCreateFile(String),
     CannotWriteToFile(String),
@@ -916,6 +924,7 @@ impl std::fmt::Display for Error {
             Self::Settings(e) => write!(f, "Settings file error: {}", e),
             Self::Bitcoind(e) => write!(f, "Failed to ping bitcoind: {}", e),
             Self::Electrum(e) => write!(f, "Failed to ping Electrum: {}", e),
+            Self::Esplora(e) => write!(f, "Failed to ping Esplora: {}", e),
             Self::CannotCreateDatadir(e) => write!(f, "Failed to create datadir: {}", e),
             Self::CannotGetAvailablePort(e) => write!(f, "Failed to get available port: {}", e),
             Self::CannotWriteToFile(e) => write!(f, "Failed to write to file: {}", e),

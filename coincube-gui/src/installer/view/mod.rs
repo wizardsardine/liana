@@ -37,7 +37,7 @@ use crate::{
     hw::{is_compatible_with_tapminiscript, HardwareWallet, UnsupportedReason},
     installer::{
         descriptor::{PathSequence, PathWarning},
-        message::{self, DefineBitcoind, DefineNode, Message},
+        message::{self, CoincubeRelayMsg, DefineBitcoind, DefineNode, DefineEsplora, Message},
         prompt,
         step::{DownloadState, InstallState},
         view::editor::format_sequence_duration,
@@ -45,7 +45,7 @@ use crate::{
     },
     node::{
         bitcoind::{ConfigField, RpcAuthType, RpcAuthValues, StartInternalBitcoindError},
-        electrum, NodeType,
+        electrum, esplora, NodeType,
     },
 };
 
@@ -1069,6 +1069,7 @@ pub fn define_bitcoin_node<'a>(
                         match node_type {
                             NodeType::Bitcoind => "Bitcoin Core",
                             NodeType::Electrum => "Electrum",
+                            NodeType::Esplora => "Esplora",
                         },
                         node_type,
                         Some(selected_node_type),
@@ -1287,6 +1288,113 @@ pub fn define_electrum<'a>(
     Column::new().push(col_address).spacing(50).into()
 }
 
+pub fn define_esplora<'a>(address: &form::Value<String>) -> Element<'a, Message> {
+    let col_address = Column::new()
+        .push(text("Esplora URL:").bold())
+        .push(
+            form::Form::new_trimmed(super::RELAY_URL, address, |msg| {
+                Message::DefineNode(DefineNode::DefineEsplora(
+                    DefineEsplora::ConfigFieldEdited(esplora::ConfigField::Address, msg),
+                ))
+            })
+            .warning("Please enter a valid URL starting with http:// or https://")
+            .size(text::P1_SIZE)
+            .padding(10),
+        )
+        .spacing(10);
+
+    Column::new().push(col_address).spacing(50).into()
+}
+
+pub fn define_coincube_relay<'a>(
+    progress: (usize, usize),
+    email: &form::Value<String>,
+    otp: &form::Value<String>,
+    otp_sent: bool,
+    is_signup: bool,
+    processing: bool,
+    error: Option<&'a str>,
+) -> Element<'a, Message> {
+    let content: Element<'a, Message> = if !otp_sent {
+        let (action_label, toggle_label) = if is_signup {
+            ("Create Account", "Already have an account? Sign in")
+        } else {
+            ("Sign In", "New to COINCUBE | Relay? Create account")
+        };
+        Column::new()
+            .spacing(20)
+            .push(text(
+                "Enter your email address to receive a verification code.",
+            ))
+            .push(
+                form::Form::new_trimmed("your@email.com", email, |msg| {
+                    Message::CoincubeRelay(CoincubeRelayMsg::EmailEdited(msg))
+                })
+                .warning("Please enter a valid email address")
+                .size(text::P1_SIZE)
+                .padding(10),
+            )
+            .push(if let Some(e) = error {
+                Some(text(e).style(theme::text::warning))
+            } else {
+                None
+            })
+            .push(
+                button::secondary(None, action_label)
+                    .width(Length::Fixed(250.0))
+                    .on_press_maybe(if !processing && email.valid {
+                        Some(Message::CoincubeRelay(CoincubeRelayMsg::RequestOtp))
+                    } else {
+                        None
+                    }),
+            )
+            .push(
+                button::transparent(None, toggle_label)
+                    .on_press(Message::CoincubeRelay(CoincubeRelayMsg::ToggleMode)),
+            )
+            .into()
+    } else {
+        Column::new()
+            .spacing(20)
+            .push(text(format!(
+                "Enter the verification code sent to {}",
+                &email.value
+            )))
+            .push(
+                form::Form::new_trimmed("6-digit code", otp, |msg| {
+                    Message::CoincubeRelay(CoincubeRelayMsg::OtpEdited(msg))
+                })
+                .warning("Invalid verification code")
+                .size(text::P1_SIZE)
+                .padding(10),
+            )
+            .push(if let Some(e) = error {
+                Some(text(e).style(theme::text::warning))
+            } else {
+                None
+            })
+            .push(
+                button::secondary(None, "Resend Code")
+                    .width(Length::Fixed(200.0))
+                    .on_press_maybe(if !processing {
+                        Some(Message::CoincubeRelay(CoincubeRelayMsg::ResendOtp))
+                    } else {
+                        None
+                    }),
+            )
+            .into()
+    };
+
+    layout(
+        progress,
+        None,
+        "COINCUBE | Relay",
+        content,
+        true,
+        Some(Message::Previous),
+    )
+}
+
 pub fn select_bitcoind_type<'a>(progress: (usize, usize)) -> Element<'a, Message> {
     layout(
         progress,
@@ -1301,20 +1409,32 @@ pub fn select_bitcoind_type<'a>(progress: (usize, usize)) -> Element<'a, Message
                         Container::new(
                             Column::new()
                                 .spacing(20)
-                                .width(Length::Fixed(300.0))
+                                .width(Length::Fixed(250.0))
                                 .push(text("I already have a node").bold()),
                         )
                         .padding(20),
                     )
                     .push(
                         Container::new(
-                            Column::new().spacing(20).width(Length::Fixed(300.0)).push(
-                                text(
-                                    "I want Coincube to automatically install \
-                                    a Bitcoin node on my device",
-                                )
-                                .bold(),
-                            ),
+                            Column::new()
+                                .spacing(20)
+                                .width(Length::Fixed(250.0))
+                                .push(
+                                    text(
+                                        "I want Coincube to automatically install \
+                                        a Bitcoin node on my device",
+                                    )
+                                    .bold(),
+                                ),
+                        )
+                        .padding(20),
+                    )
+                    .push(
+                        Container::new(
+                            Column::new()
+                                .spacing(20)
+                                .width(Length::Fixed(250.0))
+                                .push(text("COINCUBE | Relay").bold()),
                         )
                         .padding(20),
                     ),
@@ -1327,7 +1447,7 @@ pub fn select_bitcoind_type<'a>(progress: (usize, usize)) -> Element<'a, Message
                         Container::new(
                             Column::new()
                                 .spacing(20)
-                                .width(Length::Fixed(300.0))
+                                .width(Length::Fixed(250.0))
                                 .align_x(Alignment::Start)
                                 .push(text(
                                     "Select this option if you already have \
@@ -1341,7 +1461,7 @@ pub fn select_bitcoind_type<'a>(progress: (usize, usize)) -> Element<'a, Message
                         Container::new(
                             Column::new()
                                 .spacing(20)
-                                .width(Length::Fixed(300.0))
+                                .width(Length::Fixed(250.0))
                                 .align_x(Alignment::Start)
                                 .push(text(
                                     "Coincube will install a pruned node \
@@ -1351,6 +1471,19 @@ pub fn select_bitcoind_type<'a>(progress: (usize, usize)) -> Element<'a, Message
                                     wait for the initial synchronization with the \
                                     network (it can take some days depending on \
                                     your internet connection speed).",
+                                )),
+                        )
+                        .padding(20),
+                    )
+                    .push(
+                        Container::new(
+                            Column::new()
+                                .spacing(20)
+                                .width(Length::Fixed(250.0))
+                                .align_x(Alignment::Start)
+                                .push(text(
+                                    "Use the COINCUBE | Relay service to access \
+                                    our Esplora. No local node required.",
                                 )),
                         )
                         .padding(20),
@@ -1364,11 +1497,11 @@ pub fn select_bitcoind_type<'a>(progress: (usize, usize)) -> Element<'a, Message
                         Container::new(
                             Column::new()
                                 .spacing(20)
-                                .width(Length::Fixed(300.0))
+                                .width(Length::Fixed(250.0))
                                 .align_x(Alignment::Center)
                                 .push(
                                     button::secondary(None, "Select")
-                                        .width(Length::Fixed(300.0))
+                                        .width(Length::Fixed(250.0))
                                         .on_press(Message::SelectBitcoindType(
                                             message::SelectBitcoindTypeMsg::UseExternal(true),
                                         )),
@@ -1380,13 +1513,29 @@ pub fn select_bitcoind_type<'a>(progress: (usize, usize)) -> Element<'a, Message
                         Container::new(
                             Column::new()
                                 .spacing(20)
-                                .width(Length::Fixed(300.0))
+                                .width(Length::Fixed(250.0))
                                 .align_x(Alignment::Center)
                                 .push(
                                     button::secondary(None, "Select")
-                                        .width(Length::Fixed(300.0))
+                                        .width(Length::Fixed(250.0))
                                         .on_press(Message::SelectBitcoindType(
                                             message::SelectBitcoindTypeMsg::UseExternal(false),
+                                        )),
+                                ),
+                        )
+                        .padding(20),
+                    )
+                    .push(
+                        Container::new(
+                            Column::new()
+                                .spacing(20)
+                                .width(Length::Fixed(250.0))
+                                .align_x(Alignment::Center)
+                                .push(
+                                    button::secondary(None, "Select")
+                                        .width(Length::Fixed(250.0))
+                                        .on_press(Message::SelectBitcoindType(
+                                            message::SelectBitcoindTypeMsg::UseRelay,
                                         )),
                                 ),
                         )

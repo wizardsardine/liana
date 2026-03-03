@@ -90,6 +90,9 @@ pub enum BitcoinBackend {
     /// Settings specific to Electrum as the Bitcoin interface.
     #[serde(rename = "electrum_config")]
     Electrum(ElectrumConfig),
+    /// Settings specific to Esplora as the Bitcoin interface.
+    #[serde(rename = "esplora_config")]
+    Esplora(EsploraConfig),
 }
 
 /// RPC authentication options.
@@ -137,6 +140,17 @@ pub struct ElectrumConfig {
 
 fn default_validate_domain() -> bool {
     true
+}
+
+/// Everything we need to know for talking to an Esplora HTTP server.
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+pub struct EsploraConfig {
+    /// The HTTP(S) URL of the Esplora server.
+    /// e.g. https://api.coincube.io/api/v1/esplora/bitcoin/mainnet
+    pub addr: String,
+    /// Optional JWT bearer token for authenticated Esplora endpoints (e.g. COINCUBE | Relay).
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub token: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

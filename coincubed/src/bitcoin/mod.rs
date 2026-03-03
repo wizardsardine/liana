@@ -4,6 +4,7 @@
 
 pub mod d;
 pub mod electrum;
+pub mod esplora;
 pub mod poller;
 
 use crate::bitcoin::d::{BitcoindError, CachedTxGetter, LSBlockEntry};
@@ -579,6 +580,200 @@ impl BitcoinInterface for electrum::Electrum {
 
     fn rescan_progress(&self) -> Option<f64> {
         // Until we sync we're at 0%. After the sync, we're at 100%.
+        self.is_rescanning().then_some(0.0)
+    }
+
+    fn block_before_date(&self, _timestamp: u32) -> Option<BlockChainTip> {
+        Some(self.genesis_block())
+    }
+
+    fn tip_time(&self) -> Option<u32> {
+        self.client().tip_time().ok()
+    }
+}
+
+impl BitcoinInterface for esplora::Esplora {
+    fn sync_wallet(
+        &mut self,
+        receive_index: ChildNumber,
+        change_index: ChildNumber,
+    ) -> Result<Option<BlockChainTip>, String> {
+        self.sync_wallet(receive_index, change_index)
+            .map_err(|e| e.to_string())
+    }
+
+    fn received_coins(
+        &self,
+        tip: &BlockChainTip,
+        _descs: &[descriptors::SinglePathCoincubeDesc],
+    ) -> Vec<UTxO> {
+        self.wallet_coins(None)
+            .values()
+            .filter_map(|c| {
+                let height = c.block_info.map(|info| info.height);
+                if height.filter(|h| *h <= tip.height).is_some() {
+                    None
+                } else {
+                    Some(UTxO {
+                        outpoint: c.outpoint,
+                        block_height: height,
+                        amount: c.amount,
+                        address: UTxOAddress::DerivIndex(c.derivation_index, c.is_change),
+                        is_immature: c.is_immature,
+                    })
+                }
+            })
+            .collect()
+    }
+
+    fn confirmed_coins(
+        &self,
+        outpoints: &[bitcoin::OutPoint],
+    ) -> (Vec<(bitcoin::OutPoint, i32, u32)>, Vec<bitcoin::OutPoint>) {
+        let wallet_coins = &self.wallet_coins(Some(outpoints));
+        let mut confirmed = Vec::new();
+        let mut expired = Vec::new();
+        for op in outpoints {
+            if let Some(w_c) = wallet_coins.get(op) {
+                if let Some(block) = w_c.block_info {
+                    if w_c.is_immature {
+                        log::debug!(
+                            "Coin at '{}' comes from an immature coinbase transaction at \
+                            block height {}. Not marking it as confirmed for now.",
+                            op,
+                            block.height
+                        );
+                        continue;
+                    }
+                    confirmed.push((w_c.outpoint, block.height, block.time));
+                }
+            } else {
+                expired.push(*op);
+            }
+        }
+        (confirmed, expired)
+    }
+
+    fn spending_coins(
+        &self,
+        outpoints: &[bitcoin::OutPoint],
+    ) -> Vec<(bitcoin::OutPoint, bitcoin::Txid)> {
+        let wallet_coins = &self.wallet_coins(Some(outpoints));
+        outpoints
+            .iter()
+            .filter_map(|op| {
+                if let Some(w_c) = wallet_coins.get(op) {
+                    w_c.spend_txid.map(|txid| (w_c.outpoint, txid))
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    fn spent_coins(
+        &self,
+        outpoints: &[(bitcoin::OutPoint, bitcoin::Txid)],
+    ) -> (Vec<SpentCoin>, Vec<bitcoin::OutPoint>) {
+        let ops: Vec<_> = outpoints.iter().map(|(op, _)| op).copied().collect();
+        let wallet_coins = &self.wallet_coins(Some(&ops));
+        let mut spent = Vec::new();
+        let mut expired_spending = Vec::new();
+
+        for (op, spend_txid) in outpoints {
+            if let Some(w_c) = wallet_coins.get(op) {
+                if w_c.spend_txid != Some(*spend_txid) {
+                    expired_spending.push(*op);
+                }
+                if let Some(block) = w_c.spend_block {
+                    spent.push((*op, *spend_txid, block.height, block.time));
+                }
+            }
+        }
+        (spent, expired_spending)
+    }
+
+    fn genesis_block_timestamp(&self) -> u32 {
+        self.client()
+            .tip_time()
+            .map(|_| {
+                // Esplora doesn't expose genesis block timestamp directly via a cheap call.
+                // Use the well-known genesis block timestamp (mainnet/signet/testnet all differ,
+                // but coincubed uses this only for display purposes so a best-effort is fine).
+                self.client()
+                    .genesis_block_hash()
+                    .ok()
+                    .and_then(|_| {
+                        // We can't easily get block header time from just the hash without an extra
+                        // Esplora call. Return 0 as a safe fallback; the poller uses chain_tip()
+                        // for sync decisions, not genesis timestamp.
+                        None
+                    })
+                    .unwrap_or(0)
+            })
+            .unwrap_or(0)
+    }
+
+    fn genesis_block(&self) -> BlockChainTip {
+        let hash = self
+            .client()
+            .genesis_block_hash()
+            .expect("Genesis block hash must always be there");
+        BlockChainTip { hash, height: 0 }
+    }
+
+    fn chain_tip(&self) -> BlockChainTip {
+        self.wallet_tip()
+    }
+
+    fn is_in_chain(&self, tip: &BlockChainTip) -> bool {
+        self.is_in_wallet_chain(*tip).unwrap_or_default()
+    }
+
+    /// FIXME: make the Bitcoin backend interface higher level. See the comment in the poller next
+    /// to the `sync_wallet()` call.
+    fn common_ancestor(&self, _tip: &BlockChainTip) -> Option<BlockChainTip> {
+        unreachable!("The common ancestor is returned in `sync_wallet()`. If no reorg was detected then, this method will never be called on an Esplora backend.")
+    }
+
+    fn broadcast_tx(&self, tx: &bitcoin::Transaction) -> Result<(), String> {
+        self.client()
+            .broadcast_tx(tx)
+            .map_err(|e| e.to_string())
+    }
+
+    fn wallet_transaction(
+        &self,
+        txid: &bitcoin::Txid,
+    ) -> Option<(bitcoin::Transaction, Option<Block>)> {
+        self.wallet_transaction(txid)
+    }
+
+    fn mempool_entry(&self, _txid: &bitcoin::Txid) -> Option<MempoolEntry> {
+        // Esplora API doesn't expose mempool fee aggregation; return None.
+        None
+    }
+
+    fn mempool_spenders(&self, _outpoints: &[bitcoin::OutPoint]) -> Vec<MempoolEntry> {
+        // Esplora API doesn't expose mempool spender fee data; return empty.
+        Vec::new()
+    }
+
+    fn sync_progress(&self) -> SyncProgress {
+        let blocks = self.chain_tip().height as u64;
+        SyncProgress::new(1.0, blocks, blocks)
+    }
+
+    fn start_rescan(
+        &mut self,
+        _desc: &descriptors::CoincubeDescriptor,
+        _timestamp: u32,
+    ) -> Result<(), String> {
+        self.trigger_rescan();
+        Ok(())
+    }
+
+    fn rescan_progress(&self) -> Option<f64> {
         self.is_rescanning().then_some(0.0)
     }
 

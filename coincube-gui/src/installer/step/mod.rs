@@ -2,6 +2,7 @@ pub mod descriptor;
 pub mod import_descriptor;
 
 mod backend;
+mod coincube_relay;
 mod mnemonic;
 mod node;
 mod share_xpubs;
@@ -21,6 +22,7 @@ pub use descriptor::{
 };
 
 pub use backend::{ChooseBackend, ImportRemoteWallet, RemoteBackendLogin};
+pub use coincube_relay::CoincubeRelayStep;
 pub use mnemonic::{BackupMnemonic, RecoverMnemonic};
 pub use share_xpubs::ShareXpubs;
 use tracing::warn;
