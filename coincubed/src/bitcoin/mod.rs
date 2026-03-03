@@ -703,12 +703,10 @@ impl BitcoinInterface for esplora::Esplora {
                 self.client()
                     .genesis_block_hash()
                     .ok()
-                    .and_then(|_| {
-                        // We can't easily get block header time from just the hash without an extra
-                        // Esplora call. Return 0 as a safe fallback; the poller uses chain_tip()
-                        // for sync decisions, not genesis timestamp.
-                        None
-                    })
+                    // We can't easily get block header time from just the hash without an extra
+                    // Esplora call. Return 0 as a safe fallback; the poller uses chain_tip()
+                    // for sync decisions, not genesis timestamp.
+                    .and(None)
                     .unwrap_or(0)
             })
             .unwrap_or(0)
