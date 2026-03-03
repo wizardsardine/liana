@@ -60,6 +60,16 @@ impl Client {
         })
     }
 
+    /// Get the timestamp of the genesis block (block 0).
+    pub fn genesis_block_timestamp(&self) -> Result<u32, Error> {
+        let hash = self.genesis_block_hash()?;
+        let header = self
+            .0
+            .get_header_by_hash(&hash)
+            .map_err(|e| Error::Client(Box::new(e)))?;
+        Ok(header.time)
+    }
+
     /// Get the timestamp of the current tip block.
     pub fn tip_time(&self) -> Result<u32, Error> {
         let hash = self

@@ -694,22 +694,7 @@ impl BitcoinInterface for esplora::Esplora {
     }
 
     fn genesis_block_timestamp(&self) -> u32 {
-        self.client()
-            .tip_time()
-            .map(|_| {
-                // Esplora doesn't expose genesis block timestamp directly via a cheap call.
-                // Use the well-known genesis block timestamp (mainnet/signet/testnet all differ,
-                // but coincubed uses this only for display purposes so a best-effort is fine).
-                self.client()
-                    .genesis_block_hash()
-                    .ok()
-                    // We can't easily get block header time from just the hash without an extra
-                    // Esplora call. Return 0 as a safe fallback; the poller uses chain_tip()
-                    // for sync decisions, not genesis timestamp.
-                    .and(None)
-                    .unwrap_or(0)
-            })
-            .unwrap_or(0)
+        self.client().genesis_block_timestamp().unwrap_or(0)
     }
 
     fn genesis_block(&self) -> BlockChainTip {

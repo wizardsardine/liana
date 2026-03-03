@@ -198,7 +198,7 @@ impl BreezClient {
     fn get_sdk(&self) -> Result<&Arc<breez::LiquidSdk>, BreezError> {
         self.sdk
             .as_ref()
-            .ok_or_else(|| BreezError::NetworkNotSupported(self.network))
+            .ok_or(BreezError::NetworkNotSupported(self.network))
     }
 
     /// Connect to Breez SDK using an external signer (HotSigner)

@@ -12,6 +12,20 @@ const RELAY_URL: &str = "https://dev-api.coincube.io/api/v1/esplora/bitcoin/main
 #[cfg(not(debug_assertions))]
 const RELAY_URL: &str = concat!(env!("COINCUBE_API_URL"), "/api/v1/esplora/bitcoin/mainnet");
 
+fn relay_url(network: bitcoin::Network) -> String {
+    let network_path = match network {
+        bitcoin::Network::Bitcoin => "bitcoin/mainnet",
+        bitcoin::Network::Testnet => "bitcoin/testnet",
+        bitcoin::Network::Signet => "bitcoin/signet",
+        _ => "bitcoin/regtest",
+    };
+    #[cfg(debug_assertions)]
+    let base = "https://dev-api.coincube.io";
+    #[cfg(not(debug_assertions))]
+    let base = env!("COINCUBE_API_URL");
+    format!("{}/api/v1/esplora/{}", base, network_path)
+}
+
 use coincube_core::miniscript::bitcoin::{self, Network};
 use coincube_ui::{
     component::network_banner,

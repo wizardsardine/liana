@@ -143,7 +143,7 @@ fn default_validate_domain() -> bool {
 }
 
 /// Everything we need to know for talking to an Esplora HTTP server.
-#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, PartialEq, Deserialize, Serialize)]
 pub struct EsploraConfig {
     /// The HTTP(S) URL of the Esplora server.
     /// e.g. https://api.coincube.io/api/v1/esplora/bitcoin/mainnet
@@ -151,6 +151,15 @@ pub struct EsploraConfig {
     /// Optional JWT bearer token for authenticated Esplora endpoints (e.g. COINCUBE | Relay).
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub token: Option<String>,
+}
+
+impl std::fmt::Debug for EsploraConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EsploraConfig")
+            .field("addr", &self.addr)
+            .field("token", &self.token.as_ref().map(|_| "<redacted>"))
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

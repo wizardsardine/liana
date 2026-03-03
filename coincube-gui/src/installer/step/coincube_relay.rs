@@ -54,12 +54,13 @@ impl From<CoincubeRelayStep> for Box<dyn Step> {
 impl Step for CoincubeRelayStep {
     fn skip(&self, ctx: &Context) -> bool {
         !ctx.use_coincube_relay
+            || ctx.network == coincube_core::miniscript::bitcoin::Network::Regtest
     }
 
     fn apply(&mut self, ctx: &mut Context) -> bool {
         if let Some(token) = &self.jwt {
             ctx.bitcoin_backend = Some(BitcoinBackend::Esplora(EsploraConfig {
-                addr: super::super::RELAY_URL.to_string(),
+                addr: super::super::relay_url(ctx.network),
                 token: Some(token.clone()),
             }));
             true
@@ -80,7 +81,7 @@ impl Step for CoincubeRelayStep {
                     self.is_signup = !self.is_signup;
                     self.error = None;
                 }
-                CoincubeRelayMsg::RequestOtp | CoincubeRelayMsg::ResendOtp => {
+                CoincubeRelayMsg::RequestOtp => {
                     let client = self.client.clone();
                     let email = self.email.value.clone();
                     let is_signup = self.is_signup;
@@ -97,6 +98,25 @@ impl Step for CoincubeRelayStep {
                             .map_err(|e| e.to_string())
                         },
                         |res| Message::CoincubeRelay(CoincubeRelayMsg::OtpRequested(res)),
+                    );
+                }
+                CoincubeRelayMsg::ResendOtp => {
+                    let client = self.client.clone();
+                    let email = self.email.value.clone();
+                    let is_signup = self.is_signup;
+                    self.processing = true;
+                    self.error = None;
+                    return Task::perform(
+                        async move {
+                            let req = OtpRequest { email };
+                            if is_signup {
+                                client.signup_send_otp(req).await
+                            } else {
+                                client.login_send_otp(req).await
+                            }
+                            .map_err(|e| e.to_string())
+                        },
+                        |res| Message::CoincubeRelay(CoincubeRelayMsg::OtpResent(res)),
                     );
                 }
                 CoincubeRelayMsg::OtpRequested(res) => {

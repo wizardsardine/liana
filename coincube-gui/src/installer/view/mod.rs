@@ -1335,11 +1335,7 @@ pub fn define_coincube_relay<'a>(
                 .size(text::P1_SIZE)
                 .padding(10),
             )
-            .push(if let Some(e) = error {
-                Some(text(e).style(theme::text::warning))
-            } else {
-                None
-            })
+            .push(error.map(|e| text(e).style(theme::text::warning)))
             .push(
                 button::secondary(None, action_label)
                     .width(Length::Fixed(250.0))
@@ -1369,11 +1365,7 @@ pub fn define_coincube_relay<'a>(
                 .size(text::P1_SIZE)
                 .padding(10),
             )
-            .push(if let Some(e) = error {
-                Some(text(e).style(theme::text::warning))
-            } else {
-                None
-            })
+            .push(error.map(|e| text(e).style(theme::text::warning)))
             .push(
                 button::secondary(None, "Resend Code")
                     .width(Length::Fixed(200.0))

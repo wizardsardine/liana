@@ -11,17 +11,9 @@ use crate::{
     node::esplora::ConfigField,
 };
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct DefineEsplora {
     address: form::Value<String>,
-}
-
-impl Default for DefineEsplora {
-    fn default() -> Self {
-        Self {
-            address: Default::default(),
-        }
-    }
 }
 
 impl DefineEsplora {
@@ -34,13 +26,15 @@ impl DefineEsplora {
     }
 
     pub fn update(&mut self, message: message::DefineNode) -> Task<Message> {
-        if let message::DefineNode::DefineEsplora(msg) = message {
-            if let message::DefineEsplora::ConfigFieldEdited(field, value) = msg {
-                match field {
-                    ConfigField::Address => {
-                        self.address.value.clone_from(&value);
-                        self.address.valid = crate::node::esplora::is_esplora_address_valid(&value);
-                    }
+        if let message::DefineNode::DefineEsplora(message::DefineEsplora::ConfigFieldEdited(
+            field,
+            value,
+        )) = message
+        {
+            match field {
+                ConfigField::Address => {
+                    self.address.value.clone_from(&value);
+                    self.address.valid = crate::node::esplora::is_esplora_address_valid(&value);
                 }
             }
         }
