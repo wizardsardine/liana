@@ -737,9 +737,7 @@ impl BitcoinInterface for esplora::Esplora {
     }
 
     fn broadcast_tx(&self, tx: &bitcoin::Transaction) -> Result<(), String> {
-        self.client()
-            .broadcast_tx(tx)
-            .map_err(|e| e.to_string())
+        self.client().broadcast_tx(tx).map_err(|e| e.to_string())
     }
 
     fn wallet_transaction(

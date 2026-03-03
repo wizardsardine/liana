@@ -37,7 +37,7 @@ use crate::{
     hw::{is_compatible_with_tapminiscript, HardwareWallet, UnsupportedReason},
     installer::{
         descriptor::{PathSequence, PathWarning},
-        message::{self, CoincubeRelayMsg, DefineBitcoind, DefineNode, DefineEsplora, Message},
+        message::{self, CoincubeRelayMsg, DefineBitcoind, DefineEsplora, DefineNode, Message},
         prompt,
         step::{DownloadState, InstallState},
         view::editor::format_sequence_duration,
@@ -1293,9 +1293,10 @@ pub fn define_esplora<'a>(address: &form::Value<String>) -> Element<'a, Message>
         .push(text("Esplora URL:").bold())
         .push(
             form::Form::new_trimmed(super::RELAY_URL, address, |msg| {
-                Message::DefineNode(DefineNode::DefineEsplora(
-                    DefineEsplora::ConfigFieldEdited(esplora::ConfigField::Address, msg),
-                ))
+                Message::DefineNode(DefineNode::DefineEsplora(DefineEsplora::ConfigFieldEdited(
+                    esplora::ConfigField::Address,
+                    msg,
+                )))
             })
             .warning("Please enter a valid URL starting with http:// or https://")
             .size(text::P1_SIZE)
@@ -1416,16 +1417,13 @@ pub fn select_bitcoind_type<'a>(progress: (usize, usize)) -> Element<'a, Message
                     )
                     .push(
                         Container::new(
-                            Column::new()
-                                .spacing(20)
-                                .width(Length::Fixed(250.0))
-                                .push(
-                                    text(
-                                        "I want Coincube to automatically install \
+                            Column::new().spacing(20).width(Length::Fixed(250.0)).push(
+                                text(
+                                    "I want Coincube to automatically install \
                                         a Bitcoin node on my device",
-                                    )
-                                    .bold(),
-                                ),
+                                )
+                                .bold(),
+                            ),
                         )
                         .padding(20),
                     )

@@ -55,7 +55,7 @@ use crate::{
 pub use descriptor::{KeySource, KeySourceKind, PathKind, PathSequence};
 pub use message::Message;
 use step::{
-    BackupDescriptor, BackupMnemonic, ChooseBackend, CoincubeRelayStep, ChooseDescriptorTemplate,
+    BackupDescriptor, BackupMnemonic, ChooseBackend, ChooseDescriptorTemplate, CoincubeRelayStep,
     DefineDescriptor, DefineNode, DescriptorTemplateDescription, Final, ImportDescriptor,
     ImportRemoteWallet, InternalBitcoindStep, RecoverMnemonic, RegisterDescriptor,
     RemoteBackendLogin, SelectBitcoindTypeStep, ShareXpubs, Step, WalletAlias,
@@ -134,16 +134,18 @@ impl Installer {
         let context = Context::new(
             network,
             destination_path.clone(),
-            remote_backend.map(RemoteBackend::WithoutWallet).unwrap_or_else(|| {
-                match (&user_flow, network) {
-                    // CreateWallet no longer has a ChooseBackend step; always local.
-                    (UserFlow::CreateWallet, _) => RemoteBackend::None,
-                    // AddWallet still has ChooseBackend which transitions away from Undefined.
-                    (_, Network::Bitcoin | Network::Signet) => RemoteBackend::Undefined,
-                    // Non-mainnet/signet AddWallet skips backend choice.
-                    _ => RemoteBackend::None,
-                }
-            }),
+            remote_backend
+                .map(RemoteBackend::WithoutWallet)
+                .unwrap_or_else(|| {
+                    match (&user_flow, network) {
+                        // CreateWallet no longer has a ChooseBackend step; always local.
+                        (UserFlow::CreateWallet, _) => RemoteBackend::None,
+                        // AddWallet still has ChooseBackend which transitions away from Undefined.
+                        (_, Network::Bitcoin | Network::Signet) => RemoteBackend::Undefined,
+                        // Non-mainnet/signet AddWallet skips backend choice.
+                        _ => RemoteBackend::None,
+                    }
+                }),
         );
         let mut installer = Installer {
             network,

@@ -39,13 +39,21 @@ impl Client {
 
     /// Get the genesis block hash (block at height 0).
     pub fn genesis_block_hash(&self) -> Result<bitcoin::BlockHash, Error> {
-        self.0.get_block_hash(0).map_err(|e| Error::Client(Box::new(e)))
+        self.0
+            .get_block_hash(0)
+            .map_err(|e| Error::Client(Box::new(e)))
     }
 
     /// Get the current chain tip (height + hash).
     pub fn chain_tip(&self) -> Result<BlockChainTip, Error> {
-        let height = self.0.get_height().map_err(|e| Error::Client(Box::new(e)))?;
-        let hash = self.0.get_tip_hash().map_err(|e| Error::Client(Box::new(e)))?;
+        let height = self
+            .0
+            .get_height()
+            .map_err(|e| Error::Client(Box::new(e)))?;
+        let hash = self
+            .0
+            .get_tip_hash()
+            .map_err(|e| Error::Client(Box::new(e)))?;
         Ok(BlockChainTip {
             hash,
             height: height as i32,
@@ -54,8 +62,14 @@ impl Client {
 
     /// Get the timestamp of the current tip block.
     pub fn tip_time(&self) -> Result<u32, Error> {
-        let hash = self.0.get_tip_hash().map_err(|e| Error::Client(Box::new(e)))?;
-        let header = self.0.get_header_by_hash(&hash).map_err(|e| Error::Client(Box::new(e)))?;
+        let hash = self
+            .0
+            .get_tip_hash()
+            .map_err(|e| Error::Client(Box::new(e)))?;
+        let header = self
+            .0
+            .get_header_by_hash(&hash)
+            .map_err(|e| Error::Client(Box::new(e)))?;
         Ok(header.time)
     }
 

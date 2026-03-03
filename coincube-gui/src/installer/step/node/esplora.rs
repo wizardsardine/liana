@@ -39,8 +39,7 @@ impl DefineEsplora {
                 match field {
                     ConfigField::Address => {
                         self.address.value.clone_from(&value);
-                        self.address.valid =
-                            crate::node::esplora::is_esplora_address_valid(&value);
+                        self.address.valid = crate::node::esplora::is_esplora_address_valid(&value);
                     }
                 }
             }

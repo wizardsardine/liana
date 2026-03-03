@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use iced::futures::{SinkExt, Stream};
 use iced::stream::channel;
-use iced::{Alignment, Length, Subscription, Task, time};
+use iced::{time, Alignment, Length, Subscription, Task};
 use tokio::runtime::Handle;
 use tracing::{debug, info, warn};
 
@@ -72,8 +72,12 @@ pub struct Loader {
 
 pub enum Step {
     Connecting,
-    StartingDaemon { progress: f32 },
-    FullScan { progress: f32 },
+    StartingDaemon {
+        progress: f32,
+    },
+    FullScan {
+        progress: f32,
+    },
     Syncing {
         daemon: Arc<dyn Daemon + Sync + Send>,
         progress: f64,
@@ -432,7 +436,10 @@ impl Loader {
         } else {
             Subscription::none()
         };
-        let scan_sub = if matches!(self.step, Step::StartingDaemon { .. } | Step::FullScan { .. }) {
+        let scan_sub = if matches!(
+            self.step,
+            Step::StartingDaemon { .. } | Step::FullScan { .. }
+        ) {
             time::every(Duration::from_millis(500)).map(|_| Message::LoadingTick)
         } else {
             Subscription::none()
