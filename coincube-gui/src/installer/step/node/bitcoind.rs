@@ -288,6 +288,7 @@ pub fn port_is_valid(port: &u16) -> bool {
 pub struct SelectBitcoindTypeStep {
     use_external: bool,
     use_relay: bool,
+    network: Network,
 }
 
 impl Default for SelectBitcoindTypeStep {
@@ -307,11 +308,16 @@ impl SelectBitcoindTypeStep {
         Self {
             use_external: true,
             use_relay: false,
+            network: Network::Bitcoin,
         }
     }
 }
 
 impl Step for SelectBitcoindTypeStep {
+    fn load_context(&mut self, ctx: &Context) {
+        self.network = ctx.network;
+    }
+
     fn skip(&self, ctx: &Context) -> bool {
         ctx.remote_backend.is_some()
     }
@@ -351,7 +357,7 @@ impl Step for SelectBitcoindTypeStep {
         progress: (usize, usize),
         _email: Option<&str>,
     ) -> Element<Message> {
-        view::select_bitcoind_type(progress)
+        view::select_bitcoind_type(progress, self.network != Network::Regtest)
     }
 }
 

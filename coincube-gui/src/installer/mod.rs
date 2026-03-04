@@ -6,12 +6,6 @@ mod prompt;
 mod step;
 mod view;
 
-#[cfg(debug_assertions)]
-const RELAY_URL: &str = "https://dev-api.coincube.io/api/v1/esplora/bitcoin/mainnet";
-
-#[cfg(not(debug_assertions))]
-const RELAY_URL: &str = concat!(env!("COINCUBE_API_URL"), "/api/v1/esplora/bitcoin/mainnet");
-
 fn relay_url(network: bitcoin::Network) -> String {
     let network_path = match network {
         bitcoin::Network::Bitcoin => "bitcoin/mainnet",

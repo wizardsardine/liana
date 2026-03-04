@@ -78,8 +78,10 @@ impl Step for CoincubeRelayStep {
                         !self.email.value.is_empty() && self.email.value.contains('@');
                 }
                 CoincubeRelayMsg::ToggleMode => {
-                    self.is_signup = !self.is_signup;
-                    self.error = None;
+                    if !self.processing {
+                        self.is_signup = !self.is_signup;
+                        self.error = None;
+                    }
                 }
                 CoincubeRelayMsg::RequestOtp => {
                     let client = self.client.clone();

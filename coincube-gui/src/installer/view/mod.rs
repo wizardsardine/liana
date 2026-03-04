@@ -1391,150 +1391,174 @@ pub fn define_coincube_relay<'a>(
     )
 }
 
-pub fn select_bitcoind_type<'a>(progress: (usize, usize)) -> Element<'a, Message> {
+pub fn select_bitcoind_type<'a>(
+    progress: (usize, usize),
+    relay_supported: bool,
+) -> Element<'a, Message> {
+    let relay_header = relay_supported.then(|| {
+        Container::new(
+            Column::new()
+                .spacing(20)
+                .width(Length::Fixed(250.0))
+                .push(text("COINCUBE | Relay").bold()),
+        )
+        .padding(20)
+    });
+
+    let relay_description = relay_supported.then(|| {
+        Container::new(
+            Column::new()
+                .spacing(20)
+                .width(Length::Fixed(250.0))
+                .align_x(Alignment::Start)
+                .push(text(
+                    "Use the COINCUBE | Relay service to access \
+                    our Esplora. No local node required.",
+                )),
+        )
+        .padding(20)
+    });
+
+    let relay_button = relay_supported.then(|| {
+        Container::new(
+            Column::new()
+                .spacing(20)
+                .width(Length::Fixed(250.0))
+                .align_x(Alignment::Center)
+                .push(
+                    button::secondary(None, "Select")
+                        .width(Length::Fixed(250.0))
+                        .on_press(Message::SelectBitcoindType(
+                            message::SelectBitcoindTypeMsg::UseRelay,
+                        )),
+                ),
+        )
+        .padding(20)
+    });
+
+    let header_row = {
+        let mut row = Row::new()
+            .align_y(Alignment::Start)
+            .spacing(20)
+            .push(
+                Container::new(
+                    Column::new()
+                        .spacing(20)
+                        .width(Length::Fixed(250.0))
+                        .push(text("I already have a node").bold()),
+                )
+                .padding(20),
+            )
+            .push(
+                Container::new(
+                    Column::new().spacing(20).width(Length::Fixed(250.0)).push(
+                        text(
+                            "I want Coincube to automatically install \
+                                a Bitcoin node on my device",
+                        )
+                        .bold(),
+                    ),
+                )
+                .padding(20),
+            );
+        if let Some(col) = relay_header {
+            row = row.push(col);
+        }
+        row
+    };
+
+    let description_row = {
+        let mut row = Row::new()
+            .align_y(Alignment::Start)
+            .spacing(20)
+            .push(
+                Container::new(
+                    Column::new()
+                        .spacing(20)
+                        .width(Length::Fixed(250.0))
+                        .align_x(Alignment::Start)
+                        .push(text(
+                            "Select this option if you already have \
+                            a Bitcoin node running locally or remotely. \
+                            Coincube will connect to it.",
+                        )),
+                )
+                .padding(20),
+            )
+            .push(
+                Container::new(
+                    Column::new()
+                        .spacing(20)
+                        .width(Length::Fixed(250.0))
+                        .align_x(Alignment::Start)
+                        .push(text(
+                            "Coincube will install a pruned node \
+                            on your computer. You won't need to do anything \
+                            except have some disk space available \
+                            (~30GB required on mainnet) and \
+                            wait for the initial synchronization with the \
+                            network (it can take some days depending on \
+                            your internet connection speed).",
+                        )),
+                )
+                .padding(20),
+            );
+        if let Some(col) = relay_description {
+            row = row.push(col);
+        }
+        row
+    };
+
+    let button_row = {
+        let mut row = Row::new()
+            .align_y(Alignment::End)
+            .spacing(20)
+            .push(
+                Container::new(
+                    Column::new()
+                        .spacing(20)
+                        .width(Length::Fixed(250.0))
+                        .align_x(Alignment::Center)
+                        .push(
+                            button::secondary(None, "Select")
+                                .width(Length::Fixed(250.0))
+                                .on_press(Message::SelectBitcoindType(
+                                    message::SelectBitcoindTypeMsg::UseExternal(true),
+                                )),
+                        ),
+                )
+                .padding(20),
+            )
+            .push(
+                Container::new(
+                    Column::new()
+                        .spacing(20)
+                        .width(Length::Fixed(250.0))
+                        .align_x(Alignment::Center)
+                        .push(
+                            button::secondary(None, "Select")
+                                .width(Length::Fixed(250.0))
+                                .on_press(Message::SelectBitcoindType(
+                                    message::SelectBitcoindTypeMsg::UseExternal(false),
+                                )),
+                        ),
+                )
+                .padding(20),
+            );
+        if let Some(col) = relay_button {
+            row = row.push(col);
+        }
+        row
+    };
+
     layout(
         progress,
         None,
         "Bitcoin node management",
         Column::new()
-            .push(
-                Row::new()
-                    .align_y(Alignment::Start)
-                    .spacing(20)
-                    .push(
-                        Container::new(
-                            Column::new()
-                                .spacing(20)
-                                .width(Length::Fixed(250.0))
-                                .push(text("I already have a node").bold()),
-                        )
-                        .padding(20),
-                    )
-                    .push(
-                        Container::new(
-                            Column::new().spacing(20).width(Length::Fixed(250.0)).push(
-                                text(
-                                    "I want Coincube to automatically install \
-                                        a Bitcoin node on my device",
-                                )
-                                .bold(),
-                            ),
-                        )
-                        .padding(20),
-                    )
-                    .push(
-                        Container::new(
-                            Column::new()
-                                .spacing(20)
-                                .width(Length::Fixed(250.0))
-                                .push(text("COINCUBE | Relay").bold()),
-                        )
-                        .padding(20),
-                    ),
-            )
-            .push(
-                Row::new()
-                    .align_y(Alignment::Start)
-                    .spacing(20)
-                    .push(
-                        Container::new(
-                            Column::new()
-                                .spacing(20)
-                                .width(Length::Fixed(250.0))
-                                .align_x(Alignment::Start)
-                                .push(text(
-                                    "Select this option if you already have \
-                                    a Bitcoin node running locally or remotely. \
-                                    Coincube will connect to it.",
-                                )),
-                        )
-                        .padding(20),
-                    )
-                    .push(
-                        Container::new(
-                            Column::new()
-                                .spacing(20)
-                                .width(Length::Fixed(250.0))
-                                .align_x(Alignment::Start)
-                                .push(text(
-                                    "Coincube will install a pruned node \
-                                    on your computer. You won't need to do anything \
-                                    except have some disk space available \
-                                    (~30GB required on mainnet) and \
-                                    wait for the initial synchronization with the \
-                                    network (it can take some days depending on \
-                                    your internet connection speed).",
-                                )),
-                        )
-                        .padding(20),
-                    )
-                    .push(
-                        Container::new(
-                            Column::new()
-                                .spacing(20)
-                                .width(Length::Fixed(250.0))
-                                .align_x(Alignment::Start)
-                                .push(text(
-                                    "Use the COINCUBE | Relay service to access \
-                                    our Esplora. No local node required.",
-                                )),
-                        )
-                        .padding(20),
-                    ),
-            )
-            .push(
-                Row::new()
-                    .align_y(Alignment::End)
-                    .spacing(20)
-                    .push(
-                        Container::new(
-                            Column::new()
-                                .spacing(20)
-                                .width(Length::Fixed(250.0))
-                                .align_x(Alignment::Center)
-                                .push(
-                                    button::secondary(None, "Select")
-                                        .width(Length::Fixed(250.0))
-                                        .on_press(Message::SelectBitcoindType(
-                                            message::SelectBitcoindTypeMsg::UseExternal(true),
-                                        )),
-                                ),
-                        )
-                        .padding(20),
-                    )
-                    .push(
-                        Container::new(
-                            Column::new()
-                                .spacing(20)
-                                .width(Length::Fixed(250.0))
-                                .align_x(Alignment::Center)
-                                .push(
-                                    button::secondary(None, "Select")
-                                        .width(Length::Fixed(250.0))
-                                        .on_press(Message::SelectBitcoindType(
-                                            message::SelectBitcoindTypeMsg::UseExternal(false),
-                                        )),
-                                ),
-                        )
-                        .padding(20),
-                    )
-                    .push(
-                        Container::new(
-                            Column::new()
-                                .spacing(20)
-                                .width(Length::Fixed(250.0))
-                                .align_x(Alignment::Center)
-                                .push(
-                                    button::secondary(None, "Select")
-                                        .width(Length::Fixed(250.0))
-                                        .on_press(Message::SelectBitcoindType(
-                                            message::SelectBitcoindTypeMsg::UseRelay,
-                                        )),
-                                ),
-                        )
-                        .padding(20),
-                    ),
-            ),
+            .push(header_row)
+            .push(description_row)
+            .push(button_row),
         true,
         Some(Message::Previous),
     )
