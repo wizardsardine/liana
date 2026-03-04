@@ -4,7 +4,7 @@ use iced::{
     alignment::Horizontal,
     widget::{
         qr_code::{self, QRCode},
-        scrollable, Button, Space,
+        scrollable, tooltip, Button, Space,
     },
     Alignment, Length,
 };
@@ -121,6 +121,7 @@ pub fn receive<'a>(
     active_payjoin_sessions: &'a HashSet<liana::miniscript::bitcoin::bip32::ChildNumber>,
     is_last_page: bool,
     processing: bool,
+    has_coins: bool,
 ) -> Element<'a, Message> {
     // Number of start and end address characters to show in collapsed view.
     const NUM_ADDR_CHARS: usize = 16;
@@ -142,10 +143,18 @@ pub fn receive<'a>(
                             }
                             .on_press(Message::NextReceiveAddress)
                         })
-                        .push(
-                            button::secondary(Some(icon::plus_icon()), "Receive Payjoin")
-                                .on_press(Message::ReceivePayjoin),
-                        ),
+                        .push(if has_coins {
+                            Element::<Message>::from(
+                                button::secondary(Some(icon::plus_icon()), "Receive Payjoin")
+                                    .on_press(Message::ReceivePayjoin),
+                            )
+                        } else {
+                            Element::<Message>::from(Container::new(tooltip::Tooltip::new(
+                                button::secondary(Some(icon::plus_icon()), "Receive Payjoin"),
+                                "Account balance required to initiate payjoin",
+                                tooltip::Position::Bottom,
+                            )))
+                        }),
                 ),
         )
         .push(text("Always generate a new address for each deposit."))

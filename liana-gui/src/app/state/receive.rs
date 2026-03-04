@@ -145,6 +145,7 @@ impl State for ReceivePanel {
                 &self.active_payjoin_sessions,
                 self.prev_continue_from.is_none(),
                 self.processing,
+                !cache.coins().is_empty(),
             ),
         );
 
