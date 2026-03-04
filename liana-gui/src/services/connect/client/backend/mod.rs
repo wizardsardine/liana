@@ -667,7 +667,10 @@ impl Daemon for BackendWalletClient {
         unimplemented!()
     }
 
-    async fn get_payjoin_bip21(&self, _derivation_index: u32) -> Result<Option<String>, DaemonError> {
+    async fn get_payjoin_bip21(
+        &self,
+        _derivation_index: u32,
+    ) -> Result<Option<String>, DaemonError> {
         unimplemented!()
     }
 
