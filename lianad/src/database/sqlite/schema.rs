@@ -95,7 +95,7 @@ CREATE TABLE coins (
  */
 CREATE TABLE payjoin_outpoints (
     outpoint BLOB NOT NULL PRIMARY KEY,
-    added_at INTEGER NOT NULL
+    created_at INTEGER NOT NULL
 );
 
 /* A mapping from descriptor address to derivation index. Necessary until
@@ -145,21 +145,11 @@ CREATE TABLE payjoin_ohttp_keys (
 /* Payjoin receivers */
 CREATE TABLE payjoin_receivers (
     id INTEGER PRIMARY KEY NOT NULL,
-    derivation_index INTEGER,
-    bip21 TEXT,
-    original_txid BLOB,
-    proposed_txid BLOB,
+    derivation_index INTEGER NOT NULL,
     created_at INTEGER NOT NULL,
-    completed_at INTEGER
-);
-
-/* Payjoin Receiver session events */
-CREATE TABLE payjoin_receiver_events (
-    id INTEGER PRIMARY KEY NOT NULL,
-    session_id INTEGER NOT NULL,
-    created_at INTEGER NOT NULL,
-    event BLOB NOT NULL,
-    FOREIGN KEY (session_id) REFERENCES payjoin_receivers (id)
+    completed_at INTEGER,
+    events TEXT NOT NULL DEFAULT '[]',
+    FOREIGN KEY (derivation_index) REFERENCES addresses (derivation_index)
 );
 ";
 

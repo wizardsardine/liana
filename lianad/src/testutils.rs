@@ -598,22 +598,6 @@ impl DatabaseConnection for DummyDatabase {
         todo!()
     }
 
-    fn save_receiver_session_original_txid(
-        &mut self,
-        _session_id: &crate::payjoin::db::SessionId,
-        _original_txid: &bitcoin::Txid,
-    ) {
-        todo!()
-    }
-
-    fn save_receiver_session_proposed_txid(
-        &mut self,
-        _session_id: &crate::payjoin::db::SessionId,
-        _proposed_txid: &bitcoin::Txid,
-    ) {
-        todo!()
-    }
-
     fn get_all_active_receiver_session_ids(&mut self) -> Vec<crate::payjoin::db::SessionId> {
         todo!()
     }

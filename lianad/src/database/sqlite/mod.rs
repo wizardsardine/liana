@@ -29,6 +29,7 @@ use crate::{
 };
 use liana::descriptors::LianaDescriptor;
 use payjoin::{bitcoin::consensus::Encodable, OhttpKeys};
+use serde_json;
 
 use std::{
     cmp,
@@ -45,7 +46,7 @@ use miniscript::bitcoin::{
     secp256k1,
 };
 
-const DB_VERSION: i64 = 10;
+const DB_VERSION: i64 = 8;
 
 /// Last database version for which Bitcoin transactions were not stored in database. In practice
 /// this meant we relied on the bitcoind watchonly wallet to store them for us.
@@ -1061,9 +1062,22 @@ impl SqliteConn {
     /// Save a Receiver Session Event
     pub fn save_receiver_session_event(&mut self, session_id: &SessionId, event: Vec<u8>) {
         db_exec(&mut self.conn, |db_tx| {
+            let events: Vec<Vec<u8>> = db_tx
+                .query_row(
+                    "SELECT events FROM payjoin_receivers WHERE id = ?1",
+                    rusqlite::params![session_id.0],
+                    |row| {
+                        let events_json: String = row.get(0)?;
+                        Ok(serde_json::from_str(&events_json).unwrap_or_default())
+                    },
+                )
+                .unwrap_or_default();
+            let mut events = events;
+            events.push(event);
+            let events_json = serde_json::to_string(&events).unwrap();
             db_tx.execute(
-                "INSERT INTO payjoin_receiver_events (session_id, created_at, event) VALUES (?1, ?2, ?3)",
-                rusqlite::params![session_id.0, curr_timestamp(), event],
+                "UPDATE payjoin_receivers SET events = ?1 WHERE id = ?2",
+                rusqlite::params![events_json, session_id.0],
             )?;
             Ok(())
         })
@@ -1086,46 +1100,17 @@ impl SqliteConn {
     pub fn load_receiver_session_events(&mut self, session_id: &SessionId) -> Vec<Vec<u8>> {
         db_query(
             &mut self.conn,
-            "SELECT event FROM payjoin_receiver_events WHERE session_id = ?1 ORDER BY created_at ASC",
+            "SELECT events FROM payjoin_receivers WHERE id = ?1",
             rusqlite::params![session_id.0],
             |row| {
-                let event: Vec<u8> = row.get(0)?;
-                Ok(event)
+                let events_json: String = row.get(0)?;
+                Ok(serde_json::from_str(&events_json).unwrap_or_default())
             },
         )
         .expect("Db must not fail")
-    }
-
-    /// Save original txid for a receiver session
-    pub fn update_receiver_session_original_txid(
-        &mut self,
-        session_id: &SessionId,
-        original_txid: &bitcoin::Txid,
-    ) {
-        db_exec(&mut self.conn, |db_tx| {
-            db_tx.execute(
-                "UPDATE payjoin_receivers SET original_txid = ?1 WHERE id = ?2",
-                rusqlite::params![original_txid[..].to_vec(), session_id.0],
-            )?;
-            Ok(())
-        })
-        .expect("Db must not fail");
-    }
-
-    /// Save proposed txid for a receiver session
-    pub fn save_receiver_session_proposed_txid(
-        &mut self,
-        session_id: &SessionId,
-        proposed_txid: &bitcoin::Txid,
-    ) {
-        db_exec(&mut self.conn, |db_tx| {
-            db_tx.execute(
-                "UPDATE payjoin_receivers SET proposed_txid = ?1 WHERE id = ?2",
-                rusqlite::params![proposed_txid[..].to_vec(), session_id.0],
-            )?;
-            Ok(())
-        })
-        .expect("Db must not fail");
+        .into_iter()
+        .next()
+        .unwrap_or_default()
     }
 
     /// Get receiver session id from txid
@@ -1133,26 +1118,33 @@ impl SqliteConn {
         &mut self,
         txid: &bitcoin::Txid,
     ) -> Option<SessionId> {
-        db_query(
-            &mut self.conn,
-            "SELECT id FROM payjoin_receivers WHERE proposed_txid = ?1 or original_txid = ?1",
-            rusqlite::params![txid[..].to_vec()],
-            |row| {
-                let id: i64 = row.get(0)?;
-                Ok(SessionId::new(id))
-            },
-        )
-        .ok()
-        .and_then(|v| v.into_iter().next())
+        let sessions = self.get_active_payjoin_sessions();
+        let txid_bytes = txid[..].to_vec();
+        for (session_id, _) in sessions {
+            let events = self.load_receiver_session_events(&session_id);
+            for event in events {
+                if event
+                    .windows(txid_bytes.len())
+                    .any(|w| w == txid_bytes.as_slice())
+                {
+                    return Some(session_id);
+                }
+            }
+        }
+        None
     }
 
     /// Create new Receiver Session
-    pub fn save_new_payjoin_receiver_session(&mut self, derivation_index: u32, bip21: &str) -> i64 {
+    pub fn save_new_payjoin_receiver_session(
+        &mut self,
+        derivation_index: u32,
+        _bip21: &str,
+    ) -> i64 {
         let mut id = 0i64;
         db_exec(&mut self.conn, |db_tx| {
             db_tx.execute(
-                "INSERT INTO payjoin_receivers (derivation_index, bip21, created_at) VALUES (?1, ?2, ?3)",
-                rusqlite::params![derivation_index, bip21, curr_timestamp()],
+                "INSERT INTO payjoin_receivers (derivation_index, created_at) VALUES (?1, ?2)",
+                rusqlite::params![derivation_index, curr_timestamp()],
             )?;
 
             id = db_tx.last_insert_rowid();
@@ -1166,7 +1158,7 @@ impl SqliteConn {
     pub fn get_payjoin_receiver_bip21(&mut self, derivation_index: u32) -> Option<String> {
         db_query(
             &mut self.conn,
-            "SELECT bip21 FROM payjoin_receivers WHERE derivation_index = ?1 AND bip21 IS NOT NULL",
+            "SELECT receive_address FROM addresses WHERE derivation_index = ?1",
             rusqlite::params![derivation_index],
             |row| row.get(0),
         )
@@ -1175,16 +1167,9 @@ impl SqliteConn {
         .next()
     }
 
-    /// Update bip21 for a receiver session
-    pub fn update_payjoin_receiver_bip21(&mut self, derivation_index: u32, bip21: &str) {
-        db_exec(&mut self.conn, |db_tx| {
-            db_tx.execute(
-                "UPDATE payjoin_receivers SET bip21 = ?1 WHERE derivation_index = ?2",
-                rusqlite::params![bip21, derivation_index],
-            )?;
-            Ok(())
-        })
-        .expect("Db must not fail");
+    /// Update bip21 for a receiver session (no-op, kept for API compatibility)
+    pub fn update_payjoin_receiver_bip21(&mut self, _derivation_index: u32, _bip21: &str) {
+        // bip21 is now computed on-the-fly, no-op
     }
 
     /// Get all active receiver session ids with their derivation indexes

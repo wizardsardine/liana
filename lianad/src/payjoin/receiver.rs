@@ -243,8 +243,6 @@ fn apply_fee_range(
     let proposal = proposal.apply_fee_range(None, None).save(persister)?;
     let psbt = proposal.psbt_to_sign();
 
-    let txid = psbt.unsigned_tx.compute_txid();
-    db_conn.save_receiver_session_original_txid(&persister.session_id, &txid);
     db_conn.store_spend(&psbt);
     log::info!("[Payjoin] PSBT in the DB...");
 
@@ -280,8 +278,6 @@ fn finalize_proposal(
                 })
                 .save(persister)?;
 
-            let proposed_txid = proposal.psbt().unsigned_tx.compute_txid();
-            db_conn.save_receiver_session_proposed_txid(&persister.session_id, &proposed_txid);
             send_payjoin_proposal(proposal, persister)?;
         }
     }
