@@ -2,7 +2,7 @@ use crate::{
     app::{
         menu::Menu,
         settings::unit::BitcoinDisplayUnit,
-        view::{global_home::TransferDirection, FiatAmountConverter},
+        view::{global_home::{IncomingTransferStage, TransferDirection}, FiatAmountConverter},
     },
     export::ImportExportMessage,
     node::bitcoind::RpcAuthType,
@@ -385,4 +385,18 @@ pub enum HomeMessage {
     TransferPsbtReady(TransferPsbtResult),
     TransferSigningComplete,
     ConfirmTransfer,
+    LiquidToVaultSubmitted {
+        amount: Amount,
+        swap_id: Option<String>,
+    },
+    LiquidToVaultPending(Option<String>),
+    LiquidToVaultWaitingConfirmation(Option<String>),
+    LiquidToVaultSucceeded(Option<String>),
+    LiquidToVaultFailed(Option<String>),
+    PendingTransferRestored {
+        amount_sat: u64,
+        stage: IncomingTransferStage,
+        swap_id: String,
+    },
+    PendingTransferAnimationTick,
 }

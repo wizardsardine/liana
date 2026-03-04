@@ -143,6 +143,15 @@ pub struct CubeSettings {
     /// Fiat price display preference for this cube
     #[serde(default, deserialize_with = "ok_or_none")]
     pub fiat_price: Option<fiat::PriceSetting>,
+    /// Persisted pending Liquid -> Vault transfer, used to restore UX state across app restarts
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending_liquid_to_vault_transfer: Option<PendingLiquidToVaultTransfer>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct PendingLiquidToVaultTransfer {
+    pub swap_id: String,
+    pub amount_sat: u64,
 }
 
 impl CubeSettings {
@@ -159,6 +168,7 @@ impl CubeSettings {
             mfa_done: false,
             unit_setting: unit::UnitSetting::default(),
             fiat_price: None,
+            pending_liquid_to_vault_transfer: None,
         }
     }
 

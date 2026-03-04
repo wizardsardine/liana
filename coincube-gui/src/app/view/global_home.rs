@@ -13,6 +13,7 @@ use iced::{
     widget::{Button, Column, Space, Stack},
     Alignment, Length,
 };
+use iced_anim::AnimationBuilder;
 
 use crate::app::{
     menu::Menu,
@@ -30,6 +31,218 @@ enum WalletType {
     Vault,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IncomingTransferStage {
+    TransferInitiated,
+    SwappingLbtcToBtc,
+    SendingToVault,
+    Completed,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct PendingIncomingTransfer {
+    pub amount: Amount,
+    pub stage: IncomingTransferStage,
+}
+
+fn incoming_transfer_status_text(stage: IncomingTransferStage) -> &'static str {
+    match stage {
+        IncomingTransferStage::TransferInitiated => "Transfer initiated",
+        IncomingTransferStage::SwappingLbtcToBtc => "Swapping LBTC to BTC",
+        IncomingTransferStage::SendingToVault => "Sending BTC to Vault",
+        IncomingTransferStage::Completed => "Completed",
+    }
+}
+
+fn vault_incoming_transfer_card<'a>(
+    pending_transfer: PendingIncomingTransfer,
+    bitcoin_unit: BitcoinDisplayUnit,
+    animation_phase: f32,
+) -> Element<'a, Message> {
+    let steps = [
+        IncomingTransferStage::TransferInitiated,
+        IncomingTransferStage::SwappingLbtcToBtc,
+        IncomingTransferStage::SendingToVault,
+        IncomingTransferStage::Completed,
+    ];
+    let current_step = steps
+        .iter()
+        .position(|stage| *stage == pending_transfer.stage)
+        .unwrap_or(0);
+    let step_labels = ["Initiated", "Swapped", "Sending", "Complete"];
+
+    let step_dot = |idx: usize, current: usize| -> Element<'a, Message> {
+        let color = if idx < current {
+            color::GREEN
+        } else if idx == current {
+            color::ORANGE
+        } else {
+            color::GREY_4
+        };
+        Container::new(
+            Space::new()
+                .width(Length::Fixed(8.0))
+                .height(Length::Fixed(8.0)),
+        )
+        .style(move |_| iced::widget::container::Style {
+            background: Some(iced::Background::Color(color)),
+            border: iced::Border {
+                color,
+                width: 1.0,
+                radius: 20.0.into(),
+            },
+            ..Default::default()
+        })
+        .into()
+    };
+
+    let step_line = |segment_idx: usize, current: usize, phase: f32| -> Element<'a, Message> {
+        let animate_segment = if current == 0 { 0 } else { current - 1 };
+        if segment_idx == animate_segment && current < 4 {
+            use iced_anim::spring::Motion;
+            return AnimationBuilder::new(phase, move |animated_phase| {
+                let mut wave = Row::new().spacing(2).align_y(Alignment::Center);
+
+                for i in 0..4 {
+                    let shifted = (animated_phase + i as f32 * 0.18) % 1.0;
+                    let intensity = 1.0 - ((shifted * 2.0 - 1.0).abs());
+                    let alpha = 0.25 + 0.75 * intensity;
+
+                    wave = wave.push(
+                        Container::new(
+                            Space::new()
+                                .width(Length::Fixed(6.0))
+                                .height(Length::Fixed(2.0)),
+                        )
+                        .style(move |_| iced::widget::container::Style {
+                            background: Some(iced::Background::Color(iced::Color {
+                                a: alpha,
+                                ..color::ORANGE
+                            })),
+                            ..Default::default()
+                        }),
+                    );
+                }
+
+                wave.into()
+            })
+            .animation(Motion::SMOOTH)
+            .animates_layout(false)
+            .into();
+        }
+
+        if segment_idx < current {
+            return Container::new(
+                Space::new()
+                    .width(Length::Fixed(28.0))
+                    .height(Length::Fixed(1.0)),
+            )
+            .style(|_| iced::widget::container::Style {
+                background: Some(iced::Background::Color(color::ORANGE)),
+                ..Default::default()
+            })
+            .into();
+        }
+
+        Container::new(
+            Space::new()
+                .width(Length::Fixed(28.0))
+                .height(Length::Fixed(1.0)),
+        )
+        .style(|_| iced::widget::container::Style {
+            background: Some(iced::Background::Color(color::GREY_5)),
+            ..Default::default()
+        })
+        .into()
+    };
+
+    let completed_chip = |label: &'static str| -> Element<'a, Message> {
+        Container::new(
+            Row::new()
+                .spacing(5)
+                .align_y(Alignment::Center)
+                .push(check_circle_icon().size(10).color(color::GREEN))
+                .push(text(label).size(10).color(color::GREY_2)),
+        )
+        .padding([4, 8])
+        .style(|_| iced::widget::container::Style {
+            background: Some(iced::Background::Color(color::GREY_6)),
+            border: iced::Border {
+                color: color::GREY_5,
+                width: 0.5,
+                radius: 12.0.into(),
+            },
+            ..Default::default()
+        })
+        .into()
+    };
+
+    let completed_steps_view: Element<'a, Message> = if current_step == 0 {
+        Container::new(text("Starting...").size(10).color(color::GREY_3))
+            .width(Length::Fill)
+            .into()
+    } else {
+        step_labels[..current_step]
+            .iter()
+            .fold(Row::new().spacing(6), |row, label| {
+                row.push(completed_chip(label))
+            })
+            .into()
+    };
+
+    Container::new(
+        Column::new()
+            .spacing(12)
+            .push(
+                Row::new()
+                    .align_y(Alignment::Center)
+                    .push(text("Incoming transfer").size(12).color(color::GREY_2))
+                    .push(Space::new().width(Length::Fill))
+                    .push(
+                        text(
+                            pending_transfer
+                                .amount
+                                .to_formatted_string_with_unit(bitcoin_unit),
+                        )
+                        .bold()
+                        .size(14)
+                        .color(color::ORANGE),
+                    ),
+            )
+            .push(
+                Row::new()
+                    .spacing(8)
+                    .align_y(Alignment::Center)
+                    .push(step_dot(0, current_step))
+                    .push(step_line(0, current_step, animation_phase))
+                    .push(step_dot(1, current_step))
+                    .push(step_line(1, current_step, animation_phase))
+                    .push(step_dot(2, current_step))
+                    .push(step_line(2, current_step, animation_phase))
+                    .push(step_dot(3, current_step)),
+            )
+            .push(
+                Row::new()
+                    .align_y(Alignment::Center)
+                    .push(text(incoming_transfer_status_text(pending_transfer.stage)).size(11))
+                    .push(Space::new().width(Length::Fill))
+                    .push(text("Liquid -> Vault").size(11).color(color::GREY_3)),
+            )
+            .push(completed_steps_view),
+    )
+    .padding([14, 16])
+    .style(|_| iced::widget::container::Style {
+        border: iced::Border {
+            color: color::GREY_4,
+            width: 0.5,
+            radius: 20.0.into(),
+        },
+        background: Some(iced::Background::Color(color::GREY_6)),
+        ..Default::default()
+    })
+    .into()
+}
+
 fn wallet_card<'a>(
     wallet_type: WalletType,
     balance: &Amount,
@@ -37,6 +250,8 @@ fn wallet_card<'a>(
     balance_masked: bool,
     has_vault: bool,
     bitcoin_unit: coincube_ui::component::amount::BitcoinDisplayUnit,
+    pending_vault_incoming: Option<PendingIncomingTransfer>,
+    pending_animation_phase: f32,
 ) -> Element<'a, Message> {
     let fiat_balance = fiat_converter.as_ref().map(|c| c.convert(*balance));
 
@@ -128,6 +343,24 @@ fn wallet_card<'a>(
                             .on_press(receive_action),
                     ),
             ),
+    };
+
+    let content = if matches!(wallet_type, WalletType::Vault) {
+        if let Some(pending_transfer) = pending_vault_incoming {
+            if pending_transfer.stage != IncomingTransferStage::Completed {
+                content.push(vault_incoming_transfer_card(
+                    pending_transfer,
+                    bitcoin_unit,
+                    pending_animation_phase,
+                ))
+            } else {
+                content
+            }
+        } else {
+            content
+        }
+    } else {
+        content
     };
 
     Container::new(content)
@@ -839,7 +1072,10 @@ fn confirm_transfer_view<'a>(
         .into()
 }
 
-pub fn transfer_successful_view<'a>(direction: TransferDirection) -> Element<'a, Message> {
+pub fn transfer_successful_view<'a>(
+    direction: TransferDirection,
+    pending_vault_incoming: Option<PendingIncomingTransfer>,
+) -> Element<'a, Message> {
     use coincube_ui::widget::{Column, Row};
     Column::new()
         .spacing(20)
@@ -863,7 +1099,17 @@ pub fn transfer_successful_view<'a>(direction: TransferDirection) -> Element<'a,
                     Column::new()
                         .width(Length::Shrink)
                         .align_x(Alignment::Center)
-                        .push(h3("Transfer Successful!")),
+                        .push(h3(
+                            if matches!(direction, TransferDirection::LiquidToVault)
+                                && pending_vault_incoming
+                                    .map(|p| p.stage != IncomingTransferStage::Completed)
+                                    .unwrap_or(false)
+                            {
+                                "Transfer Processing"
+                            } else {
+                                "Transfer Successful!"
+                            },
+                        )),
                 )
                 .push(Space::new().width(Length::Fill)),
         )
@@ -875,11 +1121,29 @@ pub fn transfer_successful_view<'a>(direction: TransferDirection) -> Element<'a,
                 .push(
                     Row::new().spacing(5).push(
                         text(format!(
-                            "Your funds have been moved to your {} Wallet",
-                            if matches!(direction, TransferDirection::LiquidToVault) {
-                                "Vault"
+                            "{}",
+                            if matches!(direction, TransferDirection::LiquidToVault)
+                                && pending_vault_incoming
+                                    .map(|p| p.stage != IncomingTransferStage::Completed)
+                                    .unwrap_or(false)
+                            {
+                                pending_vault_incoming
+                                    .map(|pending| {
+                                        format!(
+                                            "Funds are on the way to Vault. Current step: {}",
+                                            incoming_transfer_status_text(pending.stage)
+                                        )
+                                    })
+                                    .unwrap_or_else(|| "Funds are on the way to Vault".to_string())
                             } else {
-                                "Liquid"
+                                format!(
+                                    "Your funds have been moved to your {} Wallet",
+                                    if matches!(direction, TransferDirection::LiquidToVault) {
+                                        "Vault"
+                                    } else {
+                                        "Liquid"
+                                    }
+                                )
                             }
                         ))
                         .size(20),
@@ -950,6 +1214,8 @@ pub struct GlobalViewConfig<'a> {
     pub is_tx_signed: bool,
     pub prepare_onchain_send_response: Option<&'a PreparePayOnchainResponse>,
     pub spend_tx_fees: Option<Amount>,
+    pub pending_vault_incoming: Option<PendingIncomingTransfer>,
+    pub pending_animation_phase: f32,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -995,6 +1261,8 @@ pub fn global_home_view<'a>(config: GlobalViewConfig<'a>) -> Element<'a, Message
         is_tx_signed,
         prepare_onchain_send_response,
         spend_tx_fees,
+        pending_vault_incoming,
+        pending_animation_phase,
     } = config;
 
     match current_view.step {
@@ -1034,7 +1302,7 @@ pub fn global_home_view<'a>(config: GlobalViewConfig<'a>) -> Element<'a, Message
         }
         4 => {
             if let Some(direction) = transfer_direction {
-                return transfer_successful_view(direction);
+                return transfer_successful_view(direction, pending_vault_incoming);
             }
         }
         0 => {}
@@ -1048,6 +1316,8 @@ pub fn global_home_view<'a>(config: GlobalViewConfig<'a>) -> Element<'a, Message
         balance_masked,
         false,
         bitcoin_unit,
+        pending_vault_incoming,
+        pending_animation_phase,
     );
 
     let vault_card_element = wallet_card(
@@ -1057,6 +1327,8 @@ pub fn global_home_view<'a>(config: GlobalViewConfig<'a>) -> Element<'a, Message
         balance_masked,
         has_vault,
         bitcoin_unit,
+        pending_vault_incoming,
+        pending_animation_phase,
     );
 
     Column::new()
