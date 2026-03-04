@@ -6,6 +6,8 @@ let
       fileset = lib.fileset.unions [
         (craneLib.fileset.commonCargoSources rootPath)
         (lib.fileset.maybeMissing (rootPath + "/liana-ui/static"))
+        (rootPath + "/liana-business/build.rs")
+        (rootPath + "/liana-ui/static/logos/liana-business.ico")
       ];
     };
     strictDeps = true;
@@ -14,13 +16,15 @@ let
     cargoVendorDir = craneLib.vendorCargoDeps {
       src = rootPath;
     };
+    # Skip liana-gui icon so liana-business can use its own
+    LIANA_SKIP_GUI_ICON = "1";
   };
 
   lianaBusinessInfo = craneLib.crateNameFromCargoToml { cargoToml = rootPath + "/liana-business/Cargo.toml"; };
 
-  x86_64-pc-windows-gnu = craneLib.buildPackage {
-    inherit (commonBuildSettings) src strictDeps doCheck;
-    inherit (lianaBusinessInfo) pname version;
+  # Windows-specific settings shared between deps and final build
+  windowsSettings = {
+    inherit (commonBuildSettings) src strictDeps cargoLock cargoVendorDir LIANA_SKIP_GUI_ICON;
 
     SOURCE_DATE_EPOCH = 1;
     CARGO_BUILD_TARGET = "x86_64-pc-windows-gnu";
@@ -33,18 +37,33 @@ let
     TOOLKIT_x86_64_pc_windows_gnu = "${pkgs.pkgsCross.mingwW64.stdenv.cc.bintools.bintools}/bin";
     WINDRES_x86_64_pc_windows_gnu = "${pkgs.pkgsCross.mingwW64.stdenv.cc.targetPrefix}windres";
 
-    cargoExtraArgs = "-p liana-business";
     depsBuildBuild = with pkgs; [
       pkgsCross.mingwW64.stdenv.cc
       pkgsCross.mingwW64.buildPackages.binutils
       pkgsCross.mingwW64.buildPackages.binutils-unwrapped
     ];
+  };
+
+  # Build deps separately with LIANA_SKIP_GUI_ICON to ensure liana-gui doesn't set its icon
+  windowsDeps = craneLib.buildDepsOnly (windowsSettings // {
+    pname = "liana-business-deps";
+    version = lianaBusinessInfo.version;
+    doCheck = false;
+  });
+
+  x86_64-pc-windows-gnu = craneLib.buildPackage (windowsSettings // {
+    inherit (lianaBusinessInfo) pname version;
+    doCheck = false;
+
+    cargoArtifacts = windowsDeps;
+
+    cargoExtraArgs = "-p liana-business";
 
     installPhaseCommand = ''
       mkdir -p $out/x86_64-pc-windows-gnu
       cp target/x86_64-pc-windows-gnu/release/liana-business.exe $out/x86_64-pc-windows-gnu
     '';
-  };
+  });
 
   x86_64-apple-darwin = craneLib.buildPackage {
     inherit (commonBuildSettings) src strictDeps doCheck;

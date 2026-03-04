@@ -9,7 +9,7 @@ authors = ["Edouard Paris <m@edouard.paris>"]
 edition = "2018"
 resolver = "2"
 
-[package.metadata.winres]
+[package.metadata.winresource]
 LegalCopyright = "Copyright © 2025"
 
 [[bin]]
@@ -70,6 +70,9 @@ zip = { workspace = true, default-features = false, features = ["bzip2", "deflat
 [target.'cfg(unix)'.dependencies]
 tar = { workspace = true, default-features = false }
 flate2 = { workspace = true, default-features = false }
+
+[features]
+skip-windows-icon = []
 
 [build-dependencies]
 winresource = { workspace = true }
