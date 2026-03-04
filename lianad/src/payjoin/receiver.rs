@@ -366,13 +366,30 @@ pub(crate) fn payjoin_receiver_check(
     secp: &secp256k1::Secp256k1<secp256k1::VerifyOnly>,
 ) {
     let mut db_conn = db.connection();
+
     for session_id in db_conn.get_all_active_receiver_session_ids() {
         let persister = ReceiverPersister::from_id(Arc::new(db.clone()), session_id.clone());
-        match process_receiver_session(&mut db_conn, bit, desc, secp, persister) {
-            Ok(_) => (),
+
+        match replay_event_log(&persister) {
+            Ok(_) => match process_receiver_session(&mut db_conn, bit, desc, secp, persister) {
+                Ok(_) => (),
+                Err(e) => {
+                    log::warn!("process_receiver_session(): {}", e);
+                }
+            },
             Err(e) => {
-                log::warn!("process_receiver_session(): {}", e);
-                continue;
+                let error_str = e.to_string();
+                if error_str.contains("expired") {
+                    log::info!(
+                        "Payjoin session {:?} expired, marking as closed",
+                        session_id
+                    );
+                    if let Err(close_err) = persister.close() {
+                        log::warn!("Failed to close expired payjoin session: {}", close_err);
+                    }
+                    continue;
+                }
+                log::warn!("Failed to replay payjoin session {:?}: {}", session_id, e);
             }
         }
     }
