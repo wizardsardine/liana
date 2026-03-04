@@ -330,6 +330,7 @@ pub enum LiquidReceiveMessage {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ReceiveMethod {
     Lightning,
+    Liquid,
     OnChain,
 }
 

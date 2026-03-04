@@ -281,6 +281,26 @@ impl BreezClient {
         .map_err(|e| BreezError::Sdk(e.to_string()))
     }
 
+    pub async fn receive_liquid(&self) -> Result<breez::ReceivePaymentResponse, BreezError> {
+        let sdk = self.get_sdk()?;
+        let prepare = sdk
+            .prepare_receive_payment(&breez::PrepareReceiveRequest {
+                payment_method: breez::PaymentMethod::LiquidAddress,
+                amount: None,
+            })
+            .await
+            .map_err(|e| BreezError::Sdk(e.to_string()))?;
+
+        sdk.receive_payment(&breez::ReceivePaymentRequest {
+            prepare_response: prepare,
+            description: None,
+            payer_note: None,
+            description_hash: None,
+        })
+        .await
+        .map_err(|e| BreezError::Sdk(e.to_string()))
+    }
+
     pub async fn pay_invoice(
         &self,
         invoice: String,

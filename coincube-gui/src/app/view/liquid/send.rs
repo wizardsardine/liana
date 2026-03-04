@@ -161,9 +161,11 @@ pub fn liquid_send_view<'a>(
         .width(Length::Fill)
         .align_x(Alignment::Center)
         .push(
-            Container::new(h4_bold("Enter Invoice, Lightning Address, or BTC Address"))
-                .padding(iced::Padding::new(0.0).top(5))
-                .width(Length::Fill),
+            Container::new(h4_bold(
+                "Enter Invoice, Lightning Address, Liquid BTC Address or BTC Address",
+            ))
+            .padding(iced::Padding::new(0.0).top(5))
+            .width(Length::Fill),
         )
         .push(
             Row::new()
