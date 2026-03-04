@@ -158,7 +158,7 @@ impl CubeSettings {
             backed_up: false,
             mfa_done: false,
             unit_setting: unit::UnitSetting::default(),
-            fiat_price: None,
+            fiat_price: Some(fiat::PriceSetting::default()),  // Initialize with default (enabled: true)
         }
     }
 
