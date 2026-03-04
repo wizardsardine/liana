@@ -6,6 +6,8 @@ fn main() {
         || std::env::var("CARGO_FEATURE_SKIP_WINDOWS_ICON").is_ok();
 
     if target_os == "windows" && !skip_icon {
+        let out_dir = std::env::var("OUT_DIR").unwrap();
+
         let mut res = winresource::WindowsResource::new();
         res.set_icon("../liana-ui/static/logos/liana.ico");
 
@@ -24,6 +26,12 @@ fn main() {
         if let Err(e) = res.compile() {
             eprintln!("Failed to compile Windows resources: {}", e);
             panic!("Windows resource compilation failed: {}", e);
+        }
+
+        // Explicitly link the resource object file (needed for cross-compilation)
+        let resource_obj = format!("{}/resource.o", out_dir);
+        if std::path::Path::new(&resource_obj).exists() {
+            println!("cargo:rustc-link-arg-bins={}", resource_obj);
         }
     }
 }
