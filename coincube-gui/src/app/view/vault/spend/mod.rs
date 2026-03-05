@@ -542,7 +542,15 @@ pub fn recipient_view<'a>(
     is_recovery: bool,
     bitcoin_unit: BitcoinDisplayUnit,
 ) -> Element<'a, CreateSpendMessage> {
-    let btc_amt = Amount::from_str_in(&amount.value, Denomination::Bitcoin).ok();
+    let btc_amt = match bitcoin_unit {
+        BitcoinDisplayUnit::BTC => Amount::from_str_in(&amount.value, Denomination::Bitcoin).ok(),
+        BitcoinDisplayUnit::Sats => amount
+            .value
+            .replace(' ', "")
+            .parse::<u64>()
+            .ok()
+            .map(Amount::from_sat),
+    };
 
     Container::new(
         Column::new()
@@ -615,7 +623,7 @@ pub fn recipient_view<'a>(
                             .spacing(5)
                             .push(if is_max_selected {
                                 let amount_txt = btc_amt
-                                    .map(|a| a.to_formatted_string())
+                                    .map(|a| a.to_formatted_string_with_unit(bitcoin_unit))
                                     .unwrap_or(amount.value.clone());
                                 Container::new(
                                     text(amount_txt).size(P1_SIZE).style(theme::text::secondary),

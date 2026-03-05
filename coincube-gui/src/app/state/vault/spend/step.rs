@@ -319,6 +319,7 @@ impl DefineSpend {
                     .expect("max has been requested for this recipient so it must exist")
                     .update(
                         self.network,
+                        self.bitcoin_unit,
                         view::CreateSpendMessage::RecipientEdited(i, "amount", "".to_string()),
                     );
             }
@@ -386,6 +387,7 @@ impl DefineSpend {
                 if let Some((i, recipient)) = recipient_with_max {
                     recipient.update(
                         self.network,
+                        self.bitcoin_unit,
                         view::CreateSpendMessage::RecipientEdited(i, "amount", "0".to_string()),
                     );
                 }
@@ -472,18 +474,24 @@ impl DefineSpend {
                 if let Some((i, recipient)) = recipient_with_max {
                     // If there's no change output, any excess must be below the dust threshold
                     // and so the max available for this recipient is 0.
-                    let amount = psbt
+                    let amount_sat = psbt
                         .unsigned_tx
                         .output
                         .iter()
                         .find(|o| {
                             o.script_pubkey == max_address.clone().assume_checked().script_pubkey()
                         })
-                        .map(|change_output| change_output.value.to_btc())
-                        .unwrap_or(0.0)
-                        .to_string();
+                        .map(|change_output| change_output.value.to_sat())
+                        .unwrap_or(0);
+                    let amount = match self.bitcoin_unit {
+                        BitcoinDisplayUnit::BTC => {
+                            Amount::from_sat(amount_sat).to_btc().to_string()
+                        }
+                        BitcoinDisplayUnit::Sats => amount_sat.to_string(),
+                    };
                     recipient.update(
                         self.network,
+                        self.bitcoin_unit,
                         view::CreateSpendMessage::RecipientEdited(i, "amount", amount),
                     );
                 }
@@ -501,7 +509,7 @@ impl DefineSpend {
                     }
                 }
                 if let Some((i, recipient)) = recipient_with_max {
-                    let amount = Amount::from_sat(if destinations.is_empty() {
+                    let base_sats = if destinations.is_empty() {
                         // If there are no other recipients, then the missing value will
                         // be the amount left to select in order to create an output at the dust
                         // threshold. Therefore, set this recipient's amount to this value so
@@ -511,11 +519,14 @@ impl DefineSpend {
                         DUST_OUTPUT_SATS
                     } else {
                         0
-                    })
-                    .to_btc()
-                    .to_string();
+                    };
+                    let amount = match self.bitcoin_unit {
+                        BitcoinDisplayUnit::BTC => Amount::from_sat(base_sats).to_btc().to_string(),
+                        BitcoinDisplayUnit::Sats => base_sats.to_string(),
+                    };
                     recipient.update(
                         self.network,
+                        self.bitcoin_unit,
                         view::CreateSpendMessage::RecipientEdited(i, "amount", amount),
                     );
                 }
@@ -651,10 +662,11 @@ impl Step for DefineSpend {
                     }
                     view::CreateSpendMessage::RecipientEdited(i, _, _)
                     | view::CreateSpendMessage::RecipientFiatAmountEdited(i, _, _) => {
-                        self.recipients
-                            .get_mut(i)
-                            .unwrap()
-                            .update(cache.network, msg);
+                        self.recipients.get_mut(i).unwrap().update(
+                            cache.network,
+                            self.bitcoin_unit,
+                            msg,
+                        );
                     }
                     view::CreateSpendMessage::FeerateEdited(s) => {
                         if let Ok(value) = s.parse::<u64>() {
@@ -913,7 +925,12 @@ impl Step for DefineSpend {
                 .enumerate()
                 .map(|(i, recipient)| {
                     recipient
-                        .view(i, self.send_max_to_recipient == Some(i), converter.as_ref(), self.bitcoin_unit)
+                        .view(
+                            i,
+                            self.send_max_to_recipient == Some(i),
+                            converter.as_ref(),
+                            self.bitcoin_unit,
+                        )
                         .map(view::Message::CreateSpend)
                 })
                 .collect(),
@@ -944,6 +961,7 @@ struct Recipient {
     label: form::Value<String>,
     address: form::Value<String>,
     amount: form::Value<String>,
+    bitcoin_unit: BitcoinDisplayUnit,
     // This is only `Some` if the user has entered a fiat amount directly.
     fiat_amount: Option<form::Value<String>>,
     fiat_converter: Option<view::FiatAmountConverter>, // the converter at the time of entering the fiat amount
@@ -963,8 +981,21 @@ impl Recipient {
             return Err(Error::Unexpected("Amount should be non-zero".to_string()));
         }
 
-        let amount = Amount::from_str_in(&self.amount.value, Denomination::Bitcoin)
-            .map_err(|_| Error::Unexpected("cannot parse output amount".to_string()))?;
+        let amount = match self.bitcoin_unit {
+            BitcoinDisplayUnit::BTC => {
+                Amount::from_str_in(&self.amount.value, Denomination::Bitcoin)
+                    .map_err(|_| Error::Unexpected("cannot parse output amount".to_string()))?
+            }
+            BitcoinDisplayUnit::Sats => {
+                let sats = self
+                    .amount
+                    .value
+                    .replace(' ', "")
+                    .parse::<u64>()
+                    .map_err(|_| Error::Unexpected("cannot parse output amount".to_string()))?;
+                Amount::from_sat(sats)
+            }
+        };
 
         if amount.to_sat() == 0 {
             return Err(Error::Unexpected("Amount should be non-zero".to_string()));
@@ -996,7 +1027,12 @@ impl Recipient {
             && self.label.valid
     }
 
-    fn update(&mut self, network: Network, message: view::CreateSpendMessage) {
+    fn update(
+        &mut self,
+        network: Network,
+        bitcoin_unit: BitcoinDisplayUnit,
+        message: view::CreateSpendMessage,
+    ) {
         match message {
             view::CreateSpendMessage::RecipientEdited(_, "address", address) => {
                 self.address.value = address;
@@ -1039,6 +1075,7 @@ impl Recipient {
                     Ok(btc_amount) => {
                         // Update both BTC and fiat amounts.
                         self.amount.value = btc_amount.to_btc().to_string();
+                        self.bitcoin_unit = BitcoinDisplayUnit::BTC;
                         self.amount.valid = self.amount().is_ok();
                         self.fiat_amount = Some(form::Value {
                             value: fiat_amt_str,
@@ -1058,6 +1095,7 @@ impl Recipient {
                 }
             }
             view::CreateSpendMessage::RecipientEdited(_, "amount", amount) => {
+                self.bitcoin_unit = bitcoin_unit;
                 self.fiat_amount = None; // Clear any fiat amount to indicate BTC amount is now primary.
                 self.fiat_converter = None;
                 self.amount.value = amount;
