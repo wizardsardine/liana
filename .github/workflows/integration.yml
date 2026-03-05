@@ -97,8 +97,6 @@ jobs:
           curl -LO https://github.com/coincubetech/coincube/releases/download/v1.0.0/coincube-1.0.0-x86_64-unknown-linux-gnu.tar.gz
           echo "9979f50c65991d2417b0c6c57701f00ebf91cdcd10b9583de0bcc9d898f0dc38 coincube-1.0.0-x86_64-unknown-linux-gnu.tar.gz" | sha256sum -c
           tar -xzf coincube-1.0.0-x86_64-unknown-linux-gnu.tar.gz
-          # Find the binary
-          OLD_PATH=$(find $PWD -type f -name coincubed | head -n 1)
-          export OLD_COINCUBED_PATH="$OLD_PATH"
+          export OLD_COINCUBED_PATH="$PWD/coincube-1.0.0-x86_64-unknown-linux-gnu/coincubed"
           # Run the functional tests
           pytest tests/ -vvv -n 8
