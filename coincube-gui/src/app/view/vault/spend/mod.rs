@@ -479,6 +479,7 @@ pub fn create_spend_tx<'a>(
                                         timelock,
                                         cache.blockheight() as u32,
                                         *selected,
+                                        bitcoin_unit,
                                     ))
                                 },
                             )))
@@ -539,6 +540,7 @@ pub fn recipient_view<'a>(
     label: &'a form::Value<String>,
     is_max_selected: bool,
     is_recovery: bool,
+    bitcoin_unit: BitcoinDisplayUnit,
 ) -> Element<'a, CreateSpendMessage> {
     let btc_amt = Amount::from_str_in(&amount.value, Denomination::Bitcoin).ok();
 
@@ -599,7 +601,10 @@ pub fn recipient_view<'a>(
                     .align_y(Alignment::Center)
                     .spacing(10)
                     .push(
-                        Container::new(p1_bold("Amount (BTC)"))
+                        Container::new(p1_bold(match bitcoin_unit {
+                            BitcoinDisplayUnit::BTC => "Amount BTC",
+                            BitcoinDisplayUnit::Sats => "Amount (sats)"
+                        }))
                             .padding(10)
                             .align_x(alignment::Horizontal::Right)
                             .width(Length::Fixed(130.0)),
@@ -617,12 +622,23 @@ pub fn recipient_view<'a>(
                                 )
                                 .width(Length::Fill)
                             } else {
-                                form::Form::new_amount_btc("0.001 (in BTC)", amount, move |msg| {
-                                    CreateSpendMessage::RecipientEdited(index, "amount", msg)
-                                })
-                                .warning(
-                                    "Invalid amount. (Note amounts lower than 0.00005 BTC are invalid.)",
-                                )
+
+                                let form = match bitcoin_unit {
+                                    BitcoinDisplayUnit::BTC => {
+                                        form::Form::new_amount_btc("0.001 (in BTC)", amount, move |msg| {
+                                            CreateSpendMessage::RecipientEdited(index, "amount", msg)
+                                        })
+                                        .warning("Invalid amount. (Note amounts lower than 0.00005 BTC are invalid.)")
+                                    }
+                                    BitcoinDisplayUnit::Sats => {
+                                        form::Form::new_amount_sats("100 000 (in sats)", amount, move |msg| {
+                                            CreateSpendMessage::RecipientEdited(index, "amount", msg)
+                                        })
+                                        .warning("Invalid amount. (Note amounts lower than 5000 sats are invalid.)")
+                                    }
+                                };
+
+                                form
                                 .size(P1_SIZE)
                                 .padding(10)
                                 .into_container()
@@ -707,6 +723,7 @@ fn coin_list_view<'a>(
     timelock: u16,
     blockheight: u32,
     selected: bool,
+    bitcoin_unit: BitcoinDisplayUnit,
 ) -> Element<'a, Message> {
     Row::new()
         .push(
@@ -748,7 +765,7 @@ fn coin_list_view<'a>(
                 .align_y(Alignment::Center)
                 .width(Length::Fill),
         )
-        .push(amount(&coin.amount))
+        .push(amount_with_unit(&coin.amount, bitcoin_unit))
         .align_y(Alignment::Center)
         .spacing(20)
         .into()

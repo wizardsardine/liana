@@ -913,7 +913,7 @@ impl Step for DefineSpend {
                 .enumerate()
                 .map(|(i, recipient)| {
                     recipient
-                        .view(i, self.send_max_to_recipient == Some(i), converter.as_ref())
+                        .view(i, self.send_max_to_recipient == Some(i), converter.as_ref(), self.bitcoin_unit)
                         .map(view::Message::CreateSpend)
                 })
                 .collect(),
@@ -1081,6 +1081,7 @@ impl Recipient {
         i: usize,
         is_max_selected: bool,
         fiat_converter: Option<&view::FiatAmountConverter>,
+        bitcoin_unit: BitcoinDisplayUnit,
     ) -> Element<view::CreateSpendMessage> {
         let mut fiat_form_value = self.fiat_amount.as_ref();
 
@@ -1109,6 +1110,7 @@ impl Recipient {
             &self.label,
             is_max_selected,
             self.is_recovery,
+            bitcoin_unit,
         )
     }
 }
