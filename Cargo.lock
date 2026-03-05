@@ -820,6 +820,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "bdk_esplora"
+version = "0.15.0"
+source = "git+https://github.com/wizardsardine/bdk?branch=release%2F1.0.0-alpha.13#8936e828861f0f32500c4156b6534238e5154b0f"
+dependencies = [
+ "bdk_chain",
+ "esplora-client 0.8.0",
+]
+
+[[package]]
 name = "bech32"
 version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1191,7 +1200,7 @@ dependencies = [
  "ecies",
  "electrum-client 0.21.0",
  "env_logger 0.11.9",
- "esplora-client",
+ "esplora-client 0.12.0",
  "futures",
  "futures-util",
  "glob",
@@ -1619,6 +1628,7 @@ version = "0.9.0"
 dependencies = [
  "backtrace",
  "bdk_electrum",
+ "bdk_esplora",
  "bip329",
  "coincube-core",
  "dirs",
@@ -2519,6 +2529,19 @@ name = "error-code"
 version = "3.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dea2df4cf52843e0452895c455a1a2cfbb842a1e7329671acf418fdc53ed4c59"
+
+[[package]]
+name = "esplora-client"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "69c6d27ef4ff21019edd98aa92199757e10a88065bbfcef6bb750ca6ec5e4a45"
+dependencies = [
+ "bitcoin 0.32.8",
+ "hex-conservative 0.2.2",
+ "log",
+ "minreq",
+ "serde",
+]
 
 [[package]]
 name = "esplora-client"
@@ -5357,8 +5380,11 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "05015102dad0f7d61691ca347e9d9d9006685a64aefb3d79eecf62665de2153d"
 dependencies = [
  "base64 0.22.1",
+ "rustls 0.21.12",
+ "rustls-webpki 0.101.7",
  "serde",
  "serde_json",
+ "webpki-roots 0.25.4",
 ]
 
 [[package]]
@@ -6987,7 +7013,7 @@ version = "0.13.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "be769465445e8c1474e9c5dac2018218498557af32d9ed057325ec9a41ae81bf"
 dependencies = [
- "heck 0.5.0",
+ "heck 0.4.1",
  "itertools 0.14.0",
  "log",
  "multimap 0.10.1",

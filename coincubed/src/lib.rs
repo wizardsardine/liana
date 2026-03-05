@@ -8,6 +8,7 @@ mod jsonrpc;
 mod testutils;
 
 pub use bdk_electrum::electrum_client;
+pub use bdk_esplora::esplora_client;
 pub use bip329;
 use bitcoin::electrum;
 use datadir::DataDirectory;
@@ -16,6 +17,7 @@ pub use miniscript;
 pub use crate::bitcoin::{
     d::{BitcoinD, BitcoindError, WalletError},
     electrum::{Electrum, ElectrumError},
+    esplora::{Esplora, EsploraError},
 };
 
 use crate::jsonrpc::server;
@@ -99,11 +101,13 @@ pub enum StartupError {
     DatadirCreation(path::PathBuf, io::Error),
     MissingBitcoindConfig,
     MissingElectrumConfig,
+    MissingEsploraConfig,
     MissingBitcoinBackendConfig,
     DbMigrateBitcoinTxs(&'static str),
     Database(SqliteDbError),
     Bitcoind(BitcoindError),
     Electrum(ElectrumError),
+    Esplora(EsploraError),
     #[cfg(windows)]
     NoWatchonlyInDatadir,
 }
@@ -128,6 +132,10 @@ impl fmt::Display for StartupError {
                 f,
                 "Our Bitcoin interface is Electrum but we have no 'electrum_config' entry in the configuration."
             ),
+            Self::MissingEsploraConfig => write!(
+                f,
+                "Our Bitcoin interface is Esplora but we have no 'esplora_config' entry in the configuration."
+            ),
             Self::MissingBitcoinBackendConfig => write!(
                 f,
                 "No Bitcoin backend entry in the configuration."
@@ -139,6 +147,7 @@ impl fmt::Display for StartupError {
             Self::Database(e) => write!(f, "Error initializing database: '{}'.", e),
             Self::Bitcoind(e) => write!(f, "Error setting up bitcoind interface: '{}'.", e),
             Self::Electrum(e) => write!(f, "Error setting up Electrum interface: '{}'.", e),
+            Self::Esplora(e) => write!(f, "Error setting up Esplora interface: '{}'.", e),
             #[cfg(windows)]
             Self::NoWatchonlyInDatadir => {
                 write!(
@@ -335,6 +344,68 @@ fn setup_electrum(
     Ok(electrum)
 }
 
+// Create an Esplora interface from a client and BDK-based wallet, and do some sanity checks.
+// If all went well, returns the interface to Esplora.
+fn setup_esplora(
+    config: &Config,
+    db: sync::Arc<sync::Mutex<dyn DatabaseInterface>>,
+) -> Result<Esplora, StartupError> {
+    let esplora_config = match config.bitcoin_backend.as_ref() {
+        Some(config::BitcoinBackend::Esplora(esplora_config)) => esplora_config,
+        _ => Err(StartupError::MissingEsploraConfig)?,
+    };
+    let client = crate::bitcoin::esplora::client::Client::new(esplora_config)
+        .map_err(|e| StartupError::Esplora(EsploraError::Client(e)))?;
+    let mut db_conn = db.connection();
+    let tip = db_conn.chain_tip();
+    let coins: Vec<_> = db_conn
+        .coins(&[], &[])
+        .into_values()
+        .map(|c| crate::bitcoin::Coin {
+            outpoint: c.outpoint,
+            amount: c.amount,
+            derivation_index: c.derivation_index,
+            is_change: c.is_change,
+            is_immature: c.is_immature,
+            block_info: c.block_info.map(|info| crate::bitcoin::BlockInfo {
+                height: info.height,
+                time: info.time,
+            }),
+            spend_txid: c.spend_txid,
+            spend_block: c.spend_block.map(|info| crate::bitcoin::BlockInfo {
+                height: info.height,
+                time: info.time,
+            }),
+        })
+        .collect();
+    let txids = db_conn.list_saved_txids();
+    let txs: Vec<_> = db_conn
+        .list_wallet_transactions(&txids)
+        .into_iter()
+        .map(|(tx, _, _)| tx)
+        .collect();
+    let (receive_index, change_index) = (db_conn.receive_index(), db_conn.change_index());
+    let genesis_hash = {
+        let chain_hash = ChainHash::using_genesis_block(config.bitcoin_config.network);
+        BlockHash::from_byte_array(*chain_hash.as_bytes())
+    };
+    let bdk_wallet = electrum::wallet::BdkWallet::new(
+        &config.main_descriptor,
+        genesis_hash,
+        tip,
+        &coins,
+        &txs,
+        receive_index,
+        change_index,
+    );
+    let full_scan = db_conn.rescan_timestamp().is_some();
+    let esplora = Esplora::new(client, bdk_wallet, full_scan).map_err(StartupError::Esplora)?;
+    esplora
+        .sanity_checks(&genesis_hash)
+        .map_err(StartupError::Esplora)?;
+    Ok(esplora)
+}
+
 #[derive(Clone)]
 pub struct DaemonControl {
     config: Config,
@@ -453,6 +524,9 @@ impl DaemonHandle {
                 as sync::Arc<sync::Mutex<dyn BitcoinInterface>>,
             (None, Some(config::BitcoinBackend::Electrum(..))) => {
                 sync::Arc::from(sync::Mutex::from(setup_electrum(&config, db.clone())?))
+            }
+            (None, Some(config::BitcoinBackend::Esplora(..))) => {
+                sync::Arc::from(sync::Mutex::from(setup_esplora(&config, db.clone())?))
             }
             (None, None) => Err(StartupError::MissingBitcoinBackendConfig)?,
         };

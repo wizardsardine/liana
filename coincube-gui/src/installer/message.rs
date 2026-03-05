@@ -26,7 +26,7 @@ use crate::{
     installer::{decrypt::Decrypt, descriptor::PathKind},
     node::{
         bitcoind::{Bitcoind, ConfigField, RpcAuthType},
-        electrum, NodeType,
+        electrum, esplora, NodeType,
     },
     services::{
         self,
@@ -85,6 +85,7 @@ pub enum Message {
     ),
     CubeSaveFailed(String),
     RetryCubeSave,
+    CoincubeConnect(CoincubeConnectMsg),
     None,
 }
 
@@ -149,10 +150,16 @@ pub enum DefineElectrum {
 }
 
 #[derive(Debug, Clone)]
+pub enum DefineEsplora {
+    ConfigFieldEdited(esplora::ConfigField, String),
+}
+
+#[derive(Debug, Clone)]
 pub enum DefineNode {
     NodeTypeSelected(NodeType),
     DefineBitcoind(DefineBitcoind),
     DefineElectrum(DefineElectrum),
+    DefineEsplora(DefineEsplora),
     PingResult((NodeType, Result<(), Error>)),
     Ping,
 }
@@ -160,6 +167,19 @@ pub enum DefineNode {
 #[derive(Debug, Clone)]
 pub enum SelectBitcoindTypeMsg {
     UseExternal(bool),
+    UseConnect,
+}
+
+#[derive(Debug, Clone)]
+pub enum CoincubeConnectMsg {
+    EmailEdited(String),
+    ToggleMode,
+    RequestOtp,
+    OtpRequested(Result<(), String>),
+    OtpEdited(String),
+    OtpVerified(Result<String, String>),
+    ResendOtp,
+    OtpResent(Result<(), String>),
 }
 
 #[derive(Debug, Clone)]
