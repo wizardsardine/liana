@@ -16,6 +16,7 @@ use crate::{
 pub struct CoincubeRelayStep {
     client: CoincubeClient,
     email: form::Value<String>,
+    email_touched: bool,
     otp: form::Value<String>,
     otp_sent: bool,
     is_signup: bool,
@@ -28,7 +29,11 @@ impl CoincubeRelayStep {
     pub fn new() -> Self {
         Self {
             client: CoincubeClient::new(),
-            email: form::Value::default(),
+            email: form::Value {
+                valid: false,
+                ..form::Value::default()
+            },
+            email_touched: false,
             otp: form::Value::default(),
             otp_sent: false,
             is_signup: true,
@@ -49,6 +54,16 @@ impl From<CoincubeRelayStep> for Box<dyn Step> {
     fn from(s: CoincubeRelayStep) -> Box<dyn Step> {
         Box::new(s)
     }
+}
+
+async fn send_otp(client: CoincubeClient, email: String, is_signup: bool) -> Result<(), String> {
+    let req = OtpRequest { email };
+    if is_signup {
+        client.signup_send_otp(req).await
+    } else {
+        client.login_send_otp(req).await
+    }
+    .map_err(|e| e.to_string())
 }
 
 impl Step for CoincubeRelayStep {
@@ -73,6 +88,7 @@ impl Step for CoincubeRelayStep {
         if let Message::CoincubeRelay(msg) = message {
             match msg {
                 CoincubeRelayMsg::EmailEdited(value) => {
+                    self.email_touched = true;
                     self.email.value = value;
                     self.email.valid =
                         !self.email.value.is_empty() && self.email.value.contains('@');
@@ -84,40 +100,18 @@ impl Step for CoincubeRelayStep {
                     }
                 }
                 CoincubeRelayMsg::RequestOtp => {
-                    let client = self.client.clone();
-                    let email = self.email.value.clone();
-                    let is_signup = self.is_signup;
                     self.processing = true;
                     self.error = None;
                     return Task::perform(
-                        async move {
-                            let req = OtpRequest { email };
-                            if is_signup {
-                                client.signup_send_otp(req).await
-                            } else {
-                                client.login_send_otp(req).await
-                            }
-                            .map_err(|e| e.to_string())
-                        },
+                        send_otp(self.client.clone(), self.email.value.clone(), self.is_signup),
                         |res| Message::CoincubeRelay(CoincubeRelayMsg::OtpRequested(res)),
                     );
                 }
                 CoincubeRelayMsg::ResendOtp => {
-                    let client = self.client.clone();
-                    let email = self.email.value.clone();
-                    let is_signup = self.is_signup;
                     self.processing = true;
                     self.error = None;
                     return Task::perform(
-                        async move {
-                            let req = OtpRequest { email };
-                            if is_signup {
-                                client.signup_send_otp(req).await
-                            } else {
-                                client.login_send_otp(req).await
-                            }
-                            .map_err(|e| e.to_string())
-                        },
+                        send_otp(self.client.clone(), self.email.value.clone(), self.is_signup),
                         |res| Message::CoincubeRelay(CoincubeRelayMsg::OtpResent(res)),
                     );
                 }
@@ -189,9 +183,17 @@ impl Step for CoincubeRelayStep {
         progress: (usize, usize),
         _email: Option<&'a str>,
     ) -> Element<'a, Message> {
+        let email_display = if self.email_touched {
+            self.email.clone()
+        } else {
+            form::Value {
+                valid: true,
+                ..self.email.clone()
+            }
+        };
         view::define_coincube_relay(
             progress,
-            &self.email,
+            &email_display,
             &self.otp,
             self.otp_sent,
             self.is_signup,

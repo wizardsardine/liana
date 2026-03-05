@@ -1,6 +1,6 @@
 use iced::{
     alignment::Horizontal,
-    widget::{checkbox, pick_list, scrollable, Button, Space, Stack, Toggler},
+    widget::{pick_list, scrollable, Button, Space, Stack, Toggler},
     Alignment, Length, Subscription, Task,
 };
 
