@@ -63,7 +63,8 @@ pub fn spend_view<'a>(
         },
     ));
 
-    let spend_overview = psbt::spend_overview_view(tx, desc_info, key_aliases, currently_signing);
+    let spend_overview =
+        psbt::spend_overview_view(tx, desc_info, key_aliases, currently_signing, saved);
 
     let inputs_outputs = Column::new()
         .spacing(20)
@@ -84,23 +85,27 @@ pub fn spend_view<'a>(
         ));
 
     let bottom_row = if saved {
-        Row::new()
-            .push(button::secondary(None, "Delete").width(200).on_press_maybe(
-                (!currently_signing).then_some(Message::Spend(SpendTxMessage::Delete)),
-            ))
-            .width(Length::Fill)
+        Column::new().push(
+            Row::new()
+                .push(button::secondary(None, "Delete").width(200).on_press_maybe(
+                    (!currently_signing).then_some(Message::Spend(SpendTxMessage::Delete)),
+                ))
+                .width(Length::Fill),
+        )
     } else {
-        Row::new()
-            .push(
-                button::secondary(None, "< Previous")
-                    .width(150)
-                    .on_press_maybe((!currently_signing).then_some(Message::Previous)),
-            )
-            .push(Space::with_width(Length::Fill))
-            .push(button::secondary(None, "Save").width(150).on_press_maybe(
-                (!currently_signing).then_some(Message::Spend(SpendTxMessage::Save)),
-            ))
-            .width(Length::Fill)
+        Column::new().spacing(20).push(
+            Row::new()
+                .push(
+                    button::secondary(None, "< Previous")
+                        .width(150)
+                        .on_press_maybe((!currently_signing).then_some(Message::Previous)),
+                )
+                .push(Space::with_width(Length::Fill))
+                .push(button::secondary(None, "Save").width(150).on_press_maybe(
+                    (!currently_signing).then_some(Message::Spend(SpendTxMessage::Save)),
+                ))
+                .width(Length::Fill),
+        )
     };
 
     let content = Column::new()
