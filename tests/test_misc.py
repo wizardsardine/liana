@@ -286,7 +286,7 @@ def test_migration(coincubed_multisig_legacy_datadir, bitcoind):
     coincubed.cmd_line[0] = OLD_COINCUBED_PATH
     coincubed.restart_fresh(bitcoind)
     old_coincubed_ver = coincubed.rpc.getinfo()["version"]
-    assert old_coincubed_ver in ["0.3.0", "1.0.0"]
+    assert old_coincubed_ver in ["0.3.0", "0.9.0", "1.0.0"]
 
     # Perform some transactions. On Coincube v0.3 there was no "updated_at" for Spend
     # transaction drafts.
@@ -373,11 +373,10 @@ def test_retry_on_workqueue_exceeded(coincubed, bitcoind, executor):
                 ],
                 timeout=5,
             )
-        except TimeoutError:
-            continue
-        finally:
             logging.info("Didn't raise. Trying again.")
             break
+        except TimeoutError:
+            continue
 
     # Submit the mined block to bitcoind through its P2P interface, it would make `waitfornewblock`
     # return, thereby unclogging the RPC work queue and unstucking the `getinfo` call to Coincube.
