@@ -92,9 +92,20 @@ impl Panels {
             liquid_expanded: false,
             // Liquid panels always available (use BreezClient, not Vault wallet)
             global_home: if let Some(w) = &wallet {
-                GlobalHome::new(w.clone(), breez_client.clone())
+                GlobalHome::new(
+                    w.clone(),
+                    breez_client.clone(),
+                    datadir.clone(),
+                    network,
+                    cube_id.clone(),
+                )
             } else {
-                GlobalHome::new_without_wallet(breez_client.clone())
+                GlobalHome::new_without_wallet(
+                    breez_client.clone(),
+                    datadir.clone(),
+                    network,
+                    cube_id.clone(),
+                )
             },
             liquid_overview: LiquidOverview::new(breez_client.clone()),
             liquid_send: LiquidSend::new(breez_client.clone()),
@@ -152,7 +163,13 @@ impl Panels {
             current: Menu::Home,
             vault_expanded: false,
             liquid_expanded: false,
-            global_home: GlobalHome::new(wallet.clone(), breez_client.clone()),
+            global_home: GlobalHome::new(
+                wallet.clone(),
+                breez_client.clone(),
+                data_dir.clone(),
+                cache.network,
+                cube_id.clone(),
+            ),
             vault_overview: Some(VaultOverview::new(
                 wallet.clone(),
                 cache.coins(),
@@ -1093,10 +1110,27 @@ impl App {
                 }
             }
             Message::View(view::Message::Clipboard(text)) => return clipboard::write(text),
+            msg @ Message::View(view::Message::Home(_)) => {
+                return self
+                    .panels
+                    .global_home
+                    .update(self.daemon.clone(), &self.cache, msg);
+            }
 
             Message::BreezEvent(event) => {
-                use breez_sdk_liquid::prelude::{PaymentDetails, SdkEvent};
+                use breez_sdk_liquid::prelude::{PaymentDetails, PaymentType, SdkEvent};
                 log::info!("App received Breez Event: {:?}", event);
+
+                let swap_id_for_bitcoin_send = |details: &breez_sdk_liquid::prelude::Payment| {
+                    if matches!(details.payment_type, PaymentType::Send) {
+                        match &details.details {
+                            PaymentDetails::Bitcoin { swap_id, .. } => Some(swap_id.clone()),
+                            _ => None,
+                        }
+                    } else {
+                        None
+                    }
+                };
 
                 match event {
                     SdkEvent::PaymentWaitingFeeAcceptance { details } => {
@@ -1146,11 +1180,91 @@ impl App {
                             },
                         );
                     }
-                    SdkEvent::PaymentPending { .. }
-                    | SdkEvent::PaymentSucceeded { .. }
-                    | SdkEvent::PaymentFailed { .. }
-                    | SdkEvent::PaymentWaitingConfirmation { .. }
-                    | SdkEvent::Synced => {
+                    SdkEvent::PaymentPending { details } => {
+                        let home_task = swap_id_for_bitcoin_send(&details).map(|swap_id| {
+                            Task::done(Message::View(view::Message::Home(
+                                view::HomeMessage::LiquidToVaultPending(Some(swap_id)),
+                            )))
+                        });
+
+                        return Task::batch(vec![
+                            Task::done(Message::Tick),
+                            Task::done(Message::View(view::Message::LiquidSend(
+                                view::LiquidSendMessage::RefreshRequested,
+                            ))),
+                            Task::done(Message::View(view::Message::LiquidOverview(
+                                view::LiquidOverviewMessage::RefreshRequested,
+                            ))),
+                            Task::done(Message::View(view::Message::Home(
+                                view::HomeMessage::RefreshLiquidBalance,
+                            ))),
+                            home_task.unwrap_or_else(Task::none),
+                        ]);
+                    }
+                    SdkEvent::PaymentSucceeded { details } => {
+                        let home_task = swap_id_for_bitcoin_send(&details).map(|swap_id| {
+                            Task::done(Message::View(view::Message::Home(
+                                view::HomeMessage::LiquidToVaultSucceeded(Some(swap_id)),
+                            )))
+                        });
+
+                        return Task::batch(vec![
+                            Task::done(Message::Tick),
+                            Task::done(Message::View(view::Message::LiquidSend(
+                                view::LiquidSendMessage::RefreshRequested,
+                            ))),
+                            Task::done(Message::View(view::Message::LiquidOverview(
+                                view::LiquidOverviewMessage::RefreshRequested,
+                            ))),
+                            Task::done(Message::View(view::Message::Home(
+                                view::HomeMessage::RefreshLiquidBalance,
+                            ))),
+                            home_task.unwrap_or_else(Task::none),
+                        ]);
+                    }
+                    SdkEvent::PaymentFailed { details } => {
+                        let home_task = swap_id_for_bitcoin_send(&details).map(|swap_id| {
+                            Task::done(Message::View(view::Message::Home(
+                                view::HomeMessage::LiquidToVaultFailed(Some(swap_id)),
+                            )))
+                        });
+
+                        return Task::batch(vec![
+                            Task::done(Message::Tick),
+                            Task::done(Message::View(view::Message::LiquidSend(
+                                view::LiquidSendMessage::RefreshRequested,
+                            ))),
+                            Task::done(Message::View(view::Message::LiquidOverview(
+                                view::LiquidOverviewMessage::RefreshRequested,
+                            ))),
+                            Task::done(Message::View(view::Message::Home(
+                                view::HomeMessage::RefreshLiquidBalance,
+                            ))),
+                            home_task.unwrap_or_else(Task::none),
+                        ]);
+                    }
+                    SdkEvent::PaymentWaitingConfirmation { details } => {
+                        let home_task = swap_id_for_bitcoin_send(&details).map(|swap_id| {
+                            Task::done(Message::View(view::Message::Home(
+                                view::HomeMessage::LiquidToVaultWaitingConfirmation(Some(swap_id)),
+                            )))
+                        });
+
+                        return Task::batch(vec![
+                            Task::done(Message::Tick),
+                            Task::done(Message::View(view::Message::LiquidSend(
+                                view::LiquidSendMessage::RefreshRequested,
+                            ))),
+                            Task::done(Message::View(view::Message::LiquidOverview(
+                                view::LiquidOverviewMessage::RefreshRequested,
+                            ))),
+                            Task::done(Message::View(view::Message::Home(
+                                view::HomeMessage::RefreshLiquidBalance,
+                            ))),
+                            home_task.unwrap_or_else(Task::none),
+                        ]);
+                    }
+                    SdkEvent::Synced => {
                         // Payment state changed - trigger cache update
                         return Task::batch(vec![
                             Task::done(Message::Tick),
