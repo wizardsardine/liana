@@ -9,6 +9,12 @@ pub struct CoincubeClient {
     pub base_url: &'static str,
 }
 
+impl Default for CoincubeClient {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CoincubeClient {
     pub fn new() -> Self {
         #[cfg(debug_assertions)]

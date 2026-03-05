@@ -821,7 +821,7 @@ pub(super) fn webview_ux<'a>(
             widget::column![
                 widget::container(
                     widget::row![
-                        widget::text_input("", &addr)
+                        widget::text_input("", addr)
                             .size(12)
                             .padding([6, 10])
                             .width(Length::Fill)

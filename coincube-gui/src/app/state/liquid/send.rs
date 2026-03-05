@@ -308,7 +308,10 @@ impl State for LiquidSend {
                                 }
                             }
 
-                            InputType::LiquidAddress { address } => address.address.clone(),
+                            InputType::LiquidAddress { address } => format!(
+                                "Sending money to {}",
+                                display_abbreviated(address.address.clone())
+                            ),
                             _ => String::from("Send Payment"),
                         }
                     } else {
