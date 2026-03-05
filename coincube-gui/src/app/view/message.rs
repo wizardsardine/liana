@@ -2,7 +2,10 @@ use crate::{
     app::{
         menu::Menu,
         settings::unit::BitcoinDisplayUnit,
-        view::{global_home::{IncomingTransferStage, TransferDirection}, FiatAmountConverter},
+        view::{
+            global_home::{IncomingTransferStage, TransferDirection},
+            FiatAmountConverter,
+        },
     },
     export::ImportExportMessage,
     node::bitcoind::RpcAuthType,

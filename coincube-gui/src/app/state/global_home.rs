@@ -538,7 +538,7 @@ impl State for GlobalHome {
                                     if let Some(prepare_onchain_send_response) =
                                         self.prepare_onchain_send_response.clone()
                                     {
-                                        let transfer_amount = Amount::from_str_in(
+                                        let Ok(transfer_amount) = Amount::from_str_in(
                                             &self.entered_amount.value,
                                             if matches!(cache.bitcoin_unit, BitcoinDisplayUnit::BTC)
                                             {
@@ -546,8 +546,10 @@ impl State for GlobalHome {
                                             } else {
                                                 breez_sdk_liquid::bitcoin::Denomination::Satoshi
                                             },
-                                        )
-                                        .unwrap_or(Amount::ZERO);
+                                        ) else {
+                                            self.entered_amount.valid = false;
+                                            return Task::none();
+                                        };
                                         let breez_client = self.breez_client.clone();
                                         self.is_sending = true;
                                         return Task::perform(
@@ -991,7 +993,7 @@ impl GlobalHome {
             (Some(_), Some(expected_swap_id)) => incoming_swap_id
                 .map(|swap_id| swap_id == expected_swap_id)
                 .unwrap_or(false),
-            (Some(_), None) => true,
+            (Some(_), None) => false,
             _ => false,
         }
     }

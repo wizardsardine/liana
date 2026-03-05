@@ -1245,9 +1245,7 @@ impl App {
                     SdkEvent::PaymentWaitingConfirmation { details } => {
                         let home_task = swap_id_for_bitcoin_send(&details).map(|swap_id| {
                             Task::done(Message::View(view::Message::Home(
-                                view::HomeMessage::LiquidToVaultWaitingConfirmation(Some(
-                                    swap_id,
-                                )),
+                                view::HomeMessage::LiquidToVaultWaitingConfirmation(Some(swap_id)),
                             )))
                         });
 
