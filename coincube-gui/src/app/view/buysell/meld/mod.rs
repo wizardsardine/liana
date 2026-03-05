@@ -188,7 +188,7 @@ impl MeldState {
                 search,
                 regions,
                 ..
-            }) => ui::region_selection_ux(&regions, *selected, search),
+            }) => ui::region_selection_ux(regions, *selected, search),
             Some(MeldFlowStep::AmountInputForm { .. }) => ui::input_form_ux(self),
             Some(MeldFlowStep::QuoteSelection {
                 quotes,
@@ -382,7 +382,7 @@ impl MeldState {
                     }) = self.steps.last_mut()
                     {
                         let daemon = daemon.expect("Daemon must be available for BuySell panel");
-                        let start_index = addresses_continue_from.clone();
+                        let start_index = *addresses_continue_from;
 
                         let task = iced::Task::perform(
                             async move {
@@ -871,7 +871,7 @@ impl MeldState {
     }
 
     // utility functions
-    fn get_region<'a>(&'a self) -> Option<&'a meld::api::MeldRegion> {
+    fn get_region(&self) -> Option<&meld::api::MeldRegion> {
         self.steps.iter().find_map(|step| match step {
             MeldFlowStep::RegionSelection {
                 regions,

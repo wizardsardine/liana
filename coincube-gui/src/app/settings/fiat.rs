@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use crate::services::fiat::{Currency, PriceSource};
 use crate::utils::serde::{deser_fromstr, serialize_display};
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PriceSetting {
     #[serde(
         deserialize_with = "deser_fromstr",
@@ -16,4 +16,14 @@ pub struct PriceSetting {
     )]
     pub currency: Currency,
     pub is_enabled: bool,
+}
+
+impl Default for PriceSetting {
+    fn default() -> Self {
+        Self {
+            source: PriceSource::default(),
+            currency: Currency::default(),
+            is_enabled: true,
+        }
+    }
 }

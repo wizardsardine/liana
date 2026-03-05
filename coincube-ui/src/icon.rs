@@ -255,6 +255,10 @@ pub fn lightning_icon() -> Text<'static> {
     bootstrap_icon('\u{F46E}')
 }
 
+pub fn droplet_icon() -> Text<'static> {
+    bootstrap_icon('\u{F30C}')
+}
+
 pub fn eye_icon() -> Text<'static> {
     bootstrap_icon('\u{F33E}')
 }

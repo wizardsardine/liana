@@ -3,6 +3,7 @@ name: Functional Tests
 on:
   push:
   pull_request:
+  workflow_dispatch:
 
 jobs:
   functional-tests:
@@ -70,11 +71,9 @@ jobs:
           cargo build --release --package coincubed
           cd ./tests/tools/taproot_signer
           cargo build --release
-
       - name: Prepare and run functional tests
         run: |
           set -xe
-
           if [ "$USE_MIN_BITCOIN_VERSION" = "TRUE" ]; then
             curl -O https://bitcoincore.org/bin/bitcoin-core-24.0.1/bitcoin-24.0.1-x86_64-linux-gnu.tar.gz
             echo "49df6e444515d457ea0b885d66f521f2a26ca92ccf73d5296082e633544253bf bitcoin-24.0.1-x86_64-linux-gnu.tar.gz" | sha256sum -c
@@ -87,9 +86,7 @@ jobs:
             tar -xzf bitcoin-29.0-x86_64-linux-gnu.tar.gz
             export BITCOIND_PATH=bitcoin-29.0/bin/bitcoind
           fi
-
           echo "BITCOIN_BACKEND_TYPE = $BITCOIN_BACKEND_TYPE"
-
           if [ "$BITCOIN_BACKEND_TYPE" = "electrs" ]; then
             curl -OL https://github.com/jp1ac4/electrsd/releases/download/electrs-v0.10.6-ubuntu-20.04/electrs_linux_v0.10.6.zip
             echo "34934bedbc4003867353f23c7983d4aa2d901dfccfd0bd74167f9fd305c56f7b electrs_linux_v0.10.6.zip" | sha256sum -c
@@ -97,11 +94,11 @@ jobs:
             chmod 754 electrs
             export ELECTRS_PATH=$PWD/electrs
           fi
-
-          curl -LO https://github.com/coincubetech/coincube/releases/download/v13.0.0/Coincube-Vault-x86_64-unknown-linux-gnu.tar.gz
-          echo "f4472364ef457e78ca684115d695fac7b51746607f546c5de9b56f3ce4722472 Coincube-Vault-x86_64-unknown-linux-gnu.tar.gz" | sha256sum -c
-          tar -xzf Coincube-Vault-x86_64-unknown-linux-gnu.tar.gz
-          export OLD_COINCUBED_PATH="$PWD/Coincube-Vault-x86_64-unknown-linux-gnu/coincubed"
-
+          curl -LO https://github.com/coincubetech/coincube/releases/download/v1.0.0/coincube-1.0.0-x86_64-unknown-linux-gnu.tar.gz
+          echo "9979f50c65991d2417b0c6c57701f00ebf91cdcd10b9583de0bcc9d898f0dc38 coincube-1.0.0-x86_64-unknown-linux-gnu.tar.gz" | sha256sum -c
+          tar -xzf coincube-1.0.0-x86_64-unknown-linux-gnu.tar.gz
+          # Find the binary
+          OLD_PATH=$(find $PWD -type f -name coincubed | head -n 1)
+          export OLD_COINCUBED_PATH="$OLD_PATH"
           # Run the functional tests
           pytest tests/ -vvv -n 8

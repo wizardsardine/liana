@@ -140,6 +140,7 @@ pub fn liquid_receive_view<'a>(
 
 fn method_toggle(current_method: &ReceiveMethod) -> Element<LiquidReceiveMessage> {
     let lightning_liquid = *current_method == ReceiveMethod::Lightning;
+    let liquid_active = *current_method == ReceiveMethod::Liquid;
     let onchain_liquid = *current_method == ReceiveMethod::OnChain;
 
     let lightning_button = {
@@ -147,7 +148,7 @@ fn method_toggle(current_method: &ReceiveMethod) -> Element<LiquidReceiveMessage
             .size(18)
             .style(move |_theme: &theme::Theme| iced::widget::text::Style {
                 color: Some(if lightning_liquid {
-                    color::WHITE
+                    color::ORANGE
                 } else {
                     color::GREY_2
                 }),
@@ -157,7 +158,7 @@ fn method_toggle(current_method: &ReceiveMethod) -> Element<LiquidReceiveMessage
             .size(16)
             .style(move |_theme: &theme::Theme| iced::widget::text::Style {
                 color: Some(if lightning_liquid {
-                    color::WHITE
+                    color::ORANGE
                 } else {
                     color::GREY_2
                 }),
@@ -214,7 +215,7 @@ fn method_toggle(current_method: &ReceiveMethod) -> Element<LiquidReceiveMessage
             .size(18)
             .style(move |_theme: &theme::Theme| iced::widget::text::Style {
                 color: Some(if onchain_liquid {
-                    color::WHITE
+                    color::ORANGE
                 } else {
                     color::GREY_2
                 }),
@@ -224,7 +225,7 @@ fn method_toggle(current_method: &ReceiveMethod) -> Element<LiquidReceiveMessage
             .size(16)
             .style(move |_theme: &theme::Theme| iced::widget::text::Style {
                 color: Some(if onchain_liquid {
-                    color::WHITE
+                    color::ORANGE
                 } else {
                     color::GREY_2
                 }),
@@ -276,19 +277,92 @@ fn method_toggle(current_method: &ReceiveMethod) -> Element<LiquidReceiveMessage
         })
     };
 
-    Container::new(Row::new().push(lightning_button).push(onchain_button))
-        .padding(4)
-        .max_width(800.0)
-        .style(|_theme: &theme::Theme| container::Style {
-            background: Some(Background::Color(iced::color!(0x202020))),
+    let liquid_button = {
+        let icon = icon::droplet_icon()
+            .size(18)
+            .style(move |_theme: &theme::Theme| iced::widget::text::Style {
+                color: Some(if liquid_active {
+                    color::ORANGE
+                } else {
+                    color::GREY_2
+                }),
+            });
+
+        let label =
+            text("Liquid")
+                .size(16)
+                .style(move |_theme: &theme::Theme| iced::widget::text::Style {
+                    color: Some(if liquid_active {
+                        color::ORANGE
+                    } else {
+                        color::GREY_2
+                    }),
+                });
+
+        let button_content = Container::new(
+            Row::new()
+                .spacing(8)
+                .align_y(iced::alignment::Vertical::Center)
+                .push(icon)
+                .push(label),
+        )
+        .width(Length::Fill)
+        .align_x(iced::alignment::Horizontal::Center);
+
+        Container::new(
+            iced_button(Container::new(button_content).padding([10, 30]))
+                .style(move |_theme: &theme::Theme, _status| iced_button::Style {
+                    background: Some(Background::Color(color::TRANSPARENT)),
+                    text_color: if liquid_active {
+                        color::WHITE
+                    } else {
+                        color::GREY_2
+                    },
+                    border: iced::Border {
+                        radius: 50.0.into(),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                })
+                .on_press(LiquidReceiveMessage::ToggleMethod(ReceiveMethod::Liquid)),
+        )
+        .style(move |_theme: &theme::Theme| container::Style {
+            background: Some(Background::Color(if liquid_active {
+                iced::color!(0x161716)
+            } else {
+                color::TRANSPARENT
+            })),
             border: iced::Border {
-                color: iced::color!(0x202020),
                 radius: 50.0.into(),
-                width: 50.0,
+                color: if liquid_active {
+                    color::ORANGE
+                } else {
+                    color::TRANSPARENT
+                },
+                width: if liquid_active { 0.7 } else { 0.0 },
             },
             ..Default::default()
         })
-        .into()
+    };
+
+    Container::new(
+        Row::new()
+            .push(lightning_button)
+            .push(liquid_button)
+            .push(onchain_button),
+    )
+    .padding(4)
+    .max_width(800.0)
+    .style(|_theme: &theme::Theme| container::Style {
+        background: Some(Background::Color(iced::color!(0x202020))),
+        border: iced::Border {
+            color: iced::color!(0x202020),
+            radius: 50.0.into(),
+            width: 2.0,
+        },
+        ..Default::default()
+    })
+    .into()
 }
 
 fn input_fields<'a>(
@@ -407,6 +481,14 @@ fn action_buttons<'a>(
         .spacing(15)
         .align_x(Alignment::Center)
         .push(Row::new().spacing(15).push(copy_button));
+
+    if *receive_method == ReceiveMethod::Liquid {
+        column = column.push(
+            text("Share this address to receive L-BTC from any Liquid wallet")
+                .size(13)
+                .style(theme::text::secondary),
+        );
+    }
 
     if *receive_method == ReceiveMethod::OnChain {
         let mut warning_content = Column::new().spacing(8).push(
