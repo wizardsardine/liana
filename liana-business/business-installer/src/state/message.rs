@@ -37,6 +37,7 @@ pub enum Msg {
     KeyUpdateAlias(String),              // Update key alias field
     KeyUpdateDescr(String),              // Update key description field
     KeyUpdateEmail(String),              // Update key email field
+    KeyUpdateToken(String),              // Update key token field
     KeyUpdateType(ws_business::KeyType), // Update key type
 
     // Template management
