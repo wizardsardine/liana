@@ -67,7 +67,7 @@ pub struct Context {
     // we dont want to override the generated signer with it.
     pub recovered_signer: Option<Arc<Signer>>,
     pub bitcoind_is_external: bool,
-    pub use_coincube_relay: bool,
+    pub use_coincube_connect: bool,
     pub internal_bitcoind_config: Option<InternalBitcoindConfig>,
     pub internal_bitcoind: Option<Bitcoind>,
     pub remote_backend: RemoteBackend,
@@ -96,7 +96,7 @@ impl Context {
             hw_is_used: false,
             recovered_signer: None,
             bitcoind_is_external: true,
-            use_coincube_relay: false,
+            use_coincube_connect: false,
             internal_bitcoind_config: None,
             internal_bitcoind: None,
             remote_backend,

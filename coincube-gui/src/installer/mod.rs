@@ -6,7 +6,7 @@ mod prompt;
 mod step;
 mod view;
 
-fn relay_url(network: bitcoin::Network) -> String {
+fn connect_url(network: bitcoin::Network) -> String {
     let network_path = match network {
         bitcoin::Network::Bitcoin => "bitcoin/mainnet",
         bitcoin::Network::Testnet => "bitcoin/testnet",
@@ -63,7 +63,7 @@ use crate::{
 pub use descriptor::{KeySource, KeySourceKind, PathKind, PathSequence};
 pub use message::Message;
 use step::{
-    BackupDescriptor, BackupMnemonic, ChooseBackend, ChooseDescriptorTemplate, CoincubeRelayStep,
+    BackupDescriptor, BackupMnemonic, ChooseBackend, ChooseDescriptorTemplate, CoincubeConnectStep,
     DefineDescriptor, DefineNode, DescriptorTemplateDescription, Final, ImportDescriptor,
     ImportRemoteWallet, InternalBitcoindStep, RecoverMnemonic, RegisterDescriptor,
     RemoteBackendLogin, SelectBitcoindTypeStep, ShareXpubs, Step, WalletAlias,
@@ -173,7 +173,7 @@ impl Installer {
                     RegisterDescriptor::new_create_wallet().into(),
                     SelectBitcoindTypeStep::new().into(),
                     InternalBitcoindStep::new(&context.coincube_directory).into(),
-                    CoincubeRelayStep::new().into(),
+                    CoincubeConnectStep::new().into(),
                     DefineNode::new(crate::node::NodeType::Esplora).into(),
                     WalletAlias::default().into(),
                     Final::new().into(),
@@ -189,7 +189,7 @@ impl Installer {
                     RegisterDescriptor::new_import_wallet().into(),
                     SelectBitcoindTypeStep::new().into(),
                     InternalBitcoindStep::new(&context.coincube_directory).into(),
-                    CoincubeRelayStep::new().into(),
+                    CoincubeConnectStep::new().into(),
                     DefineNode::default().into(),
                     WalletAlias::default().into(),
                     Final::new().into(),

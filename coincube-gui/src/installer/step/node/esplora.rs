@@ -23,7 +23,7 @@ impl DefineEsplora {
     }
 
     pub fn load_context(&mut self, ctx: &Context) {
-        self.placeholder = super::super::super::relay_url(ctx.network);
+        self.placeholder = super::super::super::connect_url(ctx.network);
     }
 
     pub fn can_try_ping(&self) -> bool {

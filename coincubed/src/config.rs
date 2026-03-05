@@ -148,7 +148,7 @@ pub struct EsploraConfig {
     /// The HTTP(S) URL of the Esplora server.
     /// e.g. https://api.coincube.io/api/v1/esplora/bitcoin/mainnet
     pub addr: String,
-    /// Optional JWT bearer token for authenticated Esplora endpoints (e.g. COINCUBE | Relay).
+    /// Optional JWT bearer token for authenticated Esplora endpoints (e.g. COINCUBE | Connect).
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub token: Option<String>,
 }

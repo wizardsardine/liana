@@ -258,6 +258,6 @@ impl Step for DefineNode {
     }
 
     fn skip(&self, ctx: &Context) -> bool {
-        !ctx.bitcoind_is_external || ctx.remote_backend.is_some() || ctx.use_coincube_relay
+        !ctx.bitcoind_is_external || ctx.remote_backend.is_some() || ctx.use_coincube_connect
     }
 }

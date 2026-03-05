@@ -85,7 +85,7 @@ pub enum Message {
     ),
     CubeSaveFailed(String),
     RetryCubeSave,
-    CoincubeRelay(CoincubeRelayMsg),
+    CoincubeConnect(CoincubeConnectMsg),
     None,
 }
 
@@ -167,11 +167,11 @@ pub enum DefineNode {
 #[derive(Debug, Clone)]
 pub enum SelectBitcoindTypeMsg {
     UseExternal(bool),
-    UseRelay,
+    UseConnect,
 }
 
 #[derive(Debug, Clone)]
-pub enum CoincubeRelayMsg {
+pub enum CoincubeConnectMsg {
     EmailEdited(String),
     ToggleMode,
     RequestOtp,

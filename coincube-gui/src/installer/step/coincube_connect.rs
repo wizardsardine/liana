@@ -6,14 +6,14 @@ use crate::{
     hw::HardwareWallets,
     installer::{
         context::Context,
-        message::{CoincubeRelayMsg, Message},
+        message::{CoincubeConnectMsg, Message},
         step::Step,
         view,
     },
     services::coincube::{CoincubeClient, OtpRequest, OtpVerifyRequest},
 };
 
-pub struct CoincubeRelayStep {
+pub struct CoincubeConnectStep {
     client: CoincubeClient,
     email: form::Value<String>,
     email_touched: bool,
@@ -25,7 +25,7 @@ pub struct CoincubeRelayStep {
     error: Option<String>,
 }
 
-impl CoincubeRelayStep {
+impl CoincubeConnectStep {
     pub fn new() -> Self {
         Self {
             client: CoincubeClient::new(),
@@ -44,14 +44,14 @@ impl CoincubeRelayStep {
     }
 }
 
-impl Default for CoincubeRelayStep {
+impl Default for CoincubeConnectStep {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl From<CoincubeRelayStep> for Box<dyn Step> {
-    fn from(s: CoincubeRelayStep) -> Box<dyn Step> {
+impl From<CoincubeConnectStep> for Box<dyn Step> {
+    fn from(s: CoincubeConnectStep) -> Box<dyn Step> {
         Box::new(s)
     }
 }
@@ -66,16 +66,16 @@ async fn send_otp(client: CoincubeClient, email: String, is_signup: bool) -> Res
     .map_err(|e| e.to_string())
 }
 
-impl Step for CoincubeRelayStep {
+impl Step for CoincubeConnectStep {
     fn skip(&self, ctx: &Context) -> bool {
-        !ctx.use_coincube_relay
+        !ctx.use_coincube_connect
             || ctx.network == coincube_core::miniscript::bitcoin::Network::Regtest
     }
 
     fn apply(&mut self, ctx: &mut Context) -> bool {
         if let Some(token) = &self.jwt {
             ctx.bitcoin_backend = Some(BitcoinBackend::Esplora(EsploraConfig {
-                addr: super::super::relay_url(ctx.network),
+                addr: super::super::connect_url(ctx.network),
                 token: Some(token.clone()),
             }));
             true
@@ -85,37 +85,45 @@ impl Step for CoincubeRelayStep {
     }
 
     fn update(&mut self, _hws: &mut HardwareWallets, message: Message) -> Task<Message> {
-        if let Message::CoincubeRelay(msg) = message {
+        if let Message::CoincubeConnect(msg) = message {
             match msg {
-                CoincubeRelayMsg::EmailEdited(value) => {
+                CoincubeConnectMsg::EmailEdited(value) => {
                     self.email_touched = true;
                     self.email.value = value;
                     self.email.valid =
                         !self.email.value.is_empty() && self.email.value.contains('@');
                 }
-                CoincubeRelayMsg::ToggleMode => {
+                CoincubeConnectMsg::ToggleMode => {
                     if !self.processing {
                         self.is_signup = !self.is_signup;
                         self.error = None;
                     }
                 }
-                CoincubeRelayMsg::RequestOtp => {
+                CoincubeConnectMsg::RequestOtp => {
                     self.processing = true;
                     self.error = None;
                     return Task::perform(
-                        send_otp(self.client.clone(), self.email.value.clone(), self.is_signup),
-                        |res| Message::CoincubeRelay(CoincubeRelayMsg::OtpRequested(res)),
+                        send_otp(
+                            self.client.clone(),
+                            self.email.value.clone(),
+                            self.is_signup,
+                        ),
+                        |res| Message::CoincubeConnect(CoincubeConnectMsg::OtpRequested(res)),
                     );
                 }
-                CoincubeRelayMsg::ResendOtp => {
+                CoincubeConnectMsg::ResendOtp => {
                     self.processing = true;
                     self.error = None;
                     return Task::perform(
-                        send_otp(self.client.clone(), self.email.value.clone(), self.is_signup),
-                        |res| Message::CoincubeRelay(CoincubeRelayMsg::OtpResent(res)),
+                        send_otp(
+                            self.client.clone(),
+                            self.email.value.clone(),
+                            self.is_signup,
+                        ),
+                        |res| Message::CoincubeConnect(CoincubeConnectMsg::OtpResent(res)),
                     );
                 }
-                CoincubeRelayMsg::OtpRequested(res) => {
+                CoincubeConnectMsg::OtpRequested(res) => {
                     self.processing = false;
                     match res {
                         Ok(()) => {
@@ -128,13 +136,13 @@ impl Step for CoincubeRelayStep {
                         }
                     }
                 }
-                CoincubeRelayMsg::OtpResent(res) => {
+                CoincubeConnectMsg::OtpResent(res) => {
                     self.processing = false;
                     if let Err(e) = res {
                         self.error = Some(e);
                     }
                 }
-                CoincubeRelayMsg::OtpEdited(value) => {
+                CoincubeConnectMsg::OtpEdited(value) => {
                     self.otp.value = value.trim().to_string();
                     self.otp.valid = true;
                     if self.otp.value.len() == 6 && !self.processing {
@@ -155,11 +163,11 @@ impl Step for CoincubeRelayStep {
                                 .map(|resp| resp.token)
                                 .map_err(|e| e.to_string())
                             },
-                            |res| Message::CoincubeRelay(CoincubeRelayMsg::OtpVerified(res)),
+                            |res| Message::CoincubeConnect(CoincubeConnectMsg::OtpVerified(res)),
                         );
                     }
                 }
-                CoincubeRelayMsg::OtpVerified(res) => {
+                CoincubeConnectMsg::OtpVerified(res) => {
                     self.processing = false;
                     match res {
                         Ok(token) => {
@@ -191,7 +199,7 @@ impl Step for CoincubeRelayStep {
                 ..self.email.clone()
             }
         };
-        view::define_coincube_relay(
+        view::define_coincube_connect(
             progress,
             &email_display,
             &self.otp,

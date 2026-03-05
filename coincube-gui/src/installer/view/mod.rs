@@ -37,7 +37,7 @@ use crate::{
     hw::{is_compatible_with_tapminiscript, HardwareWallet, UnsupportedReason},
     installer::{
         descriptor::{PathSequence, PathWarning},
-        message::{self, CoincubeRelayMsg, DefineBitcoind, DefineEsplora, DefineNode, Message},
+        message::{self, CoincubeConnectMsg, DefineBitcoind, DefineEsplora, DefineNode, Message},
         prompt,
         step::{DownloadState, InstallState},
         view::editor::format_sequence_duration,
@@ -1310,7 +1310,7 @@ pub fn define_esplora<'a>(
     Column::new().push(col_address).spacing(50).into()
 }
 
-pub fn define_coincube_relay<'a>(
+pub fn define_coincube_connect<'a>(
     progress: (usize, usize),
     email: &form::Value<String>,
     otp: &form::Value<String>,
@@ -1323,7 +1323,7 @@ pub fn define_coincube_relay<'a>(
         let (action_label, toggle_label) = if is_signup {
             ("Create Account", "Already have an account? Sign in")
         } else {
-            ("Sign In", "New to COINCUBE | Relay? Create account")
+            ("Sign In", "New to COINCUBE | Connect? Create account")
         };
         Column::new()
             .spacing(20)
@@ -1332,7 +1332,7 @@ pub fn define_coincube_relay<'a>(
             ))
             .push(
                 form::Form::new_trimmed("your@email.com", email, |msg| {
-                    Message::CoincubeRelay(CoincubeRelayMsg::EmailEdited(msg))
+                    Message::CoincubeConnect(CoincubeConnectMsg::EmailEdited(msg))
                 })
                 .warning("Please enter a valid email address")
                 .size(text::P1_SIZE)
@@ -1343,14 +1343,14 @@ pub fn define_coincube_relay<'a>(
                 button::secondary(None, action_label)
                     .width(Length::Fixed(250.0))
                     .on_press_maybe(if !processing && email.valid {
-                        Some(Message::CoincubeRelay(CoincubeRelayMsg::RequestOtp))
+                        Some(Message::CoincubeConnect(CoincubeConnectMsg::RequestOtp))
                     } else {
                         None
                     }),
             )
             .push(
                 button::transparent(None, toggle_label)
-                    .on_press(Message::CoincubeRelay(CoincubeRelayMsg::ToggleMode)),
+                    .on_press(Message::CoincubeConnect(CoincubeConnectMsg::ToggleMode)),
             )
             .into()
     } else {
@@ -1362,7 +1362,7 @@ pub fn define_coincube_relay<'a>(
             )))
             .push(
                 form::Form::new_trimmed("6-digit code", otp, |msg| {
-                    Message::CoincubeRelay(CoincubeRelayMsg::OtpEdited(msg))
+                    Message::CoincubeConnect(CoincubeConnectMsg::OtpEdited(msg))
                 })
                 .warning("Invalid verification code")
                 .size(text::P1_SIZE)
@@ -1373,7 +1373,7 @@ pub fn define_coincube_relay<'a>(
                 button::secondary(None, "Resend Code")
                     .width(Length::Fixed(200.0))
                     .on_press_maybe(if !processing {
-                        Some(Message::CoincubeRelay(CoincubeRelayMsg::ResendOtp))
+                        Some(Message::CoincubeConnect(CoincubeConnectMsg::ResendOtp))
                     } else {
                         None
                     }),
@@ -1384,7 +1384,7 @@ pub fn define_coincube_relay<'a>(
     layout(
         progress,
         None,
-        "COINCUBE | Relay",
+        "COINCUBE | Connect",
         content,
         true,
         Some(Message::Previous),
@@ -1393,33 +1393,33 @@ pub fn define_coincube_relay<'a>(
 
 pub fn select_bitcoind_type<'a>(
     progress: (usize, usize),
-    relay_supported: bool,
+    connect_supported: bool,
 ) -> Element<'a, Message> {
-    let relay_header = relay_supported.then(|| {
+    let connect_header = connect_supported.then(|| {
         Container::new(
             Column::new()
                 .spacing(20)
                 .width(Length::Fixed(250.0))
-                .push(text("COINCUBE | Relay").bold()),
+                .push(text("COINCUBE | Connect").bold()),
         )
         .padding(20)
     });
 
-    let relay_description = relay_supported.then(|| {
+    let connect_description = connect_supported.then(|| {
         Container::new(
             Column::new()
                 .spacing(20)
                 .width(Length::Fixed(250.0))
                 .align_x(Alignment::Start)
                 .push(text(
-                    "Use the COINCUBE | Relay service to access \
+                    "Use the COINCUBE | Connect service to access \
                     our Esplora. No local node required.",
                 )),
         )
         .padding(20)
     });
 
-    let relay_button = relay_supported.then(|| {
+    let connect_button = connect_supported.then(|| {
         Container::new(
             Column::new()
                 .spacing(20)
@@ -1429,7 +1429,7 @@ pub fn select_bitcoind_type<'a>(
                     button::secondary(None, "Select")
                         .width(Length::Fixed(250.0))
                         .on_press(Message::SelectBitcoindType(
-                            message::SelectBitcoindTypeMsg::UseRelay,
+                            message::SelectBitcoindTypeMsg::UseConnect,
                         )),
                 ),
         )
@@ -1461,7 +1461,7 @@ pub fn select_bitcoind_type<'a>(
                 )
                 .padding(20),
             );
-        if let Some(col) = relay_header {
+        if let Some(col) = connect_header {
             row = row.push(col);
         }
         row
@@ -1503,7 +1503,7 @@ pub fn select_bitcoind_type<'a>(
                 )
                 .padding(20),
             );
-        if let Some(col) = relay_description {
+        if let Some(col) = connect_description {
             row = row.push(col);
         }
         row
@@ -1545,7 +1545,7 @@ pub fn select_bitcoind_type<'a>(
                 )
                 .padding(20),
             );
-        if let Some(col) = relay_button {
+        if let Some(col) = connect_button {
             row = row.push(col);
         }
         row
