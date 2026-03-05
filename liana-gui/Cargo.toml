@@ -20,6 +20,7 @@ path = "src/main.rs"
 async-trait = { workspace = true }
 async-hwi = { workspace = true }
 liana = { path = "../liana" }
+liana-connect = { workspace = true }
 lianad = { path = "../lianad", default-features = false, features = ["nonblocking_shutdown"] }
 liana-ui = { path = "../liana-ui" }
 backtrace = { workspace = true }

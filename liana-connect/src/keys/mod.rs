@@ -1,10 +1,11 @@
 pub mod api;
+mod http;
 pub mod token;
 
 use reqwest::{self, IntoUrl, Method, RequestBuilder};
 use serde_json::json;
 
-use super::http::{NotSuccessResponseInfo, ResponseExt};
+use self::http::{NotSuccessResponseInfo, ResponseExt};
 
 const KEYS_API_URL: &str = "https://keys.wizardsardine.com";
 
@@ -37,33 +38,33 @@ fn request<U: reqwest::IntoUrl>(
     http: &reqwest::Client,
     method: reqwest::Method,
     url: U,
+    user_agent: &str,
 ) -> reqwest::RequestBuilder {
     let req = http
         .request(method, url)
         .header("Content-Type", "application/json")
         .header("API-Version", "0.1")
-        .header("User-Agent", format!("liana-gui/{}", crate::VERSION));
+        .header("User-Agent", user_agent);
     tracing::debug!("Sending http request: {:?}", req);
     req
 }
 
 #[derive(Debug, Clone)]
-pub struct Client(reqwest::Client);
-
-impl Default for Client {
-    fn default() -> Self {
-        Self::new()
-    }
+pub struct Client {
+    http: reqwest::Client,
+    user_agent: String,
 }
 
 impl Client {
-    pub fn new() -> Self {
-        let http = reqwest::Client::new();
-        Client(http)
+    pub fn new(user_agent: &str) -> Self {
+        Client {
+            http: reqwest::Client::new(),
+            user_agent: user_agent.to_string(),
+        }
     }
 
     async fn request<U: IntoUrl>(&self, method: Method, url: U) -> RequestBuilder {
-        request(&self.0, method, url)
+        request(&self.http, method, url, &self.user_agent)
     }
 
     pub async fn get_key_by_token(&self, token: String) -> Result<api::Key, Error> {

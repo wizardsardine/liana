@@ -31,9 +31,9 @@ use crate::{
         step::{Context, Step},
         view,
     },
-    services::keys::api::KeyKind,
     signer::Signer,
 };
+use liana_connect::keys::api::KeyKind;
 
 use key::{new_multixkey_from_xpub, EditKeyAlias, PathData, SelectKeySource};
 

@@ -42,12 +42,9 @@ use crate::{
         message::{self, Message},
         Error, PathKind,
     },
-    services::{
-        self,
-        keys::{self, api::KeyKind},
-    },
     signer::Signer,
 };
+use liana_connect::keys::{self, api::KeyKind};
 
 const MAX_ALIAS_LEN: usize = 24;
 pub type FnMsg = fn() -> Message;
@@ -445,7 +442,7 @@ impl SelectKeySource {
     }
     fn fetch_provider(&mut self, token: String) -> Task<Message> {
         self.processing = true;
-        let client = services::keys::Client::new();
+        let client = keys::Client::new(&format!("liana-gui/{}", crate::VERSION));
         Task::perform(
             async move { (token.clone(), client.get_key_by_token(token).await) },
             |(token, res)| {
