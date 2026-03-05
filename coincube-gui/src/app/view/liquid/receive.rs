@@ -358,7 +358,7 @@ fn method_toggle(current_method: &ReceiveMethod) -> Element<LiquidReceiveMessage
         border: iced::Border {
             color: iced::color!(0x202020),
             radius: 50.0.into(),
-            width: 50.0,
+            width: 2.0,
         },
         ..Default::default()
     })
@@ -481,6 +481,14 @@ fn action_buttons<'a>(
         .spacing(15)
         .align_x(Alignment::Center)
         .push(Row::new().spacing(15).push(copy_button));
+
+    if *receive_method == ReceiveMethod::Liquid {
+        column = column.push(
+            text("Share this address to receive L-BTC from any Liquid wallet")
+                .size(13)
+                .style(theme::text::secondary),
+        );
+    }
 
     if *receive_method == ReceiveMethod::OnChain {
         let mut warning_content = Column::new().spacing(8).push(

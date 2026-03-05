@@ -26,7 +26,6 @@ pub struct LiquidReceive {
     amount_input: form::Value<String>,
     description_input: String,
     lightning_receive_limits: Option<(u64, u64)>, // (min_sat, max_sat)
-    liquid_receive_limits: Option<(u64, u64)>,    // (min_sat, max_sat)
     onchain_receive_limits: Option<(u64, u64)>,   // (min_sat, max_sat)
     error: Option<String>,
 }
@@ -47,7 +46,6 @@ impl LiquidReceive {
             amount_input: form::Value::default(),
             description_input: String::new(),
             lightning_receive_limits: None,
-            liquid_receive_limits: None,
             onchain_receive_limits: None,
             error: None,
         }
