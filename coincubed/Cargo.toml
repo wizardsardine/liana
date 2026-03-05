@@ -42,6 +42,12 @@ bdk_electrum = { git = "https://github.com/wizardsardine/bdk", branch = "release
 	"use-rustls-ring",
 ] }
 
+# For Esplora backend. Same git workspace as bdk_electrum so bdk_chain types are identical.
+bdk_esplora = { git = "https://github.com/wizardsardine/bdk", branch = "release/1.0.0-alpha.13", default-features = false, features = [
+	"blocking",
+	"blocking-https-rustls",
+] }
+
 # Don't reinvent the wheel
 dirs = "6"
 

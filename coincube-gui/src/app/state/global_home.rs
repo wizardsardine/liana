@@ -4,24 +4,30 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use breez_sdk_liquid::model::{
-    PayOnchainRequest, PreparePayOnchainRequest, PreparePayOnchainResponse,
+    PayOnchainRequest, PaymentDetails, PaymentType, PreparePayOnchainRequest,
+    PreparePayOnchainResponse,
 };
+use breez_sdk_liquid::prelude::PaymentState;
 use coincube_core::miniscript::bitcoin::{bip32::ChildNumber, Address, Amount};
 use coincube_ui::component::amount::BitcoinDisplayUnit;
 use coincube_ui::component::form;
 use coincube_ui::widget::*;
 use iced::{Subscription, Task};
+use std::time::Duration;
 
 use super::vault::psbt::SignModal;
 use super::{Cache, Menu, State};
 use crate::app::breez::BreezClient;
 use crate::app::state::vault::label::LabelsEdited;
 use crate::app::state::vault::receive::ShowQrCodeModal;
-use crate::app::view::global_home::{GlobalViewConfig, HomeView, TransferDirection};
+use crate::app::view::global_home::{
+    GlobalViewConfig, HomeView, IncomingTransferStage, PendingIncomingTransfer, TransferDirection,
+};
 use crate::app::view::HomeMessage;
-use crate::app::{message::Message, view, wallet::Wallet};
+use crate::app::{message::Message, settings, view, wallet::Wallet};
 use crate::daemon::model::{CreateSpendResult, LabelItem, Labelled, SpendTx};
 use crate::daemon::Daemon;
+use crate::dir::CoincubeDirectory;
 use crate::services::feeestimation::fee_estimation::FeeEstimator;
 
 #[derive(Default)]
@@ -80,10 +86,22 @@ pub struct GlobalHome {
     transfer_spend_tx: Option<SpendTx>,
     transfer_signed: bool,
     spend_tx_fees: Option<Amount>,
+    pending_vault_incoming: Option<PendingIncomingTransfer>,
+    pending_vault_incoming_swap_id: Option<String>,
+    pending_transfer_animation_phase: f32,
+    datadir_path: CoincubeDirectory,
+    network: coincube_core::miniscript::bitcoin::Network,
+    cube_id: String,
 }
 
 impl GlobalHome {
-    pub fn new(wallet: Arc<Wallet>, breez_client: Arc<BreezClient>) -> Self {
+    pub fn new(
+        wallet: Arc<Wallet>,
+        breez_client: Arc<BreezClient>,
+        datadir_path: CoincubeDirectory,
+        network: coincube_core::miniscript::bitcoin::Network,
+        cube_id: String,
+    ) -> Self {
         Self {
             wallet: Some(wallet),
             liquid_balance: Amount::ZERO,
@@ -104,10 +122,21 @@ impl GlobalHome {
             transfer_spend_tx: None,
             transfer_signed: false,
             spend_tx_fees: None,
+            pending_vault_incoming: None,
+            pending_vault_incoming_swap_id: None,
+            pending_transfer_animation_phase: 0.0,
+            datadir_path,
+            network,
+            cube_id,
         }
     }
 
-    pub fn new_without_wallet(breez_client: Arc<BreezClient>) -> Self {
+    pub fn new_without_wallet(
+        breez_client: Arc<BreezClient>,
+        datadir_path: CoincubeDirectory,
+        network: coincube_core::miniscript::bitcoin::Network,
+        cube_id: String,
+    ) -> Self {
         Self {
             wallet: None,
             liquid_balance: Amount::from_sat(0),
@@ -128,6 +157,12 @@ impl GlobalHome {
             transfer_spend_tx: None,
             transfer_signed: false,
             spend_tx_fees: None,
+            pending_vault_incoming: None,
+            pending_vault_incoming_swap_id: None,
+            pending_transfer_animation_phase: 0.0,
+            datadir_path,
+            network,
+            cube_id,
         }
     }
 }
@@ -173,6 +208,8 @@ impl State for GlobalHome {
                 is_tx_signed: self.transfer_signed,
                 prepare_onchain_send_response: self.prepare_onchain_send_response.as_ref(),
                 spend_tx_fees: self.spend_tx_fees,
+                pending_vault_incoming: self.pending_vault_incoming,
+                pending_animation_phase: self.pending_transfer_animation_phase,
             }),
         );
 
@@ -196,14 +233,27 @@ impl State for GlobalHome {
     }
 
     fn subscription(&self) -> Subscription<Message> {
-        match &self.modal {
-            Modal::Sign(sign_modal) => {
-                // To fetch hardware wallets
-                use crate::app::state::vault::psbt::Modal as PsbtModalTrait;
-                sign_modal.subscription()
-            }
-            _ => Subscription::none(),
+        let mut subscriptions = Vec::new();
+
+        if let Modal::Sign(sign_modal) = &self.modal {
+            // To fetch hardware wallets
+            use crate::app::state::vault::psbt::Modal as PsbtModalTrait;
+            subscriptions.push(sign_modal.subscription());
         }
+
+        if self
+            .pending_vault_incoming
+            .map(|pending| pending.stage != IncomingTransferStage::Completed)
+            .unwrap_or(false)
+        {
+            subscriptions.push(iced::time::every(Duration::from_millis(120)).map(|_| {
+                Message::View(view::Message::Home(
+                    HomeMessage::PendingTransferAnimationTick,
+                ))
+            }));
+        }
+
+        Subscription::batch(subscriptions)
     }
 
     fn update(
@@ -276,7 +326,7 @@ impl State for GlobalHome {
                                                     })
                                                     .await
                                             },
-                                            |result| match result {
+                                            move |result| match result {
                                                 Ok(response) => Message::View(view::Message::Home(HomeMessage::PrepareOnChainResponseReceived(response))),
                                                 Err(error) => Message::View(view::Message::Home(
                                                     HomeMessage::Error(error.to_string()),
@@ -488,6 +538,18 @@ impl State for GlobalHome {
                                     if let Some(prepare_onchain_send_response) =
                                         self.prepare_onchain_send_response.clone()
                                     {
+                                        let Ok(transfer_amount) = Amount::from_str_in(
+                                            &self.entered_amount.value,
+                                            if matches!(cache.bitcoin_unit, BitcoinDisplayUnit::BTC)
+                                            {
+                                                breez_sdk_liquid::bitcoin::Denomination::Bitcoin
+                                            } else {
+                                                breez_sdk_liquid::bitcoin::Denomination::Satoshi
+                                            },
+                                        ) else {
+                                            self.entered_amount.valid = false;
+                                            return Task::none();
+                                        };
                                         let breez_client = self.breez_client.clone();
                                         self.is_sending = true;
                                         return Task::perform(
@@ -500,10 +562,30 @@ impl State for GlobalHome {
                                                     })
                                                     .await
                                             },
-                                            |result| match result {
-                                                Ok(_) => Message::View(view::Message::Home(
-                                                    HomeMessage::TransferSuccessful,
-                                                )),
+                                            move |result| match result {
+                                                Ok(response) => {
+                                                    let swap_id = if matches!(
+                                                        response.payment.payment_type,
+                                                        PaymentType::Send
+                                                    ) {
+                                                        match response.payment.details {
+                                                            PaymentDetails::Bitcoin {
+                                                                swap_id,
+                                                                ..
+                                                            } => Some(swap_id),
+                                                            _ => None,
+                                                        }
+                                                    } else {
+                                                        None
+                                                    };
+
+                                                    Message::View(view::Message::Home(
+                                                        HomeMessage::LiquidToVaultSubmitted {
+                                                            amount: transfer_amount,
+                                                            swap_id,
+                                                        },
+                                                    ))
+                                                }
                                                 Err(error) => Message::View(view::Message::Home(
                                                     HomeMessage::Error(error.to_string()),
                                                 )),
@@ -577,6 +659,89 @@ impl State for GlobalHome {
                         self.is_sending = false;
                         Task::none()
                     }
+                    HomeMessage::LiquidToVaultSubmitted { amount, swap_id } => {
+                        self.current_view.next();
+                        self.is_sending = false;
+                        self.pending_vault_incoming = Some(PendingIncomingTransfer {
+                            amount,
+                            stage: IncomingTransferStage::TransferInitiated,
+                        });
+                        self.pending_vault_incoming_swap_id = swap_id.clone();
+                        if let Some(swap_id) = swap_id {
+                            return self.persist_pending_liquid_to_vault_transfer(
+                                swap_id,
+                                amount.to_sat(),
+                            );
+                        }
+                        Task::none()
+                    }
+                    HomeMessage::LiquidToVaultPending(swap_id) => {
+                        if self.is_matching_pending_swap(swap_id.as_deref()) {
+                            if let Some(mut pending) = self.pending_vault_incoming {
+                                pending.stage = IncomingTransferStage::SwappingLbtcToBtc;
+                                self.pending_vault_incoming = Some(pending);
+                            }
+                        }
+                        Task::none()
+                    }
+                    HomeMessage::LiquidToVaultWaitingConfirmation(swap_id) => {
+                        if self.is_matching_pending_swap(swap_id.as_deref()) {
+                            if let Some(mut pending) = self.pending_vault_incoming {
+                                pending.stage = IncomingTransferStage::SendingToVault;
+                                self.pending_vault_incoming = Some(pending);
+                            }
+                        }
+                        Task::none()
+                    }
+                    HomeMessage::LiquidToVaultSucceeded(swap_id) => {
+                        if self.is_matching_pending_swap(swap_id.as_deref()) {
+                            if let Some(mut pending) = self.pending_vault_incoming {
+                                pending.stage = IncomingTransferStage::Completed;
+                                self.pending_vault_incoming = Some(pending);
+                            }
+                            self.pending_vault_incoming_swap_id = None;
+                            return self.clear_pending_liquid_to_vault_transfer();
+                        }
+                        Task::none()
+                    }
+                    HomeMessage::LiquidToVaultFailed(swap_id) => {
+                        if self.is_matching_pending_swap(swap_id.as_deref()) {
+                            self.pending_vault_incoming = None;
+                            self.pending_vault_incoming_swap_id = None;
+                            return Task::batch(vec![
+                                self.clear_pending_liquid_to_vault_transfer(),
+                                Task::done(Message::View(view::Message::ShowError(
+                                    "Liquid to Vault transfer failed. Please retry.".to_string(),
+                                ))),
+                            ]);
+                        }
+                        Task::none()
+                    }
+                    HomeMessage::PendingTransferRestored {
+                        amount_sat,
+                        stage,
+                        swap_id,
+                    } => {
+                        self.pending_vault_incoming = Some(PendingIncomingTransfer {
+                            amount: Amount::from_sat(amount_sat),
+                            stage,
+                        });
+                        self.pending_vault_incoming_swap_id = Some(swap_id);
+                        Task::none()
+                    }
+                    HomeMessage::PendingTransferAnimationTick => {
+                        if self
+                            .pending_vault_incoming
+                            .map(|pending| pending.stage != IncomingTransferStage::Completed)
+                            .unwrap_or(false)
+                        {
+                            self.pending_transfer_animation_phase =
+                                (self.pending_transfer_animation_phase + 0.08) % 1.0;
+                        } else {
+                            self.pending_transfer_animation_phase = 0.0;
+                        }
+                        Task::none()
+                    }
                     HomeMessage::BackToHome => {
                         self.current_view.reset();
                         self.transfer_direction = None;
@@ -588,6 +753,15 @@ impl State for GlobalHome {
                         self.is_sending = false;
                         self.transfer_spend_tx = None;
                         self.transfer_signed = false;
+                        if self
+                            .pending_vault_incoming
+                            .map(|pending| pending.stage == IncomingTransferStage::Completed)
+                            .unwrap_or(false)
+                        {
+                            self.pending_vault_incoming = None;
+                            self.pending_vault_incoming_swap_id = None;
+                            return self.clear_pending_liquid_to_vault_transfer();
+                        }
                         Task::none()
                     }
                     HomeMessage::BreezOnchainAddress(address) => {
@@ -803,11 +977,27 @@ impl State for GlobalHome {
         wallet: Option<Arc<Wallet>>,
     ) -> Task<Message> {
         self.wallet = wallet;
-        self.load_liquid_balance()
+        Task::batch(vec![
+            self.load_liquid_balance(),
+            self.restore_pending_liquid_to_vault_transfer(),
+        ])
     }
 }
 
 impl GlobalHome {
+    fn is_matching_pending_swap(&self, incoming_swap_id: Option<&str>) -> bool {
+        match (
+            &self.pending_vault_incoming,
+            &self.pending_vault_incoming_swap_id,
+        ) {
+            (Some(_), Some(expected_swap_id)) => incoming_swap_id
+                .map(|swap_id| swap_id == expected_swap_id)
+                .unwrap_or(false),
+            (Some(_), None) => false,
+            _ => false,
+        }
+    }
+
     fn load_liquid_balance(&self) -> Task<Message> {
         let breez_client = self.breez_client.clone();
         Task::perform(async move { breez_client.info().await }, |info| {
@@ -824,5 +1014,148 @@ impl GlobalHome {
                 )))
             }
         })
+    }
+
+    fn persist_pending_liquid_to_vault_transfer(
+        &self,
+        swap_id: String,
+        amount_sat: u64,
+    ) -> Task<Message> {
+        let network_dir = self.datadir_path.network_directory(self.network);
+        let cube_id = self.cube_id.clone();
+        Task::perform(
+            async move {
+                settings::update_settings_file(&network_dir, move |mut current| {
+                    if let Some(cube) = current.cubes.iter_mut().find(|c| c.id == cube_id) {
+                        cube.pending_liquid_to_vault_transfer =
+                            Some(settings::PendingLiquidToVaultTransfer {
+                                swap_id,
+                                amount_sat,
+                            });
+                    }
+                    Some(current)
+                })
+                .await
+            },
+            |res| {
+                if let Err(e) = res {
+                    log::warn!("Failed to persist pending liquid->vault transfer: {}", e);
+                }
+                Message::Tick
+            },
+        )
+    }
+
+    fn clear_pending_liquid_to_vault_transfer(&self) -> Task<Message> {
+        let network_dir = self.datadir_path.network_directory(self.network);
+        let cube_id = self.cube_id.clone();
+        Task::perform(
+            async move {
+                settings::update_settings_file(&network_dir, move |mut current| {
+                    if let Some(cube) = current.cubes.iter_mut().find(|c| c.id == cube_id) {
+                        cube.pending_liquid_to_vault_transfer = None;
+                    }
+                    Some(current)
+                })
+                .await
+            },
+            |res| {
+                if let Err(e) = res {
+                    log::warn!("Failed to clear pending liquid->vault transfer: {}", e);
+                }
+                Message::Tick
+            },
+        )
+    }
+
+    fn restore_pending_liquid_to_vault_transfer(&self) -> Task<Message> {
+        let network_dir = self.datadir_path.network_directory(self.network);
+        let cube_id = self.cube_id.clone();
+        let breez_client = self.breez_client.clone();
+        Task::perform(
+            async move {
+                let settings = settings::Settings::from_file(&network_dir).ok();
+                let pending = settings
+                    .as_ref()
+                    .and_then(|s| s.cubes.iter().find(|c| c.id == cube_id))
+                    .and_then(|cube| cube.pending_liquid_to_vault_transfer.clone());
+
+                let Some(pending) = pending else {
+                    return None;
+                };
+
+                let mut stage = IncomingTransferStage::TransferInitiated;
+                let payments = breez_client.list_payments(None).await.ok();
+
+                if let Some(payment) = payments.and_then(|ps| {
+                    ps.into_iter().find(|payment| {
+                        matches!(payment.payment_type, PaymentType::Send)
+                            && matches!(
+                                &payment.details,
+                                PaymentDetails::Bitcoin { swap_id, .. } if swap_id == &pending.swap_id
+                            )
+                    })
+                }) {
+                    stage = match payment.status {
+                        PaymentState::Complete => {
+                            let cube_id_for_clear = cube_id.clone();
+                            let _ = settings::update_settings_file(&network_dir, move |mut current| {
+                                    if let Some(cube) = current
+                                        .cubes
+                                        .iter_mut()
+                                        .find(|c| c.id == cube_id_for_clear)
+                                    {
+                                        cube.pending_liquid_to_vault_transfer = None;
+                                    }
+                                    Some(current)
+                                })
+                                .await;
+                            return None;
+                        }
+                        PaymentState::Pending | PaymentState::WaitingFeeAcceptance => {
+                            match payment.details {
+                                PaymentDetails::Bitcoin {
+                                    claim_tx_id: Some(_),
+                                    ..
+                                } => IncomingTransferStage::SendingToVault,
+                                _ => IncomingTransferStage::SwappingLbtcToBtc,
+                            }
+                        }
+                        PaymentState::Created => IncomingTransferStage::TransferInitiated,
+                        PaymentState::Failed
+                        | PaymentState::TimedOut
+                        | PaymentState::Refundable
+                        | PaymentState::RefundPending => {
+                            let cube_id_for_clear = cube_id.clone();
+                            let _ = settings::update_settings_file(&network_dir, move |mut current| {
+                                    if let Some(cube) = current
+                                        .cubes
+                                        .iter_mut()
+                                        .find(|c| c.id == cube_id_for_clear)
+                                    {
+                                        cube.pending_liquid_to_vault_transfer = None;
+                                    }
+                                    Some(current)
+                                })
+                                .await;
+                            return None;
+                        }
+                    };
+                }
+
+                Some((pending.amount_sat, pending.swap_id, stage))
+            },
+            |restored| {
+                if let Some((amount_sat, swap_id, stage)) = restored {
+                    Message::View(view::Message::Home(HomeMessage::PendingTransferRestored {
+                        amount_sat,
+                        stage,
+                        swap_id,
+                    }))
+                } else {
+                    Message::Tick
+                }
+            },
+        )
     }
 }

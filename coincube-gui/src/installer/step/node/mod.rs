@@ -1,5 +1,6 @@
 pub mod bitcoind;
 pub mod electrum;
+pub mod esplora;
 
 use crate::{
     hw::HardwareWallets,
@@ -7,7 +8,7 @@ use crate::{
         context::Context,
         message::{self, Message},
         step::{
-            node::{bitcoind::DefineBitcoind, electrum::DefineElectrum},
+            node::{bitcoind::DefineBitcoind, electrum::DefineElectrum, esplora::DefineEsplora},
             Step,
         },
         view, Error,
@@ -22,6 +23,7 @@ use iced::Task;
 pub enum NodeDefinition {
     Bitcoind(DefineBitcoind),
     Electrum(DefineElectrum),
+    Esplora(DefineEsplora),
 }
 
 impl NodeDefinition {
@@ -29,6 +31,7 @@ impl NodeDefinition {
         match node_type {
             NodeType::Bitcoind => NodeDefinition::Bitcoind(DefineBitcoind::new()),
             NodeType::Electrum => NodeDefinition::Electrum(DefineElectrum::new()),
+            NodeType::Esplora => NodeDefinition::Esplora(DefineEsplora::new()),
         }
     }
 
@@ -36,6 +39,7 @@ impl NodeDefinition {
         match self {
             NodeDefinition::Bitcoind(_) => NodeType::Bitcoind,
             NodeDefinition::Electrum(_) => NodeType::Electrum,
+            NodeDefinition::Esplora(_) => NodeType::Esplora,
         }
     }
 
@@ -43,6 +47,7 @@ impl NodeDefinition {
         match self {
             NodeDefinition::Bitcoind(def) => def.apply(ctx),
             NodeDefinition::Electrum(def) => def.apply(ctx),
+            NodeDefinition::Esplora(def) => def.apply(ctx),
         }
     }
 
@@ -50,6 +55,7 @@ impl NodeDefinition {
         match self {
             NodeDefinition::Bitcoind(def) => def.can_try_ping(),
             NodeDefinition::Electrum(def) => def.can_try_ping(),
+            NodeDefinition::Esplora(def) => def.can_try_ping(),
         }
     }
 
@@ -59,6 +65,7 @@ impl NodeDefinition {
             NodeDefinition::Electrum(_) => {
                 // noop for now
             }
+            NodeDefinition::Esplora(def) => def.load_context(ctx),
         }
     }
 
@@ -66,6 +73,7 @@ impl NodeDefinition {
         match self {
             NodeDefinition::Bitcoind(def) => def.update(message),
             NodeDefinition::Electrum(def) => def.update(message),
+            NodeDefinition::Esplora(def) => def.update(message),
         }
     }
 
@@ -73,6 +81,7 @@ impl NodeDefinition {
         match self {
             NodeDefinition::Bitcoind(def) => def.view(),
             NodeDefinition::Electrum(def) => def.view(),
+            NodeDefinition::Esplora(def) => def.view(),
         }
     }
 
@@ -80,6 +89,7 @@ impl NodeDefinition {
         match self {
             NodeDefinition::Bitcoind(def) => def.ping(),
             NodeDefinition::Electrum(def) => def.ping(),
+            NodeDefinition::Esplora(def) => def.ping(),
         }
     }
 }
@@ -117,6 +127,7 @@ impl DefineNode {
             // This is the order in which the available node types will be shown to the user.
             NodeType::Bitcoind,
             NodeType::Electrum,
+            NodeType::Esplora,
         ];
         assert!(available_node_types.contains(&selected_node_type));
 
@@ -216,6 +227,9 @@ impl Step for DefineNode {
                 msg @ message::DefineNode::DefineElectrum(_) => {
                     return self.update_node(NodeType::Electrum, msg);
                 }
+                msg @ message::DefineNode::DefineEsplora(_) => {
+                    return self.update_node(NodeType::Esplora, msg);
+                }
             }
         }
         Task::none()
@@ -244,6 +258,6 @@ impl Step for DefineNode {
     }
 
     fn skip(&self, ctx: &Context) -> bool {
-        !ctx.bitcoind_is_external || ctx.remote_backend.is_some()
+        !ctx.bitcoind_is_external || ctx.remote_backend.is_some() || ctx.use_coincube_connect
     }
 }

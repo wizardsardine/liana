@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use iced::futures::{SinkExt, Stream};
 use iced::stream::channel;
-use iced::{Alignment, Length, Subscription, Task};
+use iced::{time, Alignment, Length, Subscription, Task};
 use tokio::runtime::Handle;
 use tracing::{debug, info, warn};
 
@@ -72,7 +72,12 @@ pub struct Loader {
 
 pub enum Step {
     Connecting,
-    StartingDaemon,
+    StartingDaemon {
+        progress: f32,
+    },
+    FullScan {
+        progress: f32,
+    },
     Syncing {
         daemon: Arc<dyn Daemon + Sync + Send>,
         progress: f64,
@@ -127,6 +132,7 @@ pub enum Message {
     Started(StartedResult),
     Loaded(Result<(Arc<dyn Daemon + Sync + Send>, GetInfoResult), Error>),
     BitcoindLog(Option<String>),
+    LoadingTick,
     Failure(DaemonError),
     None,
 }
@@ -170,6 +176,23 @@ impl Loader {
             },
             task,
         )
+    }
+
+    fn is_first_esplora_scan(&self, wallet_settings: &WalletSettings) -> bool {
+        let data_dir = self
+            .datadir_path
+            .network_directory(self.network)
+            .coincubed_data_directory(&wallet_settings.wallet_id());
+        let config_path = data_dir.path().join("daemon.toml");
+        let is_esplora = match Config::from_file(Some(config_path)) {
+            Ok(config) => matches!(config.bitcoin_backend, Some(BitcoinBackend::Esplora(_))),
+            Err(_) => false,
+        };
+        // Only show the full-scan screen on the very first run, before the
+        // SQLite database has been created. On subsequent starts the daemon
+        // just does an incremental sync and the regular StartingDaemon step
+        // is sufficient.
+        is_esplora && !data_dir.sqlite_db_file_path().exists()
     }
 
     fn start_bitcoind(&self) -> bool {
@@ -245,7 +268,11 @@ impl Loader {
                         .wallet_settings
                         .clone()
                         .expect("wallet_settings must be Some when starting daemon");
-                    self.step = Step::StartingDaemon;
+                    self.step = if self.is_first_esplora_scan(&wallet_settings) {
+                        Step::FullScan { progress: 0.0 }
+                    } else {
+                        Step::StartingDaemon { progress: 0.0 }
+                    };
                     self.daemon_started = true;
                     self.waiting_daemon_bitcoind = true;
                     return Task::perform(
@@ -373,6 +400,21 @@ impl Loader {
             Message::Loaded(res) => self.on_load(res),
             Message::Syncing(res) => self.on_sync(res),
             Message::BitcoindLog(log) => self.on_log(log),
+            Message::LoadingTick => {
+                match &mut self.step {
+                    // ~1% per 500ms tick — daemon usually starts in < 10s so
+                    // this will comfortably reach 90% well before it connects.
+                    Step::StartingDaemon { progress } => {
+                        *progress = (*progress + 0.010).min(0.90);
+                    }
+                    // ~0.4% per 500ms tick — full scan takes 1-2 minutes.
+                    Step::FullScan { progress } => {
+                        *progress = (*progress + 0.004).min(0.90);
+                    }
+                    _ => {}
+                }
+                Task::none()
+            }
             Message::Synced(Err(e)) => {
                 self.step = Step::Error(Box::new(e));
                 Task::none()
@@ -387,13 +429,22 @@ impl Loader {
     }
 
     pub fn subscription(&self) -> Subscription<Message> {
-        if self.internal_bitcoind.is_some() {
+        let log_sub = if self.internal_bitcoind.is_some() {
             let log_path = internal_bitcoind_debug_log_path(&self.datadir_path, self.network);
             iced::Subscription::run_with(log_path, |log_path| get_bitcoind_log(log_path.clone()))
                 .map(Message::BitcoindLog)
         } else {
             Subscription::none()
-        }
+        };
+        let scan_sub = if matches!(
+            self.step,
+            Step::StartingDaemon { .. } | Step::FullScan { .. }
+        ) {
+            time::every(Duration::from_millis(500)).map(|_| Message::LoadingTick)
+        } else {
+            Subscription::none()
+        };
+        Subscription::batch([log_sub, scan_sub])
     }
 
     pub fn view(&self) -> Element<Message> {
@@ -532,12 +583,27 @@ pub enum ViewMessage {
 
 pub fn view(step: &Step) -> Element<ViewMessage> {
     match &step {
-        Step::StartingDaemon => cover(
+        Step::StartingDaemon { progress } => cover(
             None,
             Column::new()
                 .width(Length::Fill)
-                .push(ProgressBar::new(0.0..=1.0, 0.0).length(Length::Fill))
+                .push(ProgressBar::new(0.0..=1.0, *progress).length(Length::Fill))
                 .push(text("Starting daemon...")),
+        ),
+        Step::FullScan { progress } => cover(
+            None,
+            Column::new()
+                .width(Length::Fill)
+                .spacing(10)
+                .push(ProgressBar::new(0.0..=1.0, *progress).length(Length::Fill))
+                .push(text("Scanning the blockchain..."))
+                .push(
+                    p2_regular(
+                        "Performing an initial scan of the Bitcoin blockchain via Esplora. \
+                        This typically takes 1–2 minutes on the first run.",
+                    )
+                    .style(theme::text::secondary),
+                ),
         ),
         Step::Connecting => cover(
             None,

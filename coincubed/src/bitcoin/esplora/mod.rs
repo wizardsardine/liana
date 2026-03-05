@@ -8,13 +8,13 @@ use bdk_electrum::bdk_chain::{
 };
 
 pub mod client;
-pub mod utils;
-pub mod wallet;
+
+use crate::bitcoin::electrum::{utils, wallet::BdkWallet};
 use crate::bitcoin::{Block, BlockChainTip, Coin};
 
-/// An error in the Electrum interface.
+/// An error in the Esplora interface.
 #[derive(Debug)]
-pub enum ElectrumError {
+pub enum EsploraError {
     Client(client::Error),
     GenesisHashMismatch(
         BlockHash, /*expected hash*/
@@ -23,11 +23,11 @@ pub enum ElectrumError {
     ),
 }
 
-impl std::fmt::Display for ElectrumError {
+impl std::fmt::Display for EsploraError {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
-            ElectrumError::Client(e) => write!(f, "Electrum client error: '{}'.", e),
-            ElectrumError::GenesisHashMismatch(expected, server, wallet) => {
+            EsploraError::Client(e) => write!(f, "Esplora client error: '{}'.", e),
+            EsploraError::GenesisHashMismatch(expected, server, wallet) => {
                 write!(
                     f,
                     "Genesis hash mismatch. The genesis hash is expected to be '{}'. \
@@ -39,10 +39,10 @@ impl std::fmt::Display for ElectrumError {
     }
 }
 
-/// Interface for Electrum backend.
-pub struct Electrum {
+/// Interface for the Esplora backend.
+pub struct Esplora {
     client: client::Client,
-    bdk_wallet: wallet::BdkWallet,
+    bdk_wallet: BdkWallet,
     /// Used for setting the `last_seen` of unconfirmed transactions in a strictly
     /// increasing manner.
     sync_count: u64,
@@ -51,12 +51,12 @@ pub struct Electrum {
     full_scan: bool,
 }
 
-impl Electrum {
+impl Esplora {
     pub fn new(
         client: client::Client,
-        bdk_wallet: wallet::BdkWallet,
+        bdk_wallet: BdkWallet,
         full_scan: bool,
-    ) -> Result<Self, ElectrumError> {
+    ) -> Result<Self, EsploraError> {
         Ok(Self {
             client,
             bdk_wallet,
@@ -65,15 +65,14 @@ impl Electrum {
         })
     }
 
-    pub fn sanity_checks(&self, expected_hash: &bitcoin::BlockHash) -> Result<(), ElectrumError> {
+    pub fn sanity_checks(&self, expected_hash: &bitcoin::BlockHash) -> Result<(), EsploraError> {
         let server_hash = self
             .client
-            .genesis_block()
-            .map_err(ElectrumError::Client)?
-            .hash;
+            .genesis_block_hash()
+            .map_err(EsploraError::Client)?;
         let wallet_hash = self.bdk_wallet.local_chain().genesis_hash();
         if server_hash != *expected_hash || wallet_hash != *expected_hash {
-            return Err(ElectrumError::GenesisHashMismatch(
+            return Err(EsploraError::GenesisHashMismatch(
                 *expected_hash,
                 server_hash,
                 wallet_hash,
@@ -102,8 +101,6 @@ impl Electrum {
     }
 
     /// Whether `tip` exists in the wallet's `local_chain`.
-    ///
-    /// Returns `None` if no block at that height exists in `local_chain`.
     pub fn is_in_wallet_chain(&self, tip: BlockChainTip) -> Option<bool> {
         self.bdk_wallet.is_in_chain(tip)
     }
@@ -118,29 +115,23 @@ impl Electrum {
         self.full_scan = true;
     }
 
-    /// Sync the wallet with the Electrum server. If there was any reorg since the last poll, this
+    /// Sync the wallet with the Esplora server. If there was any reorg since the last poll, this
     /// returns the first common ancestor between the previous and the new chain.
     pub fn sync_wallet(
         &mut self,
         receive_index: ChildNumber,
         change_index: ChildNumber,
-    ) -> Result<Option<BlockChainTip>, ElectrumError> {
+    ) -> Result<Option<BlockChainTip>, EsploraError> {
         self.bdk_wallet.reveal_spks(receive_index, change_index);
         let local_chain_tip = self.local_chain().tip();
         log::debug!(
-            "local chain tip height before sync with electrum: {}",
+            "local chain tip height before sync with esplora: {}",
             local_chain_tip.block_id().height
         );
 
-        // We'll only need to calculate fees of mempool transactions and this will be done separately from our graph
-        // so we don't need to fetch prev txouts. In any case, we'll already have these for our own transactions.
-        const FETCH_PREV_TXOUTS: bool = false;
+        const PARALLEL_REQUESTS: usize = 4;
         const STOP_GAP: usize = 200;
 
-        // TODO: See if this caching can be done in a more optimal way, e.g. only new txs after syncing.
-        self.client
-            .bdk_electrum_client()
-            .populate_tx_cache(self.bdk_wallet.graph());
         let (chain_update, mut graph_update, keychain_update) = if !self.is_rescanning() {
             log::debug!("Performing sync.");
             let mut request = SyncRequest::from_chain_tip(local_chain_tip.clone());
@@ -148,7 +139,7 @@ impl Electrum {
             let all_spks: Vec<_> = self
                 .bdk_wallet
                 .index()
-                .inner() // we include lookahead SPKs
+                .inner()
                 .all_spks()
                 .values()
                 .cloned()
@@ -158,13 +149,12 @@ impl Electrum {
 
             let sync_result = self
                 .client
-                .sync_with_confirmation_time_height_anchor(request, FETCH_PREV_TXOUTS)
-                .map_err(ElectrumError::Client)?;
+                .sync(request, PARALLEL_REQUESTS)
+                .map_err(EsploraError::Client)?;
             log::debug!("Sync complete.");
             (sync_result.chain_update, sync_result.graph_update, None)
         } else {
             log::info!("Performing full scan.");
-            // Either local_chain has height 0 or we want to trigger a full scan.
             let mut request = FullScanRequest::from_chain_tip(local_chain_tip.clone());
 
             for (k, spks) in self.bdk_wallet.index().all_unbounded_spk_iters() {
@@ -172,14 +162,8 @@ impl Electrum {
             }
             let scan_result = self
                 .client
-                .full_scan_with_confirmation_time_height_anchor(
-                    request,
-                    STOP_GAP,
-                    FETCH_PREV_TXOUTS,
-                )
-                .map_err(ElectrumError::Client)?;
-            // A full scan only makes sense to do once, in most cases. Don't do it again unless
-            // explicitly asked to by a user.
+                .full_scan(request, STOP_GAP, PARALLEL_REQUESTS)
+                .map_err(EsploraError::Client)?;
             self.full_scan = false;
             log::info!("Full scan complete.");
             (
@@ -189,14 +173,13 @@ impl Electrum {
             )
         };
         log::debug!(
-            "chain update height after sync with electrum: {}",
+            "chain update height after sync with esplora: {}",
             chain_update.height()
         );
 
         log::debug!("Full local chain: {:?}", self.local_chain());
         log::debug!("Full chain update: {:?}", chain_update);
 
-        // Increment the sync count and apply changes.
         self.sync_count = self.sync_count.checked_add(1).expect("must fit");
         if let Some(keychain_update) = keychain_update {
             self.bdk_wallet.apply_keychain_update(keychain_update);
@@ -205,17 +188,10 @@ impl Electrum {
 
         let mut changes_iter = changeset.into_iter();
         let reorg_common_ancestor = if let Some((height, _)) = changes_iter.next() {
-            // Either a new block has been added at this height or an existing block in our local
-            // chain has been invalidated.
-            // Since we iterate in ascending height order, we'll see the lowest block height first.
-            // If the lowest height is higher than our height before syncing, we're good.
-            // Else if it's adding/invalidating a block at height before syncing or lower,
-            // it's a reorg.
             if height > local_chain_tip.height() {
                 None
             } else {
                 log::info!("Block chain reorganization detected.");
-                // We can assume height is positive as genesis block will not have changed.
                 Some(
                     self.bdk_wallet
                         .find_block_before_height(height)
@@ -226,9 +202,6 @@ impl Electrum {
             None
         };
 
-        // Unconfirmed transactions have their last seen as 0, so we override to the `sync_count`
-        // so that conflicts can be properly handled. We use `sync_count` instead of current time
-        // in seconds to ensure strictly increasing values between poller iterations.
         for tx in &graph_update.initial_changeset().txs {
             let txid = tx.compute_txid();
             if let Some(ChainPosition::Unconfirmed(_)) = graph_update.get_chain_position(

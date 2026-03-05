@@ -17,6 +17,8 @@ pub struct LiquidReceive {
     receive_method: ReceiveMethod,
     lightning_address: Option<String>,
     lightning_qr_data: Option<qr_code::Data>,
+    liquid_address: Option<String>,
+    liquid_qr_data: Option<qr_code::Data>,
     onchain_address: Option<String>,
     onchain_qr_data: Option<qr_code::Data>,
     loading: bool,
@@ -35,6 +37,8 @@ impl LiquidReceive {
             receive_method: ReceiveMethod::Lightning,
             lightning_address: None,
             lightning_qr_data: None,
+            liquid_address: None,
+            liquid_qr_data: None,
             onchain_address: None,
             onchain_qr_data: None,
             loading: false,
@@ -65,6 +69,12 @@ impl LiquidReceive {
             .receive_onchain(None)
             .await
             .map_err(|e| e.to_string())?;
+
+        Ok(response.destination)
+    }
+
+    async fn generate_liquid_address(client: Arc<BreezClient>) -> Result<String, String> {
+        let response = client.receive_liquid().await.map_err(|e| e.to_string())?;
 
         Ok(response.destination)
     }
@@ -127,6 +137,9 @@ impl State for LiquidReceive {
                         self.toast = Some(match self.receive_method {
                             ReceiveMethod::Lightning => {
                                 "Copied Lightning Address to clipboard".to_string()
+                            }
+                            ReceiveMethod::Liquid => {
+                                "Copied Liquid Address to clipboard".to_string()
                             }
                             ReceiveMethod::OnChain => {
                                 "Copied Bitcoin Address to clipboard".to_string()
@@ -202,6 +215,7 @@ impl State for LiquidReceive {
                 LiquidReceiveMessage::GenerateAddress => {
                     return match self.receive_method {
                         ReceiveMethod::Lightning => self.generate_lightning(cache.bitcoin_unit),
+                        ReceiveMethod::Liquid => self.generate_liquid(),
                         ReceiveMethod::OnChain => self.generate_onchain(),
                     };
                 }
@@ -214,6 +228,9 @@ impl State for LiquidReceive {
                                 ReceiveMethod::Lightning => {
                                     self.lightning_address = Some(address.clone());
                                 }
+                                ReceiveMethod::Liquid => {
+                                    self.liquid_address = Some(address.clone());
+                                }
                                 ReceiveMethod::OnChain => {
                                     self.onchain_address = Some(address.clone());
                                 }
@@ -225,6 +242,9 @@ impl State for LiquidReceive {
                                     ReceiveMethod::Lightning => {
                                         self.lightning_qr_data = Some(qr_data);
                                     }
+                                    ReceiveMethod::Liquid => {
+                                        self.liquid_qr_data = Some(qr_data);
+                                    }
                                     ReceiveMethod::OnChain => {
                                         self.onchain_qr_data = Some(qr_data);
                                     }
@@ -234,6 +254,9 @@ impl State for LiquidReceive {
                                     match method {
                                         ReceiveMethod::Lightning => {
                                             self.lightning_qr_data = None;
+                                        }
+                                        ReceiveMethod::Liquid => {
+                                            self.liquid_qr_data = None;
                                         }
                                         ReceiveMethod::OnChain => {
                                             self.onchain_qr_data = None;
@@ -253,6 +276,10 @@ impl State for LiquidReceive {
                                 ReceiveMethod::Lightning => {
                                     self.lightning_address = None;
                                     self.lightning_qr_data = None;
+                                }
+                                ReceiveMethod::Liquid => {
+                                    self.liquid_address = None;
+                                    self.liquid_qr_data = None;
                                 }
                                 ReceiveMethod::OnChain => {
                                     self.onchain_address = None;
@@ -334,6 +361,7 @@ impl LiquidReceive {
     fn current_address(&self) -> Option<&String> {
         match self.receive_method {
             ReceiveMethod::Lightning => self.lightning_address.as_ref(),
+            ReceiveMethod::Liquid => self.liquid_address.as_ref(),
             ReceiveMethod::OnChain => self.onchain_address.as_ref(),
         }
     }
@@ -341,6 +369,7 @@ impl LiquidReceive {
     fn current_qr_data(&self) -> Option<&qr_code::Data> {
         match self.receive_method {
             ReceiveMethod::Lightning => self.lightning_qr_data.as_ref(),
+            ReceiveMethod::Liquid => self.liquid_qr_data.as_ref(),
             ReceiveMethod::OnChain => self.onchain_qr_data.as_ref(),
         }
     }
@@ -418,6 +447,18 @@ impl LiquidReceive {
         Task::perform(Self::generate_onchain_address(client), |result| {
             Message::View(view::Message::LiquidReceive(
                 LiquidReceiveMessage::AddressGenerated(ReceiveMethod::OnChain, result),
+            ))
+        })
+    }
+
+    fn generate_liquid(&mut self) -> Task<Message> {
+        self.loading = true;
+
+        let client = self.breez_client.clone();
+
+        Task::perform(Self::generate_liquid_address(client), |result| {
+            Message::View(view::Message::LiquidReceive(
+                LiquidReceiveMessage::AddressGenerated(ReceiveMethod::Liquid, result),
             ))
         })
     }

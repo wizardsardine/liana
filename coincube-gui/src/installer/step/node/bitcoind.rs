@@ -287,6 +287,8 @@ pub fn port_is_valid(port: &u16) -> bool {
 
 pub struct SelectBitcoindTypeStep {
     use_external: bool,
+    use_connect: bool,
+    network: Network,
 }
 
 impl Default for SelectBitcoindTypeStep {
@@ -303,11 +305,19 @@ impl From<SelectBitcoindTypeStep> for Box<dyn Step> {
 
 impl SelectBitcoindTypeStep {
     pub fn new() -> Self {
-        Self { use_external: true }
+        Self {
+            use_external: true,
+            use_connect: false,
+            network: Network::Bitcoin,
+        }
     }
 }
 
 impl Step for SelectBitcoindTypeStep {
+    fn load_context(&mut self, ctx: &Context) {
+        self.network = ctx.network;
+    }
+
     fn skip(&self, ctx: &Context) -> bool {
         ctx.remote_backend.is_some()
     }
@@ -316,6 +326,11 @@ impl Step for SelectBitcoindTypeStep {
             match msg {
                 message::SelectBitcoindTypeMsg::UseExternal(selected) => {
                     self.use_external = selected;
+                    self.use_connect = false;
+                }
+                message::SelectBitcoindTypeMsg::UseConnect => {
+                    self.use_external = true;
+                    self.use_connect = true;
                 }
             };
             return Task::perform(async {}, |_| Message::Next);
@@ -332,6 +347,7 @@ impl Step for SelectBitcoindTypeStep {
             ctx.internal_bitcoind_config = None;
         }
         ctx.bitcoind_is_external = self.use_external;
+        ctx.use_coincube_connect = self.use_connect;
         true
     }
 
@@ -341,7 +357,7 @@ impl Step for SelectBitcoindTypeStep {
         progress: (usize, usize),
         _email: Option<&str>,
     ) -> Element<Message> {
-        view::select_bitcoind_type(progress)
+        view::select_bitcoind_type(progress, self.network != Network::Regtest)
     }
 }
 

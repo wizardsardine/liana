@@ -1,6 +1,6 @@
 use iced::{
     alignment::Horizontal,
-    widget::{checkbox, pick_list, scrollable, Button, Space, Stack, Toggler},
+    widget::{pick_list, scrollable, Button, Space, Stack, Toggler},
     Alignment, Length, Subscription, Task,
 };
 
@@ -1324,33 +1324,12 @@ impl DeleteCubeModal {
             .spacing(10)
             .push(Container::new(
                 h4_bold(format!("Delete Cube \"{}\"", self.cube.name))
-                .style(theme::text::destructive)
-                .width(Length::Fill),
+                    .style(theme::text::destructive)
+                    .width(Length::Fill),
             ))
             .push(Row::new().push(text(help_text_1)))
-            .push(
-                help_text_2
-                    .map(|t| Row::new().push(p1_regular(t).style(theme::text::secondary))),
-            )
+            .push(help_text_2.map(|t| Row::new().push(p1_regular(t).style(theme::text::secondary))))
             .push(Row::new())
-            .push(self.wallet_settings.as_ref().and_then(|w| w.remote_backend_auth.as_ref()).map(|a| {
-                checkbox(
-                    self.delete_liana_connect,
-                )
-                .label(
-                        match self.user_role {
-                            Some(UserRole::Owner) | None => "Also permanently delete the Vault wallet from Liana Connect (for all members).".to_string(),
-                            Some(UserRole::Member) => format!("Also disassociate {} from this Liana Connect wallet.", a.email),
-                        }
-                    )
-                .on_toggle_maybe(if !self.deleted {
-                        Some(|v| {
-                            ViewMessage::DeleteCube(DeleteCubeMessage::DeleteLianaConnect(v))
-                        })
-                    } else {
-                        None
-                    })
-            }))
             .push(Row::new().push(text(help_text_3)));
 
         // PIN entry section
