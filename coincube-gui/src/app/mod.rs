@@ -244,6 +244,7 @@ impl Panels {
 
     /// Rebuilds all vault-specific panels when a vault wallet is added to an app that didn't have one.
     /// This is called when transitioning from no-vault to has-vault state.
+    #[allow(clippy::too_many_arguments)]
     fn build_vault_panels(
         &mut self,
         wallet: Arc<Wallet>,

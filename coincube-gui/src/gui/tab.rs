@@ -186,7 +186,7 @@ impl Tab {
                 login::Message::View(login::ViewMessage::BackToLauncher(network)) => {
                     let (launcher, command) = Launcher::new(l.datadir.clone(), Some(network));
                     self.state = State::Launcher(launcher);
-                    command.map(|msg| Message::Launch(msg))
+                    command.map(Message::Launch)
                 }
                 login::Message::Install(remote_backend) => {
                     let (install, command) = Installer::new(
