@@ -440,6 +440,51 @@ pub struct App {
     current_error_id: usize,
 }
 
+/// Poll the local bitcoind's IBD progress via its JSON-RPC interface.
+/// Returns `verificationprogress` (0.0–1.0) or an error string.
+async fn check_bitcoind_sync_progress(
+    cfg: coincubed::config::BitcoindConfig,
+) -> Result<f64, String> {
+    use coincubed::config::BitcoindRpcAuth;
+
+    let (user, pass) = match &cfg.rpc_auth {
+        BitcoindRpcAuth::CookieFile(path) => {
+            let cookie = tokio::fs::read_to_string(path)
+                .await
+                .map_err(|e| format!("Cannot read bitcoind cookie: {}", e))?;
+            let trimmed = cookie.trim();
+            let sep = trimmed
+                .find(':')
+                .ok_or_else(|| "Invalid cookie file format".to_string())?;
+            (trimmed[..sep].to_string(), trimmed[sep + 1..].to_string())
+        }
+        BitcoindRpcAuth::UserPass(u, p) => (u.clone(), p.clone()),
+    };
+
+    let url = format!("http://{}/", cfg.addr);
+    let body = serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": "getblockchaininfo",
+        "params": [],
+        "id": 1
+    });
+
+    let resp: serde_json::Value = reqwest::Client::new()
+        .post(&url)
+        .basic_auth(&user, Some(&pass))
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("bitcoind RPC request failed: {}", e))?
+        .json()
+        .await
+        .map_err(|e| format!("bitcoind RPC response parse failed: {}", e))?;
+
+    resp["result"]["verificationprogress"]
+        .as_f64()
+        .ok_or_else(|| "Missing verificationprogress in bitcoind response".to_string())
+}
+
 impl App {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
@@ -914,6 +959,21 @@ impl App {
                 ));
             }
         }
+
+        // If a local Bitcoind node is pending (Connect is active, node is catching
+        // up), poll its IBD progress every tick so we can switch when ready.
+        if let Some(pending_cfg) = self
+            .daemon
+            .as_ref()
+            .and_then(|d| d.config())
+            .and_then(|c| c.pending_bitcoind.clone())
+        {
+            tasks.push(Task::perform(
+                check_bitcoind_sync_progress(pending_cfg),
+                Message::BitcoindSyncProgress,
+            ));
+        }
+
         Task::batch(tasks)
     }
 
@@ -932,6 +992,45 @@ impl App {
                     async move { tokio::time::sleep(Duration::from_secs(8)).await },
                     move |_| Message::View(view::Message::DismissToast(id)),
                 );
+            }
+            Message::BitcoindSyncProgress(res) => {
+                match res {
+                    Err(e) => tracing::warn!("Bitcoind sync check failed: {}", e),
+                    Ok(progress) => {
+                        self.cache.node_bitcoind_sync_progress = Some(progress);
+                        // IBD complete — promote local Bitcoind to primary backend.
+                        if progress >= 1.0 {
+                            let switch =
+                                self.daemon.as_ref().and_then(|d| d.config()).and_then(|c| {
+                                    let pending = c.pending_bitcoind.clone()?;
+                                    // Preserve the current Connect config as the new fallback.
+                                    let old_esplora = match &c.bitcoin_backend {
+                                        Some(coincubed::config::BitcoinBackend::Esplora(e)) => {
+                                            Some(e.clone())
+                                        }
+                                        _ => None,
+                                    };
+                                    let mut new_cfg = c.clone();
+                                    new_cfg.bitcoin_backend =
+                                        Some(coincubed::config::BitcoinBackend::Bitcoind(pending));
+                                    new_cfg.pending_bitcoind = None;
+                                    new_cfg.fallback_esplora = old_esplora;
+                                    Some(new_cfg)
+                                });
+                            if let Some(new_cfg) = switch {
+                                let datadir = self.cache.datadir_path.clone();
+                                match self.load_daemon_config(datadir, new_cfg) {
+                                    Ok(()) => {
+                                        info!("Switched to local Bitcoind — IBD complete");
+                                        self.cache.node_bitcoind_sync_progress = None;
+                                        return Task::done(Message::CacheUpdated);
+                                    }
+                                    Err(e) => error!("Failed to switch to Bitcoind: {}", e),
+                                }
+                            }
+                        }
+                    }
+                }
             }
             Message::SettingsSaved => {
                 // Settings saved - reload unit preference and fiat_price from cube settings
@@ -990,9 +1089,51 @@ impl App {
                     self.cache.daemon_cache = daemon_cache;
                     return Task::done(Message::CacheUpdated);
                 }
-                Err(e) => tracing::error!("Failed to update daemon cache: {}", e),
+                Err(e) => {
+                    tracing::error!("Failed to update daemon cache: {}", e);
+                    // If the active Bitcoind daemon has failed and a Connect
+                    // Esplora fallback is configured (set when IBD completed),
+                    // restart using Connect.
+                    let fallback = self
+                        .daemon
+                        .as_ref()
+                        .filter(|d| {
+                            matches!(
+                                d.backend(),
+                                DaemonBackend::EmbeddedCoincubed(Some(NodeType::Bitcoind))
+                            )
+                        })
+                        .and_then(|d| d.config())
+                        .and_then(|c| {
+                            c.fallback_esplora.as_ref().map(|fb| {
+                                let mut new_cfg = c.clone();
+                                new_cfg.bitcoin_backend =
+                                    Some(coincubed::config::BitcoinBackend::Esplora(fb.clone()));
+                                new_cfg.fallback_esplora = None;
+                                new_cfg
+                            })
+                        });
+                    if let Some(new_cfg) = fallback {
+                        let datadir = self.cache.datadir_path.clone();
+                        match self.load_daemon_config(datadir, new_cfg) {
+                            Ok(()) => {
+                                info!("Switched to COINCUBE | Connect fallback after Bitcoind failure");
+                                return Task::done(Message::CacheUpdated);
+                            }
+                            Err(e) => error!("Failed to activate Connect fallback: {}", e),
+                        }
+                    }
+                }
             },
             Message::CacheUpdated => {
+                // node_syncing_alongside_connect is true while pending_bitcoind exists
+                // (Connect is active and the local node is still catching up).
+                self.cache.node_syncing_alongside_connect = self
+                    .daemon
+                    .as_ref()
+                    .and_then(|d| d.config())
+                    .map(|c| c.pending_bitcoind.is_some())
+                    .unwrap_or(false);
                 // Update vault panels with cache if they exist
                 if let (Some(daemon), Some(vault_overview), Some(vault_settings)) = (
                     &self.daemon,

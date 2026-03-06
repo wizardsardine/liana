@@ -71,6 +71,9 @@ pub struct Context {
     pub install_node_alongside_connect: bool,
     pub internal_bitcoind_config: Option<InternalBitcoindConfig>,
     pub internal_bitcoind: Option<Bitcoind>,
+    /// Set when `install_node_alongside_connect` is true; holds the Bitcoind
+    /// config that will become the primary backend once IBD completes.
+    pub pending_bitcoind_config: Option<coincubed::config::BitcoindConfig>,
     pub remote_backend: RemoteBackend,
     pub backup: Option<Backup>,
     pub wallet_alias: String,
@@ -101,6 +104,7 @@ impl Context {
             install_node_alongside_connect: false,
             internal_bitcoind_config: None,
             internal_bitcoind: None,
+            pending_bitcoind_config: None,
             remote_backend,
             wallet_alias: String::new(),
             backup: None,

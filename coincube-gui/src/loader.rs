@@ -559,6 +559,12 @@ pub async fn load_application(
         },
         fiat_price: None,
         bitcoin_unit,
+        node_syncing_alongside_connect: config
+            .daemon
+            .config()
+            .map(|c| c.pending_bitcoind.is_some())
+            .unwrap_or(false),
+        node_bitcoind_sync_progress: None,
         vault_expanded: false,
         liquid_expanded: false,
         has_vault: true,
