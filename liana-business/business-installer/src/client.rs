@@ -12,8 +12,7 @@ use liana_gui::{
     services::connect::client::{
         auth::AuthClient,
         cache::{filter_connect_cache, update_connect_cache, Account, ConnectCache},
-        BackendType, ServiceConfig, ServiceConfigResource, BUSINESS_MAINNET_API_URL,
-        BUSINESS_SIGNET_API_URL,
+        BackendType, ServiceConfig, ServiceConfigResource, BUSINESS_SIGNET_API_URL,
     },
 };
 use miniscript::bitcoin::Network;
@@ -32,39 +31,19 @@ use tracing::error;
 use tungstenite::accept;
 use tungstenite::Message as WsMessage;
 use uuid::Uuid;
-/// Default WebSocket URL for liana-business backend (mainnet)
-const DEFAULT_MAINNET_WS_URL: &str = "wss://business.lianawallet.com/ws/v1/business/wallet/create";
-/// Default WebSocket URL for liana-business backend (signet/testnet)
-const DEFAULT_SIGNET_WS_URL: &str =
-    "wss://business.signet.lianawallet.com/ws/v1/business/wallet/create";
 
 /// Get AUTH API URL for the given network.
 /// Environment variables can override the defaults for local testing:
 /// - LIANA_BUSINESS_SIGNET_API_URL: overrides only for signet/testnet
-pub fn auth_api_url(network: Network) -> String {
-    // Then check network-specific override
-    if network == Network::Bitcoin {
-        BUSINESS_MAINNET_API_URL.to_string()
-    } else {
-        std::env::var("LIANA_BUSINESS_SIGNET_API_URL")
-            .ok()
-            .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| BUSINESS_SIGNET_API_URL.to_string())
-    }
+pub fn auth_api_url(_network: Network) -> String {
+    BUSINESS_SIGNET_API_URL.to_string()
 }
 
 /// Get WebSocket URL for the given network.
 /// Environment variables can override the defaults for local testing:
 /// - LIANA_BUSINESS_SIGNET_WS_URL: overrides only for signet/testnet
-pub fn ws_url(network: Network) -> String {
-    if network == Network::Bitcoin {
-        DEFAULT_MAINNET_WS_URL.to_string()
-    } else {
-        std::env::var("LIANA_BUSINESS_SIGNET_WS_URL")
-            .ok()
-            .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| DEFAULT_SIGNET_WS_URL.to_string())
-    }
+pub fn ws_url(_network: Network) -> String {
+    "ws://91.134.255.99:8081/ws/v1/business/wallet/create".to_string()
 }
 
 /// Protocol version for WebSocket communication

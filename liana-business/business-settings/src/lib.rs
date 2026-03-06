@@ -11,7 +11,6 @@ pub mod message;
 pub mod ui;
 pub mod views;
 
-pub use liana_gui::services::fiat::Currency;
 pub use message::{Msg, Section};
 pub use ui::BusinessSettingsUI;
 
@@ -31,33 +30,51 @@ use liana_gui::{
     dir::{LianaDirectory, NetworkDirectory},
     hw::HardwareWalletConfig,
     services::connect::client::backend::{api, BackendWalletClient},
-    utils::serde::{deser_fromstr, serialize_display},
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 
-/// Business fiat price setting.
+/// Currencies supported by the business backend.
 ///
-/// Simpler than liana-gui's `PriceSetting` - no source selection since
-/// the backend provides a single price feed.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
-pub struct FiatSetting {
-    #[serde(
-        deserialize_with = "deser_fromstr",
-        serialize_with = "serialize_display"
-    )]
-    pub currency: Currency,
-    pub is_enabled: bool,
+/// The backend `GET /v1/network` endpoint returns rates keyed as `"BTC{currency}"`.
+/// Currently only EUR and USD are provided.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum BackendCurrency {
+    #[default]
+    USD,
+    EUR,
 }
 
-impl FiatSetting {
-    /// Convert from liana-gui's PriceSetting (ignoring source).
-    pub fn from_price_setting(ps: &fiat::PriceSetting) -> Self {
-        Self {
-            currency: ps.currency,
-            is_enabled: ps.is_enabled,
+pub const ALL_BACKEND_CURRENCIES: &[BackendCurrency] =
+    &[BackendCurrency::USD, BackendCurrency::EUR];
+
+impl std::fmt::Display for BackendCurrency {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::USD => write!(f, "USD"),
+            Self::EUR => write!(f, "EUR"),
+        }
+    }
+}
+
+impl From<BackendCurrency> for liana_gui::services::fiat::Currency {
+    fn from(bc: BackendCurrency) -> Self {
+        match bc {
+            BackendCurrency::USD => Self::USD,
+            BackendCurrency::EUR => Self::EUR,
+        }
+    }
+}
+
+impl TryFrom<liana_gui::services::fiat::Currency> for BackendCurrency {
+    type Error = ();
+    fn try_from(c: liana_gui::services::fiat::Currency) -> Result<Self, ()> {
+        match c {
+            liana_gui::services::fiat::Currency::USD => Ok(Self::USD),
+            liana_gui::services::fiat::Currency::EUR => Ok(Self::EUR),
+            _ => Err(()),
         }
     }
 }
@@ -107,6 +124,7 @@ impl SettingsTrait for BusinessSettings {
         remote_backend: BackendWalletClient,
         wallet: api::Wallet,
         coins: ListCoinsResult,
+        user_settings: api::UserSettings,
         liana_dir: LianaDirectory,
         network: bitcoin::Network,
         config: app::Config,
@@ -149,6 +167,21 @@ impl SettingsTrait for BusinessSettings {
                 refresh_token: None,
             };
 
+            // Convert backend FiatCurrency to fiat::PriceSetting
+            let fiat_price_setting = match user_settings.fiat_currency {
+                api::FiatCurrency::None => None,
+                api::FiatCurrency::USD => Some(fiat::PriceSetting {
+                    source: liana_gui::services::fiat::PriceSource::default(),
+                    currency: liana_gui::services::fiat::Currency::USD,
+                    is_enabled: true,
+                }),
+                api::FiatCurrency::EUR => Some(fiat::PriceSetting {
+                    source: liana_gui::services::fiat::PriceSource::default(),
+                    currency: liana_gui::services::fiat::Currency::EUR,
+                    is_enabled: true,
+                }),
+            };
+
             let app_wallet = Arc::new(
                 AppWallet::new(wallet.descriptor)
                     .with_name(wallet.name)
@@ -157,6 +190,7 @@ impl SettingsTrait for BusinessSettings {
                     .with_provider_keys(provider_keys)
                     .with_hardware_wallets(hws)
                     .with_remote_backend_auth(auth_cfg)
+                    .with_fiat_price_setting(fiat_price_setting)
                     .load_hotsigners(&liana_dir, network)
                     .map_err(|e| SettingsError::Unexpected(e.to_string()))?,
             );
