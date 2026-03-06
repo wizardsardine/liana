@@ -79,7 +79,8 @@ pub enum Message {
     SettingsSaved,
     SettingsSaveFailed(Error),
     /// Result of polling the pending local bitcoind's IBD sync progress.
-    BitcoindSyncProgress(Result<f64, String>),
+    /// Carries `(verificationprogress, initialblockdownload)`.
+    BitcoindSyncProgress(Result<(f64, bool), String>),
 }
 
 impl From<ImportExportMessage> for Message {

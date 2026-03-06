@@ -441,10 +441,10 @@ pub struct App {
 }
 
 /// Poll the local bitcoind's IBD progress via its JSON-RPC interface.
-/// Returns `verificationprogress` (0.0–1.0) or an error string.
+/// Returns `(verificationprogress, initialblockdownload)` or an error string.
 async fn check_bitcoind_sync_progress(
     cfg: coincubed::config::BitcoindConfig,
-) -> Result<f64, String> {
+) -> Result<(f64, bool), String> {
     use coincubed::config::BitcoindRpcAuth;
 
     let (user, pass) = match &cfg.rpc_auth {
@@ -480,9 +480,14 @@ async fn check_bitcoind_sync_progress(
         .await
         .map_err(|e| format!("bitcoind RPC response parse failed: {}", e))?;
 
-    resp["result"]["verificationprogress"]
+    let result = &resp["result"];
+    let progress = result["verificationprogress"]
         .as_f64()
-        .ok_or_else(|| "Missing verificationprogress in bitcoind response".to_string())
+        .ok_or_else(|| "Missing verificationprogress in bitcoind response".to_string())?;
+    let ibd = result["initialblockdownload"]
+        .as_bool()
+        .ok_or_else(|| "Missing initialblockdownload in bitcoind response".to_string())?;
+    Ok((progress, ibd))
 }
 
 impl App {
@@ -996,10 +1001,12 @@ impl App {
             Message::BitcoindSyncProgress(res) => {
                 match res {
                     Err(e) => tracing::warn!("Bitcoind sync check failed: {}", e),
-                    Ok(progress) => {
+                    Ok((progress, ibd)) => {
                         self.cache.node_bitcoind_sync_progress = Some(progress);
-                        // IBD complete — promote local Bitcoind to primary backend.
-                        if progress >= 1.0 {
+                        // IBD complete when initialblockdownload flips to false.
+                        // verificationprogress is a heuristic that tops out at ~0.9999
+                        // and is not a reliable completion signal on its own.
+                        if !ibd {
                             let switch =
                                 self.daemon.as_ref().and_then(|d| d.config()).and_then(|c| {
                                     let pending = c.pending_bitcoind.clone()?;
