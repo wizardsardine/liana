@@ -37,17 +37,14 @@ use crate::{
     dir::LianaDirectory,
     hw::{HardwareWalletConfig, HardwareWalletMessage, HardwareWallets},
     node::bitcoind::Bitcoind,
-    services::{
-        self,
-        connect::client::{
-            auth::AuthError,
-            backend::{
-                api::payload::{Provider, ProviderKey},
-                BackendClient, BackendWalletClient,
-            },
-            cache::update_connect_cache,
-            BackendType,
+    services::connect::client::{
+        auth::AuthError,
+        backend::{
+            api::payload::{Provider, ProviderKey},
+            BackendClient, BackendWalletClient,
         },
+        cache::update_connect_cache,
+        BackendType,
     },
     signer::Signer,
 };
@@ -979,7 +976,7 @@ pub enum Error {
     // DaemonError does not implement Clone.
     // TODO: maybe Arc is overkill
     Backend(Arc<DaemonError>),
-    Services(services::keys::Error),
+    Services(liana_connect::keys::Error),
     Settings(SettingsError),
     Bitcoind(String),
     Electrum(String),

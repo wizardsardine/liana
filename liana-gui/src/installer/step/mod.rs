@@ -36,7 +36,6 @@ use crate::{
     hw::HardwareWallets,
     installer::{context::Context, message::Message, view},
     node::bitcoind::Bitcoind,
-    services,
 };
 
 pub trait Step {
@@ -72,7 +71,7 @@ pub struct Final {
     internal_bitcoind: Option<Bitcoind>,
     warning: Option<String>,
     wallet_settings: Option<WalletSettings>,
-    key_redemptions: HashMap<ProviderKey, Option<Result<(), services::keys::Error>>>,
+    key_redemptions: HashMap<ProviderKey, Option<Result<(), liana_connect::keys::Error>>>,
     backup: Option<Backup>,
 }
 
@@ -116,7 +115,8 @@ impl Step for Final {
         match message {
             Message::RedeemNextKey => {
                 if let Some((pk, _)) = self.key_redemptions.iter().find(|(_, v)| v.is_none()) {
-                    let client = services::keys::Client::new();
+                    let client =
+                        liana_connect::keys::Client::new(&format!("liana-gui/{}", crate::VERSION));
                     let pk = pk.clone();
                     return Task::perform(
                         async move { (pk.clone(), client.redeem_key(pk.uuid, pk.token).await) },

@@ -56,6 +56,7 @@ impl State {
             Msg::KeyUpdateAlias(value) => self.views.keys.on_key_update_alias(value),
             Msg::KeyUpdateDescr(value) => self.views.keys.on_key_update_descr(value),
             Msg::KeyUpdateEmail(value) => self.views.keys.on_key_update_email(value),
+            Msg::KeyUpdateToken(value) => self.views.keys.on_key_update_token(value, &self.app.keys),
             Msg::KeyUpdateType(key_type) => self.views.keys.on_key_update_type(key_type),
             Msg::KeyAdd => self.on_key_add(),
             Msg::KeyEdit(key_id) => self.on_key_edit(key_id),
@@ -385,23 +386,30 @@ impl State {
             key_id,
             alias: String::new(),
             description: String::new(),
-            email: String::new(),
             key_type: ws_business::KeyType::Internal,
             is_new: true,
+            email: String::new(),
+            token: String::new(),
+            token_warning: None,
         });
     }
 
     fn on_key_edit(&mut self, key_id: u8) {
         if let Some(key) = self.app.keys.get(&key_id) {
-            // Extract email from KeyIdentity
-            let email = key.identity.to_string();
+            let (email, token) = match &key.identity {
+                KeyIdentity::Email(e) => (e.clone(), String::new()),
+                KeyIdentity::Token(t) => (String::new(), t.clone()),
+                KeyIdentity::Other(o) => (o.clone(), String::new()),
+            };
             self.views.keys.edit_key_modal = Some(views::EditKeyModalState {
                 key_id,
                 alias: key.alias.clone(),
                 description: key.description.clone(),
-                email,
                 key_type: key.key_type,
                 is_new: false,
+                email,
+                token,
+                token_warning: None,
             });
         }
     }
@@ -434,13 +442,22 @@ impl State {
 
     fn on_key_save(&mut self) {
         if let Some(modal_state) = &self.views.keys.edit_key_modal {
+            let identity = match modal_state.key_type {
+                ws_business::KeyType::Internal | ws_business::KeyType::External => {
+                    KeyIdentity::Email(modal_state.email.clone())
+                }
+                ws_business::KeyType::Cosigner | ws_business::KeyType::SafetyNet => {
+                    KeyIdentity::Token(modal_state.token.clone())
+                }
+            };
+
             if modal_state.is_new {
                 // Creating a new key
                 let key = Key {
                     id: modal_state.key_id,
                     alias: modal_state.alias.clone(),
                     description: modal_state.description.clone(),
-                    identity: KeyIdentity::Email(modal_state.email.clone()),
+                    identity,
                     key_type: modal_state.key_type,
                     xpub: None,
                     xpub_source: None,
@@ -457,7 +474,7 @@ impl State {
                 if let Some(key) = self.app.keys.get_mut(&modal_state.key_id) {
                     key.alias = modal_state.alias.clone();
                     key.description = modal_state.description.clone();
-                    key.identity = KeyIdentity::Email(modal_state.email.clone());
+                    key.identity = identity;
                     key.key_type = modal_state.key_type;
                 }
             }
@@ -1505,18 +1522,20 @@ impl State {
                     if let Some(wallet) = self.backend.get_wallet(wallet_id) {
                         if let Some(template) = &wallet.template {
                             if let Some(key) = template.keys.get(&key_id) {
-                                // Extract email from KeyIdentity
-                                let email = match &key.identity {
-                                    KeyIdentity::Email(e) => e.clone(),
-                                    KeyIdentity::Token(t) => t.clone(),
-                                    KeyIdentity::Other(o) => o.clone(),
+                                // Extract identity fields
+                                let (email, token) = match &key.identity {
+                                    KeyIdentity::Email(e) => (e.clone(), String::new()),
+                                    KeyIdentity::Token(t) => (String::new(), t.clone()),
+                                    KeyIdentity::Other(o) => (o.clone(), String::new()),
                                 };
                                 // Update the modal with server data
                                 if let Some(modal) = &mut self.views.keys.edit_key_modal {
                                     modal.alias = key.alias.clone();
                                     modal.description = key.description.clone();
                                     modal.email = email;
+                                    modal.token = token;
                                     modal.key_type = key.key_type;
+                                    modal.token_warning = None;
                                 }
                                 // Also update local AppState
                                 self.app.keys.insert(key_id, key.clone());

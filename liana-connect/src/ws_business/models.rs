@@ -360,6 +360,12 @@ pub struct SecondaryPath {
     pub timelock: Timelock,
 }
 
+impl SecondaryPath {
+    pub fn is_valid(&self) -> bool {
+        self.timelock.blocks > 0 && self.timelock.blocks <= 65535 && self.path.is_valid()
+    }
+}
+
 /// Template structure containing all policy data
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PolicyTemplate {
@@ -375,6 +381,23 @@ impl PolicyTemplate {
             primary_path: SpendingPath::new(true, 1, Vec::new()),
             secondary_paths: Vec::new(),
         }
+    }
+    pub fn is_valid(&self) -> bool {
+        let keys = self.keys.len() as u8;
+        if !self.primary_path.key_ids.iter().all(|i| *i < keys) || !self.primary_path.is_valid() {
+            return false;
+        }
+        let mut seen_timelocks = BTreeSet::new();
+        for p in &self.secondary_paths {
+            if !p.is_valid()
+                || !p.path.key_ids.iter().all(|i| *i < keys)
+                || seen_timelocks.contains(&p.timelock.blocks)
+            {
+                return false;
+            }
+            seen_timelocks.insert(p.timelock.blocks);
+        }
+        !self.secondary_paths.is_empty()
     }
 }
 
@@ -1548,6 +1571,289 @@ mod wire_format_tests {
             assert_eq!(parsed, expected);
             assert_eq!(serde_json::to_string(&parsed).unwrap(), json_str);
         }
+    }
+
+    fn make_key(id: u8) -> Key {
+        Key {
+            id,
+            alias: format!("Key{}", id),
+            description: "".to_string(),
+            identity: KeyIdentity::Email(format!("key{}@example.com", id)),
+            key_type: KeyType::Internal,
+            xpub: None,
+            xpub_source: None,
+            xpub_device_kind: None,
+            xpub_device_version: None,
+            xpub_file_name: None,
+            last_edited: None,
+            last_editor: None,
+        }
+    }
+
+    #[test]
+    fn test_spending_path_valid_1_of_1() {
+        let sp = SpendingPath::new(true, 1, vec![0]);
+        assert!(sp.is_valid());
+    }
+
+    #[test]
+    fn test_spending_path_valid_2_of_3() {
+        let sp = SpendingPath::new(true, 2, vec![0, 1, 2]);
+        assert!(sp.is_valid());
+    }
+
+    #[test]
+    fn test_spending_path_valid_n_equals_m() {
+        let sp = SpendingPath::new(true, 3, vec![0, 1, 2]);
+        assert!(sp.is_valid());
+    }
+
+    #[test]
+    fn test_spending_path_invalid_threshold_zero() {
+        let sp = SpendingPath::new(true, 0, vec![0]);
+        assert!(!sp.is_valid());
+    }
+
+    #[test]
+    fn test_spending_path_invalid_empty_keys() {
+        let sp = SpendingPath::new(true, 1, vec![]);
+        assert!(!sp.is_valid());
+    }
+
+    #[test]
+    fn test_spending_path_invalid_threshold_exceeds_keys() {
+        let sp = SpendingPath::new(true, 3, vec![0, 1]);
+        assert!(!sp.is_valid());
+    }
+
+    #[test]
+    fn test_spending_path_invalid_zero_threshold_empty_keys() {
+        let sp = SpendingPath::new(true, 0, vec![]);
+        assert!(!sp.is_valid());
+    }
+
+    #[test]
+    fn test_secondary_path_valid() {
+        let sp = SecondaryPath {
+            path: SpendingPath::new(false, 1, vec![0]),
+            timelock: Timelock::new(144),
+        };
+        assert!(sp.is_valid());
+    }
+
+    #[test]
+    fn test_secondary_path_valid_max_timelock() {
+        let sp = SecondaryPath {
+            path: SpendingPath::new(false, 1, vec![0]),
+            timelock: Timelock::new(65535),
+        };
+        assert!(sp.is_valid());
+    }
+
+    #[test]
+    fn test_secondary_path_valid_min_timelock() {
+        let sp = SecondaryPath {
+            path: SpendingPath::new(false, 1, vec![0]),
+            timelock: Timelock::new(1),
+        };
+        assert!(sp.is_valid());
+    }
+
+    #[test]
+    fn test_secondary_path_invalid_zero_timelock() {
+        let sp = SecondaryPath {
+            path: SpendingPath::new(false, 1, vec![0]),
+            timelock: Timelock::new(0),
+        };
+        assert!(!sp.is_valid());
+    }
+
+    #[test]
+    fn test_secondary_path_invalid_timelock_exceeds_max() {
+        let sp = SecondaryPath {
+            path: SpendingPath::new(false, 1, vec![0]),
+            timelock: Timelock::new(65536),
+        };
+        assert!(!sp.is_valid());
+    }
+
+    #[test]
+    fn test_secondary_path_invalid_path() {
+        // threshold_n=0 makes path invalid
+        let sp = SecondaryPath {
+            path: SpendingPath::new(false, 0, vec![0]),
+            timelock: Timelock::new(144),
+        };
+        assert!(!sp.is_valid());
+    }
+
+    #[test]
+    fn test_secondary_path_invalid_empty_keys() {
+        let sp = SecondaryPath {
+            path: SpendingPath::new(false, 1, vec![]),
+            timelock: Timelock::new(144),
+        };
+        assert!(!sp.is_valid());
+    }
+
+    #[test]
+    fn test_secondary_path_invalid_threshold_exceeds_keys() {
+        let sp = SecondaryPath {
+            path: SpendingPath::new(false, 3, vec![0, 1]),
+            timelock: Timelock::new(144),
+        };
+        assert!(!sp.is_valid());
+    }
+
+    #[test]
+    fn test_policy_template_invalid_no_secondary_paths() {
+        let mut keys = BTreeMap::new();
+        keys.insert(0, make_key(0));
+        let template = PolicyTemplate {
+            keys,
+            primary_path: SpendingPath::new(true, 1, vec![0]),
+            secondary_paths: vec![],
+        };
+        assert!(!template.is_valid());
+    }
+
+    #[test]
+    fn test_policy_template_valid_multisig_with_recovery() {
+        let mut keys = BTreeMap::new();
+        keys.insert(0, make_key(0));
+        keys.insert(1, make_key(1));
+        keys.insert(2, make_key(2));
+        let template = PolicyTemplate {
+            keys,
+            primary_path: SpendingPath::new(true, 2, vec![0, 1, 2]),
+            secondary_paths: vec![SecondaryPath {
+                path: SpendingPath::new(false, 1, vec![2]),
+                timelock: Timelock::new(52560),
+            }],
+        };
+        assert!(template.is_valid());
+    }
+
+    #[test]
+    fn test_policy_template_invalid_primary_key_id_out_of_range() {
+        let mut keys = BTreeMap::new();
+        keys.insert(0, make_key(0));
+        // key_id=1 doesn't exist (only 1 key, so valid ids are 0..1 exclusive)
+        let template = PolicyTemplate {
+            keys,
+            primary_path: SpendingPath::new(true, 1, vec![1]),
+            secondary_paths: vec![],
+        };
+        assert!(!template.is_valid());
+    }
+
+    #[test]
+    fn test_policy_template_invalid_primary_path() {
+        let mut keys = BTreeMap::new();
+        keys.insert(0, make_key(0));
+        // threshold_n=0 makes primary path invalid
+        let template = PolicyTemplate {
+            keys,
+            primary_path: SpendingPath::new(true, 0, vec![0]),
+            secondary_paths: vec![],
+        };
+        assert!(!template.is_valid());
+    }
+
+    #[test]
+    fn test_policy_template_invalid_secondary_path() {
+        let mut keys = BTreeMap::new();
+        keys.insert(0, make_key(0));
+        let template = PolicyTemplate {
+            keys,
+            primary_path: SpendingPath::new(true, 1, vec![0]),
+            secondary_paths: vec![SecondaryPath {
+                path: SpendingPath::new(false, 1, vec![0]),
+                timelock: Timelock::new(0), // invalid: zero timelock
+            }],
+        };
+        assert!(!template.is_valid());
+    }
+
+    #[test]
+    fn test_policy_template_invalid_secondary_key_id_out_of_range() {
+        let mut keys = BTreeMap::new();
+        keys.insert(0, make_key(0));
+        let template = PolicyTemplate {
+            keys,
+            primary_path: SpendingPath::new(true, 1, vec![0]),
+            secondary_paths: vec![SecondaryPath {
+                path: SpendingPath::new(false, 1, vec![1]), // key_id=1 out of range
+                timelock: Timelock::new(144),
+            }],
+        };
+        assert!(!template.is_valid());
+    }
+
+    #[test]
+    fn test_policy_template_invalid_no_keys() {
+        let template = PolicyTemplate {
+            keys: BTreeMap::new(),
+            primary_path: SpendingPath::new(true, 1, vec![0]),
+            secondary_paths: vec![],
+        };
+        assert!(!template.is_valid());
+    }
+
+    #[test]
+    fn test_policy_template_invalid_empty_primary_path() {
+        let mut keys = BTreeMap::new();
+        keys.insert(0, make_key(0));
+        let template = PolicyTemplate {
+            keys,
+            primary_path: SpendingPath::new(true, 1, vec![]),
+            secondary_paths: vec![],
+        };
+        assert!(!template.is_valid());
+    }
+
+    #[test]
+    fn test_policy_template_valid_multiple_secondary_paths() {
+        let mut keys = BTreeMap::new();
+        keys.insert(0, make_key(0));
+        keys.insert(1, make_key(1));
+        let template = PolicyTemplate {
+            keys,
+            primary_path: SpendingPath::new(true, 2, vec![0, 1]),
+            secondary_paths: vec![
+                SecondaryPath {
+                    path: SpendingPath::new(false, 1, vec![0]),
+                    timelock: Timelock::new(144),
+                },
+                SecondaryPath {
+                    path: SpendingPath::new(false, 1, vec![1]),
+                    timelock: Timelock::new(52560),
+                },
+            ],
+        };
+        assert!(template.is_valid());
+    }
+
+    #[test]
+    fn test_policy_template_invalid_one_bad_secondary_among_valid() {
+        let mut keys = BTreeMap::new();
+        keys.insert(0, make_key(0));
+        keys.insert(1, make_key(1));
+        let template = PolicyTemplate {
+            keys,
+            primary_path: SpendingPath::new(true, 2, vec![0, 1]),
+            secondary_paths: vec![
+                SecondaryPath {
+                    path: SpendingPath::new(false, 1, vec![0]),
+                    timelock: Timelock::new(144),
+                },
+                SecondaryPath {
+                    path: SpendingPath::new(false, 1, vec![0]),
+                    timelock: Timelock::new(70000), // exceeds 65535
+                },
+            ],
+        };
+        assert!(!template.is_valid());
     }
 
     #[test]
