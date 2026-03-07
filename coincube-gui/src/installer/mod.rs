@@ -6,7 +6,7 @@ mod prompt;
 pub(crate) mod step;
 mod view;
 
-fn connect_url(network: bitcoin::Network) -> String {
+pub(crate) fn connect_url(network: bitcoin::Network) -> String {
     let network_path = match network {
         bitcoin::Network::Bitcoin => "bitcoin/mainnet",
         bitcoin::Network::Testnet => "bitcoin/testnet",

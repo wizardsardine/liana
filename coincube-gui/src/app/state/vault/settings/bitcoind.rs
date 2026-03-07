@@ -10,23 +10,6 @@ use tracing::info;
 
 use crate::services::coincube::{CoincubeClient, OtpRequest, OtpVerifyRequest};
 
-/// Mirrors `connect_url()` in `installer/mod.rs`.
-/// Must be kept in sync with that function.
-fn coincube_connect_esplora_url(network: Network) -> String {
-    let network_path = match network {
-        Network::Bitcoin => "bitcoin/mainnet",
-        Network::Testnet => "bitcoin/testnet",
-        Network::Signet => "bitcoin/signet",
-        Network::Testnet4 => "bitcoin/testnet4",
-        _ => "bitcoin/regtest",
-    };
-    #[cfg(debug_assertions)]
-    let base = "https://dev-api.coincube.io";
-    #[cfg(not(debug_assertions))]
-    let base = env!("COINCUBE_API_URL");
-    format!("{}/api/v1/esplora/{}", base, network_path)
-}
-
 use coincube_core::miniscript::bitcoin::Network;
 use coincubed::config::{
     BitcoinBackend, BitcoinConfig, BitcoindConfig, BitcoindRpcAuth, Config, ElectrumConfig,
@@ -41,7 +24,7 @@ use crate::{
     },
     daemon::Daemon,
     dir::CoincubeDirectory,
-    download, help,
+    download,
     installer::step::node::bitcoind::{
         get_available_port, install_bitcoind, internal_bitcoind_address, PRUNE_DEFAULT,
     },
@@ -183,6 +166,7 @@ impl State for BitcoindSettingsState {
                     self.connect_login = None;
                     self.pending_node_setup = None;
                     self.warning = None;
+                    self.full_config = daemon.config().cloned();
                     if let Some(settings) = &mut self.bitcoind_settings {
                         settings.edited(true);
                         return Task::perform(async {}, |_| {
@@ -391,7 +375,7 @@ impl State for BitcoindSettingsState {
                                 // stale fallback_esplora.addr (e.g. written
                                 // before Testnet4 was handled) is never used.
                                 use coincubed::config::EsploraConfig;
-                                let esplora_url = coincube_connect_esplora_url(cache.network);
+                                let esplora_url = crate::installer::connect_url(cache.network);
                                 info!(
                                     "Switching to Connect: url={} token_len={}",
                                     esplora_url,
@@ -540,7 +524,7 @@ impl State for BitcoindSettingsState {
                                     );
                                 }
                                 Err(e) => {
-                                    setup.internal_stage = InternalSetupStage::Installing;
+                                    setup.internal_stage = InternalSetupStage::Downloading;
                                     setup.internal_error = Some(e);
                                 }
                             }

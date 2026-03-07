@@ -1399,6 +1399,7 @@ pub fn connect_login_panel<'a>(
     card::simple(Container::new(col).padding(15).width(Length::Fill)).into()
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn node_backend_status<'a>(
     active_backend: &'static str,
     active_icon: coincube_ui::widget::Text<'static>,
