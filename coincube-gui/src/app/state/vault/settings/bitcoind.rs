@@ -803,10 +803,6 @@ impl State for BitcoindSettingsState {
                         },
                     ));
                 }
-                setting_panels.push(view::vault::settings::link(
-                    help::CHANGE_BACKEND_OR_NODE_URL,
-                    "I want to change node type or use Liana Connect",
-                ));
             }
             setting_panels.push(
                 self.rescan_settings
