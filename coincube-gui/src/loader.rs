@@ -18,7 +18,7 @@ use coincube_ui::{
     widget::*,
 };
 use coincubed::{
-    config::{BitcoinBackend, Config, ConfigError},
+    config::{BitcoinBackend, BitcoindRpcAuth, Config, ConfigError},
     StartupError,
 };
 
@@ -37,7 +37,10 @@ use crate::{
     },
     daemon::{client, embedded::EmbeddedDaemon, model::*, Daemon, DaemonError},
     node::{
-        bitcoind::{internal_bitcoind_debug_log_path, Bitcoind, StartInternalBitcoindError},
+        bitcoind::{
+            internal_bitcoind_datadir, internal_bitcoind_debug_log_path, Bitcoind,
+            StartInternalBitcoindError,
+        },
         NodeType,
     },
 };
@@ -452,7 +455,7 @@ impl Loader {
     }
 }
 
-fn get_bitcoind_log(log_path: PathBuf) -> impl Stream<Item = Option<String>> {
+pub fn get_bitcoind_log(log_path: PathBuf) -> impl Stream<Item = Option<String>> {
     channel(5, async move |mut output| {
         loop {
             // Reduce the io load.
@@ -559,12 +562,8 @@ pub async fn load_application(
         },
         fiat_price: None,
         bitcoin_unit,
-        node_syncing_alongside_connect: config
-            .daemon
-            .config()
-            .map(|c| c.pending_bitcoind.is_some())
-            .unwrap_or(false),
         node_bitcoind_sync_progress: None,
+        node_bitcoind_last_log: None,
         vault_expanded: false,
         liquid_expanded: false,
         has_vault: true,
@@ -725,6 +724,34 @@ pub async fn start_bitcoind_and_daemon(
             .map_err(Error::Bitcoind)?,
         ),
         _ => None,
+    };
+
+    // If the active backend is not internal bitcoind but there is a pending
+    // internal node, start it so it keeps syncing in the background.
+    let bitcoind = if bitcoind.is_none() {
+        if let Some(pending_cfg) = &config.pending_bitcoind {
+            let internal_datadir = internal_bitcoind_datadir(&coincube_datadir_path);
+            let is_internal = match &pending_cfg.rpc_auth {
+                BitcoindRpcAuth::CookieFile(path) => path.starts_with(&internal_datadir),
+                _ => false,
+            };
+            if is_internal {
+                Some(
+                    Bitcoind::maybe_start(
+                        config.bitcoin_config.network,
+                        pending_cfg.clone(),
+                        &coincube_datadir_path,
+                    )
+                    .map_err(Error::Bitcoind)?,
+                )
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    } else {
+        bitcoind
     };
 
     debug!("starting coincube daemon");

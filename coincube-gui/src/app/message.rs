@@ -81,6 +81,9 @@ pub enum Message {
     /// Result of polling the pending local bitcoind's IBD sync progress.
     /// Carries `(verificationprogress, initialblockdownload)`.
     BitcoindSyncProgress(Result<(f64, bool), String>),
+    /// Latest UpdateTip/blockheaders line streamed from the pending internal
+    /// bitcoind's debug.log.  `None` means no matching line found yet.
+    PendingBitcoindLog(Option<String>),
 }
 
 impl From<ImportExportMessage> for Message {

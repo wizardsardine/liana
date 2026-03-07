@@ -206,7 +206,7 @@ fn verify_hash(bytes: &[u8]) -> bool {
 }
 
 /// Install bitcoind by verifying the download hash and unpacking in the specified directory.
-fn install_bitcoind(install_dir: &PathBuf, bytes: &[u8]) -> Result<(), InstallBitcoindError> {
+pub fn install_bitcoind(install_dir: &PathBuf, bytes: &[u8]) -> Result<(), InstallBitcoindError> {
     if !verify_hash(bytes) {
         return Err(InstallBitcoindError::HashMismatch);
     };
@@ -214,7 +214,7 @@ fn install_bitcoind(install_dir: &PathBuf, bytes: &[u8]) -> Result<(), InstallBi
 }
 
 /// RPC address for internal bitcoind.
-fn internal_bitcoind_address(rpc_port: u16) -> SocketAddr {
+pub fn internal_bitcoind_address(rpc_port: u16) -> SocketAddr {
     SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), rpc_port)
 }
 

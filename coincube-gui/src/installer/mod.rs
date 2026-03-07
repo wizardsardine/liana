@@ -3,7 +3,7 @@ mod decrypt;
 mod descriptor;
 mod message;
 mod prompt;
-mod step;
+pub(crate) mod step;
 mod view;
 
 fn connect_url(network: bitcoin::Network) -> String {
@@ -11,6 +11,7 @@ fn connect_url(network: bitcoin::Network) -> String {
         bitcoin::Network::Bitcoin => "bitcoin/mainnet",
         bitcoin::Network::Testnet => "bitcoin/testnet",
         bitcoin::Network::Signet => "bitcoin/signet",
+        bitcoin::Network::Testnet4 => "bitcoin/testnet4",
         _ => "bitcoin/regtest",
     };
     #[cfg(debug_assertions)]
