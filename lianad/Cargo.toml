@@ -52,3 +52,7 @@ jsonrpc = { workspace = true, features = ["minreq_http"], default-features = fal
 
 # import/export labels
 bip329 = { workspace = true, default-features = false }
+
+# payjoin
+payjoin = { version = "1.0.0-rc.1", features = ["v2", "io"] }
+reqwest = { version = "0.11", default-features=false, features = ["json", "rustls-tls", "stream", "blocking"] }
