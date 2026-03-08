@@ -51,6 +51,20 @@ pub struct Claims {
     pub sub: String,
 }
 
+/// Fiat currency setting for a user's wallet.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, serde::Serialize)]
+pub enum FiatCurrency {
+    None,
+    USD,
+    EUR,
+}
+
+/// User settings for a wallet.
+#[derive(Debug, Clone, Deserialize)]
+pub struct UserSettings {
+    pub fiat_currency: FiatCurrency,
+}
+
 #[derive(Deserialize)]
 pub struct NetworkInfo {
     pub feerate: Feerate,
@@ -515,5 +529,10 @@ pub mod payload {
     pub struct UpdateFingerprintAlias {
         pub fingerprint: String,
         pub alias: String,
+    }
+
+    #[derive(Serialize)]
+    pub struct UpdateSettings {
+        pub fiat_currency: super::FiatCurrency,
     }
 }

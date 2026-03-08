@@ -26,6 +26,26 @@ pub struct BusinessInstaller {
 
 impl BusinessInstaller {
     fn new(datadir: LianaDirectory, network: bitcoin::Network) -> (Self, Task<Message>) {
+        // Log if signet mode is enabled via LIANA_BUSINESS_SIGNET env var
+        if network != bitcoin::Network::Bitcoin {
+            tracing::info!(
+                "LIANA_BUSINESS_SIGNET enabled, using network: {:?}",
+                network
+            );
+
+            // Log custom URL overrides if set
+            if let Ok(url) = std::env::var("LIANA_BUSINESS_SIGNET_API_URL") {
+                if !url.is_empty() {
+                    tracing::info!("LIANA_BUSINESS_SIGNET_API_URL: {}", url);
+                }
+            }
+            if let Ok(url) = std::env::var("LIANA_BUSINESS_SIGNET_WS_URL") {
+                if !url.is_empty() {
+                    tracing::info!("LIANA_BUSINESS_SIGNET_WS_URL: {}", url);
+                }
+            }
+        }
+
         let mut state = State::new(network, datadir.clone());
         state.backend.set_network(network, datadir.clone());
 

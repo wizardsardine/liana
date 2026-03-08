@@ -8,7 +8,7 @@ use liana_gui::{
         cache::Cache,
         menu::Menu,
         message::Message,
-        settings::SettingsUI,
+        settings::{fiat::PriceSetting, SettingsError, SettingsUI},
         state::{settings::wallet::RegisterWalletModal, State},
         view,
         wallet::Wallet,
@@ -27,9 +27,18 @@ pub struct BusinessSettingsUI {
     pub(crate) data_dir: LianaDirectory,
     pub(crate) wallet: Arc<Wallet>,
     pub(crate) current_section: Option<Section>,
+    fiat_setting: PriceSetting,
     #[allow(dead_code)]
     processing: bool,
     register_modal: Option<RegisterWalletModal>,
+}
+
+fn wallet_fiat_setting_or_default(wallet: &Wallet) -> PriceSetting {
+    wallet
+        .fiat_price_setting
+        .as_ref()
+        .cloned()
+        .unwrap_or_default()
 }
 
 impl SettingsUI<Msg> for BusinessSettingsUI {
@@ -41,14 +50,15 @@ impl SettingsUI<Msg> for BusinessSettingsUI {
         _internal_bitcoind: bool,
         _config: Arc<Config>,
     ) -> (Self, Task<Msg>) {
+        let fiat_setting = wallet_fiat_setting_or_default(&wallet);
         let ui = Self {
             data_dir,
             wallet,
             current_section: None,
+            fiat_setting,
             processing: false,
             register_modal: None,
         };
-        // TODO: Fetch fiat setting from backend on load
         (ui, Task::none())
     }
 
@@ -64,7 +74,7 @@ impl SettingsUI<Msg> for BusinessSettingsUI {
                 Task::none()
             }
             Msg::SelectSection(section) => self.on_select_section(section),
-            Msg::RegisterWallet => Task::none(), // Handled in State::update()
+            Msg::RegisterWallet | Msg::FiatEnable(_) | Msg::FiatCurrencyEdited(_) => Task::none(), // Handled in State::update()
         }
     }
 
@@ -72,6 +82,11 @@ impl SettingsUI<Msg> for BusinessSettingsUI {
         match self.current_section {
             None => views::list_view(),
             Some(Section::Wallet) => views::wallet_view(self),
+            Some(Section::General) => {
+                let bc = crate::BackendCurrency::try_from(self.fiat_setting.currency)
+                    .unwrap_or_default();
+                views::general_view(self.fiat_setting.is_enabled, bc)
+            }
             Some(Section::About) => views::about_view(),
         }
     }
@@ -87,6 +102,7 @@ impl SettingsUI<Msg> for BusinessSettingsUI {
 
     fn reload(&mut self, _daemon: Arc<dyn Daemon + Sync + Send>, wallet: Arc<Wallet>) -> Task<Msg> {
         self.current_section = None;
+        self.fiat_setting = wallet_fiat_setting_or_default(&wallet);
         self.wallet = wallet;
         Task::none()
     }
@@ -98,6 +114,43 @@ impl BusinessSettingsUI {
         self.current_section = Some(section);
         Task::none()
     }
+
+    fn save_fiat_setting(&self, daemon: Arc<dyn Daemon + Sync + Send>) -> Task<Message> {
+        let wallet = self.wallet.clone();
+        let setting = self.fiat_setting.clone();
+
+        // Convert PriceSetting to backend FiatCurrency
+        let fiat_currency = if !setting.is_enabled {
+            liana_gui::services::connect::client::backend::api::FiatCurrency::None
+        } else {
+            match crate::BackendCurrency::try_from(setting.currency) {
+                Ok(crate::BackendCurrency::USD) => {
+                    liana_gui::services::connect::client::backend::api::FiatCurrency::USD
+                }
+                Ok(crate::BackendCurrency::EUR) => {
+                    liana_gui::services::connect::client::backend::api::FiatCurrency::EUR
+                }
+                Err(_) => liana_gui::services::connect::client::backend::api::FiatCurrency::None,
+            }
+        };
+
+        Task::perform(
+            async move {
+                // Update backend only (no local file for business)
+                daemon
+                    .update_wallet_settings(fiat_currency)
+                    .await
+                    .map_err(|e| SettingsError::Unexpected(e.to_string()))?;
+                // Return updated wallet with new fiat setting
+                let mut w = wallet.as_ref().clone();
+                w = w.with_fiat_price_setting(Some(setting));
+                Ok::<_, SettingsError>(Arc::new(w))
+            },
+            |res: Result<Arc<Wallet>, SettingsError>| {
+                Message::WalletUpdated(res.map_err(Into::into))
+            },
+        )
+    }
 }
 
 /// State trait implementation for integration with liana-gui's App panel system.
@@ -108,10 +161,19 @@ impl State for BusinessSettingsUI {
             Msg::SelectSection(Section::Wallet) => {
                 view::Message::Settings(view::SettingsMessage::EditWalletSettings)
             }
+            Msg::SelectSection(Section::General) => {
+                view::Message::Settings(view::SettingsMessage::GeneralSection)
+            }
             Msg::SelectSection(Section::About) => {
                 view::Message::Settings(view::SettingsMessage::AboutSection)
             }
             Msg::RegisterWallet => view::Message::Settings(view::SettingsMessage::RegisterWallet),
+            Msg::FiatEnable(b) => {
+                view::Message::Settings(view::SettingsMessage::Fiat(view::FiatMessage::Enable(b)))
+            }
+            Msg::FiatCurrencyEdited(c) => view::Message::Settings(view::SettingsMessage::Fiat(
+                view::FiatMessage::CurrencyEdited(c.into()),
+            )),
         });
         let dashboard = view::dashboard(&Menu::Settings, cache, None, content);
 
@@ -145,6 +207,7 @@ impl State for BusinessSettingsUI {
             }
             Message::WalletUpdated(ref res) => {
                 if let Ok(wallet) = res {
+                    self.fiat_setting = wallet_fiat_setting_or_default(wallet);
                     self.wallet = wallet.clone();
                 }
                 if let Some(modal) = &mut self.register_modal {
@@ -162,10 +225,26 @@ impl State for BusinessSettingsUI {
                     Task::none()
                 }
             }
+            Message::View(view::Message::Settings(view::SettingsMessage::Fiat(ref fiat_msg))) => {
+                match fiat_msg {
+                    view::FiatMessage::Enable(enabled) => {
+                        self.fiat_setting.is_enabled = *enabled;
+                        self.save_fiat_setting(daemon)
+                    }
+                    view::FiatMessage::CurrencyEdited(currency) => {
+                        self.fiat_setting.currency = *currency;
+                        self.save_fiat_setting(daemon)
+                    }
+                    _ => Task::none(),
+                }
+            }
             Message::View(view::Message::Settings(ref settings_msg)) => {
                 let msg = match settings_msg {
                     view::SettingsMessage::EditWalletSettings => {
                         Some(Msg::SelectSection(Section::Wallet))
+                    }
+                    view::SettingsMessage::GeneralSection => {
+                        Some(Msg::SelectSection(Section::General))
                     }
                     view::SettingsMessage::AboutSection => Some(Msg::SelectSection(Section::About)),
                     _ => None,
