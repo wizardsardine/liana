@@ -264,6 +264,7 @@ pub enum LiquidOverviewMessage {
     SelectTransaction(usize),
     DataLoaded {
         balance: Amount,
+        usdt_balance: u64,
         recent_payment: Vec<Payment>,
     },
     Error(String),
@@ -279,6 +280,7 @@ pub enum LiquidSendMessage {
     SelectTransaction(usize),
     DataLoaded {
         balance: Amount,
+        usdt_balance: u64,
         recent_payment: Vec<Payment>,
     },
     Error(String),
@@ -313,6 +315,8 @@ pub enum SendPopupMessage {
     FiatClose,
     Done,
     Close,
+    ToggleSendAsset,
+    UsdtAmountEdited(String),
 }
 
 #[derive(Debug, Clone)]
@@ -323,6 +327,7 @@ pub enum LiquidReceiveMessage {
     GenerateAddress,
     AddressGenerated(ReceiveMethod, Result<String, String>),
     AmountInput(String),
+    UsdtAmountInput(String),
     DescriptionInput(String),
     Error(String),
     ClearError,
@@ -335,6 +340,7 @@ pub enum ReceiveMethod {
     Lightning,
     Liquid,
     OnChain,
+    Usdt,
 }
 
 #[derive(Debug, Clone)]

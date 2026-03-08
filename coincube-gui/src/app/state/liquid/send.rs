@@ -9,6 +9,7 @@ use coincube_core::miniscript::bitcoin::Amount;
 use coincube_ui::{component::form, widget::*};
 use iced::Task;
 
+use crate::app::breez::assets::{usdt_asset_id, USDT_PRECISION};
 use crate::app::menu::{LiquidSubMenu, Menu};
 use crate::app::settings::unit::BitcoinDisplayUnit;
 use crate::app::state::{redirect, State};
@@ -17,6 +18,12 @@ use crate::app::{breez::BreezClient, cache::Cache};
 use crate::app::{message::Message, view, wallet::Wallet};
 use crate::daemon::Daemon;
 use crate::utils::format_time_ago;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SendAsset {
+    Btc,
+    Usdt,
+}
 
 #[derive(Debug)]
 pub enum Modal {
@@ -42,8 +49,11 @@ pub enum LiquidSendFlowState {
 pub struct LiquidSend {
     breez_client: Arc<BreezClient>,
     btc_balance: Amount,
+    usdt_balance: u64,
     amount: Amount,
     amount_input: form::Value<String>,
+    usdt_amount_input: form::Value<String>,
+    send_asset: SendAsset,
     recent_transaction: Vec<view::liquid::RecentTransaction>,
     recent_payments: Vec<Payment>,
     selected_payment: Option<Payment>,
@@ -65,8 +75,11 @@ impl LiquidSend {
         Self {
             breez_client,
             btc_balance: Amount::from_sat(0),
+            usdt_balance: 0,
             amount: Amount::from_sat(0),
             amount_input: form::Value::default(),
+            usdt_amount_input: form::Value::default(),
+            send_asset: SendAsset::Btc,
             recent_transaction: Vec::new(),
             recent_payments: Vec::new(),
             selected_payment: None,
@@ -101,6 +114,18 @@ impl LiquidSend {
                     })
                     .unwrap_or(Amount::ZERO);
 
+                let usdt_balance = info.as_ref().ok().and_then(|info| {
+                    info.wallet_info.asset_balances.iter().find_map(|ab| {
+                        if ab.asset_id
+                            == usdt_asset_id(breez_client.network()).unwrap_or("")
+                        {
+                            Some(ab.balance_sat)
+                        } else {
+                            None
+                        }
+                    })
+                }).unwrap_or(0);
+
                 let error = match (&info, &payments) {
                     (Err(_), Err(_)) => Some("Couldn't fetch balance or transactions".to_string()),
                     (Err(_), _) => Some("Couldn't fetch account balance".to_string()),
@@ -110,9 +135,9 @@ impl LiquidSend {
 
                 let payments = payments.unwrap_or_default();
 
-                (balance, payments, error)
+                (balance, usdt_balance, payments, error)
             },
-            |(balance, recent_payment, error)| {
+            |(balance, usdt_balance, recent_payment, error)| {
                 if let Some(err) = error {
                     Message::View(view::Message::LiquidSend(view::LiquidSendMessage::Error(
                         err,
@@ -121,6 +146,7 @@ impl LiquidSend {
                     Message::View(view::Message::LiquidSend(
                         view::LiquidSendMessage::DataLoaded {
                             balance,
+                            usdt_balance,
                             recent_payment,
                         },
                     ))
@@ -146,10 +172,13 @@ impl State for LiquidSend {
             view::liquid_send_with_flow(view::LiquidSendFlowConfig {
                 flow_state: &self.flow_state,
                 btc_balance: self.btc_balance,
+                usdt_balance: self.usdt_balance,
                 fiat_converter,
                 recent_transaction: &self.recent_transaction,
                 input: &self.input,
                 amount_input: &self.amount_input,
+                usdt_amount_input: &self.usdt_amount_input,
+                send_asset: self.send_asset,
                 comment,
                 description: self.description.as_deref(),
                 lightning_limits: self.lightning_limits,
@@ -341,9 +370,11 @@ impl State for LiquidSend {
                 }
                 view::LiquidSendMessage::DataLoaded {
                     balance,
+                    usdt_balance,
                     recent_payment,
                 } => {
                     self.btc_balance = *balance;
+                    self.usdt_balance = *usdt_balance;
                     self.recent_payments = recent_payment.clone();
 
                     if !recent_payment.is_empty() {
@@ -355,9 +386,18 @@ impl State for LiquidSend {
                                 let amount = Amount::from_sat(payment.amount_sat);
                                 let status = payment.status;
                                 let time_ago = format_time_ago(payment.timestamp.into());
-                                let fiat_amount = fiat_converter
-                                    .as_ref()
-                                    .map(|c: &view::FiatAmountConverter| c.convert(amount));
+                                let is_usdt_payment = matches!(
+                                    &payment.details,
+                                    PaymentDetails::Liquid { asset_id, .. }
+                                        if asset_id == usdt_asset_id(self.breez_client.network()).unwrap_or("")
+                                );
+                                let fiat_amount = if is_usdt_payment {
+                                    None
+                                } else {
+                                    fiat_converter
+                                        .as_ref()
+                                        .map(|c: &view::FiatAmountConverter| c.convert(amount))
+                                };
 
                                 let desc = match &payment.details {
                                     PaymentDetails::Lightning {
@@ -739,6 +779,53 @@ impl State for LiquidSend {
                     } = &self.flow_state
                     {
                         if let Some(input_type) = &self.input_type {
+                            // USDt send path: Liquid address + USDt asset selected
+                            if matches!(input_type, InputType::LiquidAddress { .. })
+                                && self.send_asset == SendAsset::Usdt
+                            {
+                                let usdt_val_str = self.usdt_amount_input.value.trim().to_string();
+                                let usdt_base = match usdt_val_str.parse::<f64>().ok().filter(|&v| v > 0.0) {
+                                    Some(v) => (v * 10_u64.pow(USDT_PRECISION as u32) as f64).round() as u64,
+                                    None => {
+                                        self.error = Some("Invalid USDt amount".to_string());
+                                        return Task::none();
+                                    }
+                                };
+                                let network = self.breez_client.network();
+                                let asset_id = match usdt_asset_id(network) {
+                                    Some(id) => id.to_string(),
+                                    None => {
+                                        self.error = Some("USDt not available on this network".to_string());
+                                        return Task::none();
+                                    }
+                                };
+                                let destination = match input_type {
+                                    InputType::LiquidAddress { address } => address.address.clone(),
+                                    _ => unreachable!(),
+                                };
+                                let breez_client = self.breez_client.clone();
+                                return Task::perform(
+                                    async move {
+                                        breez_client
+                                            .prepare_send_usdt(
+                                                destination,
+                                                &asset_id,
+                                                usdt_base,
+                                                USDT_PRECISION,
+                                            )
+                                            .await
+                                    },
+                                    |result| match result {
+                                        Ok(prepare_response) => Message::View(view::Message::LiquidSend(
+                                            view::LiquidSendMessage::PrepareResponseReceived(prepare_response),
+                                        )),
+                                        Err(e) => Message::View(view::Message::LiquidSend(
+                                            view::LiquidSendMessage::Error(format!("Failed to prepare USDt payment: {}", e)),
+                                        )),
+                                    },
+                                );
+                            }
+
                             let destination = match input_type {
                                 InputType::Bolt11 { invoice } => invoice.bolt11.clone(),
                                 InputType::Bolt12Offer { offer, .. } => offer.offer.clone(),
@@ -835,6 +922,49 @@ impl State for LiquidSend {
                     self.prepare_onchain_response = Some(prepare_response.clone());
                     self.flow_state = LiquidSendFlowState::FinalCheck;
                 }
+                view::LiquidSendMessage::PopupMessage(SendPopupMessage::ToggleSendAsset) => {
+                    if let LiquidSendFlowState::Main {
+                        modal: Modal::AmountInput,
+                    } = &self.flow_state
+                    {
+                        self.send_asset = match self.send_asset {
+                            SendAsset::Btc => SendAsset::Usdt,
+                            SendAsset::Usdt => SendAsset::Btc,
+                        };
+                        self.usdt_amount_input = form::Value::default();
+                        self.amount_input = form::Value::default();
+                    }
+                }
+                view::LiquidSendMessage::PopupMessage(SendPopupMessage::UsdtAmountEdited(v)) => {
+                    if let LiquidSendFlowState::Main {
+                        modal: Modal::AmountInput,
+                    } = &mut self.flow_state
+                    {
+                        self.usdt_amount_input.value = v.clone();
+                        let trimmed = v.trim();
+                        if trimmed.is_empty() {
+                            self.usdt_amount_input.valid = true;
+                            self.usdt_amount_input.warning = None;
+                        } else if let Ok(val) = trimmed.parse::<f64>() {
+                            if val <= 0.0 {
+                                self.usdt_amount_input.valid = false;
+                                self.usdt_amount_input.warning = Some("Amount must be greater than zero");
+                            } else {
+                                let base_units = (val * 10_u64.pow(USDT_PRECISION as u32) as f64).round() as u64;
+                                if base_units > self.usdt_balance {
+                                    self.usdt_amount_input.valid = false;
+                                    self.usdt_amount_input.warning = Some("Insufficient USDt balance");
+                                } else {
+                                    self.usdt_amount_input.valid = true;
+                                    self.usdt_amount_input.warning = None;
+                                }
+                            }
+                        } else {
+                            self.usdt_amount_input.valid = false;
+                            self.usdt_amount_input.warning = Some("Invalid amount");
+                        }
+                    }
+                }
                 view::LiquidSendMessage::PopupMessage(SendPopupMessage::Close) => {
                     self.flow_state = LiquidSendFlowState::Main { modal: Modal::None };
                     self.amount = Amount::ZERO;
@@ -842,6 +972,8 @@ impl State for LiquidSend {
                     self.description = None;
                     self.comment = None;
                     self.amount_input = form::Value::default();
+                    self.usdt_amount_input = form::Value::default();
+                    self.send_asset = SendAsset::Btc;
                     self.input = form::Value::default();
                     self.input_type = None;
                 }
@@ -944,6 +1076,8 @@ impl State for LiquidSend {
                     self.input = form::Value::default();
                     self.amount = Amount::ZERO;
                     self.amount_input = form::Value::default();
+                    self.usdt_amount_input = form::Value::default();
+                    self.send_asset = SendAsset::Btc;
                     self.input_type = None;
                     self.description = None;
                     self.comment = None;

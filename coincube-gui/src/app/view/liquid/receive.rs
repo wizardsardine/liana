@@ -26,6 +26,7 @@ pub fn liquid_receive_view<'a>(
     qr_data: Option<&'a qr_code::Data>,
     loading: bool,
     amount_input: &'a form::Value<String>,
+    usdt_amount_input: &'a form::Value<String>,
     description_input: &'a str,
     bitcoin_unit: BitcoinDisplayUnit,
     error: Option<&'a String>,
@@ -40,19 +41,24 @@ pub fn liquid_receive_view<'a>(
 
     content = content.push(method_toggle(receive_method));
 
-    // Show input fields only for Lightning
-    if *receive_method == ReceiveMethod::Lightning {
-        content = content.push(input_fields(
-            amount_input,
-            description_input,
-            bitcoin_unit,
-            lightning_limits,
-            loading,
-        ));
-    } else {
-        // For on-chain, only show generate button if no address is displayed
-        if address.is_none() && !loading {
-            content = content.push(generate_button());
+    match receive_method {
+        ReceiveMethod::Lightning => {
+            content = content.push(input_fields(
+                amount_input,
+                description_input,
+                bitcoin_unit,
+                lightning_limits,
+                loading,
+            ));
+        }
+        ReceiveMethod::Usdt => {
+            content = content.push(usdt_input_fields(usdt_amount_input, loading));
+        }
+        _ => {
+            // Liquid / OnChain: only show generate button if no address is displayed
+            if address.is_none() && !loading {
+                content = content.push(generate_button());
+            }
         }
     }
 
@@ -101,7 +107,7 @@ pub fn liquid_receive_view<'a>(
         );
 
         // Add generate new address button for on-chain
-        if *receive_method == ReceiveMethod::OnChain {
+        if *receive_method == ReceiveMethod::OnChain || *receive_method == ReceiveMethod::Usdt {
             content = content.push(
                 Container::new(
                     button::secondary(None, "Generate New Address")
@@ -142,6 +148,7 @@ fn method_toggle(current_method: &ReceiveMethod) -> Element<LiquidReceiveMessage
     let lightning_liquid = *current_method == ReceiveMethod::Lightning;
     let liquid_active = *current_method == ReceiveMethod::Liquid;
     let onchain_liquid = *current_method == ReceiveMethod::OnChain;
+    let usdt_active = *current_method == ReceiveMethod::Usdt;
 
     let lightning_button = {
         let icon = icon::lightning_icon()
@@ -345,10 +352,55 @@ fn method_toggle(current_method: &ReceiveMethod) -> Element<LiquidReceiveMessage
         })
     };
 
+    let usdt_button = {
+        let label = text("USDt")
+            .size(16)
+            .style(move |_theme: &theme::Theme| iced::widget::text::Style {
+                color: Some(if usdt_active { color::ORANGE } else { color::GREY_2 }),
+            });
+
+        let button_content = Container::new(
+            Row::new()
+                .spacing(8)
+                .align_y(iced::alignment::Vertical::Center)
+                .push(label),
+        )
+        .width(Length::Fill)
+        .align_x(iced::alignment::Horizontal::Center);
+
+        Container::new(
+            iced_button(Container::new(button_content).padding([10, 30]))
+                .style(move |_theme: &theme::Theme, _status| iced_button::Style {
+                    background: Some(Background::Color(color::TRANSPARENT)),
+                    text_color: if usdt_active { color::WHITE } else { color::GREY_2 },
+                    border: iced::Border {
+                        radius: 50.0.into(),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                })
+                .on_press(LiquidReceiveMessage::ToggleMethod(ReceiveMethod::Usdt)),
+        )
+        .style(move |_theme: &theme::Theme| container::Style {
+            background: Some(Background::Color(if usdt_active {
+                iced::color!(0x161716)
+            } else {
+                color::TRANSPARENT
+            })),
+            border: iced::Border {
+                radius: 50.0.into(),
+                color: if usdt_active { color::ORANGE } else { color::TRANSPARENT },
+                width: if usdt_active { 0.7 } else { 0.0 },
+            },
+            ..Default::default()
+        })
+    };
+
     Container::new(
         Row::new()
             .push(lightning_button)
             .push(liquid_button)
+            .push(usdt_button)
             .push(onchain_button),
     )
     .padding(4)
@@ -455,6 +507,49 @@ fn input_fields<'a>(
     .into()
 }
 
+fn usdt_input_fields<'a>(
+    usdt_amount_input: &'a form::Value<String>,
+    loading: bool,
+) -> Element<'a, LiquidReceiveMessage> {
+    let amount_field = Column::new()
+        .spacing(5)
+        .push(
+            text("Amount (USDt) — Optional")
+                .size(14)
+                .style(theme::text::secondary),
+        )
+        .push(
+            TextInput::new("e.g. 1.50", &usdt_amount_input.value)
+                .on_input(LiquidReceiveMessage::UsdtAmountInput)
+                .padding(12)
+                .width(Length::Fill),
+        )
+        .push(
+            text("Leave empty to generate an amountless address")
+                .size(12)
+                .style(theme::text::secondary),
+        );
+
+    let is_valid = usdt_amount_input.value.trim().is_empty()
+        || usdt_amount_input.value.trim().parse::<f64>().ok().map_or(false, |v| v > 0.0);
+
+    let generate_btn = button::primary(None, "Generate USDt Address")
+        .on_press_maybe((is_valid && !loading).then_some(LiquidReceiveMessage::GenerateAddress))
+        .width(Length::Fill)
+        .padding(5);
+
+    Container::new(
+        Column::new()
+            .spacing(15)
+            .max_width(500)
+            .push(amount_field)
+            .push(generate_btn),
+    )
+    .width(Length::Fill)
+    .center_x(Length::Fill)
+    .into()
+}
+
 fn generate_button<'a>() -> Element<'a, LiquidReceiveMessage> {
     Container::new(
         button::primary(None, "Generate Address")
@@ -485,6 +580,14 @@ fn action_buttons<'a>(
     if *receive_method == ReceiveMethod::Liquid {
         column = column.push(
             text("Share this address to receive L-BTC from any Liquid wallet")
+                .size(13)
+                .style(theme::text::secondary),
+        );
+    }
+
+    if *receive_method == ReceiveMethod::Usdt {
+        column = column.push(
+            text("Share this address to receive USDt (Liquid Tether) from any Liquid wallet")
                 .size(13)
                 .style(theme::text::secondary),
         );

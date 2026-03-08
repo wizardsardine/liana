@@ -17,10 +17,12 @@ use iced::{
     Alignment, Background, Length,
 };
 
+use crate::app::breez::assets::{format_asset_amount, USDT_ASSET_ID_MAINNET, USDT_PRECISION};
 use crate::app::view::{liquid::RecentTransaction, FiatAmountConverter, LiquidOverviewMessage};
 
 pub fn liquid_overview_view<'a>(
     btc_balance: Amount,
+    usdt_balance: u64,
     fiat_converter: Option<FiatAmountConverter>,
     recent_transaction: &[RecentTransaction],
     error: Option<&'a str>,
@@ -30,16 +32,21 @@ pub fn liquid_overview_view<'a>(
 
     let fiat_balance = fiat_converter.as_ref().map(|c| c.convert(btc_balance));
 
-    content = content.push(h3("Balance").bold()).push(
-        Column::new()
-            .spacing(5)
-            .push(amount_with_size_and_unit(
-                &btc_balance,
-                H1_SIZE,
-                bitcoin_unit,
-            ))
-            .push_maybe(fiat_balance.map(|fiat| fiat.to_text().size(P2_SIZE).color(color::GREY_2))),
-    );
+    let mut balance_col = Column::new()
+        .spacing(5)
+        .push(amount_with_size_and_unit(&btc_balance, H1_SIZE, bitcoin_unit))
+        .push_maybe(fiat_balance.map(|fiat| fiat.to_text().size(P2_SIZE).color(color::GREY_2)));
+
+    if usdt_balance > 0 {
+        let usdt_str = format!("{} USDt", format_asset_amount(usdt_balance, USDT_PRECISION));
+        balance_col = balance_col.push(
+            text(usdt_str)
+                .size(P2_SIZE)
+                .style(theme::text::secondary),
+        );
+    }
+
+    content = content.push(h3("Balance").bold()).push(balance_col);
 
     let buttons_row = Row::new()
         .spacing(10)
@@ -86,19 +93,44 @@ pub fn liquid_overview_view<'a>(
                 }
             };
 
-            let fiat_str = tx
-                .fiat_amount
-                .as_ref()
-                .map(|fiat| format!("~{} {}", fiat.to_rounded_string(), fiat.currency()));
+            // Detect USDt payments; tx.amount.to_sat() holds USDt base units in that case
+            let usdt_display = if let PaymentDetails::Liquid { asset_id, .. } = &tx.details {
+                if asset_id == USDT_ASSET_ID_MAINNET {
+                    Some(format!(
+                        "{} USDt",
+                        format_asset_amount(tx.amount.to_sat(), USDT_PRECISION)
+                    ))
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
 
-            let mut amount = tx.amount;
-            if !tx.is_incoming {
-                amount += tx.fees_sat;
-            }
-            let mut item = TransactionListItem::new(direction, &amount, bitcoin_unit)
+            let fiat_str = if usdt_display.is_some() {
+                None // don't convert USDt to fiat via the BTC price converter
+            } else {
+                tx.fiat_amount
+                    .as_ref()
+                    .map(|fiat| format!("~{} {}", fiat.to_rounded_string(), fiat.currency()))
+            };
+
+            let display_amount = if usdt_display.is_some() {
+                Amount::ZERO
+            } else if tx.is_incoming {
+                tx.amount
+            } else {
+                tx.amount + tx.fees_sat
+            };
+
+            let mut item = TransactionListItem::new(direction, &display_amount, bitcoin_unit)
                 .with_type(tx_type)
                 .with_label(tx.description.clone())
                 .with_time_ago(tx.time_ago.clone());
+
+            if let Some(ref usdt_str) = usdt_display {
+                item = item.with_fiat_amount(usdt_str.clone());
+            }
 
             if matches!(tx.status, PaymentState::Pending) {
                 let (bg, fg) = (color::GREY_3, color::BLACK);

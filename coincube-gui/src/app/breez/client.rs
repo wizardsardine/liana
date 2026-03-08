@@ -301,6 +301,67 @@ impl BreezClient {
         .map_err(|e| BreezError::Sdk(e.to_string()))
     }
 
+    /// Generate a Liquid address for receiving USDt (or any Liquid asset).
+    /// `amount` is in base units (e.g. 100_000_000 = 1 USDt); pass `None` for amountless.
+    /// `precision` is the asset's decimal precision (8 for USDt).
+    pub async fn receive_usdt(
+        &self,
+        asset_id: &str,
+        amount: Option<u64>,
+        precision: u8,
+    ) -> Result<breez::ReceivePaymentResponse, BreezError> {
+        let sdk = self.get_sdk()?;
+        let payer_amount = amount.map(|a| {
+            a as f64 / 10_u64.pow(precision as u32) as f64
+        });
+        let prepare = sdk
+            .prepare_receive_payment(&breez::PrepareReceiveRequest {
+                payment_method: breez::PaymentMethod::LiquidAddress,
+                amount: Some(breez::ReceiveAmount::Asset {
+                    asset_id: asset_id.to_string(),
+                    payer_amount,
+                }),
+            })
+            .await
+            .map_err(|e| BreezError::Sdk(e.to_string()))?;
+
+        sdk.receive_payment(&breez::ReceivePaymentRequest {
+            prepare_response: prepare,
+            description: None,
+            payer_note: None,
+            description_hash: None,
+        })
+        .await
+        .map_err(|e| BreezError::Sdk(e.to_string()))
+    }
+
+    /// Prepare a USDt (or any Liquid asset) send payment.
+    /// `amount` is in base units; `precision` is the asset's decimal precision (8 for USDt).
+    /// Returns a `PrepareSendResponse` that must be passed to `send_payment()`.
+    pub async fn prepare_send_usdt(
+        &self,
+        destination: String,
+        asset_id: &str,
+        amount: u64,
+        precision: u8,
+    ) -> Result<breez::PrepareSendResponse, BreezError> {
+        let receiver_amount = amount as f64 / 10_u64.pow(precision as u32) as f64;
+        self.get_sdk()?
+            .prepare_send_payment(&breez::PrepareSendRequest {
+                destination,
+                amount: Some(breez::PayAmount::Asset {
+                    to_asset: asset_id.to_string(),
+                    receiver_amount,
+                    estimate_asset_fees: Some(true),
+                    from_asset: None,
+                }),
+                disable_mrh: None,
+                payment_timeout_sec: None,
+            })
+            .await
+            .map_err(|e| BreezError::Sdk(e.to_string()))
+    }
+
     pub async fn pay_invoice(
         &self,
         invoice: String,

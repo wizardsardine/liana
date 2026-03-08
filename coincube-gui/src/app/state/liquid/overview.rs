@@ -7,6 +7,7 @@ use coincube_core::miniscript::bitcoin::Amount;
 use coincube_ui::widget::*;
 use iced::Task;
 
+use crate::app::breez::assets::{asset_kind_for_id, usdt_asset_id, AssetKind};
 use crate::app::menu::{LiquidSubMenu, Menu};
 use crate::app::state::{redirect, State};
 use crate::app::{breez::BreezClient, cache::Cache};
@@ -18,6 +19,7 @@ use crate::utils::format_time_ago;
 pub struct LiquidOverview {
     breez_client: Arc<BreezClient>,
     btc_balance: Amount,
+    usdt_balance: u64,
     recent_transaction: Vec<view::liquid::RecentTransaction>,
     recent_payments: Vec<Payment>,
     selected_payment: Option<Payment>,
@@ -29,6 +31,7 @@ impl LiquidOverview {
         Self {
             breez_client,
             btc_balance: Amount::from_sat(0),
+            usdt_balance: 0,
             recent_transaction: Vec::new(),
             recent_payments: Vec::new(),
             selected_payment: None,
@@ -53,6 +56,16 @@ impl LiquidOverview {
                     })
                     .unwrap_or(Amount::ZERO);
 
+                let usdt_balance = info.as_ref().ok().and_then(|info| {
+                    info.wallet_info.asset_balances.iter().find_map(|ab| {
+                        if asset_kind_for_id(&ab.asset_id, breez_client.network()) == Some(AssetKind::Usdt) {
+                            Some(ab.balance_sat)
+                        } else {
+                            None
+                        }
+                    })
+                }).unwrap_or(0);
+
                 let error = match (&info, &payments) {
                     (Err(_), Err(_)) => Some("Couldn't fetch balance or transactions".to_string()),
                     (Err(_), _) => Some("Couldn't fetch account balance".to_string()),
@@ -62,9 +75,9 @@ impl LiquidOverview {
 
                 let payments = payments.unwrap_or_default();
 
-                (balance, payments, error)
+                (balance, usdt_balance, payments, error)
             },
-            |(balance, recent_payment, error)| {
+            |(balance, usdt_balance, recent_payment, error)| {
                 if let Some(err) = error {
                     Message::View(view::Message::LiquidOverview(
                         view::LiquidOverviewMessage::Error(err),
@@ -73,6 +86,7 @@ impl LiquidOverview {
                     Message::View(view::Message::LiquidOverview(
                         view::LiquidOverviewMessage::DataLoaded {
                             balance,
+                            usdt_balance,
                             recent_payment,
                         },
                     ))
@@ -95,6 +109,7 @@ impl State for LiquidOverview {
         } else {
             let send_view = view::liquid::liquid_overview_view(
                 self.btc_balance,
+                self.usdt_balance,
                 fiat_converter,
                 &self.recent_transaction,
                 self.error.as_deref(),
@@ -134,10 +149,12 @@ impl State for LiquidOverview {
                 }
                 view::LiquidOverviewMessage::DataLoaded {
                     balance,
+                    usdt_balance,
                     recent_payment,
                 } => {
                     self.error = None;
                     self.btc_balance = *balance;
+                    self.usdt_balance = *usdt_balance;
                     self.recent_payments = recent_payment.clone();
 
                     if !recent_payment.is_empty() {
@@ -149,9 +166,18 @@ impl State for LiquidOverview {
                                 let amount = Amount::from_sat(payment.amount_sat);
                                 let status = payment.status;
                                 let time_ago = format_time_ago(payment.timestamp.into());
-                                let fiat_amount = fiat_converter
-                                    .as_ref()
-                                    .map(|c: &view::FiatAmountConverter| c.convert(amount));
+                                let is_usdt_payment = matches!(
+                                    &payment.details,
+                                    PaymentDetails::Liquid { asset_id, .. }
+                                        if asset_id == usdt_asset_id(self.breez_client.network()).unwrap_or("")
+                                );
+                                let fiat_amount = if is_usdt_payment {
+                                    None
+                                } else {
+                                    fiat_converter
+                                        .as_ref()
+                                        .map(|c: &view::FiatAmountConverter| c.convert(amount))
+                                };
 
                                 let desc = match &payment.details {
                                     PaymentDetails::Lightning {

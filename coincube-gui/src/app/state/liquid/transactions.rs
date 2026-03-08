@@ -1,13 +1,14 @@
 use std::convert::TryInto;
 use std::sync::Arc;
 
-use breez_sdk_liquid::model::RefundRequest;
+use breez_sdk_liquid::model::{PaymentDetails, RefundRequest};
 use breez_sdk_liquid::prelude::{Payment, RefundableSwap};
 use coincube_core::miniscript::bitcoin::Amount;
 use coincube_ui::component::form;
 use coincube_ui::widget::*;
 use iced::Task;
 
+use crate::app::breez::assets::USDT_ASSET_ID_MAINNET;
 use crate::app::view::FeeratePriority;
 use crate::app::{breez::BreezClient, cache::Cache, menu::Menu, state::State};
 use crate::app::{message::Message, view, wallet::Wallet};
@@ -63,6 +64,12 @@ impl LiquidTransactions {
         let mut balance: i64 = 0;
 
         for payment in &self.payments {
+            // Skip asset (USDt) payments — their amount_sat is in asset base units, not sats
+            if let PaymentDetails::Liquid { asset_id, .. } = &payment.details {
+                if asset_id == USDT_ASSET_ID_MAINNET {
+                    continue;
+                }
+            }
             match payment.payment_type {
                 PaymentType::Receive => {
                     balance += payment.amount_sat as i64;
