@@ -24,12 +24,14 @@ impl KeysViewState {
     }
 
     pub fn on_key_update_email(&mut self, value: String) {
+        let value = value.trim().to_string();
         if let Some(modal) = &mut self.edit_key_modal {
             modal.email = value;
         }
     }
 
     pub fn on_key_update_token(&mut self, value: String, keys: &BTreeMap<u8, Key>) {
+        let value = value.trim().to_string();
         if let Some(modal) = &mut self.edit_key_modal {
             modal.token = value.clone();
 
