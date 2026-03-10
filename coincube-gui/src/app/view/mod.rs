@@ -3,6 +3,7 @@ mod message;
 pub mod buysell;
 pub mod global_home;
 pub mod liquid;
+pub mod p2p;
 pub mod settings;
 
 pub mod vault;
@@ -24,8 +25,8 @@ use coincube_ui::{
     component::{button, text, text::*},
     icon::{
         bitcoin_icon, coins_icon, cross_icon, cube_icon, down_icon, home_icon, lightning_icon,
-        plus_icon, receipt_icon, receive_icon, recovery_icon, send_icon, settings_icon, up_icon,
-        vault_icon,
+        person_icon, plus_icon, receipt_icon, receive_icon, recovery_icon, send_icon,
+        settings_icon, up_icon, vault_icon,
     },
     image::*,
     theme,
@@ -76,6 +77,83 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<
                 .on_press(Message::Menu(Menu::BuySell))
                 .width(iced::Length::Fill))
         }
+    };
+
+    let p2p_button = {
+        if matches!(menu, Menu::P2P(_)) {
+            row!(
+                button::menu_active(Some(person_icon()), "P2P")
+                    .on_press(Message::Reload)
+                    .width(iced::Length::Fill),
+                menu_bar_highlight()
+            )
+        } else {
+            row!(button::menu(Some(person_icon()), "P2P")
+                .on_press(Message::Menu(Menu::P2P(
+                    crate::app::menu::P2PSubMenu::Overview
+                )))
+                .width(iced::Length::Fill))
+        }
+    };
+
+    // P2P submenu
+    use crate::app::menu::P2PSubMenu;
+
+    let p2p_overview_button = if matches!(menu, Menu::P2P(P2PSubMenu::Overview)) {
+        row!(
+            Space::new().width(Length::Fixed(20.0)),
+            button::menu_active(Some(home_icon()), "Order Book")
+                .on_press(Message::Reload)
+                .width(iced::Length::Fill),
+            menu_bar_highlight()
+        )
+        .width(Length::Fill)
+    } else {
+        row!(
+            Space::new().width(Length::Fixed(20.0)),
+            button::menu(Some(home_icon()), "Order Book")
+                .on_press(Message::Menu(Menu::P2P(P2PSubMenu::Overview)))
+                .width(iced::Length::Fill),
+        )
+        .width(Length::Fill)
+    };
+
+    let p2p_my_trades_button = if matches!(menu, Menu::P2P(P2PSubMenu::MyTrades)) {
+        row!(
+            Space::new().width(Length::Fixed(20.0)),
+            button::menu_active(Some(receipt_icon()), "My Trades")
+                .on_press(Message::Reload)
+                .width(iced::Length::Fill),
+            menu_bar_highlight()
+        )
+        .width(Length::Fill)
+    } else {
+        row!(
+            Space::new().width(Length::Fixed(20.0)),
+            button::menu(Some(receipt_icon()), "My Trades")
+                .on_press(Message::Menu(Menu::P2P(P2PSubMenu::MyTrades)))
+                .width(iced::Length::Fill),
+        )
+        .width(Length::Fill)
+    };
+
+    let p2p_create_order_button = if matches!(menu, Menu::P2P(P2PSubMenu::CreateOrder)) {
+        row!(
+            Space::new().width(Length::Fixed(20.0)),
+            button::menu_active(Some(plus_icon()), "Create Order")
+                .on_press(Message::Reload)
+                .width(iced::Length::Fill),
+            menu_bar_highlight()
+        )
+        .width(Length::Fill)
+    } else {
+        row!(
+            Space::new().width(Length::Fixed(20.0)),
+            button::menu(Some(plus_icon()), "Create Order")
+                .on_press(Message::Menu(Menu::P2P(P2PSubMenu::CreateOrder)))
+                .width(iced::Length::Fill),
+        )
+        .width(Length::Fill)
     };
 
     // Build the main menu column
@@ -456,6 +534,31 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<
     }
 
     menu_column = menu_column.push(has_vault.then_some(buy_sell_button));
+    menu_column = menu_column.push(p2p_button);
+    let p2p_settings_button = if matches!(menu, Menu::P2P(P2PSubMenu::Settings)) {
+        row!(
+            Space::new().width(Length::Fixed(20.0)),
+            button::menu_active(Some(settings_icon()), "Settings")
+                .on_press(Message::Reload)
+                .width(iced::Length::Fill),
+            menu_bar_highlight()
+        )
+        .width(Length::Fill)
+    } else {
+        row!(
+            Space::new().width(Length::Fixed(20.0)),
+            button::menu(Some(settings_icon()), "Settings")
+                .on_press(Message::Menu(Menu::P2P(P2PSubMenu::Settings)))
+                .width(iced::Length::Fill),
+        )
+        .width(Length::Fill)
+    };
+
+    menu_column = menu_column
+        .push(p2p_overview_button)
+        .push(p2p_my_trades_button)
+        .push(p2p_create_order_button)
+        .push(p2p_settings_button);
 
     // Global Settings button (always visible at bottom of main menu)
     let global_settings_button = if matches!(menu, Menu::Settings(_)) {
@@ -601,12 +704,13 @@ pub fn placeholder<'a, T: Into<Element<'a, Message>>>(
         .into()
 }
 
-pub fn error_toast_overlay<'a, I: Iterator<Item = (usize, &'a str)>>(
+pub fn toast_overlay<'a, I: Iterator<Item = (usize, &'a str, bool)>>(
     iter: I,
 ) -> coincube_ui::widget::Element<'a, Message> {
     use coincube_ui::{color, component::text, icon::cross_icon};
 
-    let toast = |id: usize, content: &str| {
+    let toast = |id: usize, content: &str, success: bool| {
+        let accent = if success { color::GREEN } else { color::RED };
         const WIDGET_HEIGHT: u32 = 80;
         iced::widget::row![
             container(text::p1_bold(content).color(color::WHITE))
@@ -614,10 +718,10 @@ pub fn error_toast_overlay<'a, I: Iterator<Item = (usize, &'a str)>>(
                 .height(WIDGET_HEIGHT)
                 .padding(15)
                 .align_y(iced::Alignment::Center)
-                .style(|_| {
+                .style(move |_| {
                     iced::widget::container::Style::default()
                         .background(iced::Color::BLACK)
-                        .border(iced::Border::default().width(1).color(color::RED))
+                        .border(iced::Border::default().width(1).color(accent))
                 }),
             iced::widget::Button::new(
                 cross_icon()
@@ -629,7 +733,7 @@ pub fn error_toast_overlay<'a, I: Iterator<Item = (usize, &'a str)>>(
             )
             .height(WIDGET_HEIGHT)
             .width(60)
-            .style(|_, _| iced::widget::button::Style::default().with_background(color::RED))
+            .style(move |_, _| iced::widget::button::Style::default().with_background(accent))
             .on_press(Message::DismissToast(id))
         ]
     };
@@ -639,8 +743,10 @@ pub fn error_toast_overlay<'a, I: Iterator<Item = (usize, &'a str)>>(
         iced::widget::Space::new().width(190.0),
         // center toasts horizontally
         iced::widget::Space::new().width(iced::Length::Fill),
-        iced::widget::Column::from_iter(iter.map(|(id, content)| toast(id, content).into()))
-            .spacing(10),
+        iced::widget::Column::from_iter(
+            iter.map(|(id, content, success)| toast(id, content, success).into())
+        )
+        .spacing(10),
         iced::widget::Space::new().width(iced::Length::Fill),
     ];
 

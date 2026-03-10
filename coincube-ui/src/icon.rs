@@ -310,3 +310,11 @@ pub fn chain_icon() -> Text<'static> {
 pub fn invoice_icon() -> Text<'static> {
     bootstrap_icon('\u{F86F}')
 }
+
+pub fn star_fill_icon() -> Text<'static> {
+    bootstrap_icon('\u{F586}')
+}
+
+pub fn calendar_icon() -> Text<'static> {
+    bootstrap_icon('\u{F1F4}')
+}

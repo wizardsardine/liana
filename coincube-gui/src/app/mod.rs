@@ -73,6 +73,7 @@ struct Panels {
     vault_settings: Option<VaultSettingsState>,
     // remaining panels
     buy_sell: Option<crate::app::view::buysell::BuySellPanel>,
+    p2p: Option<crate::app::view::p2p::P2PPanel>,
 }
 
 impl Panels {
@@ -136,7 +137,9 @@ impl Panels {
             receive: None,
             create_spend: None,
             vault_settings: None,
+            // remaining panels
             buy_sell: None,
+            p2p: None,
         }
     }
 
@@ -253,9 +256,10 @@ impl Panels {
             )),
             buy_sell: Some(crate::app::view::buysell::BuySellPanel::new(
                 cache.network,
-                wallet,
-                breez_client,
+                wallet.clone(),
+                breez_client.clone(),
             )),
+            p2p: Some(crate::app::view::p2p::P2PPanel::new(Some(wallet))),
         }
     }
 
@@ -378,6 +382,7 @@ impl Panels {
                 }
             },
             Menu::BuySell => self.buy_sell.as_ref().map(|v| v as &dyn State),
+            Menu::P2P(_) => self.p2p.as_ref().map(|v| v as &dyn State),
             Menu::Settings(_) => Some(&self.global_settings as &dyn State),
         }
     }
@@ -421,6 +426,7 @@ impl Panels {
                 }
             },
             Menu::BuySell => self.buy_sell.as_mut().map(|v| v as &mut dyn State),
+            Menu::P2P(_) => self.p2p.as_mut().map(|v| v as &mut dyn State),
             Menu::Settings(_) => Some(&mut self.global_settings as &mut dyn State),
         }
     }
@@ -436,7 +442,7 @@ pub struct App {
     config: Arc<Config>,
     datadir: CoincubeDirectory,
     panels: Panels,
-    errors: std::collections::BinaryHeap<(usize, std::time::Instant, String)>,
+    toasts: std::collections::BinaryHeap<(usize, std::time::Instant, String, bool)>,
     current_error_id: usize,
 }
 
@@ -491,7 +497,7 @@ impl App {
                 cube_settings,
                 config: config_arc,
                 datadir: data_dir,
-                errors: std::collections::BinaryHeap::with_capacity(8),
+                toasts: std::collections::BinaryHeap::with_capacity(8),
                 current_error_id: 256,
             },
             cmd,
@@ -548,7 +554,7 @@ impl App {
                 cube_settings,
                 config: config_arc,
                 datadir,
-                errors: std::collections::BinaryHeap::with_capacity(8),
+                toasts: std::collections::BinaryHeap::with_capacity(8),
                 current_error_id: 256,
             },
             cmd,
@@ -920,11 +926,22 @@ impl App {
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::View(view::Message::DismissToast(id)) => {
-                self.errors.retain(|(i, ..)| *i != id);
+                self.toasts.retain(|(i, ..)| *i != id);
             }
             Message::View(view::Message::ShowError(msg)) => {
-                self.errors
-                    .push((self.current_error_id, std::time::Instant::now(), msg));
+                self.toasts
+                    .push((self.current_error_id, std::time::Instant::now(), msg, false));
+                self.current_error_id += 1;
+
+                let id = self.current_error_id - 1;
+                return Task::perform(
+                    async move { tokio::time::sleep(Duration::from_secs(8)).await },
+                    move |_| Message::View(view::Message::DismissToast(id)),
+                );
+            }
+            Message::View(view::Message::ShowSuccess(msg)) => {
+                self.toasts
+                    .push((self.current_error_id, std::time::Instant::now(), msg, true));
                 self.current_error_id += 1;
 
                 let id = self.current_error_id - 1;
@@ -1347,14 +1364,16 @@ impl App {
             view.map(Message::View)
         };
 
-        // Overlay error toast at bottom if present
-        match self.errors.is_empty() {
+        // Overlay toast at bottom if present
+        match self.toasts.is_empty() {
             true => content,
             false => iced::widget::Stack::new()
                 .push(content)
                 .push(
-                    view::error_toast_overlay(
-                        self.errors.iter().map(|(id, _, msg)| (*id, msg.as_str())),
+                    view::toast_overlay(
+                        self.toasts
+                            .iter()
+                            .map(|(id, _, msg, success)| (*id, msg.as_str(), *success)),
                     )
                     .map(Message::View),
                 )

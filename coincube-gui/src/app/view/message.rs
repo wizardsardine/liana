@@ -94,7 +94,9 @@ pub enum Message {
     LiquidSettings(LiquidSettingsMessage),
     PreselectPayment(Payment),
     ShowError(String),
+    ShowSuccess(String),
     DismissToast(usize),
+    P2P(P2PMessage),
 }
 
 impl Close for Message {
@@ -403,4 +405,74 @@ pub enum HomeMessage {
         swap_id: String,
     },
     PendingTransferAnimationTick,
+}
+
+#[derive(Debug, Clone)]
+pub enum P2PMessage {
+    OrderTypeSelected(super::p2p::components::OrderType),
+    PricingModeSelected(super::p2p::components::PricingMode),
+    FiatAmountEdited(String),
+    FiatCurrencyEdited(String),
+    SatsAmountEdited(String),
+    PremiumEdited(String),
+    PaymentMethodSelected(String),
+    PaymentMethodRemoved(String),
+    CustomPaymentMethodEdited(String),
+    AddCustomPaymentMethod,
+    MinAmountEdited(String),
+    MaxAmountEdited(String),
+    LightningAddressEdited(String),
+    ExpiryDaysEdited(String),
+    SubmitOrder,
+    ClearForm,
+    MostroOrdersReceived(Vec<super::p2p::components::P2POrder>),
+    BuySellFilterChanged(super::p2p::components::BuySellFilter),
+    SelectOrder(String),
+    CloseOrderDetail,
+    CopyOrderId(String),
+    CancelOrder(String),
+    CancelOrderResult(Result<(), String>),
+    OrderSubmitResult(Result<super::p2p::mostro::OrderSubmitResponse, String>),
+    TradeFilterChanged(super::p2p::components::TradeFilter),
+    MostroTradesReceived(Vec<super::p2p::components::P2PTrade>),
+    // Mostro settings
+    MostroRelayInputEdited(String),
+    MostroAddRelay,
+    MostroRemoveRelay(String),
+    MostroNodeNameInputEdited(String),
+    MostroNodePubkeyInputEdited(String),
+    MostroAddNode,
+    MostroRemoveNode(String),
+    MostroSelectActiveNode(String),
+    MostroNodeInfoReceived {
+        currencies: Vec<String>,
+    },
+    ConfirmOrder,
+    CancelConfirmation,
+    // Take order flow
+    TakeOrder,
+    TakeOrderAmountEdited(String),
+    TakeOrderInvoiceEdited(String),
+    ConfirmTakeOrder,
+    CancelTakeOrder,
+    TakeOrderResult(Result<super::p2p::mostro::TakeOrderResponse, String>),
+    DismissPaymentInvoice,
+    CopyPaymentInvoice(String),
+    // Trade detail
+    SelectTrade(String),
+    CloseTradeDetail,
+    // Trade actions
+    SubmitInvoice,
+    TradeInvoiceEdited(String),
+    ConfirmFiatSent,
+    ConfirmFiatReceived,
+    CancelTrade,
+    OpenDispute,
+    TradeActionResult(Result<super::p2p::mostro::TradeActionResponse, String>),
+    // Real-time DM updates
+    TradeUpdate {
+        order_id: String,
+        action: String,
+        payload_json: String,
+    },
 }
