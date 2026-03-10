@@ -6,8 +6,8 @@ use coincube_ui::component::{form, toast};
 use coincube_ui::widget::*;
 use iced::{clipboard, widget::qr_code, Subscription, Task};
 
-use crate::app::settings::unit::BitcoinDisplayUnit;
 use crate::app::breez::assets::{usdt_asset_id, USDT_PRECISION};
+use crate::app::settings::unit::BitcoinDisplayUnit;
 use crate::app::view::{LiquidReceiveMessage, ReceiveMethod};
 use crate::app::{breez::BreezClient, cache::Cache, menu::Menu, state::State};
 use crate::app::{message::Message, view, wallet::Wallet};
@@ -153,9 +153,7 @@ impl State for LiquidReceive {
                             ReceiveMethod::OnChain => {
                                 "Copied Bitcoin Address to clipboard".to_string()
                             }
-                            ReceiveMethod::Usdt => {
-                                "Copied USDt Address to clipboard".to_string()
-                            }
+                            ReceiveMethod::Usdt => "Copied USDt Address to clipboard".to_string(),
                         });
 
                         // Auto-dismiss toast after 3 seconds
@@ -392,6 +390,31 @@ impl State for LiquidReceive {
 }
 
 impl LiquidReceive {
+    pub fn view_usdt_only<'a>(
+        &'a self,
+        menu: &'a Menu,
+        cache: &'a Cache,
+    ) -> Element<'a, view::Message> {
+        let receive_view = view::liquid::usdt_only_receive_view(
+            self.usdt_address.as_ref(),
+            self.usdt_qr_data.as_ref(),
+            self.loading,
+            &self.usdt_amount_input,
+            self.error.as_ref(),
+        )
+        .map(view::Message::LiquidReceive);
+
+        let content = view::dashboard(menu, cache, receive_view);
+
+        let toasts = if let Some(message) = &self.toast {
+            vec![view::simple_toast(message).into()]
+        } else {
+            vec![]
+        };
+
+        coincube_ui::component::toast::Manager::new(content, toasts).into()
+    }
+
     fn current_address(&self) -> Option<&String> {
         match self.receive_method {
             ReceiveMethod::Lightning => self.lightning_address.as_ref(),

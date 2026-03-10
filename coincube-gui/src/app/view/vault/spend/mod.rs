@@ -24,7 +24,10 @@ use crate::{
     app::{
         cache::Cache,
         menu::Menu,
-        view::{dashboard, message::*, vault::coins, vault::psbt, FiatAmountConverter},
+        view::{
+            balance_header_card, dashboard, message::*, vault::coins, vault::psbt,
+            FiatAmountConverter,
+        },
         wallet::SyncStatus,
     },
     daemon::model::{remaining_sequence, Coin, SpendTx},
@@ -196,14 +199,15 @@ pub fn create_spend_tx<'a>(
         menu,
         cache,
         Column::new()
-            .push(h3("Balance").bold())
-            .push(
+            .push(balance_header_card(
                 Column::new()
+                    .spacing(8)
+                    .push(h4_bold("Balance"))
                     .push(
                         if sync_status.is_synced() {
                             Column::new()
                                 .spacing(5)
-                                .push(amount_with_size_and_unit(balance, H1_SIZE, bitcoin_unit))
+                                .push(amount_with_size_and_unit(balance, H2_SIZE, bitcoin_unit))
                                 .push_maybe(
                                     fiat_balance.map(|fiat| {
                                         fiat.to_text().size(P2_SIZE).color(color::GREY_2)
@@ -213,10 +217,10 @@ pub fn create_spend_tx<'a>(
                             Column::new().push(Row::new().push(spinner::Carousel::new(
                                 Duration::from_millis(1000),
                                 vec![
-                                    amount_with_size_and_unit(balance, H1_SIZE, bitcoin_unit),
+                                    amount_with_size_and_unit(balance, H2_SIZE, bitcoin_unit),
                                     amount_with_size_colors_and_unit(
                                         balance,
-                                        H1_SIZE,
+                                        H2_SIZE,
                                         color::GREY_4,
                                         Some(color::GREY_2),
                                         bitcoin_unit,
@@ -249,69 +253,58 @@ pub fn create_spend_tx<'a>(
                         )
                     } else {
                         None
-                    })
-                    .push(Space::new().height(Length::Fixed(20.0)))
-                    .push(
-                        Column::new()
-                            .spacing(10)
-                            .push(h3(if recovery_timelock.is_some() {
-                                "Recovery"
-                            } else if is_self_send {
-                                "Self-transfer"
-                            } else {
-                                "Send"
-                            }))
-                            .push_maybe(if recipients.len() > 1 {
-                                Some(
-                                    form::Form::new("Batch label", batch_label, |s| {
-                                        Message::CreateSpend(CreateSpendMessage::BatchLabelEdited(
-                                            s,
-                                        ))
-                                    })
-                                    .warning("Invalid label length, cannot be superior to 100")
-                                    .size(30)
-                                    .padding(10),
-                                )
-                            } else {
-                                None
+                    }),
+            ))
+            .push(
+                Column::new()
+                    .spacing(10)
+                    .push(h3(if recovery_timelock.is_some() {
+                        "Recovery"
+                    } else if is_self_send {
+                        "Self-transfer"
+                    } else {
+                        "Send"
+                    }))
+                    .push_maybe(if recipients.len() > 1 {
+                        Some(
+                            form::Form::new("Batch label", batch_label, |s| {
+                                Message::CreateSpend(CreateSpendMessage::BatchLabelEdited(s))
                             })
-                            .push_maybe(
-                                if unconfirmed_balance.to_sat() != 0 && sync_status.is_synced() {
-                                    Some(
-                                        Row::new()
-                                            .spacing(10)
-                                            .align_y(Alignment::Center)
-                                            .push(
-                                                text("+")
-                                                    .size(H3_SIZE)
-                                                    .style(theme::text::secondary),
-                                            )
-                                            .push(unconfirmed_amount_with_size_and_unit(
-                                                unconfirmed_balance,
-                                                H3_SIZE,
-                                                bitcoin_unit,
-                                            ))
-                                            .push(
-                                                text("unconfirmed")
-                                                    .size(H3_SIZE)
-                                                    .style(theme::text::secondary),
-                                            )
-                                            .push_maybe(fiat_unconfirmed.map(|fiat| {
-                                                Row::new()
-                                                    .align_y(Alignment::Center)
-                                                    .push(Space::new().width(10)) // total spacing = 20 including row spacing
-                                                    .push(
-                                                        fiat.to_text()
-                                                            .size(H4_SIZE)
-                                                            .color(color::GREY_3),
-                                                    )
-                                            }))
-                                            .wrap(),
+                            .warning("Invalid label length, cannot be superior to 100")
+                            .size(30)
+                            .padding(10),
+                        )
+                    } else {
+                        None
+                    })
+                    .push_maybe(
+                        if unconfirmed_balance.to_sat() != 0 && sync_status.is_synced() {
+                            Some(
+                                Row::new()
+                                    .spacing(10)
+                                    .align_y(Alignment::Center)
+                                    .push(text("+").size(H3_SIZE).style(theme::text::secondary))
+                                    .push(unconfirmed_amount_with_size_and_unit(
+                                        unconfirmed_balance,
+                                        H3_SIZE,
+                                        bitcoin_unit,
+                                    ))
+                                    .push(
+                                        text("unconfirmed")
+                                            .size(H3_SIZE)
+                                            .style(theme::text::secondary),
                                     )
-                                } else {
-                                    None
-                                },
-                            ),
+                                    .push_maybe(fiat_unconfirmed.map(|fiat| {
+                                        Row::new()
+                                            .align_y(Alignment::Center)
+                                            .push(Space::new().width(10)) // total spacing = 20 including row spacing
+                                            .push(fiat.to_text().size(H4_SIZE).color(color::GREY_3))
+                                    }))
+                                    .wrap(),
+                            )
+                        } else {
+                            None
+                        },
                     ),
             )
             .push(

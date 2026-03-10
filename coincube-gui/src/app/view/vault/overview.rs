@@ -28,7 +28,10 @@ use crate::{
     app::{
         cache::Cache,
         menu::{self, Menu, VaultSubMenu},
-        view::{dashboard, message::Message, vault::coins, vault::label, FiatAmountConverter},
+        view::{
+            balance_header_card, dashboard, message::Message, vault::coins, vault::label,
+            FiatAmountConverter,
+        },
         wallet::SyncStatus,
     },
     daemon::model::{HistoryTransaction, Payment, PaymentKind, TransactionKind},
@@ -86,14 +89,15 @@ pub fn vault_overview_view<'a>(
     let fiat_balance = fiat_converter.as_ref().map(|c| c.convert(*balance));
     let fiat_unconfirmed = fiat_converter.map(|c| c.convert(*unconfirmed_balance));
     Column::new()
-        .push(h3("Balance").bold())
-        .push(
+        .push(balance_header_card(
             Column::new()
+                .spacing(8)
+                .push(h4_bold("Balance"))
                 .push(
                     if sync_status.is_synced() {
                         Column::new()
                             .spacing(5)
-                            .push(amount_with_size_and_unit(balance, H1_SIZE, bitcoin_unit))
+                            .push(amount_with_size_and_unit(balance, H2_SIZE, bitcoin_unit))
                             .push_maybe(
                                 fiat_balance
                                     .map(|fiat| fiat.to_text().size(P2_SIZE).color(color::GREY_2)),
@@ -102,10 +106,10 @@ pub fn vault_overview_view<'a>(
                         Column::new().push(Row::new().push(spinner::Carousel::new(
                             Duration::from_millis(1000),
                             vec![
-                                amount_with_size_and_unit(balance, H1_SIZE, bitcoin_unit),
+                                amount_with_size_and_unit(balance, H2_SIZE, bitcoin_unit),
                                 amount_with_size_colors_and_unit(
                                     balance,
-                                    H1_SIZE,
+                                    H2_SIZE,
                                     color::GREY_4,
                                     Some(color::GREY_2),
                                     bitcoin_unit,
@@ -115,7 +119,7 @@ pub fn vault_overview_view<'a>(
                     }
                     .wrap(),
                 )
-                .push(if !sync_status.is_synced() {
+                .push_maybe(if !sync_status.is_synced() {
                     Some(
                         Row::new()
                             .push(
@@ -139,7 +143,7 @@ pub fn vault_overview_view<'a>(
                 } else {
                     None
                 })
-                .push(
+                .push_maybe(
                     if unconfirmed_balance.to_sat() != 0 && sync_status.is_synced() {
                         Some(
                             Row::new()
@@ -168,7 +172,7 @@ pub fn vault_overview_view<'a>(
                         None
                     },
                 ),
-        )
+        ))
         .push(show_rescan_warning.then_some(rescan_warning()))
         .push(if expiring_coins.is_empty() {
             remaining_sequence.map(|sequence| {

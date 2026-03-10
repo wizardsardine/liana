@@ -561,6 +561,7 @@ pub async fn load_application(
         bitcoin_unit,
         vault_expanded: false,
         liquid_expanded: false,
+        usdt_expanded: false,
         has_vault: true,
     };
 

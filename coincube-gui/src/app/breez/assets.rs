@@ -116,6 +116,24 @@ pub fn format_asset_amount(amount: u64, precision: u8) -> String {
     format!("{}.{:0>width$}", whole, frac, width = precision as usize)
 }
 
+/// Number of decimal places to show when displaying USDt to the user.
+pub const USDT_DISPLAY_DECIMALS: u8 = 2;
+
+/// Format a USDt base-unit amount (8-decimal precision) for display with 2 decimal places.
+pub fn format_usdt_display(amount: u64) -> String {
+    let divisor = 10_u64.pow(USDT_PRECISION as u32);
+    let whole = amount / divisor;
+    let frac = amount % divisor;
+    let scale = 10_u64.pow((USDT_PRECISION - USDT_DISPLAY_DECIMALS) as u32);
+    let frac_2dp = frac / scale;
+    format!(
+        "{}.{:0>width$}",
+        whole,
+        frac_2dp,
+        width = USDT_DISPLAY_DECIMALS as usize
+    )
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------

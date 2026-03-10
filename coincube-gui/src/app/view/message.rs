@@ -95,6 +95,8 @@ pub enum Message {
     PreselectPayment(Payment),
     ShowError(String),
     DismissToast(usize),
+    UsdtOverview(UsdtOverviewMessage),
+    ToggleUsdt,
 }
 
 impl Close for Message {
@@ -258,12 +260,25 @@ pub enum FiatMessage {
 
 #[derive(Debug, Clone)]
 pub enum LiquidOverviewMessage {
-    Send,
-    Receive,
+    SendLbtc,
+    ReceiveLbtc,
     History,
     SelectTransaction(usize),
     DataLoaded {
         balance: Amount,
+        recent_payment: Vec<Payment>,
+    },
+    Error(String),
+    RefreshRequested,
+}
+
+#[derive(Debug, Clone)]
+pub enum UsdtOverviewMessage {
+    SendUsdt,
+    ReceiveUsdt,
+    History,
+    SelectTransaction(usize),
+    DataLoaded {
         usdt_balance: u64,
         recent_payment: Vec<Payment>,
     },
@@ -273,6 +288,7 @@ pub enum LiquidOverviewMessage {
 
 #[derive(Debug, Clone)]
 pub enum LiquidSendMessage {
+    PresetAsset(crate::app::state::liquid::send::SendAsset),
     InputEdited(String),
     InputValidated(Option<InputType>),
     Send,
@@ -382,6 +398,7 @@ pub enum HomeMessage {
     PreviousStep,
     Error(String),
     LiquidBalanceUpdated(Amount),
+    UsdtBalanceUpdated(u64),
     OnChainLimitsFetched {
         send: (u64, u64),    // (min_sat, max_sat)
         receive: (u64, u64), // (min_sat, max_sat)

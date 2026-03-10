@@ -620,13 +620,12 @@ pub async fn export_liquid_payments(
     use breez_sdk_liquid::prelude::PaymentType;
     use chrono::DateTime;
 
-    use crate::app::breez::assets::{
-        format_asset_amount, USDT_ASSET_ID_MAINNET, USDT_PRECISION,
-    };
+    use crate::app::breez::assets::{USDT_ASSET_ID_MAINNET, USDT_PRECISION};
 
     let mut file = open_file_write(&path).await?;
 
-    let header = "Date,PaymentType,Asset,Sending/Receiving Address,Amount,Fees (L-BTC),Net Amount\n";
+    let header =
+        "Date,PaymentType,Asset,Sending/Receiving Address,Amount,Fees (L-BTC),Net Amount\n";
     file.write_all(header.as_bytes())?;
 
     let payments = breez_client
@@ -648,19 +647,28 @@ pub async fn export_liquid_payments(
         let address = payment
             .destination
             .as_ref()
-            .map(|d| format!("\"{}\"" , d))
+            .map(|d| format!("\"{}\"", d))
             .unwrap_or_default();
 
         let fees_btc = payment.fees_sat as f64 / 100_000_000.0;
 
-        // Detect USDt asset payments — amount_sat holds USDt base units in that case
+        // Detect USDt asset payments — real amount is in asset_info.amount, not amount_sat (which is 0)
         let is_usdt = matches!(
             &payment.details,
             PaymentDetails::Liquid { asset_id, .. } if asset_id == USDT_ASSET_ID_MAINNET
         );
 
         let line = if is_usdt {
-            let usdt_amount = format_asset_amount(payment.amount_sat, USDT_PRECISION);
+            let raw_usdt = if let PaymentDetails::Liquid {
+                asset_info: Some(ref ai),
+                ..
+            } = &payment.details
+            {
+                ai.amount
+            } else {
+                payment.amount_sat as f64 / 10_f64.powi(USDT_PRECISION as i32)
+            };
+            let usdt_amount = format!("{:.2}", raw_usdt);
             let net = match payment.payment_type {
                 PaymentType::Send => format!("-{}", usdt_amount),
                 PaymentType::Receive => usdt_amount.clone(),

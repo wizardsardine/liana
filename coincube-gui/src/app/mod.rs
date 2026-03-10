@@ -27,8 +27,8 @@ pub use message::Message;
 
 use state::{
     CoinsPanel, CreateSpendPanel, GlobalHome, LiquidOverview, LiquidReceive, LiquidSend,
-    LiquidSettings, LiquidTransactions, PsbtsPanel, State, VaultOverview, VaultReceivePanel,
-    VaultTransactionsPanel,
+    LiquidSettings, LiquidTransactions, PsbtsPanel, State, UsdtOverview, UsdtReceive, UsdtSend,
+    UsdtTransactions, VaultOverview, VaultReceivePanel, VaultTransactionsPanel,
 };
 use wallet::{sync_status, SyncStatus};
 
@@ -54,6 +54,7 @@ struct Panels {
     current: Menu,
     vault_expanded: bool,
     liquid_expanded: bool,
+    usdt_expanded: bool,
     // Always available panels
     global_home: GlobalHome,
     liquid_overview: LiquidOverview,
@@ -61,6 +62,10 @@ struct Panels {
     liquid_receive: LiquidReceive,
     liquid_transactions: LiquidTransactions,
     liquid_settings: LiquidSettings,
+    usdt_overview: UsdtOverview,
+    usdt_send: UsdtSend,
+    usdt_receive: UsdtReceive,
+    usdt_transactions: UsdtTransactions,
     global_settings: GeneralSettingsState,
     // Vault-only panels - None when no vault exists
     vault_overview: Option<VaultOverview>,
@@ -90,6 +95,7 @@ impl Panels {
             current: Menu::Home,
             vault_expanded: false,
             liquid_expanded: false,
+            usdt_expanded: false,
             // Liquid panels always available (use BreezClient, not Vault wallet)
             global_home: if let Some(w) = &wallet {
                 GlobalHome::new(
@@ -111,7 +117,13 @@ impl Panels {
             liquid_send: LiquidSend::new(breez_client.clone()),
             liquid_receive: LiquidReceive::new(breez_client.clone()),
             liquid_transactions: LiquidTransactions::new(breez_client.clone()),
-            liquid_settings: LiquidSettings::new(breez_client),
+            liquid_settings: LiquidSettings::new(breez_client.clone()),
+            usdt_overview: UsdtOverview::new(breez_client.clone()),
+            usdt_send: UsdtSend::new(LiquidSend::new_usdt_only(breez_client.clone())),
+            usdt_receive: UsdtReceive::new(LiquidReceive::new(breez_client.clone())),
+            usdt_transactions: UsdtTransactions::new(LiquidTransactions::new_usdt_only(
+                breez_client.clone(),
+            )),
             global_settings: {
                 let network_dir = datadir.network_directory(network);
                 let settings_file = settings::Settings::from_file(&network_dir).ok();
@@ -163,6 +175,7 @@ impl Panels {
             current: Menu::Home,
             vault_expanded: false,
             liquid_expanded: false,
+            usdt_expanded: false,
             global_home: GlobalHome::new(
                 wallet.clone(),
                 breez_client.clone(),
@@ -188,6 +201,12 @@ impl Panels {
             liquid_receive: LiquidReceive::new(breez_client.clone()),
             liquid_transactions: LiquidTransactions::new(breez_client.clone()),
             liquid_settings: LiquidSettings::new(breez_client.clone()),
+            usdt_overview: UsdtOverview::new(breez_client.clone()),
+            usdt_send: UsdtSend::new(LiquidSend::new_usdt_only(breez_client.clone())),
+            usdt_receive: UsdtReceive::new(LiquidReceive::new(breez_client.clone())),
+            usdt_transactions: UsdtTransactions::new(LiquidTransactions::new_usdt_only(
+                breez_client.clone(),
+            )),
             global_settings: {
                 let network_dir = data_dir.network_directory(cache.network);
                 let settings_file = settings::Settings::from_file(&network_dir).ok();
@@ -351,6 +370,12 @@ impl Panels {
                 crate::app::menu::LiquidSubMenu::Transactions(_) => Some(&self.liquid_transactions),
                 crate::app::menu::LiquidSubMenu::Settings(_) => Some(&self.liquid_settings),
             },
+            Menu::Usdt(submenu) => match submenu {
+                crate::app::menu::UsdtSubMenu::Overview => Some(&self.usdt_overview),
+                crate::app::menu::UsdtSubMenu::Send => Some(&self.usdt_send),
+                crate::app::menu::UsdtSubMenu::Receive => Some(&self.usdt_receive),
+                crate::app::menu::UsdtSubMenu::Transactions(_) => Some(&self.usdt_transactions),
+            },
             Menu::Vault(submenu) => match submenu {
                 crate::app::menu::VaultSubMenu::Overview => {
                     self.vault_overview.as_ref().map(|v| v as &dyn State)
@@ -393,6 +418,12 @@ impl Panels {
                     Some(&mut self.liquid_transactions)
                 }
                 crate::app::menu::LiquidSubMenu::Settings(_) => Some(&mut self.liquid_settings),
+            },
+            Menu::Usdt(submenu) => match submenu {
+                crate::app::menu::UsdtSubMenu::Overview => Some(&mut self.usdt_overview),
+                crate::app::menu::UsdtSubMenu::Send => Some(&mut self.usdt_send),
+                crate::app::menu::UsdtSubMenu::Receive => Some(&mut self.usdt_receive),
+                crate::app::menu::UsdtSubMenu::Transactions(_) => Some(&mut self.usdt_transactions),
             },
             Menu::Vault(submenu) => match submenu {
                 crate::app::menu::VaultSubMenu::Overview => {
@@ -750,6 +781,9 @@ impl App {
                 // Liquid transaction preselection is handled via PreselectPayment message
                 // since Payment objects are passed directly instead of fetching by ID
             }
+            menu::Menu::Usdt(_submenu) => {
+                // USDt panels: preselection handled via PreselectPayment message
+            }
             _ => {
                 tracing::debug!(
                     "Menu variant {:?} has no special handling in set_current_panel",
@@ -1089,17 +1123,32 @@ impl App {
             Message::View(view::Message::ToggleVault) => {
                 self.panels.vault_expanded = !self.panels.vault_expanded;
                 self.cache.vault_expanded = self.panels.vault_expanded;
-                // If we're expanding Vault, collapse Liquid
+                // If we're expanding Vault, collapse Liquid and USDt
                 if self.panels.vault_expanded {
                     self.panels.liquid_expanded = false;
                     self.cache.liquid_expanded = false;
+                    self.panels.usdt_expanded = false;
+                    self.cache.usdt_expanded = false;
                 }
             }
             Message::View(view::Message::ToggleLiquid) => {
                 self.panels.liquid_expanded = !self.panels.liquid_expanded;
                 self.cache.liquid_expanded = self.panels.liquid_expanded;
-                // If we're expanding Liquid, collapse Vault
+                // If we're expanding Liquid, collapse Vault and USDt
                 if self.panels.liquid_expanded {
+                    self.panels.vault_expanded = false;
+                    self.cache.vault_expanded = false;
+                    self.panels.usdt_expanded = false;
+                    self.cache.usdt_expanded = false;
+                }
+            }
+            Message::View(view::Message::ToggleUsdt) => {
+                self.panels.usdt_expanded = !self.panels.usdt_expanded;
+                self.cache.usdt_expanded = self.panels.usdt_expanded;
+                // If we're expanding USDt, collapse Liquid and Vault
+                if self.panels.usdt_expanded {
+                    self.panels.liquid_expanded = false;
+                    self.cache.liquid_expanded = false;
                     self.panels.vault_expanded = false;
                     self.cache.vault_expanded = false;
                 }
@@ -1216,6 +1265,9 @@ impl App {
                             Task::done(Message::View(view::Message::LiquidOverview(
                                 view::LiquidOverviewMessage::RefreshRequested,
                             ))),
+                            Task::done(Message::View(view::Message::UsdtOverview(
+                                view::UsdtOverviewMessage::RefreshRequested,
+                            ))),
                             Task::done(Message::View(view::Message::Home(
                                 view::HomeMessage::RefreshLiquidBalance,
                             ))),
@@ -1236,6 +1288,9 @@ impl App {
                             ))),
                             Task::done(Message::View(view::Message::LiquidOverview(
                                 view::LiquidOverviewMessage::RefreshRequested,
+                            ))),
+                            Task::done(Message::View(view::Message::UsdtOverview(
+                                view::UsdtOverviewMessage::RefreshRequested,
                             ))),
                             Task::done(Message::View(view::Message::Home(
                                 view::HomeMessage::RefreshLiquidBalance,
@@ -1258,6 +1313,9 @@ impl App {
                             Task::done(Message::View(view::Message::LiquidOverview(
                                 view::LiquidOverviewMessage::RefreshRequested,
                             ))),
+                            Task::done(Message::View(view::Message::UsdtOverview(
+                                view::UsdtOverviewMessage::RefreshRequested,
+                            ))),
                             Task::done(Message::View(view::Message::Home(
                                 view::HomeMessage::RefreshLiquidBalance,
                             ))),
@@ -1273,6 +1331,9 @@ impl App {
                             ))),
                             Task::done(Message::View(view::Message::LiquidOverview(
                                 view::LiquidOverviewMessage::RefreshRequested,
+                            ))),
+                            Task::done(Message::View(view::Message::UsdtOverview(
+                                view::UsdtOverviewMessage::RefreshRequested,
                             ))),
                             Task::done(Message::View(view::Message::Home(
                                 view::HomeMessage::RefreshLiquidBalance,

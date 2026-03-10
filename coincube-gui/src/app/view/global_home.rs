@@ -4,23 +4,24 @@ use coincube_ui::{
     component::{amount::*, button, form, text::*},
     icon::{
         arrow_down_up_icon, arrow_right, check_circle_icon, eye_outline_icon, eye_slash_icon,
-        lightning_icon, vault_icon,
+        lightning_icon, usd_icon, vault_icon,
     },
     theme,
     widget::*,
 };
 use iced::{
-    widget::{Button, Column, Space, Stack},
+    widget::{mouse_area, Button, Column, Space, Stack},
     Alignment, Length,
 };
 use iced_anim::AnimationBuilder;
 
+use crate::app::breez::assets::format_usdt_display;
 use crate::app::{
     menu::Menu,
     view::{vault::receive::address_card, FiatAmountConverter},
 };
 use crate::app::{
-    menu::{LiquidSubMenu, VaultSubMenu},
+    menu::{LiquidSubMenu, UsdtSubMenu, VaultSubMenu},
     view::message::{HomeMessage, Message},
 };
 use coincube_core::miniscript::bitcoin::Amount;
@@ -28,6 +29,7 @@ use coincube_core::miniscript::bitcoin::Amount;
 #[derive(Clone, Copy, Debug)]
 enum WalletType {
     Liquid,
+    Usdt { balance: u64 },
     Vault,
 }
 
@@ -263,6 +265,13 @@ fn wallet_card<'a>(
             Message::Menu(Menu::Liquid(LiquidSubMenu::Send)),
             Message::Menu(Menu::Liquid(LiquidSubMenu::Receive)),
         ),
+        WalletType::Usdt { .. } => (
+            usd_icon().color(color::ORANGE),
+            "USDt",
+            Some(color::ORANGE),
+            Message::Menu(Menu::Usdt(UsdtSubMenu::Send)),
+            Message::Menu(Menu::Usdt(UsdtSubMenu::Receive)),
+        ),
         WalletType::Vault => (
             vault_icon(),
             "Vault",
@@ -271,6 +280,75 @@ fn wallet_card<'a>(
             Message::Menu(Menu::Vault(VaultSubMenu::Receive)),
         ),
     };
+
+    // USDt card renders its own balance display (not Amount-based)
+    if let WalletType::Usdt { balance: usdt_bal } = wallet_type {
+        let content = Column::new()
+            .spacing(12)
+            .push(
+                Row::new()
+                    .spacing(8)
+                    .align_y(Alignment::Center)
+                    .push(usd_icon().color(color::ORANGE).size(16))
+                    .push(text("USDt").color(color::ORANGE).size(14)),
+            )
+            .push(
+                Row::new()
+                    .align_y(Alignment::Center)
+                    .push(
+                        Column::new()
+                            .spacing(4)
+                            .push(if balance_masked {
+                                Row::new().push(text("********").size(H2_SIZE))
+                            } else {
+                                Row::new()
+                                    .spacing(10)
+                                    .align_y(Alignment::Center)
+                                    .push(text(format_usdt_display(usdt_bal)).size(H2_SIZE).bold())
+                                    .push(text("USDt").size(H2_SIZE).color(color::GREY_3))
+                            })
+                            .push(
+                                text("Liquid Network")
+                                    .size(P1_SIZE)
+                                    .style(theme::text::secondary),
+                            )
+                            .width(Length::Fill),
+                    )
+                    .push(Space::new().width(Length::Fixed(8.0)))
+                    .push(
+                        button::primary(None, "Send")
+                            .width(Length::Fixed(120.0))
+                            .on_press(Message::Menu(Menu::Usdt(UsdtSubMenu::Send))),
+                    )
+                    .push(Space::new().width(Length::Fixed(8.0)))
+                    .push(
+                        button::secondary(None, "Receive")
+                            .style(|_t, _s| iced::widget::button::Style {
+                                text_color: color::ORANGE,
+                                border: iced::Border {
+                                    color: color::ORANGE,
+                                    width: 1.0,
+                                    radius: 25.0.into(),
+                                },
+                                ..Default::default()
+                            })
+                            .width(Length::Fixed(120.0))
+                            .on_press(Message::Menu(Menu::Usdt(UsdtSubMenu::Receive))),
+                    ),
+            );
+        return Container::new(content)
+            .padding(20)
+            .style(|_| iced::widget::container::Style {
+                border: iced::Border {
+                    color: color::ORANGE,
+                    width: 0.2,
+                    radius: 25.0.into(),
+                },
+                background: Some(iced::Background::Color(color::GREY_6)),
+                ..Default::default()
+            })
+            .into();
+    }
 
     let content = match wallet_type {
         WalletType::Vault if !has_vault => Column::new().spacing(12).push(
@@ -322,6 +400,25 @@ fn wallet_card<'a>(
                             }),
                     )
                     .push(Space::new().width(Length::Fill))
+                    .push_maybe(matches!(wallet_type, WalletType::Liquid).then(|| {
+                        button::secondary(Some(arrow_down_up_icon()), "Transfer")
+                            .style(|_t, _s| iced::widget::button::Style {
+                                text_color: color::ORANGE,
+                                border: iced::Border {
+                                    color: color::ORANGE,
+                                    width: 1.0,
+                                    radius: 35.0.into(),
+                                },
+                                background: Some(iced::Background::Color(color::GREY_6)),
+                                ..Default::default()
+                            })
+                            .width(Length::Fixed(140.0))
+                            .on_press(Message::Home(HomeMessage::NextStep))
+                    }))
+                    .push_maybe(
+                        matches!(wallet_type, WalletType::Liquid)
+                            .then(|| Space::new().width(Length::Fixed(8.0))),
+                    )
                     .push(
                         button::primary(None, "Send")
                             .width(Length::Fixed(120.0))
@@ -367,6 +464,15 @@ fn wallet_card<'a>(
         .padding(20)
         .style(move |t| match wallet_type {
             WalletType::Liquid => iced::widget::container::Style {
+                border: iced::Border {
+                    color: color::ORANGE,
+                    width: 0.2,
+                    radius: 25.0.into(),
+                },
+                background: Some(iced::Background::Color(color::GREY_6)),
+                ..Default::default()
+            },
+            WalletType::Usdt { .. } => iced::widget::container::Style {
                 border: iced::Border {
                     color: color::ORANGE,
                     width: 0.2,
@@ -1195,6 +1301,7 @@ impl TransferDirection {
 
 pub struct GlobalViewConfig<'a> {
     pub liquid_balance: Amount,
+    pub usdt_balance: u64,
     pub vault_balance: Amount,
     pub fiat_converter: Option<FiatAmountConverter>,
     pub balance_masked: bool,
@@ -1242,6 +1349,7 @@ impl HomeView {
 pub fn global_home_view<'a>(config: GlobalViewConfig<'a>) -> Element<'a, Message> {
     let GlobalViewConfig {
         liquid_balance,
+        usdt_balance,
         vault_balance,
         fiat_converter,
         balance_masked,
@@ -1309,7 +1417,7 @@ pub fn global_home_view<'a>(config: GlobalViewConfig<'a>) -> Element<'a, Message
         _ => {}
     }
 
-    let liquid_card = wallet_card(
+    let liquid_card = mouse_area(wallet_card(
         WalletType::Liquid,
         &liquid_balance,
         fiat_converter,
@@ -1318,9 +1426,24 @@ pub fn global_home_view<'a>(config: GlobalViewConfig<'a>) -> Element<'a, Message
         bitcoin_unit,
         pending_vault_incoming,
         pending_animation_phase,
-    );
+    ))
+    .on_press(Message::Menu(Menu::Liquid(LiquidSubMenu::Overview)));
 
-    let vault_card_element = wallet_card(
+    let usdt_card = mouse_area(wallet_card(
+        WalletType::Usdt {
+            balance: usdt_balance,
+        },
+        &Amount::ZERO,
+        fiat_converter,
+        balance_masked,
+        false,
+        bitcoin_unit,
+        None,
+        0.0,
+    ))
+    .on_press(Message::Menu(Menu::Usdt(UsdtSubMenu::Overview)));
+
+    let vault_card_element = mouse_area(wallet_card(
         WalletType::Vault,
         &vault_balance,
         fiat_converter,
@@ -1329,7 +1452,8 @@ pub fn global_home_view<'a>(config: GlobalViewConfig<'a>) -> Element<'a, Message
         bitcoin_unit,
         pending_vault_incoming,
         pending_animation_phase,
-    );
+    ))
+    .on_press(Message::Menu(Menu::Vault(VaultSubMenu::Overview)));
 
     Column::new()
         .spacing(20)
@@ -1350,36 +1474,11 @@ pub fn global_home_view<'a>(config: GlobalViewConfig<'a>) -> Element<'a, Message
                 .align_y(Alignment::Center),
         )
         .push(
-            Stack::new()
-                .push(
-                    Column::new()
-                        .spacing(40)
-                        .push(liquid_card)
-                        .push(vault_card_element),
-                )
-                .push(
-                    Container::new(
-                        button::secondary(Some(arrow_down_up_icon()), "Transfer")
-                            .style(|_t, _s| iced::widget::button::Style {
-                                text_color: color::ORANGE,
-                                border: iced::Border {
-                                    color: color::ORANGE,
-                                    width: 1.0,
-                                    radius: 35.0.into(),
-                                },
-                                background: Some(iced::Background::Color(color::GREY_6)),
-                                ..Default::default()
-                            })
-                            .height(Length::Fixed(60.0))
-                            .width(Length::Fixed(150.0))
-                            .padding(iced::Padding::from([15, 0]))
-                            .on_press(Message::Home(HomeMessage::NextStep)),
-                    )
-                    .width(Length::Fill)
-                    .height(Length::Fill)
-                    .align_x(Alignment::Center)
-                    .align_y(Alignment::Center),
-                ),
+            Column::new()
+                .spacing(40)
+                .push(liquid_card)
+                .push(usdt_card)
+                .push(vault_card_element),
         )
         .into()
 }

@@ -48,6 +48,7 @@ pub enum LiquidSendFlowState {
 /// LiquidSend manages the Lightning Network send interface
 pub struct LiquidSend {
     breez_client: Arc<BreezClient>,
+    usdt_only: bool,
     btc_balance: Amount,
     usdt_balance: u64,
     amount: Amount,
@@ -74,6 +75,7 @@ impl LiquidSend {
     pub fn new(breez_client: Arc<BreezClient>) -> Self {
         Self {
             breez_client,
+            usdt_only: false,
             btc_balance: Amount::from_sat(0),
             usdt_balance: 0,
             amount: Amount::from_sat(0),
@@ -97,13 +99,22 @@ impl LiquidSend {
         }
     }
 
+    pub fn new_usdt_only(breez_client: Arc<BreezClient>) -> Self {
+        Self {
+            usdt_only: true,
+            send_asset: SendAsset::Usdt,
+            ..Self::new(breez_client)
+        }
+    }
+
     fn load_balance(&self) -> Task<Message> {
         let breez_client = self.breez_client.clone();
+        let usdt_only = self.usdt_only;
 
         Task::perform(
             async move {
                 let info = breez_client.info().await;
-                let payments = breez_client.list_payments(Some(2)).await;
+                let payments = breez_client.list_payments(Some(5)).await;
 
                 let balance = info
                     .as_ref()
@@ -114,17 +125,21 @@ impl LiquidSend {
                     })
                     .unwrap_or(Amount::ZERO);
 
-                let usdt_balance = info.as_ref().ok().and_then(|info| {
-                    info.wallet_info.asset_balances.iter().find_map(|ab| {
-                        if ab.asset_id
-                            == usdt_asset_id(breez_client.network()).unwrap_or("")
-                        {
-                            Some(ab.balance_sat)
-                        } else {
-                            None
-                        }
+                let usdt_id = usdt_asset_id(breez_client.network()).unwrap_or("");
+
+                let usdt_balance = info
+                    .as_ref()
+                    .ok()
+                    .and_then(|info| {
+                        info.wallet_info.asset_balances.iter().find_map(|ab| {
+                            if ab.asset_id == usdt_id {
+                                Some(ab.balance_sat)
+                            } else {
+                                None
+                            }
+                        })
                     })
-                }).unwrap_or(0);
+                    .unwrap_or(0);
 
                 let error = match (&info, &payments) {
                     (Err(_), Err(_)) => Some("Couldn't fetch balance or transactions".to_string()),
@@ -133,7 +148,21 @@ impl LiquidSend {
                     _ => None,
                 };
 
-                let payments = payments.unwrap_or_default();
+                let all_payments = payments.unwrap_or_default();
+                let payments: Vec<_> = all_payments
+                    .into_iter()
+                    .filter(|p| {
+                        let is_usdt = matches!(
+                            &p.details,
+                            PaymentDetails::Liquid { asset_id, .. } if asset_id == usdt_id
+                        );
+                        if usdt_only {
+                            is_usdt
+                        } else {
+                            !is_usdt
+                        }
+                    })
+                    .collect();
 
                 (balance, usdt_balance, payments, error)
             },
@@ -203,6 +232,9 @@ impl State for LiquidSend {
     ) -> Task<Message> {
         if let Message::View(view::Message::LiquidSend(ref msg)) = message {
             match msg {
+                view::LiquidSendMessage::PresetAsset(asset) => {
+                    self.send_asset = *asset;
+                }
                 view::LiquidSendMessage::InputEdited(value) => {
                     self.input.value = value.clone();
                     self.error = None;
@@ -383,7 +415,6 @@ impl State for LiquidSend {
                         let txns = recent_payment
                             .iter()
                             .map(|payment| {
-                                let amount = Amount::from_sat(payment.amount_sat);
                                 let status = payment.status;
                                 let time_ago = format_time_ago(payment.timestamp.into());
                                 let is_usdt_payment = matches!(
@@ -391,6 +422,15 @@ impl State for LiquidSend {
                                     PaymentDetails::Liquid { asset_id, .. }
                                         if asset_id == usdt_asset_id(self.breez_client.network()).unwrap_or("")
                                 );
+                                let amount = if is_usdt_payment {
+                                    if let PaymentDetails::Liquid { asset_info: Some(ref ai), .. } = &payment.details {
+                                        Amount::from_sat((ai.amount * 10_f64.powi(USDT_PRECISION as i32)).round() as u64)
+                                    } else {
+                                        Amount::from_sat(payment.amount_sat)
+                                    }
+                                } else {
+                                    Amount::from_sat(payment.amount_sat)
+                                };
                                 let fiat_amount = if is_usdt_payment {
                                     None
                                 } else {
@@ -399,25 +439,20 @@ impl State for LiquidSend {
                                         .map(|c: &view::FiatAmountConverter| c.convert(amount))
                                 };
 
-                                let desc = match &payment.details {
-                                    PaymentDetails::Lightning {
-                                        payer_note,
-                                        description,
-                                        ..
-                                    } => payer_note
-                                        .as_ref()
-                                        .filter(|s| !s.is_empty())
-                                        .unwrap_or(description),
-                                    PaymentDetails::Liquid {
-                                        payer_note,
-                                        description,
-                                        ..
-                                    } => payer_note
-                                        .as_ref()
-                                        .filter(|s| !s.is_empty())
-                                        .unwrap_or(description),
-
-                                    PaymentDetails::Bitcoin { description, .. } => description,
+                                let desc: &str = if is_usdt_payment {
+                                    "USDt Transfer"
+                                } else {
+                                    match &payment.details {
+                                        PaymentDetails::Lightning { payer_note, description, .. } => payer_note
+                                            .as_ref()
+                                            .filter(|s| !s.is_empty())
+                                            .unwrap_or(description),
+                                        PaymentDetails::Liquid { payer_note, description, .. } => payer_note
+                                            .as_ref()
+                                            .filter(|s| !s.is_empty())
+                                            .unwrap_or(description),
+                                        PaymentDetails::Bitcoin { description, .. } => description,
+                                    }
                                 };
 
                                 let is_incoming = matches!(
@@ -784,18 +819,22 @@ impl State for LiquidSend {
                                 && self.send_asset == SendAsset::Usdt
                             {
                                 let usdt_val_str = self.usdt_amount_input.value.trim().to_string();
-                                let usdt_base = match usdt_val_str.parse::<f64>().ok().filter(|&v| v > 0.0) {
-                                    Some(v) => (v * 10_u64.pow(USDT_PRECISION as u32) as f64).round() as u64,
-                                    None => {
-                                        self.error = Some("Invalid USDt amount".to_string());
-                                        return Task::none();
-                                    }
-                                };
+                                let usdt_base =
+                                    match usdt_val_str.parse::<f64>().ok().filter(|&v| v > 0.0) {
+                                        Some(v) => (v * 10_u64.pow(USDT_PRECISION as u32) as f64)
+                                            .round()
+                                            as u64,
+                                        None => {
+                                            self.error = Some("Invalid USDt amount".to_string());
+                                            return Task::none();
+                                        }
+                                    };
                                 let network = self.breez_client.network();
                                 let asset_id = match usdt_asset_id(network) {
                                     Some(id) => id.to_string(),
                                     None => {
-                                        self.error = Some("USDt not available on this network".to_string());
+                                        self.error =
+                                            Some("USDt not available on this network".to_string());
                                         return Task::none();
                                     }
                                 };
@@ -816,11 +855,18 @@ impl State for LiquidSend {
                                             .await
                                     },
                                     |result| match result {
-                                        Ok(prepare_response) => Message::View(view::Message::LiquidSend(
-                                            view::LiquidSendMessage::PrepareResponseReceived(prepare_response),
-                                        )),
+                                        Ok(prepare_response) => {
+                                            Message::View(view::Message::LiquidSend(
+                                                view::LiquidSendMessage::PrepareResponseReceived(
+                                                    prepare_response,
+                                                ),
+                                            ))
+                                        }
                                         Err(e) => Message::View(view::Message::LiquidSend(
-                                            view::LiquidSendMessage::Error(format!("Failed to prepare USDt payment: {}", e)),
+                                            view::LiquidSendMessage::Error(format!(
+                                                "Failed to prepare USDt payment: {}",
+                                                e
+                                            )),
                                         )),
                                     },
                                 );
@@ -948,12 +994,15 @@ impl State for LiquidSend {
                         } else if let Ok(val) = trimmed.parse::<f64>() {
                             if val <= 0.0 {
                                 self.usdt_amount_input.valid = false;
-                                self.usdt_amount_input.warning = Some("Amount must be greater than zero");
+                                self.usdt_amount_input.warning =
+                                    Some("Amount must be greater than zero");
                             } else {
-                                let base_units = (val * 10_u64.pow(USDT_PRECISION as u32) as f64).round() as u64;
+                                let base_units =
+                                    (val * 10_u64.pow(USDT_PRECISION as u32) as f64).round() as u64;
                                 if base_units > self.usdt_balance {
                                     self.usdt_amount_input.valid = false;
-                                    self.usdt_amount_input.warning = Some("Insufficient USDt balance");
+                                    self.usdt_amount_input.warning =
+                                        Some("Insufficient USDt balance");
                                 } else {
                                     self.usdt_amount_input.valid = true;
                                     self.usdt_amount_input.warning = None;

@@ -8,7 +8,7 @@ use coincube_ui::component::form;
 use coincube_ui::widget::*;
 use iced::Task;
 
-use crate::app::breez::assets::USDT_ASSET_ID_MAINNET;
+use crate::app::breez::assets::usdt_asset_id;
 use crate::app::view::FeeratePriority;
 use crate::app::{breez::BreezClient, cache::Cache, menu::Menu, state::State};
 use crate::app::{message::Message, view, wallet::Wallet};
@@ -35,6 +35,7 @@ pub struct LiquidTransactions {
     refund_feerate: form::Value<String>,
     fee_estimator: FeeEstimator,
     refunding: bool,
+    usdt_only: bool,
 }
 
 impl LiquidTransactions {
@@ -52,6 +53,14 @@ impl LiquidTransactions {
             refund_feerate: form::Value::default(),
             fee_estimator: FeeEstimator::new(),
             refunding: false,
+            usdt_only: false,
+        }
+    }
+
+    pub fn new_usdt_only(breez_client: Arc<BreezClient>) -> Self {
+        Self {
+            usdt_only: true,
+            ..Self::new(breez_client)
         }
     }
 
@@ -61,12 +70,13 @@ impl LiquidTransactions {
 
     fn calculate_balance(&self) -> Amount {
         use breez_sdk_liquid::prelude::PaymentType;
+        let usdt_id = usdt_asset_id(self.breez_client.network()).unwrap_or("");
         let mut balance: i64 = 0;
 
         for payment in &self.payments {
             // Skip asset (USDt) payments — their amount_sat is in asset base units, not sats
             if let PaymentDetails::Liquid { asset_id, .. } = &payment.details {
-                if asset_id == USDT_ASSET_ID_MAINNET {
+                if asset_id == usdt_id {
                     continue;
                 }
             }
@@ -158,7 +168,30 @@ impl State for LiquidTransactions {
         match message {
             Message::PaymentsLoaded(Ok(payments)) => {
                 self.loading = false;
-                self.payments = payments;
+                let usdt_id = usdt_asset_id(self.breez_client.network()).unwrap_or("");
+                self.payments = if self.usdt_only {
+                    payments
+                        .into_iter()
+                        .filter(|p| {
+                            matches!(
+                                &p.details,
+                                PaymentDetails::Liquid { asset_id, .. }
+                                    if asset_id == usdt_id
+                            )
+                        })
+                        .collect()
+                } else {
+                    payments
+                        .into_iter()
+                        .filter(|p| {
+                            !matches!(
+                                &p.details,
+                                PaymentDetails::Liquid { asset_id, .. }
+                                    if asset_id == usdt_id
+                            )
+                        })
+                        .collect()
+                };
                 self.balance = self.calculate_balance();
                 Task::none()
             }

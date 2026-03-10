@@ -69,6 +69,7 @@ impl Labelled for ReceiveAddressInfo {
 pub struct GlobalHome {
     breez_client: Arc<BreezClient>,
     liquid_balance: Amount,
+    usdt_balance: u64,
     wallet: Option<Arc<Wallet>>,
     balance_masked: bool,
     transfer_direction: Option<TransferDirection>,
@@ -105,6 +106,7 @@ impl GlobalHome {
         Self {
             wallet: Some(wallet),
             liquid_balance: Amount::ZERO,
+            usdt_balance: 0,
             breez_client,
             balance_masked: false,
             transfer_direction: None,
@@ -140,6 +142,7 @@ impl GlobalHome {
         Self {
             wallet: None,
             liquid_balance: Amount::from_sat(0),
+            usdt_balance: 0,
             breez_client,
             balance_masked: false,
             transfer_direction: None,
@@ -176,6 +179,7 @@ impl State for GlobalHome {
             .fold(Amount::from_sat(0), |acc, coin| acc + coin.amount);
 
         let liquid_balance = self.liquid_balance;
+        let usdt_balance = self.usdt_balance;
 
         // Fiat price is cube-level, not wallet-level, so get it directly from cache
         let fiat_converter: Option<view::FiatAmountConverter> =
@@ -186,6 +190,7 @@ impl State for GlobalHome {
             cache,
             view::global_home::global_home_view(GlobalViewConfig {
                 liquid_balance,
+                usdt_balance,
                 vault_balance,
                 fiat_converter,
                 balance_masked: self.balance_masked,
@@ -645,6 +650,10 @@ impl State for GlobalHome {
                         self.liquid_balance = liquid_balance;
                         Task::none()
                     }
+                    HomeMessage::UsdtBalanceUpdated(usdt_balance) => {
+                        self.usdt_balance = usdt_balance;
+                        Task::none()
+                    }
                     HomeMessage::OnChainLimitsFetched { send, receive } => {
                         self.onchain_send_limit = Some(send);
                         self.onchain_receive_limit = Some(receive);
@@ -979,6 +988,7 @@ impl State for GlobalHome {
         self.wallet = wallet;
         Task::batch(vec![
             self.load_liquid_balance(),
+            self.load_usdt_balance(),
             self.restore_pending_liquid_to_vault_transfer(),
         ])
     }
@@ -1014,6 +1024,35 @@ impl GlobalHome {
                 )))
             }
         })
+    }
+
+    fn load_usdt_balance(&self) -> Task<Message> {
+        use crate::app::breez::assets::{asset_kind_for_id, AssetKind};
+        let breez_client = self.breez_client.clone();
+        let network = self.network;
+        Task::perform(
+            async move {
+                breez_client.info().await.map(|info| {
+                    info.wallet_info
+                        .asset_balances
+                        .iter()
+                        .find_map(|ab| {
+                            if asset_kind_for_id(&ab.asset_id, network) == Some(AssetKind::Usdt) {
+                                Some(ab.balance_sat)
+                            } else {
+                                None
+                            }
+                        })
+                        .unwrap_or(0)
+                })
+            },
+            |result| match result {
+                Ok(usdt_balance) => Message::View(view::Message::Home(
+                    HomeMessage::UsdtBalanceUpdated(usdt_balance),
+                )),
+                Err(_) => Message::Tick,
+            },
+        )
     }
 
     fn persist_pending_liquid_to_vault_transfer(

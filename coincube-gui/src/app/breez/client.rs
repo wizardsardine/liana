@@ -311,9 +311,7 @@ impl BreezClient {
         precision: u8,
     ) -> Result<breez::ReceivePaymentResponse, BreezError> {
         let sdk = self.get_sdk()?;
-        let payer_amount = amount.map(|a| {
-            a as f64 / 10_u64.pow(precision as u32) as f64
-        });
+        let payer_amount = amount.map(|a| a as f64 / 10_u64.pow(precision as u32) as f64);
         let prepare = sdk
             .prepare_receive_payment(&breez::PrepareReceiveRequest {
                 payment_method: breez::PaymentMethod::LiquidAddress,
