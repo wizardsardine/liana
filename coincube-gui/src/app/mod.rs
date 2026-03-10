@@ -1104,6 +1104,7 @@ impl App {
                                         info!("Switched to local Bitcoind — IBD complete");
                                         self.cache.node_bitcoind_sync_progress = None;
                                         self.cache.node_bitcoind_last_log = None;
+                                        self.last_bitcoind_sync_poll = None;
                                         return Task::done(Message::CacheUpdated);
                                     }
                                     Err(e) => error!("Failed to switch to Bitcoind: {}", e),
