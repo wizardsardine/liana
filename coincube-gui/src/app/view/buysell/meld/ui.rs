@@ -415,7 +415,6 @@ pub(crate) fn address_selection_ux<'a>(
         .width(Length::Fill)
     };
 
-
     match deposit_address {
         None => address_picker(),
         // allows user to verify an address and proceed with the UX flow

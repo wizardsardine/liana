@@ -39,8 +39,31 @@ fn buy_input_form<'a>(state: &'a MavapayState) -> widget::Column<'a, BuySellMess
     };
 
     let form = match state.btc_price {
-        Some(price) => widget::Container::new(
-            widget::column![
+        Some(price) => widget::container(match ln_invoice {
+            Some((invoice, qr_code_data)) => widget::column![
+                invoice_qr_code_display(
+                    "Generated Lightning Invoice:",
+                    invoice.as_str(),
+                    qr_code_data
+                ),
+                match sending_quote {
+                    true => button::primary(Some(clock_icon()), "Getting Quote..."),
+                    false => button::primary(Some(card_icon()), "Get Quote")
+                        .on_press(BuySellMessage::Mavapay(MavapayMessage::CreateQuote)),
+                }
+                .width(Length::Fill)
+                .style(|th, st| {
+                    let mut base = theme::button::secondary(th, st);
+                    base.border = iced::Border::default()
+                        .width(2)
+                        .rounded(2)
+                        .color(color::GREY_4);
+                    base
+                })
+            ]
+            .width(Length::Fill)
+            .spacing(12),
+            None => widget::column![
                 widget::row![
                     widget::column![
                         widget::text(format!(
@@ -53,7 +76,7 @@ fn buy_input_form<'a>(state: &'a MavapayState) -> widget::Column<'a, BuySellMess
                         iced_aw::number_input(
                             &{ state.sat_amount as f64 * (price / 100_000_000.0) }.round(),
                             ..,
-                            |a| { BuySellMessage::Mavapay(MavapayMessage::FiatAmountChanged(a)) }
+                            |a| { BuySellMessage::Mavapay(MavapayMessage::FiatAmountChanged(a,)) }
                         )
                         .on_submit(BuySellMessage::Mavapay(MavapayMessage::NormalizeAmounts))
                         .align_x(Alignment::Center)
@@ -84,56 +107,19 @@ fn buy_input_form<'a>(state: &'a MavapayState) -> widget::Column<'a, BuySellMess
                 .align_y(Alignment::End)
                 .spacing(20)
                 .padding(0),
-                match ln_invoice {
-                    Some((invoice, qr_code_data)) => {
-                        widget::container(
-                            widget::column![
-                                invoice_qr_code_display(
-                                    "Generated Lightning Invoice:",
-                                    invoice.as_str(),
-                                    qr_code_data
-                                ),
-                                match sending_quote {
-                                    true => button::primary(Some(clock_icon()), "Getting Quote..."),
-                                    false => button::primary(Some(card_icon()), "Get Quote")
-                                        .on_press(BuySellMessage::Mavapay(
-                                            MavapayMessage::CreateQuote
-                                        )),
-                                }
-                                .width(Length::Fill)
-                                .style(|th, st| {
-                                    let mut base = theme::button::primary(th, st);
-                                    base.border = iced::Border::default()
-                                        .width(2)
-                                        .rounded(2)
-                                        .color(color::GREY_4);
-                                    base
-                                })
-                            ]
-                            .width(Length::Fill)
-                            .spacing(12),
-                        )
-                    }
-                    None => {
-                        widget::container(
-                            match getting_invoice {
-                                true => button::secondary(Some(clock_icon()), "Getting Invoice..."),
-                                false => button::primary(Some(card_icon()), "Generate Invoice")
-                                    .on_press(BuySellMessage::Mavapay(
-                                        MavapayMessage::GenerateLightningInvoice,
-                                    )),
-                            }
-                            .width(Length::Fill),
-                        )
-                        .width(Length::Fill)
-                    }
+                match getting_invoice {
+                    true => button::secondary(Some(clock_icon()), "Getting Invoice..."),
+                    false => button::primary(Some(card_icon()), "Generate Invoice").on_press(
+                        BuySellMessage::Mavapay(MavapayMessage::GenerateLightningInvoice)
+                    ),
                 }
+                .width(Length::Fill)
             ]
-            .spacing(15)
-            .align_x(Alignment::Center)
+            .spacing(10)
+            .align_x(iced::Alignment::Center)
             .width(Length::Fill),
-        ),
-        None => widget::Container::new(
+        }),
+        None => widget::container(
             text::p1_italic("Getting recent conversion rates, please wait")
                 .width(Length::Fill)
                 .center(),
@@ -314,9 +300,12 @@ fn sell_input_form<'a>(
                                             .color(color::GREY_4);
                                         base
                                     })
-                                    .on_press(BuySellMessage::Mavapay(
-                                        MavapayMessage::VerifyNgnBankDetails
-                                    ))
+                                    .on_press_maybe(
+                                        (!(bank_account_number.is_empty() || bank_code.is_empty()))
+                                            .then_some(BuySellMessage::Mavapay(
+                                                MavapayMessage::VerifyNgnBankDetails
+                                            ))
+                                    )
                             ]
                             .spacing(5),
                         ]

@@ -415,11 +415,9 @@ impl MavapayState {
                         Beneficiary::KES(KenyanBeneficiary::PayToPhone { phone_number, .. }),
                     ) => *phone_number = data,
 
-                    (field, beneficiary) => log::warn!(
-                        "Field Edit: `{}` ignored for Beneficiary: {:?}",
-                        field,
-                        beneficiary
-                    ),
+                    (field, ..) => {
+                        log::warn!("Field Edit: `{}` ignored for Beneficiary", field)
+                    }
                 },
                 MavapayMessage::VerifyNgnBankDetails => {
                     if let Beneficiary::NGN {
