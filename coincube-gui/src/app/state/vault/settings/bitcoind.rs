@@ -87,6 +87,7 @@ pub struct BitcoindSettingsState {
     node_switch_processing: bool,
     connect_login: Option<ConnectLoginState>,
     pending_node_setup: Option<PendingNodeSetup>,
+    cancel_node_setup_in_flight: bool,
 
     bitcoind_settings: Option<BitcoindSettings>,
     electrum_settings: Option<ElectrumSettings>,
@@ -143,6 +144,7 @@ impl BitcoindSettingsState {
             }),
             rescan_settings: RescanSetting::new(cache.rescan_progress()),
             pending_node_setup: None,
+            cancel_node_setup_in_flight: false,
         }
     }
 }
@@ -167,6 +169,14 @@ impl State for BitcoindSettingsState {
                     self.pending_node_setup = None;
                     self.warning = None;
                     self.full_config = daemon.config().cloned();
+                    if self.cancel_node_setup_in_flight {
+                        self.cancel_node_setup_in_flight = false;
+                        if let Some(cfg) = daemon.config() {
+                            let mut rollback_cfg = cfg.clone();
+                            rollback_cfg.pending_bitcoind = None;
+                            return Task::done(Message::LoadDaemonConfig(Box::new(rollback_cfg)));
+                        }
+                    }
                     if let Some(settings) = &mut self.bitcoind_settings {
                         settings.edited(true);
                         return Task::perform(async {}, |_| {
@@ -189,6 +199,7 @@ impl State for BitcoindSettingsState {
                     self.node_switch_processing = false;
                     self.connect_login = None;
                     self.pending_node_setup = None;
+                    self.cancel_node_setup_in_flight = false;
                     let err_msg = e.to_string();
                     self.warning = Some(e);
                     if let Some(settings) = &mut self.bitcoind_settings {
@@ -380,8 +391,7 @@ impl State for BitcoindSettingsState {
                                     // stale fallback_esplora.addr (e.g. written
                                     // before Testnet4 was handled) is never used.
                                     use coincubed::config::EsploraConfig;
-                                    let esplora_url =
-                                        crate::installer::connect_url(cache.network);
+                                    let esplora_url = crate::installer::connect_url(cache.network);
                                     info!(
                                         "Switching to Connect: url={} token_len={}",
                                         esplora_url,
@@ -566,6 +576,9 @@ impl State for BitcoindSettingsState {
                         }
                     }
                     NodeSettingsMessage::SetupLocalNodeCancel => {
+                        if matches!(&self.pending_node_setup, Some(s) if s.processing) {
+                            self.cancel_node_setup_in_flight = true;
+                        }
                         self.pending_node_setup = None;
                     }
                     NodeSettingsMessage::SetupLocalNodeAddrChanged(addr) => {
@@ -617,10 +630,8 @@ impl State for BitcoindSettingsState {
                                     }
                                 }
                                 RpcAuthType::UserPass => {
-                                    let user_ok =
-                                        !setup.rpc_auth_vals.user.value.is_empty();
-                                    let pass_ok =
-                                        !setup.rpc_auth_vals.password.value.is_empty();
+                                    let user_ok = !setup.rpc_auth_vals.user.value.is_empty();
+                                    let pass_ok = !setup.rpc_auth_vals.password.value.is_empty();
                                     setup.rpc_auth_vals.user.valid = user_ok;
                                     setup.rpc_auth_vals.password.valid = pass_ok;
                                     if user_ok && pass_ok {
@@ -647,9 +658,9 @@ impl State for BitcoindSettingsState {
                         }
                     }
                     NodeSettingsMessage::SwitchToBitcoind => {
-                        if matches!(cache.node_bitcoind_sync_progress, Some(p) if p < 1.0) {
+                        if matches!(cache.node_bitcoind_sync_progress, Some(p) if p < 0.999) {
                             self.warning = Some(Error::Unexpected(format!(
-                                "Bitcoin node is still syncing ({:.0}%). \
+                                "Bitcoin node is still syncing ({:.1}%). \
                                  Please wait until sync is complete before switching.",
                                 cache.node_bitcoind_sync_progress.unwrap_or(0.0) * 100.0
                             )));
@@ -878,6 +889,9 @@ fn configure_and_start_internal_bitcoind(
     } else {
         let rpc = get_available_port().map_err(|e: crate::installer::Error| e.to_string())?;
         let p2p = get_available_port().map_err(|e: crate::installer::Error| e.to_string())?;
+        if rpc == p2p {
+            return Err("Could not get distinct ports. Please try again.".to_string());
+        }
         (rpc, p2p)
     };
 

@@ -1582,7 +1582,14 @@ pub fn pending_node_setup_panel<'a>(
                         .size(16)
                         .padding(12)
                         .width(Length::Fill),
-                    ),
+                    )
+                    .push(if rpc_auth_vals.cookie_path.valid {
+                        text("").size(12)
+                    } else {
+                        text("Cookie file path must not be empty")
+                            .style(theme::text::warning)
+                            .size(12)
+                    }),
             );
         }
         RpcAuthType::UserPass => {
@@ -1602,6 +1609,13 @@ pub fn pending_node_setup_panel<'a>(
                                     .padding(12)
                                     .width(Length::Fill),
                             )
+                            .push(if rpc_auth_vals.user.valid {
+                                text("").size(12)
+                            } else {
+                                text("Username must not be empty")
+                                    .style(theme::text::warning)
+                                    .size(12)
+                            })
                             .width(Length::FillPortion(1)),
                     )
                     .push(
@@ -1620,6 +1634,13 @@ pub fn pending_node_setup_panel<'a>(
                                     .padding(12)
                                     .width(Length::Fill),
                             )
+                            .push(if rpc_auth_vals.password.valid {
+                                text("").size(12)
+                            } else {
+                                text("Password must not be empty")
+                                    .style(theme::text::warning)
+                                    .size(12)
+                            })
                             .width(Length::FillPortion(1)),
                     ),
             );
