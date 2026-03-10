@@ -54,13 +54,45 @@ impl PinInput {
                 let old_value = self.digits[index].clone();
                 if value.is_empty() {
                     self.digits[index] = value;
-                    if !old_value.is_empty() && index > 0 {
+                    if index > 0 {
+                        // this deletes the number and also moves the cursor to the previous field
+                        // If the field was already empty, also clear the previous field
+                        if old_value.is_empty() {
+                            self.digits[index - 1] = String::new();
+                        }
                         return focus_previous();
                     }
-                } else if value.len() == 1 && value.chars().all(|c| c.is_ascii_digit()) {
-                    self.digits[index] = value;
-                    if index < 3 {
-                        return focus_next();
+                } else if !value.is_empty() && value.chars().all(|c| c.is_ascii_digit()) {
+                    // Smart fill logic: determine which field to update
+                    if value.len() == 1 {
+                        // Simple case: typing in empty field
+                        self.digits[index] = value;
+                        if index < 3 {
+                            return focus_next();
+                        }
+                    } else if value.len() > old_value.len() {
+                        // User typed in a field that already has content
+                        // Extract the newly typed character
+                        if let Some(last_char) = value.chars().last() {
+                            if last_char.is_ascii_digit() {
+                                let new_digit = last_char.to_string();
+
+                                // Smart fill: if current field has content and next field is empty, fill next
+                                if !old_value.is_empty()
+                                    && index < 3
+                                    && self.digits[index + 1].is_empty()
+                                {
+                                    self.digits[index + 1] = new_digit;
+                                    return focus_next();
+                                } else {
+                                    // Otherwise replace current field
+                                    self.digits[index] = new_digit;
+                                    if index < 3 {
+                                        return focus_next();
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
                 Task::none()
