@@ -188,6 +188,7 @@ impl State for BitcoindSettingsState {
                     self.config_updated = false;
                     self.node_switch_processing = false;
                     self.connect_login = None;
+                    self.pending_node_setup = None;
                     let err_msg = e.to_string();
                     self.warning = Some(e);
                     if let Some(settings) = &mut self.bitcoind_settings {
@@ -369,28 +370,42 @@ impl State for BitcoindSettingsState {
                     }
                     NodeSettingsMessage::ConnectLoginVerified(res) => match res {
                         Ok(jwt) => {
-                            self.connect_login = None;
-                            if let Some(cfg) = daemon.config() {
-                                // Reconstruct URL from cache.network so a
-                                // stale fallback_esplora.addr (e.g. written
-                                // before Testnet4 was handled) is never used.
-                                use coincubed::config::EsploraConfig;
-                                let esplora_url = crate::installer::connect_url(cache.network);
-                                info!(
-                                    "Switching to Connect: url={} token_len={}",
-                                    esplora_url,
-                                    jwt.len()
-                                );
-                                let esplora = EsploraConfig {
-                                    addr: esplora_url,
-                                    token: Some(jwt),
-                                };
-                                let mut new_cfg = cfg.clone();
-                                new_cfg.bitcoin_backend = Some(BitcoinBackend::Esplora(esplora));
-                                new_cfg.fallback_esplora = None;
-                                self.node_switch_processing = true;
-                                self.warning = None;
-                                return Task::done(Message::LoadDaemonConfig(Box::new(new_cfg)));
+                            if matches!(
+                                self.connect_login,
+                                Some(ConnectLoginState::EnterOtp { .. })
+                            ) {
+                                self.connect_login = None;
+                                if let Some(cfg) = daemon.config() {
+                                    // Reconstruct URL from cache.network so a
+                                    // stale fallback_esplora.addr (e.g. written
+                                    // before Testnet4 was handled) is never used.
+                                    use coincubed::config::EsploraConfig;
+                                    let esplora_url =
+                                        crate::installer::connect_url(cache.network);
+                                    info!(
+                                        "Switching to Connect: url={} token_len={}",
+                                        esplora_url,
+                                        jwt.len()
+                                    );
+                                    let esplora = EsploraConfig {
+                                        addr: esplora_url,
+                                        token: Some(jwt),
+                                    };
+                                    let mut new_cfg = cfg.clone();
+                                    if let Some(BitcoinBackend::Bitcoind(current)) =
+                                        cfg.bitcoin_backend.clone()
+                                    {
+                                        new_cfg.pending_bitcoind = Some(current);
+                                    }
+                                    new_cfg.bitcoin_backend =
+                                        Some(BitcoinBackend::Esplora(esplora));
+                                    new_cfg.fallback_esplora = None;
+                                    self.node_switch_processing = true;
+                                    self.warning = None;
+                                    return Task::done(Message::LoadDaemonConfig(Box::new(
+                                        new_cfg,
+                                    )));
+                                }
                             }
                         }
                         Err(e) => {
@@ -582,20 +597,41 @@ impl State for BitcoindSettingsState {
                             setup.addr.valid = new_addr.is_ok();
                             let rpc_auth = match setup.selected_auth_type {
                                 RpcAuthType::CookieFile => {
-                                    let new_path =
-                                        PathBuf::from_str(&setup.rpc_auth_vals.cookie_path.value);
-                                    match new_path {
-                                        Ok(path) => {
-                                            setup.rpc_auth_vals.cookie_path.valid = true;
-                                            Some(BitcoindRpcAuth::CookieFile(path))
+                                    if setup.rpc_auth_vals.cookie_path.value.is_empty() {
+                                        setup.rpc_auth_vals.cookie_path.valid = false;
+                                        None
+                                    } else {
+                                        let new_path = PathBuf::from_str(
+                                            &setup.rpc_auth_vals.cookie_path.value,
+                                        );
+                                        match new_path {
+                                            Ok(path) => {
+                                                setup.rpc_auth_vals.cookie_path.valid = true;
+                                                Some(BitcoindRpcAuth::CookieFile(path))
+                                            }
+                                            Err(_) => {
+                                                setup.rpc_auth_vals.cookie_path.valid = false;
+                                                None
+                                            }
                                         }
-                                        Err(_) => None,
                                     }
                                 }
-                                RpcAuthType::UserPass => Some(BitcoindRpcAuth::UserPass(
-                                    setup.rpc_auth_vals.user.value.clone(),
-                                    setup.rpc_auth_vals.password.value.clone(),
-                                )),
+                                RpcAuthType::UserPass => {
+                                    let user_ok =
+                                        !setup.rpc_auth_vals.user.value.is_empty();
+                                    let pass_ok =
+                                        !setup.rpc_auth_vals.password.value.is_empty();
+                                    setup.rpc_auth_vals.user.valid = user_ok;
+                                    setup.rpc_auth_vals.password.valid = pass_ok;
+                                    if user_ok && pass_ok {
+                                        Some(BitcoindRpcAuth::UserPass(
+                                            setup.rpc_auth_vals.user.value.clone(),
+                                            setup.rpc_auth_vals.password.value.clone(),
+                                        ))
+                                    } else {
+                                        None
+                                    }
+                                }
                             };
                             if let (Ok(addr), Some(rpc_auth)) = (new_addr, rpc_auth) {
                                 if let Some(cfg) = daemon.config() {
@@ -611,6 +647,14 @@ impl State for BitcoindSettingsState {
                         }
                     }
                     NodeSettingsMessage::SwitchToBitcoind => {
+                        if matches!(cache.node_bitcoind_sync_progress, Some(p) if p < 1.0) {
+                            self.warning = Some(Error::Unexpected(format!(
+                                "Bitcoin node is still syncing ({:.0}%). \
+                                 Please wait until sync is complete before switching.",
+                                cache.node_bitcoind_sync_progress.unwrap_or(0.0) * 100.0
+                            )));
+                            return Task::none();
+                        }
                         if let Some(cfg) = daemon.config() {
                             if let Some(pending) = cfg.pending_bitcoind.clone() {
                                 let old_esplora = match &cfg.bitcoin_backend {

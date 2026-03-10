@@ -373,16 +373,21 @@ impl Step for SelectBitcoindTypeStep {
                 }
             } else {
                 ctx.internal_bitcoind_config = None;
+                ctx.pending_bitcoind_config = None;
+                ctx.internal_bitcoind = None;
             }
         } else if self.use_external {
             ctx.use_coincube_connect = false;
             ctx.install_node_alongside_connect = false;
             ctx.bitcoind_is_external = true;
             ctx.internal_bitcoind_config = None;
+            ctx.pending_bitcoind_config = None;
+            ctx.internal_bitcoind = None;
         } else {
             ctx.use_coincube_connect = false;
             ctx.install_node_alongside_connect = false;
             ctx.bitcoind_is_external = false;
+            ctx.pending_bitcoind_config = None;
             if ctx.internal_bitcoind_config.is_none() {
                 ctx.bitcoin_backend = None;
             }

@@ -1442,7 +1442,7 @@ pub fn node_backend_status<'a>(
         let mut sync_col = Column::new()
             .spacing(8)
             .push(caption("Local node syncing in background"))
-            .push(text(format!("Progress {:.2}%", 100.0 * progress)))
+            .push(text(format!("Progress {:.1}%", 100.0 * progress)))
             .push(ProgressBar::new(0.0..=1.0, progress as f32).length(Length::Fill))
             .push(p2_regular(desc).style(theme::text::secondary));
 
@@ -1615,6 +1615,7 @@ pub fn pending_node_setup_panel<'a>(
                                             "password", v,
                                         )
                                     })
+                                    .secure(true)
                                     .size(16)
                                     .padding(12)
                                     .width(Length::Fill),
