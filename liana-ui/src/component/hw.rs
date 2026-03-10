@@ -505,7 +505,7 @@ pub fn unsupported_version_hardware_wallet<'a, T: 'static, K: Display, V: Displa
 pub fn taproot_not_supported_device<'a, T: 'static, K: Display>(kind: K) -> Container<'a, T> {
     container(
         row(vec![column(vec![
-            text::p1_bold("This device do not support taproot miniscript").into(),
+            text::p1_bold("This device doesn't support taproot miniscript").into(),
             text::caption(kind.to_string()).into(),
         ])
         .width(Length::Fill)
