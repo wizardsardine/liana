@@ -15,6 +15,7 @@ use iced::{
 };
 
 use crate::app::{
+    breez::assets::USDT_PRECISION,
     settings::unit::BitcoinDisplayUnit,
     view::{LiquidReceiveMessage, ReceiveMethod},
 };
@@ -485,12 +486,8 @@ fn usdt_input_fields<'a>(
         );
 
     let is_valid = usdt_amount_input.value.trim().is_empty()
-        || usdt_amount_input
-            .value
-            .trim()
-            .parse::<f64>()
-            .ok()
-            .map_or(false, |v| v > 0.0);
+        || parse_usdt_to_minor_units(usdt_amount_input.value.trim(), USDT_PRECISION)
+            .is_some_and(|units| units > 0);
 
     let generate_btn = button::primary(None, "Generate USDt Address")
         .on_press_maybe((is_valid && !loading).then_some(LiquidReceiveMessage::GenerateAddress))
@@ -507,6 +504,41 @@ fn usdt_input_fields<'a>(
     .width(Length::Fill)
     .center_x(Length::Fill)
     .into()
+}
+
+/// Parses a decimal USDt amount string into integer minor units without using f64.
+///
+/// Rejects scientific notation, invalid characters, and fractional digits that exceed
+/// `scale` (USDt uses 8). Returns `None` for malformed or zero-or-negative inputs.
+fn parse_usdt_to_minor_units(s: &str, scale: u8) -> Option<u64> {
+    if s.contains(['e', 'E']) {
+        return None;
+    }
+    let (whole_str, frac_str) = match s.split_once('.') {
+        Some((w, f)) => (w, f),
+        None => (s, ""),
+    };
+    if frac_str.len() > scale as usize {
+        return None;
+    }
+    let whole: u64 = if whole_str.is_empty() {
+        0
+    } else {
+        whole_str.parse().ok()?
+    };
+    let frac_padded: u64 = if frac_str.is_empty() {
+        0
+    } else {
+        if !frac_str.chars().all(|c| c.is_ascii_digit()) {
+            return None;
+        }
+        let padding = scale as usize - frac_str.len();
+        let padded = format!("{}{}", frac_str, "0".repeat(padding));
+        padded.parse().ok()?
+    };
+    let multiplier = 10_u64.pow(scale as u32);
+    let minor_units = whole.checked_mul(multiplier)?.checked_add(frac_padded)?;
+    Some(minor_units)
 }
 
 fn generate_button<'a>() -> Element<'a, LiquidReceiveMessage> {

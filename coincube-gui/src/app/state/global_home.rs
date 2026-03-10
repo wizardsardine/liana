@@ -1119,9 +1119,7 @@ impl GlobalHome {
                     .and_then(|s| s.cubes.iter().find(|c| c.id == cube_id))
                     .and_then(|cube| cube.pending_liquid_to_vault_transfer.clone());
 
-                let Some(pending) = pending else {
-                    return None;
-                };
+                let pending = pending?;
 
                 let mut stage = IncomingTransferStage::TransferInitiated;
                 let payments = breez_client.list_payments(None).await.ok();

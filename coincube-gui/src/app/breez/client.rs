@@ -311,7 +311,9 @@ impl BreezClient {
         precision: u8,
     ) -> Result<breez::ReceivePaymentResponse, BreezError> {
         let sdk = self.get_sdk()?;
-        let payer_amount = amount.map(|a| a as f64 / 10_u64.pow(precision as u32) as f64);
+        let payer_amount = amount
+            .map(|a| safe_base_units_to_f64(a, precision))
+            .transpose()?;
         let prepare = sdk
             .prepare_receive_payment(&breez::PrepareReceiveRequest {
                 payment_method: breez::PaymentMethod::LiquidAddress,
@@ -343,7 +345,7 @@ impl BreezClient {
         amount: u64,
         precision: u8,
     ) -> Result<breez::PrepareSendResponse, BreezError> {
-        let receiver_amount = amount as f64 / 10_u64.pow(precision as u32) as f64;
+        let receiver_amount = safe_base_units_to_f64(amount, precision)?;
         self.get_sdk()?
             .prepare_send_payment(&breez::PrepareSendRequest {
                 destination,
@@ -572,6 +574,21 @@ fn make_breez_stream(state: &BreezSubscriptionState) -> impl Stream<Item = breez
             std::future::pending().await
         },
     )
+}
+
+/// Converts `amount` base-units to an `f64` display value by dividing by `10^precision`.
+///
+/// Returns `Err(BreezError::Sdk)` if `amount` exceeds 2^53 (the largest integer that can be
+/// represented exactly in an f64 53-bit mantissa), preventing silent precision loss.
+fn safe_base_units_to_f64(amount: u64, precision: u8) -> Result<f64, BreezError> {
+    const MAX_EXACT_F64_INT: u64 = 1u64 << 53;
+    if amount > MAX_EXACT_F64_INT {
+        return Err(BreezError::Sdk(format!(
+            "amount {} exceeds maximum exactly-representable f64 integer (2^53 = {})",
+            amount, MAX_EXACT_F64_INT,
+        )));
+    }
+    Ok(amount as f64 / 10_u64.pow(precision as u32) as f64)
 }
 
 struct BreezEventListener {

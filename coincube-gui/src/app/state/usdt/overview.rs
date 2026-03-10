@@ -97,7 +97,12 @@ impl State for UsdtOverview {
             view::dashboard(
                 menu,
                 cache,
-                view::liquid::transaction_detail_view(payment, fiat_converter, cache.bitcoin_unit),
+                view::liquid::transaction_detail_view(
+                    payment,
+                    fiat_converter,
+                    cache.bitcoin_unit,
+                    usdt_asset_id(self.breez_client.network()).unwrap_or(""),
+                ),
             )
         } else {
             let overview_view = view::usdt::usdt_overview_view(

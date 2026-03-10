@@ -20,7 +20,7 @@ use iced::{
     Alignment, Background, Length,
 };
 
-use crate::app::breez::assets::{format_usdt_display, USDT_ASSET_ID_MAINNET};
+use crate::app::breez::assets::format_usdt_display;
 use crate::app::menu::Menu;
 use crate::app::state::liquid::send::{LiquidSendFlowState, Modal, SendAsset};
 use crate::app::view::{
@@ -38,6 +38,7 @@ pub struct LiquidSendFlowConfig<'a> {
     pub amount_input: &'a form::Value<String>,
     pub usdt_amount_input: &'a form::Value<String>,
     pub send_asset: SendAsset,
+    pub usdt_asset_id: &'a str,
     pub comment: String,
     pub description: Option<&'a str>,
     pub lightning_limits: Option<(u64, u64)>,
@@ -64,6 +65,7 @@ pub fn liquid_send_with_flow<'a>(config: LiquidSendFlowConfig<'a>) -> Element<'a
                 config.input,
                 config.input_type,
                 config.bitcoin_unit,
+                config.usdt_asset_id,
             )
             .map(Message::LiquidSend);
 
@@ -148,6 +150,7 @@ pub fn liquid_send_with_flow<'a>(config: LiquidSendFlowConfig<'a>) -> Element<'a
     base_content
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn liquid_send_view<'a>(
     btc_balance: Amount,
     usdt_balance: u64,
@@ -157,6 +160,7 @@ pub fn liquid_send_view<'a>(
     input: &'a form::Value<String>,
     input_type: &'a Option<InputType>,
     bitcoin_unit: BitcoinDisplayUnit,
+    usdt_asset_id: &str,
 ) -> Element<'a, LiquidSendMessage> {
     let mut content = Column::new().spacing(20);
 
@@ -271,7 +275,7 @@ pub fn liquid_send_view<'a>(
             };
 
             let usdt_display = if let PaymentDetails::Liquid { asset_id, .. } = &tx.details {
-                if asset_id == USDT_ASSET_ID_MAINNET {
+                if !usdt_asset_id.is_empty() && asset_id == usdt_asset_id {
                     Some(format!("{} USDt", format_usdt_display(tx.amount.to_sat())))
                 } else {
                     None

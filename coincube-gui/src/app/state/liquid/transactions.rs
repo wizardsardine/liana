@@ -74,12 +74,23 @@ impl LiquidTransactions {
         let mut balance: i64 = 0;
 
         for payment in &self.payments {
-            // Skip asset (USDt) payments — their amount_sat is in asset base units, not sats
-            if let PaymentDetails::Liquid { asset_id, .. } = &payment.details {
-                if asset_id == usdt_id {
+            let is_usdt = matches!(
+                &payment.details,
+                PaymentDetails::Liquid { asset_id, .. } if !usdt_id.is_empty() && asset_id == usdt_id
+            );
+
+            if self.usdt_only {
+                // USDt view: only count USDt payments (amount_sat is in asset base units)
+                if !is_usdt {
+                    continue;
+                }
+            } else {
+                // L-BTC view: skip USDt payments whose amount_sat is asset base units, not sats
+                if is_usdt {
                     continue;
                 }
             }
+
             match payment.payment_type {
                 PaymentType::Receive => {
                     balance += payment.amount_sat as i64;
@@ -101,7 +112,12 @@ impl State for LiquidTransactions {
             view::dashboard(
                 menu,
                 cache,
-                view::liquid::transaction_detail_view(payment, fiat_converter, cache.bitcoin_unit),
+                view::liquid::transaction_detail_view(
+                    payment,
+                    fiat_converter,
+                    cache.bitcoin_unit,
+                    usdt_asset_id(self.breez_client.network()).unwrap_or(""),
+                ),
             )
         } else if let Some(refundable) = &self.selected_refundable {
             view::dashboard(
@@ -127,6 +143,7 @@ impl State for LiquidTransactions {
                     fiat_converter,
                     self.loading,
                     cache.bitcoin_unit,
+                    usdt_asset_id(self.breez_client.network()).unwrap_or(""),
                 ),
             )
         };

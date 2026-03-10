@@ -18,13 +18,13 @@ This plan is written to be directly useful inside Windsurf for implementation pl
 
 ### In scope for v1
 - Detect and display USDt balances from Breez Liquid SDK
-- Add USDt asset constants for mainnet and testnet
+- Add USDt asset constants for mainnet and regtest
 - Add a Receive USDt flow
 - Add a Send USDt flow
 - Add fee preview before send
 - Add transaction history support for USDt payments
 - Add validation and error handling for common failure cases
-- Test end-to-end on testnet
+- Test end-to-end on regtest
 
 ### Out of scope for v1
 - General support for arbitrary Liquid assets
@@ -67,11 +67,6 @@ pub const LBTC_ASSET_ID_MAINNET: &str =
 pub const USDT_ASSET_ID_MAINNET: &str =
     "ce091c998b83c78bb71a632313ba3760f1763d9cfcffae02258ffa9865a37bd2";
 
-pub const LBTC_ASSET_ID_TESTNET: &str =
-    "144c654344aa716d6f3abcc1ca90e5641e4e2a7f633bc09fe3baf64585819a49";
-
-pub const USDT_ASSET_ID_TESTNET: &str =
-    "b612eb46313a2cd6ebabd8b7a8eed5696e29898b87a43bff41c94f51acef9d73";
 ```
 
 ---
@@ -359,14 +354,14 @@ Fully validate the USDt flow before enabling on mainnet.
 - [ ] Test wrong-network cases
 
 ### Deliverable
-Confidence that the full USDt workflow works on regtest (and testnet if enabled).
+Confidence that the full USDt workflow works on regtest.
 
 ---
 
 ## Milestone 9: Mainnet rollout plan
 
 ### Objective
-Launch safely once testnet validation is complete.
+Launch safely once regtest validation is complete.
 
 ### Tasks
 - [ ] Add feature flag for USDt support
@@ -524,7 +519,7 @@ Add tests for asset resolution, amount validation, wrong-network handling, malfo
 - Asset fee behavior can confuse users if not displayed clearly.
 - Wrong-network addresses/URIs could lead to failed flows or user confusion.
 - Cross-asset support should not be mixed into v1 unless the core USDt path is already stable.
-- Testnet and mainnet asset IDs must never be mixed.
+- Regtest and mainnet asset IDs must never be mixed.
 
 ---
 
@@ -537,7 +532,7 @@ Add tests for asset resolution, amount validation, wrong-network handling, malfo
 5. Fee preview polish
 6. History support
 7. Error handling
-8. Testnet QA
+8. Regtest QA
 9. Feature-flagged mainnet rollout
 
 ---

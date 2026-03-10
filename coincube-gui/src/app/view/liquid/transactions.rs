@@ -16,7 +16,7 @@ use iced::{
     Alignment, Length,
 };
 
-use crate::app::breez::assets::{format_usdt_display, USDT_ASSET_ID_MAINNET};
+use crate::app::breez::assets::format_usdt_display;
 use crate::app::menu::Menu;
 use crate::app::view::message::{FeeratePriority, Message};
 use crate::app::view::FiatAmountConverter;
@@ -24,14 +24,14 @@ use crate::export::ImportExportMessage;
 use crate::utils::{format_time_ago, format_timestamp};
 
 /// Returns `Some(formatted_usdt_string)` when the payment is a USDt asset payment.
-fn usdt_amount_str(payment: &Payment) -> Option<String> {
+fn usdt_amount_str(payment: &Payment, usdt_id: &str) -> Option<String> {
     if let PaymentDetails::Liquid {
         asset_id,
         asset_info,
         ..
     } = &payment.details
     {
-        if asset_id == USDT_ASSET_ID_MAINNET {
+        if !usdt_id.is_empty() && asset_id == usdt_id {
             let display = if let Some(info) = asset_info {
                 format!("{:.2}", info.amount)
             } else {
@@ -50,6 +50,7 @@ pub fn liquid_transactions_view<'a>(
     fiat_converter: Option<FiatAmountConverter>,
     _loading: bool,
     bitcoin_unit: coincube_ui::component::amount::BitcoinDisplayUnit,
+    usdt_id: &'a str,
 ) -> Element<'a, Message> {
     let mut content = Column::new().spacing(20).width(Length::Fill);
 
@@ -106,7 +107,13 @@ pub fn liquid_transactions_view<'a>(
                 .push(payments.iter().enumerate().fold(
                     Column::new().spacing(10),
                     |col, (i, payment)| {
-                        col.push(transaction_row(i, payment, fiat_converter, bitcoin_unit))
+                        col.push(transaction_row(
+                            i,
+                            payment,
+                            fiat_converter,
+                            bitcoin_unit,
+                            usdt_id,
+                        ))
                     },
                 )),
         );
@@ -135,9 +142,10 @@ fn transaction_row<'a>(
     payment: &'a Payment,
     fiat_converter: Option<FiatAmountConverter>,
     bitcoin_unit: coincube_ui::component::amount::BitcoinDisplayUnit,
+    usdt_id: &str,
 ) -> Element<'a, Message> {
     let is_receive = matches!(payment.payment_type, PaymentType::Receive);
-    let usdt_str = usdt_amount_str(payment);
+    let usdt_str = usdt_amount_str(payment, usdt_id);
 
     // Extract description — label USDt payments explicitly
     let is_usdt = usdt_str.is_some();
@@ -238,9 +246,10 @@ pub fn transaction_detail_view<'a>(
     payment: &'a Payment,
     fiat_converter: Option<FiatAmountConverter>,
     bitcoin_unit: coincube_ui::component::amount::BitcoinDisplayUnit,
+    usdt_id: &str,
 ) -> Element<'a, Message> {
     let is_receive = matches!(payment.payment_type, PaymentType::Receive);
-    let usdt_str = usdt_amount_str(payment);
+    let usdt_str = usdt_amount_str(payment, usdt_id);
     let btc_amount = Amount::from_sat(payment.amount_sat);
     let fees_sat = Amount::from_sat(payment.fees_sat);
     let mut total_amount = btc_amount;

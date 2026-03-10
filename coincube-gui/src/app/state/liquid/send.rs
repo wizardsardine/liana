@@ -193,7 +193,12 @@ impl State for LiquidSend {
             view::dashboard(
                 menu,
                 cache,
-                view::liquid::transaction_detail_view(payment, fiat_converter, cache.bitcoin_unit),
+                view::liquid::transaction_detail_view(
+                    payment,
+                    fiat_converter,
+                    cache.bitcoin_unit,
+                    usdt_asset_id(self.breez_client.network()).unwrap_or(""),
+                ),
             )
         } else {
             let comment = self.comment.clone().unwrap_or("".to_string());
@@ -208,6 +213,7 @@ impl State for LiquidSend {
                 amount_input: &self.amount_input,
                 usdt_amount_input: &self.usdt_amount_input,
                 send_asset: self.send_asset,
+                usdt_asset_id: usdt_asset_id(self.breez_client.network()).unwrap_or(""),
                 comment,
                 description: self.description.as_deref(),
                 lightning_limits: self.lightning_limits,
@@ -1022,7 +1028,11 @@ impl State for LiquidSend {
                     self.comment = None;
                     self.amount_input = form::Value::default();
                     self.usdt_amount_input = form::Value::default();
-                    self.send_asset = SendAsset::Btc;
+                    self.send_asset = if self.usdt_only {
+                        SendAsset::Usdt
+                    } else {
+                        SendAsset::Btc
+                    };
                     self.input = form::Value::default();
                     self.input_type = None;
                 }
@@ -1126,7 +1136,11 @@ impl State for LiquidSend {
                     self.amount = Amount::ZERO;
                     self.amount_input = form::Value::default();
                     self.usdt_amount_input = form::Value::default();
-                    self.send_asset = SendAsset::Btc;
+                    self.send_asset = if self.usdt_only {
+                        SendAsset::Usdt
+                    } else {
+                        SendAsset::Btc
+                    };
                     self.input_type = None;
                     self.description = None;
                     self.comment = None;

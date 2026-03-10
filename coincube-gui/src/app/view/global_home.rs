@@ -245,6 +245,7 @@ fn vault_incoming_transfer_card<'a>(
     .into()
 }
 
+#[allow(clippy::too_many_arguments)]
 fn wallet_card<'a>(
     wallet_type: WalletType,
     balance: &Amount,
@@ -1226,8 +1227,7 @@ pub fn transfer_successful_view<'a>(
                 .push(Space::new().width(Length::Fill))
                 .push(
                     Row::new().spacing(5).push(
-                        text(format!(
-                            "{}",
+                        text(
                             if matches!(direction, TransferDirection::LiquidToVault)
                                 && pending_vault_incoming
                                     .map(|p| p.stage != IncomingTransferStage::Completed)
@@ -1250,8 +1250,8 @@ pub fn transfer_successful_view<'a>(
                                         "Liquid"
                                     }
                                 )
-                            }
-                        ))
+                            },
+                        )
                         .size(20),
                     ),
                 )

@@ -620,7 +620,7 @@ pub async fn export_liquid_payments(
     use breez_sdk_liquid::prelude::PaymentType;
     use chrono::DateTime;
 
-    use crate::app::breez::assets::{USDT_ASSET_ID_MAINNET, USDT_PRECISION};
+    use crate::app::breez::assets::USDT_ASSET_ID_MAINNET;
 
     let mut file = open_file_write(&path).await?;
 
@@ -659,19 +659,20 @@ pub async fn export_liquid_payments(
         );
 
         let line = if is_usdt {
-            let raw_usdt = if let PaymentDetails::Liquid {
+            let raw_usdt: Option<f64> = if let PaymentDetails::Liquid {
                 asset_info: Some(ref ai),
                 ..
             } = &payment.details
             {
-                ai.amount
+                Some(ai.amount)
             } else {
-                payment.amount_sat as f64 / 10_f64.powi(USDT_PRECISION as i32)
+                None
             };
-            let usdt_amount = format!("{:.2}", raw_usdt);
-            let net = match payment.payment_type {
-                PaymentType::Send => format!("-{}", usdt_amount),
-                PaymentType::Receive => usdt_amount.clone(),
+            let usdt_amount = raw_usdt.map(|v| format!("{:.2}", v)).unwrap_or_default();
+            let net = match (raw_usdt, payment.payment_type) {
+                (Some(v), PaymentType::Send) => format!("-{:.2}", v),
+                (Some(v), PaymentType::Receive) => format!("{:.2}", v),
+                (None, _) => String::new(),
             };
             format!(
                 "{},{},USDt,{},{},{:.8},{}\n",
