@@ -12,7 +12,7 @@ pub mod wallet;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use iced::{clipboard, time, Subscription, Task};
 use tokio::runtime::Handle;
@@ -432,6 +432,9 @@ impl Panels {
     }
 }
 
+/// Interval between bitcoind sync progress polls (in seconds).
+const BITCOIND_SYNC_POLL_INTERVAL: Duration = Duration::from_secs(10);
+
 pub struct App {
     cache: Cache,
     wallet: Option<Arc<Wallet>>,
@@ -447,6 +450,9 @@ pub struct App {
     /// True while a check_bitcoind_sync_progress probe is in flight; prevents
     /// multiple concurrent RPC calls from piling up across ticks.
     bitcoind_sync_probe_in_progress: bool,
+    /// Timestamp of the last bitcoind sync progress poll; used to rate-limit
+    /// RPC calls to once every BITCOIND_SYNC_POLL_INTERVAL.
+    last_bitcoind_sync_poll: Option<Instant>,
 }
 
 /// Returns true when a `DaemonError` indicates the daemon process is no longer
@@ -568,6 +574,7 @@ impl App {
                 errors: std::collections::BinaryHeap::with_capacity(8),
                 current_error_id: 256,
                 bitcoind_sync_probe_in_progress: false,
+                last_bitcoind_sync_poll: None,
             },
             cmd,
         )
@@ -626,6 +633,7 @@ impl App {
                 errors: std::collections::BinaryHeap::with_capacity(8),
                 current_error_id: 256,
                 bitcoind_sync_probe_in_progress: false,
+                last_bitcoind_sync_poll: None,
             },
             cmd,
         )
@@ -1015,10 +1023,14 @@ impl App {
             }
         }
 
+        // check if enough time has elapsed since the last poll
+        let should_poll = self.last_bitcoind_sync_poll
+        .map_or(true, |last| last.elapsed() > BITCOIND_SYNC_POLL_INTERVAL);
+
         // If a local Bitcoind node is pending (Connect is active, node is catching
         // up), poll its IBD progress every tick so we can switch when ready.
         // Guard: skip if a probe is already in flight to avoid queuing concurrent RPC calls.
-        if !self.bitcoind_sync_probe_in_progress {
+        if !self.bitcoind_sync_probe_in_progress && should_poll {
             if let Some(pending_cfg) = self
                 .daemon
                 .as_ref()
@@ -1026,6 +1038,7 @@ impl App {
                 .and_then(|c| c.pending_bitcoind.clone())
             {
                 self.bitcoind_sync_probe_in_progress = true;
+                self.last_bitcoind_sync_poll = Some(Instant::now()); 
                 tasks.push(Task::perform(
                     check_bitcoind_sync_progress(pending_cfg),
                     Message::BitcoindSyncProgress,
