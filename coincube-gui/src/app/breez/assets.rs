@@ -135,6 +135,53 @@ pub fn format_usdt_display(amount: u64) -> String {
 }
 
 // ---------------------------------------------------------------------------
+// Amount parsing
+// ---------------------------------------------------------------------------
+
+/// Parses a decimal asset amount string into integer minor units without using f64.
+///
+/// Rejects scientific notation, invalid characters, and fractional digits that exceed
+/// `scale`. Returns `None` for malformed, empty, or zero inputs.
+///
+/// ```
+/// use coincube_gui::app::breez::assets::parse_asset_to_minor_units;
+/// assert_eq!(parse_asset_to_minor_units("1.50", 8), Some(150_000_000));
+/// assert_eq!(parse_asset_to_minor_units("1e2",  8), None);  // scientific notation rejected
+/// assert_eq!(parse_asset_to_minor_units("0.0",  8), Some(0));
+/// assert_eq!(parse_asset_to_minor_units("1.000000001", 8), None);  // too many decimals
+/// ```
+pub fn parse_asset_to_minor_units(s: &str, scale: u8) -> Option<u64> {
+    if s.contains(['e', 'E']) {
+        return None;
+    }
+    let (whole_str, frac_str) = match s.split_once('.') {
+        Some((w, f)) => (w, f),
+        None => (s, ""),
+    };
+    if frac_str.len() > scale as usize {
+        return None;
+    }
+    let whole: u64 = if whole_str.is_empty() {
+        0
+    } else {
+        whole_str.parse().ok()?
+    };
+    let frac_padded: u64 = if frac_str.is_empty() {
+        0
+    } else {
+        if !frac_str.chars().all(|c| c.is_ascii_digit()) {
+            return None;
+        }
+        let padding = scale as usize - frac_str.len();
+        let padded = format!("{}{}", frac_str, "0".repeat(padding));
+        padded.parse().ok()?
+    };
+    let multiplier = 10_u64.pow(scale as u32);
+    let minor_units = whole.checked_mul(multiplier)?.checked_add(frac_padded)?;
+    Some(minor_units)
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 

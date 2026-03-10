@@ -6,7 +6,7 @@ use coincube_ui::component::{form, toast};
 use coincube_ui::widget::*;
 use iced::{clipboard, widget::qr_code, Subscription, Task};
 
-use crate::app::breez::assets::{usdt_asset_id, USDT_PRECISION};
+use crate::app::breez::assets::{parse_asset_to_minor_units, usdt_asset_id, USDT_PRECISION};
 use crate::app::settings::unit::BitcoinDisplayUnit;
 use crate::app::view::{LiquidReceiveMessage, ReceiveMethod};
 use crate::app::{breez::BreezClient, cache::Cache, menu::Menu, state::State};
@@ -562,12 +562,7 @@ impl LiquidReceive {
         if trimmed.is_empty() {
             return None;
         }
-        let display: f64 = trimmed.parse().ok()?;
-        if display < 0.0 {
-            return None;
-        }
-        let base_units = (display * 10_u64.pow(USDT_PRECISION as u32) as f64).round() as u64;
-        Some(base_units)
+        parse_asset_to_minor_units(trimmed, USDT_PRECISION)
     }
 
     fn parse_amount(&self, bitcoin_unit: BitcoinDisplayUnit) -> Option<Amount> {

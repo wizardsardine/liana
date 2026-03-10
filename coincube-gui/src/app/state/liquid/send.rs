@@ -10,7 +10,7 @@ use coincube_ui::{component::form, widget::*};
 use iced::Task;
 
 use crate::app::breez::assets::{usdt_asset_id, USDT_PRECISION};
-use crate::app::menu::{LiquidSubMenu, Menu};
+use crate::app::menu::{LiquidSubMenu, Menu, UsdtSubMenu};
 use crate::app::settings::unit::BitcoinDisplayUnit;
 use crate::app::state::{redirect, State};
 use crate::app::view::SendPopupMessage;
@@ -395,13 +395,23 @@ impl State for LiquidSend {
                     };
                 }
                 view::LiquidSendMessage::History => {
-                    return redirect(Menu::Liquid(LiquidSubMenu::Transactions(None)));
+                    let target = if self.usdt_only {
+                        Menu::Usdt(UsdtSubMenu::Transactions(None))
+                    } else {
+                        Menu::Liquid(LiquidSubMenu::Transactions(None))
+                    };
+                    return redirect(target);
                 }
                 view::LiquidSendMessage::SelectTransaction(idx) => {
                     if let Some(payment) = self.recent_payments.get(*idx).cloned() {
                         self.selected_payment = Some(payment.clone());
+                        let target = if self.usdt_only {
+                            Menu::Usdt(UsdtSubMenu::Transactions(None))
+                        } else {
+                            Menu::Liquid(LiquidSubMenu::Transactions(None))
+                        };
                         return Task::batch(vec![
-                            redirect(Menu::Liquid(LiquidSubMenu::Transactions(None))),
+                            redirect(target),
                             Task::done(Message::View(view::Message::PreselectPayment(payment))),
                         ]);
                     }
