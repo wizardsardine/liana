@@ -1026,7 +1026,7 @@ impl App {
         // check if enough time has elapsed since the last poll
         let should_poll = self
             .last_bitcoind_sync_poll
-            .map_or(true, |last| last.elapsed() > BITCOIND_SYNC_POLL_INTERVAL);
+            .is_none_or(|last| last.elapsed() > BITCOIND_SYNC_POLL_INTERVAL);
 
         // If a local Bitcoind node is pending (Connect is active, node is catching
         // up), poll its IBD progress every tick so we can switch when ready.
