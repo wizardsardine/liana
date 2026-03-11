@@ -559,6 +559,7 @@ pub struct DummyLiana {
 
 static mut COUNTER: sync::atomic::AtomicUsize = sync::atomic::AtomicUsize::new(0);
 fn uid() -> usize {
+    #[allow(static_mut_refs)]
     unsafe {
         let uid = COUNTER.load(sync::atomic::Ordering::Relaxed);
         COUNTER.fetch_add(1, sync::atomic::Ordering::Relaxed);

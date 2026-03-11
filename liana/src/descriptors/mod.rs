@@ -689,12 +689,12 @@ impl SinglePathLianaDesc {
         //
         // So we roll our own translation.
         struct Derivator<'a, C: secp256k1::Verification>(u32, &'a secp256k1::Secp256k1<C>);
-        impl<'a, C: secp256k1::Verification>
+        impl<C: secp256k1::Verification>
             Translator<
                 descriptor::DescriptorPublicKey,
                 DerivedPublicKey,
                 descriptor::ConversionError,
-            > for Derivator<'a, C>
+            > for Derivator<'_, C>
         {
             fn pk(
                 &mut self,

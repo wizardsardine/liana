@@ -31,8 +31,8 @@ where
     }
 }
 
-impl<'a, Message, Theme, Renderer> Widget<Message, Theme, Renderer>
-    for Manager<'a, Message, Theme, Renderer>
+impl<Message, Theme, Renderer> Widget<Message, Theme, Renderer>
+    for Manager<'_, Message, Theme, Renderer>
 where
     Renderer: iced::advanced::Renderer,
 {
@@ -207,8 +207,8 @@ struct Overlay<'a, 'b, Message, Theme, Renderer> {
     size: Size,
 }
 
-impl<'a, 'b, Message, Theme, Renderer> overlay::Overlay<Message, Theme, Renderer>
-    for Overlay<'a, 'b, Message, Theme, Renderer>
+impl<Message, Theme, Renderer> overlay::Overlay<Message, Theme, Renderer>
+    for Overlay<'_, '_, Message, Theme, Renderer>
 where
     Renderer: iced::advanced::Renderer,
 {
@@ -230,47 +230,6 @@ where
             self.state,
         )
         .translate(Vector::new(self.position.x, self.position.y))
-    }
-
-    fn on_event(
-        &mut self,
-        event: Event,
-        layout: Layout<'_>,
-        cursor_position: iced::mouse::Cursor,
-        renderer: &Renderer,
-        clipboard: &mut dyn Clipboard,
-        shell: &mut Shell<'_, Message>,
-    ) -> event::Status {
-        let viewport = layout.bounds();
-        self.toasts
-            .iter_mut()
-            .zip(self.state.iter_mut())
-            .zip(layout.children())
-            .zip(self.instants.iter_mut())
-            .map(|(((child, state), layout), instant)| {
-                let mut local_messages = vec![];
-                let mut local_shell = Shell::new(&mut local_messages);
-
-                let status = child.as_widget_mut().on_event(
-                    state,
-                    event.clone(),
-                    layout,
-                    cursor_position,
-                    renderer,
-                    clipboard,
-                    &mut local_shell,
-                    &viewport,
-                );
-
-                if !local_shell.is_empty() {
-                    instant.take();
-                }
-
-                shell.merge(local_shell, std::convert::identity);
-
-                status
-            })
-            .fold(event::Status::Ignored, event::Status::merge)
     }
 
     fn draw(
@@ -318,6 +277,47 @@ where
                         .operate(state, layout, renderer, operation);
                 })
         });
+    }
+
+    fn on_event(
+        &mut self,
+        event: Event,
+        layout: Layout<'_>,
+        cursor_position: iced::mouse::Cursor,
+        renderer: &Renderer,
+        clipboard: &mut dyn Clipboard,
+        shell: &mut Shell<'_, Message>,
+    ) -> event::Status {
+        let viewport = layout.bounds();
+        self.toasts
+            .iter_mut()
+            .zip(self.state.iter_mut())
+            .zip(layout.children())
+            .zip(self.instants.iter_mut())
+            .map(|(((child, state), layout), instant)| {
+                let mut local_messages = vec![];
+                let mut local_shell = Shell::new(&mut local_messages);
+
+                let status = child.as_widget_mut().on_event(
+                    state,
+                    event.clone(),
+                    layout,
+                    cursor_position,
+                    renderer,
+                    clipboard,
+                    &mut local_shell,
+                    &viewport,
+                );
+
+                if !local_shell.is_empty() {
+                    instant.take();
+                }
+
+                shell.merge(local_shell, std::convert::identity);
+
+                status
+            })
+            .fold(event::Status::Ignored, event::Status::merge)
     }
 
     fn mouse_interaction(
