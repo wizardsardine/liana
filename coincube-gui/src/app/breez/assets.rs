@@ -122,10 +122,15 @@ pub const USDT_DISPLAY_DECIMALS: u8 = 2;
 /// Format a USDt base-unit amount (8-decimal precision) for display with 2 decimal places.
 pub fn format_usdt_display(amount: u64) -> String {
     let divisor = 10_u64.pow(USDT_PRECISION as u32);
-    let whole = amount / divisor;
+    let mut whole = amount / divisor;
     let frac = amount % divisor;
     let scale = 10_u64.pow((USDT_PRECISION - USDT_DISPLAY_DECIMALS) as u32);
-    let frac_2dp = frac / scale;
+    let mut frac_2dp = (frac + scale / 2) / scale;
+    let carry_threshold = 10_u64.pow(USDT_DISPLAY_DECIMALS as u32);
+    if frac_2dp >= carry_threshold {
+        frac_2dp = 0;
+        whole += 1;
+    }
     format!(
         "{}.{:0>width$}",
         whole,
@@ -151,6 +156,10 @@ pub fn format_usdt_display(amount: u64) -> String {
 /// assert_eq!(parse_asset_to_minor_units("1.000000001", 8), None);  // too many decimals
 /// ```
 pub fn parse_asset_to_minor_units(s: &str, scale: u8) -> Option<u64> {
+    let s = s.trim();
+    if s.is_empty() {
+        return None;
+    }
     if s.contains(['e', 'E']) {
         return None;
     }
@@ -158,6 +167,9 @@ pub fn parse_asset_to_minor_units(s: &str, scale: u8) -> Option<u64> {
         Some((w, f)) => (w, f),
         None => (s, ""),
     };
+    if whole_str.is_empty() && frac_str.is_empty() {
+        return None;
+    }
     if frac_str.len() > scale as usize {
         return None;
     }

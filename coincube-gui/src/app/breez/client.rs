@@ -578,8 +578,9 @@ fn make_breez_stream(state: &BreezSubscriptionState) -> impl Stream<Item = breez
 
 /// Converts `amount` base-units to an `f64` display value by dividing by `10^precision`.
 ///
-/// Returns `Err(BreezError::Sdk)` if `amount` exceeds 2^53 (the largest integer that can be
-/// represented exactly in an f64 53-bit mantissa), preventing silent precision loss.
+/// Returns `Err(BreezError::Sdk)` if:
+/// - `amount` exceeds 2^53 (largest exactly-representable f64 integer), or
+/// - `precision` is so large that `10^precision` overflows `u64` (precision > 19).
 fn safe_base_units_to_f64(amount: u64, precision: u8) -> Result<f64, BreezError> {
     const MAX_EXACT_F64_INT: u64 = 1u64 << 53;
     if amount > MAX_EXACT_F64_INT {
@@ -588,7 +589,13 @@ fn safe_base_units_to_f64(amount: u64, precision: u8) -> Result<f64, BreezError>
             amount, MAX_EXACT_F64_INT,
         )));
     }
-    Ok(amount as f64 / 10_u64.pow(precision as u32) as f64)
+    let divisor = 10_u64.checked_pow(precision as u32).ok_or_else(|| {
+        BreezError::Sdk(format!(
+            "precision {} causes 10^precision to overflow u64",
+            precision,
+        ))
+    })?;
+    Ok(amount as f64 / divisor as f64)
 }
 
 struct BreezEventListener {

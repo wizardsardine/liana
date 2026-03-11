@@ -70,6 +70,7 @@ pub struct GlobalHome {
     breez_client: Arc<BreezClient>,
     liquid_balance: Amount,
     usdt_balance: u64,
+    usdt_balance_error: bool,
     wallet: Option<Arc<Wallet>>,
     balance_masked: bool,
     transfer_direction: Option<TransferDirection>,
@@ -107,6 +108,7 @@ impl GlobalHome {
             wallet: Some(wallet),
             liquid_balance: Amount::ZERO,
             usdt_balance: 0,
+            usdt_balance_error: false,
             breez_client,
             balance_masked: false,
             transfer_direction: None,
@@ -143,6 +145,7 @@ impl GlobalHome {
             wallet: None,
             liquid_balance: Amount::from_sat(0),
             usdt_balance: 0,
+            usdt_balance_error: false,
             breez_client,
             balance_masked: false,
             transfer_direction: None,
@@ -180,6 +183,7 @@ impl State for GlobalHome {
 
         let liquid_balance = self.liquid_balance;
         let usdt_balance = self.usdt_balance;
+        let usdt_balance_error = self.usdt_balance_error;
 
         // Fiat price is cube-level, not wallet-level, so get it directly from cache
         let fiat_converter: Option<view::FiatAmountConverter> =
@@ -191,6 +195,7 @@ impl State for GlobalHome {
             view::global_home::global_home_view(GlobalViewConfig {
                 liquid_balance,
                 usdt_balance,
+                usdt_balance_error,
                 vault_balance,
                 fiat_converter,
                 balance_masked: self.balance_masked,
@@ -652,6 +657,11 @@ impl State for GlobalHome {
                     }
                     HomeMessage::UsdtBalanceUpdated(usdt_balance) => {
                         self.usdt_balance = usdt_balance;
+                        self.usdt_balance_error = false;
+                        Task::none()
+                    }
+                    HomeMessage::UsdtBalanceFetchFailed => {
+                        self.usdt_balance_error = true;
                         Task::none()
                     }
                     HomeMessage::OnChainLimitsFetched { send, receive } => {
@@ -1050,7 +1060,10 @@ impl GlobalHome {
                 Ok(usdt_balance) => Message::View(view::Message::Home(
                     HomeMessage::UsdtBalanceUpdated(usdt_balance),
                 )),
-                Err(_) => Message::Tick,
+                Err(e) => {
+                    tracing::error!("USDt balance fetch failed: {:?}", e);
+                    Message::View(view::Message::Home(HomeMessage::UsdtBalanceFetchFailed))
+                }
             },
         )
     }

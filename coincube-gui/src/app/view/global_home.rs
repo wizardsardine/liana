@@ -29,7 +29,7 @@ use coincube_core::miniscript::bitcoin::Amount;
 #[derive(Clone, Copy, Debug)]
 enum WalletType {
     Liquid,
-    Usdt { balance: u64 },
+    Usdt { balance: u64, error: bool },
     Vault,
 }
 
@@ -283,7 +283,11 @@ fn wallet_card<'a>(
     };
 
     // USDt card renders its own balance display (not Amount-based)
-    if let WalletType::Usdt { balance: usdt_bal } = wallet_type {
+    if let WalletType::Usdt {
+        balance: usdt_bal,
+        error: usdt_error,
+    } = wallet_type
+    {
         let content = Column::new()
             .spacing(12)
             .push(
@@ -301,6 +305,10 @@ fn wallet_card<'a>(
                             .spacing(4)
                             .push(if balance_masked {
                                 Row::new().push(text("********").size(H2_SIZE))
+                            } else if usdt_error {
+                                Row::new().push(
+                                    text("Balance unavailable").size(P1_SIZE).color(color::RED),
+                                )
                             } else {
                                 Row::new()
                                     .spacing(10)
@@ -1302,6 +1310,7 @@ impl TransferDirection {
 pub struct GlobalViewConfig<'a> {
     pub liquid_balance: Amount,
     pub usdt_balance: u64,
+    pub usdt_balance_error: bool,
     pub vault_balance: Amount,
     pub fiat_converter: Option<FiatAmountConverter>,
     pub balance_masked: bool,
@@ -1350,6 +1359,7 @@ pub fn global_home_view<'a>(config: GlobalViewConfig<'a>) -> Element<'a, Message
     let GlobalViewConfig {
         liquid_balance,
         usdt_balance,
+        usdt_balance_error,
         vault_balance,
         fiat_converter,
         balance_masked,
@@ -1432,6 +1442,7 @@ pub fn global_home_view<'a>(config: GlobalViewConfig<'a>) -> Element<'a, Message
     let usdt_card = mouse_area(wallet_card(
         WalletType::Usdt {
             balance: usdt_balance,
+            error: usdt_balance_error,
         },
         &Amount::ZERO,
         fiat_converter,

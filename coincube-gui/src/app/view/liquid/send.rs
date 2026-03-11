@@ -592,9 +592,9 @@ pub fn amount_input_model<'a>(config: AmountInputConfig<'a>) -> Element<'a, Liqu
 
     let is_next_enabled = match config.send_asset {
         SendAsset::Usdt if matches!(config.input_type, Some(InputType::LiquidAddress { .. })) => {
-            config.usdt_amount_input.valid && !config.usdt_amount_input.value.is_empty()
+            config.usdt_amount_input.valid && !config.usdt_amount_input.value.trim().is_empty()
         }
-        _ => config.amount.valid && !config.amount.value.is_empty(),
+        _ => config.amount.valid && !config.amount.value.trim().is_empty(),
     };
 
     let next_button = button::primary(None, "Next").width(Length::Fill);

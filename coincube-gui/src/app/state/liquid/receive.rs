@@ -523,6 +523,12 @@ impl LiquidReceive {
     }
 
     fn generate_usdt(&mut self) -> Task<Message> {
+        if !self.usdt_amount_input.valid {
+            return Task::done(Message::View(view::Message::LiquidReceive(
+                LiquidReceiveMessage::Error("Invalid USDt amount".to_string()),
+            )));
+        }
+
         let network = self.breez_client.network();
         let asset_id = match usdt_asset_id(network) {
             Some(id) => id.to_string(),

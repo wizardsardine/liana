@@ -9,7 +9,7 @@ use coincube_core::miniscript::bitcoin::Amount;
 use coincube_ui::{component::form, widget::*};
 use iced::Task;
 
-use crate::app::breez::assets::{usdt_asset_id, USDT_PRECISION};
+use crate::app::breez::assets::{parse_asset_to_minor_units, usdt_asset_id, USDT_PRECISION};
 use crate::app::menu::{LiquidSubMenu, Menu, UsdtSubMenu};
 use crate::app::settings::unit::BitcoinDisplayUnit;
 use crate::app::state::{redirect, State};
@@ -114,7 +114,7 @@ impl LiquidSend {
         Task::perform(
             async move {
                 let info = breez_client.info().await;
-                let payments = breez_client.list_payments(Some(5)).await;
+                let payments = breez_client.list_payments(None).await;
 
                 let balance = info
                     .as_ref()
@@ -162,6 +162,7 @@ impl LiquidSend {
                             !is_usdt
                         }
                     })
+                    .take(5)
                     .collect();
 
                 (balance, usdt_balance, payments, error)
@@ -836,10 +837,10 @@ impl State for LiquidSend {
                             {
                                 let usdt_val_str = self.usdt_amount_input.value.trim().to_string();
                                 let usdt_base =
-                                    match usdt_val_str.parse::<f64>().ok().filter(|&v| v > 0.0) {
-                                        Some(v) => (v * 10_u64.pow(USDT_PRECISION as u32) as f64)
-                                            .round()
-                                            as u64,
+                                    match parse_asset_to_minor_units(&usdt_val_str, USDT_PRECISION)
+                                        .filter(|&v| v > 0)
+                                    {
+                                        Some(v) => v,
                                         None => {
                                             self.error = Some("Invalid USDt amount".to_string());
                                             return Task::none();
@@ -1007,14 +1008,14 @@ impl State for LiquidSend {
                         if trimmed.is_empty() {
                             self.usdt_amount_input.valid = true;
                             self.usdt_amount_input.warning = None;
-                        } else if let Ok(val) = trimmed.parse::<f64>() {
-                            if val <= 0.0 {
+                        } else if let Some(base_units) =
+                            parse_asset_to_minor_units(trimmed, USDT_PRECISION)
+                        {
+                            if base_units == 0 {
                                 self.usdt_amount_input.valid = false;
                                 self.usdt_amount_input.warning =
                                     Some("Amount must be greater than zero");
                             } else {
-                                let base_units =
-                                    (val * 10_u64.pow(USDT_PRECISION as u32) as f64).round() as u64;
                                 if base_units > self.usdt_balance {
                                     self.usdt_amount_input.valid = false;
                                     self.usdt_amount_input.warning =

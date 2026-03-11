@@ -399,6 +399,7 @@ pub enum HomeMessage {
     Error(String),
     LiquidBalanceUpdated(Amount),
     UsdtBalanceUpdated(u64),
+    UsdtBalanceFetchFailed,
     OnChainLimitsFetched {
         send: (u64, u64),    // (min_sat, max_sat)
         receive: (u64, u64), // (min_sat, max_sat)

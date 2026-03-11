@@ -43,7 +43,7 @@ impl UsdtOverview {
         Task::perform(
             async move {
                 let info = breez_client.info().await;
-                let payments = breez_client.list_payments(Some(5)).await;
+                let payments = breez_client.list_payments(None).await;
 
                 let usdt_balance = info
                     .as_ref()
@@ -167,6 +167,7 @@ impl State for UsdtOverview {
                                         .unwrap_or(false)
                             )
                         })
+                        .take(5)
                         .cloned()
                         .collect();
 

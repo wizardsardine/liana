@@ -620,7 +620,9 @@ pub async fn export_liquid_payments(
     use breez_sdk_liquid::prelude::PaymentType;
     use chrono::DateTime;
 
-    use crate::app::breez::assets::USDT_ASSET_ID_MAINNET;
+    use crate::app::breez::assets::usdt_asset_id;
+
+    let usdt_id = usdt_asset_id(breez_client.network()).unwrap_or("");
 
     let mut file = open_file_write(&path).await?;
 
@@ -655,7 +657,7 @@ pub async fn export_liquid_payments(
         // Detect USDt asset payments — real amount is in asset_info.amount, not amount_sat (which is 0)
         let is_usdt = matches!(
             &payment.details,
-            PaymentDetails::Liquid { asset_id, .. } if asset_id == USDT_ASSET_ID_MAINNET
+            PaymentDetails::Liquid { asset_id, .. } if asset_id == usdt_id
         );
 
         let line = if is_usdt {
