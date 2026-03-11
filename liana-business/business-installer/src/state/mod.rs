@@ -9,7 +9,7 @@ use crate::{
 };
 use async_hwi::{bitbox::NoiseConfig, service::HwiService};
 use crossbeam::channel;
-use liana_connect::ws_business::Wallet;
+use liana_connect::ws_business::{PolicyTemplate, Wallet};
 use liana_gui::{app::settings::global::PersistedBitboxNoiseConfig, dir::LianaDirectory};
 use liana_ui::widget::{modal::Modal, Element};
 pub use message::{Message, Msg};
@@ -211,38 +211,13 @@ impl State {
     }
 
     /// Check if the template is valid and ready for validation
-    /// Returns true if:
-    /// - Primary path has at least one key and valid threshold
-    /// - All secondary paths have non-zero timelocks
-    /// - All secondary paths have unique timelocks (no duplicates)
-    /// - All secondary paths have valid thresholds
     pub fn is_template_valid(&self) -> bool {
-        // Check primary path
-        if self.app.primary_path.key_ids.is_empty() {
-            return false;
-        }
-        if !self.app.primary_path.is_valid() {
-            return false;
-        }
-
-        // Check all secondary paths
-        let mut seen_timelocks = std::collections::HashSet::new();
-        for secondary in &self.app.secondary_paths {
-            // Check timelock is set (non-zero)
-            if secondary.timelock.is_zero() {
-                return false;
-            }
-            // Check for duplicate timelocks
-            if !seen_timelocks.insert(secondary.timelock.blocks) {
-                return false;
-            }
-            // Check path has at least one key and valid threshold
-            if !secondary.path.is_valid() {
-                return false;
-            }
-        }
-
-        true
+        let template = PolicyTemplate {
+            keys: self.app.keys.clone(),
+            primary_path: self.app.primary_path.clone(),
+            secondary_paths: self.app.secondary_paths.clone(),
+        };
+        template.is_valid()
     }
 
     pub fn selected_wallet(&self) -> Option<Wallet> {
