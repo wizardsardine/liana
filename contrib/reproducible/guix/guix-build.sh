@@ -80,10 +80,13 @@ cp "$PROJECT_ROOT/Cargo.lock" "$BUILD_ROOT/Cargo.lock"
 time_machine shell --no-cwd \
     --expose="$PWD/Cargo.toml=/liana/Cargo.toml" \
     --expose="$BUILD_ROOT/Cargo.lock=/liana/Cargo.lock" \
+    --expose="$PWD/build_common.rs=/liana/build_common.rs" \
     --expose="$PWD/liana/src=/liana/liana/src" \
     --expose="$PWD/liana/Cargo.toml=/liana/liana/Cargo.toml" \
     --expose="$PWD/lianad/src=/liana/lianad/src" \
+    --expose="$PWD/lianad/build.rs=/liana/lianad/build.rs" \
     --expose="$PWD/lianad/Cargo.toml=/liana/lianad/Cargo.toml" \
+    --expose="$PWD/liana-gui/build.rs=/liana/liana-gui/build.rs" \
     --expose="$PWD/liana-gui/Cargo.toml=/liana/liana-gui/Cargo.toml" \
     --expose="$PWD/liana-gui/src=/liana/liana-gui/src" \
     --expose="$PWD/liana-ui/src=/liana/liana-ui/src" \
@@ -99,7 +102,7 @@ time_machine shell --no-cwd \
     --fallback \
     --rebuild-cache \
     -m $PWD/contrib/reproducible/guix/manifest.scm \
-    -- env CC=gcc VENDOR_DIR="$PROJECT_VENDOR_DIR" TARGET_DIR="$PROJECT_OUT_DIR" IS_GUI="$IS_GUI" JOBS="$JOBS" \
+    -- env CC=gcc LIANA_VERSION="$LIANA_VERSION" VENDOR_DIR="$PROJECT_VENDOR_DIR" TARGET_DIR="$PROJECT_OUT_DIR" IS_GUI="$IS_GUI" JOBS="$JOBS" \
     /bin/sh -c "cd /liana && ./build.sh"
 
 set +ex

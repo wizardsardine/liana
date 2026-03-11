@@ -11,12 +11,20 @@ pub fn expose_liana_version() {
     }
 }
 
-/// Fetch the short git commit hash.
+/// Fetch the short git commit hash. Returns "unknown" if git is not available
+/// (e.g. in reproducible build environments like Nix or Guix).
 pub fn get_git_hash() -> String {
-    let output = Command::new("git")
+    Command::new("git")
         .args(["rev-parse", "--short", "HEAD"])
         .output()
-        .expect("Git command should succeed.");
-
-    String::from_utf8_lossy(&output.stdout).trim().to_string()
+        .ok()
+        .and_then(|output| {
+            if output.status.success() {
+                let hash = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                if hash.is_empty() { None } else { Some(hash) }
+            } else {
+                None
+            }
+        })
+        .unwrap_or_else(|| "unknown".to_string())
 }
