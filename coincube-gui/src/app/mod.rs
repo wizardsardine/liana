@@ -54,6 +54,7 @@ struct Panels {
     current: Menu,
     vault_expanded: bool,
     liquid_expanded: bool,
+    p2p_expanded: bool,
     // Always available panels
     global_home: GlobalHome,
     liquid_overview: LiquidOverview,
@@ -91,6 +92,7 @@ impl Panels {
             current: Menu::Home,
             vault_expanded: false,
             liquid_expanded: false,
+            p2p_expanded: false,
             // Liquid panels always available (use BreezClient, not Vault wallet)
             global_home: if let Some(w) = &wallet {
                 GlobalHome::new(
@@ -166,6 +168,7 @@ impl Panels {
             current: Menu::Home,
             vault_expanded: false,
             liquid_expanded: false,
+            p2p_expanded: false,
             global_home: GlobalHome::new(
                 wallet.clone(),
                 breez_client.clone(),
@@ -1120,6 +1123,10 @@ impl App {
                     self.panels.vault_expanded = false;
                     self.cache.vault_expanded = false;
                 }
+            }
+            Message::View(view::Message::ToggleP2P) => {
+                self.panels.p2p_expanded = !self.panels.p2p_expanded;
+                self.cache.p2p_expanded = self.panels.p2p_expanded;
             }
             Message::View(view::Message::OpenUrl(url)) => {
                 if let Err(e) = open::that_detached(&url) {

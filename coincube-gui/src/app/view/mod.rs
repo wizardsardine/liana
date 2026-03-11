@@ -79,25 +79,29 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<
         }
     };
 
-    let p2p_button = {
-        if matches!(menu, Menu::P2P(_)) {
-            row!(
-                button::menu_active(Some(person_icon()), "P2P")
-                    .on_press(Message::Reload)
-                    .width(iced::Length::Fill),
-                menu_bar_highlight()
-            )
-        } else {
-            row!(button::menu(Some(person_icon()), "P2P")
-                .on_press(Message::Menu(Menu::P2P(
-                    crate::app::menu::P2PSubMenu::Overview
-                )))
-                .width(iced::Length::Fill))
-        }
-    };
-
     // P2P submenu
     use crate::app::menu::P2PSubMenu;
+
+    let is_p2p_expanded = cache.p2p_expanded;
+
+    let p2p_chevron = if is_p2p_expanded {
+        up_icon()
+    } else {
+        down_icon()
+    };
+    let p2p_button = Button::new(
+        Row::new()
+            .spacing(10)
+            .align_y(iced::alignment::Vertical::Center)
+            .push(person_icon().style(theme::text::secondary))
+            .push(text("P2P").size(15))
+            .push(Space::new().width(Length::Fill))
+            .push(p2p_chevron.style(theme::text::secondary))
+            .padding(10),
+    )
+    .width(iced::Length::Fill)
+    .style(theme::button::menu)
+    .on_press(Message::ToggleP2P);
 
     let p2p_overview_button = if matches!(menu, Menu::P2P(P2PSubMenu::Overview)) {
         row!(
@@ -535,30 +539,33 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<
 
     menu_column = menu_column.push(has_vault.then_some(buy_sell_button));
     menu_column = menu_column.push(p2p_button);
-    let p2p_settings_button = if matches!(menu, Menu::P2P(P2PSubMenu::Settings)) {
-        row!(
-            Space::new().width(Length::Fixed(20.0)),
-            button::menu_active(Some(settings_icon()), "Settings")
-                .on_press(Message::Reload)
-                .width(iced::Length::Fill),
-            menu_bar_highlight()
-        )
-        .width(Length::Fill)
-    } else {
-        row!(
-            Space::new().width(Length::Fixed(20.0)),
-            button::menu(Some(settings_icon()), "Settings")
-                .on_press(Message::Menu(Menu::P2P(P2PSubMenu::Settings)))
-                .width(iced::Length::Fill),
-        )
-        .width(Length::Fill)
-    };
 
-    menu_column = menu_column
-        .push(p2p_overview_button)
-        .push(p2p_my_trades_button)
-        .push(p2p_create_order_button)
-        .push(p2p_settings_button);
+    if is_p2p_expanded {
+        let p2p_settings_button = if matches!(menu, Menu::P2P(P2PSubMenu::Settings)) {
+            row!(
+                Space::new().width(Length::Fixed(20.0)),
+                button::menu_active(Some(settings_icon()), "Settings")
+                    .on_press(Message::Reload)
+                    .width(iced::Length::Fill),
+                menu_bar_highlight()
+            )
+            .width(Length::Fill)
+        } else {
+            row!(
+                Space::new().width(Length::Fixed(20.0)),
+                button::menu(Some(settings_icon()), "Settings")
+                    .on_press(Message::Menu(Menu::P2P(P2PSubMenu::Settings)))
+                    .width(iced::Length::Fill),
+            )
+            .width(Length::Fill)
+        };
+
+        menu_column = menu_column
+            .push(p2p_overview_button)
+            .push(p2p_my_trades_button)
+            .push(p2p_create_order_button)
+            .push(p2p_settings_button);
+    }
 
     // Global Settings button (always visible at bottom of main menu)
     let global_settings_button = if matches!(menu, Menu::Settings(_)) {

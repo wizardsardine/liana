@@ -78,7 +78,19 @@ fn save_trades(cube_name: &str, trades: &[TradeSession]) -> Result<(), String> {
     let path = trades_file_path(cube_name)?;
     let bytes = serde_json::to_vec_pretty(trades)
         .map_err(|e| format!("Failed to serialize trades: {e}"))?;
-    std::fs::write(&path, bytes).map_err(|e| format!("Failed to write trades file: {e}"))?;
+    let dir = path
+        .parent()
+        .ok_or_else(|| "Trades file has no parent directory".to_string())?;
+    let tmp_path = dir.join(format!(".trades_{cube_name}.tmp"));
+    let mut tmp_file = std::fs::File::create(&tmp_path)
+        .map_err(|e| format!("Failed to create temp trades file: {e}"))?;
+    std::io::Write::write_all(&mut tmp_file, &bytes)
+        .map_err(|e| format!("Failed to write temp trades file: {e}"))?;
+    tmp_file
+        .sync_all()
+        .map_err(|e| format!("Failed to sync temp trades file: {e}"))?;
+    std::fs::rename(&tmp_path, &path)
+        .map_err(|e| format!("Failed to rename temp trades file: {e}"))?;
     Ok(())
 }
 
@@ -389,6 +401,13 @@ async fn send_mostro_message(
     let unwrapped = nip59::extract_rumor(&trade_keys, &response_event)
         .await
         .map_err(|e| format!("Failed to unwrap response: {e}"))?;
+
+    if unwrapped.rumor.pubkey != mostro_pubkey {
+        return Err(format!(
+            "Response sender mismatch: expected {mostro_pubkey}, got {}",
+            unwrapped.rumor.pubkey
+        ));
+    }
 
     let (response_message, _): (mostro_core::message::Message, Option<String>) =
         serde_json::from_str(&unwrapped.rumor.content)

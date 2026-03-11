@@ -57,6 +57,7 @@ pub enum Message {
     Menu(Menu),
     ToggleVault,
     ToggleLiquid,
+    ToggleP2P,
     SetupVault,
     Close,
     Select(usize),

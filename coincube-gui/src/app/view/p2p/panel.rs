@@ -1534,8 +1534,7 @@ impl State for P2PPanel {
                                         .width(Length::Fill),
                                 ]
                                 .spacing(16),
-                            )
-                            .into();
+                            );
                         }
                     }
 
