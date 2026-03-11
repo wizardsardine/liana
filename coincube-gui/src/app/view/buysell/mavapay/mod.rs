@@ -630,7 +630,8 @@ impl MavapayState {
                     let client = coincube_client.clone();
                     let request = SimulatePayInRequest {
                         order_id,
-                        amount: quote.amount_in_source_currency,
+                        amount: matches!(self.buy_or_sell, panel::BuyOrSell::Buy)
+                            .then_some(quote.amount_in_source_currency),
                         currency: quote.source_currency.clone().into(),
                     };
 

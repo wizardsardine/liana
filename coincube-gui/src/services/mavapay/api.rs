@@ -613,6 +613,7 @@ pub struct GetTransactionsResponse {
 #[serde(rename_all = "camelCase")]
 pub struct SimulatePayInRequest {
     pub order_id: String,
-    pub amount: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub amount: Option<u64>,
     pub currency: MavapayCurrency,
 }

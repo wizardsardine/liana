@@ -316,7 +316,8 @@ fn sell_input_form<'a>(
                 .spacing(0),
                 bank_account_name.as_ref().map(|s| {
                     widget::column![
-                        text::caption("Is this your registered name?").color(color::BLUE),
+                        text::caption("Is this the recipient's registered name?")
+                            .color(color::GREEN),
                         widget::container(widget::text(s).color(color::BLACK).size(20))
                             .padding(8)
                             .style(|_| {
