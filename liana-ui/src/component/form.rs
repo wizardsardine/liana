@@ -87,16 +87,30 @@ where
     /// - a function that produces a message when the [`Form`] changes
     pub fn new_amount_btc<F>(placeholder: &str, value: &'a Value<String>, on_change: F) -> Self
     where
-        F: 'static + Fn(String) -> Message,
+        F: 'static + Fn(String) -> Message + Clone,
     {
+        let on_change_clone = on_change.clone();
         Self {
-            input: text_input::TextInput::new(placeholder, &value.value).on_input(move |s| {
-                if bitcoin::Amount::from_str_in(&s, Denomination::Bitcoin).is_ok() || s.is_empty() {
-                    on_change(s)
-                } else {
-                    on_change(value.value.clone())
-                }
-            }),
+            input: text_input::TextInput::new(placeholder, &value.value)
+                .on_input(move |s| {
+                    if bitcoin::Amount::from_str_in(&s, Denomination::Bitcoin).is_ok()
+                        || s.is_empty()
+                        // In order to allow the user to fix an invalid pasted value, we allow deletion
+                        // even if the result is still invalid.
+                        // Note that all invalid characters must be deleted before the user can enter
+                        // new valid values.
+                        || s.chars().count() < value.value.chars().count()
+                    {
+                        on_change(s)
+                    } else {
+                        on_change(value.value.clone())
+                    }
+                })
+                .on_paste(move |pasted| {
+                    // Keep the entire pasted content and perform any required checks or modifications
+                    // in the on_change message handler.
+                    on_change_clone(pasted)
+                }),
             warning: value.warning,
             valid: value.valid,
         }

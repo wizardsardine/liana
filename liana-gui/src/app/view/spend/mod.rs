@@ -514,10 +514,19 @@ pub fn recipient_view<'a>(
         .push_maybe(fiat_price)
         .push_maybe(max)
         .width(Length::Fill);
-    let dust_warning_row = Row::new()
-        .push(Space::with_width(20))
-        .push_maybe(dust_warning.as_ref().map(|w| caption(w).color(color::RED)));
-    let amount_col = column![amount_row, dust_warning_row];
+    // Show dust warning, if any, or otherwise any amount warning.
+    let amount_warning_row = Row::new().push(Space::with_width(20)).push_maybe(
+        dust_warning
+            .as_ref()
+            .map(|w| caption(w).color(color::RED))
+            .or_else(|| {
+                amount
+                    .warning
+                    .as_ref()
+                    .map(|w| caption(w).color(color::ORANGE))
+            }),
+    );
+    let amount_col = column![amount_row, amount_warning_row];
 
     Container::new(
         Column::new()

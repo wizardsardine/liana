@@ -969,6 +969,7 @@ impl Recipient {
                 }
             }
             view::CreateSpendMessage::RecipientFiatAmountEdited(_, fiat_amt_str, converter) => {
+                self.amount.warning = None; // Clear any warning on the BTC amount as it is no longer the last edited field.
                 self.fiat_converter = Some(converter);
                 if fiat_amt_str.is_empty() {
                     self.fiat_amount = Some(form::Value::default());
@@ -1016,7 +1017,25 @@ impl Recipient {
             view::CreateSpendMessage::RecipientEdited(_, "amount", amount) => {
                 self.fiat_amount = None; // Clear any fiat amount to indicate BTC amount is now primary.
                 self.fiat_converter = None;
-                self.amount.value = amount;
+                self.amount.warning = None;
+
+                // If a float has been passed with more than 8 decimal places, and truncating it
+                // to 8 decimal places would result in a valid BTC amount, we truncate it and show a warning.
+                // This can only happen if the user pastes an amount, as the input only allows up to 8 decimal places.
+                // Otherwise, keep the full string value.
+                self.amount.value = f64::from_str(&amount)
+                    .ok()
+                    .and_then(|_| amount.split_once('.'))
+                    .filter(|(_, fraction)| fraction.len() > 8)
+                    .map(|(integer, fraction)| format!("{}.{}", integer, &fraction[..8]))
+                    .filter(|truncated| {
+                        Amount::from_str_in(truncated, Denomination::Bitcoin).is_ok()
+                    })
+                    .inspect(|_| {
+                        self.amount.warning = Some("Amount has been truncated to 8 decimal places");
+                    })
+                    .unwrap_or(amount);
+
                 if !self.amount.value.is_empty() {
                     self.amount.valid = self.amount().is_ok();
                 } else {
