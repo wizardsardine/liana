@@ -59,8 +59,4 @@ pub enum MavapayMessage {
 #[inline(always)]
 pub fn mavapay_supported(iso_code: &str) -> bool {
     ["NG", "KE", "ZA"].contains(&iso_code)
-        && matches!(
-            std::env::var("ENABLE_MAVAPAY").as_deref(),
-            Ok("1") | Ok("true")
-        )
 }
