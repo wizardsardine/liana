@@ -631,11 +631,21 @@ impl P2PPanel {
             column![].into()
         };
 
-        // Submit: amount (min_amount) is always required
-        let has_amount = !self.create_min_amount.value.is_empty();
+        // Submit: validate all required fields parse correctly
+        let has_amount = self.create_min_amount.value.parse::<f64>().is_ok();
         let has_payment_method = !self.create_payment_methods.is_empty()
             || !self.create_custom_payment_method.value.is_empty();
-        let can_submit = has_amount && has_payment_method && !self.order_submitting;
+        let pricing_valid = if is_range {
+            // Range orders require max_amount
+            self.create_max_amount.value.parse::<f64>().is_ok()
+        } else if *effective_pricing_mode == PricingMode::Fixed {
+            // Fixed pricing requires sats amount
+            self.create_sats_amount.value.parse::<u64>().is_ok()
+        } else {
+            true
+        };
+        let can_submit =
+            has_amount && has_payment_method && pricing_valid && !self.order_submitting;
 
         let submit_btn = if self.order_submitting {
             button::primary(None, "Submit").width(Length::Fill)
@@ -1233,7 +1243,15 @@ impl P2PPanel {
         }
 
         let can_confirm = if order.is_range_order() {
-            !self.take_order_amount.value.is_empty()
+            self.take_order_amount
+                .value
+                .parse::<f64>()
+                .map(|v| {
+                    let min = order.min_amount.unwrap_or(0.0);
+                    let max = order.max_amount.unwrap_or(f64::MAX);
+                    v >= min && v <= max
+                })
+                .unwrap_or(false)
         } else {
             true
         };
@@ -1426,8 +1444,7 @@ impl State for P2PPanel {
                                         .width(Length::Fill),
                                 ]
                                 .spacing(16),
-                            )
-                            .into();
+                            );
 
                             // Show take order modal overlay if taking
                             if self.taking_order {
@@ -1498,8 +1515,7 @@ impl State for P2PPanel {
                             },
                         ]
                         .spacing(16),
-                    )
-                    .into();
+                    );
 
                     // Show payment invoice modal if seller took a buy order
                     if let Some((ref oid, ref inv, amt)) = self.pending_payment_invoice {
@@ -1578,7 +1594,6 @@ impl State for P2PPanel {
                         ]
                         .spacing(16),
                     )
-                    .into()
                 }
                 P2PSubMenu::CreateOrder => {
                     let content: Element<'_, view::Message> = view::dashboard(
@@ -1600,8 +1615,7 @@ impl State for P2PPanel {
                                 .width(Length::Fill),
                         ]
                         .spacing(16),
-                    )
-                    .into();
+                    );
 
                     if self.confirming_order {
                         coincube_ui::widget::modal::Modal::new(
@@ -1631,8 +1645,7 @@ impl State for P2PPanel {
                             .width(Length::Fill),
                     ]
                     .spacing(16),
-                )
-                .into(),
+                ),
             }
         } else {
             view::dashboard(
@@ -1644,7 +1657,6 @@ impl State for P2PPanel {
                     "Mostro P2P trading integration",
                 ),
             )
-            .into()
         }
     }
 
@@ -1906,15 +1918,25 @@ impl State for P2PPanel {
                 self.taking_order = false;
             }
             P2PMessage::ConfirmTakeOrder => {
-                self.take_order_submitting = true;
-
                 if let Some(ref selected_id) = self.selected_order {
                     if let Some(order) = self.orders.iter().find(|o| o.id == *selected_id) {
                         let amount = if order.is_range_order() {
-                            self.take_order_amount.value.parse::<i64>().ok()
+                            match self.take_order_amount.value.parse::<i64>() {
+                                Ok(v) => {
+                                    let min = order.min_amount.unwrap_or(0.0) as i64;
+                                    let max = order.max_amount.unwrap_or(i64::MAX as f64) as i64;
+                                    if v < min || v > max {
+                                        return Task::none();
+                                    }
+                                    Some(v)
+                                }
+                                Err(_) => return Task::none(),
+                            }
                         } else {
                             None
                         };
+
+                        self.take_order_submitting = true;
                         let invoice = {
                             let v = self.take_order_invoice.value.trim().to_string();
                             if v.is_empty() {

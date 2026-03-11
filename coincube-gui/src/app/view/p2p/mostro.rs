@@ -50,13 +50,30 @@ fn default_role() -> String {
     "creator".to_string()
 }
 
+/// Sanitize a cube name so it is safe to use as a filename component.
+/// Replaces any character that isn't alphanumeric, hyphen, or underscore with '_',
+/// and rejects empty / dot-only results to prevent path traversal.
+fn safe_filename(name: &str) -> String {
+    let sanitized: String = name
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    if sanitized.is_empty() || sanitized.trim_matches('.').is_empty() {
+        "default".to_string()
+    } else {
+        sanitized
+    }
+}
+
 /// Path to the trades file for a given cube name.
 fn trades_file_path(cube_name: &str) -> Result<PathBuf, String> {
-    let data_dir = dirs::data_dir().ok_or_else(|| "Cannot determine data directory".to_string())?;
-    let mostro_dir = data_dir.join("coincube").join("mostro");
-    std::fs::create_dir_all(&mostro_dir)
-        .map_err(|e| format!("Failed to create mostro data dir: {e}"))?;
-    Ok(mostro_dir.join(format!("{cube_name}_trades.json")))
+    Ok(super::mostro_dir()?.join(format!("{}_trades.json", safe_filename(cube_name))))
 }
 
 fn load_trades(cube_name: &str) -> Vec<TradeSession> {
@@ -162,24 +179,20 @@ fn derive_trade_keys(mnemonic: &str, trade_index: i64) -> Result<Keys, String> {
 
 /// Path to the identity file for a given cube name.
 fn identity_file_path(cube_name: &str) -> Result<PathBuf, String> {
-    let data_dir = dirs::data_dir().ok_or_else(|| "Cannot determine data directory".to_string())?;
-    let mostro_dir = data_dir.join("coincube").join("mostro");
-    std::fs::create_dir_all(&mostro_dir)
-        .map_err(|e| format!("Failed to create mostro data dir: {e}"))?;
-    Ok(mostro_dir.join(format!("{cube_name}.json")))
+    Ok(super::mostro_dir()?.join(format!("{}.json", safe_filename(cube_name))))
 }
 
 /// Load or create a MostroIdentity from disk.
+/// If the file exists but cannot be parsed, returns an error instead of
+/// silently replacing the identity (which would lose the mnemonic).
 fn load_or_create_identity(cube_name: &str) -> Result<MostroIdentity, String> {
     let path = identity_file_path(cube_name)?;
 
-    // Try to load existing identity
     if path.exists() {
         let data =
             std::fs::read(&path).map_err(|e| format!("Failed to read identity file: {e}"))?;
-        if let Ok(identity) = serde_json::from_slice::<MostroIdentity>(&data) {
-            return Ok(identity);
-        }
+        return serde_json::from_slice::<MostroIdentity>(&data)
+            .map_err(|e| format!("Identity file is corrupted ({}): {e}", path.display()));
     }
 
     // Generate new mnemonic and store
@@ -196,12 +209,16 @@ fn load_or_create_identity(cube_name: &str) -> Result<MostroIdentity, String> {
     Ok(identity)
 }
 
-/// Persist the updated identity to disk.
+/// Persist the updated identity to disk atomically (write to temp, then rename).
 fn save_identity(cube_name: &str, identity: &MostroIdentity) -> Result<(), String> {
     let path = identity_file_path(cube_name)?;
+    let tmp_path = path.with_extension("tmp");
     let bytes = serde_json::to_vec_pretty(identity)
         .map_err(|e| format!("Failed to serialize identity: {e}"))?;
-    std::fs::write(&path, bytes).map_err(|e| format!("Failed to write identity file: {e}"))?;
+    std::fs::write(&tmp_path, bytes)
+        .map_err(|e| format!("Failed to write temp identity file: {e}"))?;
+    std::fs::rename(&tmp_path, &path)
+        .map_err(|e| format!("Failed to rename identity file into place: {e}"))?;
     Ok(())
 }
 
@@ -1135,6 +1152,7 @@ async fn fetch_user_trades(
                 premium_percent: Some(order.premium as f64),
                 payment_method: order.payment_method.clone(),
                 counterparty_rating: None,
+                created_at_ts: *event_ts as i64,
                 created_at: String::new(),
                 time_ago: format_time_ago(*event_ts),
                 last_dm_action: session.last_dm_action.clone(),
@@ -1146,14 +1164,14 @@ async fn fetch_user_trades(
     }
 
     // Sort newest first
-    trades.sort_by(|a, b| b.time_ago.cmp(&a.time_ago));
+    trades.sort_by_key(|t| std::cmp::Reverse(t.created_at_ts));
     trades
 }
 
 /// Build fallback trades from saved sessions (e.g. when relay is unreachable).
 fn sessions_to_fallback_trades(sessions: &[TradeSession]) -> Vec<P2PTrade> {
     let mut trades: Vec<P2PTrade> = sessions.iter().map(trade_from_session).collect();
-    trades.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    trades.sort_by_key(|t| std::cmp::Reverse(t.created_at_ts));
     trades
 }
 
@@ -1196,6 +1214,7 @@ fn trade_from_session(session: &TradeSession) -> P2PTrade {
         premium_percent: Some(session.premium as f64),
         payment_method: session.payment_method.clone(),
         counterparty_rating: None,
+        created_at_ts: session.created_at,
         created_at: String::new(),
         time_ago: format_time_ago(session.created_at as u64),
         last_dm_action: session.last_dm_action.clone(),
@@ -1261,6 +1280,7 @@ fn mostro_stream(
                 process_dm_notifications(
                     &client,
                     &cube_name,
+                    mostro_pk,
                     &mut last_dm_ts,
                     &mut output,
                     first_run,
@@ -1336,6 +1356,7 @@ async fn update_dm_subscriptions(
 async fn process_dm_notifications(
     client: &Client,
     cube_name: &str,
+    mostro_pubkey: PublicKey,
     last_dm_ts: &mut std::collections::HashMap<String, u64>,
     output: &mut iced::futures::channel::mpsc::Sender<Message>,
     silent: bool,
@@ -1395,6 +1416,11 @@ async fn process_dm_notifications(
             }
 
             if let Ok(unwrapped) = nip59::extract_rumor(keys, event).await {
+                // Verify the DM came from the expected Mostro node
+                if unwrapped.rumor.pubkey != mostro_pubkey {
+                    continue;
+                }
+
                 if let Ok((msg, _)) = serde_json::from_str::<(
                     mostro_core::message::Message,
                     Option<String>,

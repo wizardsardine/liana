@@ -120,11 +120,7 @@ impl MostroConfig {
 }
 
 fn config_file_path() -> Result<PathBuf, String> {
-    let data_dir = dirs::data_dir().ok_or_else(|| "Cannot determine data directory".to_string())?;
-    let mostro_dir = data_dir.join("coincube").join("mostro");
-    std::fs::create_dir_all(&mostro_dir)
-        .map_err(|e| format!("Failed to create mostro data dir: {e}"))?;
-    Ok(mostro_dir.join("config.json"))
+    Ok(super::mostro_dir()?.join("config.json"))
 }
 
 pub fn load_mostro_config() -> MostroConfig {

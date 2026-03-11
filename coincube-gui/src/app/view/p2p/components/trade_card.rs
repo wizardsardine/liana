@@ -35,7 +35,7 @@ impl TradeStatus {
             TradeStatus::FiatSent => "Fiat Sent",
             TradeStatus::Success => "Completed",
             TradeStatus::Canceled => "Canceled",
-            TradeStatus::CooperativelyCanceled => "Cancel Pending",
+            TradeStatus::CooperativelyCanceled => "Cooperatively Canceled",
             TradeStatus::Dispute => "Dispute",
             TradeStatus::Expired => "Expired",
         }
@@ -44,7 +44,10 @@ impl TradeStatus {
     pub fn is_terminal(&self) -> bool {
         matches!(
             self,
-            TradeStatus::Success | TradeStatus::Canceled | TradeStatus::Expired
+            TradeStatus::Success
+                | TradeStatus::Canceled
+                | TradeStatus::CooperativelyCanceled
+                | TradeStatus::Expired
         )
     }
 }
@@ -76,6 +79,7 @@ pub struct P2PTrade {
     pub premium_percent: Option<f64>,
     pub payment_method: String,
     pub counterparty_rating: Option<f32>,
+    pub created_at_ts: i64,
     pub created_at: String,
     pub time_ago: String,
     pub last_dm_action: Option<String>,
