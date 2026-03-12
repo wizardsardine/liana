@@ -262,7 +262,13 @@ impl Panels {
                 wallet.clone(),
                 breez_client.clone(),
             )),
-            p2p: Some(crate::app::view::p2p::P2PPanel::new(Some(wallet))),
+            p2p: Some(crate::app::view::p2p::P2PPanel::new(
+                Some(wallet),
+                breez_client
+                    .liquid_signer()
+                    .map(|s| s.lock().expect("signer lock").mnemonic_str())
+                    .unwrap_or_default(),
+            )),
         }
     }
 

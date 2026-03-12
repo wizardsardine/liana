@@ -19,11 +19,20 @@ const MOSTRO_INFO_EVENT_KIND: u16 = 38385;
 
 // ── Key management ──────────────────────────────────────────────────────
 
-/// Identity persisted to disk, keyed by cube name.
-#[derive(Serialize, Deserialize)]
-struct MostroIdentity {
-    mnemonic: String,
+/// All Mostro state persisted to a single file per cube.
+#[derive(Serialize, Deserialize, Default)]
+struct MostroData {
     last_trade_index: i64,
+    #[serde(default)]
+    trades: Vec<TradeSession>,
+}
+
+/// A single DM message from Mostro, persisted for state reconstruction.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct TradeMessage {
+    pub timestamp: u64,
+    pub action: String,
+    pub payload_json: String,
 }
 
 /// A trade session persisted to disk so we can track the user's own orders.
@@ -43,7 +52,7 @@ pub struct TradeSession {
     #[serde(default = "default_role")]
     pub role: String,
     #[serde(default)]
-    pub last_dm_action: Option<String>,
+    pub messages: Vec<TradeMessage>,
 }
 
 fn default_role() -> String {
@@ -71,66 +80,317 @@ fn safe_filename(name: &str) -> String {
     }
 }
 
-/// Path to the trades file for a given cube name.
-fn trades_file_path(cube_name: &str) -> Result<PathBuf, String> {
-    Ok(super::mostro_dir()?.join(format!("{}_trades.json", safe_filename(cube_name))))
+/// Path to the single Mostro data file for a given cube name.
+fn data_file_path(cube_name: &str) -> Result<PathBuf, String> {
+    Ok(super::mostro_dir()?.join(format!("{}_mostro.json", safe_filename(cube_name))))
 }
 
-fn load_trades(cube_name: &str) -> Vec<TradeSession> {
-    let path = match trades_file_path(cube_name) {
+fn load_data(cube_name: &str) -> MostroData {
+    let path = match data_file_path(cube_name) {
         Ok(p) => p,
-        Err(_) => return Vec::new(),
+        Err(_) => return MostroData::default(),
     };
     if !path.exists() {
-        return Vec::new();
+        return MostroData::default();
     }
     let data = match std::fs::read(&path) {
         Ok(d) => d,
-        Err(_) => return Vec::new(),
+        Err(_) => return MostroData::default(),
     };
     serde_json::from_slice(&data).unwrap_or_default()
 }
 
-fn save_trades(cube_name: &str, trades: &[TradeSession]) -> Result<(), String> {
-    let path = trades_file_path(cube_name)?;
-    let bytes = serde_json::to_vec_pretty(trades)
-        .map_err(|e| format!("Failed to serialize trades: {e}"))?;
+fn save_data(cube_name: &str, data: &MostroData) -> Result<(), String> {
+    let path = data_file_path(cube_name)?;
+    let bytes = serde_json::to_vec_pretty(data)
+        .map_err(|e| format!("Failed to serialize mostro data: {e}"))?;
     let dir = path
         .parent()
-        .ok_or_else(|| "Trades file has no parent directory".to_string())?;
-    let tmp_path = dir.join(format!(".trades_{cube_name}.tmp"));
-    let mut tmp_file = std::fs::File::create(&tmp_path)
-        .map_err(|e| format!("Failed to create temp trades file: {e}"))?;
+        .ok_or_else(|| "Data file has no parent directory".to_string())?;
+    let tmp_path = dir.join(format!(".mostro_{}.tmp", safe_filename(cube_name)));
+    let mut tmp_file =
+        std::fs::File::create(&tmp_path).map_err(|e| format!("Failed to create temp file: {e}"))?;
     std::io::Write::write_all(&mut tmp_file, &bytes)
-        .map_err(|e| format!("Failed to write temp trades file: {e}"))?;
+        .map_err(|e| format!("Failed to write temp file: {e}"))?;
     tmp_file
         .sync_all()
-        .map_err(|e| format!("Failed to sync temp trades file: {e}"))?;
-    std::fs::rename(&tmp_path, &path)
-        .map_err(|e| format!("Failed to rename temp trades file: {e}"))?;
+        .map_err(|e| format!("Failed to sync temp file: {e}"))?;
+    std::fs::rename(&tmp_path, &path).map_err(|e| format!("Failed to rename temp file: {e}"))?;
     Ok(())
 }
 
-/// Update the last_dm_action for a specific trade on disk.
-pub fn update_trade_dm_action(cube_name: &str, order_id: &str, action: &str) {
-    let mut trades = load_trades(cube_name);
-    if let Some(session) = trades.iter_mut().find(|t| t.order_id == order_id) {
-        session.last_dm_action = Some(action.to_string());
-        if let Err(e) = save_trades(cube_name, &trades) {
-            tracing::warn!("Failed to persist DM action: {e}");
+/// Append a DM message to a trade's message history on disk.
+/// Deduplicates by (timestamp, action) to avoid storing the same message twice.
+pub fn append_trade_message(cube_name: &str, order_id: &str, msg: TradeMessage) {
+    let mut data = load_data(cube_name);
+    if let Some(session) = data.trades.iter_mut().find(|t| t.order_id == order_id) {
+        let is_dup = session
+            .messages
+            .iter()
+            .any(|m| m.timestamp == msg.timestamp && m.action == msg.action);
+        if !is_dup {
+            session.messages.push(msg);
+            session.messages.sort_by_key(|m| m.timestamp);
+            if let Err(e) = save_data(cube_name, &data) {
+                tracing::warn!("Failed to persist trade message: {e}");
+            }
         }
     }
 }
 
+/// Get the latest DM action for a trade from its message history.
+pub fn latest_dm_action(session: &TradeSession) -> Option<&str> {
+    session.messages.last().map(|m| m.action.as_str())
+}
+
+/// Restore trades from Mostro using the protocol-level restore flow:
+/// 1. Send RestoreSession → get order IDs + trade indices
+/// 2. Send Orders request → get full order details
+/// 3. Send LastTradeIndex → get the correct last index
+/// Returns the number of trades recovered.
+pub async fn restore_trades(
+    cube_name: &str,
+    mnemonic: &str,
+    mostro_pubkey_hex: &str,
+    relay_urls: &[String],
+) -> Result<usize, String> {
+    // Use temp trade key at index 1 for all restore requests (same as mobile)
+    let temp_trade_index: i64 = 1;
+
+    tracing::info!("Restore: sending RestoreSession request");
+
+    // Step 1: Request restore data from Mostro
+    let restore_msg = mostro_core::message::Message::new_restore(None);
+    let (restore_response, _) = send_mostro_message(
+        mnemonic,
+        temp_trade_index,
+        mostro_pubkey_hex,
+        relay_urls,
+        restore_msg,
+    )
+    .await?;
+
+    let restore_inner = restore_response.get_inner_message_kind();
+
+    // CantDo means no orders found for this user
+    if restore_inner.action == mostro_core::message::Action::CantDo {
+        tracing::info!("Restore: Mostro returned CantDo — no orders found");
+        return Ok(0);
+    }
+
+    // Extract order list + trade indices from RestoreData payload
+    let restore_info = match &restore_inner.payload {
+        Some(mostro_core::message::Payload::RestoreData(info)) => info.clone(),
+        _ => {
+            return Err(format!(
+                "Restore: unexpected response payload: {:?}",
+                restore_inner.action
+            ));
+        }
+    };
+
+    if restore_info.restore_orders.is_empty() {
+        tracing::info!("Restore: no orders in restore data");
+        return Ok(0);
+    }
+
+    tracing::info!(
+        "Restore: received {} orders, {} disputes",
+        restore_info.restore_orders.len(),
+        restore_info.restore_disputes.len(),
+    );
+
+    // Build order_id → trade_index map
+    let mut order_map: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
+    for order_info in &restore_info.restore_orders {
+        order_map.insert(order_info.order_id.to_string(), order_info.trade_index);
+    }
+    // Include disputed orders too
+    for dispute_info in &restore_info.restore_disputes {
+        order_map.insert(dispute_info.order_id.to_string(), dispute_info.trade_index);
+    }
+
+    // Step 2: Request full order details
+    let order_uuids: Vec<uuid::Uuid> = order_map
+        .keys()
+        .filter_map(|id| uuid::Uuid::parse_str(id).ok())
+        .collect();
+
+    tracing::info!(
+        "Restore: requesting details for {} orders",
+        order_uuids.len()
+    );
+
+    let request_id = uuid::Uuid::new_v4().as_u128() as u64;
+    let orders_msg = mostro_core::message::Message::new_order(
+        None,
+        Some(request_id),
+        Some(temp_trade_index),
+        mostro_core::message::Action::Orders,
+        Some(mostro_core::message::Payload::Ids(order_uuids)),
+    );
+    let orders_response = send_mostro_message(
+        mnemonic,
+        temp_trade_index,
+        mostro_pubkey_hex,
+        relay_urls,
+        orders_msg,
+    )
+    .await;
+
+    // Parse order details (best-effort — restore can still work without full details)
+    let mut order_details: std::collections::HashMap<String, mostro_core::order::SmallOrder> =
+        std::collections::HashMap::new();
+    if let Ok((resp, _)) = &orders_response {
+        let inner = resp.get_inner_message_kind();
+        if let Some(mostro_core::message::Payload::Orders(orders)) = &inner.payload {
+            for order in orders {
+                if let Some(id) = &order.id {
+                    order_details.insert(id.to_string(), order.clone());
+                }
+            }
+            tracing::info!(
+                "Restore: received details for {} orders",
+                order_details.len()
+            );
+        }
+    } else {
+        tracing::warn!("Restore: failed to fetch order details, continuing with partial data");
+    }
+
+    // Step 3: Request last trade index
+    tracing::info!("Restore: requesting last trade index");
+    let last_index_kind = mostro_core::message::MessageKind::new(
+        None,
+        None,
+        None,
+        mostro_core::message::Action::LastTradeIndex,
+        None,
+    );
+    let last_index_msg = mostro_core::message::Message::Restore(last_index_kind);
+    let last_trade_index = match send_mostro_message(
+        mnemonic,
+        temp_trade_index,
+        mostro_pubkey_hex,
+        relay_urls,
+        last_index_msg,
+    )
+    .await
+    {
+        Ok((resp, _)) => {
+            let inner = resp.get_inner_message_kind();
+            let idx = inner.trade_index();
+            tracing::info!("Restore: last trade index from Mostro = {}", idx);
+            idx
+        }
+        Err(e) => {
+            // Fall back to highest index from restored orders
+            let fallback = order_map.values().copied().max().unwrap_or(0);
+            tracing::warn!(
+                "Restore: failed to get last trade index ({e}), using fallback={fallback}"
+            );
+            fallback
+        }
+    };
+
+    // Step 4: Build sessions from restore data + order details
+    let mut sessions: Vec<TradeSession> = Vec::new();
+
+    for (order_id, trade_index) in &order_map {
+        let details = order_details.get(order_id);
+
+        let kind = details
+            .and_then(|d| {
+                d.kind.as_ref().map(|k| match k {
+                    mostro_core::order::Kind::Buy => "buy".to_string(),
+                    mostro_core::order::Kind::Sell => "sell".to_string(),
+                })
+            })
+            .unwrap_or_else(|| "unknown".to_string());
+
+        // Try to determine role from order's trade pubkeys
+        let trade_keys = derive_trade_keys(mnemonic, *trade_index).ok();
+        let our_pubkey = trade_keys.as_ref().map(|k| k.public_key().to_hex());
+        let role = if let (Some(d), Some(ref pk)) = (details, &our_pubkey) {
+            if d.buyer_trade_pubkey.as_deref() == Some(pk) {
+                "taker" // We're the buyer, likely took a sell order
+            } else if d.seller_trade_pubkey.as_deref() == Some(pk) {
+                "taker" // We're the seller, likely took a buy order
+            } else {
+                "creator"
+            }
+        } else {
+            "unknown"
+        };
+
+        // Get status from restore info
+        let status_str = restore_info
+            .restore_orders
+            .iter()
+            .find(|o| o.order_id.to_string() == *order_id)
+            .map(|o| o.status.clone());
+
+        // Build initial message from the status if available
+        let messages = if let Some(status) = &status_str {
+            vec![TradeMessage {
+                timestamp: chrono::Utc::now().timestamp() as u64,
+                action: status.clone(),
+                payload_json: String::new(),
+            }]
+        } else {
+            Vec::new()
+        };
+
+        sessions.push(TradeSession {
+            order_id: order_id.clone(),
+            trade_index: *trade_index,
+            kind,
+            fiat_code: details.map(|d| d.fiat_code.clone()).unwrap_or_default(),
+            fiat_amount: details.map(|d| d.fiat_amount).unwrap_or(0),
+            min_amount: details.and_then(|d| d.min_amount),
+            max_amount: details.and_then(|d| d.max_amount),
+            amount: details.map(|d| d.amount).unwrap_or(0),
+            premium: details.map(|d| d.premium).unwrap_or(0),
+            payment_method: details
+                .map(|d| d.payment_method.clone())
+                .unwrap_or_default(),
+            created_at: details
+                .and_then(|d| d.created_at)
+                .unwrap_or_else(|| chrono::Utc::now().timestamp()),
+            role: role.to_string(),
+            messages,
+        });
+    }
+
+    let count = sessions.len();
+    let data = MostroData {
+        last_trade_index: last_trade_index,
+        trades: sessions,
+    };
+    save_data(cube_name, &data)?;
+
+    tracing::info!(
+        "Restore: recovered {} trades, last_trade_index={}",
+        count,
+        last_trade_index
+    );
+
+    Ok(count)
+}
+
 fn append_trade(cube_name: &str, session: TradeSession) -> Result<(), String> {
-    let mut trades = load_trades(cube_name);
+    let mut data = load_data(cube_name);
     // Replace existing session for the same order (re-take after cancel uses new keys)
-    if let Some(existing) = trades.iter_mut().find(|t| t.order_id == session.order_id) {
+    if let Some(existing) = data
+        .trades
+        .iter_mut()
+        .find(|t| t.order_id == session.order_id)
+    {
         *existing = session;
     } else {
-        trades.push(session);
+        data.trades.push(session);
     }
-    save_trades(cube_name, &trades)?;
+    save_data(cube_name, &data)?;
     Ok(())
 }
 
@@ -187,51 +447,6 @@ fn derive_trade_keys(mnemonic: &str, trade_index: i64) -> Result<Keys, String> {
         Some(0),
     )
     .map_err(|e| format!("Failed to derive trade keys: {e}"))
-}
-
-/// Path to the identity file for a given cube name.
-fn identity_file_path(cube_name: &str) -> Result<PathBuf, String> {
-    Ok(super::mostro_dir()?.join(format!("{}.json", safe_filename(cube_name))))
-}
-
-/// Load or create a MostroIdentity from disk.
-/// If the file exists but cannot be parsed, returns an error instead of
-/// silently replacing the identity (which would lose the mnemonic).
-fn load_or_create_identity(cube_name: &str) -> Result<MostroIdentity, String> {
-    let path = identity_file_path(cube_name)?;
-
-    if path.exists() {
-        let data =
-            std::fs::read(&path).map_err(|e| format!("Failed to read identity file: {e}"))?;
-        return serde_json::from_slice::<MostroIdentity>(&data)
-            .map_err(|e| format!("Identity file is corrupted ({}): {e}", path.display()));
-    }
-
-    // Generate new mnemonic and store
-    let mnemonic = bip39::Mnemonic::generate(12)
-        .map_err(|e| format!("Failed to generate mnemonic: {e}"))?
-        .to_string();
-
-    let identity = MostroIdentity {
-        mnemonic,
-        last_trade_index: 0,
-    };
-
-    save_identity(cube_name, &identity)?;
-    Ok(identity)
-}
-
-/// Persist the updated identity to disk atomically (write to temp, then rename).
-fn save_identity(cube_name: &str, identity: &MostroIdentity) -> Result<(), String> {
-    let path = identity_file_path(cube_name)?;
-    let tmp_path = path.with_extension("tmp");
-    let bytes = serde_json::to_vec_pretty(identity)
-        .map_err(|e| format!("Failed to serialize identity: {e}"))?;
-    std::fs::write(&tmp_path, bytes)
-        .map_err(|e| format!("Failed to write temp identity file: {e}"))?;
-    std::fs::rename(&tmp_path, &path)
-        .map_err(|e| format!("Failed to rename identity file into place: {e}"))?;
-    Ok(())
 }
 
 /// Info fetched from the Mostro info event (kind 38385): order limits and accepted currencies.
@@ -337,17 +552,24 @@ async fn send_mostro_message(
         .map_err(|e| format!("Invalid Mostro pubkey: {e}"))?;
 
     let trade_keys = derive_trade_keys(mnemonic, trade_index)?;
+    let master_keys = derive_trade_keys(mnemonic, 0)?;
 
-    // Build gift wrap content: (Message, Option<Signature>) with None signature
-    let content: (mostro_core::message::Message, Option<Signature>) = (message, None);
+    // Build gift wrap content with trade-key signature for identity proof
+    let msg_json =
+        serde_json::to_string(&message).map_err(|e| format!("Failed to serialize message: {e}"))?;
+    let msg_hash = bitcoin_hashes::sha256::Hash::hash(msg_json.as_bytes());
+    let secp_msg = nostr_sdk::secp256k1::Message::from_digest(msg_hash.to_byte_array());
+    let sig = trade_keys.sign_schnorr(&secp_msg);
+    let content: (mostro_core::message::Message, Option<Signature>) = (message, Some(sig));
     let content_json =
         serde_json::to_string(&content).map_err(|e| format!("Failed to serialize content: {e}"))?;
 
-    // Create rumor (unsigned event)
+    // Rumor uses trade_keys pubkey (per-trade identity)
     let rumor = EventBuilder::text_note(content_json).build(trade_keys.public_key());
 
-    // Create gift wrap event
-    let gift_wrap_event = EventBuilder::gift_wrap(&trade_keys, &mostro_pubkey, rumor, [])
+    // Gift wrap uses master_keys for the seal layer, so Mostro can link
+    // all trades from the same user (enables protocol-level restore)
+    let gift_wrap_event = EventBuilder::gift_wrap(&master_keys, &mostro_pubkey, rumor, [])
         .await
         .map_err(|e| format!("Failed to create gift wrap: {e}"))?;
 
@@ -435,6 +657,7 @@ pub struct OrderFormData {
     pub premium: i64,
     pub payment_method: String,
     pub cube_name: String,
+    pub mnemonic: String,
     pub buyer_invoice: Option<String>,
     pub expiry_days: u32,
     pub mostro_pubkey_hex: String,
@@ -449,9 +672,8 @@ pub enum OrderSubmitResponse {
 
 /// Submit an order to Mostro via NIP-59 gift wrap.
 pub async fn submit_order(form: OrderFormData) -> Result<OrderSubmitResponse, String> {
-    // Load or create identity
-    let mut identity = load_or_create_identity(&form.cube_name)?;
-    let next_idx = identity.last_trade_index + 1;
+    let mut data = load_data(&form.cube_name);
+    let next_idx = data.last_trade_index + 1;
 
     // Expiration based on user-chosen days (0 = no expiration)
     let expires_at = if form.expiry_days > 0 {
@@ -503,7 +725,7 @@ pub async fn submit_order(form: OrderFormData) -> Result<OrderSubmitResponse, St
     );
 
     let (response_message, limits) = send_mostro_message(
-        &identity.mnemonic,
+        &form.mnemonic,
         next_idx,
         &form.mostro_pubkey_hex,
         &form.relay_urls,
@@ -538,9 +760,9 @@ pub async fn submit_order(form: OrderFormData) -> Result<OrderSubmitResponse, St
 
     tracing::info!("Order created successfully, order_id={}", order_id);
 
-    // Update trade index in keyring
-    identity.last_trade_index = next_idx;
-    save_identity(&form.cube_name, &identity)?;
+    // Update trade index
+    data.last_trade_index = next_idx;
+    save_data(&form.cube_name, &data)?;
 
     // Persist trade session to disk (best-effort — order already succeeded)
     let session = TradeSession {
@@ -559,7 +781,7 @@ pub async fn submit_order(form: OrderFormData) -> Result<OrderSubmitResponse, St
         payment_method: saved_payment_method,
         created_at: chrono::Utc::now().timestamp(),
         role: "creator".to_string(),
-        last_dm_action: None,
+        messages: Vec::new(),
     };
     if let Err(e) = append_trade(&form.cube_name, session) {
         tracing::warn!("Failed to persist trade session: {e}");
@@ -575,6 +797,7 @@ pub struct TakeOrderData {
     pub order_id: String,
     pub order_type: OrderType,
     pub cube_name: String,
+    pub mnemonic: String,
     pub amount: Option<i64>,
     pub lightning_invoice: Option<String>,
     pub mostro_pubkey_hex: String,
@@ -601,8 +824,8 @@ pub enum TakeOrderResponse {
 
 /// Take an existing order from the order book.
 pub async fn take_order(data: TakeOrderData) -> Result<TakeOrderResponse, String> {
-    let mut identity = load_or_create_identity(&data.cube_name)?;
-    let next_idx = identity.last_trade_index + 1;
+    let mut mdata = load_data(&data.cube_name);
+    let next_idx = mdata.last_trade_index + 1;
 
     let order_uuid =
         uuid::Uuid::parse_str(&data.order_id).map_err(|e| format!("Invalid order ID: {e}"))?;
@@ -659,7 +882,7 @@ pub async fn take_order(data: TakeOrderData) -> Result<TakeOrderResponse, String
     );
 
     let (response_message, limits) = send_mostro_message(
-        &identity.mnemonic,
+        &data.mnemonic,
         next_idx,
         &data.mostro_pubkey_hex,
         &data.relay_urls,
@@ -680,8 +903,8 @@ pub async fn take_order(data: TakeOrderData) -> Result<TakeOrderResponse, String
     }
 
     // Update trade index
-    identity.last_trade_index = next_idx;
-    save_identity(&data.cube_name, &identity)?;
+    mdata.last_trade_index = next_idx;
+    save_data(&data.cube_name, &mdata)?;
 
     // Determine our role's order kind: if we take a sell, we're buying
     let our_kind = match data.order_type {
@@ -702,7 +925,7 @@ pub async fn take_order(data: TakeOrderData) -> Result<TakeOrderResponse, String
         payment_method: String::new(),
         created_at: chrono::Utc::now().timestamp(),
         role: "taker".to_string(),
-        last_dm_action: None,
+        messages: Vec::new(),
     };
     if let Err(e) = append_trade(&data.cube_name, session) {
         tracing::warn!("Failed to persist take-order session: {e}");
@@ -739,6 +962,7 @@ pub async fn take_order(data: TakeOrderData) -> Result<TakeOrderResponse, String
 pub struct TradeActionData {
     pub order_id: String,
     pub cube_name: String,
+    pub mnemonic: String,
     pub invoice: Option<String>,
     pub mostro_pubkey_hex: String,
     pub relay_urls: Vec<String>,
@@ -780,13 +1004,11 @@ async fn trade_action(
     data: TradeActionData,
     action: mostro_core::message::Action,
 ) -> Result<TradeActionResponse, String> {
-    let sessions = load_trades(&data.cube_name);
+    let sessions = load_data(&data.cube_name).trades;
     let session = sessions
         .iter()
         .find(|s| s.order_id == data.order_id)
         .ok_or_else(|| format!("No trade session found for order {}", data.order_id))?;
-
-    let identity = load_or_create_identity(&data.cube_name)?;
 
     let order_uuid =
         uuid::Uuid::parse_str(&data.order_id).map_err(|e| format!("Invalid order ID: {e}"))?;
@@ -837,7 +1059,7 @@ async fn trade_action(
     );
 
     let (response_message, limits) = send_mostro_message(
-        &identity.mnemonic,
+        &data.mnemonic,
         session.trade_index,
         &data.mostro_pubkey_hex,
         &data.relay_urls,
@@ -1059,7 +1281,7 @@ async fn fetch_mostro_orders(
         }
     }
 
-    let sessions = load_trades(cube_name);
+    let sessions = load_data(cube_name).trades;
     let my_order_ids: std::collections::HashSet<&str> = sessions
         .iter()
         .filter(|s| s.role == "creator")
@@ -1084,7 +1306,7 @@ async fn fetch_user_trades(
     cube_name: &str,
     mostro_pubkey: PublicKey,
 ) -> Vec<P2PTrade> {
-    let sessions = load_trades(cube_name);
+    let sessions = load_data(cube_name).trades;
     if sessions.is_empty() {
         return Vec::new();
     }
@@ -1131,9 +1353,7 @@ async fn fetch_user_trades(
                 .as_ref()
                 .map(map_trade_status)
                 .unwrap_or(TradeStatus::Pending);
-            let status = session
-                .last_dm_action
-                .as_deref()
+            let status = latest_dm_action(session)
                 .and_then(dm_action_to_status)
                 .unwrap_or(relay_status);
             let order_type = match session.kind.as_str() {
@@ -1163,7 +1383,7 @@ async fn fetch_user_trades(
                 created_at_ts: *event_ts as i64,
                 created_at: String::new(),
                 time_ago: format_time_ago(*event_ts),
-                last_dm_action: session.last_dm_action.clone(),
+                last_dm_action: latest_dm_action(session).map(String::from),
             });
         } else {
             // Not found on relay — fallback from saved session
@@ -1202,9 +1422,7 @@ fn trade_from_session(session: &TradeSession) -> P2PTrade {
         // Range order — show min as the display amount
         session.min_amount.unwrap_or(0) as f64
     };
-    let status = session
-        .last_dm_action
-        .as_deref()
+    let status = latest_dm_action(session)
         .and_then(dm_action_to_status)
         .unwrap_or(TradeStatus::Pending);
     P2PTrade {
@@ -1225,7 +1443,7 @@ fn trade_from_session(session: &TradeSession) -> P2PTrade {
         created_at_ts: session.created_at,
         created_at: String::new(),
         time_ago: format_time_ago(session.created_at as u64),
-        last_dm_action: session.last_dm_action.clone(),
+        last_dm_action: latest_dm_action(session).map(String::from),
     }
 }
 
@@ -1233,18 +1451,20 @@ fn trade_from_session(session: &TradeSession) -> P2PTrade {
 /// When any of the three values change, iced detects a hash change and restarts the subscription.
 pub fn mostro_subscription(
     cube_name: String,
+    mnemonic: String,
     active_pubkey: String,
     relays: Vec<String>,
 ) -> Subscription<Message> {
-    Subscription::run_with((cube_name, active_pubkey, relays), mostro_stream)
+    Subscription::run_with((cube_name, mnemonic, active_pubkey, relays), mostro_stream)
 }
 
 fn mostro_stream(
-    params: &(String, String, Vec<String>),
+    params: &(String, String, String, Vec<String>),
 ) -> impl iced::futures::Stream<Item = Message> + 'static {
     let cube_name = params.0.clone();
-    let pubkey_hex = params.1.clone();
-    let relay_urls = params.2.clone();
+    let mnemonic = params.1.clone();
+    let pubkey_hex = params.2.clone();
+    let relay_urls = params.3.clone();
     iced::stream::channel(
         32,
         move |mut output: iced::futures::channel::mpsc::Sender<Message>| async move {
@@ -1280,14 +1500,39 @@ fn mostro_stream(
                 let _ = output.send(msg).await;
             }
 
+            // Auto-restore: if we have a mnemonic but no local trades, scan relay for DMs
+            let data = load_data(&cube_name);
+            if data.trades.is_empty() && !mnemonic.is_empty() {
+                tracing::info!("No local trades found — attempting DM-scan restore");
+                match restore_trades(&cube_name, &mnemonic, &pubkey_hex, &relay_urls).await {
+                    Ok(0) => tracing::info!("Restore: no trades found on relay"),
+                    Ok(n) => {
+                        tracing::info!("Restore: recovered {} trades from relay", n);
+                        let msg = Message::View(view::Message::ShowSuccess(format!(
+                            "Recovered {} trade(s) from relay",
+                            n
+                        )));
+                        let _ = output.send(msg).await;
+                    }
+                    Err(e) => tracing::warn!("Restore failed: {e}"),
+                }
+            }
+
             loop {
                 // Subscribe to gift-wrap DMs for any new trade pubkeys
-                update_dm_subscriptions(&client, &cube_name, &mut subscribed_trade_pubkeys).await;
+                update_dm_subscriptions(
+                    &client,
+                    &cube_name,
+                    &mnemonic,
+                    &mut subscribed_trade_pubkeys,
+                )
+                .await;
 
                 // Process DMs: first run is silent (state recovery only), subsequent runs send toasts
                 process_dm_notifications(
                     &client,
                     &cube_name,
+                    &mnemonic,
                     mostro_pk,
                     &mut last_dm_ts,
                     &mut output,
@@ -1318,21 +1563,17 @@ fn mostro_stream(
 async fn update_dm_subscriptions(
     client: &Client,
     cube_name: &str,
+    mnemonic: &str,
     subscribed_pubkeys: &mut Vec<PublicKey>,
 ) {
-    let sessions = load_trades(cube_name);
+    let sessions = load_data(cube_name).trades;
     if sessions.is_empty() {
         return;
     }
 
-    let identity = match load_or_create_identity(cube_name) {
-        Ok(id) => id,
-        Err(_) => return,
-    };
-
     let mut new_pubkeys: Vec<PublicKey> = Vec::new();
     for session in &sessions {
-        if let Ok(keys) = derive_trade_keys(&identity.mnemonic, session.trade_index) {
+        if let Ok(keys) = derive_trade_keys(mnemonic, session.trade_index) {
             let pk = keys.public_key();
             if !subscribed_pubkeys.contains(&pk) {
                 new_pubkeys.push(pk);
@@ -1364,24 +1605,20 @@ async fn update_dm_subscriptions(
 async fn process_dm_notifications(
     client: &Client,
     cube_name: &str,
+    mnemonic: &str,
     mostro_pubkey: PublicKey,
     last_dm_ts: &mut std::collections::HashMap<String, u64>,
     output: &mut iced::futures::channel::mpsc::Sender<Message>,
     silent: bool,
 ) {
-    let sessions = load_trades(cube_name);
+    let sessions = load_data(cube_name).trades;
     if sessions.is_empty() {
         return;
     }
 
-    let identity = match load_or_create_identity(cube_name) {
-        Ok(id) => id,
-        Err(_) => return,
-    };
-
     let mut session_keys: Vec<(TradeSession, Keys)> = Vec::new();
     for session in &sessions {
-        if let Ok(keys) = derive_trade_keys(&identity.mnemonic, session.trade_index) {
+        if let Ok(keys) = derive_trade_keys(mnemonic, session.trade_index) {
             session_keys.push((session.clone(), keys));
         }
     }
@@ -1440,8 +1677,16 @@ async fn process_dm_notifications(
 
                     last_dm_ts.insert(session.order_id.clone(), event_ts);
 
-                    // Persist the DM action to disk
-                    update_trade_dm_action(cube_name, &session.order_id, &action);
+                    // Persist the full message to disk
+                    append_trade_message(
+                        cube_name,
+                        &session.order_id,
+                        TradeMessage {
+                            timestamp: event_ts,
+                            action: action.clone(),
+                            payload_json: payload_json.clone(),
+                        },
+                    );
 
                     // Only send UI updates (toasts) for new DMs, not historical replay
                     if !silent {

@@ -39,6 +39,7 @@ fn detail_row(label: impl ToString, value: impl ToString) -> Element<'static, vi
 
 pub struct P2PPanel {
     wallet: Option<Arc<Wallet>>,
+    mnemonic: String,
     // Node currencies (fetched from info event, empty = use fallback)
     node_currencies: Vec<String>,
     // Order book state
@@ -84,9 +85,10 @@ pub struct P2PPanel {
 }
 
 impl P2PPanel {
-    pub fn new(wallet: Option<Arc<Wallet>>) -> Self {
+    pub fn new(wallet: Option<Arc<Wallet>>, mnemonic: String) -> Self {
         Self {
             wallet,
+            mnemonic,
             node_currencies: Vec::new(),
             orders: Vec::new(),
             buy_sell_filter: BuySellFilter::Sell,
@@ -247,6 +249,7 @@ impl P2PPanel {
                 .as_ref()
                 .map(|w| w.name.clone())
                 .unwrap_or_else(|| "default".to_string()),
+            mnemonic: self.mnemonic.clone(),
             buyer_invoice: if self.create_order_type == OrderType::Buy {
                 let addr = self.create_lightning_address.value.trim().to_string();
                 if addr.is_empty() {
@@ -285,6 +288,7 @@ impl P2PPanel {
                     .as_ref()
                     .map(|w| w.name.clone())
                     .unwrap_or_else(|| "default".to_string()),
+                mnemonic: self.mnemonic.clone(),
                 invoice,
                 mostro_pubkey_hex: self.mostro_config.active_pubkey_hex().to_string(),
                 relay_urls: self.mostro_config.relays.clone(),
@@ -1684,9 +1688,10 @@ impl State for P2PPanel {
             .as_ref()
             .map(|w| w.name.clone())
             .unwrap_or_else(|| "default".to_string());
+        let mnemonic = self.mnemonic.clone();
         let active_pubkey = self.mostro_config.active_pubkey_hex().to_string();
         let relays = self.mostro_config.relays.clone();
-        super::mostro::mostro_subscription(cube_name, active_pubkey, relays)
+        super::mostro::mostro_subscription(cube_name, mnemonic, active_pubkey, relays)
     }
 
     fn update(
@@ -1805,6 +1810,7 @@ impl State for P2PPanel {
                         .as_ref()
                         .map(|w| w.name.clone())
                         .unwrap_or_else(|| "default".to_string()),
+                    mnemonic: self.mnemonic.clone(),
                     invoice: None,
                     mostro_pubkey_hex: self.mostro_config.active_pubkey_hex().to_string(),
                     relay_urls: self.mostro_config.relays.clone(),
@@ -1971,6 +1977,7 @@ impl State for P2PPanel {
                                 .as_ref()
                                 .map(|w| w.name.clone())
                                 .unwrap_or_else(|| "default".to_string()),
+                            mnemonic: self.mnemonic.clone(),
                             amount,
                             lightning_invoice: invoice,
                             mostro_pubkey_hex: self.mostro_config.active_pubkey_hex().to_string(),
@@ -2072,10 +2079,14 @@ impl State for P2PPanel {
                                 .as_ref()
                                 .map(|w| w.name.clone())
                                 .unwrap_or_else(|| "default".to_string());
-                            super::mostro::update_trade_dm_action(
+                            super::mostro::append_trade_message(
                                 &cube_name,
                                 order_id,
-                                &new_status,
+                                super::mostro::TradeMessage {
+                                    timestamp: chrono::Utc::now().timestamp() as u64,
+                                    action: new_status.clone(),
+                                    payload_json: String::new(),
+                                },
                             );
                         }
 
@@ -2091,26 +2102,35 @@ impl State for P2PPanel {
             }
             // Real-time DM updates
             P2PMessage::TradeUpdate {
-                order_id, action, ..
+                order_id,
+                action,
+                payload_json,
             } => {
                 tracing::info!("Trade update for {}: {}", order_id, action);
 
                 // Update last_dm_action and status on the matching in-memory trade
                 if let Some(trade) = self.trades.iter_mut().find(|t| t.id == order_id) {
                     trade.last_dm_action = Some(action.clone());
-                    // Also update the displayed status from the DM action
                     if let Some(new_status) = super::mostro::dm_action_to_status(&action) {
                         trade.status = new_status;
                     }
                 }
 
-                // Persist to disk
+                // Persist full message to disk (deduplication handled inside)
                 let cube_name = self
                     .wallet
                     .as_ref()
                     .map(|w| w.name.clone())
                     .unwrap_or_else(|| "default".to_string());
-                super::mostro::update_trade_dm_action(&cube_name, &order_id, &action);
+                super::mostro::append_trade_message(
+                    &cube_name,
+                    &order_id,
+                    super::mostro::TradeMessage {
+                        timestamp: chrono::Utc::now().timestamp() as u64,
+                        action: action.clone(),
+                        payload_json,
+                    },
+                );
 
                 return Task::done(Message::View(view::Message::ShowSuccess(format!(
                     "Trade update: {} ({})",
