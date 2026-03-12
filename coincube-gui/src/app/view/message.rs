@@ -427,4 +427,10 @@ pub enum HomeMessage {
         swap_id: String,
     },
     PendingTransferAnimationTick,
+    PendingAmountsUpdated {
+        liquid_send_sats: u64,
+        usdt_send_sats: u64,
+        liquid_receive_sats: u64,
+        usdt_receive_sats: u64,
+    },
 }

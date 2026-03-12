@@ -30,22 +30,68 @@ pub fn liquid_overview_view<'a>(
 
     let btc_fiat = fiat_converter.as_ref().map(|c| c.convert(btc_balance));
 
+    let pending_outgoing_sats: u64 = recent_transaction
+        .iter()
+        .filter(|t| !t.is_incoming && matches!(t.status, PaymentState::Pending))
+        .map(|t| (t.amount + t.fees_sat).to_sat())
+        .sum();
+
+    let pending_incoming_sats: u64 = recent_transaction
+        .iter()
+        .filter(|t| t.is_incoming && matches!(t.status, PaymentState::Pending))
+        .map(|t| t.amount.to_sat())
+        .sum();
+
     // ── Balance header ────────────────────────────────────────────────────────
-    let balance_col = Column::new().spacing(8).push(h4_bold("Balance")).push(
-        Column::new()
-            .spacing(4)
-            .push(amount_with_size_and_unit(
-                &btc_balance,
-                H2_SIZE,
-                bitcoin_unit,
-            ))
-            .push_maybe(btc_fiat.map(|fiat| -> Element<'_, LiquidOverviewMessage> {
-                text(format!("~{} {}", fiat.to_rounded_string(), fiat.currency()))
-                    .size(P1_SIZE)
-                    .style(theme::text::secondary)
-                    .into()
-            })),
-    );
+    let balance_inner = Column::new()
+        .spacing(4)
+        .push(amount_with_size_and_unit(
+            &btc_balance,
+            H2_SIZE,
+            bitcoin_unit,
+        ))
+        .push_maybe(btc_fiat.map(|fiat| -> Element<'_, LiquidOverviewMessage> {
+            text(format!("~{} {}", fiat.to_rounded_string(), fiat.currency()))
+                .size(P1_SIZE)
+                .style(theme::text::secondary)
+                .into()
+        }))
+        .push_maybe(if pending_outgoing_sats > 0 {
+            Some(
+                Row::new()
+                    .spacing(6)
+                    .align_y(Alignment::Center)
+                    .push(icon::warning_icon().size(12).style(theme::text::secondary))
+                    .push(text("-").size(P2_SIZE).style(theme::text::secondary))
+                    .push(amount_with_size_and_unit(
+                        &Amount::from_sat(pending_outgoing_sats),
+                        P2_SIZE,
+                        bitcoin_unit,
+                    ))
+                    .push(text("pending").size(P2_SIZE).style(theme::text::secondary)),
+            )
+        } else {
+            None
+        })
+        .push_maybe(if pending_incoming_sats > 0 {
+            Some(
+                Row::new()
+                    .spacing(6)
+                    .align_y(Alignment::Center)
+                    .push(icon::warning_icon().size(12).style(theme::text::secondary))
+                    .push(text("+").size(P2_SIZE).style(theme::text::secondary))
+                    .push(amount_with_size_and_unit(
+                        &Amount::from_sat(pending_incoming_sats),
+                        P2_SIZE,
+                        bitcoin_unit,
+                    ))
+                    .push(text("pending").size(P2_SIZE).style(theme::text::secondary)),
+            )
+        } else {
+            None
+        });
+
+    let balance_col = Column::new().spacing(8).push(h4_bold("Balance")).push(balance_inner);
 
     let action_buttons = Row::new()
         .spacing(8)

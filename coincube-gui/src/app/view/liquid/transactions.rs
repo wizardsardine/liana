@@ -16,7 +16,7 @@ use iced::{
     Alignment, Length,
 };
 
-use crate::app::breez::assets::format_usdt_display;
+use crate::app::breez::assets::{format_usdt_display, USDT_PRECISION};
 use crate::app::menu::Menu;
 use crate::app::view::message::{FeeratePriority, Message};
 use crate::app::view::FiatAmountConverter;
@@ -33,7 +33,9 @@ fn usdt_amount_str(payment: &Payment, usdt_id: &str) -> Option<String> {
     {
         if !usdt_id.is_empty() && asset_id == usdt_id {
             let display = if let Some(info) = asset_info {
-                format!("{:.2}", info.amount)
+                format_usdt_display(
+                    (info.amount * 10_f64.powi(USDT_PRECISION as i32)).round() as u64,
+                )
             } else {
                 format_usdt_display(payment.amount_sat)
             };
@@ -298,7 +300,9 @@ pub fn transaction_detail_view<'a>(
         let usdt_num = match &payment.details {
             PaymentDetails::Liquid { asset_info, .. } => {
                 if let Some(info) = asset_info {
-                    format!("{:.2}", info.amount)
+                    format_usdt_display(
+                        (info.amount * 10_f64.powi(USDT_PRECISION as i32)).round() as u64,
+                    )
                 } else {
                     format_usdt_display(payment.amount_sat)
                 }

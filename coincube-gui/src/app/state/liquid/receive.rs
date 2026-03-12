@@ -295,6 +295,7 @@ impl State for LiquidReceive {
 
                             // Clear inputs after successful address generation
                             self.amount_input = form::Value::default();
+                            self.usdt_amount_input = form::Value::default();
                             self.description_input.clear();
                         }
                         Err(e) => {

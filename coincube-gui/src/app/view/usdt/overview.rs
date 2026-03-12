@@ -28,23 +28,71 @@ pub fn usdt_overview_view<'a>(
 ) -> Element<'a, UsdtOverviewMessage> {
     let mut content = Column::new().spacing(20);
 
+    let pending_outgoing_sats: u64 = recent_transaction
+        .iter()
+        .filter(|t| !t.is_incoming && matches!(t.status, PaymentState::Pending))
+        .map(|t| t.amount.to_sat())
+        .sum();
+
+    let pending_incoming_sats: u64 = recent_transaction
+        .iter()
+        .filter(|t| t.is_incoming && matches!(t.status, PaymentState::Pending))
+        .map(|t| t.amount.to_sat())
+        .sum();
+
     // ── Balance header ────────────────────────────────────────────────────────
-    let balance_col = Column::new().spacing(8).push(h4_bold("Balance")).push(
-        Column::new()
-            .spacing(4)
-            .push(
+    let balance_inner = Column::new()
+        .spacing(4)
+        .push(
+            Row::new()
+                .spacing(10)
+                .align_y(Alignment::Center)
+                .push(text(format_usdt_display(usdt_balance)).size(H2_SIZE).bold())
+                .push(text("USDt").size(H2_SIZE).color(color::GREY_3)),
+        )
+        .push(
+            text("Liquid Network")
+                .size(P1_SIZE)
+                .style(theme::text::secondary),
+        )
+        .push_maybe(if pending_outgoing_sats > 0 {
+            Some(
                 Row::new()
-                    .spacing(10)
+                    .spacing(6)
                     .align_y(Alignment::Center)
-                    .push(text(format_usdt_display(usdt_balance)).size(H2_SIZE).bold())
-                    .push(text("USDt").size(H2_SIZE).color(color::GREY_3)),
+                    .push(icon::warning_icon().size(12).style(theme::text::secondary))
+                    .push(
+                        text(format!(
+                            "-{} USDt pending",
+                            format_usdt_display(pending_outgoing_sats)
+                        ))
+                        .size(P2_SIZE)
+                        .style(theme::text::secondary),
+                    ),
             )
-            .push(
-                text("Liquid Network")
-                    .size(P1_SIZE)
-                    .style(theme::text::secondary),
-            ),
-    );
+        } else {
+            None
+        })
+        .push_maybe(if pending_incoming_sats > 0 {
+            Some(
+                Row::new()
+                    .spacing(6)
+                    .align_y(Alignment::Center)
+                    .push(icon::warning_icon().size(12).style(theme::text::secondary))
+                    .push(
+                        text(format!(
+                            "+{} USDt pending",
+                            format_usdt_display(pending_incoming_sats)
+                        ))
+                        .size(P2_SIZE)
+                        .style(theme::text::secondary),
+                    ),
+            )
+        } else {
+            None
+        });
+
+    let balance_col = Column::new().spacing(8).push(h4_bold("Balance")).push(balance_inner);
 
     let action_buttons = Row::new()
         .spacing(8)

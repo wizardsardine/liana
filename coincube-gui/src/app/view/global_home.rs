@@ -4,7 +4,7 @@ use coincube_ui::{
     component::{amount::*, button, form, text::*},
     icon::{
         arrow_down_up_icon, arrow_right, check_circle_icon, eye_outline_icon, eye_slash_icon,
-        lightning_icon, usd_icon, vault_icon,
+        lightning_icon, usd_icon, vault_icon, warning_icon,
     },
     theme,
     widget::*,
@@ -255,6 +255,8 @@ fn wallet_card<'a>(
     bitcoin_unit: coincube_ui::component::amount::BitcoinDisplayUnit,
     pending_vault_incoming: Option<PendingIncomingTransfer>,
     pending_animation_phase: f32,
+    pending_send_sats: u64,
+    pending_receive_sats: u64,
 ) -> Element<'a, Message> {
     let fiat_balance = fiat_converter.as_ref().map(|c| c.convert(*balance));
 
@@ -320,6 +322,48 @@ fn wallet_card<'a>(
                                 text("Liquid Network")
                                     .size(P1_SIZE)
                                     .style(theme::text::secondary),
+                            )
+                            .push_maybe(
+                                (!balance_masked && !usdt_error && pending_send_sats > 0).then(|| {
+                                    Row::new()
+                                        .spacing(6)
+                                        .align_y(Alignment::Center)
+                                        .push(
+                                            warning_icon()
+                                                .size(12)
+                                                .style(theme::text::secondary),
+                                        )
+                                        .push(
+                                            text(format!(
+                                                "-{} USDt pending",
+                                                format_usdt_display(pending_send_sats)
+                                            ))
+                                            .size(P2_SIZE)
+                                            .style(theme::text::secondary),
+                                        )
+                                }),
+                            )
+                            .push_maybe(
+                                (!balance_masked && !usdt_error && pending_receive_sats > 0).then(
+                                    || {
+                                        Row::new()
+                                            .spacing(6)
+                                            .align_y(Alignment::Center)
+                                            .push(
+                                                warning_icon()
+                                                    .size(12)
+                                                    .style(theme::text::secondary),
+                                            )
+                                            .push(
+                                                text(format!(
+                                                    "+{} USDt pending",
+                                                    format_usdt_display(pending_receive_sats)
+                                                ))
+                                                .size(P2_SIZE)
+                                                .style(theme::text::secondary),
+                                            )
+                                    },
+                                ),
                             )
                             .width(Length::Fill),
                     )
@@ -406,7 +450,54 @@ fn wallet_card<'a>(
                             } else {
                                 fiat_balance
                                     .map(|fiat| fiat.to_text().size(P1_SIZE).color(color::GREY_2))
-                            }),
+                            })
+                            .push_maybe(
+                                (!balance_masked && pending_send_sats > 0).then(|| {
+                                    Row::new()
+                                        .spacing(6)
+                                        .align_y(Alignment::Center)
+                                        .push(
+                                            warning_icon()
+                                                .size(12)
+                                                .style(theme::text::secondary),
+                                        )
+                                        .push(text("-").size(P2_SIZE).style(theme::text::secondary))
+                                        .push(amount_with_size_and_unit(
+                                            &Amount::from_sat(pending_send_sats),
+                                            P2_SIZE,
+                                            bitcoin_unit,
+                                        ))
+                                        .push(
+                                            text("pending")
+                                                .size(P2_SIZE)
+                                                .style(theme::text::secondary),
+                                        )
+                                }),
+                            )
+                            .push_maybe(
+                                (!balance_masked && pending_receive_sats > 0).then(|| {
+                                    Row::new()
+                                        .spacing(6)
+                                        .align_y(Alignment::Center)
+                                        .push(
+                                            warning_icon()
+                                                .size(12)
+                                                .style(theme::text::secondary),
+                                        )
+                                        .push(text("+").size(P2_SIZE).style(theme::text::secondary))
+                                        .push(amount_with_size_and_unit(
+                                            &Amount::from_sat(pending_receive_sats),
+                                            P2_SIZE,
+                                            bitcoin_unit,
+                                        ))
+                                        .push(
+                                            text("pending")
+                                                .size(P2_SIZE)
+                                                .style(theme::text::secondary),
+                                        )
+                                }),
+                            )
+                            .width(Length::Fill),
                     )
                     .push(Space::new().width(Length::Fill))
                     .push_maybe(matches!(wallet_type, WalletType::Liquid).then(|| {
@@ -1311,6 +1402,12 @@ pub struct GlobalViewConfig<'a> {
     pub liquid_balance: Amount,
     pub usdt_balance: u64,
     pub usdt_balance_error: bool,
+    pub pending_liquid_send_sats: u64,
+    pub pending_usdt_send_sats: u64,
+    pub pending_liquid_receive_sats: u64,
+    pub pending_usdt_receive_sats: u64,
+    pub vault_pending_send_sats: u64,
+    pub vault_pending_receive_sats: u64,
     pub vault_balance: Amount,
     pub fiat_converter: Option<FiatAmountConverter>,
     pub balance_masked: bool,
@@ -1360,6 +1457,12 @@ pub fn global_home_view<'a>(config: GlobalViewConfig<'a>) -> Element<'a, Message
         liquid_balance,
         usdt_balance,
         usdt_balance_error,
+        pending_liquid_send_sats,
+        pending_usdt_send_sats,
+        pending_liquid_receive_sats,
+        pending_usdt_receive_sats,
+        vault_pending_send_sats,
+        vault_pending_receive_sats,
         vault_balance,
         fiat_converter,
         balance_masked,
@@ -1436,6 +1539,8 @@ pub fn global_home_view<'a>(config: GlobalViewConfig<'a>) -> Element<'a, Message
         bitcoin_unit,
         pending_vault_incoming,
         pending_animation_phase,
+        pending_liquid_send_sats,
+        pending_liquid_receive_sats,
     ))
     .on_press(Message::Menu(Menu::Liquid(LiquidSubMenu::Overview)));
 
@@ -1451,6 +1556,8 @@ pub fn global_home_view<'a>(config: GlobalViewConfig<'a>) -> Element<'a, Message
         bitcoin_unit,
         None,
         0.0,
+        pending_usdt_send_sats,
+        pending_usdt_receive_sats,
     ))
     .on_press(Message::Menu(Menu::Usdt(UsdtSubMenu::Overview)));
 
@@ -1463,6 +1570,8 @@ pub fn global_home_view<'a>(config: GlobalViewConfig<'a>) -> Element<'a, Message
         bitcoin_unit,
         pending_vault_incoming,
         pending_animation_phase,
+        vault_pending_send_sats,
+        vault_pending_receive_sats,
     ))
     .on_press(Message::Menu(Menu::Vault(VaultSubMenu::Overview)));
 

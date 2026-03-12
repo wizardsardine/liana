@@ -114,7 +114,7 @@ impl LiquidSend {
         Task::perform(
             async move {
                 let info = breez_client.info().await;
-                let payments = breez_client.list_payments(None).await;
+                let payments = breez_client.list_payments(Some(20)).await;
 
                 let balance = info
                     .as_ref()
@@ -240,7 +240,12 @@ impl State for LiquidSend {
         if let Message::View(view::Message::LiquidSend(ref msg)) = message {
             match msg {
                 view::LiquidSendMessage::PresetAsset(asset) => {
-                    self.send_asset = *asset;
+                    if *asset == SendAsset::Btc && self.usdt_only {
+                        // usdt_only invariant: ignore attempts to switch to BTC
+                    } else if *asset != self.send_asset {
+                        self.send_asset = *asset;
+                        self.amount = Amount::ZERO;
+                    }
                 }
                 view::LiquidSendMessage::InputEdited(value) => {
                     self.input.value = value.clone();
@@ -994,12 +999,16 @@ impl State for LiquidSend {
                         modal: Modal::AmountInput,
                     } = &self.flow_state
                     {
-                        self.send_asset = match self.send_asset {
+                        let next = match self.send_asset {
                             SendAsset::Btc => SendAsset::Usdt,
                             SendAsset::Usdt => SendAsset::Btc,
                         };
-                        self.usdt_amount_input = form::Value::default();
-                        self.amount_input = form::Value::default();
+                        if !(next == SendAsset::Btc && self.usdt_only) {
+                            self.send_asset = next;
+                            self.amount = Amount::ZERO;
+                            self.usdt_amount_input = form::Value::default();
+                            self.amount_input = form::Value::default();
+                        }
                     }
                 }
                 view::LiquidSendMessage::PopupMessage(SendPopupMessage::UsdtAmountEdited(v)) => {
