@@ -6,11 +6,12 @@ mod utils;
 
 use crate::{
     bitcoin::BitcoinInterface,
+    config::Config,
     database::{Coin, DatabaseConnection, DatabaseInterface},
     miniscript::bitcoin::absolute::LockTime,
     payjoin::{
         db::ReceiverPersister,
-        helpers::{fetch_ohttp_keys, FetchOhttpKeysError, OHTTP_RELAY, PAYJOIN_DIRECTORY},
+        helpers::{fetch_ohttp_keys, FetchOhttpKeysError},
         types::PayjoinStatus,
     },
     poller::PollerMessage,
@@ -387,15 +388,24 @@ impl DaemonControl {
     pub fn receive_payjoin(&self) -> Result<GetAddressResult, CommandError> {
         let mut db_conn = self.db.connection();
 
-        let ohttp_keys = if let Some(entry) = db_conn.payjoin_get_ohttp_keys(OHTTP_RELAY) {
+        let payjoin_config = self
+            .config
+            .payjoin_config
+            .clone()
+            .unwrap_or_else(Config::default_payjoin_config);
+        let ohttp_relay_url = payjoin_config.ohttp_relay.clone();
+        let payjoin_dir_url = payjoin_config.payjoin_directory.clone();
+
+        let ohttp_keys = if let Some(entry) = db_conn.payjoin_get_ohttp_keys(&ohttp_relay_url) {
             entry.1
         } else {
-            let ohttp_keys =
-                std::thread::spawn(move || fetch_ohttp_keys(OHTTP_RELAY, PAYJOIN_DIRECTORY))
-                    .join()
-                    .unwrap()
-                    .map_err(CommandError::FailedToFetchOhttpKeys)?;
-            db_conn.payjoin_save_ohttp_keys(OHTTP_RELAY, ohttp_keys.clone());
+            let ohttp_relay = ohttp_relay_url.clone();
+            let payjoin_dir = payjoin_dir_url.clone();
+            let ohttp_keys = std::thread::spawn(move || fetch_ohttp_keys(ohttp_relay, payjoin_dir))
+                .join()
+                .unwrap()
+                .map_err(CommandError::FailedToFetchOhttpKeys)?;
+            db_conn.payjoin_save_ohttp_keys(&ohttp_relay_url, ohttp_keys.clone());
             ohttp_keys
         };
 
@@ -412,7 +422,7 @@ impl DaemonControl {
             .address(self.config.bitcoin_config.network);
 
         let persister = ReceiverPersister::new(Arc::new(self.db.clone()), new_index.into(), "");
-        let session = ReceiverBuilder::new(address.clone(), PAYJOIN_DIRECTORY, ohttp_keys)
+        let session = ReceiverBuilder::new(address.clone(), payjoin_dir_url, ohttp_keys)
             .map_err(|e| CommandError::IntoUrlError(e.to_string()))?
             .build()
             .save(&persister)

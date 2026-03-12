@@ -139,6 +139,21 @@ fn default_validate_domain() -> bool {
     true
 }
 
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+pub struct PayjoinConfig {
+    pub ohttp_relay: String,
+    pub payjoin_directory: String,
+}
+
+impl PayjoinConfig {
+    pub fn new(ohttp_relay: String, payjoin_directory: String) -> Self {
+        Self {
+            ohttp_relay,
+            payjoin_directory,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct BitcoinConfig {
     /// The network we are operating on, one of "bitcoin", "testnet", "testnet4", "regtest", "signet"
@@ -177,6 +192,9 @@ pub struct Config {
     /// Settings specific to the Bitcoin backend.
     #[serde(flatten)]
     pub bitcoin_backend: Option<BitcoinBackend>,
+    /// Settings for Payjoin.
+    #[serde(default)]
+    pub payjoin_config: Option<PayjoinConfig>,
 }
 
 impl Config {
@@ -194,6 +212,14 @@ impl Config {
             main_descriptor,
             data_directory: Some(data_directory.path().to_path_buf()),
             data_dir: None,
+            payjoin_config: None,
+        }
+    }
+
+    pub fn default_payjoin_config() -> PayjoinConfig {
+        PayjoinConfig {
+            ohttp_relay: "https://pj.bobspacebkk.com".to_string(),
+            payjoin_directory: "https://payjo.in".to_string(),
         }
     }
 

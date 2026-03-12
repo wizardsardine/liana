@@ -749,6 +749,12 @@ mod tests {
                 }]})),
             ),
             (
+                Some(
+                    json!({"method": "getpayjoininfo", "params": vec!["4bc07e8fe753f7314b69da02a7cfbedc3e4e0d5fbee316a048240ae87b8aaa58"]}),
+                ),
+                Ok(json!({ "Unknown": null})),
+            ),
+            (
                 Some(json!({"method": "getlabels", "params": vec![vec![
                     "4bc07e8fe753f7314b69da02a7cfbedc3e4e0d5fbee316a048240ae87b8aaa58",
                     "4bc07e8fe753f7314b69da02a7cfbedc3e4e0d5fbee316a048240ae87b8aaa58:0",

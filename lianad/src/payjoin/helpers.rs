@@ -9,7 +9,6 @@ use payjoin::{bitcoin::Amount, IntoUrl, OhttpKeys};
 use reqwest::{header::ACCEPT, Proxy};
 
 pub(crate) const OHTTP_RELAY: &str = "https://pj.bobspacebkk.com";
-pub(crate) const PAYJOIN_DIRECTORY: &str = "https://payjo.in";
 
 pub(crate) fn http_agent() -> reqwest::blocking::Client {
     reqwest::blocking::Client::new()
