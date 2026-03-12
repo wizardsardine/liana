@@ -1109,24 +1109,35 @@ impl App {
             Message::View(view::Message::ToggleVault) => {
                 self.panels.vault_expanded = !self.panels.vault_expanded;
                 self.cache.vault_expanded = self.panels.vault_expanded;
-                // If we're expanding Vault, collapse Liquid
+                // If we're expanding Vault, collapse Liquid and P2P
                 if self.panels.vault_expanded {
                     self.panels.liquid_expanded = false;
                     self.cache.liquid_expanded = false;
+                    self.panels.p2p_expanded = false;
+                    self.cache.p2p_expanded = false;
                 }
             }
             Message::View(view::Message::ToggleLiquid) => {
                 self.panels.liquid_expanded = !self.panels.liquid_expanded;
                 self.cache.liquid_expanded = self.panels.liquid_expanded;
-                // If we're expanding Liquid, collapse Vault
+                // If we're expanding Liquid, collapse Vault and P2P
                 if self.panels.liquid_expanded {
                     self.panels.vault_expanded = false;
                     self.cache.vault_expanded = false;
+                    self.panels.p2p_expanded = false;
+                    self.cache.p2p_expanded = false;
                 }
             }
             Message::View(view::Message::ToggleP2P) => {
                 self.panels.p2p_expanded = !self.panels.p2p_expanded;
                 self.cache.p2p_expanded = self.panels.p2p_expanded;
+                // If we're expanding P2P, collapse Vault and Liquid
+                if self.panels.p2p_expanded {
+                    self.panels.vault_expanded = false;
+                    self.cache.vault_expanded = false;
+                    self.panels.liquid_expanded = false;
+                    self.cache.liquid_expanded = false;
+                }
             }
             Message::View(view::Message::OpenUrl(url)) => {
                 if let Err(e) = open::that_detached(&url) {
