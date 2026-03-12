@@ -49,8 +49,8 @@ fi
 # Execute "$@" in a pinned, possibly older version of Guix, for reproducibility
 # across time.
 time_machine() {
-    guix time-machine --url=https://git.savannah.gnu.org/git/guix.git \
-        --commit=001cd00bcd123cd1eab6ebd1b85afd7b0aa994fa \
+    guix time-machine --url=https://codeberg.org/guix/guix.git \
+        --commit=0d622898faee0f3119a6878a23bcbcc817afec12 \
         --cores="$JOBS" \
         --keep-failed \
         --fallback \
