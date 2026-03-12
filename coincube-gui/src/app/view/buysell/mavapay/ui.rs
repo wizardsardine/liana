@@ -142,19 +142,7 @@ fn sell_input_form<'a>(
             text::caption(caption).color(color::BLUE),
             widget::text_input("...", value)
                 .size(20)
-                .style(|th: &theme::Theme, _: widget::text_input::Status| {
-                    widget::text_input::Style {
-                        background: iced::Color::WHITE.into(),
-                        border: iced::Border::default()
-                            .width(2)
-                            .rounded(0)
-                            .color(color::GREY_4),
-                        icon: th.colors.text_inputs.primary.active.icon,
-                        placeholder: th.colors.text_inputs.primary.active.placeholder,
-                        value: iced::Color::BLACK,
-                        selection: th.colors.text_inputs.primary.active.selection,
-                    }
-                })
+                .padding(10)
                 .on_input(move |b| {
                     BuySellMessage::Mavapay(MavapayMessage::BeneficiaryFieldUpdate(field, b))
                 })
@@ -176,22 +164,7 @@ fn sell_input_form<'a>(
                     .align_x(Alignment::Center)
                     .width(150)
                     .set_size(20)
-                    .font(iced::Font::MONOSPACE)
-                    .input_style(
-                        |th: &theme::Theme, _: widget::text_input::Status| {
-                            widget::text_input::Style {
-                                background: iced::Color::WHITE.into(),
-                                border: iced::Border::default()
-                                    .width(2)
-                                    .rounded(0)
-                                    .color(color::GREY_4),
-                                icon: th.colors.text_inputs.primary.active.icon,
-                                placeholder: th.colors.text_inputs.primary.active.placeholder,
-                                value: iced::Color::BLACK,
-                                selection: th.colors.text_inputs.primary.active.selection,
-                            }
-                        }
-                    ),
+                    .font(iced::Font::MONOSPACE),
                     widget::text("≈"),
                     widget::text(format!(
                         "{} {}",
@@ -254,35 +227,16 @@ fn sell_input_form<'a>(
                                     },
                                 )
                                 .width(iced::Length::Fill)
-                                .style(|_, _| {
-                                    widget::pick_list::Style {
-                                        text_color: iced::Color::BLACK,
-                                        placeholder_color: iced::Color::BLACK,
-                                        handle_color: iced::Color::BLACK,
-                                        background: iced::Color::WHITE.into(),
-                                        border: iced::Border::default()
-                                            .width(3)
-                                            .rounded(1)
-                                            .color(color::GREY_4),
-                                    }
-                                })
-                                .text_size(16),
-                                widget::button("Verify Details")
-                                    .style(|th, st| {
-                                        let mut base = theme::button::secondary(th, st);
-                                        base.border = iced::Border::default()
-                                            .width(2)
-                                            .rounded(2)
-                                            .color(color::GREY_4);
-                                        base
-                                    })
-                                    .on_press_maybe(
-                                        (!(bank_account_number.is_empty() || bank_code.is_empty()))
-                                            .then_some(BuySellMessage::Mavapay(
-                                                MavapayMessage::VerifyNgnBankDetails
-                                            ))
-                                    )
+                                .text_size(16)
+                                .padding(10),
+                                widget::button("Verify Details").on_press_maybe(
+                                    (!(bank_account_number.is_empty() || bank_code.is_empty()))
+                                        .then_some(BuySellMessage::Mavapay(
+                                            MavapayMessage::VerifyNgnBankDetails
+                                        ))
+                                )
                             ]
+                            .align_y(iced::Alignment::Center)
                             .spacing(5),
                         ]
                     }
@@ -294,18 +248,18 @@ fn sell_input_form<'a>(
                     widget::column![
                         text::caption("Is this the recipient's registered name?")
                             .color(color::GREEN),
-                        widget::container(widget::text(s).color(color::BLACK).size(20))
+                        widget::container(widget::text(s).size(20))
                             .padding(8)
                             .style(|_| {
                                 widget::container::Style::default()
-                                    .background(color::WHITE)
+                                    .background(color::BLACK)
                                     .border(
                                         iced::Border::default()
                                             .width(2)
                                             .rounded(2)
                                             .color(color::GREY_4),
                                     )
-                                    .color(color::BLACK)
+                                    .color(color::WHITE)
                             })
                     ]
                 })
@@ -351,18 +305,7 @@ fn sell_input_form<'a>(
                                     ))
                                 },
                             )
-                            .style(|_, _| {
-                                widget::pick_list::Style {
-                                    text_color: iced::Color::BLACK,
-                                    placeholder_color: iced::Color::BLACK,
-                                    handle_color: iced::Color::BLACK,
-                                    background: iced::Color::WHITE.into(),
-                                    border: iced::Border::default()
-                                        .width(3)
-                                        .rounded(1)
-                                        .color(color::GREY_4),
-                                }
-                            })
+                            .padding(10)
                             .text_size(16)
                         ]
                     }
@@ -403,22 +346,12 @@ fn sell_input_form<'a>(
 
         b => unreachable!("Beneficiary currently not supported: {:?}", b),
     }
-    .spacing(5)
+    .spacing(10)
     .width(iced::Length::Fill);
 
     widget::column![
         widget::Space::new().height(6),
-        widget::container(form).padding(10).style(move |_| {
-            widget::container::Style::default()
-                .background(iced::Color::BLACK)
-                .color(iced::Color::WHITE)
-                .border(
-                    iced::Border::default()
-                        .color(color::GREY_5)
-                        .width(1)
-                        .rounded(5),
-                )
-        }),
+        card::simple(form).padding(20),
         widget::Space::new().height(12),
         widget::row![
             widget::row![
@@ -432,23 +365,17 @@ fn sell_input_form<'a>(
             widget::space().width(iced::Length::Fill),
             match validation_message {
                 None => match sending_quote {
-                    true =>
-                        button::secondary(Some(clock_icon()), "Fetching Quote..").style(|th, st| {
-                            let mut base = theme::button::secondary(th, st);
-                            base.border = iced::Border::default().rounded(3);
-                            base
-                        }),
-                    false => button::primary(Some(enter_box_icon()), "Get Quote")
-                        .on_press_maybe(
-                            (banks.is_some() || state.country.code == "KE")
-                                .then_some(BuySellMessage::Mavapay(MavapayMessage::CreateQuote))
-                        )
-                        .style(|th, st| {
-                            let mut base = theme::button::primary(th, st);
-                            base.border = iced::Border::default().rounded(3);
-                            base
-                        }),
-                },
+                    true => button::secondary(Some(clock_icon()), "Fetching Quote.."),
+                    false => button::primary(Some(enter_box_icon()), "Get Quote").on_press_maybe(
+                        (banks.is_some() || state.country.code == "KE")
+                            .then_some(BuySellMessage::Mavapay(MavapayMessage::CreateQuote))
+                    ),
+                }
+                .style(|th, st| {
+                    let mut base = theme::button::secondary(th, st);
+                    base.border = iced::Border::default().rounded(3);
+                    base
+                }),
                 Some(m) => {
                     widget::button(widget::text(m).size(14))
                         .padding(12)
