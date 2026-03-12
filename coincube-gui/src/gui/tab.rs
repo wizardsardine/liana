@@ -1000,6 +1000,7 @@ pub fn create_app_with_remote_backend(
             bitcoin_unit: cube_settings.unit_setting.display_unit,
             vault_expanded: false,
             liquid_expanded: false,
+            p2p_expanded: false,
             has_vault: true,
         },
         Arc::new(
