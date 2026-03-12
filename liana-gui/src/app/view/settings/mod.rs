@@ -146,6 +146,13 @@ pub fn list(cache: &Cache, is_remote_backend: bool) -> Element<Message> {
         Message::Settings(SettingsMessage::EditWalletSettings),
     );
 
+    let payjoin = settings_section(
+        "Payjoin",
+        None,
+        icon::bitcoin_icon(),
+        Message::Settings(SettingsMessage::EditPayjoinSettings),
+    );
+
     let import_export = settings_section(
         "Import/Export",
         None,
@@ -171,6 +178,7 @@ pub fn list(cache: &Cache, is_remote_backend: bool) -> Element<Message> {
             .push(general)
             .push(if !is_remote_backend { node } else { backend })
             .push(wallet)
+            .push(payjoin)
             .push(import_export)
             .push(about),
     )
@@ -204,6 +212,160 @@ pub fn bitcoind_settings<'a>(
             .push(header)
             .push(Column::with_children(settings).spacing(20)),
     )
+}
+
+pub fn payjoin_settings<'a>(
+    cache: &'a Cache,
+    warning: Option<&Error>,
+    settings: Option<Element<'a, SettingsEditMessage>>,
+) -> Element<'a, Message> {
+    let header = header("Payjoin", SettingsMessage::EditPayjoinSettings);
+
+    dashboard(
+        &Menu::Settings,
+        cache,
+        warning,
+        Column::new().spacing(20).push(header).push_maybe(
+            settings.map(|s| s.map(|msg| Message::Settings(SettingsMessage::PayjoinSettings(msg)))),
+        ),
+    )
+}
+
+pub fn payjoin_edit<'a>(
+    ohttp_relay: &form::Value<String>,
+    payjoin_directory: &form::Value<String>,
+    processing: bool,
+) -> Element<'a, SettingsEditMessage> {
+    let mut col = Column::new().spacing(20);
+
+    col = col.push(
+        Column::new()
+            .push(text("OHTTP Relay:").bold().small())
+            .push(
+                form::Form::new_trimmed("https://pj.example.com", ohttp_relay, |value| {
+                    SettingsEditMessage::FieldEdited("ohttp_relay", value)
+                })
+                .warning("Please enter a valid URL")
+                .size(P1_SIZE)
+                .padding(5),
+            )
+            .spacing(5),
+    );
+
+    col = col.push(
+        Column::new()
+            .push(text("Payjoin Directory:").bold().small())
+            .push(
+                form::Form::new_trimmed("https://payjo.in", payjoin_directory, |value| {
+                    SettingsEditMessage::FieldEdited("payjoin_directory", value)
+                })
+                .warning("Please enter a valid URL")
+                .size(P1_SIZE)
+                .padding(5),
+            )
+            .spacing(5),
+    );
+
+    let mut cancel_button = button::transparent(None, " Cancel ").padding(5);
+    let mut confirm_button = button::secondary(None, " Save ").padding(5);
+    if !processing {
+        cancel_button = cancel_button.on_press(SettingsEditMessage::Cancel);
+        confirm_button = confirm_button.on_press(SettingsEditMessage::Confirm);
+    }
+
+    card::simple(Container::new(
+        Column::new()
+            .push(
+                Row::new()
+                    .push(badge::badge(icon::bitcoin_icon()))
+                    .push(text("Payjoin").bold())
+                    .padding(10)
+                    .spacing(20)
+                    .align_y(Alignment::Center)
+                    .width(Length::Fill),
+            )
+            .push(separation().width(Length::Fill))
+            .push(col)
+            .push(
+                Container::new(
+                    Row::new()
+                        .push(cancel_button)
+                        .push(confirm_button)
+                        .spacing(10)
+                        .align_y(Alignment::Center),
+                )
+                .width(Length::Fill)
+                .align_x(alignment::Horizontal::Right),
+            )
+            .spacing(20),
+    ))
+    .width(Length::Fill)
+    .into()
+}
+
+pub fn payjoin<'a>(ohttp_relay: &str, payjoin_directory: &str) -> Element<'a, SettingsEditMessage> {
+    let rows = vec![
+        ("OHTTP Relay:", ohttp_relay.to_string()),
+        ("Payjoin Directory:", payjoin_directory.to_string()),
+    ];
+
+    let mut col_fields = Column::new();
+    for (k, v) in rows {
+        let v_clone = v.clone();
+        col_fields = col_fields.push(
+            Row::new()
+                .push(Container::new(text(k).bold().small()).width(Length::FillPortion(1)))
+                .push(
+                    Container::new(
+                        scrollable(
+                            Column::new()
+                                .push(Space::with_height(Length::Fixed(10.0)))
+                                .push(text(v).small())
+                                .push(Space::with_height(Length::Fixed(10.0))),
+                        )
+                        .direction(scrollable::Direction::Horizontal(
+                            scrollable::Scrollbar::new().width(2).scroller_width(2),
+                        )),
+                    )
+                    .align_x(alignment::Horizontal::Right)
+                    .padding(10)
+                    .width(Length::FillPortion(3)),
+                )
+                .push(Space::with_width(10))
+                .push(
+                    Button::new(icon::clipboard_icon())
+                        .style(theme::button::transparent_border)
+                        .on_press(SettingsEditMessage::Clipboard(v_clone)),
+                )
+                .align_y(Alignment::Center),
+        );
+    }
+
+    card::simple(Container::new(
+        Column::new()
+            .push(
+                Row::new()
+                    .push(
+                        Row::new()
+                            .push(badge::badge(icon::bitcoin_icon()))
+                            .push(text("Payjoin").bold())
+                            .spacing(20)
+                            .align_y(Alignment::Center)
+                            .width(Length::Fill),
+                    )
+                    .push(
+                        Button::new(icon::pencil_icon())
+                            .style(theme::button::transparent_border)
+                            .on_press(SettingsEditMessage::Select),
+                    )
+                    .align_y(Alignment::Center),
+            )
+            .push(separation().width(Length::Fill))
+            .push(col_fields)
+            .spacing(20),
+    ))
+    .width(Length::Fill)
+    .into()
 }
 
 pub fn import_export<'a>(cache: &'a Cache, warning: Option<&Error>) -> Element<'a, Message> {

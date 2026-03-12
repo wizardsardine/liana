@@ -118,6 +118,8 @@ pub enum SettingsMessage {
     Save,
     GeneralSection,
     Fiat(FiatMessage),
+    EditPayjoinSettings,
+    PayjoinSettings(SettingsEditMessage),
 }
 
 #[derive(Debug, Clone)]
