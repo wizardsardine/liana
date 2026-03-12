@@ -196,9 +196,7 @@ impl State for GlobalHome {
         let vault_pending_receive_sats = cache
             .coins()
             .iter()
-            .filter(|coin| {
-                coin.spend_info.is_none() && !crate::daemon::model::coin_is_owned(coin)
-            })
+            .filter(|coin| coin.spend_info.is_none() && !crate::daemon::model::coin_is_owned(coin))
             .fold(Amount::ZERO, |acc, coin| acc + coin.amount)
             .to_sat();
 
@@ -1109,47 +1107,52 @@ impl GlobalHome {
                                 breez_sdk_liquid::prelude::PaymentType::Send
                             );
                             match &payment.details {
-                                PaymentDetails::Liquid { asset_id, asset_info, .. } => {
-                                    if asset_kind_for_id(asset_id, network)
-                                        == Some(AssetKind::Usdt)
+                                PaymentDetails::Liquid {
+                                    asset_id,
+                                    asset_info,
+                                    ..
+                                } => {
+                                    if asset_kind_for_id(asset_id, network) == Some(AssetKind::Usdt)
                                     {
                                         let minor = asset_info
                                             .as_ref()
                                             .map(|ai| {
-                                                (ai.amount
-                                                    * 10_f64.powi(USDT_PRECISION as i32))
-                                                    .round() as u64
+                                                (ai.amount * 10_f64.powi(USDT_PRECISION as i32))
+                                                    .round()
+                                                    as u64
                                             })
                                             .unwrap_or(payment.amount_sat);
                                         if is_send {
-                                            usdt_send_sats =
-                                                usdt_send_sats.saturating_add(minor);
+                                            usdt_send_sats = usdt_send_sats.saturating_add(minor);
                                         } else {
                                             usdt_receive_sats =
                                                 usdt_receive_sats.saturating_add(minor);
                                         }
                                     } else if is_send {
-                                        liquid_send_sats = liquid_send_sats.saturating_add(
-                                            payment.amount_sat + payment.fees_sat,
-                                        );
+                                        liquid_send_sats = liquid_send_sats
+                                            .saturating_add(payment.amount_sat + payment.fees_sat);
                                     } else {
-                                        liquid_receive_sats = liquid_receive_sats
-                                            .saturating_add(payment.amount_sat);
+                                        liquid_receive_sats =
+                                            liquid_receive_sats.saturating_add(payment.amount_sat);
                                     }
                                 }
                                 _ => {
                                     if is_send {
-                                        liquid_send_sats = liquid_send_sats.saturating_add(
-                                            payment.amount_sat + payment.fees_sat,
-                                        );
+                                        liquid_send_sats = liquid_send_sats
+                                            .saturating_add(payment.amount_sat + payment.fees_sat);
                                     } else {
-                                        liquid_receive_sats = liquid_receive_sats
-                                            .saturating_add(payment.amount_sat);
+                                        liquid_receive_sats =
+                                            liquid_receive_sats.saturating_add(payment.amount_sat);
                                     }
                                 }
                             }
                         }
-                        (liquid_send_sats, usdt_send_sats, liquid_receive_sats, usdt_receive_sats)
+                        (
+                            liquid_send_sats,
+                            usdt_send_sats,
+                            liquid_receive_sats,
+                            usdt_receive_sats,
+                        )
                     }
                     Err(_) => (0, 0, 0, 0),
                 }

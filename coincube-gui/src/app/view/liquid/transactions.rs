@@ -34,7 +34,7 @@ fn usdt_amount_str(payment: &Payment, usdt_id: &str) -> Option<String> {
         if !usdt_id.is_empty() && asset_id == usdt_id {
             let display = if let Some(info) = asset_info {
                 format_usdt_display(
-                    (info.amount * 10_f64.powi(USDT_PRECISION as i32)).round() as u64,
+                    (info.amount * 10_f64.powi(USDT_PRECISION as i32)).round() as u64
                 )
             } else {
                 format_usdt_display(payment.amount_sat)
@@ -301,7 +301,7 @@ pub fn transaction_detail_view<'a>(
             PaymentDetails::Liquid { asset_info, .. } => {
                 if let Some(info) = asset_info {
                     format_usdt_display(
-                        (info.amount * 10_f64.powi(USDT_PRECISION as i32)).round() as u64,
+                        (info.amount * 10_f64.powi(USDT_PRECISION as i32)).round() as u64
                     )
                 } else {
                     format_usdt_display(payment.amount_sat)

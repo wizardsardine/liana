@@ -92,7 +92,10 @@ pub fn usdt_overview_view<'a>(
             None
         });
 
-    let balance_col = Column::new().spacing(8).push(h4_bold("Balance")).push(balance_inner);
+    let balance_col = Column::new()
+        .spacing(8)
+        .push(h4_bold("Balance"))
+        .push(balance_inner);
 
     let action_buttons = Row::new()
         .spacing(8)

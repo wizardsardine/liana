@@ -324,24 +324,26 @@ fn wallet_card<'a>(
                                     .style(theme::text::secondary),
                             )
                             .push_maybe(
-                                (!balance_masked && !usdt_error && pending_send_sats > 0).then(|| {
-                                    Row::new()
-                                        .spacing(6)
-                                        .align_y(Alignment::Center)
-                                        .push(
-                                            warning_icon()
-                                                .size(12)
+                                (!balance_masked && !usdt_error && pending_send_sats > 0).then(
+                                    || {
+                                        Row::new()
+                                            .spacing(6)
+                                            .align_y(Alignment::Center)
+                                            .push(
+                                                warning_icon()
+                                                    .size(12)
+                                                    .style(theme::text::secondary),
+                                            )
+                                            .push(
+                                                text(format!(
+                                                    "-{} USDt pending",
+                                                    format_usdt_display(pending_send_sats)
+                                                ))
+                                                .size(P2_SIZE)
                                                 .style(theme::text::secondary),
-                                        )
-                                        .push(
-                                            text(format!(
-                                                "-{} USDt pending",
-                                                format_usdt_display(pending_send_sats)
-                                            ))
-                                            .size(P2_SIZE)
-                                            .style(theme::text::secondary),
-                                        )
-                                }),
+                                            )
+                                    },
+                                ),
                             )
                             .push_maybe(
                                 (!balance_masked && !usdt_error && pending_receive_sats > 0).then(
@@ -451,52 +453,36 @@ fn wallet_card<'a>(
                                 fiat_balance
                                     .map(|fiat| fiat.to_text().size(P1_SIZE).color(color::GREY_2))
                             })
-                            .push_maybe(
-                                (!balance_masked && pending_send_sats > 0).then(|| {
-                                    Row::new()
-                                        .spacing(6)
-                                        .align_y(Alignment::Center)
-                                        .push(
-                                            warning_icon()
-                                                .size(12)
-                                                .style(theme::text::secondary),
-                                        )
-                                        .push(text("-").size(P2_SIZE).style(theme::text::secondary))
-                                        .push(amount_with_size_and_unit(
-                                            &Amount::from_sat(pending_send_sats),
-                                            P2_SIZE,
-                                            bitcoin_unit,
-                                        ))
-                                        .push(
-                                            text("pending")
-                                                .size(P2_SIZE)
-                                                .style(theme::text::secondary),
-                                        )
-                                }),
-                            )
-                            .push_maybe(
-                                (!balance_masked && pending_receive_sats > 0).then(|| {
-                                    Row::new()
-                                        .spacing(6)
-                                        .align_y(Alignment::Center)
-                                        .push(
-                                            warning_icon()
-                                                .size(12)
-                                                .style(theme::text::secondary),
-                                        )
-                                        .push(text("+").size(P2_SIZE).style(theme::text::secondary))
-                                        .push(amount_with_size_and_unit(
-                                            &Amount::from_sat(pending_receive_sats),
-                                            P2_SIZE,
-                                            bitcoin_unit,
-                                        ))
-                                        .push(
-                                            text("pending")
-                                                .size(P2_SIZE)
-                                                .style(theme::text::secondary),
-                                        )
-                                }),
-                            )
+                            .push_maybe((!balance_masked && pending_send_sats > 0).then(|| {
+                                Row::new()
+                                    .spacing(6)
+                                    .align_y(Alignment::Center)
+                                    .push(warning_icon().size(12).style(theme::text::secondary))
+                                    .push(text("-").size(P2_SIZE).style(theme::text::secondary))
+                                    .push(amount_with_size_and_unit(
+                                        &Amount::from_sat(pending_send_sats),
+                                        P2_SIZE,
+                                        bitcoin_unit,
+                                    ))
+                                    .push(
+                                        text("pending").size(P2_SIZE).style(theme::text::secondary),
+                                    )
+                            }))
+                            .push_maybe((!balance_masked && pending_receive_sats > 0).then(|| {
+                                Row::new()
+                                    .spacing(6)
+                                    .align_y(Alignment::Center)
+                                    .push(warning_icon().size(12).style(theme::text::secondary))
+                                    .push(text("+").size(P2_SIZE).style(theme::text::secondary))
+                                    .push(amount_with_size_and_unit(
+                                        &Amount::from_sat(pending_receive_sats),
+                                        P2_SIZE,
+                                        bitcoin_unit,
+                                    ))
+                                    .push(
+                                        text("pending").size(P2_SIZE).style(theme::text::secondary),
+                                    )
+                            }))
                             .width(Length::Fill),
                     )
                     .push(Space::new().width(Length::Fill))
