@@ -164,9 +164,7 @@ impl SettingsUI<Message> for LianaSettingsUI {
                     .unwrap_or_else(Task::none)
             }
             Message::View(view::Message::Settings(view::SettingsMessage::EditPayjoinSettings)) => {
-                self.setting = Some(
-                    PayjoinSettingsState::new(daemon.config().cloned()).into(),
-                );
+                self.setting = Some(PayjoinSettingsState::new(daemon.config().cloned()).into());
                 let wallet = self.wallet.clone();
                 self.setting
                     .as_mut()
