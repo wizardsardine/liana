@@ -13,7 +13,7 @@ use crate::services::{
 #[derive(Debug)]
 pub enum MavapayFlowStep {
     BuyInputFrom {
-        ln_invoice: Option<(String, iced::widget::qr_code::Data)>,
+        ln_invoice: Option<String>,
         getting_invoice: bool,
         sending_quote: bool,
     },
@@ -206,18 +206,19 @@ impl MavapayState {
                                     ))
                                 }
                             },
-                        );
+                        )
+                        .chain(iced::Task::done(view::Message::BuySell(
+                            view::BuySellMessage::Mavapay(MavapayMessage::CreateQuote),
+                        )));
 
                         return Some(task);
                     }
                     MavapayMessage::LightningInvoiceReceived(invoice) => {
                         *getting_invoice = false;
-                        *ln_invoice = iced::widget::qr_code::Data::new(invoice.as_bytes())
-                            .ok()
-                            .map(|data| (invoice, data));
+                        *ln_invoice = Some(invoice);
                     }
                     MavapayMessage::WriteInvoiceToClipboard => {
-                        return ln_invoice.as_ref().map(|(invoice, ..)| {
+                        return ln_invoice.as_ref().map(|invoice| {
                             iced::Task::batch([
                                 iced::Task::done(view::Message::Clipboard(invoice.clone())),
                                 iced::Task::done(view::Message::ShowError(
@@ -227,7 +228,7 @@ impl MavapayState {
                         })
                     }
                     MavapayMessage::CreateQuote => {
-                        let Some((invoice, ..)) = ln_invoice else {
+                        let Some(invoice) = ln_invoice else {
                             unreachable!()
                         };
 

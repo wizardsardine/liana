@@ -31,39 +31,16 @@ pub fn form<'a>(state: &'a MavapayState) -> iced::Element<'a, ViewMessage, theme
 fn buy_input_form<'a>(state: &'a MavapayState) -> widget::Column<'a, BuySellMessage, theme::Theme> {
     let Some(MavapayFlowStep::BuyInputFrom {
         getting_invoice,
-        ln_invoice,
         sending_quote,
+        ..
     }) = state.steps.last()
     else {
         unreachable!()
     };
 
     let form = match state.btc_price {
-        Some(price) => widget::container(match ln_invoice {
-            Some((invoice, qr_code_data)) => widget::column![
-                invoice_qr_code_display(
-                    "Generated Lightning Invoice:",
-                    invoice.as_str(),
-                    qr_code_data
-                ),
-                match sending_quote {
-                    true => button::primary(Some(clock_icon()), "Getting Quote..."),
-                    false => button::primary(Some(card_icon()), "Get Quote")
-                        .on_press(BuySellMessage::Mavapay(MavapayMessage::CreateQuote)),
-                }
-                .width(Length::Fill)
-                .style(|th, st| {
-                    let mut base = theme::button::secondary(th, st);
-                    base.border = iced::Border::default()
-                        .width(2)
-                        .rounded(2)
-                        .color(color::GREY_4);
-                    base
-                })
-            ]
-            .width(Length::Fill)
-            .spacing(12),
-            None => widget::column![
+        Some(price) => widget::container(
+            widget::column![
                 widget::row![
                     widget::column![
                         widget::text(format!(
@@ -109,16 +86,19 @@ fn buy_input_form<'a>(state: &'a MavapayState) -> widget::Column<'a, BuySellMess
                 .padding(0),
                 match getting_invoice {
                     true => button::secondary(Some(clock_icon()), "Getting Invoice..."),
-                    false => button::primary(Some(card_icon()), "Generate Invoice").on_press(
-                        BuySellMessage::Mavapay(MavapayMessage::GenerateLightningInvoice)
-                    ),
+                    false => match sending_quote {
+                        true => button::secondary(Some(clock_icon()), "Getting Quote..."),
+                        false => button::primary(Some(card_icon()), "Generate Invoice").on_press(
+                            BuySellMessage::Mavapay(MavapayMessage::GenerateLightningInvoice)
+                        ),
+                    },
                 }
                 .width(Length::Fill)
             ]
             .spacing(10)
             .align_x(iced::Alignment::Center)
             .width(Length::Fill),
-        }),
+        ),
         None => widget::container(
             text::p1_italic("Getting recent conversion rates, please wait")
                 .width(Length::Fill)
