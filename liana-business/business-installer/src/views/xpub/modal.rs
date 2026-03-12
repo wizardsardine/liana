@@ -11,7 +11,7 @@ use iced::{
 use liana_gui::hw::{is_compatible_with_tapminiscript, min_taproot_version, UnsupportedReason};
 use liana_ui::{
     component::{
-        button, card, form, modal,
+        button, card, form, hw, modal,
         text::{self, p1_bold},
         tooltip,
     },
@@ -297,11 +297,13 @@ enum DeviceState {
 /// Render a device card based on its state (Supported, Locked, or Unsupported)
 /// Clicking a supported device opens the Details step
 fn device_card(data: DeviceRenderData) -> Element<'static, Msg> {
+    let kind = data.kind;
     let kind_name = capitalize_first(&data.kind.to_string());
     let name = match &data.version {
         Some(v) => format!("{kind_name} {v}"),
         None => kind_name,
     };
+    let version = data.version;
 
     match data.state {
         DeviceState::Supported => {
@@ -317,19 +319,15 @@ fn device_card(data: DeviceRenderData) -> Element<'static, Msg> {
             )
         }
         DeviceState::Locked { pairing_code } => {
-            let message = match pairing_code {
-                Some(code) => format!("Locked, check code: {code}"),
-                None => "Please unlock the device".to_string(),
+            let card_content = match kind {
+                async_hwi::DeviceKind::Jade => hw::taproot_not_supported_device(kind),
+                _ => hw::locked_hardware_wallet(kind, pairing_code),
             };
-            modal::key_entry(
-                Some(icon::usb_drive_icon()),
-                name,
-                None,
-                None,
-                None,
-                Some(message),
-                None::<fn() -> Msg>,
-            )
+
+            Button::new(card_content)
+                .style(theme::button::secondary)
+                .width(Length::Fill)
+                .into()
         }
         DeviceState::Unsupported { reason } => {
             let message = match &reason {
@@ -339,11 +337,20 @@ fn device_card(data: DeviceRenderData) -> Element<'static, Msg> {
                 UnsupportedReason::WrongNetwork => "Wrong network in device settings".to_string(),
                 UnsupportedReason::Version {
                     minimal_supported_version,
-                } => {
-                    format!("Unsupported firmware, upgrade to > {minimal_supported_version}")
-                }
-                UnsupportedReason::Method(m) => format!("Unsupported method: {m}"),
-                UnsupportedReason::AppIsNotOpen => "Please open the app on device".to_string(),
+                } => match kind {
+                    async_hwi::DeviceKind::Jade => {
+                        return hw::taproot_not_supported_device(kind).into()
+                    }
+                    _ => {
+                        return hw::unsupported_version_hardware_wallet(
+                            kind,
+                            version.as_ref(),
+                            minimal_supported_version,
+                        )
+                        .into()
+                    }
+                },
+                _ => return hw::unsupported_hardware_wallet(kind, version.as_ref()).into(),
             };
             let fp_str = data.fingerprint.map(|fp| format!("#{fp}"));
             modal::key_entry(
