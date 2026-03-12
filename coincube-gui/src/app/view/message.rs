@@ -411,7 +411,6 @@ pub enum HomeMessage {
 pub enum P2PMessage {
     OrderTypeSelected(super::p2p::components::OrderType),
     PricingModeSelected(super::p2p::components::PricingMode),
-    FiatAmountEdited(String),
     FiatCurrencyEdited(String),
     SatsAmountEdited(String),
     PremiumEdited(String),

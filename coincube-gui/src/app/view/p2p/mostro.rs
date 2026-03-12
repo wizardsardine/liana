@@ -267,18 +267,7 @@ async fn fetch_mostro_info(client: &Client, mostro_pubkey: PublicKey) -> MostroN
     info
 }
 
-fn format_sats(sats: i64) -> String {
-    // Format with thousand separators
-    let s = sats.to_string();
-    let mut result = String::new();
-    for (i, c) in s.chars().rev().enumerate() {
-        if i > 0 && i % 3 == 0 {
-            result.push(',');
-        }
-        result.push(c);
-    }
-    result.chars().rev().collect()
-}
+use super::components::format_with_separators;
 
 /// Convert a CantDoReason to a user-friendly error message, with optional limits context.
 fn cant_do_description(
@@ -292,8 +281,8 @@ fn cant_do_description(
             match (&limits.min_order_amount, &limits.max_order_amount) {
                 (Some(min), Some(max)) => format!(
                     "Fiat amount is out of range — Mostro allows {} to {} sats equivalent",
-                    format_sats(*min),
-                    format_sats(*max),
+                    format_with_separators(*min as u64),
+                    format_with_separators(*max as u64),
                 ),
                 _ => "Fiat amount is out of the acceptable range".into(),
             }
@@ -302,8 +291,8 @@ fn cant_do_description(
             match (&limits.min_order_amount, &limits.max_order_amount) {
                 (Some(min), Some(max)) => format!(
                     "Amount out of range — Mostro allows {} to {} sats",
-                    format_sats(*min),
-                    format_sats(*max),
+                    format_with_separators(*min as u64),
+                    format_with_separators(*max as u64),
                 ),
                 _ => "Amount is too large — try a smaller fiat amount".into(),
             }

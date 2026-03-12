@@ -91,17 +91,7 @@ impl P2PTrade {
     }
 
     pub fn premium_text(&self) -> String {
-        if let Some(premium) = self.premium_percent {
-            if premium == 0.0 {
-                "(0%)".to_string()
-            } else if premium > 0.0 {
-                format!("(+{}%)", premium)
-            } else {
-                format!("({}%)", premium)
-            }
-        } else {
-            "(0%)".to_string()
-        }
+        super::format_premium(self.premium_percent)
     }
 
     pub fn order_type_label(&self) -> &'static str {

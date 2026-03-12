@@ -27,6 +27,16 @@ use super::components::{
 };
 use super::config::{load_mostro_config, save_mostro_config, MostroConfig, MostroNode};
 
+/// A label–value row used in order confirmation and trade detail views.
+fn detail_row(label: impl ToString, value: impl ToString) -> Element<'static, view::Message> {
+    row![
+        p2_regular(label.to_string()).width(Length::FillPortion(2)),
+        p1_bold(value.to_string()).width(Length::FillPortion(3)),
+    ]
+    .spacing(8)
+    .into()
+}
+
 pub struct P2PPanel {
     wallet: Option<Arc<Wallet>>,
     // Node currencies (fetched from info event, empty = use fallback)
@@ -133,9 +143,6 @@ impl P2PPanel {
     }
 
     fn filtered_trades(&self) -> Vec<&P2PTrade> {
-        if self.trade_filters.contains(&TradeFilter::All) {
-            return self.trades.iter().collect();
-        }
         self.trades
             .iter()
             .filter(|trade| {
@@ -260,6 +267,36 @@ impl P2PPanel {
         !self.create_min_amount.value.is_empty() && !self.create_max_amount.value.is_empty()
     }
 
+    /// Build a `TradeActionData` for the selected trade, dispatch the given async
+    /// action, and route the result to `TradeActionResult`.
+    fn perform_trade_action<F, Fut>(&mut self, invoice: Option<String>, action: F) -> Task<Message>
+    where
+        F: FnOnce(super::mostro::TradeActionData) -> Fut + Send + 'static,
+        Fut: std::future::Future<Output = Result<super::mostro::TradeActionResponse, String>>
+            + Send
+            + 'static,
+    {
+        self.trade_action_loading = true;
+        if let Some(ref order_id) = self.selected_trade {
+            let data = super::mostro::TradeActionData {
+                order_id: order_id.clone(),
+                cube_name: self
+                    .wallet
+                    .as_ref()
+                    .map(|w| w.name.clone())
+                    .unwrap_or_else(|| "default".to_string()),
+                invoice,
+                mostro_pubkey_hex: self.mostro_config.active_pubkey_hex().to_string(),
+                relay_urls: self.mostro_config.relays.clone(),
+            };
+            return Task::perform(action(data), |result| {
+                Message::View(view::Message::P2P(P2PMessage::TradeActionResult(result)))
+            });
+        }
+        self.trade_action_loading = false;
+        Task::none()
+    }
+
     fn order_confirmation_view(&self) -> Element<'_, view::Message> {
         let p2p = |msg: P2PMessage| view::Message::P2P(msg);
         let is_range = self.is_range_order();
@@ -302,15 +339,6 @@ impl P2PPanel {
             format!("{}%", self.create_premium.value.parse::<i64>().unwrap_or(0))
         } else {
             "N/A".to_string()
-        };
-
-        let detail_row = |label: &str, value: &str| -> Element<'_, view::Message> {
-            row![
-                p2_regular(label).width(Length::FillPortion(2)),
-                p1_bold(value).width(Length::FillPortion(3)),
-            ]
-            .spacing(8)
-            .into()
         };
 
         let mut details = column![
@@ -817,15 +845,6 @@ impl P2PPanel {
 
         // Is user the buyer? order_type always stores OUR perspective (what we're doing).
         let is_buyer = trade.order_type == OrderType::Buy;
-
-        let detail_row = |label: &str, value: &str| -> Element<'_, view::Message> {
-            row![
-                p2_regular(label).width(Length::FillPortion(2)),
-                p1_bold(value).width(Length::FillPortion(3)),
-            ]
-            .spacing(8)
-            .into()
-        };
 
         // Trade info card
         let info_card = card::simple(
@@ -1684,7 +1703,6 @@ impl State for P2PPanel {
         match msg {
             P2PMessage::OrderTypeSelected(t) => self.create_order_type = t,
             P2PMessage::PricingModeSelected(m) => self.create_pricing_mode = m,
-            P2PMessage::FiatAmountEdited(_) => {}
             P2PMessage::FiatCurrencyEdited(v) => {
                 self.create_fiat_currency = v;
                 self.create_payment_methods.clear();
@@ -2011,110 +2029,28 @@ impl State for P2PPanel {
             }
             P2PMessage::CloseTradeDetail => {
                 self.selected_trade = None;
+                self.trade_invoice_input = Default::default();
+                self.trade_action_loading = false;
             }
             // Trade actions
             P2PMessage::TradeInvoiceEdited(v) => {
                 self.trade_invoice_input.value = v;
             }
             P2PMessage::SubmitInvoice => {
-                self.trade_action_loading = true;
-                if let Some(ref order_id) = self.selected_trade {
-                    let data = super::mostro::TradeActionData {
-                        order_id: order_id.clone(),
-                        cube_name: self
-                            .wallet
-                            .as_ref()
-                            .map(|w| w.name.clone())
-                            .unwrap_or_else(|| "default".to_string()),
-                        invoice: Some(self.trade_invoice_input.value.trim().to_string()),
-                        mostro_pubkey_hex: self.mostro_config.active_pubkey_hex().to_string(),
-                        relay_urls: self.mostro_config.relays.clone(),
-                    };
-                    return Task::perform(super::mostro::submit_invoice(data), |result| {
-                        Message::View(view::Message::P2P(P2PMessage::TradeActionResult(result)))
-                    });
-                }
-                self.trade_action_loading = false;
+                let invoice = Some(self.trade_invoice_input.value.trim().to_string());
+                return self.perform_trade_action(invoice, super::mostro::submit_invoice);
             }
             P2PMessage::ConfirmFiatSent => {
-                self.trade_action_loading = true;
-                if let Some(ref order_id) = self.selected_trade {
-                    let data = super::mostro::TradeActionData {
-                        order_id: order_id.clone(),
-                        cube_name: self
-                            .wallet
-                            .as_ref()
-                            .map(|w| w.name.clone())
-                            .unwrap_or_else(|| "default".to_string()),
-                        invoice: None,
-                        mostro_pubkey_hex: self.mostro_config.active_pubkey_hex().to_string(),
-                        relay_urls: self.mostro_config.relays.clone(),
-                    };
-                    return Task::perform(super::mostro::confirm_fiat_sent(data), |result| {
-                        Message::View(view::Message::P2P(P2PMessage::TradeActionResult(result)))
-                    });
-                }
-                self.trade_action_loading = false;
+                return self.perform_trade_action(None, super::mostro::confirm_fiat_sent);
             }
             P2PMessage::ConfirmFiatReceived => {
-                self.trade_action_loading = true;
-                if let Some(ref order_id) = self.selected_trade {
-                    let data = super::mostro::TradeActionData {
-                        order_id: order_id.clone(),
-                        cube_name: self
-                            .wallet
-                            .as_ref()
-                            .map(|w| w.name.clone())
-                            .unwrap_or_else(|| "default".to_string()),
-                        invoice: None,
-                        mostro_pubkey_hex: self.mostro_config.active_pubkey_hex().to_string(),
-                        relay_urls: self.mostro_config.relays.clone(),
-                    };
-                    return Task::perform(super::mostro::confirm_fiat_received(data), |result| {
-                        Message::View(view::Message::P2P(P2PMessage::TradeActionResult(result)))
-                    });
-                }
-                self.trade_action_loading = false;
+                return self.perform_trade_action(None, super::mostro::confirm_fiat_received);
             }
             P2PMessage::CancelTrade => {
-                self.trade_action_loading = true;
-                if let Some(ref order_id) = self.selected_trade {
-                    let data = super::mostro::TradeActionData {
-                        order_id: order_id.clone(),
-                        cube_name: self
-                            .wallet
-                            .as_ref()
-                            .map(|w| w.name.clone())
-                            .unwrap_or_else(|| "default".to_string()),
-                        invoice: None,
-                        mostro_pubkey_hex: self.mostro_config.active_pubkey_hex().to_string(),
-                        relay_urls: self.mostro_config.relays.clone(),
-                    };
-                    return Task::perform(super::mostro::cancel_trade(data), |result| {
-                        Message::View(view::Message::P2P(P2PMessage::TradeActionResult(result)))
-                    });
-                }
-                self.trade_action_loading = false;
+                return self.perform_trade_action(None, super::mostro::cancel_trade);
             }
             P2PMessage::OpenDispute => {
-                self.trade_action_loading = true;
-                if let Some(ref order_id) = self.selected_trade {
-                    let data = super::mostro::TradeActionData {
-                        order_id: order_id.clone(),
-                        cube_name: self
-                            .wallet
-                            .as_ref()
-                            .map(|w| w.name.clone())
-                            .unwrap_or_else(|| "default".to_string()),
-                        invoice: None,
-                        mostro_pubkey_hex: self.mostro_config.active_pubkey_hex().to_string(),
-                        relay_urls: self.mostro_config.relays.clone(),
-                    };
-                    return Task::perform(super::mostro::open_dispute(data), |result| {
-                        Message::View(view::Message::P2P(P2PMessage::TradeActionResult(result)))
-                    });
-                }
-                self.trade_action_loading = false;
+                return self.perform_trade_action(None, super::mostro::open_dispute);
             }
             P2PMessage::TradeActionResult(result) => {
                 self.trade_action_loading = false;

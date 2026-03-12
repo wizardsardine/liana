@@ -10,18 +10,7 @@ use iced::{
 
 use crate::app::view::{self, message::P2PMessage};
 
-/// Format a u64 with thousand separators (e.g. 1234567 → "1,234,567").
-fn format_sats(n: u64) -> String {
-    let s = n.to_string();
-    let mut result = String::with_capacity(s.len() + s.len() / 3);
-    for (i, ch) in s.chars().rev().enumerate() {
-        if i > 0 && i % 3 == 0 {
-            result.push(',');
-        }
-        result.push(ch);
-    }
-    result.chars().rev().collect()
-}
+use super::format_with_separators;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OrderType {
@@ -65,17 +54,7 @@ impl P2POrder {
     }
 
     pub fn premium_text(&self) -> String {
-        if let Some(premium) = self.premium_percent {
-            if premium == 0.0 {
-                "(0%)".to_string()
-            } else if premium > 0.0 {
-                format!("(+{}%)", premium)
-            } else {
-                format!("({}%)", premium)
-            }
-        } else {
-            "(0%)".to_string()
-        }
+        super::format_premium(self.premium_percent)
     }
 
     pub fn order_type_label(&self) -> &'static str {
@@ -146,7 +125,7 @@ pub fn order_card<'a>(order: &'a P2POrder) -> Button<'a, view::Message> {
                     p2_regular("for").style(theme::text::secondary),
                     p2_bold(format!(
                         "{} sats",
-                        format_sats(order.sats_amount.unwrap_or(0))
+                        format_with_separators(order.sats_amount.unwrap_or(0))
                     ))
                 ]
                 .spacing(8)
@@ -269,7 +248,7 @@ pub fn order_detail<'a>(order: &'a P2POrder) -> Container<'a, view::Message> {
                     p2_regular("for").style(theme::text::secondary),
                     p2_bold(format!(
                         "{} sats",
-                        format_sats(order.sats_amount.unwrap_or(0))
+                        format_with_separators(order.sats_amount.unwrap_or(0))
                     ))
                 ]
                 .spacing(8)

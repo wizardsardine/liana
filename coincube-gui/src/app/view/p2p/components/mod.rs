@@ -6,6 +6,28 @@ pub use order_card::{order_card, order_detail, OrderType, P2POrder, PricingMode}
 pub use order_filters::{buy_sell_tabs, trade_status_filter, BuySellFilter, TradeFilter};
 pub use trade_card::{trade_card, P2PTrade, TradeRole, TradeStatus};
 
+/// Format a number with thousand separators (e.g. 1234567 → "1,234,567").
+pub fn format_with_separators(n: u64) -> String {
+    let s = n.to_string();
+    let mut result = String::with_capacity(s.len() + s.len() / 3);
+    for (i, ch) in s.chars().rev().enumerate() {
+        if i > 0 && i % 3 == 0 {
+            result.push(',');
+        }
+        result.push(ch);
+    }
+    result.chars().rev().collect()
+}
+
+/// Format a premium percentage for display (e.g. `(+5%)`, `(-2%)`, `(0%)`).
+pub fn format_premium(premium: Option<f64>) -> String {
+    match premium {
+        Some(p) if p > 0.0 => format!("(+{}%)", p),
+        Some(p) if p < 0.0 => format!("({}%)", p),
+        _ => "(0%)".to_string(),
+    }
+}
+
 /// All fiat currency codes supported by Mostro P2P.
 pub const FIAT_CURRENCIES: &[&str] = &[
     "AED", "ANG", "AOA", "ARS", "AUD", "AZN", "BDT", "BHD", "BOB", "BRL", "BWP", "BYN", "CAD",
