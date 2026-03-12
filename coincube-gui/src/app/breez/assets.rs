@@ -146,13 +146,14 @@ pub fn format_usdt_display(amount: u64) -> String {
 /// Parses a decimal asset amount string into integer minor units without using f64.
 ///
 /// Rejects scientific notation, invalid characters, and fractional digits that exceed
-/// `scale`. Returns `None` for malformed, empty, or zero inputs.
+/// `scale`. Returns `None` for malformed or empty inputs. Zero values return `Some(0)`.
 ///
 /// ```
 /// use coincube_gui::app::breez::assets::parse_asset_to_minor_units;
 /// assert_eq!(parse_asset_to_minor_units("1.50", 8), Some(150_000_000));
-/// assert_eq!(parse_asset_to_minor_units("1e2",  8), None);  // scientific notation rejected
-/// assert_eq!(parse_asset_to_minor_units("0.0",  8), Some(0));
+/// assert_eq!(parse_asset_to_minor_units("1e2",  8), None);   // scientific notation rejected
+/// assert_eq!(parse_asset_to_minor_units("0.0",  8), Some(0)); // zero yields Some(0)
+/// assert_eq!(parse_asset_to_minor_units("0",    8), Some(0)); // zero yields Some(0)
 /// assert_eq!(parse_asset_to_minor_units("1.000000001", 8), None);  // too many decimals
 /// ```
 pub fn parse_asset_to_minor_units(s: &str, scale: u8) -> Option<u64> {

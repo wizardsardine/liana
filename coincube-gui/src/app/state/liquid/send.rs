@@ -456,20 +456,24 @@ impl State for LiquidSend {
                                         .map(|c: &view::FiatAmountConverter| c.convert(amount))
                                 };
 
-                                let desc: &str = if is_usdt_payment {
-                                    "USDt Transfer"
-                                } else {
-                                    match &payment.details {
-                                        PaymentDetails::Lightning { payer_note, description, .. } => payer_note
+                                let desc: &str = match &payment.details {
+                                    PaymentDetails::Lightning { payer_note, description, .. } => payer_note
+                                        .as_ref()
+                                        .filter(|s| !s.is_empty())
+                                        .unwrap_or(description),
+                                    PaymentDetails::Liquid { payer_note, description, .. } => {
+                                        let fallback = if is_usdt_payment && description.is_empty() {
+                                            "USDt Transfer"
+                                        } else {
+                                            description.as_str()
+                                        };
+                                        payer_note
                                             .as_ref()
                                             .filter(|s| !s.is_empty())
-                                            .unwrap_or(description),
-                                        PaymentDetails::Liquid { payer_note, description, .. } => payer_note
-                                            .as_ref()
-                                            .filter(|s| !s.is_empty())
-                                            .unwrap_or(description),
-                                        PaymentDetails::Bitcoin { description, .. } => description,
+                                            .map(|s| s.as_str())
+                                            .unwrap_or(fallback)
                                     }
+                                    PaymentDetails::Bitcoin { description, .. } => description,
                                 };
 
                                 let is_incoming = matches!(
@@ -1015,15 +1019,12 @@ impl State for LiquidSend {
                                 self.usdt_amount_input.valid = false;
                                 self.usdt_amount_input.warning =
                                     Some("Amount must be greater than zero");
+                            } else if base_units > self.usdt_balance {
+                                self.usdt_amount_input.valid = false;
+                                self.usdt_amount_input.warning = Some("Insufficient USDt balance");
                             } else {
-                                if base_units > self.usdt_balance {
-                                    self.usdt_amount_input.valid = false;
-                                    self.usdt_amount_input.warning =
-                                        Some("Insufficient USDt balance");
-                                } else {
-                                    self.usdt_amount_input.valid = true;
-                                    self.usdt_amount_input.warning = None;
-                                }
+                                self.usdt_amount_input.valid = true;
+                                self.usdt_amount_input.warning = None;
                             }
                         } else {
                             self.usdt_amount_input.valid = false;

@@ -670,10 +670,10 @@ pub async fn export_liquid_payments(
             } else {
                 None
             };
-            let usdt_amount = raw_usdt.map(|v| format!("{:.2}", v)).unwrap_or_default();
+            let usdt_amount = raw_usdt.map(|v| v.to_string()).unwrap_or_default();
             let net = match (raw_usdt, payment.payment_type) {
-                (Some(v), PaymentType::Send) => format!("-{:.2}", v),
-                (Some(v), PaymentType::Receive) => format!("{:.2}", v),
+                (Some(v), PaymentType::Send) => format!("-{}", v),
+                (Some(v), PaymentType::Receive) => v.to_string(),
                 (None, _) => String::new(),
             };
             format!(
