@@ -28,6 +28,7 @@ pub struct Text {
     pub success: iced::Color,
     pub error: iced::Color,
     pub accent: iced::Color,
+    pub payjoin: iced::Color,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq)]
@@ -206,6 +207,7 @@ impl std::default::Default for Palette {
                 success: color::GREEN,
                 error: color::RED,
                 accent: color::BLUE,
+                payjoin: color::PAYJOIN_PINK,
             },
             buttons: Buttons {
                 primary: Button {
@@ -622,6 +624,7 @@ impl Palette {
                 success: color::DARK_GREEN,
                 error: color::RED,
                 accent: color::BUSINESS_BLUE_DARK,
+                payjoin: color::PAYJOIN_PINK,
             },
             buttons: Buttons {
                 primary: Button {

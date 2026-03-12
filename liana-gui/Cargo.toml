@@ -64,6 +64,9 @@ open = { workspace = true }
 
 encrypted_backup = { workspace = true }
 
+# payjoin
+payjoin = { version = "1.0.0-rc.1", features = ["v2", "io"] }
+
 [target.'cfg(windows)'.dependencies]
 zip = { workspace = true, default-features = false, features = ["bzip2", "deflate"] }
 
