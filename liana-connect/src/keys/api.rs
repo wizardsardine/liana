@@ -1,6 +1,6 @@
 use serde::{de, Deserialize};
 
-use liana::miniscript::descriptor::DescriptorPublicKey;
+use miniscript::descriptor::DescriptorPublicKey;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Copy)]
 pub enum KeyKind {

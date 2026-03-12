@@ -1,10 +1,11 @@
 pub mod api;
+mod http;
 pub mod token;
 
 use reqwest::{self, IntoUrl, Method, RequestBuilder};
 use serde_json::json;
 
-use super::http::{NotSuccessResponseInfo, ResponseExt};
+use self::http::{NotSuccessResponseInfo, ResponseExt};
 
 const KEYS_API_URL: &str = "https://keys.wizardsardine.com";
 
@@ -37,38 +38,51 @@ fn request<U: reqwest::IntoUrl>(
     http: &reqwest::Client,
     method: reqwest::Method,
     url: U,
+    user_agent: &str,
 ) -> reqwest::RequestBuilder {
     let req = http
         .request(method, url)
         .header("Content-Type", "application/json")
         .header("API-Version", "0.1")
-        .header("User-Agent", format!("liana-gui/{}", crate::VERSION));
+        .header("User-Agent", user_agent);
     tracing::debug!("Sending http request: {:?}", req);
     req
 }
 
 #[derive(Debug, Clone)]
-pub struct Client(reqwest::Client);
-
-impl Default for Client {
-    fn default() -> Self {
-        Self::new()
-    }
+pub struct Client {
+    http: reqwest::Client,
+    url: String,
+    user_agent: String,
 }
 
 impl Client {
-    pub fn new() -> Self {
-        let http = reqwest::Client::new();
-        Client(http)
+    pub fn new(user_agent: &str) -> Self {
+        Self::new_with_url(KEYS_API_URL, user_agent)
+    }
+
+    pub fn new_with_url(url: &str, user_agent: &str) -> Self {
+        Client {
+            http: reqwest::Client::new(),
+            url: url.to_string(),
+            user_agent: user_agent.to_string(),
+        }
+    }
+
+    pub fn new_with_optional_url(url: Option<&str>, user_agent: &str) -> Self {
+        match url {
+            Some(url) => Self::new_with_url(url, user_agent),
+            None => Self::new(user_agent),
+        }
     }
 
     async fn request<U: IntoUrl>(&self, method: Method, url: U) -> RequestBuilder {
-        request(&self.0, method, url)
+        request(&self.http, method, url, &self.user_agent)
     }
 
     pub async fn get_key_by_token(&self, token: String) -> Result<api::Key, Error> {
         let response = self
-            .request(Method::GET, &format!("{}/v1/keys", KEYS_API_URL))
+            .request(Method::GET, &format!("{}/v1/keys", self.url))
             .await
             .query(&[("token", token)])
             .send()
@@ -83,7 +97,7 @@ impl Client {
         let response = self
             .request(
                 Method::POST,
-                &format!("{}/v1/keys/{}/redeem", KEYS_API_URL, uuid),
+                &format!("{}/v1/keys/{}/redeem", self.url, uuid),
             )
             .await
             .json(&json!({

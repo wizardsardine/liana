@@ -1,4 +1,3 @@
-use liana::{bip39, getrandom, miniscript};
 use miniscript::bitcoin::hashes::{sha256, Hash, HashEngine};
 use std::error::Error;
 use std::fmt::Display;
@@ -112,8 +111,6 @@ pub fn generate_random_token() -> Result<Token, Box<dyn Error>> {
 
 #[cfg(test)]
 mod tests {
-    use liana::bip39;
-
     use super::*;
     use std::str::FromStr;
 
