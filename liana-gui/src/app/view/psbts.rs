@@ -11,7 +11,7 @@ use crate::{
     daemon::model::{SpendStatus, SpendTx},
 };
 
-use super::{message::*, warning::warn};
+use super::{message::*, warning::warn, MENU_LABEL_PSBTS};
 
 pub fn import_psbt_view<'a>(
     imported: &form::Value<String>,
@@ -66,7 +66,7 @@ pub fn psbts_view(spend_txs: &[SpendTx]) -> Element<'_, Message> {
             Row::new()
                 .align_y(Alignment::Center)
                 .spacing(10)
-                .push(Container::new(h3("PSBTs")).width(Length::Fill))
+                .push(Container::new(h3(MENU_LABEL_PSBTS)).width(Length::Fill))
                 .push(
                     button::secondary(Some(icon::restore_icon()), "Import")
                         .on_press(Message::ImportPsbt),
