@@ -75,7 +75,7 @@ pub const BLUE: Color = Color::from_rgb(
 // Primary accent: Cyan-Blue from lianawallet.com/business (HSL 196, 100%, 50%)
 pub const BUSINESS_BLUE: Color = Color::from_rgb(
     0x00 as f32 / 255.0,
-    0xBF as f32 / 255.0,
+    0xBD as f32 / 255.0,
     0xFF as f32 / 255.0,
 ); // #00BFFF
 

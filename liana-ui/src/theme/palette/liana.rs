@@ -5,6 +5,7 @@ impl Palette {
         Self {
             general: General {
                 background: color::LIGHT_BLACK,
+                menu_background: color::BLACK,
                 foreground: color::BLACK,
                 scrollable: color::GREY_7,
                 accent: color::GREEN,

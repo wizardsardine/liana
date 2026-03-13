@@ -5,6 +5,7 @@ impl Palette {
         Self {
             general: General {
                 background: color::LIGHT_BG,
+                menu_background: color::WHITE,
                 foreground: color::LIGHT_BG_SECONDARY,
                 scrollable: color::LIGHT_BORDER,
                 accent: color::BUSINESS_BLUE,
@@ -174,9 +175,9 @@ impl Palette {
                 },
                 menu: Button {
                     active: ButtonPalette {
-                        background: color::LIGHT_BG_SECONDARY,
+                        background: color::WHITE,
                         text: color::DARK_TEXT_PRIMARY,
-                        border: color::LIGHT_BG_SECONDARY.into(),
+                        border: color::WHITE.into(),
                     },
                     hovered: ButtonPalette {
                         background: color::LIGHT_BG_TERTIARY,
@@ -189,9 +190,9 @@ impl Palette {
                         border: color::BUSINESS_BLUE.into(),
                     }),
                     disabled: Some(ButtonPalette {
-                        background: color::LIGHT_BG_SECONDARY,
-                        text: color::DARK_TEXT_TERTIARY,
-                        border: color::LIGHT_BG_SECONDARY.into(),
+                        background: color::WHITE,
+                        text: color::WHITE,
+                        border: color::WHITE.into(),
                     }),
                 },
                 tab: Button {

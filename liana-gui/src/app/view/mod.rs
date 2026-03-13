@@ -36,48 +36,48 @@ use crate::app::{cache::Cache, error::Error, menu::Menu};
 
 use std::cell::RefCell;
 
-const SIDEBAR_LARGE_WIDTH: f32 = 200.0;
+const SIDEBAR_LARGE_WIDTH: f32 = 380.0;
 const SIDEBAR_SMALL_WIDTH: f32 = 60.0;
 const PANE_WIDTH_THRESHOLD: f32 = 900.0;
 
-pub fn sidebar<'a>(active: &Menu, cache: &'a Cache, small: bool) -> Container<'a, Message> {
-    Container::new(
+pub fn sidebar<'a>(
+    active: &Menu,
+    cache: &'a Cache,
+    small: bool,
+    business: bool,
+) -> Container<'a, Message> {
+    let logo = match (small, business) {
+        (false, true) => liana_business_logo(),
+        (false, false) => liana_wallet_logo(),
+        _ => liana_grey_logo().style(theme::svg::accent).width(60),
+    }
+    .height(120);
+    let upper_buttons = Column::new()
+        .push(Container::new(logo).padding(10))
+        .push(Menu::Home.entry(active, small))
+        .push(Menu::CreateSpendTx.entry(active, small))
+        .push(Menu::Receive.entry(active, small))
+        .push(Menu::PSBTs.entry(active, small))
+        .height(Length::Fill);
+
+    let bottom_buttons = Container::new(
         Column::new()
-            .push(
-                Column::new()
-                    .push(
-                        Container::new(
-                            liana_grey_logo()
-                                .height(Length::Fixed(120.0))
-                                .width(Length::Fixed(60.0))
-                                .style(theme::svg::accent),
-                        )
-                        .padding(10),
-                    )
-                    .push(Menu::Home.entry(active, small))
-                    .push(Menu::CreateSpendTx.entry(active, small))
-                    .push(Menu::Receive.entry(active, small))
-                    .push(Menu::Coins.entry(active, small))
-                    .push(Menu::Transactions.entry(active, small))
-                    .push(Menu::PSBTs.entry(active, small))
-                    .height(Length::Fill),
-            )
-            .push(
-                Container::new(
-                    Column::new()
-                        .spacing(10)
-                        .push_maybe(cache.rescan_progress().map(|p| {
-                            Container::new(text(format!("  Rescan...{:.2}%  ", p * 100.0)))
-                                .padding(5)
-                                .style(theme::pill::simple)
-                        }))
-                        .push(Menu::Recovery.entry(active, small))
-                        .push(Menu::Settings.entry(active, small)),
-                )
-                .height(Length::Shrink),
-            ),
+            .spacing(10)
+            .push_maybe(cache.rescan_progress().map(|p| {
+                Container::new(text(format!("  Rescan...{:.2}%  ", p * 100.0)))
+                    .padding(5)
+                    .style(theme::pill::simple)
+            }))
+            .push(Menu::Recovery.entry(active, small))
+            .push(Menu::Transactions.entry(active, small))
+            .push(Menu::Coins.entry(active, small))
+            .push(Menu::Settings.entry(active, small)),
     )
-    .style(theme::container::foreground)
+    .height(Length::Shrink);
+
+    Container::new(Column::new().push(upper_buttons).push(bottom_buttons))
+        .style(theme::container::sidebar)
+        .padding(30.0)
 }
 
 pub fn dashboard<'a, T: Into<Element<'a, Message>>>(
@@ -100,7 +100,7 @@ pub fn dashboard<'a, T: Into<Element<'a, Message>>>(
             .unwrap_or_else(|| Space::new(Length::Fill, Length::Fill).into());
         Row::new()
             .push(
-                sidebar(menu, cache, small)
+                sidebar(menu, cache, small, true)
                     .height(Length::Fill)
                     .width(Length::Fixed(sidebar_width)),
             )
