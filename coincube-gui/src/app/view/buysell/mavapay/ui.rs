@@ -351,7 +351,13 @@ fn sell_input_form<'a>(
 
     widget::column![
         widget::Space::new().height(6),
-        card::simple(form).padding(20),
+        widget::container(form).padding(20).style(|th| {
+            theme::card::simple(th).border(iced::Border {
+                radius: 25.0.into(),
+                width: 1.0,
+                color: color::TRANSPARENT_ORANGE,
+            })
+        }),
         widget::Space::new().height(12),
         widget::row![
             widget::row![
@@ -381,10 +387,7 @@ fn sell_input_form<'a>(
                         .padding(12)
                         .style(|th, st| {
                             let mut base = theme::button::secondary(th, st);
-                            base.border = iced::Border::default()
-                                .rounded(2)
-                                .width(1)
-                                .color(color::RED);
+                            base.border = iced::Border::default().rounded(2).width(1);
                             base.text_color = color::GREY_2;
                             base
                         })
