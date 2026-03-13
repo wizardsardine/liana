@@ -19,6 +19,10 @@ pub use fiat::FiatAmountConverter;
 pub use message::*;
 use warning::warn;
 
+const MENU_ENTRY_HOME: &str = "Dashboard";
+const MENU_ENTRY_COINS: &str = "Coins/UTXOs";
+const MENU_ENTRY_PSBTS: &str = "Drafts & Approvals";
+
 use iced::{
     widget::{column, responsive, row, scrollable, Space},
     Length,
@@ -46,13 +50,13 @@ fn menu_green_bar<'a, T: 'a>() -> Container<'a, T> {
 pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
     let home_button = if *menu == Menu::Home {
         row!(
-            button::menu_active(Some(home_icon()), "Home")
+            button::menu_active(Some(home_icon()), MENU_ENTRY_HOME)
                 .on_press(Message::Reload)
                 .width(iced::Length::Fill),
             menu_green_bar(),
         )
     } else {
-        row!(button::menu(Some(home_icon()), "Home")
+        row!(button::menu(Some(home_icon()), MENU_ENTRY_HOME)
             .on_press(Message::Menu(Menu::Home))
             .width(iced::Length::Fill),)
     };
@@ -72,13 +76,13 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
 
     let coins_button = if *menu == Menu::Coins {
         row!(
-            button::menu_active(Some(coins_icon()), "Coins")
+            button::menu_active(Some(coins_icon()), MENU_ENTRY_COINS)
                 .on_press(Message::Reload)
                 .width(iced::Length::Fill),
             menu_green_bar()
         )
     } else {
-        row!(button::menu(Some(coins_icon()), "Coins")
+        row!(button::menu(Some(coins_icon()), MENU_ENTRY_COINS)
             .style(theme::button::menu)
             .on_press(Message::Menu(Menu::Coins))
             .width(iced::Length::Fill))
@@ -86,13 +90,13 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
 
     let psbt_button = if *menu == Menu::PSBTs {
         row!(
-            button::menu_active(Some(history_icon()), "PSBTs")
+            button::menu_active(Some(history_icon()), MENU_ENTRY_PSBTS)
                 .on_press(Message::Reload)
                 .width(iced::Length::Fill),
             menu_green_bar()
         )
     } else {
-        row!(button::menu(Some(history_icon()), "PSBTs")
+        row!(button::menu(Some(history_icon()), MENU_ENTRY_PSBTS)
             .on_press(Message::Menu(Menu::PSBTs))
             .width(iced::Length::Fill))
     };

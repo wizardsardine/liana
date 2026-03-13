@@ -17,6 +17,8 @@ use crate::{
     daemon::model::{remaining_sequence, Coin},
 };
 
+use super::MENU_ENTRY_COINS;
+
 pub fn coins_view<'a>(
     cache: &Cache,
     coins: &'a [Coin],
@@ -26,7 +28,7 @@ pub fn coins_view<'a>(
     labels_editing: &'a HashMap<String, form::Value<String>>,
 ) -> Element<'a, Message> {
     Column::new()
-        .push(Container::new(h3("Coins")).width(Length::Fill))
+        .push(Container::new(h3(MENU_ENTRY_COINS)).width(Length::Fill))
         .push(
             Column::new()
                 .spacing(10)
