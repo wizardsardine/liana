@@ -4,6 +4,8 @@ use iced::{Background, Border, Color};
 use super::palette::Button;
 use super::Theme;
 
+pub const BUTTON_RADIUS: f32 = 16.0;
+
 impl Catalog for Theme {
     type Class<'a> = StyleFn<'a, Self>;
 
@@ -63,7 +65,7 @@ fn button(p: &Button, status: Status) -> Style {
             text_color: p.active.text,
             border: if let Some(color) = p.active.border {
                 Border {
-                    radius: 25.0.into(),
+                    radius: BUTTON_RADIUS.into(),
                     width: 1.0,
                     color,
                 }
@@ -81,7 +83,7 @@ fn button(p: &Button, status: Status) -> Style {
                     text_color: pressed.text,
                     border: if let Some(color) = pressed.border {
                         Border {
-                            radius: 25.0.into(),
+                            radius: BUTTON_RADIUS.into(),
                             width: 1.0,
                             color,
                         }
@@ -101,7 +103,7 @@ fn button(p: &Button, status: Status) -> Style {
             text_color: p.hovered.text,
             border: if let Some(color) = p.hovered.border {
                 Border {
-                    radius: 25.0.into(),
+                    radius: BUTTON_RADIUS.into(),
                     width: 1.0,
                     color,
                 }
@@ -124,7 +126,7 @@ fn button(p: &Button, status: Status) -> Style {
                     },
                     border: if let Some(color) = disabled.border {
                         Border {
-                            radius: 25.0.into(),
+                            radius: BUTTON_RADIUS.into(),
                             width: 1.0,
                             color,
                         }

@@ -66,7 +66,7 @@ pub fn psbts_view(spend_txs: &[SpendTx]) -> Element<'_, Message> {
             Row::new()
                 .align_y(Alignment::Center)
                 .spacing(10)
-                .push(Container::new(h3("PSBTs")).width(Length::Fill))
+                .push(Container::new(h3(Menu::PSBTs.title())).width(Length::Fill))
                 .push(
                     button::secondary(Some(icon::restore_icon()), "Import")
                         .on_press(Message::ImportPsbt),
@@ -163,6 +163,6 @@ fn spend_tx_list_view(i: usize, tx: &SpendTx) -> Element<'_, Message> {
         .on_press(Message::Select(i))
         .style(theme::button::transparent_border),
     )
-    .style(theme::card::simple)
+    .style(theme::card::button_simple)
     .into()
 }

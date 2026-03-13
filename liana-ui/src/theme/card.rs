@@ -1,6 +1,7 @@
 use iced::widget::container::Style;
 use iced::{Background, Border, Color, Shadow, Vector};
 
+use super::button::BUTTON_RADIUS;
 use super::palette::ContainerPalette;
 use super::Theme;
 
@@ -23,19 +24,20 @@ fn card(palette: &ContainerPalette) -> Style {
     }
 }
 
-fn card_with_shadow(palette: &ContainerPalette) -> Style {
+fn card_with_shadow(palette: &ContainerPalette, btn: bool) -> Style {
+    let radius = if btn { BUTTON_RADIUS } else { 25.0 }.into();
     Style {
         background: Some(Background::Color(palette.background)),
         text_color: palette.text,
         border: if let Some(color) = palette.border {
             Border {
-                radius: 25.0.into(),
+                radius,
                 width: 1.0,
                 color,
             }
         } else {
             Border {
-                radius: 25.0.into(),
+                radius,
                 ..Default::default()
             }
         },
@@ -48,7 +50,11 @@ fn card_with_shadow(palette: &ContainerPalette) -> Style {
 }
 
 pub fn simple(theme: &Theme) -> Style {
-    card_with_shadow(&theme.colors.cards.simple)
+    card_with_shadow(&theme.colors.cards.simple, false)
+}
+
+pub fn button_simple(theme: &Theme) -> Style {
+    card_with_shadow(&theme.colors.cards.simple, true)
 }
 
 pub fn modal(theme: &Theme) -> Style {
