@@ -135,7 +135,7 @@ pub async fn delete_wallet(
                 auth.email.to_string(),
                 backend_type.user_agent(),
             );
-            if let BackendState::WalletExists(client, _, _) = connect_with_credentials(
+            if let BackendState::WalletExists(client, _, _, _) = connect_with_credentials(
                 client,
                 auth.wallet_id.clone(),
                 service_config.backend_api_url,
