@@ -41,20 +41,11 @@ use liana_ui::{
 
 use crate::app::{cache::Cache, error::Error, menu::Menu};
 
-fn menu_green_bar<'a, T: 'a>() -> Container<'a, T> {
-    Container::new(Space::with_width(Length::Fixed(2.0)))
-        .height(Length::Fixed(50.0))
-        .style(theme::container::menu_bar)
-}
-
 pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
     let home_button = if *menu == Menu::Home {
-        row!(
-            button::menu_active(Some(home_icon()), MENU_ENTRY_HOME)
-                .on_press(Message::Reload)
-                .width(iced::Length::Fill),
-            menu_green_bar(),
-        )
+        row!(button::menu_active(Some(home_icon()), MENU_ENTRY_HOME)
+            .on_press(Message::Reload)
+            .width(iced::Length::Fill),)
     } else {
         row!(button::menu(Some(home_icon()), MENU_ENTRY_HOME)
             .on_press(Message::Menu(Menu::Home))
@@ -62,12 +53,9 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
     };
 
     let transactions_button = if *menu == Menu::Transactions {
-        row!(
-            button::menu_active(Some(history_icon()), "Transactions")
-                .on_press(Message::Reload)
-                .width(iced::Length::Fill),
-            menu_green_bar()
-        )
+        row!(button::menu_active(Some(history_icon()), "Transactions")
+            .on_press(Message::Reload)
+            .width(iced::Length::Fill),)
     } else {
         row!(button::menu(Some(history_icon()), "Transactions")
             .on_press(Message::Menu(Menu::Transactions))
@@ -75,12 +63,9 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
     };
 
     let coins_button = if *menu == Menu::Coins {
-        row!(
-            button::menu_active(Some(coins_icon()), MENU_ENTRY_COINS)
-                .on_press(Message::Reload)
-                .width(iced::Length::Fill),
-            menu_green_bar()
-        )
+        row!(button::menu_active(Some(coins_icon()), MENU_ENTRY_COINS)
+            .on_press(Message::Reload)
+            .width(iced::Length::Fill),)
     } else {
         row!(button::menu(Some(coins_icon()), MENU_ENTRY_COINS)
             .style(theme::button::menu)
@@ -89,12 +74,9 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
     };
 
     let psbt_button = if *menu == Menu::PSBTs {
-        row!(
-            button::menu_active(Some(history_icon()), MENU_ENTRY_PSBTS)
-                .on_press(Message::Reload)
-                .width(iced::Length::Fill),
-            menu_green_bar()
-        )
+        row!(button::menu_active(Some(history_icon()), MENU_ENTRY_PSBTS)
+            .on_press(Message::Reload)
+            .width(iced::Length::Fill),)
     } else {
         row!(button::menu(Some(history_icon()), MENU_ENTRY_PSBTS)
             .on_press(Message::Menu(Menu::PSBTs))
@@ -102,12 +84,9 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
     };
 
     let spend_button = if *menu == Menu::CreateSpendTx {
-        row!(
-            button::menu_active(Some(send_icon()), "Send")
-                .on_press(Message::Reload)
-                .width(iced::Length::Fill),
-            menu_green_bar()
-        )
+        row!(button::menu_active(Some(send_icon()), "Send")
+            .on_press(Message::Reload)
+            .width(iced::Length::Fill),)
     } else {
         row!(button::menu(Some(send_icon()), "Send")
             .on_press(Message::Menu(Menu::CreateSpendTx))
@@ -115,12 +94,9 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
     };
 
     let receive_button = if *menu == Menu::Receive {
-        row!(
-            button::menu_active(Some(receive_icon()), "Receive")
-                .on_press(Message::Reload)
-                .width(iced::Length::Fill),
-            menu_green_bar()
-        )
+        row!(button::menu_active(Some(receive_icon()), "Receive")
+            .on_press(Message::Reload)
+            .width(iced::Length::Fill),)
     } else {
         row!(button::menu(Some(receive_icon()), "Receive")
             .on_press(Message::Menu(Menu::Receive))
@@ -128,12 +104,9 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
     };
 
     let recovery_button = if *menu == Menu::Recovery {
-        row!(
-            button::menu_active(Some(recovery_icon()), "Recovery")
-                .on_press(Message::Reload)
-                .width(iced::Length::Fill),
-            menu_green_bar()
-        )
+        row!(button::menu_active(Some(recovery_icon()), "Recovery")
+            .on_press(Message::Reload)
+            .width(iced::Length::Fill),)
     } else {
         row!(button::menu(Some(recovery_icon()), "Recovery")
             .on_press(Message::Menu(Menu::Recovery))
@@ -141,12 +114,9 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
     };
 
     let settings_button = if *menu == Menu::Settings {
-        row!(
-            button::menu_active(Some(settings_icon()), "Settings")
-                .on_press(Message::Menu(Menu::Settings))
-                .width(iced::Length::Fill),
-            menu_green_bar()
-        )
+        row!(button::menu_active(Some(settings_icon()), "Settings")
+            .on_press(Message::Menu(Menu::Settings))
+            .width(iced::Length::Fill),)
     } else {
         row!(button::menu(Some(settings_icon()), "Settings")
             .on_press(Message::Menu(Menu::Settings))
@@ -194,12 +164,9 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
 
 pub fn small_sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message> {
     let home_button = if *menu == Menu::Home {
-        row!(
-            button::menu_active_small(home_icon())
-                .on_press(Message::Reload)
-                .width(iced::Length::Fill),
-            menu_green_bar(),
-        )
+        row!(button::menu_active_small(home_icon())
+            .on_press(Message::Reload)
+            .width(iced::Length::Fill),)
     } else {
         row!(button::menu_small(home_icon())
             .on_press(Message::Menu(Menu::Home))
@@ -207,12 +174,9 @@ pub fn small_sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message
     };
 
     let transactions_button = if *menu == Menu::Transactions {
-        row!(
-            button::menu_active_small(history_icon())
-                .on_press(Message::Reload)
-                .width(iced::Length::Fill),
-            menu_green_bar()
-        )
+        row!(button::menu_active_small(history_icon())
+            .on_press(Message::Reload)
+            .width(iced::Length::Fill),)
     } else {
         row!(button::menu_small(history_icon())
             .on_press(Message::Menu(Menu::Transactions))
@@ -220,12 +184,9 @@ pub fn small_sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message
     };
 
     let coins_button = if *menu == Menu::Coins {
-        row!(
-            button::menu_active_small(coins_icon())
-                .on_press(Message::Reload)
-                .width(iced::Length::Fill),
-            menu_green_bar()
-        )
+        row!(button::menu_active_small(coins_icon())
+            .on_press(Message::Reload)
+            .width(iced::Length::Fill),)
     } else {
         row!(button::menu_small(coins_icon())
             .style(theme::button::menu)
@@ -234,12 +195,9 @@ pub fn small_sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message
     };
 
     let psbt_button = if *menu == Menu::PSBTs {
-        row!(
-            button::menu_active_small(history_icon())
-                .on_press(Message::Reload)
-                .width(iced::Length::Fill),
-            menu_green_bar()
-        )
+        row!(button::menu_active_small(history_icon())
+            .on_press(Message::Reload)
+            .width(iced::Length::Fill),)
     } else {
         row!(button::menu_small(history_icon())
             .on_press(Message::Menu(Menu::PSBTs))
@@ -247,12 +205,9 @@ pub fn small_sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message
     };
 
     let spend_button = if *menu == Menu::CreateSpendTx {
-        row!(
-            button::menu_active_small(send_icon())
-                .on_press(Message::Reload)
-                .width(iced::Length::Fill),
-            menu_green_bar()
-        )
+        row!(button::menu_active_small(send_icon())
+            .on_press(Message::Reload)
+            .width(iced::Length::Fill),)
     } else {
         row!(button::menu_small(send_icon())
             .on_press(Message::Menu(Menu::CreateSpendTx))
@@ -260,12 +215,9 @@ pub fn small_sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message
     };
 
     let receive_button = if *menu == Menu::Receive {
-        row!(
-            button::menu_active_small(receive_icon())
-                .on_press(Message::Reload)
-                .width(iced::Length::Fill),
-            menu_green_bar()
-        )
+        row!(button::menu_active_small(receive_icon())
+            .on_press(Message::Reload)
+            .width(iced::Length::Fill),)
     } else {
         row!(button::menu_small(receive_icon())
             .on_press(Message::Menu(Menu::Receive))
@@ -273,12 +225,9 @@ pub fn small_sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message
     };
 
     let recovery_button = if *menu == Menu::Recovery {
-        row!(
-            button::menu_active_small(recovery_icon())
-                .on_press(Message::Reload)
-                .width(iced::Length::Fill),
-            menu_green_bar()
-        )
+        row!(button::menu_active_small(recovery_icon())
+            .on_press(Message::Reload)
+            .width(iced::Length::Fill),)
     } else {
         row!(button::menu_small(recovery_icon())
             .on_press(Message::Menu(Menu::Recovery))
@@ -286,12 +235,9 @@ pub fn small_sidebar<'a>(menu: &Menu, cache: &'a Cache) -> Container<'a, Message
     };
 
     let settings_button = if *menu == Menu::Settings {
-        row!(
-            button::menu_active_small(settings_icon())
-                .on_press(Message::Menu(Menu::Settings))
-                .width(iced::Length::Fill),
-            menu_green_bar()
-        )
+        row!(button::menu_active_small(settings_icon())
+            .on_press(Message::Menu(Menu::Settings))
+            .width(iced::Length::Fill),)
     } else {
         row!(button::menu_small(settings_icon())
             .on_press(Message::Menu(Menu::Settings))
