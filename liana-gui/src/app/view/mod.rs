@@ -34,6 +34,12 @@ use liana_ui::{
 
 use crate::app::{cache::Cache, error::Error, menu::Menu};
 
+use std::cell::RefCell;
+
+const SIDEBAR_LARGE_WIDTH: f32 = 200.0;
+const SIDEBAR_SMALL_WIDTH: f32 = 60.0;
+const PANE_WIDTH_THRESHOLD: f32 = 900.0;
+
 pub fn sidebar<'a>(active: &Menu, cache: &'a Cache, small: bool) -> Container<'a, Message> {
     Container::new(
         Column::new()
@@ -77,40 +83,52 @@ pub fn sidebar<'a>(active: &Menu, cache: &'a Cache, small: bool) -> Container<'a
 pub fn dashboard<'a, T: Into<Element<'a, Message>>>(
     menu: &'a Menu,
     cache: &'a Cache,
-    warning: Option<&Error>,
+    warning: Option<&'a Error>,
     content: T,
 ) -> Element<'a, Message> {
-    Row::new()
-        .push(
-            Container::new(responsive(move |size| {
-                let small = size.width < 150.0;
-                sidebar(menu, cache, small).height(Length::Fill).into()
-            }))
-            .width(Length::FillPortion(2)),
-        )
-        .push(
-            Column::new()
-                .push(warn(warning))
-                .push(
-                    Container::new(
-                        scrollable(row!(
-                            Space::with_width(Length::FillPortion(1)),
-                            column!(Space::with_height(Length::Fixed(150.0)), content.into())
-                                .width(Length::FillPortion(8))
-                                .max_width(1500),
-                            Space::with_width(Length::FillPortion(1)),
-                        ))
-                        .on_scroll(|w| Message::Scroll(w.absolute_offset().y)),
+    let content_cell = RefCell::new(Some(content.into()));
+    responsive(move |size| {
+        let small = size.width < PANE_WIDTH_THRESHOLD;
+        let sidebar_width = if small {
+            SIDEBAR_SMALL_WIDTH
+        } else {
+            SIDEBAR_LARGE_WIDTH
+        };
+        let content = content_cell
+            .borrow_mut()
+            .take()
+            .unwrap_or_else(|| Space::new(Length::Fill, Length::Fill).into());
+        Row::new()
+            .push(
+                sidebar(menu, cache, small)
+                    .height(Length::Fill)
+                    .width(Length::Fixed(sidebar_width)),
+            )
+            .push(
+                Column::new()
+                    .push(warn(warning))
+                    .push(
+                        Container::new(
+                            scrollable(row!(
+                                Space::with_width(Length::FillPortion(1)),
+                                column!(Space::with_height(Length::Fixed(150.0)), content)
+                                    .width(Length::FillPortion(8))
+                                    .max_width(1500),
+                                Space::with_width(Length::FillPortion(1)),
+                            ))
+                            .on_scroll(|w| Message::Scroll(w.absolute_offset().y)),
+                        )
+                        .center_x(Length::Fill)
+                        .style(theme::container::background)
+                        .height(Length::Fill),
                     )
-                    .center_x(Length::Fill)
-                    .style(theme::container::background)
-                    .height(Length::Fill),
-                )
-                .width(Length::FillPortion(10)),
-        )
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .into()
+                    .width(Length::Fill),
+            )
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into()
+    })
+    .into()
 }
 
 pub fn modal<'a, T: Into<Element<'a, Message>>, F: Into<Element<'a, Message>>>(

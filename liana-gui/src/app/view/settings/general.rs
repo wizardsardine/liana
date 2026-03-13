@@ -24,7 +24,7 @@ pub fn general_section<'a>(
     cache: &'a cache::Cache,
     new_price_setting: &'a PriceSetting,
     currencies_list: &'a [Currency],
-    warning: Option<&Error>,
+    warning: Option<&'a Error>,
 ) -> Element<'a, Message> {
     let header = header("General", SettingsMessage::GeneralSection);
 
