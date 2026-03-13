@@ -279,7 +279,7 @@ impl State for BitcoindSettingsState {
                             ref mut error,
                         }) = self.connect_login
                         {
-                            if email.contains('@') && !*loading {
+                            if email.contains('@') && email.contains('.') && email.len() >= 6 && !*loading {
                                 *loading = true;
                                 *error = None;
                                 let client = client.clone();
@@ -350,7 +350,7 @@ impl State for BitcoindSettingsState {
                             ref mut error,
                         }) = self.connect_login
                         {
-                            if !otp.is_empty() && !*loading {
+                            if otp.len() == 6 && !*loading {
                                 *loading = true;
                                 *error = None;
                                 let client = client.clone();
@@ -481,11 +481,15 @@ impl State for BitcoindSettingsState {
                                     };
                                     return Task::perform(
                                         async move {
-                                            configure_and_start_internal_bitcoind(
-                                                coincube_datadir,
-                                                network,
-                                                None,
-                                            )
+                                            tokio::task::spawn_blocking(move || {
+                                                configure_and_start_internal_bitcoind(
+                                                    coincube_datadir,
+                                                    network,
+                                                    None,
+                                                )
+                                            })
+                                            .await
+                                            .unwrap_or_else(|e| Err(e.to_string()))
                                         },
                                         map_msg,
                                     );
@@ -539,11 +543,15 @@ impl State for BitcoindSettingsState {
                                     };
                                     return Task::perform(
                                         async move {
-                                            configure_and_start_internal_bitcoind(
-                                                coincube_datadir,
-                                                network,
-                                                Some(bytes),
-                                            )
+                                            tokio::task::spawn_blocking(move || {
+                                                configure_and_start_internal_bitcoind(
+                                                    coincube_datadir,
+                                                    network,
+                                                    Some(bytes),
+                                                )
+                                            })
+                                            .await
+                                            .unwrap_or_else(|e| Err(e.to_string()))
                                         },
                                         map_msg,
                                     );
@@ -658,7 +666,7 @@ impl State for BitcoindSettingsState {
                         }
                     }
                     NodeSettingsMessage::SwitchToBitcoind => {
-                        if matches!(cache.node_bitcoind_sync_progress, Some(p) if p < 0.999) {
+                        if cache.node_bitcoind_ibd == Some(true) {
                             self.warning = Some(Error::Unexpected(format!(
                                 "Bitcoin node is still syncing ({:.1}%). \
                                  Please wait until sync is complete before switching.",

@@ -563,6 +563,7 @@ pub async fn load_application(
         fiat_price: None,
         bitcoin_unit,
         node_bitcoind_sync_progress: None,
+        node_bitcoind_ibd: None,
         node_bitcoind_last_log: None,
         vault_expanded: false,
         liquid_expanded: false,

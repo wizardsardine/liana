@@ -12,7 +12,7 @@ pub mod wallet;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use iced::{clipboard, time, Subscription, Task};
 use tokio::runtime::Handle;
@@ -448,11 +448,8 @@ pub struct App {
     errors: std::collections::BinaryHeap<(usize, std::time::Instant, String)>,
     current_error_id: usize,
     /// True while a check_bitcoind_sync_progress probe is in flight; prevents
-    /// multiple concurrent RPC calls from piling up across ticks.
+    /// multiple concurrent RPC calls from piling up across subscription ticks.
     bitcoind_sync_probe_in_progress: bool,
-    /// Timestamp of the last bitcoind sync progress poll; used to rate-limit
-    /// RPC calls to once every BITCOIND_SYNC_POLL_INTERVAL.
-    last_bitcoind_sync_poll: Option<Instant>,
 }
 
 /// Returns true when a `DaemonError` indicates the daemon process is no longer
@@ -574,7 +571,6 @@ impl App {
                 errors: std::collections::BinaryHeap::with_capacity(8),
                 current_error_id: 256,
                 bitcoind_sync_probe_in_progress: false,
-                last_bitcoind_sync_poll: None,
             },
             cmd,
         )
@@ -633,7 +629,6 @@ impl App {
                 errors: std::collections::BinaryHeap::with_capacity(8),
                 current_error_id: 256,
                 bitcoind_sync_probe_in_progress: false,
-                last_bitcoind_sync_poll: None,
             },
             cmd,
         )
@@ -894,6 +889,20 @@ impl App {
             );
         }
 
+        // Poll pending local Bitcoind IBD progress on a fixed interval,
+        // independent of the variable-rate tick subscription.
+        if self
+            .daemon
+            .as_ref()
+            .and_then(|d| d.config())
+            .and_then(|c| c.pending_bitcoind.as_ref())
+            .is_some()
+        {
+            subscriptions.push(
+                time::every(BITCOIND_SYNC_POLL_INTERVAL).map(|_| Message::PollBitcoindSync),
+            );
+        }
+
         // Current panel's subscription
         subscriptions.push(
             self.panels
@@ -1023,30 +1032,6 @@ impl App {
             }
         }
 
-        // check if enough time has elapsed since the last poll
-        let should_poll = self
-            .last_bitcoind_sync_poll
-            .is_none_or(|last| last.elapsed() > BITCOIND_SYNC_POLL_INTERVAL);
-
-        // If a local Bitcoind node is pending (Connect is active, node is catching
-        // up), poll its IBD progress every tick so we can switch when ready.
-        // Guard: skip if a probe is already in flight to avoid queuing concurrent RPC calls.
-        if !self.bitcoind_sync_probe_in_progress && should_poll {
-            if let Some(pending_cfg) = self
-                .daemon
-                .as_ref()
-                .and_then(|d| d.config())
-                .and_then(|c| c.pending_bitcoind.clone())
-            {
-                self.bitcoind_sync_probe_in_progress = true;
-                self.last_bitcoind_sync_poll = Some(Instant::now());
-                tasks.push(Task::perform(
-                    check_bitcoind_sync_progress(pending_cfg),
-                    Message::BitcoindSyncProgress,
-                ));
-            }
-        }
-
         Task::batch(tasks)
     }
 
@@ -1071,12 +1056,29 @@ impl App {
                     self.cache.node_bitcoind_last_log = Some(line);
                 }
             }
+            Message::PollBitcoindSync => {
+                if !self.bitcoind_sync_probe_in_progress {
+                    if let Some(pending_cfg) = self
+                        .daemon
+                        .as_ref()
+                        .and_then(|d| d.config())
+                        .and_then(|c| c.pending_bitcoind.clone())
+                    {
+                        self.bitcoind_sync_probe_in_progress = true;
+                        return Task::perform(
+                            check_bitcoind_sync_progress(pending_cfg),
+                            Message::BitcoindSyncProgress,
+                        );
+                    }
+                }
+            }
             Message::BitcoindSyncProgress(res) => {
                 self.bitcoind_sync_probe_in_progress = false;
                 match res {
                     Err(e) => tracing::warn!("Bitcoind sync check failed: {}", e),
                     Ok((progress, ibd)) => {
                         self.cache.node_bitcoind_sync_progress = Some(progress);
+                        self.cache.node_bitcoind_ibd = Some(ibd);
                         // IBD complete when initialblockdownload flips to false.
                         // verificationprogress is a heuristic that tops out at ~0.9999
                         // and is not a reliable completion signal on its own.
@@ -1104,8 +1106,8 @@ impl App {
                                     Ok(()) => {
                                         info!("Switched to local Bitcoind — IBD complete");
                                         self.cache.node_bitcoind_sync_progress = None;
+                                        self.cache.node_bitcoind_ibd = None;
                                         self.cache.node_bitcoind_last_log = None;
-                                        self.last_bitcoind_sync_poll = None;
                                         return Task::done(Message::CacheUpdated);
                                     }
                                     Err(e) => error!("Failed to switch to Bitcoind: {}", e),

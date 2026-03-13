@@ -78,6 +78,8 @@ pub enum Message {
     BreezEvent(breez_sdk_liquid::prelude::SdkEvent),
     SettingsSaved,
     SettingsSaveFailed(Error),
+    /// Fired by the bitcoind-sync subscription to trigger a progress probe.
+    PollBitcoindSync,
     /// Result of polling the pending local bitcoind's IBD sync progress.
     /// Carries `(verificationprogress, initialblockdownload)`.
     BitcoindSyncProgress(Result<(f64, bool), String>),

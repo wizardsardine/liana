@@ -1335,7 +1335,7 @@ pub fn connect_login_panel<'a>(
 
     match step {
         ConnectLoginViewStep::EnterEmail => {
-            let valid = email.contains('@');
+            let valid = email.contains('@') && email.contains('.') && email.len() >= 6;
             let mut email_input = TextInput::new("your@email.com", email)
                 .on_input(NodeSettingsMessage::ConnectLoginEmailChanged)
                 .size(16)
@@ -1367,7 +1367,7 @@ pub fn connect_login_panel<'a>(
                 .size(16)
                 .padding(12)
                 .width(Length::Fill);
-            if !otp.is_empty() && !loading {
+            if otp.len() == 6 && !loading {
                 otp_input = otp_input.on_submit(NodeSettingsMessage::ConnectLoginVerifyOtp);
             }
             col = col.push(
@@ -1385,7 +1385,7 @@ pub fn connect_login_panel<'a>(
                 },
             )
             .padding([10, 20]);
-            if !otp.is_empty() && !loading {
+            if otp.len() == 6 && !loading {
                 verify_btn = verify_btn.on_press(NodeSettingsMessage::ConnectLoginVerifyOtp);
             }
             col = col.push(verify_btn);
