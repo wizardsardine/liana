@@ -5,6 +5,42 @@ use liana_ui::{
     icon,
 };
 
+#[derive(Debug, Clone, Copy)]
+pub enum MenuWidth {
+    Normal,
+    Compact,
+    Small,
+}
+
+impl MenuWidth {
+    pub fn from_pane_width(w: f32) -> Self {
+        if w < 700.0 {
+            return Self::Small;
+        } else if w < 1200.0 {
+            return Self::Compact;
+        }
+        Self::Normal
+    }
+
+    pub fn is_small(&self) -> bool {
+        matches!(self, &Self::Small)
+    }
+
+    pub fn is_compact(&self) -> bool {
+        matches!(self, &Self::Compact)
+    }
+}
+
+impl From<MenuWidth> for f32 {
+    fn from(val: MenuWidth) -> Self {
+        match val {
+            MenuWidth::Normal => 380.0,
+            MenuWidth::Compact => 210.0,
+            MenuWidth::Small => 70.0,
+        }
+    }
+}
+
 use super::view::Message;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Menu {
@@ -34,7 +70,7 @@ fn menu_entry<'a>(
     icon: liana_ui::widget::Text<'a>,
     text: &'static str,
     reload: bool,
-    small: bool,
+    menu_width: MenuWidth,
 ) -> liana_ui::widget::Row<'a, Message> {
     if *active == menu {
         let msg = if reload {
@@ -42,19 +78,19 @@ fn menu_entry<'a>(
         } else {
             Message::Menu(menu)
         };
-        let btn = if small {
+        let btn = if menu_width.is_small() {
             button::menu_active_small(icon)
         } else {
-            menu_active(Some(icon), text)
+            menu_active(Some(icon), text, menu_width.is_compact())
         };
 
         row!(btn.on_press(msg).width(iced::Length::Fill),)
     } else {
         let msg = Message::Menu(menu);
-        let btn = if small {
+        let btn = if menu_width.is_small() {
             button::menu_small(icon)
         } else {
-            button::menu(Some(icon), text)
+            button::menu(Some(icon), text, menu_width.is_compact())
         };
         row!(btn.on_press(msg).width(iced::Length::Fill))
     }
@@ -112,14 +148,18 @@ impl Menu {
         }
     }
 
-    pub fn entry<'a>(self, active: &Menu, small: bool) -> liana_ui::widget::Row<'a, Message> {
+    pub fn entry<'a>(
+        self,
+        active: &Menu,
+        menu_width: MenuWidth,
+    ) -> liana_ui::widget::Row<'a, Message> {
         menu_entry(
             active,
             self.clone(),
             self.icon(),
             self.title(),
             self.reload(),
-            small,
+            menu_width,
         )
     }
 }

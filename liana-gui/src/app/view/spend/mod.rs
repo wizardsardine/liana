@@ -39,7 +39,7 @@ pub fn spend_view<'a>(
     labels_editing: &'a HashMap<String, form::Value<String>>,
     network: Network,
     currently_signing: bool,
-    warning: Option<&Error>,
+    warning: Option<&'a Error>,
 ) -> Element<'a, Message> {
     let is_recovery = tx
         .psbt
@@ -148,7 +148,7 @@ pub fn create_spend_tx<'a>(
     amount_left: Option<&Amount>,
     feerate: &form::Value<String>,
     fee_amount: Option<&Amount>,
-    error: Option<&Error>,
+    error: Option<&'a Error>,
     is_first_step: bool,
     max_under_dust: bool,
 ) -> Element<'a, Message> {

@@ -47,7 +47,7 @@ pub fn psbt_view<'a>(
     labels_editing: &'a HashMap<String, form::Value<String>>,
     network: Network,
     currently_signing: bool,
-    warning: Option<&Error>,
+    warning: Option<&'a Error>,
 ) -> Element<'a, Message> {
     dashboard(
         &Menu::PSBTs,

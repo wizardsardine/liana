@@ -12,20 +12,31 @@ use iced::{
 
 const MENU_PADDING: [u16; 2] = [8, 12];
 const MENU_TEXT_SIZE: u16 = 22;
+const MENU_TEXT_COMPACT_SIZE: u16 = 22;
 const MENU_ICON_SIZE: u16 = 32;
 
 const ICON_BTN_SIZE: f32 = 40.0;
 const ICON_BTN_PADDING: f32 = 10.0;
 
-pub fn menu<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> Button<'a, T> {
+pub fn menu<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str, compact: bool) -> Button<'a, T> {
     Button::new(
-        content_menu(icon.map(|i| i.style(theme::text::secondary)), t, false).padding(MENU_PADDING),
+        content_menu(
+            icon.map(|i| i.style(theme::text::secondary)),
+            t,
+            false,
+            compact,
+        )
+        .padding(MENU_PADDING),
     )
     .style(theme::button::menu)
 }
 
-pub fn menu_active<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> Button<'a, T> {
-    Button::new(content_menu(icon, t, true).padding(MENU_PADDING))
+pub fn menu_active<'a, T: 'a>(
+    icon: Option<Text<'a>>,
+    t: &'static str,
+    compact: bool,
+) -> Button<'a, T> {
+    Button::new(content_menu(icon, t, true, compact).padding(MENU_PADDING))
         .style(theme::button::menu_pressed)
 }
 
@@ -51,11 +62,13 @@ fn content_menu<'a, T: 'a>(
     icon: Option<Text<'a>>,
     t: &'static str,
     active: bool,
+    compact: bool,
 ) -> Container<'a, T> {
-    let t = if active {
-        text(t).size(MENU_TEXT_SIZE).font(BOLD)
-    } else {
-        text(t).size(MENU_TEXT_SIZE).font(MEDIUM)
+    let t = match (active, compact) {
+        (true, false) => text(t).size(MENU_TEXT_SIZE).font(BOLD),
+        (false, false) => text(t).size(MENU_TEXT_SIZE).font(MEDIUM),
+        (true, true) => text(t).size(MENU_TEXT_COMPACT_SIZE).font(BOLD),
+        (false, true) => text(t).size(MENU_TEXT_COMPACT_SIZE).font(MEDIUM),
     };
 
     match icon {
