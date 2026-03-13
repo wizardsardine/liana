@@ -670,13 +670,24 @@ impl State for BitcoindSettingsState {
                         }
                     }
                     NodeSettingsMessage::SwitchToBitcoind => {
-                        if cache.node_bitcoind_ibd == Some(true) {
-                            self.warning = Some(Error::Unexpected(format!(
-                                "Bitcoin node is still syncing ({:.1}%). \
-                                 Please wait until sync is complete before switching.",
-                                cache.node_bitcoind_sync_progress.unwrap_or(0.0) * 100.0
-                            )));
-                            return Task::none();
+                        match cache.node_bitcoind_ibd {
+                            None => {
+                                self.warning = Some(Error::Unexpected(
+                                    "Bitcoin node sync status not yet known. \
+                                     Please wait a moment and try again."
+                                        .to_string(),
+                                ));
+                                return Task::none();
+                            }
+                            Some(true) => {
+                                self.warning = Some(Error::Unexpected(format!(
+                                    "Bitcoin node is still syncing ({:.1}%). \
+                                     Please wait until sync is complete before switching.",
+                                    cache.node_bitcoind_sync_progress.unwrap_or(0.0) * 100.0
+                                )));
+                                return Task::none();
+                            }
+                            Some(false) => {}
                         }
                         if let Some(cfg) = daemon.config() {
                             if let Some(pending) = cfg.pending_bitcoind.clone() {
