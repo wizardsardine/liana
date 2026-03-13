@@ -164,7 +164,7 @@ fn tx_list_view(i: usize, tx: &HistoryTransaction) -> Element<'_, Message> {
         .on_press(Message::Select(i))
         .style(theme::button::transparent_border),
     )
-    .style(theme::card::simple)
+    .style(theme::card::button_simple)
     .into()
 }
 

@@ -317,7 +317,7 @@ fn coin_list_view<'a>(
                 None
             }),
     )
-    .style(theme::card::simple)
+    .style(theme::card::button_simple)
 }
 
 pub fn coin_sequence_label<'a, T: 'a>(seq: u32, timelock: u32) -> Container<'a, T> {
