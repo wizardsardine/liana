@@ -108,8 +108,6 @@ pub enum StartupError {
     Bitcoind(BitcoindError),
     Electrum(ElectrumError),
     Esplora(EsploraError),
-    #[cfg(windows)]
-    NoWatchonlyInDatadir,
 }
 
 impl fmt::Display for StartupError {
@@ -148,17 +146,6 @@ impl fmt::Display for StartupError {
             Self::Bitcoind(e) => write!(f, "Error setting up bitcoind interface: '{}'.", e),
             Self::Electrum(e) => write!(f, "Error setting up Electrum interface: '{}'.", e),
             Self::Esplora(e) => write!(f, "Error setting up Esplora interface: '{}'.", e),
-            #[cfg(windows)]
-            Self::NoWatchonlyInDatadir => {
-                write!(
-                    f,
-                    "A data directory exists with no watchonly wallet. Really old versions of Coincube used to not \
-                     store the bitcoind watchonly wallet under their own datadir on Windows. A migration will be \
-                     necessary to be able to use such an old datadir with recent versions of Coincube. The migration \
-                     is automatically performed by Coincube version 4 and older. If you want to salvage this datadir \
-                     first run Coincube v4 before running more recent Coincube versions."
-                )
-            }
         }
     }
 }
@@ -261,15 +248,10 @@ fn setup_bitcoind(
         config.bitcoin_config.network,
         config.main_descriptor.is_taproot(),
     )?;
-    if fresh_data_dir {
+    if fresh_data_dir || !wo_path.exists() {
         log::info!("Creating a new watchonly wallet on bitcoind.");
         bitcoind.create_watchonly_wallet(&config.main_descriptor)?;
         log::info!("Watchonly wallet created.");
-    } else {
-        #[cfg(windows)]
-        if !cfg!(test) && !wo_path.exists() {
-            return Err(StartupError::NoWatchonlyInDatadir);
-        }
     }
     log::info!("Loading our watchonly wallet on bitcoind.");
     bitcoind.maybe_load_watchonly_wallet()?;
