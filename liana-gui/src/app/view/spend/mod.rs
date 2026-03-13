@@ -48,8 +48,12 @@ pub fn spend_view<'a>(
         .iter()
         .any(|txin| txin.sequence.is_relative_lock_time());
 
-    let title =
-        Container::new(h3(if is_recovery { "Recovery" } else { "Send" })).width(Length::Fill);
+    let title = Container::new(h3(if is_recovery {
+        Menu::Recovery.title()
+    } else {
+        Menu::CreateSpendTx.title()
+    }))
+    .width(Length::Fill);
 
     let warnings = (!(spend_warnings.is_empty() || saved)).then_some(spend_warnings.iter().fold(
         Column::new().padding(15).spacing(5),

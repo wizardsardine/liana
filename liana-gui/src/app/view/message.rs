@@ -7,6 +7,7 @@ use crate::{
 };
 use liana::miniscript::bitcoin::{bip32::Fingerprint, Address, OutPoint};
 
+
 pub trait Close {
     fn close() -> Self;
 }
