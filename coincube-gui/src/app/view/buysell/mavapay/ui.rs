@@ -229,7 +229,7 @@ fn sell_input_form<'a>(
                                 .width(iced::Length::Fill)
                                 .text_size(16)
                                 .padding(10),
-                                widget::button("Verify Details").on_press_maybe(
+                                widget::button("Verify Details").padding(10).on_press_maybe(
                                     (!(bank_account_number.is_empty() || bank_code.is_empty()))
                                         .then_some(BuySellMessage::Mavapay(
                                             MavapayMessage::VerifyNgnBankDetails
