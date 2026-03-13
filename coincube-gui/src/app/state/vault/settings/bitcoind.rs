@@ -279,7 +279,11 @@ impl State for BitcoindSettingsState {
                             ref mut error,
                         }) = self.connect_login
                         {
-                            if email.contains('@') && email.contains('.') && email.len() >= 6 && !*loading {
+                            if email.contains('@')
+                                && email.contains('.')
+                                && email.len() >= 6
+                                && !*loading
+                            {
                                 *loading = true;
                                 *error = None;
                                 let client = client.clone();

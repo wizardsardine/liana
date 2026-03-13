@@ -898,9 +898,8 @@ impl App {
             .and_then(|c| c.pending_bitcoind.as_ref())
             .is_some()
         {
-            subscriptions.push(
-                time::every(BITCOIND_SYNC_POLL_INTERVAL).map(|_| Message::PollBitcoindSync),
-            );
+            subscriptions
+                .push(time::every(BITCOIND_SYNC_POLL_INTERVAL).map(|_| Message::PollBitcoindSync));
         }
 
         // Current panel's subscription
