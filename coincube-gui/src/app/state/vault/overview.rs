@@ -115,6 +115,7 @@ impl State for VaultOverview {
                     self.show_rescan_warning,
                     cache.bitcoin_unit,
                     cache.node_bitcoind_sync_progress,
+                    cache.node_bitcoind_ibd,
                 ),
             )
         }

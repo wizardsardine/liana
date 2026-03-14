@@ -1055,6 +1055,9 @@ impl App {
                     self.cache.node_bitcoind_last_log = Some(line);
                 }
             }
+            Message::SetInternalBitcoind(bitcoind) => {
+                self.internal_bitcoind = Some(bitcoind);
+            }
             Message::PollBitcoindSync => {
                 if !self.bitcoind_sync_probe_in_progress {
                     if let Some(pending_cfg) = self
@@ -1076,12 +1079,15 @@ impl App {
                 match res {
                     Err(e) => tracing::warn!("Bitcoind sync check failed: {}", e),
                     Ok((progress, ibd)) => {
+                        let was_in_ibd = self.cache.node_bitcoind_ibd == Some(true);
                         self.cache.node_bitcoind_sync_progress = Some(progress);
                         self.cache.node_bitcoind_ibd = Some(ibd);
-                        // IBD complete when initialblockdownload flips to false.
-                        // verificationprogress is a heuristic that tops out at ~0.9999
-                        // and is not a reliable completion signal on its own.
-                        if !ibd {
+                        // Only auto-switch when we have observed the node transition
+                        // OUT of IBD (was_in_ibd=true → ibd=false).  This prevents
+                        // the immediately reversal that occurs when ConnectLoginVerified
+                        // saves an already-synced Bitcoind into pending_bitcoind: the
+                        // first poll would otherwise see ibd=false and switch back.
+                        if !ibd && was_in_ibd {
                             let switch =
                                 self.daemon.as_ref().and_then(|d| d.config()).and_then(|c| {
                                     let pending = c.pending_bitcoind.clone()?;
@@ -1107,7 +1113,12 @@ impl App {
                                         self.cache.node_bitcoind_sync_progress = None;
                                         self.cache.node_bitcoind_ibd = None;
                                         self.cache.node_bitcoind_last_log = None;
-                                        return Task::done(Message::CacheUpdated);
+                                        let cfg_task =
+                                            self.update(Message::DaemonConfigLoaded(Ok(())));
+                                        return Task::batch([
+                                            cfg_task,
+                                            Task::done(Message::CacheUpdated),
+                                        ]);
                                     }
                                     Err(e) => error!("Failed to switch to Bitcoind: {}", e),
                                 }
@@ -1205,7 +1216,11 @@ impl App {
                             match self.load_daemon_config(datadir, new_cfg) {
                                 Ok(()) => {
                                     info!("Switched to COINCUBE | Connect fallback after Bitcoind failure");
-                                    return Task::done(Message::CacheUpdated);
+                                    let cfg_task = self.update(Message::DaemonConfigLoaded(Ok(())));
+                                    return Task::batch([
+                                        cfg_task,
+                                        Task::done(Message::CacheUpdated),
+                                    ]);
                                 }
                                 Err(e) => error!("Failed to activate Connect fallback: {}", e),
                             }
@@ -1263,6 +1278,21 @@ impl App {
             Message::LoadDaemonConfig(cfg) => {
                 // Only load daemon config if we have a vault (daemon and wallet exist)
                 if self.daemon.is_some() && self.wallet.is_some() {
+                    // If pending_bitcoind is being cleared (e.g. manual SwitchToBitcoind),
+                    // clear the associated sync progress fields so the vault overview
+                    // stops showing a stale "syncing" card.
+                    let pending_cleared = self
+                        .daemon
+                        .as_ref()
+                        .and_then(|d| d.config())
+                        .map(|c| c.pending_bitcoind.is_some())
+                        .unwrap_or(false)
+                        && cfg.pending_bitcoind.is_none();
+                    if pending_cleared {
+                        self.cache.node_bitcoind_sync_progress = None;
+                        self.cache.node_bitcoind_ibd = None;
+                        self.cache.node_bitcoind_last_log = None;
+                    }
                     let res = self.load_daemon_config(self.cache.datadir_path.clone(), *cfg);
                     return self.update(Message::DaemonConfigLoaded(res));
                 } else {

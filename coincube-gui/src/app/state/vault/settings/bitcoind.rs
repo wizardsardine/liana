@@ -476,13 +476,6 @@ impl State for BitcoindSettingsState {
                                     internal_bitcoind_exe_path(&coincube_datadir, VERSION).exists();
                                 if exe_exists {
                                     setup.internal_stage = InternalSetupStage::Installing;
-                                    let map_msg = |r| {
-                                        Message::View(view::Message::Settings(
-                                            view::SettingsMessage::NodeSettings(
-                                                view::NodeSettingsMessage::SetupLocalNodeStartResult(r),
-                                            ),
-                                        ))
-                                    };
                                     return Task::perform(
                                         async move {
                                             tokio::task::spawn_blocking(move || {
@@ -495,7 +488,15 @@ impl State for BitcoindSettingsState {
                                             .await
                                             .unwrap_or_else(|e| Err(e.to_string()))
                                         },
-                                        map_msg,
+                                        |r| {
+                                            Message::View(view::Message::Settings(
+                                                view::SettingsMessage::NodeSettings(
+                                                    view::NodeSettingsMessage::SetupLocalNodeStartResult(
+                                                        r,
+                                                    ),
+                                                ),
+                                            ))
+                                        },
                                     );
                                 } else {
                                     setup.internal_stage = InternalSetupStage::Downloading;
@@ -538,13 +539,6 @@ impl State for BitcoindSettingsState {
                                     setup.download_progress = 100.0;
                                     let coincube_datadir = cache.datadir_path.clone();
                                     let network = cache.network;
-                                    let map_msg = |r| {
-                                        Message::View(view::Message::Settings(
-                                            view::SettingsMessage::NodeSettings(
-                                                view::NodeSettingsMessage::SetupLocalNodeStartResult(r),
-                                            ),
-                                        ))
-                                    };
                                     return Task::perform(
                                         async move {
                                             tokio::task::spawn_blocking(move || {
@@ -557,7 +551,15 @@ impl State for BitcoindSettingsState {
                                             .await
                                             .unwrap_or_else(|e| Err(e.to_string()))
                                         },
-                                        map_msg,
+                                        |r| {
+                                            Message::View(view::Message::Settings(
+                                                view::SettingsMessage::NodeSettings(
+                                                    view::NodeSettingsMessage::SetupLocalNodeStartResult(
+                                                        r,
+                                                    ),
+                                                ),
+                                            ))
+                                        },
                                     );
                                 }
                                 Err(e) => {
@@ -570,15 +572,18 @@ impl State for BitcoindSettingsState {
                     NodeSettingsMessage::SetupLocalNodeStartResult(result) => {
                         if let Some(ref mut setup) = self.pending_node_setup {
                             match result {
-                                Ok(bitcoind_cfg) => {
+                                Ok((bitcoind_cfg, bitcoind)) => {
                                     if let Some(cfg) = daemon.config() {
                                         let mut new_cfg = cfg.clone();
                                         new_cfg.pending_bitcoind = Some(bitcoind_cfg);
                                         setup.internal_stage = InternalSetupStage::Done;
                                         setup.processing = true;
-                                        return Task::done(Message::LoadDaemonConfig(Box::new(
-                                            new_cfg,
-                                        )));
+                                        return Task::batch([
+                                            Task::done(Message::SetInternalBitcoind(bitcoind)),
+                                            Task::done(Message::LoadDaemonConfig(Box::new(
+                                                new_cfg,
+                                            ))),
+                                        ]);
                                     }
                                 }
                                 Err(e) => {
@@ -886,12 +891,13 @@ impl From<BitcoindSettingsState> for Box<dyn State> {
 
 /// Configure and start an internally-managed pruned Bitcoin Core node.
 /// If `bytes_to_install` is Some, the binary is first installed from those bytes.
-/// Returns the `BitcoindConfig` to be stored as `pending_bitcoind` in the daemon config.
+/// Returns the `BitcoindConfig` and the live `Bitcoind` handle (which keeps the
+/// lock file alive) to be stored by the caller.
 fn configure_and_start_internal_bitcoind(
     coincube_datadir: CoincubeDirectory,
     network: Network,
     bytes_to_install: Option<Vec<u8>>,
-) -> Result<BitcoindConfig, String> {
+) -> Result<(BitcoindConfig, Bitcoind), String> {
     if let Some(ref bytes) = bytes_to_install {
         let install_dir = internal_bitcoind_directory(&coincube_datadir);
         install_bitcoind(&install_dir, bytes).map_err(|e| format!("{:?}", e))?;
@@ -933,10 +939,10 @@ fn configure_and_start_internal_bitcoind(
         addr: internal_bitcoind_address(rpc_port),
     };
 
-    Bitcoind::maybe_start(network, bitcoind_config.clone(), &coincube_datadir)
+    let bitcoind = Bitcoind::maybe_start(network, bitcoind_config.clone(), &coincube_datadir)
         .map_err(|e| e.to_string())?;
 
-    Ok(bitcoind_config)
+    Ok((bitcoind_config, bitcoind))
 }
 
 #[derive(Debug)]

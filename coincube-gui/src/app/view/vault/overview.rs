@@ -83,6 +83,7 @@ pub fn vault_overview_view<'a>(
     show_rescan_warning: bool,
     bitcoin_unit: BitcoinDisplayUnit,
     node_bitcoind_sync_progress: Option<f64>,
+    node_bitcoind_ibd: Option<bool>,
 ) -> Element<'a, Message> {
     let fiat_balance = fiat_converter.as_ref().map(|c| c.convert(*balance));
     let fiat_unconfirmed = fiat_converter.map(|c| c.convert(*unconfirmed_balance));
@@ -171,30 +172,33 @@ pub fn vault_overview_view<'a>(
                 ),
         )
         .push(show_rescan_warning.then_some(rescan_warning()))
-        .push(node_bitcoind_sync_progress.map(|progress| {
-            Container::new(
-                Row::new()
-                    .spacing(10)
-                    .align_y(Alignment::Center)
-                    .push(
-                        text(format!(
-                            "Your local node is syncing — {:.1}% complete",
-                            100.0 * progress
+        .push(match (node_bitcoind_ibd, node_bitcoind_sync_progress) {
+            (Some(true), Some(progress)) => Some(
+                Container::new(
+                    Row::new()
+                        .spacing(10)
+                        .align_y(Alignment::Center)
+                        .push(
+                            text(format!(
+                                "Your local node is syncing — {:.1}% complete",
+                                100.0 * progress
+                            ))
+                            .style(theme::text::secondary)
+                            .width(Length::Fill),
+                        )
+                        .push(spinner::typing_text_carousel(
+                            "...",
+                            true,
+                            Duration::from_millis(2000),
+                            |content| text(content).style(theme::text::secondary),
                         ))
-                        .style(theme::text::secondary)
                         .width(Length::Fill),
-                    )
-                    .push(spinner::typing_text_carousel(
-                        "...",
-                        true,
-                        Duration::from_millis(2000),
-                        |content| text(content).style(theme::text::secondary),
-                    ))
-                    .width(Length::Fill),
-            )
-            .padding(15)
-            .style(theme::card::border)
-        }))
+                )
+                .padding(15)
+                .style(theme::card::border),
+            ),
+            _ => None,
+        })
         .push(if expiring_coins.is_empty() {
             remaining_sequence.map(|sequence| {
                 Container::new(

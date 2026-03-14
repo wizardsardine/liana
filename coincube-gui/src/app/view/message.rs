@@ -8,7 +8,7 @@ use crate::{
         },
     },
     export::ImportExportMessage,
-    node::bitcoind::RpcAuthType,
+    node::bitcoind::{Bitcoind, RpcAuthType},
     services::fiat::{Currency, PriceSource},
 };
 use coincubed::config::BitcoindConfig;
@@ -201,7 +201,7 @@ pub enum NodeSettingsMessage {
     // Internal (COINCUBE-managed) node setup progress
     SetupLocalNodeDownloadProgress(f32),
     SetupLocalNodeDownloadComplete(Result<Vec<u8>, String>),
-    SetupLocalNodeStartResult(Result<BitcoindConfig, String>),
+    SetupLocalNodeStartResult(Result<(BitcoindConfig, Bitcoind), String>),
 }
 
 #[derive(Debug, Clone)]

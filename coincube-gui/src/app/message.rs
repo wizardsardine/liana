@@ -19,6 +19,7 @@ use crate::{
     daemon::model::*,
     export::ImportExportMessage,
     hw::HardwareWalletMessage,
+    node::bitcoind::Bitcoind,
     services::fiat::{
         api::{ListCurrenciesResult, PriceApiError},
         PriceSource,
@@ -78,6 +79,9 @@ pub enum Message {
     BreezEvent(breez_sdk_liquid::prelude::SdkEvent),
     SettingsSaved,
     SettingsSaveFailed(Error),
+    /// Store the Bitcoind handle produced by configure_and_start_internal_bitcoind so
+    /// that its LockFile is kept alive for the lifetime of the App.
+    SetInternalBitcoind(Bitcoind),
     /// Fired by the bitcoind-sync subscription to trigger a progress probe.
     PollBitcoindSync,
     /// Result of polling the pending local bitcoind's IBD sync progress.
