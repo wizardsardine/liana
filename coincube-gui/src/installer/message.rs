@@ -86,7 +86,9 @@ pub enum Message {
     CubeSaveFailed(String),
     RetryCubeSave,
     CoincubeConnect(CoincubeConnectMsg),
-    BorderWalletWizard(super::step::descriptor::editor::border_wallet_wizard::BorderWalletWizardMessage),
+    BorderWalletWizard(
+        super::step::descriptor::editor::border_wallet_wizard::BorderWalletWizardMessage,
+    ),
     None,
 }
 

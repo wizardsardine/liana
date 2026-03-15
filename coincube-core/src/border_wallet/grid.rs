@@ -80,10 +80,12 @@ impl WordGrid {
     ///
     /// Returns an error if out of bounds.
     pub fn word_at(&self, row: usize, col: usize) -> Result<&'static str, BorderWalletError> {
-        let idx = self.word_index_at(row, col).ok_or(BorderWalletError::CellOutOfBounds {
-            row: row as u16,
-            col: col as u8,
-        })?;
+        let idx = self
+            .word_index_at(row, col)
+            .ok_or(BorderWalletError::CellOutOfBounds {
+                row: row as u16,
+                col: col as u8,
+            })?;
         Ok(bip39::Language::English.word_list()[idx as usize])
     }
 
@@ -105,7 +107,8 @@ impl WordGrid {
         Self { cells }
     }
 
-    /// Access the raw cell indices (for testing and pattern extraction).
+    /// Access the raw cell indices (used in tests).
+    #[cfg(test)]
     pub(crate) fn cells(&self) -> &[u16] {
         &self.cells
     }
@@ -166,15 +169,18 @@ mod tests {
     fn test_deterministic_regeneration() {
         let grid1 = WordGrid::from_recovery_phrase(TEST_PHRASE);
         let grid2 = WordGrid::from_recovery_phrase(TEST_PHRASE);
-        assert_eq!(grid1.cells(), grid2.cells(), "same phrase must produce same grid");
+        assert_eq!(
+            grid1.cells(),
+            grid2.cells(),
+            "same phrase must produce same grid"
+        );
     }
 
     #[test]
     fn test_different_phrases_yield_different_grids() {
         let grid1 = WordGrid::from_recovery_phrase(TEST_PHRASE);
-        let grid2 = WordGrid::from_recovery_phrase(
-            "zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo wrong",
-        );
+        let grid2 =
+            WordGrid::from_recovery_phrase("zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo wrong");
         assert_ne!(
             grid1.cells(),
             grid2.cells(),
@@ -249,11 +255,9 @@ mod tests {
                 let idx = grid.word_index_at(row, col).unwrap();
                 let word = grid.word_at(row, col).unwrap();
                 assert_eq!(
-                    word,
-                    word_list[idx as usize],
+                    word, word_list[idx as usize],
                     "word_index_at and word_at must agree at ({}, {})",
-                    row,
-                    col
+                    row, col
                 );
             }
         }

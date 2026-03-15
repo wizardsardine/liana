@@ -21,7 +21,10 @@ impl fmt::Display for BorderWalletError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidRecoveryPhrase => {
-                write!(f, "invalid recovery phrase: must be a valid 12-word BIP39 mnemonic")
+                write!(
+                    f,
+                    "invalid recovery phrase: must be a valid 12-word BIP39 mnemonic"
+                )
             }
             Self::InvalidPatternLength(n) => {
                 write!(f, "invalid pattern length: expected 11 cells, got {}", n)

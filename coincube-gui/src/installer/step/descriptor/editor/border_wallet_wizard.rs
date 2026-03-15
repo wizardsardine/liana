@@ -15,11 +15,7 @@ use coincube_core::{
         descriptor::{DescriptorPublicKey, DescriptorXKey, Wildcard},
     },
 };
-use iced::{
-    alignment::Horizontal,
-    widget::scrollable,
-    Length, Task,
-};
+use iced::{alignment::Horizontal, widget::scrollable, Length, Task};
 
 use coincube_ui::{
     color,
@@ -150,14 +146,12 @@ impl BorderWalletWizard {
                                     self.step = WizardStep::Checksum;
                                 }
                                 Err(e) => {
-                                    self.error =
-                                        Some(format!("Key derivation failed: {:?}", e));
+                                    self.error = Some(format!("Key derivation failed: {:?}", e));
                                 }
                             }
                         }
                         Err(e) => {
-                            self.error =
-                                Some(format!("Mnemonic construction failed: {:?}", e));
+                            self.error = Some(format!("Mnemonic construction failed: {:?}", e));
                         }
                     }
                 }
@@ -288,9 +282,15 @@ impl BorderWalletWizard {
                  while you are using it.",
             ))
             .push(p1_regular("To create one, you will:"))
-            .push(p1_regular("1. Generate or enter a 12-word recovery phrase (the Entropy Grid seed)"))
-            .push(p1_regular("2. Select 11 cells from the word grid (your Pattern)"))
-            .push(p1_regular("3. Memorize the checksum word (the final derived word)"))
+            .push(p1_regular(
+                "1. Generate or enter a 12-word recovery phrase (the Entropy Grid seed)",
+            ))
+            .push(p1_regular(
+                "2. Select 11 cells from the word grid (your Pattern)",
+            ))
+            .push(p1_regular(
+                "3. Memorize the checksum word (the final derived word)",
+            ))
             .push(p1_regular("4. Review and confirm the derived key"))
             .push(p1_regular(
                 "Important: To reconstruct this key you need all three components: \
@@ -337,9 +337,9 @@ impl BorderWalletWizard {
                 let idx = i;
                 let input = TextInput::new(&format!("Word {}", i + 1), &self.phrase_words[i].value)
                     .on_input(move |s| {
-                        Message::BorderWalletWizard(
-                            BorderWalletWizardMessage::PhraseWordEdited(idx, s),
-                        )
+                        Message::BorderWalletWizard(BorderWalletWizardMessage::PhraseWordEdited(
+                            idx, s,
+                        ))
                     })
                     .width(Length::Fill);
                 row_widget = row_widget.push(
@@ -353,8 +353,10 @@ impl BorderWalletWizard {
             word_rows = word_rows.push(row_widget);
         }
 
-        let error_text: Option<Element<Message>> =
-            self.error.as_ref().map(|e| p1_regular(e.as_str()).color(color::RED).into());
+        let error_text: Option<Element<Message>> = self
+            .error
+            .as_ref()
+            .map(|e| p1_regular(e.as_str()).color(color::RED).into());
 
         let next_btn = if self.phrase_valid {
             button::primary(None, "Next")
@@ -377,12 +379,7 @@ impl BorderWalletWizard {
             col = col.push(err);
         }
 
-        col = col.push(
-            Row::new()
-                .spacing(10)
-                .push(back_btn)
-                .push(next_btn),
-        );
+        col = col.push(Row::new().spacing(10).push(back_btn).push(next_btn));
 
         Container::new(col.width(550))
             .padding(20)
@@ -452,15 +449,13 @@ impl BorderWalletWizard {
 
                     let r = row_idx as u16;
                     let c = col_idx as u8;
-                    let cell_btn = Button::new(
-                        text(label).size(11).align_x(Horizontal::Center),
-                    )
-                    .style(cell_style)
-                    .on_press(self.wizard_msg(
-                        BorderWalletWizardMessage::ToggleCellSelection(r, c),
-                    ))
-                    .width(50)
-                    .height(28);
+                    let cell_btn = Button::new(text(label).size(11).align_x(Horizontal::Center))
+                        .style(cell_style)
+                        .on_press(
+                            self.wizard_msg(BorderWalletWizardMessage::ToggleCellSelection(r, c)),
+                        )
+                        .width(50)
+                        .height(28);
 
                     row_widget = row_widget.push(cell_btn);
                 }
@@ -471,8 +466,10 @@ impl BorderWalletWizard {
             p1_regular("No grid available").into()
         };
 
-        let error_text: Option<Element<Message>> =
-            self.error.as_ref().map(|e| p1_regular(e.as_str()).color(color::RED).into());
+        let error_text: Option<Element<Message>> = self
+            .error
+            .as_ref()
+            .map(|e| p1_regular(e.as_str()).color(color::RED).into());
 
         let next_btn = if self.pattern.is_complete() {
             button::primary(None, "Next")
@@ -501,12 +498,7 @@ impl BorderWalletWizard {
             col = col.push(err);
         }
 
-        col = col.push(
-            Row::new()
-                .spacing(10)
-                .push(back_btn)
-                .push(next_btn),
-        );
+        col = col.push(Row::new().spacing(10).push(back_btn).push(next_btn));
 
         Container::new(col.width(850))
             .padding(20)
@@ -575,10 +567,7 @@ impl BorderWalletWizard {
         let col = Column::new()
             .spacing(12)
             .push(header)
-            .push(p1_bold(&format!(
-                "Checksum word: \"{}\"",
-                checksum_word
-            )))
+            .push(p1_bold(&format!("Checksum word: \"{}\"", checksum_word)))
             .push(p1_regular(
                 "This is the only word you need to memorize. The checksum word is \
                  the 12th word of the derived mnemonic, calculated automatically from \
@@ -591,12 +580,7 @@ impl BorderWalletWizard {
             ))
             .push(mnemonic_display)
             .push(enrollment_display)
-            .push(
-                Row::new()
-                    .spacing(10)
-                    .push(back_btn)
-                    .push(next_btn),
-            )
+            .push(Row::new().spacing(10).push(back_btn).push(next_btn))
             .width(500);
 
         Container::new(col)
@@ -639,7 +623,9 @@ impl BorderWalletWizard {
             .push(p1_regular(
                 "To reconstruct this key in the future, you need all three components:",
             ))
-            .push(p1_regular("1. The recovery phrase (12 words that seed the grid)"))
+            .push(p1_regular(
+                "1. The recovery phrase (12 words that seed the grid)",
+            ))
             .push(p1_regular("2. Your exact pattern (the 11 cells in order)"))
             .push(p1_bold(&format!(
                 "3. The checksum word: \"{}\"",
@@ -659,12 +645,7 @@ impl BorderWalletWizard {
             .spacing(15)
             .push(header)
             .push(warning)
-            .push(
-                Row::new()
-                    .spacing(10)
-                    .push(back_btn)
-                    .push(confirm_btn),
-            )
+            .push(Row::new().spacing(10).push(back_btn).push(confirm_btn))
             .width(500);
 
         Container::new(col)

@@ -222,7 +222,10 @@ mod tests {
         // Fingerprint should be non-zero.
         assert_ne!(enrollment.fingerprint, Fingerprint::default());
         // Derivation path should match default.
-        assert_eq!(enrollment.derivation_path, default_derivation_path(Network::Testnet));
+        assert_eq!(
+            enrollment.derivation_path,
+            default_derivation_path(Network::Testnet)
+        );
         assert_eq!(enrollment.network, Network::Testnet);
     }
 
@@ -318,9 +321,8 @@ mod tests {
         let e1 = derive_enrollment(&m1, Network::Testnet, &secp).unwrap();
 
         // Reconstruction with wrong phrase → different grid → different mnemonic.
-        let grid2 = WordGrid::from_recovery_phrase(
-            "zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo wrong",
-        );
+        let grid2 =
+            WordGrid::from_recovery_phrase("zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo wrong");
         let mut pattern2 = OrderedPattern::new();
         for col in 0..11u8 {
             pattern2.add(CellRef::new(0, col)).unwrap();
