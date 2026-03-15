@@ -447,6 +447,9 @@ pub struct KeySetting {
     pub name: String,
     pub master_fingerprint: Fingerprint,
     pub provider_key: Option<ProviderKey>,
+    /// Whether this key is a Border Wallet key (derived transiently from grid pattern).
+    #[serde(default)]
+    pub is_border_wallet_safety_net: bool,
 }
 
 impl KeySetting {
@@ -484,12 +487,14 @@ impl KeySetting {
                 name,
                 master_fingerprint: fg,
                 provider_key,
+                is_border_wallet_safety_net: false,
             })
         } else {
             Some(Self {
                 name,
                 master_fingerprint: fg,
                 provider_key: None,
+                is_border_wallet_safety_net: false,
             })
         }
     }
