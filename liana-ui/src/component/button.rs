@@ -1,7 +1,9 @@
 use super::text::{button_text, text};
 use crate::{theme, widget::*};
-use iced::alignment::{Horizontal, Vertical};
-use iced::widget::{button, container, row};
+use iced::{
+    alignment::{Horizontal, Vertical},
+    widget::{button, container, row},
+};
 
 pub fn menu<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> Button<'a, T> {
     Button::new(content_menu(icon.map(|i| i.style(theme::text::secondary)), t).padding(10))
@@ -52,6 +54,10 @@ pub fn transparent<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> Button
 
 pub fn secondary<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> Button<'a, T> {
     Button::new(content(icon, button_text(t))).style(theme::button::secondary)
+}
+
+pub fn tertiary<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> Button<'a, T> {
+    Button::new(content(icon, button_text(t))).style(theme::button::tertiary)
 }
 
 pub fn border<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> Button<'a, T> {

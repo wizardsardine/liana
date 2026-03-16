@@ -47,6 +47,7 @@ pub struct Buttons {
     pub transparent_border: Button,
     pub primary: Button,
     pub secondary: Button,
+    pub tertiary: Button,
     pub destructive: Button,
     pub container: Button,
     pub container_border: Button,

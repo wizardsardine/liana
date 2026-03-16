@@ -26,6 +26,10 @@ pub fn secondary(theme: &Theme, status: Status) -> Style {
     button(&theme.colors.buttons.secondary, status)
 }
 
+pub fn tertiary(theme: &Theme, status: Status) -> Style {
+    button(&theme.colors.buttons.tertiary, status)
+}
+
 pub fn destructive(theme: &Theme, status: Status) -> Style {
     button(&theme.colors.buttons.destructive, status)
 }

@@ -62,6 +62,28 @@ impl Palette {
                         border: color::GREY_7.into(),
                     }),
                 },
+                tertiary: Button {
+                    active: ButtonPalette {
+                        background: color::GREEN,
+                        text: color::LIGHT_BLACK,
+                        border: color::GREEN.into(),
+                    },
+                    hovered: ButtonPalette {
+                        background: color::GREEN,
+                        text: color::LIGHT_BLACK,
+                        border: color::GREEN.into(),
+                    },
+                    pressed: Some(ButtonPalette {
+                        background: color::GREEN,
+                        text: color::LIGHT_BLACK,
+                        border: color::GREEN.into(),
+                    }),
+                    disabled: Some(ButtonPalette {
+                        background: color::GREY_6,
+                        text: color::GREY_2,
+                        border: color::GREY_7.into(),
+                    }),
+                },
                 destructive: Button {
                     active: ButtonPalette {
                         background: color::GREY_6,

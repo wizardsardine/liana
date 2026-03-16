@@ -6,6 +6,11 @@ pub const LIGHT_BLACK: Color = Color::from_rgb(
     0x14 as f32 / 255.0,
     0x14 as f32 / 255.0,
 );
+pub const BUSINESS_BLACK: Color = Color::from_rgb(
+    0x0F as f32 / 255.0,
+    0x17 as f32 / 255.0,
+    0x2A as f32 / 255.0,
+);
 pub const GREY_7: Color = Color::from_rgb(
     0x3F as f32 / 255.0,
     0x3F as f32 / 255.0,
