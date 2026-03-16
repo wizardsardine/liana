@@ -175,7 +175,7 @@ impl Wallet {
                     name: alias.clone(),
                     master_fingerprint: *fg,
                     provider_key: None,
-                    is_border_wallet_safety_net: false,
+                    is_border_wallet: false,
                 },
             );
         });

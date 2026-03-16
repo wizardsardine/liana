@@ -45,11 +45,21 @@ impl WordGrid {
     ///
     /// The phrase must be a valid 12-word BIP39 mnemonic (already validated
     /// by `GridRecoveryPhrase`). The same phrase always produces the same grid.
+    ///
+    /// The input is canonicalized (trimmed, lowercased, whitespace-collapsed)
+    /// before hashing so that formatting differences never produce a different grid.
     pub fn from_recovery_phrase(phrase: &str) -> Self {
+        // Canonicalize: trim, lowercase, collapse whitespace runs to single spaces.
+        let canonical: String = phrase
+            .split_whitespace()
+            .map(|w| w.to_lowercase())
+            .collect::<Vec<_>>()
+            .join(" ");
+
         // Step 1: Derive seed via HMAC-SHA512.
         let seed = {
             let mut engine = HmacEngine::<sha512::Hash>::new(DOMAIN_TAG);
-            engine.input(phrase.as_bytes());
+            engine.input(canonical.as_bytes());
             Hmac::<sha512::Hash>::from_engine(engine)
         };
         let seed_bytes = seed.as_byte_array();

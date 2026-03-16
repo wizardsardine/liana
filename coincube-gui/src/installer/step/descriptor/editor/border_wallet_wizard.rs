@@ -48,7 +48,7 @@ enum WizardStep {
 }
 
 /// Messages specific to the Border Wallet wizard.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub enum BorderWalletWizardMessage {
     Next,
     Previous,
@@ -58,6 +58,30 @@ pub enum BorderWalletWizardMessage {
     UndoLastCell,
     ClearPattern,
     ConfirmEnrollment,
+}
+
+// Manual Debug impl to redact recovery phrase words from logs.
+impl std::fmt::Debug for BorderWalletWizardMessage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::PhraseWordEdited(idx, _) => f
+                .debug_tuple("PhraseWordEdited")
+                .field(idx)
+                .field(&"<redacted>")
+                .finish(),
+            Self::Next => write!(f, "Next"),
+            Self::Previous => write!(f, "Previous"),
+            Self::GeneratePhrase => write!(f, "GeneratePhrase"),
+            Self::ToggleCellSelection(r, c) => f
+                .debug_tuple("ToggleCellSelection")
+                .field(r)
+                .field(c)
+                .finish(),
+            Self::UndoLastCell => write!(f, "UndoLastCell"),
+            Self::ClearPattern => write!(f, "ClearPattern"),
+            Self::ConfirmEnrollment => write!(f, "ConfirmEnrollment"),
+        }
+    }
 }
 
 pub struct BorderWalletWizard {
@@ -73,8 +97,8 @@ pub struct BorderWalletWizard {
     grid: Option<WordGrid>,
     pattern: OrderedPattern,
 
-    // Derived data
-    mnemonic_str: Option<String>,
+    // Derived data — only the checksum word is retained, never the full mnemonic.
+    checksum_word: Option<String>,
     enrollment: Option<BorderWalletEnrollment>,
 
     error: Option<String>,
@@ -90,7 +114,7 @@ impl BorderWalletWizard {
             phrase_valid: false,
             grid: None,
             pattern: OrderedPattern::new(),
-            mnemonic_str: None,
+            checksum_word: None,
             enrollment: None,
             error: None,
         }
@@ -135,8 +159,10 @@ impl BorderWalletWizard {
                 }
                 if let Some(grid) = &self.grid {
                     match build_mnemonic(grid, &self.pattern) {
-                        Ok((mnemonic, _checksum_word)) => {
-                            self.mnemonic_str = Some(mnemonic.to_string());
+                        Ok((mnemonic, checksum_word)) => {
+                            // Keep only the checksum word; the full mnemonic is
+                            // used solely for derive_enrollment and then dropped.
+                            self.checksum_word = Some(checksum_word.to_string());
 
                             let secp =
                                 coincube_core::miniscript::bitcoin::secp256k1::Secp256k1::new();
@@ -149,6 +175,7 @@ impl BorderWalletWizard {
                                     self.error = Some(format!("Key derivation failed: {:?}", e));
                                 }
                             }
+                            // `mnemonic` is dropped here — no full mnemonic retained.
                         }
                         Err(e) => {
                             self.error = Some(format!("Mnemonic construction failed: {:?}", e));
@@ -243,7 +270,7 @@ impl BorderWalletWizard {
             });
 
             let key = Key {
-                source: KeySource::BorderWalletSafetyNet,
+                source: KeySource::BorderWallet,
                 name: "Border Wallet".to_string(),
                 fingerprint,
                 key: desc_xpub,
@@ -516,32 +543,7 @@ impl BorderWalletWizard {
         let back_btn = button::transparent(Some(icon::previous_icon()), "Back")
             .on_press(self.wizard_msg(BorderWalletWizardMessage::Previous));
 
-        let checksum_word = self
-            .mnemonic_str
-            .as_ref()
-            .and_then(|m| m.split_whitespace().nth(11))
-            .unwrap_or("???")
-            .to_string();
-
-        let mnemonic_display = if let Some(mnemonic) = &self.mnemonic_str {
-            let words: Vec<&str> = mnemonic.split_whitespace().collect();
-            let mut word_col = Column::new().spacing(4);
-            for (i, word) in words.iter().enumerate() {
-                let label = if i == 11 {
-                    format!("{}. {} (checksum)", i + 1, word)
-                } else {
-                    format!("{}. {}", i + 1, word)
-                };
-                if i == 11 {
-                    word_col = word_col.push(p1_bold(&label));
-                } else {
-                    word_col = word_col.push(p1_regular(&label));
-                }
-            }
-            word_col
-        } else {
-            Column::new().push(p1_regular("No mnemonic derived"))
-        };
+        let checksum_word = self.checksum_word.as_deref().unwrap_or("???");
 
         let enrollment_display = if let Some(enrollment) = &self.enrollment {
             Column::new()
@@ -574,11 +576,6 @@ impl BorderWalletWizard {
                  your pattern. Together with the recovery phrase and your pattern, it \
                  forms the three components needed to reconstruct this key.",
             ))
-            .push(p1_bold("Full Derived Mnemonic"))
-            .push(p1_regular(
-                "The words below are derived from your pattern. They will NOT be stored.",
-            ))
-            .push(mnemonic_display)
             .push(enrollment_display)
             .push(Row::new().spacing(10).push(back_btn).push(next_btn))
             .width(500);
@@ -605,12 +602,7 @@ impl BorderWalletWizard {
             .map(|e| format!("{}", e.fingerprint))
             .unwrap_or_default();
 
-        let checksum_word = self
-            .mnemonic_str
-            .as_ref()
-            .and_then(|m| m.split_whitespace().nth(11))
-            .unwrap_or("???")
-            .to_string();
+        let checksum_word = self.checksum_word.as_deref().unwrap_or("???");
 
         let warning = Column::new()
             .spacing(8)

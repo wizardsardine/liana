@@ -110,18 +110,26 @@ pub fn derive_enrollment(
     // Derive seed — zeroize on drop.
     let seed = Zeroizing::new(mnemonic.to_seed(""));
 
-    // Derive master xpriv — lives only in this scope.
-    let master_xpriv = bip32::Xpriv::new_master(network, &*seed)
-        .map_err(|e| BorderWalletError::KeyDerivation(e.to_string()))?;
-
-    let fingerprint = master_xpriv.fingerprint(secp);
-
-    let child_xpriv = master_xpriv
-        .derive_priv(secp, &derivation_path)
-        .map_err(|e| BorderWalletError::KeyDerivation(e.to_string()))?;
-    let xpub = bip32::Xpub::from_priv(secp, &child_xpriv);
-
-    // master_xpriv and child_xpriv are dropped here (stack values).
+    // SECURITY NOTE: `bip32::Xpriv` is a `Copy` type, so we cannot guarantee
+    // zeroization of private key material on the stack. The Rust compiler may
+    // copy these values freely. We mitigate this by:
+    // 1. Confining Xpriv usage to the smallest possible scope
+    // 2. Converting to Xpub (non-secret) immediately
+    // 3. Never storing or returning Xpriv values
+    // This is a known limitation of the upstream `bitcoin` crate's Xpriv type.
+    let (fingerprint, xpub) = {
+        let master_xpriv = bip32::Xpriv::new_master(network, &*seed)
+            .map_err(|e| BorderWalletError::KeyDerivation(e.to_string()))?;
+        let fingerprint = master_xpriv.fingerprint(secp);
+        let xpub = bip32::Xpub::from_priv(
+            secp,
+            &master_xpriv
+                .derive_priv(secp, &derivation_path)
+                .map_err(|e| BorderWalletError::KeyDerivation(e.to_string()))?,
+        );
+        (fingerprint, xpub)
+    };
+    // master_xpriv and derived child are now out of scope.
     // seed is Zeroizing and will be wiped on drop.
 
     Ok(BorderWalletEnrollment {

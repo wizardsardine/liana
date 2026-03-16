@@ -200,11 +200,21 @@ pub fn build_mnemonic(
 
     // Verify the 12th word matches our expectation.
     let words: Vec<&str> = mnemonic.words().collect();
-    assert_eq!(words.len(), 12);
+    if words.len() != 12 {
+        return Err(BorderWalletError::MnemonicConstruction(format!(
+            "expected 12-word mnemonic, got {}",
+            words.len()
+        )));
+    }
 
     let word_list = bip39::Language::English.word_list();
     let checksum_word = word_list[twelfth_word_index as usize];
-    assert_eq!(words[11], checksum_word);
+    if words[11] != checksum_word {
+        return Err(BorderWalletError::MnemonicConstruction(format!(
+            "checksum word mismatch: expected '{}', got '{}'",
+            checksum_word, words[11]
+        )));
+    }
 
     Ok((mnemonic, checksum_word))
 }
@@ -342,7 +352,7 @@ mod tests {
         // Must be a valid 12-word mnemonic.
         assert_eq!(mnemonic.word_count(), 12);
         // Re-parsing must succeed.
-        assert!(bip39::Mnemonic::parse_in(bip39::Language::English, &mnemonic.to_string()).is_ok());
+        assert!(bip39::Mnemonic::parse_in(bip39::Language::English, mnemonic.to_string()).is_ok());
     }
 
     #[test]

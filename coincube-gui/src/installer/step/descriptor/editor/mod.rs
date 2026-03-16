@@ -495,9 +495,9 @@ impl Step for DefineDescriptor {
                             master_fingerprint,
                             name: key.name.clone(),
                             provider_key: key.source.provider_key(),
-                            is_border_wallet_safety_net: matches!(
+                            is_border_wallet: matches!(
                                 key.source,
-                                crate::installer::descriptor::KeySource::BorderWalletSafetyNet
+                                crate::installer::descriptor::KeySource::BorderWallet
                             ),
                         },
                     );
@@ -535,9 +535,9 @@ impl Step for DefineDescriptor {
                                 master_fingerprint,
                                 name: key.name.clone(),
                                 provider_key: key.source.provider_key(),
-                                is_border_wallet_safety_net: matches!(
+                                is_border_wallet: matches!(
                                     key.source,
-                                    crate::installer::descriptor::KeySource::BorderWalletSafetyNet
+                                    crate::installer::descriptor::KeySource::BorderWallet
                                 ),
                             },
                         );

@@ -556,7 +556,7 @@ pub async fn update_aliases(
                         master_fingerprint: *master_fingerprint,
                         name: name.clone(),
                         provider_key: wallet.provider_keys.get(master_fingerprint).cloned(),
-                        is_border_wallet_safety_net: false,
+                        is_border_wallet: false,
                     })
                     .collect();
             }

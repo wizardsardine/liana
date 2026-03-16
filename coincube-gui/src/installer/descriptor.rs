@@ -23,7 +23,7 @@ pub enum KeySource {
     /// A token for a key with the given kind.
     Token(KeyKind, ProviderKey),
     /// A Border Wallet key (derived transiently from grid pattern).
-    BorderWalletSafetyNet,
+    BorderWallet,
 }
 
 impl KeySource {
@@ -65,7 +65,7 @@ impl KeySource {
             Self::HotSigner => KeySourceKind::HotSigner,
             Self::Manual => KeySourceKind::Manual,
             Self::Token(kind, _) => KeySourceKind::Token(*kind),
-            Self::BorderWalletSafetyNet => KeySourceKind::BorderWalletSafetyNet,
+            Self::BorderWallet => KeySourceKind::BorderWallet,
         }
     }
 
@@ -106,7 +106,7 @@ pub enum KeySourceKind {
     /// A token for a key with the given kind.
     Token(KeyKind),
     /// A Border Wallet key.
-    BorderWalletSafetyNet,
+    BorderWallet,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -192,12 +192,12 @@ impl PathKind {
         match (self, source_kind) {
             // Safety net path allows safety net token keys and Border Wallet keys.
             (Self::SafetyNet, KeySourceKind::Token(KeyKind::SafetyNet)) => true,
-            (Self::SafetyNet, KeySourceKind::BorderWalletSafetyNet) => true,
+            (Self::SafetyNet, KeySourceKind::BorderWallet) => true,
             (Self::SafetyNet, _) => false,
             // Safety net token keys cannot be used in non-safety-net paths.
             (_, KeySourceKind::Token(KeyKind::SafetyNet)) => false,
             // Border Wallet keys can be used on any path.
-            (_, KeySourceKind::BorderWalletSafetyNet) => true,
+            (_, KeySourceKind::BorderWallet) => true,
             // Enable/disable cosigner keys.
             (_, KeySourceKind::Token(KeyKind::Cosigner)) => ENABLE_COSIGNER_KEYS,
             _ => true,

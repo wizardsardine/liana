@@ -449,7 +449,7 @@ pub struct KeySetting {
     pub provider_key: Option<ProviderKey>,
     /// Whether this key is a Border Wallet key (derived transiently from grid pattern).
     #[serde(default)]
-    pub is_border_wallet_safety_net: bool,
+    pub is_border_wallet: bool,
 }
 
 impl KeySetting {
@@ -465,12 +465,17 @@ impl KeySetting {
                 };
             }
         }
+        let proprietary = if self.is_border_wallet {
+            serde_json::json!({ "is_border_wallet": true })
+        } else {
+            serde_json::Value::Null
+        };
         Key {
             key: self.master_fingerprint,
             alias: Some(self.name.clone()),
             role: None,
             key_type: None,
-            proprietary: serde_json::Value::Null,
+            proprietary,
         }
     }
 
@@ -487,14 +492,18 @@ impl KeySetting {
                 name,
                 master_fingerprint: fg,
                 provider_key,
-                is_border_wallet_safety_net: false,
+                is_border_wallet: false,
             })
         } else {
+            let is_border_wallet = metadata
+                .get("is_border_wallet")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
             Some(Self {
                 name,
                 master_fingerprint: fg,
                 provider_key: None,
-                is_border_wallet_safety_net: false,
+                is_border_wallet,
             })
         }
     }

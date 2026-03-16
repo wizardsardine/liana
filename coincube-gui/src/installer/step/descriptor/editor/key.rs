@@ -1155,7 +1155,7 @@ impl SelectKeySource {
             KeySource::HotSigner => icon::round_key_icon().color(color::RED),
             KeySource::Manual => icon::round_key_icon(),
             KeySource::Token(..) => icon::hdd_icon(),
-            KeySource::BorderWalletSafetyNet => icon::round_key_icon(),
+            KeySource::BorderWallet => icon::round_key_icon(),
         };
         let message = if let KeySource::Token(kind, _) = source {
             if !self.actual_path.token_kind.contains(&kind) {
