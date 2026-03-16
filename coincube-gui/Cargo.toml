@@ -97,6 +97,8 @@ encrypted_backup = { version = "0.0.1", default-features = false, features = [
 	"miniscript_12_0",
 ], package = "bitcoin-encrypted-backup" }
 
+zeroize = "1"
+
 [target.'cfg(windows)'.dependencies]
 zip = { version = "0.6", default-features = false, features = [
 	"bzip2",

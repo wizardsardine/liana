@@ -39,6 +39,7 @@ pub struct Wallet {
     // TODO: We could replace these two fields with `keys: HashMap<Fingerprint, settings::KeySetting>`.
     pub keys_aliases: HashMap<Fingerprint, String>,
     pub provider_keys: HashMap<Fingerprint, settings::ProviderKey>,
+    pub border_wallet_fingerprints: HashSet<Fingerprint>,
     pub hardware_wallets: Vec<HardwareWalletConfig>,
     pub signer: Option<Arc<Signer>>,
 }
@@ -58,6 +59,7 @@ impl Wallet {
             main_descriptor,
             keys_aliases: HashMap::new(),
             provider_keys: HashMap::new(),
+            border_wallet_fingerprints: HashSet::new(),
             hardware_wallets: Vec::new(),
             signer: None,
         }
@@ -96,6 +98,14 @@ impl Wallet {
         self
     }
 
+    pub fn with_border_wallet_fingerprints(
+        mut self,
+        border_wallet_fingerprints: HashSet<Fingerprint>,
+    ) -> Self {
+        self.border_wallet_fingerprints = border_wallet_fingerprints;
+        self
+    }
+
     pub fn with_hardware_wallets(mut self, hardware_wallets: Vec<HardwareWalletConfig>) -> Self {
         self.hardware_wallets = hardware_wallets;
         self
@@ -127,6 +137,7 @@ impl Wallet {
             Ok(self
                 .with_key_aliases(wallet_settings.keys_aliases())
                 .with_provider_keys(wallet_settings.provider_keys())
+                .with_border_wallet_fingerprints(wallet_settings.border_wallet_fingerprints())
                 .with_alias(wallet_settings.alias)
                 .with_name(wallet_settings.name)
                 .with_pinned_at(wallet_settings.pinned_at)
@@ -175,7 +186,7 @@ impl Wallet {
                     name: alias.clone(),
                     master_fingerprint: *fg,
                     provider_key: None,
-                    is_border_wallet: false,
+                    is_border_wallet: self.border_wallet_fingerprints.contains(fg),
                 },
             );
         });

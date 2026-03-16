@@ -41,20 +41,22 @@ impl WordGrid {
     pub const ROWS: usize = 128;
     pub const TOTAL_CELLS: usize = Self::COLS * Self::ROWS; // 2048
 
-    /// Generate a deterministic word grid from a validated recovery phrase.
+    /// Generate a deterministic word grid from a recovery phrase.
     ///
-    /// The phrase must be a valid 12-word BIP39 mnemonic (already validated
-    /// by `GridRecoveryPhrase`). The same phrase always produces the same grid.
-    ///
-    /// The input is canonicalized (trimmed, lowercased, whitespace-collapsed)
-    /// before hashing so that formatting differences never produce a different grid.
-    pub fn from_recovery_phrase(phrase: &str) -> Self {
-        // Canonicalize: trim, lowercase, collapse whitespace runs to single spaces.
-        let canonical: String = phrase
-            .split_whitespace()
-            .map(|w| w.to_lowercase())
-            .collect::<Vec<_>>()
-            .join(" ");
+    /// The phrase must be a valid 12-word BIP39 mnemonic. Returns an error
+    /// if the phrase is invalid. The input is canonicalized (trimmed,
+    /// lowercased, whitespace-collapsed) before hashing so that formatting
+    /// differences never produce a different grid.
+    pub fn from_recovery_phrase(phrase: &str) -> Result<Self, BorderWalletError> {
+        // Validate as a 12-word BIP39 mnemonic before proceeding.
+        let mnemonic = bip39::Mnemonic::parse_in(bip39::Language::English, phrase)
+            .map_err(|_| BorderWalletError::InvalidRecoveryPhrase)?;
+        if mnemonic.word_count() != 12 {
+            return Err(BorderWalletError::InvalidRecoveryPhrase);
+        }
+
+        // Canonicalize via the parsed mnemonic's string representation.
+        let canonical = mnemonic.to_string();
 
         // Step 1: Derive seed via HMAC-SHA512.
         let seed = {
@@ -73,7 +75,7 @@ impl WordGrid {
             indices.swap(i, j);
         }
 
-        Self::from_indices(indices)
+        Ok(Self::from_indices(indices))
     }
 
     /// Get the BIP39 word index at the given (row, col).
@@ -177,8 +179,8 @@ mod tests {
 
     #[test]
     fn test_deterministic_regeneration() {
-        let grid1 = WordGrid::from_recovery_phrase(TEST_PHRASE);
-        let grid2 = WordGrid::from_recovery_phrase(TEST_PHRASE);
+        let grid1 = WordGrid::from_recovery_phrase(TEST_PHRASE).unwrap();
+        let grid2 = WordGrid::from_recovery_phrase(TEST_PHRASE).unwrap();
         assert_eq!(
             grid1.cells(),
             grid2.cells(),
@@ -188,9 +190,10 @@ mod tests {
 
     #[test]
     fn test_different_phrases_yield_different_grids() {
-        let grid1 = WordGrid::from_recovery_phrase(TEST_PHRASE);
+        let grid1 = WordGrid::from_recovery_phrase(TEST_PHRASE).unwrap();
         let grid2 =
-            WordGrid::from_recovery_phrase("zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo wrong");
+            WordGrid::from_recovery_phrase("zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo wrong")
+                .unwrap();
         assert_ne!(
             grid1.cells(),
             grid2.cells(),
@@ -200,7 +203,7 @@ mod tests {
 
     #[test]
     fn test_grid_is_complete_permutation() {
-        let grid = WordGrid::from_recovery_phrase(TEST_PHRASE);
+        let grid = WordGrid::from_recovery_phrase(TEST_PHRASE).unwrap();
         let cells = grid.cells();
 
         // Must have exactly 2048 cells.
@@ -215,7 +218,7 @@ mod tests {
 
     #[test]
     fn test_grid_is_shuffled() {
-        let grid = WordGrid::from_recovery_phrase(TEST_PHRASE);
+        let grid = WordGrid::from_recovery_phrase(TEST_PHRASE).unwrap();
         let cells = grid.cells();
 
         // The grid should not be the identity permutation.
@@ -225,7 +228,7 @@ mod tests {
 
     #[test]
     fn test_all_words_are_valid_bip39() {
-        let grid = WordGrid::from_recovery_phrase(TEST_PHRASE);
+        let grid = WordGrid::from_recovery_phrase(TEST_PHRASE).unwrap();
         let word_list = bip39::Language::English.word_list();
 
         for row in 0..WordGrid::ROWS {
@@ -244,7 +247,7 @@ mod tests {
 
     #[test]
     fn test_prefixes_are_four_chars_or_less() {
-        let grid = WordGrid::from_recovery_phrase(TEST_PHRASE);
+        let grid = WordGrid::from_recovery_phrase(TEST_PHRASE).unwrap();
 
         for row in 0..WordGrid::ROWS {
             for col in 0..WordGrid::COLS {
@@ -257,7 +260,7 @@ mod tests {
 
     #[test]
     fn test_word_index_matches_word() {
-        let grid = WordGrid::from_recovery_phrase(TEST_PHRASE);
+        let grid = WordGrid::from_recovery_phrase(TEST_PHRASE).unwrap();
         let word_list = bip39::Language::English.word_list();
 
         for row in 0..WordGrid::ROWS {
@@ -276,9 +279,9 @@ mod tests {
     #[test]
     fn test_deterministic_snapshot() {
         // Pin the first few cells so any algorithm change is caught.
-        let grid = WordGrid::from_recovery_phrase(TEST_PHRASE);
+        let grid = WordGrid::from_recovery_phrase(TEST_PHRASE).unwrap();
         let snapshot: Vec<u16> = grid.cells()[..8].to_vec();
-        let grid2 = WordGrid::from_recovery_phrase(TEST_PHRASE);
+        let grid2 = WordGrid::from_recovery_phrase(TEST_PHRASE).unwrap();
         let snapshot2: Vec<u16> = grid2.cells()[..8].to_vec();
         assert_eq!(snapshot, snapshot2, "snapshot must be stable across runs");
     }

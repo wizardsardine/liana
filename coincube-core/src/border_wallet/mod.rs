@@ -76,8 +76,11 @@ impl GridRecoveryPhrase {
     }
 
     /// Generate the deterministic Word Grid from this recovery phrase.
+    ///
+    /// This cannot fail because the phrase was already validated on construction.
     pub fn generate_grid(&self) -> WordGrid {
         WordGrid::from_recovery_phrase(&self.phrase)
+            .expect("GridRecoveryPhrase always holds a valid 12-word mnemonic")
     }
 }
 
@@ -207,7 +210,7 @@ mod tests {
         // Grid should be a valid 2048-cell permutation.
         assert_eq!(grid.cells().len(), WordGrid::TOTAL_CELLS);
         // Same phrase via direct call should match.
-        let grid2 = WordGrid::from_recovery_phrase(phrase);
+        let grid2 = WordGrid::from_recovery_phrase(phrase).unwrap();
         assert_eq!(grid.cells(), grid2.cells());
     }
 
@@ -262,7 +265,7 @@ mod tests {
     fn test_derive_enrollment_different_mnemonic_different_result() {
         let secp = secp256k1::Secp256k1::new();
         let phrase = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
-        let grid = WordGrid::from_recovery_phrase(phrase);
+        let grid = WordGrid::from_recovery_phrase(phrase).unwrap();
 
         let mut pat1 = OrderedPattern::new();
         for col in 0..11u8 {
@@ -320,7 +323,7 @@ mod tests {
         // Original creation.
         let grid1 = WordGrid::from_recovery_phrase(
             "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
-        );
+        ).unwrap();
         let mut pattern = OrderedPattern::new();
         for col in 0..11u8 {
             pattern.add(CellRef::new(0, col)).unwrap();
@@ -330,7 +333,8 @@ mod tests {
 
         // Reconstruction with wrong phrase → different grid → different mnemonic.
         let grid2 =
-            WordGrid::from_recovery_phrase("zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo wrong");
+            WordGrid::from_recovery_phrase("zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo wrong")
+                .unwrap();
         let mut pattern2 = OrderedPattern::new();
         for col in 0..11u8 {
             pattern2.add(CellRef::new(0, col)).unwrap();
@@ -345,7 +349,7 @@ mod tests {
     fn test_reconstruction_wrong_pattern_fails_match() {
         let secp = secp256k1::Secp256k1::new();
         let phrase = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
-        let grid = WordGrid::from_recovery_phrase(phrase);
+        let grid = WordGrid::from_recovery_phrase(phrase).unwrap();
 
         // Original: row 0.
         let mut pat1 = OrderedPattern::new();
@@ -375,7 +379,7 @@ mod tests {
         let secp = secp256k1::Secp256k1::new();
         let grid = WordGrid::from_recovery_phrase(
             "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
-        );
+        ).unwrap();
         let mut pattern = OrderedPattern::new();
         for col in 0..11u8 {
             pattern.add(CellRef::new(0, col)).unwrap();

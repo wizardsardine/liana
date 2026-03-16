@@ -3,7 +3,7 @@
 pub mod fiat;
 pub mod unit;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use async_fd_lock::LockWrite;
 use coincube_core::descriptors::CoincubeDescriptor;
@@ -333,6 +333,14 @@ impl WalletSettings {
             map.insert(fingerprint, provider_key.clone());
         }
         map
+    }
+
+    pub fn border_wallet_fingerprints(&self) -> HashSet<Fingerprint> {
+        self.keys
+            .iter()
+            .filter(|k| k.is_border_wallet)
+            .map(|k| k.master_fingerprint)
+            .collect()
     }
 
     pub fn update_alias(&mut self, key: &Fingerprint, alias: &str) {

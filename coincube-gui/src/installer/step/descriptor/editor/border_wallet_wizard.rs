@@ -16,6 +16,7 @@ use coincube_core::{
     },
 };
 use iced::{alignment::Horizontal, widget::scrollable, Length, Task};
+use zeroize::{Zeroize, Zeroizing};
 
 use coincube_ui::{
     color,
@@ -89,7 +90,7 @@ pub struct BorderWalletWizard {
     coordinates: Vec<(usize, usize)>,
     step: WizardStep,
 
-    // Recovery phrase (12 words)
+    // Recovery phrase (12 words) — zeroized on drop via custom Drop impl below.
     phrase_words: Vec<form::Value<String>>,
     phrase_valid: bool,
 
@@ -127,12 +128,13 @@ impl BorderWalletWizard {
                 self.step = WizardStep::RecoveryPhrase;
             }
             WizardStep::RecoveryPhrase => {
-                let phrase_str: String = self
-                    .phrase_words
-                    .iter()
-                    .map(|w| w.value.trim().to_lowercase())
-                    .collect::<Vec<_>>()
-                    .join(" ");
+                let phrase_str = Zeroizing::new(
+                    self.phrase_words
+                        .iter()
+                        .map(|w| w.value.trim().to_lowercase())
+                        .collect::<Vec<_>>()
+                        .join(" "),
+                );
 
                 match GridRecoveryPhrase::from_phrase(&phrase_str) {
                     Ok(rp) => {
@@ -424,7 +426,7 @@ impl BorderWalletWizard {
         let back_btn = button::transparent(Some(icon::previous_icon()), "Back")
             .on_press(self.wizard_msg(BorderWalletWizardMessage::Previous));
 
-        let status = p1_bold(&format!(
+        let status = p1_bold(format!(
             "Selected: {} / {} cells",
             self.pattern.len(),
             PATTERN_LENGTH
@@ -549,15 +551,15 @@ impl BorderWalletWizard {
             Column::new()
                 .spacing(4)
                 .push(p1_bold("Derived Key Info"))
-                .push(p1_regular(&format!(
+                .push(p1_regular(format!(
                     "Fingerprint: {}",
                     enrollment.fingerprint
                 )))
-                .push(p1_regular(&format!(
+                .push(p1_regular(format!(
                     "Derivation Path: {}",
                     enrollment.derivation_path
                 )))
-                .push(p1_regular(&format!("Network: {:?}", enrollment.network)))
+                .push(p1_regular(format!("Network: {:?}", enrollment.network)))
         } else {
             Column::new().push(p1_regular("No enrollment data"))
         };
@@ -569,7 +571,7 @@ impl BorderWalletWizard {
         let col = Column::new()
             .spacing(12)
             .push(header)
-            .push(p1_bold(&format!("Checksum word: \"{}\"", checksum_word)))
+            .push(p1_bold(format!("Checksum word: \"{}\"", checksum_word)))
             .push(p1_regular(
                 "This is the only word you need to memorize. The checksum word is \
                  the 12th word of the derived mnemonic, calculated automatically from \
@@ -619,7 +621,7 @@ impl BorderWalletWizard {
                 "1. The recovery phrase (12 words that seed the grid)",
             ))
             .push(p1_regular("2. Your exact pattern (the 11 cells in order)"))
-            .push(p1_bold(&format!(
+            .push(p1_bold(format!(
                 "3. The checksum word: \"{}\"",
                 checksum_word
             )))
@@ -627,7 +629,7 @@ impl BorderWalletWizard {
                 "Write down and securely store all three. Without any one of them, \
                  the key cannot be recovered.",
             ))
-            .push(p1_bold(&format!("Key fingerprint: {}", fingerprint)));
+            .push(p1_bold(format!("Key fingerprint: {}", fingerprint)));
 
         let confirm_btn = button::primary(None, "Confirm & Enroll Key")
             .on_press(self.wizard_msg(BorderWalletWizardMessage::ConfirmEnrollment))
@@ -644,6 +646,16 @@ impl BorderWalletWizard {
             .padding(20)
             .style(theme::card::modal)
             .into()
+    }
+}
+
+/// Zeroize recovery phrase words when the wizard is dropped so they don't
+/// linger in memory after the user navigates away or completes enrollment.
+impl Drop for BorderWalletWizard {
+    fn drop(&mut self) {
+        for word in &mut self.phrase_words {
+            word.value.zeroize();
+        }
     }
 }
 

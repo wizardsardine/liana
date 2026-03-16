@@ -346,7 +346,7 @@ mod tests {
     fn test_build_mnemonic_produces_valid_bip39() {
         let grid = WordGrid::from_recovery_phrase(
             "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
-        );
+        ).unwrap();
         let pattern = test_pattern_row0();
         let (mnemonic, _checksum_word) = build_mnemonic(&grid, &pattern).unwrap();
         // Must be a valid 12-word mnemonic.
@@ -359,7 +359,7 @@ mod tests {
     fn test_build_mnemonic_checksum_word_is_12th() {
         let grid = WordGrid::from_recovery_phrase(
             "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
-        );
+        ).unwrap();
         let pattern = test_pattern_row0();
         let (mnemonic, checksum_word) = build_mnemonic(&grid, &pattern).unwrap();
         let words: Vec<&str> = mnemonic.words().collect();
@@ -370,7 +370,7 @@ mod tests {
     fn test_build_mnemonic_deterministic() {
         let grid = WordGrid::from_recovery_phrase(
             "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
-        );
+        ).unwrap();
         let pattern = test_pattern_row0();
         let (m1, c1) = build_mnemonic(&grid, &pattern).unwrap();
         let (m2, c2) = build_mnemonic(&grid, &pattern).unwrap();
@@ -382,7 +382,7 @@ mod tests {
     fn test_build_mnemonic_different_pattern_different_mnemonic() {
         let grid = WordGrid::from_recovery_phrase(
             "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
-        );
+        ).unwrap();
         let pat1 = test_pattern_row0();
 
         let mut pat2 = OrderedPattern::new();
@@ -399,7 +399,7 @@ mod tests {
     fn test_build_mnemonic_incomplete_pattern_fails() {
         let grid = WordGrid::from_recovery_phrase(
             "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
-        );
+        ).unwrap();
         let mut pat = OrderedPattern::new();
         for col in 0..10u8 {
             pat.add(CellRef::new(0, col)).unwrap();
@@ -410,7 +410,7 @@ mod tests {
     #[test]
     fn test_build_mnemonic_first_11_words_match_grid() {
         let phrase = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
-        let grid = WordGrid::from_recovery_phrase(phrase);
+        let grid = WordGrid::from_recovery_phrase(phrase).unwrap();
         let pattern = test_pattern_row0();
         let (mnemonic, _) = build_mnemonic(&grid, &pattern).unwrap();
         let words: Vec<&str> = mnemonic.words().collect();
