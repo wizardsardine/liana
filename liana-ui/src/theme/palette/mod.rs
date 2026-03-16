@@ -90,6 +90,7 @@ pub struct Cards {
     pub border: ContainerPalette,
     pub invalid: ContainerPalette,
     pub warning: ContainerPalette,
+    pub warning_banner: ContainerPalette,
     pub error: ContainerPalette,
 }
 

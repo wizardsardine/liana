@@ -287,6 +287,11 @@ impl Palette {
                     text: color::ORANGE.into(),
                     border: color::ORANGE.into(),
                 },
+                warning_banner: ContainerPalette {
+                    background: color::ORANGE,
+                    text: color::WHITE.into(),
+                    border: color::ORANGE.into(),
+                },
                 error: ContainerPalette {
                     background: color::LIGHT_BG,
                     text: color::RED.into(),

@@ -73,6 +73,10 @@ pub fn warning(theme: &Theme) -> Style {
     card(&theme.colors.cards.warning)
 }
 
+pub fn warning_banner(theme: &Theme) -> Style {
+    card(&theme.colors.cards.warning_banner)
+}
+
 pub fn error(theme: &Theme) -> Style {
     card(&theme.colors.cards.error)
 }
