@@ -15,6 +15,13 @@ pub enum BorderWalletError {
     MnemonicConstruction(String),
     /// BIP32 key derivation failed.
     KeyDerivation(String),
+    /// Reconstructed fingerprint does not match the expected enrollment fingerprint.
+    FingerprintMismatch {
+        expected: crate::miniscript::bitcoin::bip32::Fingerprint,
+        got: crate::miniscript::bitcoin::bip32::Fingerprint,
+    },
+    /// PSBT signing failed.
+    SigningFailed(String),
 }
 
 impl fmt::Display for BorderWalletError {
@@ -40,6 +47,16 @@ impl fmt::Display for BorderWalletError {
             }
             Self::KeyDerivation(msg) => {
                 write!(f, "key derivation failed: {}", msg)
+            }
+            Self::FingerprintMismatch { expected, got } => {
+                write!(
+                    f,
+                    "fingerprint mismatch: expected {}, got {}",
+                    expected, got
+                )
+            }
+            Self::SigningFailed(msg) => {
+                write!(f, "PSBT signing failed: {}", msg)
             }
         }
     }

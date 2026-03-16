@@ -33,9 +33,12 @@ pub use pattern::{build_mnemonic, CellRef, OrderedPattern, PATTERN_LENGTH};
 
 use miniscript::bitcoin::{
     bip32::{self, Fingerprint},
+    psbt::Psbt,
     secp256k1, Network,
 };
 use zeroize::Zeroizing;
+
+use crate::signer::HotSigner;
 
 /// A secret-bearing grid recovery phrase.
 ///
@@ -145,6 +148,41 @@ pub fn derive_enrollment(
         derivation_path,
         network,
     })
+}
+
+/// Sign a PSBT using a transiently reconstructed Border Wallet key.
+///
+/// This function:
+/// 1. Creates a transient `HotSigner` from the reconstructed mnemonic
+/// 2. Verifies the fingerprint matches the expected enrollment fingerprint
+/// 3. Signs the PSBT
+/// 4. All secret material is dropped when this function returns
+///
+/// Returns the fingerprint and signed PSBT on success.
+pub fn sign_psbt_with_border_wallet(
+    mnemonic: bip39::Mnemonic,
+    expected_fingerprint: Fingerprint,
+    network: Network,
+    psbt: Psbt,
+) -> Result<(Fingerprint, Psbt), BorderWalletError> {
+    let secp = secp256k1::Secp256k1::new();
+
+    let signer = HotSigner::from_mnemonic(network, mnemonic)
+        .map_err(|e| BorderWalletError::KeyDerivation(e.to_string()))?;
+
+    let actual_fingerprint = signer.fingerprint(&secp);
+    if actual_fingerprint != expected_fingerprint {
+        return Err(BorderWalletError::FingerprintMismatch {
+            expected: expected_fingerprint,
+            got: actual_fingerprint,
+        });
+    }
+
+    let signed_psbt = signer
+        .sign_psbt(psbt, &secp)
+        .map_err(|e| BorderWalletError::SigningFailed(e.to_string()))?;
+
+    Ok((actual_fingerprint, signed_psbt))
 }
 
 /// The standard derivation path for Border Wallet signers.
