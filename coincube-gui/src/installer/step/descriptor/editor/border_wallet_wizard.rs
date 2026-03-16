@@ -252,8 +252,12 @@ impl BorderWalletWizard {
         let cell = CellRef::new(row, col);
         if let Some(pos) = self.pattern.cells().iter().position(|c| c == &cell) {
             self.pattern.remove_at(pos);
-        } else if let Err(e) = self.pattern.add(cell) {
-            self.error = Some(format!("{:?}", e));
+            self.error = None;
+        } else {
+            match self.pattern.add(cell) {
+                Ok(()) => self.error = None,
+                Err(e) => self.error = Some(format!("{:?}", e)),
+            }
         }
         Task::none()
     }
@@ -678,10 +682,12 @@ impl super::DescriptorEditModal for BorderWalletWizard {
                 }
                 BorderWalletWizardMessage::UndoLastCell => {
                     self.pattern.undo_last();
+                    self.error = None;
                     Task::none()
                 }
                 BorderWalletWizardMessage::ClearPattern => {
                     self.pattern.clear();
+                    self.error = None;
                     Task::none()
                 }
                 BorderWalletWizardMessage::ConfirmEnrollment => self.on_confirm(),

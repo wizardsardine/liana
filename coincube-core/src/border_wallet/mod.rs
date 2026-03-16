@@ -8,7 +8,11 @@
 //!
 //! - Secret material (mnemonic, seed, private keys) exists only transiently in memory
 //! - Only non-secret enrollment data (fingerprint, xpub, derivation path) may be persisted
-//! - All secret-bearing types implement zeroization on drop
+//! - Secret types implemented here are zeroized on `Drop` where possible;
+//!   however, upstream types outside our control (notably `bip32::Xpriv`, which
+//!   is `Copy`) may remain on the stack and cannot be guaranteed to be zeroized.
+//!   Zeroization of such external types is therefore best-effort — we mitigate
+//!   by confining their use to the smallest possible scope.
 //! - No `Debug` impl for secret-bearing types
 //!
 //! # Usage

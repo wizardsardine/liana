@@ -1009,6 +1009,7 @@ pub fn create_app_with_remote_backend(
                 .with_pinned_at(wallet_settings.pinned_at)
                 .with_key_aliases(aliases)
                 .with_provider_keys(provider_keys)
+                .with_border_wallet_fingerprints(wallet_settings.border_wallet_fingerprints())
                 .with_hardware_wallets(hws)
                 .load_hotsigners(&coincube_dir, network)
                 .expect("Datadir should be conform"),
