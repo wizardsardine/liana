@@ -78,7 +78,7 @@ fn button(p: &Button, status: Status) -> Style {
                     ..Default::default()
                 }
             },
-            ..Default::default()
+            shadow: p.active.shadow,
         },
         Status::Pressed => {
             if let Some(pressed) = p.pressed {
@@ -96,7 +96,7 @@ fn button(p: &Button, status: Status) -> Style {
                             ..Default::default()
                         }
                     },
-                    ..Default::default()
+                    shadow: pressed.shadow,
                 }
             } else {
                 button(p, Status::Active)
@@ -116,7 +116,7 @@ fn button(p: &Button, status: Status) -> Style {
                     ..Default::default()
                 }
             },
-            ..Default::default()
+            shadow: p.hovered.shadow,
         },
         Status::Disabled => {
             if let Some(disabled) = p.disabled {
@@ -139,7 +139,7 @@ fn button(p: &Button, status: Status) -> Style {
                             ..Default::default()
                         }
                     },
-                    ..Default::default()
+                    shadow: disabled.shadow,
                 }
             } else {
                 let active: Style = button(p, Status::Active);

@@ -1,3 +1,5 @@
+use iced::Shadow;
+
 use crate::color;
 
 pub mod liana;
@@ -69,6 +71,7 @@ pub struct ButtonPalette {
     pub background: iced::Color,
     pub text: iced::Color,
     pub border: Option<iced::Color>,
+    pub shadow: Shadow,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq)]
