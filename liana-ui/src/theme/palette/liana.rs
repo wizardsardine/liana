@@ -18,6 +18,7 @@ impl Palette {
                 accent: color::BLUE,
             },
             buttons: Buttons {
+                border_width: 1.0,
                 primary: Button {
                     active: ButtonPalette {
                         background: color::GREEN,

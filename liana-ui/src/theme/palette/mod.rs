@@ -56,6 +56,7 @@ pub struct Buttons {
     pub menu: Button,
     pub tab: Button,
     pub link: Button,
+    pub border_width: f32,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq)]
@@ -196,10 +197,4 @@ pub struct Toggler {
     pub background_border: iced::Color,
     pub foreground: iced::Color,
     pub foreground_border: iced::Color,
-}
-
-impl std::default::Default for Palette {
-    fn default() -> Self {
-        Self::liana()
-    }
 }

@@ -19,50 +19,94 @@ impl Catalog for Theme {
 }
 
 pub fn primary(theme: &Theme, status: Status) -> Style {
-    button(&theme.colors.buttons.primary, status)
+    button(
+        &theme.colors.buttons.primary,
+        status,
+        theme.button_border_width,
+    )
 }
 
 pub fn secondary(theme: &Theme, status: Status) -> Style {
-    button(&theme.colors.buttons.secondary, status)
+    button(
+        &theme.colors.buttons.secondary,
+        status,
+        theme.button_border_width,
+    )
 }
 
 pub fn tertiary(theme: &Theme, status: Status) -> Style {
-    button(&theme.colors.buttons.tertiary, status)
+    button(
+        &theme.colors.buttons.tertiary,
+        status,
+        theme.button_border_width,
+    )
 }
 
 pub fn destructive(theme: &Theme, status: Status) -> Style {
-    button(&theme.colors.buttons.destructive, status)
+    button(
+        &theme.colors.buttons.destructive,
+        status,
+        theme.button_border_width,
+    )
 }
 
 pub fn container(theme: &Theme, status: Status) -> Style {
-    button(&theme.colors.buttons.container, status)
+    button(
+        &theme.colors.buttons.container,
+        status,
+        theme.button_border_width,
+    )
 }
 
 pub fn container_border(theme: &Theme, status: Status) -> Style {
-    button(&theme.colors.buttons.container_border, status)
+    button(
+        &theme.colors.buttons.container_border,
+        status,
+        theme.button_border_width,
+    )
 }
 
 pub fn menu(theme: &Theme, status: Status) -> Style {
-    button(&theme.colors.buttons.menu, status)
+    button(
+        &theme.colors.buttons.menu,
+        status,
+        theme.button_border_width,
+    )
 }
 
 pub fn menu_pressed(theme: &Theme, _status: Status) -> Style {
-    button(&theme.colors.buttons.menu, Status::Pressed)
+    button(
+        &theme.colors.buttons.menu,
+        Status::Pressed,
+        theme.button_border_width,
+    )
 }
 
 pub fn transparent(theme: &Theme, status: Status) -> Style {
-    button(&theme.colors.buttons.transparent, status)
+    button(
+        &theme.colors.buttons.transparent,
+        status,
+        theme.button_border_width,
+    )
 }
 
 pub fn transparent_border(theme: &Theme, status: Status) -> Style {
-    button(&theme.colors.buttons.transparent_border, status)
+    button(
+        &theme.colors.buttons.transparent_border,
+        status,
+        theme.button_border_width,
+    )
 }
 
 pub fn link(theme: &Theme, status: Status) -> Style {
-    button(&theme.colors.buttons.link, status)
+    button(
+        &theme.colors.buttons.link,
+        status,
+        theme.button_border_width,
+    )
 }
 
-fn button(p: &Button, status: Status) -> Style {
+fn button(p: &Button, status: Status, width: f32) -> Style {
     match status {
         Status::Active => Style {
             background: Some(Background::Color(p.active.background)),
@@ -70,7 +114,7 @@ fn button(p: &Button, status: Status) -> Style {
             border: if let Some(color) = p.active.border {
                 Border {
                     radius: BUTTON_RADIUS.into(),
-                    width: 1.0,
+                    width,
                     color,
                 }
             } else {
@@ -88,7 +132,7 @@ fn button(p: &Button, status: Status) -> Style {
                     border: if let Some(color) = pressed.border {
                         Border {
                             radius: BUTTON_RADIUS.into(),
-                            width: 1.0,
+                            width,
                             color,
                         }
                     } else {
@@ -99,7 +143,7 @@ fn button(p: &Button, status: Status) -> Style {
                     shadow: pressed.shadow,
                 }
             } else {
-                button(p, Status::Active)
+                button(p, Status::Active, width)
             }
         }
         Status::Hovered => Style {
@@ -108,7 +152,7 @@ fn button(p: &Button, status: Status) -> Style {
             border: if let Some(color) = p.hovered.border {
                 Border {
                     radius: BUTTON_RADIUS.into(),
-                    width: 1.0,
+                    width,
                     color,
                 }
             } else {
@@ -131,7 +175,7 @@ fn button(p: &Button, status: Status) -> Style {
                     border: if let Some(color) = disabled.border {
                         Border {
                             radius: BUTTON_RADIUS.into(),
-                            width: 1.0,
+                            width,
                             color,
                         }
                     } else {
@@ -142,7 +186,7 @@ fn button(p: &Button, status: Status) -> Style {
                     shadow: disabled.shadow,
                 }
             } else {
-                let active: Style = button(p, Status::Active);
+                let active: Style = button(p, Status::Active, width);
 
                 Style {
                     text_color: Color {
@@ -157,7 +201,7 @@ fn button(p: &Button, status: Status) -> Style {
 }
 
 pub fn tab(theme: &Theme, status: Status) -> Style {
-    let mut style = button(&theme.colors.buttons.tab, status);
+    let mut style = button(&theme.colors.buttons.tab, status, theme.button_border_width);
     style.border.radius = 0.0.into();
     style.border.width = 0.0;
     style
