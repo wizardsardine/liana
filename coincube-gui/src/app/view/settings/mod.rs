@@ -1,5 +1,6 @@
 pub mod about;
 pub mod general;
+pub mod install_stats;
 
 use iced::widget::{Column, Row};
 use iced::{Alignment, Length};
@@ -76,6 +77,11 @@ pub fn list<'a>(menu: &'a Menu, cache: &'a Cache) -> Element<'a, Message> {
                 "About",
                 icon::tooltip_icon(),
                 Message::Settings(SettingsMessage::AboutSection),
+            ))
+            .push(settings_section(
+                "Install Stats",
+                icon::graph_icon(),
+                Message::Settings(SettingsMessage::InstallStatsSection),
             )),
     )
 }
