@@ -48,6 +48,7 @@ pub struct General {
 pub struct Buttons {
     pub transparent: Button,
     pub transparent_border: Button,
+    pub clickable_card: Button,
     pub primary: Button,
     pub secondary: Button,
     pub tertiary: Button,
@@ -91,6 +92,7 @@ pub struct ContainerPalette {
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub struct Cards {
     pub simple: ContainerPalette,
+    pub transparent: ContainerPalette,
     pub modal: ContainerPalette,
     pub border: ContainerPalette,
     pub invalid: ContainerPalette,

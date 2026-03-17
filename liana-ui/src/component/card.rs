@@ -1,5 +1,6 @@
 use crate::{color, component::text::text, icon, theme, widget::*};
 use iced::{widget::button, Alignment};
+const CARD_PADDING: [u16; 2] = [15, 30];
 
 pub fn modal<'a, T: 'a, C: Into<Element<'a, T>>>(content: C) -> Container<'a, T> {
     Container::new(content)
@@ -55,7 +56,7 @@ where
     M: Clone + 'a,
 {
     Container::new(
-        button(content.align_y(Alignment::Center).padding(5))
+        button(content.align_y(Alignment::Center).padding(CARD_PADDING))
             .on_press_maybe(msg)
             .style(theme::button::transparent_border),
     )

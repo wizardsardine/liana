@@ -1,17 +1,21 @@
 use super::text::{button_text, text};
 use crate::{
     font::{BOLD, MEDIUM},
-    theme,
+    theme::{self, button::round_icon_btn},
     widget::*,
 };
 use iced::{
     alignment::{Horizontal, Vertical},
     widget::{button, container, row},
+    Length,
 };
 
 const MENU_PADDING: [u16; 2] = [8, 12];
 const MENU_TEXT_SIZE: u16 = 22;
 const MENU_ICON_SIZE: u16 = 32;
+
+const ICON_BTN_SIZE: f32 = 40.0;
+const ICON_BTN_PADDING: f32 = 10.0;
 
 pub fn menu<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> Button<'a, T> {
     Button::new(
@@ -76,6 +80,10 @@ pub fn transparent<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> Button
     Button::new(content(icon, button_text(t))).style(theme::button::container)
 }
 
+pub fn flat<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> Button<'a, T> {
+    Button::new(content(icon, button_text(t))).style(theme::button::transparent)
+}
+
 pub fn secondary<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> Button<'a, T> {
     Button::new(content(icon, button_text(t))).style(theme::button::secondary)
 }
@@ -103,4 +111,16 @@ fn content<'a, T: 'a>(icon: Option<Text<'a>>, text: Text<'a>) -> Container<'a, T
             .align_x(Horizontal::Center)
             .padding(5),
     }
+}
+
+pub fn icon_btn<'a, T: 'a + Clone>(icon: Text<'a>, message: Option<T>) -> Button<'a, T> {
+    let inner = ICON_BTN_SIZE - 2.0 * ICON_BTN_PADDING;
+    Button::new(
+        Container::new(icon)
+            .center_x(Length::Fixed(inner))
+            .center_y(Length::Fixed(inner)),
+    )
+    .padding(ICON_BTN_PADDING)
+    .on_press_maybe(message)
+    .style(|t, s| round_icon_btn(t, s, ICON_BTN_SIZE / 2.0))
 }

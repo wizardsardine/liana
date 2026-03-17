@@ -162,13 +162,13 @@ impl Palette {
                         background: color::TRANSPARENT,
                         text: color::BUSINESS_BLUE,
                         border: None,
-                        shadow: BTN_SHADOW,
+                        shadow: Default::default(),
                     },
                     pressed: Some(ButtonPalette {
                         background: color::TRANSPARENT,
                         text: color::BUSINESS_BLUE,
                         border: None,
-                        shadow: BTN_SHADOW,
+                        shadow: Default::default(),
                     }),
                     disabled: btn_disabled(),
                 },
@@ -176,6 +176,27 @@ impl Palette {
                     active: ButtonPalette {
                         background: color::TRANSPARENT,
                         text: color::DARK_TEXT_PRIMARY,
+                        border: color::TRANSPARENT.into(),
+                        shadow: Default::default(),
+                    },
+                    hovered: ButtonPalette {
+                        background: color::TRANSPARENT,
+                        text: color::BUSINESS_BLUE,
+                        border: color::BUSINESS_BLUE.into(),
+                        shadow: Default::default(),
+                    },
+                    pressed: Some(ButtonPalette {
+                        background: color::TRANSPARENT,
+                        text: color::BUSINESS_BLUE,
+                        border: color::BUSINESS_BLUE.into(),
+                        shadow: Default::default(),
+                    }),
+                    disabled: btn_disabled(),
+                },
+                clickable_card: Button {
+                    active: ButtonPalette {
+                        background: color::TRANSPARENT,
+                        text: color::DARK_TEXT_PRIMARY, // Use primary (black) for better visibility
                         border: color::TRANSPARENT.into(),
                         shadow: Default::default(),
                     },
@@ -302,6 +323,11 @@ impl Palette {
             cards: Cards {
                 simple: ContainerPalette {
                     background: color::LIGHT_BG_SECONDARY,
+                    text: None,
+                    border: Some(color::TRANSPARENT),
+                },
+                transparent: ContainerPalette {
+                    background: color::TRANSPARENT,
                     text: None,
                     border: Some(color::TRANSPARENT),
                 },

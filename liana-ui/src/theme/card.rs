@@ -5,6 +5,17 @@ use super::button::BUTTON_RADIUS;
 use super::palette::ContainerPalette;
 use super::Theme;
 
+const CARD_SHADOW: Shadow = Shadow {
+    color: Color {
+        r: 0.0,
+        g: 0.0,
+        b: 0.0,
+        a: 0.25,
+    },
+    offset: Vector { x: 0.0, y: 4.0 },
+    blur_radius: 4.0,
+};
+
 fn card(palette: &ContainerPalette) -> Style {
     Style {
         background: Some(Background::Color(palette.background)),
@@ -41,11 +52,7 @@ fn card_with_shadow(palette: &ContainerPalette, btn: bool) -> Style {
                 ..Default::default()
             }
         },
-        shadow: Shadow {
-            color: Color::from_rgba(0.0, 0.0, 0.0, 0.15),
-            offset: Vector::new(0.0, 2.0),
-            blur_radius: 8.0,
-        },
+        shadow: CARD_SHADOW,
     }
 }
 
@@ -55,6 +62,11 @@ pub fn simple(theme: &Theme) -> Style {
 
 pub fn button_simple(theme: &Theme) -> Style {
     card_with_shadow(&theme.colors.cards.simple, true)
+}
+
+pub fn transparent(theme: &Theme) -> Style {
+    let palette = &theme.colors.cards.transparent;
+    card(palette)
 }
 
 pub fn modal(theme: &Theme) -> Style {

@@ -176,6 +176,32 @@ impl Palette {
                         shadow: Default::default(),
                     }),
                 },
+                clickable_card: Button {
+                    active: ButtonPalette {
+                        background: color::TRANSPARENT,
+                        text: color::GREY_2,
+                        border: color::TRANSPARENT.into(),
+                        shadow: Default::default(),
+                    },
+                    hovered: ButtonPalette {
+                        background: color::TRANSPARENT,
+                        text: color::GREY_2,
+                        border: color::GREEN.into(),
+                        shadow: Default::default(),
+                    },
+                    pressed: Some(ButtonPalette {
+                        background: color::TRANSPARENT,
+                        text: color::GREY_2,
+                        border: color::GREEN.into(),
+                        shadow: Default::default(),
+                    }),
+                    disabled: Some(ButtonPalette {
+                        background: color::TRANSPARENT,
+                        text: color::GREY_2,
+                        border: color::TRANSPARENT.into(),
+                        shadow: Default::default(),
+                    }),
+                },
                 container: Button {
                     active: ButtonPalette {
                         background: color::TRANSPARENT,
@@ -310,6 +336,11 @@ impl Palette {
             cards: Cards {
                 simple: ContainerPalette {
                     background: color::GREY_6,
+                    text: None,
+                    border: Some(color::TRANSPARENT),
+                },
+                transparent: ContainerPalette {
+                    background: color::TRANSPARENT,
                     text: None,
                     border: Some(color::TRANSPARENT),
                 },

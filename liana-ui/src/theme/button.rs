@@ -98,11 +98,34 @@ pub fn transparent_border(theme: &Theme, status: Status) -> Style {
     )
 }
 
+pub fn clickable_card(theme: &Theme, status: Status) -> Style {
+    button(
+        &theme.colors.buttons.clickable_card,
+        status,
+        theme.button_border_width,
+    )
+}
+
 pub fn link(theme: &Theme, status: Status) -> Style {
     button(
         &theme.colors.buttons.link,
         status,
         theme.button_border_width,
+    )
+}
+
+fn round_button(p: &Button, status: Status, width: f32, radius: f32) -> Style {
+    let mut btn = button(p, status, width);
+    btn.border.radius = radius.into();
+    btn
+}
+
+pub fn round_icon_btn(theme: &Theme, status: Status, radius: f32) -> Style {
+    round_button(
+        &theme.colors.buttons.clickable_card,
+        status,
+        theme.button_border_width,
+        radius,
     )
 }
 
