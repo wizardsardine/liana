@@ -3,14 +3,15 @@ mod decrypt;
 mod descriptor;
 mod message;
 mod prompt;
-mod step;
+pub(crate) mod step;
 mod view;
 
-fn connect_url(network: bitcoin::Network) -> String {
+pub(crate) fn connect_url(network: bitcoin::Network) -> String {
     let network_path = match network {
         bitcoin::Network::Bitcoin => "bitcoin/mainnet",
         bitcoin::Network::Testnet => "bitcoin/testnet",
         bitcoin::Network::Signet => "bitcoin/signet",
+        bitcoin::Network::Testnet4 => "bitcoin/testnet4",
         _ => "bitcoin/regtest",
     };
     #[cfg(debug_assertions)]
@@ -858,7 +859,7 @@ pub fn extract_daemon_config(ctx: &Context, settings: &WalletSettings) -> Result
     } else {
         ctx.bitcoin_backend.clone()
     };
-    Ok(Config::new(
+    let mut cfg = Config::new(
         ctx.bitcoin_config.clone(),
         bitcoin_backend,
         log::LevelFilter::Info,
@@ -866,7 +867,9 @@ pub fn extract_daemon_config(ctx: &Context, settings: &WalletSettings) -> Result
             .clone()
             .expect("Context must have a descriptor at this point"),
         coincubed::datadir::DataDirectory::new(data_directory),
-    ))
+    );
+    cfg.pending_bitcoind = ctx.pending_bitcoind_config.clone();
+    Ok(cfg)
 }
 
 #[derive(Debug, Clone)]

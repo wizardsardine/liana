@@ -1307,6 +1307,528 @@ fn expire_message_units(sequence: u32) -> Vec<String> {
     }
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum ConnectLoginViewStep {
+    EnterEmail,
+    EnterOtp,
+}
+
+pub fn connect_login_panel<'a>(
+    step: &ConnectLoginViewStep,
+    email: &'a str,
+    otp: &'a str,
+    loading: bool,
+    error: Option<String>,
+) -> Element<'a, NodeSettingsMessage> {
+    let mut col = Column::new().spacing(15);
+
+    col = col.push(
+        Row::new()
+            .push(text("Sign in to COINCUBE | Connect").bold())
+            .push(Space::new().width(Length::Fill))
+            .push(
+                button::transparent(None, "Cancel")
+                    .on_press(NodeSettingsMessage::ConnectLoginCancel),
+            )
+            .align_y(Alignment::Center),
+    );
+
+    match step {
+        ConnectLoginViewStep::EnterEmail => {
+            let valid = email.contains('@') && email.contains('.') && email.len() >= 6;
+            let mut email_input = TextInput::new("your@email.com", email)
+                .on_input(NodeSettingsMessage::ConnectLoginEmailChanged)
+                .size(16)
+                .padding(12)
+                .width(Length::Fill);
+            if valid {
+                email_input = email_input.on_submit(NodeSettingsMessage::ConnectLoginRequestOtp);
+            }
+            col = col.push(
+                Column::new()
+                    .spacing(8)
+                    .push(caption("Email address"))
+                    .push(email_input),
+            );
+            let mut send_btn = button::primary(None, if loading { "Sending…" } else { "Send OTP" })
+                .padding([10, 20]);
+            if valid && !loading {
+                send_btn = send_btn.on_press(NodeSettingsMessage::ConnectLoginRequestOtp);
+            }
+            col = col.push(send_btn);
+        }
+        ConnectLoginViewStep::EnterOtp => {
+            col = col.push(
+                text(format!("A one-time code was sent to {}", email))
+                    .style(theme::text::secondary),
+            );
+            let mut otp_input = TextInput::new("6-digit code", otp)
+                .on_input(NodeSettingsMessage::ConnectLoginOtpChanged)
+                .size(16)
+                .padding(12)
+                .width(Length::Fill);
+            if otp.len() == 6 && !loading {
+                otp_input = otp_input.on_submit(NodeSettingsMessage::ConnectLoginVerifyOtp);
+            }
+            col = col.push(
+                Column::new()
+                    .spacing(8)
+                    .push(caption("One-time code"))
+                    .push(otp_input),
+            );
+            let mut verify_btn = button::primary(
+                None,
+                if loading {
+                    "Verifying…"
+                } else {
+                    "Verify & Switch"
+                },
+            )
+            .padding([10, 20]);
+            if otp.len() == 6 && !loading {
+                verify_btn = verify_btn.on_press(NodeSettingsMessage::ConnectLoginVerifyOtp);
+            }
+            col = col.push(verify_btn);
+        }
+    }
+
+    if let Some(ref e) = error {
+        col = col.push(text(e.as_str()).style(theme::text::warning));
+    }
+
+    card::simple(Container::new(col).padding(15).width(Length::Fill)).into()
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn node_backend_status<'a>(
+    active_backend: &'static str,
+    active_icon: coincube_ui::widget::Text<'static>,
+    pending_progress: Option<f64>,
+    pending_bitcoind_log: Option<&'a str>,
+    can_switch_to_connect: bool,
+    can_switch_to_bitcoind: bool,
+    can_setup_local_node: bool,
+    processing: bool,
+    warning: Option<String>,
+) -> Element<'a, NodeSettingsMessage> {
+    let mut col = Column::new().spacing(15);
+
+    col = col.push(
+        card::simple(Container::new(
+            Row::new()
+                .push(badge::badge(active_icon))
+                .push(
+                    Column::new()
+                        .push(caption("Active backend"))
+                        .push(text(active_backend).bold())
+                        .spacing(2),
+                )
+                .spacing(15)
+                .align_y(Alignment::Center),
+        ))
+        .padding(15)
+        .width(Length::Fill),
+    );
+
+    if let Some(progress) = pending_progress {
+        let desc = if progress > 0.98 {
+            "Bitcoin Core is synchronising the blockchain. This may take a few minutes, depending on the last time it was done, your internet connection, and your computer performance."
+        } else if progress > 0.9 {
+            "Bitcoin Core is synchronising the blockchain. This will take a while, depending on the last time it was done, your internet connection, and your computer performance."
+        } else {
+            "Bitcoin Core is synchronising the blockchain. A full synchronisation typically takes a few days and is resource-intensive. Once the initial synchronisation is done, the next ones will be much faster."
+        };
+
+        let mut sync_col = Column::new()
+            .spacing(8)
+            .push(caption("Local node syncing in background"))
+            .push(text(format!("Progress {:.1}%", 100.0 * progress)))
+            .push(ProgressBar::new(0.0..=1.0, progress as f32).length(Length::Fill))
+            .push(p2_regular(desc).style(theme::text::secondary));
+
+        if let Some(log) = pending_bitcoind_log {
+            sync_col = sync_col.push(p2_regular(log).style(theme::text::secondary));
+        }
+
+        col = col.push(
+            Container::new(sync_col)
+                .padding(15)
+                .width(Length::Fill)
+                .style(theme::card::border),
+        );
+    }
+
+    if let Some(ref w) = warning {
+        col = col.push(text(w.as_str()).style(theme::text::warning));
+    }
+
+    let mut btn_row = Row::new().spacing(10);
+    if can_switch_to_connect {
+        let btn = button::secondary(None, "Switch to COINCUBE | Connect").padding([8, 15]);
+        btn_row = btn_row.push(if processing {
+            btn
+        } else {
+            btn.on_press(NodeSettingsMessage::SwitchToConnect)
+        });
+    }
+    if can_switch_to_bitcoind {
+        let label = if pending_progress.is_some() {
+            "Switch to local node (still syncing)"
+        } else {
+            "Switch to local node"
+        };
+        let btn = button::secondary(None, label).padding([8, 15]);
+        btn_row = btn_row.push(if processing {
+            btn
+        } else {
+            btn.on_press(NodeSettingsMessage::SwitchToBitcoind)
+        });
+    }
+    if can_setup_local_node {
+        let btn = button::secondary(None, "Set up local node").padding([8, 15]);
+        btn_row = btn_row.push(if processing {
+            btn
+        } else {
+            btn.on_press(NodeSettingsMessage::SetupLocalNode)
+        });
+    }
+    if can_switch_to_connect || can_switch_to_bitcoind || can_setup_local_node {
+        col = col.push(btn_row);
+    }
+
+    col.into()
+}
+
+pub fn pending_node_setup_panel<'a>(
+    addr: &'a form::Value<String>,
+    rpc_auth_vals: &'a RpcAuthValues,
+    selected_auth_type: &'a RpcAuthType,
+    processing: bool,
+) -> Element<'a, NodeSettingsMessage> {
+    let mut col = Column::new().spacing(15);
+
+    col = col.push(
+        Row::new()
+            .push(
+                text("Set up local node")
+                    .bold()
+                    .size(18)
+                    .width(Length::Fill),
+            )
+            .push(Space::new().width(Length::Fill))
+            .push(
+                button::transparent(None, "Cancel")
+                    .on_press(NodeSettingsMessage::SetupLocalNodeCancel),
+            )
+            .align_y(Alignment::Center),
+    );
+
+    col = col.push(
+        Column::new()
+            .spacing(8)
+            .push(caption("Bitcoin Core RPC address"))
+            .push(
+                TextInput::new("127.0.0.1:8332", &addr.value)
+                    .on_input(NodeSettingsMessage::SetupLocalNodeAddrChanged)
+                    .size(16)
+                    .padding(12)
+                    .width(Length::Fill),
+            )
+            .push(if addr.valid {
+                text("").size(12)
+            } else {
+                text("Invalid address (expected host:port)")
+                    .style(theme::text::warning)
+                    .size(12)
+            }),
+    );
+
+    col = col.push(
+        Column::new()
+            .spacing(8)
+            .push(caption("Authentication"))
+            .push(
+                Row::new()
+                    .spacing(15)
+                    .push(radio(
+                        "Cookie file",
+                        RpcAuthType::CookieFile,
+                        Some(*selected_auth_type),
+                        NodeSettingsMessage::SetupLocalNodeAuthTypeSelected,
+                    ))
+                    .push(radio(
+                        "Username / Password",
+                        RpcAuthType::UserPass,
+                        Some(*selected_auth_type),
+                        NodeSettingsMessage::SetupLocalNodeAuthTypeSelected,
+                    )),
+            ),
+    );
+
+    match selected_auth_type {
+        RpcAuthType::CookieFile => {
+            col = col.push(
+                Column::new()
+                    .spacing(8)
+                    .push(caption("Cookie file path"))
+                    .push(
+                        TextInput::new(
+                            "/path/to/.bitcoin/.cookie",
+                            &rpc_auth_vals.cookie_path.value,
+                        )
+                        .on_input(|v| {
+                            NodeSettingsMessage::SetupLocalNodeFieldEdited("cookie_file_path", v)
+                        })
+                        .size(16)
+                        .padding(12)
+                        .width(Length::Fill),
+                    )
+                    .push(if rpc_auth_vals.cookie_path.valid {
+                        text("").size(12)
+                    } else {
+                        text("Cookie file path must not be empty")
+                            .style(theme::text::warning)
+                            .size(12)
+                    }),
+            );
+        }
+        RpcAuthType::UserPass => {
+            col = col.push(
+                Row::new()
+                    .spacing(10)
+                    .push(
+                        Column::new()
+                            .spacing(8)
+                            .push(caption("Username"))
+                            .push(
+                                TextInput::new("rpcuser", &rpc_auth_vals.user.value)
+                                    .on_input(|v| {
+                                        NodeSettingsMessage::SetupLocalNodeFieldEdited("user", v)
+                                    })
+                                    .size(16)
+                                    .padding(12)
+                                    .width(Length::Fill),
+                            )
+                            .push(if rpc_auth_vals.user.valid {
+                                text("").size(12)
+                            } else {
+                                text("Username must not be empty")
+                                    .style(theme::text::warning)
+                                    .size(12)
+                            })
+                            .width(Length::FillPortion(1)),
+                    )
+                    .push(
+                        Column::new()
+                            .spacing(8)
+                            .push(caption("Password"))
+                            .push(
+                                TextInput::new("rpcpassword", &rpc_auth_vals.password.value)
+                                    .on_input(|v| {
+                                        NodeSettingsMessage::SetupLocalNodeFieldEdited(
+                                            "password", v,
+                                        )
+                                    })
+                                    .secure(true)
+                                    .size(16)
+                                    .padding(12)
+                                    .width(Length::Fill),
+                            )
+                            .push(if rpc_auth_vals.password.valid {
+                                text("").size(12)
+                            } else {
+                                text("Password must not be empty")
+                                    .style(theme::text::warning)
+                                    .size(12)
+                            })
+                            .width(Length::FillPortion(1)),
+                    ),
+            );
+        }
+    }
+
+    let confirm_btn = button::primary(
+        None,
+        if processing {
+            "Saving…"
+        } else {
+            "Add local node"
+        },
+    )
+    .padding([10, 20]);
+    col = col.push(if processing {
+        confirm_btn
+    } else {
+        confirm_btn.on_press(NodeSettingsMessage::SetupLocalNodeConfirm)
+    });
+
+    card::simple(Container::new(col).padding(15).width(Length::Fill)).into()
+}
+
+pub fn node_setup_mode_picker_panel<'a>() -> Element<'a, NodeSettingsMessage> {
+    let mut col = Column::new().spacing(15);
+
+    col = col.push(
+        Row::new()
+            .push(
+                text("Set up local node")
+                    .bold()
+                    .size(18)
+                    .width(Length::Fill),
+            )
+            .push(
+                button::transparent(None, "Cancel")
+                    .on_press(NodeSettingsMessage::SetupLocalNodeCancel),
+            )
+            .align_y(Alignment::Center),
+    );
+
+    col = col.push(
+        text("How would you like to connect to Bitcoin Core?")
+            .style(theme::text::secondary)
+            .size(14),
+    );
+
+    let external_card = card::simple(
+        Container::new(
+            Column::new()
+                .spacing(8)
+                .push(
+                    Row::new()
+                        .spacing(10)
+                        .push(badge::badge(icon::network_icon()))
+                        .push(text("My own node").bold())
+                        .align_y(Alignment::Center),
+                )
+                .push(
+                    text("Connect to a Bitcoin Core node you already have running.")
+                        .size(13)
+                        .style(theme::text::secondary),
+                )
+                .push(
+                    button::secondary(None, "Configure →")
+                        .padding([8, 14])
+                        .on_press(NodeSettingsMessage::SetupLocalNodeModeSelected(false)),
+                ),
+        )
+        .padding(15)
+        .width(Length::Fill),
+    );
+
+    let internal_card = card::simple(
+        Container::new(
+            Column::new()
+                .spacing(8)
+                .push(
+                    Row::new()
+                        .spacing(10)
+                        .push(badge::badge(icon::bitcoin_icon()))
+                        .push(text("COINCUBE-managed node (recommended)").bold())
+                        .align_y(Alignment::Center),
+                )
+                .push(
+                    text("COINCUBE downloads Bitcoin Core and runs a pruned node (~15 GB) automatically. No configuration needed.")
+                        .size(13)
+                        .style(theme::text::secondary),
+                )
+                .push(
+                    button::primary(None, "Set up automatically →")
+                        .padding([8, 14])
+                        .on_press(NodeSettingsMessage::SetupLocalNodeModeSelected(true)),
+                ),
+        )
+        .padding(15)
+        .width(Length::Fill),
+    );
+
+    col = col.push(external_card);
+    col = col.push(internal_card);
+
+    card::simple(Container::new(col).padding(15).width(Length::Fill)).into()
+}
+
+pub fn internal_node_setup_panel<'a>(
+    downloading: bool,
+    installing: bool,
+    done: bool,
+    error: Option<&'a str>,
+    download_progress: f32,
+) -> Element<'a, NodeSettingsMessage> {
+    let mut col = Column::new().spacing(15);
+
+    col = col.push(
+        Row::new()
+            .push(
+                text("Setting up local node")
+                    .bold()
+                    .size(18)
+                    .width(Length::Fill),
+            )
+            .push({
+                let close_btn: Element<'_, NodeSettingsMessage> = if done || error.is_some() {
+                    button::transparent(None, "Close")
+                        .on_press(NodeSettingsMessage::SetupLocalNodeCancel)
+                        .into()
+                } else {
+                    Space::new().into()
+                };
+                close_btn
+            })
+            .align_y(Alignment::Center),
+    );
+
+    if let Some(err) = error {
+        col = col.push(
+            Column::new()
+                .spacing(8)
+                .push(text("Setup failed").bold().style(theme::text::warning))
+                .push(text(err).size(13).style(theme::text::warning))
+                .push(
+                    Row::new()
+                        .spacing(10)
+                        .push(
+                            button::secondary(None, "Retry")
+                                .padding([8, 14])
+                                .on_press(NodeSettingsMessage::SetupLocalNodeModeSelected(true)),
+                        )
+                        .push(
+                            button::transparent(None, "Cancel")
+                                .on_press(NodeSettingsMessage::SetupLocalNodeCancel),
+                        ),
+                ),
+        );
+    } else if done {
+        col = col.push(
+            Column::new()
+                .spacing(6)
+                .push(text("Bitcoin Core is running and syncing in the background.").bold())
+                .push(
+                    text(
+                        "COINCUBE will automatically switch to this node once syncing is complete.",
+                    )
+                    .size(13)
+                    .style(theme::text::secondary),
+                ),
+        );
+    } else if downloading {
+        let label = format!(
+            "Downloading Bitcoin Core… {:.0}%",
+            download_progress.min(99.9)
+        );
+        col = col.push(Column::new().spacing(10).push(text(&label).size(14)).push(
+            coincube_ui::widget::ProgressBar::new(0.0..=100.0, download_progress),
+        ));
+    } else if installing {
+        col = col.push(
+            text("Installing and starting Bitcoin Core…")
+                .size(14)
+                .style(theme::text::secondary),
+        );
+    }
+
+    card::simple(Container::new(col).padding(15).width(Length::Fill)).into()
+}
+
 pub fn register_wallet_modal<'a>(
     hws: &'a [HardwareWallet],
     processing: bool,

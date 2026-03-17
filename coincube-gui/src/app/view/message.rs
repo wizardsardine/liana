@@ -8,9 +8,10 @@ use crate::{
         },
     },
     export::ImportExportMessage,
-    node::bitcoind::RpcAuthType,
+    node::bitcoind::{Bitcoind, RpcAuthType},
     services::fiat::{Currency, PriceSource},
 };
+use coincubed::config::BitcoindConfig;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum FeeratePriority {
@@ -173,6 +174,34 @@ pub enum SettingsMessage {
     GeneralSection,
     DisplayUnitChanged(BitcoinDisplayUnit),
     Fiat(FiatMessage),
+    NodeSettings(NodeSettingsMessage),
+}
+
+#[derive(Debug, Clone)]
+pub enum NodeSettingsMessage {
+    SwitchToConnect,
+    SwitchToBitcoind,
+    // COINCUBE | Connect re-authentication sub-flow (gates the Switch to Connect action)
+    ConnectLoginEmailChanged(String),
+    ConnectLoginRequestOtp,
+    ConnectLoginOtpRequested(Result<(), String>),
+    ConnectLoginOtpChanged(String),
+    ConnectLoginVerifyOtp,
+    ConnectLoginVerified(Result<String, String>), // Ok(jwt_token)
+    ConnectLoginCancel,
+    // "Set up local node while on Connect" sub-flow
+    SetupLocalNode,
+    SetupLocalNodeCancel,
+    SetupLocalNodeAddrChanged(String),
+    SetupLocalNodeAuthTypeSelected(RpcAuthType),
+    SetupLocalNodeFieldEdited(&'static str, String),
+    SetupLocalNodeConfirm,
+    // Mode picker: false = self-managed external, true = COINCUBE-managed internal
+    SetupLocalNodeModeSelected(bool),
+    // Internal (COINCUBE-managed) node setup progress
+    SetupLocalNodeDownloadProgress(f32),
+    SetupLocalNodeDownloadComplete(Result<Vec<u8>, String>),
+    SetupLocalNodeStartResult(Result<(BitcoindConfig, Bitcoind), String>),
 }
 
 #[derive(Debug, Clone)]
