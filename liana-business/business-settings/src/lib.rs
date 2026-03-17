@@ -196,6 +196,7 @@ impl SettingsTrait for BusinessSettings {
             );
 
             let cache = Cache {
+                variant: liana_ui::Variant::LianaBusiness,
                 network,
                 datadir_path: liana_dir.clone(),
                 last_poll_at_startup: None,
