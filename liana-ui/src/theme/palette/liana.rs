@@ -268,8 +268,8 @@ impl Palette {
                         shadow: Default::default(),
                     },
                     pressed: Some(ButtonPalette {
-                        background: color::LIGHT_BLACK,
-                        text: color::WHITE,
+                        background: color::GREEN,
+                        text: color::BLACK,
                         border: color::TRANSPARENT.into(),
                         shadow: Default::default(),
                     }),

@@ -40,7 +40,7 @@ pub fn chevron_right() -> Text<'static> {
 }
 
 pub fn recovery_icon() -> Text<'static> {
-    bootstrap_icon('\u{F467}')
+    bootstrap_icon('\u{F44F}')
 }
 
 pub fn plug_icon() -> Text<'static> {
@@ -171,6 +171,26 @@ pub fn enter_box_icon() -> Text<'static> {
     bootstrap_icon('\u{F1BE}')
 }
 
+pub fn collection_icon() -> Text<'static> {
+    bootstrap_icon('\u{F2CC}')
+}
+
+pub fn coins_icon() -> Text<'static> {
+    bootstrap_icon('\u{F45B}')
+}
+
+pub fn receive_icon() -> Text<'static> {
+    bootstrap_icon('\u{F1BC}')
+}
+
+pub fn send_icon() -> Text<'static> {
+    bootstrap_icon('\u{F1C6}')
+}
+
+pub fn settings_icon() -> Text<'static> {
+    bootstrap_icon('\u{F3E5}')
+}
+
 const ICONEX_ICONS: Font = Font::with_name("Untitled1");
 
 fn iconex_icon(unicode: char) -> Text<'static> {
@@ -185,20 +205,8 @@ pub fn arrow_repeat() -> Text<'static> {
     iconex_icon('\u{46BB}')
 }
 
-pub fn send_icon() -> Text<'static> {
-    iconex_icon('\u{2CEE}')
-}
-
-pub fn receive_icon() -> Text<'static> {
-    iconex_icon('\u{605B}')
-}
-
 pub fn home_icon() -> Text<'static> {
     iconex_icon('\u{C722}')
-}
-
-pub fn settings_icon() -> Text<'static> {
-    iconex_icon('\u{3038}')
 }
 
 pub fn key_icon() -> Text<'static> {
@@ -207,10 +215,6 @@ pub fn key_icon() -> Text<'static> {
 
 pub fn history_icon() -> Text<'static> {
     iconex_icon('\u{BEBA}')
-}
-
-pub fn coins_icon() -> Text<'static> {
-    iconex_icon('\u{9F25}')
 }
 
 pub fn clock_icon() -> Text<'static> {

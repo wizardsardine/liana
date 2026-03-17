@@ -281,7 +281,7 @@ impl Palette {
                         background: color::BUSINESS_BLUE,
                         text: color::WHITE,
                         border: color::BUSINESS_BLUE.into(),
-                        shadow: BTN_SHADOW,
+                        shadow: Default::default(),
                     }),
                     disabled: btn_disabled(),
                 },

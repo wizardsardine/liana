@@ -118,8 +118,8 @@ impl Menu {
         match self {
             Menu::Home => icon::home_icon(),
             Menu::Receive => icon::receive_icon(),
-            Menu::PSBTs => icon::history_icon(),
-            Menu::Transactions => icon::history_icon(),
+            Menu::PSBTs => icon::pencil_icon(),
+            Menu::Transactions => icon::collection_icon(),
             Menu::Settings => icon::settings_icon(),
             Menu::Coins => icon::coins_icon(),
             Menu::CreateSpendTx => icon::send_icon(),

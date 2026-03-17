@@ -45,43 +45,44 @@ pub fn sidebar<'a>(
     cache: &'a Cache,
     menu_width: MenuWidth,
 ) -> Container<'a, Message> {
-    Container::new(
+    let padding = match menu_width {
+        MenuWidth::Normal => [0.0, 30.0],
+        MenuWidth::Compact | MenuWidth::Small => [0.0, 5.0],
+    };
+    let logo = match (menu_width.is_small(), cache.variant) {
+        (false, liana_ui::Variant::LianaBusiness) => liana_business_logo(),
+        (false, liana_ui::Variant::Liana) => liana_wallet_logo(),
+        _ => liana_grey_logo().style(theme::svg::accent).width(60),
+    }
+    .height(120);
+    let upper_buttons = Column::new()
+        .push(Space::with_height(10))
+        .push(Container::new(logo))
+        .push(Menu::Home.entry(active, menu_width))
+        .push(Menu::CreateSpendTx.entry(active, menu_width))
+        .push(Menu::Receive.entry(active, menu_width))
+        .push(Menu::PSBTs.entry(active, menu_width))
+        .height(Length::Fill)
+        .spacing(10);
+
+    let bottom_buttons = Container::new(
         Column::new()
-            .push(
-                Column::new()
-                    .push(
-                        Container::new(
-                            liana_grey_logo()
-                                .height(Length::Fixed(120.0))
-                                .width(Length::Fixed(60.0))
-                                .style(theme::svg::accent),
-                        )
-                        .padding(10),
-                    )
-                    .push(Menu::Home.entry(active, menu_width))
-                    .push(Menu::CreateSpendTx.entry(active, menu_width))
-                    .push(Menu::Receive.entry(active, menu_width))
-                    .push(Menu::Coins.entry(active, menu_width))
-                    .push(Menu::Transactions.entry(active, menu_width))
-                    .push(Menu::PSBTs.entry(active, menu_width))
-                    .height(Length::Fill),
-            )
-            .push(
-                Container::new(
-                    Column::new()
-                        .spacing(10)
-                        .push_maybe(cache.rescan_progress().map(|p| {
-                            Container::new(text(format!("  Rescan...{:.2}%  ", p * 100.0)))
-                                .padding(5)
-                                .style(theme::pill::simple)
-                        }))
-                        .push(Menu::Recovery.entry(active, menu_width))
-                        .push(Menu::Settings.entry(active, menu_width)),
-                )
-                .height(Length::Shrink),
-            ),
+            .spacing(10)
+            .push_maybe(cache.rescan_progress().map(|p| {
+                Container::new(text(format!("  Rescan...{:.2}%  ", p * 100.0)))
+                    .padding(5)
+                    .style(theme::pill::simple)
+            }))
+            .push(Menu::Recovery.entry(active, menu_width))
+            .push(Menu::Transactions.entry(active, menu_width))
+            .push(Menu::Coins.entry(active, menu_width))
+            .push(Menu::Settings.entry(active, menu_width)),
     )
-    .style(theme::container::foreground)
+    .height(Length::Shrink);
+
+    Container::new(Column::new().push(upper_buttons).push(bottom_buttons))
+        .style(theme::container::sidebar)
+        .padding(padding)
 }
 
 pub fn dashboard<'a, T: Into<Element<'a, Message>>>(

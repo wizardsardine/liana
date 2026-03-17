@@ -1,6 +1,7 @@
 use super::text::{button_text, text};
 use crate::{
     font::{BOLD, MEDIUM},
+    icon::ICON_SIZE_L,
     theme::{self, button::round_icon_btn},
     widget::*,
 };
@@ -10,10 +11,10 @@ use iced::{
     Length,
 };
 
-const MENU_PADDING: [u16; 2] = [8, 12];
+const MENU_BTN_PADDING: [u16; 2] = [4 /* Top/Bottom */, 12 /* Left/Right */];
 const MENU_TEXT_SIZE: u16 = 22;
-const MENU_TEXT_COMPACT_SIZE: u16 = 22;
-const MENU_ICON_SIZE: u16 = 32;
+const MENU_TEXT_COMPACT_SIZE: u16 = 18;
+const MENU_ICON_SIZE: u16 = ICON_SIZE_L;
 
 const ICON_BTN_SIZE: f32 = 40.0;
 const ICON_BTN_PADDING: f32 = 10.0;
@@ -26,7 +27,7 @@ pub fn menu<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str, compact: bool) -
             false,
             compact,
         )
-        .padding(MENU_PADDING),
+        .padding(MENU_BTN_PADDING),
     )
     .style(theme::button::menu)
 }
@@ -36,14 +37,14 @@ pub fn menu_active<'a, T: 'a>(
     t: &'static str,
     compact: bool,
 ) -> Button<'a, T> {
-    Button::new(content_menu(icon, t, true, compact).padding(MENU_PADDING))
+    Button::new(content_menu(icon, t, true, compact).padding(MENU_BTN_PADDING))
         .style(theme::button::menu_pressed)
 }
 
 pub fn menu_small<'a, T: 'a>(icon: Text<'a>) -> Button<'a, T> {
     Button::new(
         container(icon.size(MENU_ICON_SIZE).style(theme::text::secondary))
-            .padding(MENU_PADDING)
+            .padding(MENU_BTN_PADDING)
             .align_x(Horizontal::Center),
     )
     .style(theme::button::menu)
@@ -52,7 +53,7 @@ pub fn menu_small<'a, T: 'a>(icon: Text<'a>) -> Button<'a, T> {
 pub fn menu_active_small<'a, T: 'a>(icon: Text<'a>) -> Button<'a, T> {
     Button::new(
         container(icon.size(MENU_ICON_SIZE))
-            .padding(MENU_PADDING)
+            .padding(MENU_BTN_PADDING)
             .align_x(Horizontal::Center),
     )
     .style(theme::button::menu_pressed)
@@ -75,7 +76,7 @@ fn content_menu<'a, T: 'a>(
         None => container(t),
         Some(i) => container(
             row![i.size(MENU_ICON_SIZE), t]
-                .spacing(20)
+                .spacing(10)
                 .align_y(Vertical::Center),
         ),
     }
