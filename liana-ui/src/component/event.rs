@@ -136,5 +136,5 @@ pub fn confirmed_incoming_event<T: Clone + 'static>(
         .on_press(msg)
         .style(theme::button::transparent_border),
     )
-    .style(theme::card::simple)
+    .style(theme::card::button_simple)
 }
