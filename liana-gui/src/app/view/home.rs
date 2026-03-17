@@ -11,8 +11,14 @@ use iced::{
 use liana::miniscript::bitcoin;
 use liana_ui::{
     color,
-    component::{amount::*, button, card, event, form, spinner, text::*},
-    icon::{self, cross_icon},
+    component::{
+        amount::*,
+        button,
+        card::{self, home_hint, home_warning},
+        event, form, spinner,
+        text::*,
+    },
+    icon::{self, cross_icon, ICON_SIZE_M},
     theme,
     widget::*,
 };
@@ -155,49 +161,78 @@ pub fn home_view<'a>(
 
     let expire_warning = if expiring_coins.is_empty() {
         remaining_sequence.map(|sequence| {
-            Container::new(
-                Row::new()
-                    .spacing(15)
-                    .align_y(Alignment::Center)
-                    .push(
-                        h4_regular(format!(
-                            "≈ {} left before first recovery path becomes available.",
-                            coins::expire_message_units(sequence).join(", ")
-                        ))
-                        .width(Length::Fill),
-                    )
-                    .push(
-                        icon::tooltip_icon()
-                            .size(20)
-                            .style(theme::text::secondary)
-                            .width(Length::Fixed(20.0)),
-                    )
+            let content = Row::new()
+                .spacing(15)
+                .align_y(Alignment::Center)
+                .push(
+                    h4_regular(format!(
+                        "≈ {} left before first recovery path becomes available.",
+                        coins::expire_message_units(sequence).join(", ")
+                    ))
                     .width(Length::Fill),
-            )
-            .padding(25)
-            .style(theme::card::border)
+                )
+                .push(
+                    icon::tooltip_icon()
+                        .size(20)
+                        .style(theme::text::secondary)
+                        .width(Length::Fixed(20.0)),
+                )
+                .width(Length::Fill);
+            home_hint(content)
         })
     } else {
+        let content = Row::new()
+            .push(icon::warning_fill_icon().size(ICON_SIZE_M))
+            .push(
+                h4_regular(format!(
+                    "Recovery path is or will soon be available for {} coin(s).",
+                    expiring_coins.len(),
+                ))
+                .width(Length::Fill),
+            )
+            .push(
+                button::tertiary(Some(icon::arrow_repeat()), "Reset timelock")
+                    .on_press(Message::Menu(Menu::RefreshCoins(expiring_coins.to_owned()))),
+            )
+            .spacing(15)
+            .align_y(Alignment::Center);
+        Some(home_warning(content))
+    };
+
+    let history = events.iter().fold(Column::new().spacing(10), |col, event| {
+        if event.kind != PaymentKind::SendToSelf {
+            col.push(event_list_view(event))
+        } else {
+            col
+        }
+    });
+
+    let see_more = if !is_last_page && !events.is_empty() {
         Some(
             Container::new(
-                Row::new()
-                    .spacing(15)
-                    .align_y(Alignment::Center)
-                    .push(
-                        h4_regular(format!(
-                            "Recovery path is or will soon be available for {} coin(s).",
-                            expiring_coins.len(),
-                        ))
-                        .width(Length::Fill),
-                    )
-                    .push(
-                        button::tertiary(Some(icon::arrow_repeat()), "Refresh coins")
-                            .on_press(Message::Menu(Menu::RefreshCoins(expiring_coins.to_owned()))),
-                    ),
+                Button::new(
+                    text(if processing {
+                        "Fetching ..."
+                    } else {
+                        "See more"
+                    })
+                    .width(Length::Fill)
+                    .align_x(alignment::Horizontal::Center),
+                )
+                .width(Length::Fill)
+                .padding(15)
+                .style(theme::button::transparent_border)
+                .on_press_maybe(if !processing {
+                    Some(Message::Next)
+                } else {
+                    None
+                }),
             )
-            .padding(25)
-            .style(theme::card::warning_banner),
+            .width(Length::Fill)
+            .style(theme::card::simple),
         )
+    } else {
+        None
     };
     Column::new()
         .push(h3("Balance"))
@@ -207,41 +242,9 @@ pub fn home_view<'a>(
         .push(
             Column::new()
                 .spacing(10)
-                .push(h4_bold("Last payments"))
-                .push(events.iter().fold(Column::new().spacing(10), |col, event| {
-                    if event.kind != PaymentKind::SendToSelf {
-                        col.push(event_list_view(event))
-                    } else {
-                        col
-                    }
-                }))
-                .push_maybe(if !is_last_page && !events.is_empty() {
-                    Some(
-                        Container::new(
-                            Button::new(
-                                text(if processing {
-                                    "Fetching ..."
-                                } else {
-                                    "See more"
-                                })
-                                .width(Length::Fill)
-                                .align_x(alignment::Horizontal::Center),
-                            )
-                            .width(Length::Fill)
-                            .padding(15)
-                            .style(theme::button::transparent_border)
-                            .on_press_maybe(if !processing {
-                                Some(Message::Next)
-                            } else {
-                                None
-                            }),
-                        )
-                        .width(Length::Fill)
-                        .style(theme::card::simple),
-                    )
-                } else {
-                    None
-                }),
+                .push(h4_bold("Payments History"))
+                .push(history)
+                .push_maybe(see_more),
         )
         .spacing(20)
         .into()

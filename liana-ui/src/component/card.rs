@@ -61,6 +61,17 @@ where
         .into()
 }
 
+pub fn home_warning<'a, T, M>(content: T) -> Element<'a, M>
+where
+    T: Into<Element<'a, M>>,
+    M: Clone + 'a,
+{
+    Container::new(content)
+        .padding(CARD_PADDING)
+        .style(theme::card::home_warning)
+        .into()
+}
+
 pub fn home_hint<'a, T, M>(content: T) -> Element<'a, M>
 where
     T: Into<Element<'a, M>>,

@@ -364,7 +364,7 @@ impl Palette {
                     text: color::ORANGE.into(),
                     border: color::ORANGE.into(),
                 },
-                warning_banner: ContainerPalette {
+                home_warning: ContainerPalette {
                     background: color::LIGHT_BLACK,
                     text: color::ORANGE.into(),
                     border: color::ORANGE.into(),

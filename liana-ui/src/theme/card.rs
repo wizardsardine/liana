@@ -87,8 +87,8 @@ pub fn warning(theme: &Theme) -> Style {
     card(&theme.colors.cards.warning)
 }
 
-pub fn warning_banner(theme: &Theme) -> Style {
-    card(&theme.colors.cards.warning_banner)
+pub fn home_warning(theme: &Theme) -> Style {
+    card(&theme.colors.cards.home_warning)
 }
 
 pub fn home_hint(theme: &Theme) -> Style {
