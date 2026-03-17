@@ -1,5 +1,7 @@
 use iced::Color;
 
+use crate::theme::card::CARD_SHADOW;
+
 use super::*;
 
 const BTN_PRIMARY_BG: Color = color::BUSINESS_BLUE;
@@ -42,6 +44,17 @@ const BTN_SHADOW: Shadow = Shadow {
         g: 0.0,
         b: 0.0,
         a: 0.25,
+    },
+    offset: iced::Vector { x: 0.0, y: 4.0 },
+    blur_radius: 4.0,
+};
+
+const CARD_SHADOW_HOVER: Shadow = Shadow {
+    color: Color {
+        r: 0.0,
+        g: 0.0,
+        b: 0.0,
+        a: 0.3,
     },
     offset: iced::Vector { x: 0.0, y: 4.0 },
     blur_radius: 4.0,
@@ -195,24 +208,19 @@ impl Palette {
                 },
                 clickable_card: Button {
                     active: ButtonPalette {
-                        background: color::TRANSPARENT,
-                        text: color::DARK_TEXT_PRIMARY, // Use primary (black) for better visibility
-                        border: color::TRANSPARENT.into(),
-                        shadow: Default::default(),
+                        background: BTN_TERTIARY_BG,
+                        text: BTN_TERTIARY_FG,
+                        border: BTN_TERTIARY_BG.into(),
+                        shadow: CARD_SHADOW,
                     },
                     hovered: ButtonPalette {
-                        background: color::TRANSPARENT,
-                        text: color::BUSINESS_BLUE,
-                        border: color::BUSINESS_BLUE.into(),
-                        shadow: BTN_SHADOW,
+                        background: BTN_TERTIARY_BG,
+                        text: BTN_TERTIARY_FG,
+                        border: BTN_TERTIARY_BG.into(),
+                        shadow: CARD_SHADOW_HOVER,
                     },
-                    pressed: Some(ButtonPalette {
-                        background: color::TRANSPARENT,
-                        text: color::BUSINESS_BLUE,
-                        border: color::BUSINESS_BLUE.into(),
-                        shadow: BTN_SHADOW,
-                    }),
-                    disabled: btn_disabled(),
+                    pressed: None,
+                    disabled: None,
                 },
                 container: Button {
                     active: ButtonPalette {

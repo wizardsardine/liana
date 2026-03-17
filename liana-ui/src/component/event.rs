@@ -8,7 +8,7 @@ use iced::{widget::row, Alignment, Length};
 
 use chrono::{DateTime, Local, Utc};
 
-pub fn event_card<'a, M>(content: Row<'a, M>, msg: M) -> Container<'a, M>
+pub fn event_card<'a, M>(content: Row<'a, M>, msg: M) -> Element<'a, M>
 where
     M: Clone + 'a,
 {
@@ -20,7 +20,7 @@ pub fn unconfirmed_outgoing_event<T: Clone + 'static>(
     label: Option<Text<'static>>,
     amount: &Amount,
     msg: T,
-) -> Container<'static, T> {
+) -> Element<'static, T> {
     let content = row!(
         row!(badge::spend(), Column::new().push_maybe(label),)
             .spacing(10)
@@ -39,7 +39,7 @@ pub fn confirmed_outgoing_event<T: Clone + 'static>(
     date: DateTime<Utc>,
     amount: &Amount,
     msg: T,
-) -> Container<'static, T> {
+) -> Element<'static, T> {
     let content = row!(
         row!(
             badge::spend(),
@@ -66,7 +66,7 @@ pub fn unconfirmed_incoming_event<T: Clone + 'static>(
     label: Option<Text<'static>>,
     amount: &Amount,
     msg: T,
-) -> Container<'static, T> {
+) -> Element<'static, T> {
     let content = row!(
         row!(badge::receive(), Column::new().push_maybe(label))
             .spacing(10)
@@ -85,7 +85,7 @@ pub fn confirmed_incoming_event<T: Clone + 'static>(
     date: DateTime<Utc>,
     amount: &Amount,
     msg: T,
-) -> Container<'static, T> {
+) -> Element<'static, T> {
     let content = row!(
         row!(
             badge::receive(),

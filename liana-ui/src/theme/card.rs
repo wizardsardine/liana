@@ -5,12 +5,12 @@ use super::button::BUTTON_RADIUS;
 use super::palette::ContainerPalette;
 use super::Theme;
 
-const CARD_SHADOW: Shadow = Shadow {
+pub const CARD_SHADOW: Shadow = Shadow {
     color: Color {
         r: 0.0,
         g: 0.0,
         b: 0.0,
-        a: 0.25,
+        a: 0.15,
     },
     offset: Vector { x: 0.0, y: 4.0 },
     blur_radius: 4.0,

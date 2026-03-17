@@ -264,14 +264,12 @@ fn event_list_view(event: &Payment) -> Element<'_, Message> {
                 &event.amount,
                 Message::SelectPayment(event.outpoint),
             )
-            .into()
         } else {
             event::unconfirmed_incoming_event(
                 label,
                 &event.amount,
                 Message::SelectPayment(event.outpoint),
             )
-            .into()
         }
     } else if let Some(t) = event.time {
         event::confirmed_outgoing_event(
@@ -280,14 +278,12 @@ fn event_list_view(event: &Payment) -> Element<'_, Message> {
             &event.amount,
             Message::SelectPayment(event.outpoint),
         )
-        .into()
     } else {
         event::unconfirmed_outgoing_event(
             label,
             &event.amount,
             Message::SelectPayment(event.outpoint),
         )
-        .into()
     }
 }
 

@@ -51,14 +51,12 @@ pub fn error<'a, T: 'a>(message: &'static str, error: String) -> Container<'a, T
     .style(theme::card::error)
 }
 
-pub fn clickable_card<'a, M>(content: Row<'a, M>, msg: Option<M>) -> Container<'a, M>
+pub fn clickable_card<'a, M>(content: Row<'a, M>, msg: Option<M>) -> Element<'a, M>
 where
     M: Clone + 'a,
 {
-    Container::new(
-        button(content.align_y(Alignment::Center).padding(CARD_PADDING))
-            .on_press_maybe(msg)
-            .style(theme::button::transparent_border),
-    )
-    .style(theme::card::simple)
+    button(content.align_y(Alignment::Center).padding(CARD_PADDING))
+        .on_press_maybe(msg)
+        .style(theme::button::clickable_card)
+        .into()
 }
