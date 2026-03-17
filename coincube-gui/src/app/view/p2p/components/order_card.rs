@@ -1,5 +1,5 @@
 use coincube_ui::{
-    component::{button, card, text::*},
+    component::{button, card, form, text::*},
     icon, theme,
     widget::*,
 };
@@ -192,7 +192,17 @@ pub fn order_card<'a>(order: &'a P2POrder) -> Button<'a, view::Message> {
 }
 
 /// Detail view for a selected order.
-pub fn order_detail<'a>(order: &'a P2POrder) -> Container<'a, view::Message> {
+/// State passed into order_detail for inline take-order fields.
+pub struct TakeOrderState<'a> {
+    pub amount: &'a form::Value<String>,
+    pub invoice: &'a form::Value<String>,
+    pub submitting: bool,
+}
+
+pub fn order_detail<'a>(
+    order: &'a P2POrder,
+    take_state: Option<TakeOrderState<'a>>,
+) -> Container<'a, view::Message> {
     let badge_style = match order.order_type {
         OrderType::Buy => theme::pill::success as fn(&_) -> _,
         OrderType::Sell => theme::pill::warning as fn(&_) -> _,
@@ -285,26 +295,20 @@ pub fn order_detail<'a>(order: &'a P2POrder) -> Container<'a, view::Message> {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
-    let time_left = if expires_at > now {
-        let remaining = expires_at - now;
-        let hours = remaining / 3600;
-        let minutes = (remaining % 3600) / 60;
-        if hours > 0 {
-            format!("{}h {}m left", hours, minutes)
-        } else {
-            format!("{}m left", minutes)
-        }
-    } else {
-        "Expired".to_string()
+
+    let created_date = {
+        let dt = chrono::DateTime::from_timestamp(order.created_at_ts as i64, 0)
+            .unwrap_or_default()
+            .with_timezone(&chrono::Local);
+        dt.format("%b %d, %Y %H:%M").to_string()
     };
 
     let time_card = card::simple(
         row![
             icon::clock_icon().style(theme::text::secondary),
             column![
-                p2_regular("Created").style(theme::text::secondary),
-                p1_bold(&order.time_ago),
-                p2_regular(time_left).style(theme::text::secondary),
+                p2_regular("Created On").style(theme::text::secondary),
+                p1_bold(format!("Created on: {}", created_date)),
             ]
             .spacing(4),
         ]
@@ -403,6 +407,28 @@ pub fn order_detail<'a>(order: &'a P2POrder) -> Container<'a, view::Message> {
     ]
     .spacing(12);
 
+    // Countdown timer for pending orders (24h expiry)
+    if expires_at > now {
+        let remaining = expires_at - now;
+        let hours = remaining / 3600;
+        let minutes = (remaining % 3600) / 60;
+        let seconds = remaining % 60;
+        detail_col = detail_col.push(
+            container(
+                column![
+                    icon::clock_icon().size(24).style(theme::text::secondary),
+                    p1_bold(format!("{:02}:{:02}:{:02}", hours, minutes, seconds)),
+                    caption("Time remaining").style(theme::text::secondary),
+                ]
+                .spacing(4)
+                .align_x(Alignment::Center),
+            )
+            .width(Length::Fill)
+            .center_x(Length::Fill)
+            .padding([12, 0]),
+        );
+    }
+
     if order.is_mine {
         detail_col = detail_col.push(
             column![
@@ -424,17 +450,90 @@ pub fn order_detail<'a>(order: &'a P2POrder) -> Container<'a, view::Message> {
             .width(Length::Fill);
         detail_col = detail_col.push(row![close_btn, cancel_btn].spacing(8));
     } else {
-        let close_btn = button::secondary(None, "Close")
-            .on_press(view::Message::P2P(P2PMessage::CloseOrderDetail))
-            .width(Length::Fill);
-        let action_label = match order.order_type {
-            OrderType::Buy => "Sell",
-            OrderType::Sell => "Buy",
-        };
-        let action_btn = button::primary(None, action_label)
-            .on_press(view::Message::P2P(P2PMessage::TakeOrder))
-            .width(Length::Fill);
-        detail_col = detail_col.push(row![close_btn, action_btn].spacing(8));
+        // Is user buying? (taking a sell order)
+        let is_buying = order.order_type == OrderType::Sell;
+
+        if let Some(state) = take_state {
+            // Inline take order fields
+            if order.is_range_order() {
+                detail_col = detail_col.push(
+                    column![
+                        p2_regular(format!(
+                            "Enter fiat amount ({:.0} - {:.0} {})",
+                            order.min_amount.unwrap_or(0.0),
+                            order.max_amount.unwrap_or(0.0),
+                            order.fiat_currency
+                        ))
+                        .style(theme::text::secondary),
+                        form::Form::new_amount_numeric("Fiat amount", state.amount, |v| {
+                            view::Message::P2P(P2PMessage::TakeOrderAmountEdited(v))
+                        })
+                        .padding(10),
+                    ]
+                    .spacing(8),
+                );
+            }
+
+            if is_buying {
+                detail_col = detail_col.push(
+                    column![
+                        p2_regular("Lightning invoice or address (optional)")
+                            .style(theme::text::secondary),
+                        form::Form::new_trimmed(
+                            "Enter lightning invoice or address",
+                            state.invoice,
+                            |v| view::Message::P2P(P2PMessage::TakeOrderInvoiceEdited(v)),
+                        )
+                        .padding(10),
+                    ]
+                    .spacing(8),
+                );
+            }
+
+            let can_confirm = if order.is_range_order() {
+                state
+                    .amount
+                    .value
+                    .parse::<f64>()
+                    .map(|v| {
+                        let min = order.min_amount.unwrap_or(0.0);
+                        let max = order.max_amount.unwrap_or(f64::MAX);
+                        v >= min && v <= max
+                    })
+                    .unwrap_or(false)
+            } else {
+                true
+            };
+
+            let action_label = if is_buying { "Buy" } else { "Sell" };
+            let confirm_btn = if can_confirm && !state.submitting {
+                button::primary(None, action_label)
+                    .on_press(view::Message::P2P(P2PMessage::ConfirmTakeOrder))
+                    .width(Length::Fill)
+            } else {
+                button::primary(None, action_label).width(Length::Fill)
+            };
+
+            detail_col = detail_col.push(
+                row![
+                    button::secondary(None, "Close")
+                        .on_press(view::Message::P2P(P2PMessage::CloseOrderDetail))
+                        .width(Length::Fill),
+                    confirm_btn,
+                ]
+                .spacing(8),
+            );
+        } else {
+            // Initial state: show Buy/Sell button that activates take order fields
+            let close_btn = button::secondary(None, "Close")
+                .on_press(view::Message::P2P(P2PMessage::CloseOrderDetail))
+                .width(Length::Fill);
+            let action_label = if is_buying { "Buy" } else { "Sell" };
+            let action_btn = button::primary(None, action_label)
+                .on_press(view::Message::P2P(P2PMessage::TakeOrder))
+                .width(Length::Fill);
+            detail_col = detail_col.push(row![close_btn, action_btn].spacing(8));
+        }
     }
 
     container(detail_col).width(Length::Fill)

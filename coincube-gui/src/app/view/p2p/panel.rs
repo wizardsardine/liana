@@ -6,7 +6,7 @@ use coincube_ui::{
     widget::*,
 };
 use iced::{
-    widget::{column, combo_box, container, row, Space},
+    widget::{column, combo_box, container, qr_code, row, Space},
     Alignment, Length, Subscription, Task,
 };
 
@@ -20,12 +20,21 @@ use crate::app::{
     State,
 };
 
+use super::components::order_card::TakeOrderState;
 use super::components::trade_card::{TradeRole, TradeStatus};
 use super::components::{
     buy_sell_tabs, order_card, order_detail, payment_methods_for, trade_card, trade_status_filter,
     BuySellFilter, OrderType, P2POrder, P2PTrade, PricingMode, TradeFilter, FIAT_CURRENCIES,
 };
 use super::config::{load_mostro_config, save_mostro_config, MostroConfig, MostroNode};
+
+/// Returns true if this DM action starts a countdown timer.
+fn is_countdown_action(action: &str) -> bool {
+    matches!(
+        action,
+        "PayInvoice" | "WaitingSellerToPay" | "AddInvoice" | "WaitingBuyerInvoice"
+    )
+}
 
 /// A label–value row used in order confirmation and trade detail views.
 fn detail_row(label: impl ToString, value: impl ToString) -> Element<'static, view::Message> {
@@ -75,8 +84,9 @@ pub struct P2PPanel {
     selected_trade: Option<String>,
     trade_invoice_input: form::Value<String>,
     trade_action_loading: bool,
+    trade_rating: u8, // 1-5 star rating for counterparty
     // Hold invoice to display (seller must pay after taking a buy order)
-    pending_payment_invoice: Option<(String, String, Option<i64>)>, // (order_id, invoice, amount_sats)
+    pending_payment_invoice: Option<(String, String, Option<i64>, qr_code::Data)>, // (order_id, invoice, amount_sats, qr_data)
     // Mostro settings
     mostro_config: MostroConfig,
     new_relay_input: form::Value<String>,
@@ -124,6 +134,7 @@ impl P2PPanel {
             selected_trade: None,
             trade_invoice_input: Default::default(),
             trade_action_loading: false,
+            trade_rating: 0,
             pending_payment_invoice: None,
             mostro_config: load_mostro_config(),
             new_relay_input: Default::default(),
@@ -151,7 +162,12 @@ impl P2PPanel {
                 self.trade_filters.iter().any(|f| match f {
                     TradeFilter::All => true,
                     TradeFilter::Pending => trade.status == TradeStatus::Pending,
-                    TradeFilter::Active => trade.status == TradeStatus::Active,
+                    TradeFilter::Active => {
+                        matches!(
+                            trade.status,
+                            TradeStatus::Active | TradeStatus::SettledHoldInvoice
+                        )
+                    }
                     TradeFilter::WaitingPayment => trade.status == TradeStatus::WaitingPayment,
                     TradeFilter::WaitingInvoice => trade.status == TradeStatus::WaitingBuyerInvoice,
                     TradeFilter::FiatSent => trade.status == TradeStatus::FiatSent,
@@ -836,12 +852,15 @@ impl P2PPanel {
         };
 
         let status_badge_style = match trade.status {
-            TradeStatus::Active | TradeStatus::FiatSent => theme::pill::success as fn(&_) -> _,
+            TradeStatus::Active | TradeStatus::FiatSent | TradeStatus::SettledHoldInvoice => {
+                theme::pill::success as fn(&_) -> _
+            }
             TradeStatus::Success => theme::pill::primary as fn(&_) -> _,
             TradeStatus::Pending
             | TradeStatus::WaitingPayment
             | TradeStatus::WaitingBuyerInvoice => theme::pill::simple as fn(&_) -> _,
-            TradeStatus::Canceled
+            TradeStatus::PaymentFailed
+            | TradeStatus::Canceled
             | TradeStatus::CooperativelyCanceled
             | TradeStatus::Dispute
             | TradeStatus::Expired => theme::pill::warning as fn(&_) -> _,
@@ -914,21 +933,27 @@ impl P2PPanel {
         let loading = self.trade_action_loading;
         let dm_action = trade.last_dm_action.as_deref();
 
+        // States where rating is available
+        let can_rate = matches!(
+            dm_action,
+            Some("HoldInvoicePaymentSettled" | "PurchaseCompleted" | "Rate")
+        );
+
         // Terminal states — no action buttons at all
         let is_terminal = matches!(
             dm_action,
             Some(
-                "HoldInvoicePaymentSettled"
-                    | "PurchaseCompleted"
-                    | "Rate"
+                "RateReceived"
                     | "CooperativeCancelAccepted"
                     | "AdminSettled"
                     | "AdminCanceled"
+                    | "HoldInvoicePaymentCanceled"
             )
-        ) || matches!(
-            trade.status,
-            TradeStatus::Success | TradeStatus::Canceled | TradeStatus::Expired
-        );
+        ) || (!can_rate
+            && matches!(
+                trade.status,
+                TradeStatus::Success | TradeStatus::Canceled | TradeStatus::Expired
+            ));
 
         // Cooperative cancel tracking
         let cancel_initiated_by_you = matches!(dm_action, Some("CooperativeCancelInitiatedByYou"));
@@ -942,16 +967,56 @@ impl P2PPanel {
             Some("DisputeInitiatedByYou" | "DisputeInitiatedByPeer" | "AdminTookDispute")
         ) || matches!(trade.status, TradeStatus::Dispute);
 
+        // --- Countdown timer for time-limited states ---
+        // Only show for PayInvoice/WaitingSellerToPay and AddInvoice/WaitingBuyerInvoice
+        if let Some(start_ts) = trade.countdown_start_ts {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            let expiration_secs: u64 = 900; // 15 minutes
+            let expires_at = start_ts + expiration_secs;
+            if expires_at > now {
+                let remaining = expires_at - now;
+                let mins = remaining / 60;
+                let secs = remaining % 60;
+                actions = actions.push(
+                    container(
+                        column![
+                            icon::clock_icon().size(24).style(theme::text::secondary),
+                            p1_bold(format!("{:02}:{:02}", mins, secs)),
+                            caption("Time remaining").style(theme::text::secondary),
+                        ]
+                        .spacing(4)
+                        .align_x(Alignment::Center),
+                    )
+                    .width(Length::Fill)
+                    .center_x(Length::Fill)
+                    .padding([12, 0]),
+                );
+            } else {
+                actions = actions.push(
+                    container(p2_regular("Time expired").style(theme::text::warning))
+                        .width(Length::Fill)
+                        .center_x(Length::Fill)
+                        .padding([8, 0]),
+                );
+            }
+        }
+
         if !is_terminal {
             // --- Status message for cooperative cancel ---
             if cancel_initiated_by_you {
                 actions = actions.push(
                     card::simple(
                         column![
-                            p2_regular("You initiated a cooperative cancel")
-                                .style(theme::text::warning),
-                            p2_regular("Waiting for counterparty to accept...")
-                                .style(theme::text::secondary),
+                            p1_bold("Cancellation requested"),
+                            p2_regular(
+                                "You have initiated a cooperative cancel. \
+                                Waiting for your counterparty to accept. \
+                                If they don't respond, you can open a dispute.",
+                            )
+                            .style(theme::text::secondary),
                         ]
                         .spacing(4),
                     )
@@ -961,10 +1026,13 @@ impl P2PPanel {
                 actions = actions.push(
                     card::simple(
                         column![
-                            p2_regular("Counterparty requested a cooperative cancel")
-                                .style(theme::text::warning),
-                            p2_regular("Accept the cancel or open a dispute")
-                                .style(theme::text::secondary),
+                            p1_bold("Cancel requested by counterparty"),
+                            p2_regular(
+                                "Your counterparty wants to cancel this order. \
+                                If you agree, press Cancel. Otherwise, you can \
+                                open a dispute.",
+                            )
+                            .style(theme::text::secondary),
                         ]
                         .spacing(4),
                     )
@@ -976,38 +1044,167 @@ impl P2PPanel {
             if matches!(dm_action, Some("DisputeInitiatedByYou")) {
                 actions = actions.push(
                     card::simple(
-                        p2_regular("You opened a dispute. Waiting for admin...")
-                            .style(theme::text::warning),
+                        column![
+                            p1_bold("Dispute opened"),
+                            p2_regular(
+                                "You have initiated a dispute. A solver will be \
+                                assigned soon to help resolve this.",
+                            )
+                            .style(theme::text::secondary),
+                        ]
+                        .spacing(4),
                     )
                     .width(Length::Fill),
                 );
             } else if matches!(dm_action, Some("DisputeInitiatedByPeer")) {
                 actions = actions.push(
                     card::simple(
-                        p2_regular("Counterparty opened a dispute. Waiting for admin...")
-                            .style(theme::text::warning),
+                        column![
+                            p1_bold("Dispute opened by counterparty"),
+                            p2_regular(
+                                "Your counterparty has opened a dispute. A solver will be \
+                                assigned soon to help resolve this.",
+                            )
+                            .style(theme::text::secondary),
+                        ]
+                        .spacing(4),
                     )
                     .width(Length::Fill),
                 );
             } else if matches!(dm_action, Some("AdminTookDispute")) {
                 actions = actions.push(
                     card::simple(
-                        p2_regular("Admin is reviewing the dispute").style(theme::text::warning),
+                        column![
+                            p1_bold("Admin reviewing dispute"),
+                            p2_regular(
+                                "A dispute resolver has been assigned to your case. \
+                                They will contact you to help resolve the issue.",
+                            )
+                            .style(theme::text::secondary),
+                        ]
+                        .spacing(4),
                     )
                     .width(Length::Fill),
                 );
             }
 
             // --- Primary trade action buttons (only if not in cooperative cancel or dispute) ---
+            // Button logic follows the Mostro protocol: Mostro sends different DM
+            // actions to buyer and seller, so we match on (dm_action, role) pairs.
             if !in_cooperative_cancel && !dispute_initiated {
                 match dm_action {
+                    // ── Seller must pay hold invoice ──
+                    Some("PayInvoice") | Some("WaitingSellerToPay") => {
+                        if is_buyer {
+                            actions = actions.push(
+                                card::simple(
+                                    column![
+                                        p1_bold("Waiting for seller payment"),
+                                        p2_regular(
+                                            "A payment request has been sent to the seller. \
+                                            If the seller doesn't complete the payment in time, \
+                                            the trade will be canceled.",
+                                        )
+                                        .style(theme::text::secondary),
+                                    ]
+                                    .spacing(4),
+                                )
+                                .width(Length::Fill),
+                            );
+                        } else {
+                            actions = actions.push(
+                                card::simple(
+                                    column![
+                                        p1_bold("Pay the hold invoice"),
+                                        p2_regular(
+                                            "Please pay the hold invoice to lock your sats \
+                                            and start the trade. If you don't pay in time, \
+                                            the trade will be canceled.",
+                                        )
+                                        .style(theme::text::secondary),
+                                    ]
+                                    .spacing(4),
+                                )
+                                .width(Length::Fill),
+                            );
+                        }
+                    }
+
+                    // ── Hold invoice paid / Trade active ──
+                    Some("HoldInvoicePaymentAccepted") | Some("BuyerInvoiceAccepted") => {
+                        if is_buyer {
+                            actions = actions.push(
+                                card::simple(
+                                    column![
+                                        p1_bold("Send fiat payment"),
+                                        p2_regular(
+                                            "Contact the seller to arrange payment. \
+                                            Once you've sent the fiat money, \
+                                            press the button below to notify the seller.",
+                                        )
+                                        .style(theme::text::secondary),
+                                    ]
+                                    .spacing(4),
+                                )
+                                .width(Length::Fill),
+                            );
+                            actions = actions.push(if !loading {
+                                button::primary(None, "Confirm Fiat Sent")
+                                    .on_press(p2p(P2PMessage::ConfirmFiatSent))
+                                    .width(Length::Fill)
+                            } else {
+                                button::primary(None, "Confirm Fiat Sent").width(Length::Fill)
+                            });
+                        } else {
+                            actions = actions.push(
+                                card::simple(
+                                    column![
+                                        p1_bold("Waiting for fiat payment"),
+                                        p2_regular(
+                                            "Contact the buyer to inform them how to send \
+                                            the fiat payment. You'll be notified when \
+                                            the buyer confirms the payment.",
+                                        )
+                                        .style(theme::text::secondary),
+                                    ]
+                                    .spacing(4),
+                                )
+                                .width(Length::Fill),
+                            );
+                        }
+                    }
+                    // BuyerTookOrder: seller is notified a buyer took their order
+                    Some("BuyerTookOrder") => {
+                        actions = actions.push(
+                            card::simple(
+                                column![
+                                    p1_bold("Buyer took your order"),
+                                    p2_regular(
+                                        "A buyer has taken your order. Please wait while \
+                                        they decide to proceed. If they accept, you'll \
+                                        be notified to complete your part.",
+                                    )
+                                    .style(theme::text::secondary),
+                                ]
+                                .spacing(4),
+                            )
+                            .width(Length::Fill),
+                        );
+                    }
+
+                    // ── Buyer must submit invoice ──
                     Some("AddInvoice") | Some("WaitingBuyerInvoice") => {
                         if is_buyer {
                             actions = actions.push(
                                 card::simple(
                                     column![
-                                        p2_regular("Submit Lightning Invoice")
-                                            .style(theme::text::secondary),
+                                        p1_bold("Submit your invoice"),
+                                        p2_regular(
+                                            "Please send a Lightning invoice or address \
+                                            where you'll receive the sats. If you don't \
+                                            provide one in time, the trade will be canceled.",
+                                        )
+                                        .style(theme::text::secondary),
                                         form::Form::new_trimmed(
                                             "Enter lightning invoice or address",
                                             &self.trade_invoice_input,
@@ -1029,10 +1226,44 @@ impl P2PPanel {
                                 )
                                 .width(Length::Fill),
                             );
+                        } else {
+                            actions = actions.push(
+                                card::simple(
+                                    column![
+                                        p1_bold("Waiting for buyer invoice"),
+                                        p2_regular(
+                                            "Payment received! Your sats are now held. \
+                                            The buyer has been asked to provide an invoice. \
+                                            If they don't do so in time, your sats will be \
+                                            returned and the trade will be canceled.",
+                                        )
+                                        .style(theme::text::secondary),
+                                    ]
+                                    .spacing(4),
+                                )
+                                .width(Length::Fill),
+                            );
                         }
                     }
-                    Some("HoldInvoicePaymentAccepted") | Some("WaitingPayment") => {
+
+                    // ── Waiting for fiat payment (status-based fallback) ──
+                    Some("WaitingPayment") => {
                         if is_buyer {
+                            actions = actions.push(
+                                card::simple(
+                                    column![
+                                        p1_bold("Send fiat payment"),
+                                        p2_regular(
+                                            "Contact the seller to arrange payment. \
+                                            Once you've sent the fiat money, \
+                                            press the button below to notify the seller.",
+                                        )
+                                        .style(theme::text::secondary),
+                                    ]
+                                    .spacing(4),
+                                )
+                                .width(Length::Fill),
+                            );
                             actions = actions.push(if !loading {
                                 button::primary(None, "Confirm Fiat Sent")
                                     .on_press(p2p(P2PMessage::ConfirmFiatSent))
@@ -1040,26 +1271,202 @@ impl P2PPanel {
                             } else {
                                 button::primary(None, "Confirm Fiat Sent").width(Length::Fill)
                             });
+                        } else {
+                            actions = actions.push(
+                                card::simple(
+                                    column![
+                                        p1_bold("Waiting for fiat payment"),
+                                        p2_regular(
+                                            "The buyer has been notified to send fiat. \
+                                            You'll be notified when they confirm.",
+                                        )
+                                        .style(theme::text::secondary),
+                                    ]
+                                    .spacing(4),
+                                )
+                                .width(Length::Fill),
+                            );
                         }
                     }
+
+                    // ── Fiat sent / waiting for release ──
                     Some("FiatSentOk") | Some("FiatSent") => {
                         if !is_buyer {
+                            actions = actions.push(
+                                card::simple(
+                                    column![
+                                        p1_bold("Buyer sent fiat"),
+                                        p2_regular(
+                                            "The buyer has confirmed sending the fiat payment. \
+                                            Once you've verified receipt, release the sats. \
+                                            This action cannot be undone.",
+                                        )
+                                        .style(theme::text::secondary),
+                                    ]
+                                    .spacing(4),
+                                )
+                                .width(Length::Fill),
+                            );
                             actions = actions.push(if !loading {
-                                button::primary(None, "Release (Confirm Fiat Received)")
+                                button::primary(None, "Release Sats")
                                     .on_press(p2p(P2PMessage::ConfirmFiatReceived))
                                     .width(Length::Fill)
                             } else {
-                                button::primary(None, "Release (Confirm Fiat Received)")
-                                    .width(Length::Fill)
+                                button::primary(None, "Release Sats").width(Length::Fill)
                             });
+                        } else {
+                            actions = actions.push(
+                                card::simple(
+                                    column![
+                                        p1_bold("Fiat sent"),
+                                        p2_regular(
+                                            "The seller has been notified that you sent the fiat. \
+                                            Once the seller confirms receipt, they will release \
+                                            the sats. If they don't, you can open a dispute.",
+                                        )
+                                        .style(theme::text::secondary),
+                                    ]
+                                    .spacing(4),
+                                )
+                                .width(Length::Fill),
+                            );
                         }
                     }
-                    Some("PayInvoice") => {
+
+                    // ── Released / settling ──
+                    Some("Released") | Some("Release") => {
                         actions = actions.push(
-                            p2_regular("Waiting for hold invoice payment...")
-                                .style(theme::text::secondary),
+                            card::simple(
+                                column![
+                                    p1_bold("Sats released"),
+                                    p2_regular(if is_buyer {
+                                        "The seller has released the sats! Expect your \
+                                        invoice to be paid shortly. Make sure your wallet \
+                                        is online to receive via Lightning Network."
+                                    } else {
+                                        "You have released the sats. The payment is being \
+                                        processed to the buyer's invoice."
+                                    })
+                                    .style(theme::text::secondary),
+                                ]
+                                .spacing(4),
+                            )
+                            .width(Length::Fill),
                         );
                     }
+
+                    // ── Payment failed ──
+                    Some("PaymentFailed") => {
+                        if is_buyer {
+                            actions = actions.push(
+                                card::simple(
+                                    column![
+                                        p1_bold("Payment failed"),
+                                        p2_regular(
+                                            "The payment to your invoice could not be completed. \
+                                            Please submit a new invoice to receive the sats.",
+                                        )
+                                        .style(theme::text::warning),
+                                        form::Form::new_trimmed(
+                                            "Enter lightning invoice or address",
+                                            &self.trade_invoice_input,
+                                            |v| view::Message::P2P(P2PMessage::TradeInvoiceEdited(
+                                                v
+                                            )),
+                                        )
+                                        .padding(10),
+                                        if !self.trade_invoice_input.value.is_empty() && !loading {
+                                            button::primary(None, "Submit Invoice")
+                                                .on_press(p2p(P2PMessage::SubmitInvoice))
+                                                .width(Length::Fill)
+                                        } else {
+                                            button::primary(None, "Submit Invoice")
+                                                .width(Length::Fill)
+                                        },
+                                    ]
+                                    .spacing(8),
+                                )
+                                .width(Length::Fill),
+                            );
+                        } else {
+                            actions = actions.push(
+                                card::simple(
+                                    column![
+                                        p1_bold("Payment failed"),
+                                        p2_regular(
+                                            "Payment to the buyer's invoice failed. \
+                                            Waiting for the buyer to submit a new invoice.",
+                                        )
+                                        .style(theme::text::warning),
+                                    ]
+                                    .spacing(4),
+                                )
+                                .width(Length::Fill),
+                            );
+                        }
+                    }
+
+                    // ── Trade completed — rate counterparty ──
+                    Some("HoldInvoicePaymentSettled")
+                    | Some("PurchaseCompleted")
+                    | Some("Rate") => {
+                        let selected = self.trade_rating;
+                        let star_buttons: Vec<Element<'_, view::Message>> = (1..=5u8)
+                            .map(|i| {
+                                let label = if i <= selected {
+                                    "\u{2605}"
+                                } else {
+                                    "\u{2606}"
+                                };
+                                iced::widget::button(iced::widget::text(label).size(28).style(
+                                    if i <= selected {
+                                        theme::text::primary
+                                    } else {
+                                        theme::text::secondary
+                                    },
+                                ))
+                                .on_press(p2p(P2PMessage::RatingSelected(i)))
+                                .style(theme::button::container)
+                                .into()
+                            })
+                            .collect();
+                        let stars = iced::widget::Row::with_children(star_buttons).spacing(4);
+
+                        actions = actions.push(
+                            card::simple(
+                                column![
+                                    p1_bold("Trade Complete!"),
+                                    p2_regular("Rate your counterparty")
+                                        .style(theme::text::secondary),
+                                    container(
+                                        column![
+                                            stars,
+                                            p2_regular(if selected > 0 {
+                                                format!("{} / 5", selected)
+                                            } else {
+                                                "Select a rating".to_string()
+                                            })
+                                            .style(theme::text::secondary),
+                                        ]
+                                        .spacing(4)
+                                        .align_x(Alignment::Center),
+                                    )
+                                    .width(Length::Fill)
+                                    .center_x(Length::Fill),
+                                    if selected > 0 && !loading {
+                                        button::primary(None, "Submit Rating")
+                                            .on_press(p2p(P2PMessage::SubmitRating))
+                                            .width(Length::Fill)
+                                    } else {
+                                        button::primary(None, "Submit Rating").width(Length::Fill)
+                                    },
+                                ]
+                                .spacing(12),
+                            )
+                            .width(Length::Fill),
+                        );
+                    }
+
                     _ => {
                         // No DM action or unrecognized — fall back to status-based buttons
                         match trade.status {
@@ -1067,8 +1474,10 @@ impl P2PPanel {
                                 actions = actions.push(
                                     card::simple(
                                         column![
-                                            p2_regular("Submit Lightning Invoice")
-                                                .style(theme::text::secondary),
+                                            p2_regular(
+                                                "Submit your Lightning invoice to receive sats"
+                                            )
+                                            .style(theme::text::secondary),
                                             form::Form::new_trimmed(
                                                 "Enter lightning invoice or address",
                                                 &self.trade_invoice_input,
@@ -1093,7 +1502,7 @@ impl P2PPanel {
                                     .width(Length::Fill),
                                 );
                             }
-                            TradeStatus::WaitingPayment if is_buyer => {
+                            TradeStatus::Active if is_buyer => {
                                 actions = actions.push(if !loading {
                                     button::primary(None, "Confirm Fiat Sent")
                                         .on_press(p2p(P2PMessage::ConfirmFiatSent))
@@ -1119,51 +1528,77 @@ impl P2PPanel {
             }
 
             // --- Cancel / Dispute footer buttons ---
-            if !loading {
+            // Hide after sats are released (too late to cancel/dispute meaningfully)
+            let past_release = matches!(dm_action, Some("Released" | "Release" | "PaymentFailed"));
+            if !loading && !past_release {
                 if cancel_initiated_by_peer {
-                    // Peer requested cancel — show "Accept Cancel" + Dispute
                     actions = actions.push(
                         row![
-                            button::secondary(None, "Accept Cancel")
+                            button::secondary(None, "Close")
+                                .on_press(p2p(P2PMessage::CloseTradeDetail))
+                                .width(Length::Fill),
+                            button::alert(None, "Accept Cancel")
                                 .on_press(p2p(P2PMessage::CancelTrade))
                                 .width(Length::Fill),
-                            button::secondary(None, "Dispute")
+                            button::alert(None, "Dispute")
                                 .on_press(p2p(P2PMessage::OpenDispute))
                                 .width(Length::Fill),
                         ]
                         .spacing(8),
                     );
                 } else if cancel_initiated_by_you {
-                    // You initiated cancel — only Dispute available
-                    actions = actions.push(
-                        button::secondary(None, "Dispute")
-                            .on_press(p2p(P2PMessage::OpenDispute))
-                            .width(Length::Fill),
-                    );
-                } else if !dispute_initiated {
-                    // Normal active trade — Cancel + Dispute
                     actions = actions.push(
                         row![
-                            button::secondary(None, "Cancel")
-                                .on_press(p2p(P2PMessage::CancelTrade))
+                            button::secondary(None, "Close")
+                                .on_press(p2p(P2PMessage::CloseTradeDetail))
                                 .width(Length::Fill),
-                            button::secondary(None, "Dispute")
+                            button::alert(None, "Dispute")
                                 .on_press(p2p(P2PMessage::OpenDispute))
                                 .width(Length::Fill),
                         ]
                         .spacing(8),
                     );
+                } else if !dispute_initiated {
+                    actions = actions.push(
+                        row![
+                            button::secondary(None, "Close")
+                                .on_press(p2p(P2PMessage::CloseTradeDetail))
+                                .width(Length::Fill),
+                            button::secondary(None, "Cancel")
+                                .on_press(p2p(P2PMessage::CancelTrade))
+                                .width(Length::Fill),
+                            button::alert(None, "Dispute")
+                                .on_press(p2p(P2PMessage::OpenDispute))
+                                .width(Length::Fill),
+                        ]
+                        .spacing(8),
+                    );
+                } else {
+                    // In dispute — only Close
+                    actions = actions.push(
+                        button::secondary(None, "Close")
+                            .on_press(p2p(P2PMessage::CloseTradeDetail))
+                            .width(Length::Fill),
+                    );
                 }
-                // If dispute_initiated: no cancel/dispute buttons (already in dispute)
+            } else {
+                // Terminal / loading / past release — just Close
+                actions = actions.push(
+                    button::secondary(None, "Close")
+                        .on_press(p2p(P2PMessage::CloseTradeDetail))
+                        .width(Length::Fill),
+                );
             }
+        } else {
+            // Terminal state — only Close
+            actions = actions.push(
+                button::secondary(None, "Close")
+                    .on_press(p2p(P2PMessage::CloseTradeDetail))
+                    .width(Length::Fill),
+            );
         }
 
-        // Close button
-        let close_btn = button::secondary(None, "Close")
-            .on_press(p2p(P2PMessage::CloseTradeDetail))
-            .width(Length::Fill);
-
-        column![info_card, id_card, actions, close_btn]
+        column![info_card, id_card, actions]
             .spacing(12)
             .width(Length::Fill)
             .into()
@@ -1174,6 +1609,7 @@ impl P2PPanel {
         order_id: &str,
         invoice: &str,
         amount_sats: Option<i64>,
+        qr_data: &'a qr_code::Data,
     ) -> Element<'a, view::Message> {
         let amount_text = match amount_sats {
             Some(amt) => format!("{} sats", amt),
@@ -1188,118 +1624,60 @@ impl P2PPanel {
 
         card::simple(
             column![
-                p1_bold("Payment Required"),
-                p2_regular(format!(
-                    "Order {} taken. Pay this hold invoice to lock {} for the trade.",
-                    truncated_id, amount_text
-                ))
-                .style(theme::text::secondary),
                 container(
-                    p2_regular(invoice)
-                        .style(theme::text::secondary)
-                        .wrapping(iced::widget::text::Wrapping::Glyph),
+                    column![
+                        p1_bold("Payment Required"),
+                        p2_regular(format!(
+                            "Order {} taken. Pay this hold invoice to lock {} for the trade.",
+                            truncated_id, amount_text
+                        ))
+                        .style(theme::text::secondary),
+                    ]
+                    .spacing(8)
+                    .align_x(Alignment::Center),
                 )
-                .padding(12)
                 .width(Length::Fill)
-                .style(theme::container::background),
+                .center_x(Length::Fill),
+                container(
+                    container(
+                        iced::widget::QRCode::<coincube_ui::theme::Theme>::new(qr_data)
+                            .cell_size(2),
+                    )
+                    .padding(10)
+                    .style(|_| {
+                        iced::widget::container::Style::default().background(iced::Color::WHITE)
+                    })
+                    .max_width(280)
+                    .max_height(280),
+                )
+                .width(Length::Fill)
+                .center_x(Length::Fill),
                 row![
-                    button::secondary(None, "Close")
-                        .on_press(view::Message::P2P(P2PMessage::DismissPaymentInvoice))
-                        .width(Length::Fill),
-                    button::primary(None, "Copy Invoice")
+                    button::primary(None, "Copy")
                         .on_press(view::Message::P2P(P2PMessage::CopyPaymentInvoice(
                             invoice.to_string(),
                         )))
                         .width(Length::Fill),
+                    button::secondary(None, "Close")
+                        .on_press(view::Message::P2P(P2PMessage::DismissPaymentInvoice))
+                        .width(Length::Fill),
                 ]
                 .spacing(8),
-            ]
-            .spacing(12),
-        )
-        .width(Length::Fixed(500.0))
-        .into()
-    }
-
-    fn take_order_modal_view<'a>(&'a self, order: &'a P2POrder) -> Element<'a, view::Message> {
-        let p2p = |msg: P2PMessage| view::Message::P2P(msg);
-
-        // Is user buying? (taking a sell order)
-        let is_buying = order.order_type == OrderType::Sell;
-
-        let mut modal_content = column![p1_bold("Take Order"),].spacing(12);
-
-        // For range orders, show amount input
-        if order.is_range_order() {
-            modal_content = modal_content.push(
-                column![
-                    p2_regular(format!(
-                        "Enter fiat amount ({:.0} - {:.0} {})",
-                        order.min_amount.unwrap_or(0.0),
-                        order.max_amount.unwrap_or(0.0),
-                        order.fiat_currency
-                    ))
-                    .style(theme::text::secondary),
-                    form::Form::new_amount_numeric("Fiat amount", &self.take_order_amount, |v| {
-                        view::Message::P2P(P2PMessage::TakeOrderAmountEdited(v))
-                    },)
-                    .padding(10),
-                ]
-                .spacing(8),
-            );
-        }
-
-        // If buying, show invoice input
-        if is_buying {
-            modal_content = modal_content.push(
-                column![
-                    p2_regular("Lightning invoice or address (optional)")
-                        .style(theme::text::secondary),
-                    form::Form::new_trimmed(
-                        "Enter lightning invoice or address",
-                        &self.take_order_invoice,
-                        |v| view::Message::P2P(P2PMessage::TakeOrderInvoiceEdited(v)),
-                    )
-                    .padding(10),
-                ]
-                .spacing(8),
-            );
-        }
-
-        let can_confirm = if order.is_range_order() {
-            self.take_order_amount
-                .value
-                .parse::<f64>()
-                .map(|v| {
-                    let min = order.min_amount.unwrap_or(0.0);
-                    let max = order.max_amount.unwrap_or(f64::MAX);
-                    v >= min && v <= max
-                })
-                .unwrap_or(false)
-        } else {
-            true
-        };
-
-        let confirm_btn = if can_confirm && !self.take_order_submitting {
-            button::primary(None, "Confirm")
-                .on_press(p2p(P2PMessage::ConfirmTakeOrder))
+                container(
+                    button::transparent(None, "Cancel Order")
+                        .on_press(view::Message::P2P(P2PMessage::CancelPaymentInvoice(
+                            order_id.to_string(),
+                        )))
+                        .width(Length::Fill),
+                )
                 .width(Length::Fill)
-        } else {
-            button::primary(None, "Confirm").width(Length::Fill)
-        };
-
-        modal_content = modal_content.push(
-            row![
-                button::secondary(None, "Cancel")
-                    .on_press(p2p(P2PMessage::CancelTakeOrder))
-                    .width(Length::Fill),
-                confirm_btn,
+                .center_x(Length::Fill),
             ]
-            .spacing(8),
-        );
-
-        card::simple(modal_content)
-            .width(Length::Fixed(500.0))
-            .into()
+            .spacing(16)
+            .align_x(Alignment::Center),
+        )
+        .width(Length::Fixed(450.0))
+        .into()
     }
 
     fn mostro_settings_view<'a>(&'a self) -> Element<'a, view::Message> {
@@ -1450,6 +1828,15 @@ impl State for P2PPanel {
                     // If an order is selected, show its detail view
                     if let Some(ref selected_id) = self.selected_order {
                         if let Some(order) = self.orders.iter().find(|o| o.id == *selected_id) {
+                            let take_state = if self.taking_order {
+                                Some(TakeOrderState {
+                                    amount: &self.take_order_amount,
+                                    invoice: &self.take_order_invoice,
+                                    submitting: self.take_order_submitting,
+                                })
+                            } else {
+                                None
+                            };
                             let content: Element<'_, view::Message> = view::dashboard(
                                 menu,
                                 cache,
@@ -1462,22 +1849,12 @@ impl State for P2PPanel {
                                     .spacing(8)
                                     .width(Length::Fill)
                                     .padding(20),
-                                    container(order_detail(order))
+                                    container(order_detail(order, take_state,))
                                         .padding([0, 20])
                                         .width(Length::Fill),
                                 ]
                                 .spacing(16),
                             );
-
-                            // Show take order modal overlay if taking
-                            if self.taking_order {
-                                return coincube_ui::widget::modal::Modal::new(
-                                    content,
-                                    self.take_order_modal_view(order),
-                                )
-                                .on_blur(Some(view::Message::P2P(P2PMessage::CancelTakeOrder)))
-                                .into();
-                            }
 
                             return content;
                         }
@@ -1541,10 +1918,11 @@ impl State for P2PPanel {
                     );
 
                     // Show payment invoice modal if seller took a buy order
-                    if let Some((ref oid, ref inv, amt)) = self.pending_payment_invoice {
+                    if let Some((ref oid, ref inv, amt, ref qr_data)) = self.pending_payment_invoice
+                    {
                         coincube_ui::widget::modal::Modal::new(
                             overview_content,
-                            self.payment_invoice_modal_view(oid, inv, amt),
+                            self.payment_invoice_modal_view(oid, inv, amt, qr_data),
                         )
                         .on_blur(Some(view::Message::P2P(P2PMessage::DismissPaymentInvoice)))
                         .into()
@@ -1691,7 +2069,17 @@ impl State for P2PPanel {
         let mnemonic = self.mnemonic.clone();
         let active_pubkey = self.mostro_config.active_pubkey_hex().to_string();
         let relays = self.mostro_config.relays.clone();
-        super::mostro::mostro_subscription(cube_name, mnemonic, active_pubkey, relays)
+        let mostro_sub =
+            super::mostro::mostro_subscription(cube_name, mnemonic, active_pubkey, relays);
+
+        // Tick every second when viewing a trade or order detail (for countdown timer)
+        if self.selected_trade.is_some() || self.selected_order.is_some() {
+            let timer = iced::time::every(std::time::Duration::from_secs(1))
+                .map(|_| Message::View(view::Message::P2P(P2PMessage::TradeTimerTick)));
+            Subscription::batch([mostro_sub, timer])
+        } else {
+            mostro_sub
+        }
     }
 
     fn update(
@@ -1798,7 +2186,10 @@ impl State for P2PPanel {
                 }
             }
             P2PMessage::SelectOrder(id) => self.selected_order = Some(id),
-            P2PMessage::CloseOrderDetail => self.selected_order = None,
+            P2PMessage::CloseOrderDetail => {
+                self.selected_order = None;
+                self.taking_order = false;
+            }
             P2PMessage::CopyOrderId(id) => {
                 return Task::done(Message::View(view::Message::Clipboard(id)));
             }
@@ -1824,6 +2215,7 @@ impl State for P2PPanel {
             P2PMessage::CancelOrderResult(result) => match result {
                 Ok(()) => {
                     self.selected_order = None;
+                    self.pending_payment_invoice = None;
                     return Task::done(Message::View(view::Message::ShowSuccess(
                         "Order canceled".to_string(),
                     )));
@@ -2013,7 +2405,18 @@ impl State for P2PPanel {
                         tracing::info!("Order taken, payment required: {}", order_id);
 
                         self.selected_order = None;
-                        self.pending_payment_invoice = Some((order_id, invoice, amount_sats));
+                        match qr_code::Data::new(&invoice) {
+                            Ok(qr_data) => {
+                                self.pending_payment_invoice =
+                                    Some((order_id, invoice, amount_sats, qr_data));
+                            }
+                            Err(e) => {
+                                tracing::warn!("Failed to generate QR code: {e}");
+                                return Task::done(Message::View(view::Message::ShowError(
+                                    "Invoice too long for QR code display".to_string(),
+                                )));
+                            }
+                        }
                     }
                     Err(e) => {
                         return Task::done(Message::View(view::Message::ShowError(e)));
@@ -2024,18 +2427,38 @@ impl State for P2PPanel {
                 self.pending_payment_invoice = None;
             }
             P2PMessage::CopyPaymentInvoice(invoice) => {
-                self.pending_payment_invoice = None;
                 return Task::done(Message::View(view::Message::Clipboard(invoice)));
+            }
+            P2PMessage::CancelPaymentInvoice(order_id) => {
+                let data = super::mostro::TradeActionData {
+                    order_id,
+                    cube_name: self
+                        .wallet
+                        .as_ref()
+                        .map(|w| w.name.clone())
+                        .unwrap_or_else(|| "default".to_string()),
+                    mnemonic: self.mnemonic.clone(),
+                    invoice: None,
+                    mostro_pubkey_hex: self.mostro_config.active_pubkey_hex().to_string(),
+                    relay_urls: self.mostro_config.relays.clone(),
+                };
+                return Task::perform(super::mostro::cancel_trade(data), |result| {
+                    Message::View(view::Message::P2P(P2PMessage::CancelOrderResult(
+                        result.map(|_| ()),
+                    )))
+                });
             }
             // Trade detail
             P2PMessage::SelectTrade(id) => {
                 self.selected_trade = Some(id);
                 self.trade_invoice_input = Default::default();
                 self.trade_action_loading = false;
+                self.trade_rating = 0;
             }
             P2PMessage::CloseTradeDetail => {
                 self.selected_trade = None;
                 self.trade_invoice_input = Default::default();
+                self.trade_rating = 0;
                 self.trade_action_loading = false;
             }
             // Trade actions
@@ -2052,6 +2475,34 @@ impl State for P2PPanel {
             P2PMessage::ConfirmFiatReceived => {
                 return self.perform_trade_action(None, super::mostro::confirm_fiat_received);
             }
+            P2PMessage::RatingSelected(rating) => {
+                self.trade_rating = rating;
+            }
+            P2PMessage::SubmitRating => {
+                let rating = self.trade_rating;
+                if rating == 0 {
+                    return Task::none();
+                }
+                let Some(ref order_id) = self.selected_trade else {
+                    return Task::none();
+                };
+                self.trade_action_loading = true;
+                let data = super::mostro::TradeActionData {
+                    order_id: order_id.clone(),
+                    cube_name: self
+                        .wallet
+                        .as_ref()
+                        .map(|w| w.name.clone())
+                        .unwrap_or_else(|| "default".to_string()),
+                    mnemonic: self.mnemonic.clone(),
+                    invoice: None,
+                    mostro_pubkey_hex: self.mostro_config.active_pubkey_hex().to_string(),
+                    relay_urls: self.mostro_config.relays.clone(),
+                };
+                return Task::perform(super::mostro::rate_counterparty(data, rating), |result| {
+                    Message::View(view::Message::P2P(P2PMessage::TradeActionResult(result)))
+                });
+            }
             P2PMessage::CancelTrade => {
                 return self.perform_trade_action(None, super::mostro::cancel_trade);
             }
@@ -2060,16 +2511,26 @@ impl State for P2PPanel {
             }
             P2PMessage::TradeActionResult(result) => {
                 self.trade_action_loading = false;
+                self.trade_rating = 0;
                 match result {
                     Ok(resp) => {
                         let super::mostro::TradeActionResponse::Success { new_status } = resp;
                         tracing::info!("Trade action succeeded: {}", new_status);
 
-                        // Update last_dm_action and status on the matching in-memory trade
+                        // Update last_dm_action, timestamp, and status on the matching in-memory trade
                         if let Some(ref order_id) = self.selected_trade {
                             if let Some(trade) = self.trades.iter_mut().find(|t| t.id == *order_id)
                             {
+                                let ts = std::time::SystemTime::now()
+                                    .duration_since(std::time::UNIX_EPOCH)
+                                    .map(|d| d.as_secs())
+                                    .unwrap_or(0);
                                 trade.last_dm_action = Some(new_status.clone());
+                                if is_countdown_action(&new_status) {
+                                    trade.countdown_start_ts = Some(ts);
+                                } else {
+                                    trade.countdown_start_ts = None;
+                                }
                                 if let Some(s) = super::mostro::dm_action_to_status(&new_status) {
                                     trade.status = s;
                                 }
@@ -2100,6 +2561,8 @@ impl State for P2PPanel {
                     }
                 }
             }
+            // Timer tick — no-op; re-render happens automatically
+            P2PMessage::TradeTimerTick => {}
             // Real-time DM updates
             P2PMessage::TradeUpdate {
                 order_id,
@@ -2109,8 +2572,17 @@ impl State for P2PPanel {
                 tracing::info!("Trade update for {}: {}", order_id, action);
 
                 // Update last_dm_action and status on the matching in-memory trade
+                let now_ts = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
                 if let Some(trade) = self.trades.iter_mut().find(|t| t.id == order_id) {
                     trade.last_dm_action = Some(action.clone());
+                    if is_countdown_action(&action) {
+                        trade.countdown_start_ts = Some(now_ts);
+                    } else {
+                        trade.countdown_start_ts = None;
+                    }
                     if let Some(new_status) = super::mostro::dm_action_to_status(&action) {
                         trade.status = new_status;
                     }

@@ -458,6 +458,7 @@ pub enum P2PMessage {
     TakeOrderResult(Result<super::p2p::mostro::TakeOrderResponse, String>),
     DismissPaymentInvoice,
     CopyPaymentInvoice(String),
+    CancelPaymentInvoice(String),
     // Trade detail
     SelectTrade(String),
     CloseTradeDetail,
@@ -466,6 +467,8 @@ pub enum P2PMessage {
     TradeInvoiceEdited(String),
     ConfirmFiatSent,
     ConfirmFiatReceived,
+    RatingSelected(u8),
+    SubmitRating,
     CancelTrade,
     OpenDispute,
     TradeActionResult(Result<super::p2p::mostro::TradeActionResponse, String>),
@@ -475,4 +478,6 @@ pub enum P2PMessage {
         action: String,
         payload_json: String,
     },
+    // Timer tick for trade detail countdown
+    TradeTimerTick,
 }

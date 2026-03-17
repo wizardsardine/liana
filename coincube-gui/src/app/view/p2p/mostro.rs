@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -143,6 +143,28 @@ pub fn latest_dm_action(session: &TradeSession) -> Option<&str> {
     session.messages.last().map(|m| m.action.as_str())
 }
 
+/// Find the timestamp of the DM that started the current countdown phase.
+/// For WaitingBuyerInvoice status → find the AddInvoice/WaitingBuyerInvoice message
+/// For WaitingPayment status → find the PayInvoice/WaitingSellerToPay message
+pub fn countdown_start_timestamp(session: &TradeSession) -> Option<u64> {
+    let last_action = session.messages.last().map(|m| m.action.as_str())?;
+
+    let target_actions: &[&str] = match last_action {
+        "AddInvoice" | "WaitingBuyerInvoice" => &["AddInvoice", "WaitingBuyerInvoice"],
+        "PayInvoice" | "WaitingSellerToPay" => &["PayInvoice", "WaitingSellerToPay"],
+        _ => return None,
+    };
+
+    // Find the earliest message with a matching action (the one that started this phase)
+    session
+        .messages
+        .iter()
+        .rev()
+        .filter(|m| target_actions.contains(&m.action.as_str()) && m.timestamp > 0)
+        .last()
+        .map(|m| m.timestamp)
+}
+
 /// Restore trades from Mostro using the protocol-level restore flow:
 /// 1. Send RestoreSession → get order IDs + trade indices
 /// 2. Send Orders request → get full order details
@@ -201,7 +223,7 @@ pub async fn restore_trades(
     );
 
     // Build order_id → trade_index map
-    let mut order_map: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
+    let mut order_map: HashMap<String, i64> = HashMap::new();
     for order_info in &restore_info.restore_orders {
         order_map.insert(order_info.order_id.to_string(), order_info.trade_index);
     }
@@ -239,8 +261,7 @@ pub async fn restore_trades(
     .await;
 
     // Parse order details (best-effort — restore can still work without full details)
-    let mut order_details: std::collections::HashMap<String, mostro_core::order::SmallOrder> =
-        std::collections::HashMap::new();
+    let mut order_details: HashMap<String, mostro_core::order::SmallOrder> = HashMap::new();
     if let Ok((resp, _)) = &orders_response {
         let inner = resp.get_inner_message_kind();
         if let Some(mostro_core::message::Payload::Orders(orders)) = &inner.payload {
@@ -418,11 +439,17 @@ pub fn dm_action_to_status(action: &str) -> Option<TradeStatus> {
     match action {
         "WaitingSellerToPay" | "PayInvoice" => Some(TradeStatus::WaitingPayment),
         "WaitingBuyerInvoice" | "AddInvoice" => Some(TradeStatus::WaitingBuyerInvoice),
-        "BuyerTookOrder" | "HoldInvoicePaymentAccepted" => Some(TradeStatus::Active),
+        "BuyerTookOrder" | "HoldInvoicePaymentAccepted" | "BuyerInvoiceAccepted" => {
+            Some(TradeStatus::Active)
+        }
         "FiatSent" | "FiatSentOk" => Some(TradeStatus::FiatSent),
-        "Released" | "Release" => Some(TradeStatus::Active),
-        "PurchaseCompleted" | "Rate" => Some(TradeStatus::Success),
-        "Canceled" | "Cancel" | "AdminCanceled" => Some(TradeStatus::Canceled),
+        "Released" | "Release" => Some(TradeStatus::SettledHoldInvoice),
+        "PurchaseCompleted" | "Rate" | "RateReceived" | "HoldInvoicePaymentSettled" => {
+            Some(TradeStatus::Success)
+        }
+        "Canceled" | "Cancel" | "AdminCanceled" | "HoldInvoicePaymentCanceled" => {
+            Some(TradeStatus::Canceled)
+        }
         "CooperativeCancelInitiatedByYou" | "CooperativeCancelInitiatedByPeer" => {
             Some(TradeStatus::CooperativelyCanceled)
         }
@@ -431,7 +458,7 @@ pub fn dm_action_to_status(action: &str) -> Option<TradeStatus> {
             Some(TradeStatus::Dispute)
         }
         "AdminSettled" => Some(TradeStatus::Success),
-        "PaymentFailed" => Some(TradeStatus::WaitingPayment),
+        "PaymentFailed" => Some(TradeStatus::PaymentFailed),
         _ => None,
     }
 }
@@ -533,6 +560,12 @@ fn cant_do_description(
         }
         CantDoReason::TooManyRequests => "Too many requests — please wait and try again".into(),
         CantDoReason::InvalidInvoice => "Invalid lightning invoice".into(),
+        CantDoReason::InvalidOrderStatus => {
+            "Action not allowed — order is not in the expected status".into()
+        }
+        CantDoReason::IsNotYourOrder => "This order does not belong to you".into(),
+        CantDoReason::NotAllowedByStatus => "Action not allowed at this stage of the trade".into(),
+        CantDoReason::NotFound => "Order not found on Mostro".into(),
         other => format!("Order rejected: {other:?}"),
     }
 }
@@ -999,6 +1032,56 @@ pub async fn open_dispute(data: TradeActionData) -> Result<TradeActionResponse, 
     trade_action(data, mostro_core::message::Action::Dispute).await
 }
 
+/// Rate the counterparty after a successful trade.
+pub async fn rate_counterparty(
+    data: TradeActionData,
+    rating: u8,
+) -> Result<TradeActionResponse, String> {
+    let sessions = load_data(&data.cube_name).trades;
+    let session = sessions
+        .iter()
+        .find(|s| s.order_id == data.order_id)
+        .ok_or_else(|| format!("No trade session found for order {}", data.order_id))?;
+
+    let order_uuid =
+        uuid::Uuid::parse_str(&data.order_id).map_err(|e| format!("Invalid order ID: {e}"))?;
+
+    let request_id = uuid::Uuid::new_v4().as_u128() as u64;
+    let payload = Some(mostro_core::message::Payload::RatingUser(rating));
+
+    let message = mostro_core::message::Message::new_order(
+        Some(order_uuid),
+        Some(request_id),
+        Some(session.trade_index),
+        mostro_core::message::Action::RateUser,
+        payload,
+    );
+
+    let (response_message, limits) = send_mostro_message(
+        &data.mnemonic,
+        session.trade_index,
+        &data.mostro_pubkey_hex,
+        &data.relay_urls,
+        message,
+    )
+    .await?;
+
+    let inner = response_message.get_inner_message_kind();
+
+    if inner.action == mostro_core::message::Action::CantDo {
+        let reason = match &inner.payload {
+            Some(mostro_core::message::Payload::CantDo(Some(reason))) => {
+                cant_do_description(reason, &limits)
+            }
+            _ => "Rating rejected by Mostro".to_string(),
+        };
+        return Err(reason);
+    }
+
+    let new_status = format!("{:?}", inner.action);
+    Ok(TradeActionResponse::Success { new_status })
+}
+
 /// Generic trade action helper.
 async fn trade_action(
     data: TradeActionData,
@@ -1019,24 +1102,11 @@ async fn trade_action(
         let invoice = data
             .invoice
             .ok_or("Invoice is required for AddInvoice action")?;
-        let small_order = mostro_core::order::SmallOrder::new(
-            Some(order_uuid),
+        Some(mostro_core::message::Payload::PaymentRequest(
             None,
-            None,
-            0,
-            String::new(),
-            None,
-            None,
-            0,
-            String::new(),
-            0,
-            None,
-            None,
-            Some(invoice),
+            invoice,
             Some(0),
-            None,
-        );
-        Some(mostro_core::message::Payload::Order(small_order))
+        ))
     } else {
         None
     };
@@ -1282,7 +1352,7 @@ async fn fetch_mostro_orders(
     }
 
     let sessions = load_data(cube_name).trades;
-    let my_order_ids: std::collections::HashSet<&str> = sessions
+    let my_order_ids: HashSet<&str> = sessions
         .iter()
         .filter(|s| s.role == "creator")
         .map(|s| s.order_id.as_str())
@@ -1384,6 +1454,7 @@ async fn fetch_user_trades(
                 created_at: String::new(),
                 time_ago: format_time_ago(*event_ts),
                 last_dm_action: latest_dm_action(session).map(String::from),
+                countdown_start_ts: countdown_start_timestamp(session),
             });
         } else {
             // Not found on relay — fallback from saved session
@@ -1444,6 +1515,7 @@ fn trade_from_session(session: &TradeSession) -> P2PTrade {
         created_at: String::new(),
         time_ago: format_time_ago(session.created_at as u64),
         last_dm_action: latest_dm_action(session).map(String::from),
+        countdown_start_ts: countdown_start_timestamp(session),
     }
 }
 
@@ -1483,9 +1555,9 @@ fn mostro_stream(
             }
             client.connect().await;
 
-            // Track last seen DM timestamps per order to avoid reprocessing
-            let mut last_dm_ts: std::collections::HashMap<String, u64> =
-                std::collections::HashMap::new();
+            // Track seen DM event IDs to avoid reprocessing
+            // (gift-wrap timestamps are randomized per NIP-59, so we can't use timestamps)
+            let mut seen_dm_event_ids: HashSet<nostr_sdk::EventId> = HashSet::new();
             // Track which trade pubkeys we're already subscribed to for DMs
             let mut subscribed_trade_pubkeys: Vec<PublicKey> = Vec::new();
             // First iteration: replay historical DMs silently (persist state, no toasts)
@@ -1534,7 +1606,7 @@ fn mostro_stream(
                     &cube_name,
                     &mnemonic,
                     mostro_pk,
-                    &mut last_dm_ts,
+                    &mut seen_dm_event_ids,
                     &mut output,
                     first_run,
                 )
@@ -1607,7 +1679,7 @@ async fn process_dm_notifications(
     cube_name: &str,
     mnemonic: &str,
     mostro_pubkey: PublicKey,
-    last_dm_ts: &mut std::collections::HashMap<String, u64>,
+    seen_event_ids: &mut HashSet<nostr_sdk::EventId>,
     output: &mut iced::futures::channel::mpsc::Sender<Message>,
     silent: bool,
 ) {
@@ -1643,15 +1715,13 @@ async fn process_dm_notifications(
     };
 
     for event in events.iter() {
-        let event_ts = event.created_at.as_u64();
+        // Skip already-processed events (use event ID, not timestamp,
+        // because NIP-59 gift-wrap timestamps are randomized)
+        if seen_event_ids.contains(&event.id) {
+            continue;
+        }
 
         for (session, keys) in &session_keys {
-            if let Some(&last_ts) = last_dm_ts.get(&session.order_id) {
-                if event_ts <= last_ts {
-                    continue;
-                }
-            }
-
             let is_for_us = event.tags.iter().any(|tag| {
                 let t = tag.clone().to_vec();
                 t.len() >= 2 && t[0] == "p" && t[1] == keys.public_key().to_hex()
@@ -1675,14 +1745,27 @@ async fn process_dm_notifications(
                     let action = format!("{:?}", inner.action);
                     let payload_json = serde_json::to_string(&inner.payload).unwrap_or_default();
 
-                    last_dm_ts.insert(session.order_id.clone(), event_ts);
+                    seen_event_ids.insert(event.id);
+
+                    // Skip error responses (CantDo) — they are not state transitions
+                    // and would pollute last_dm_action, hiding action buttons
+                    if inner.action == mostro_core::message::Action::CantDo {
+                        tracing::debug!(
+                            "Skipping CantDo DM for order {} (not a state transition)",
+                            session.order_id
+                        );
+                        continue;
+                    }
+
+                    // Use the rumor's timestamp for ordering (not the gift-wrap's randomized ts)
+                    let rumor_ts = unwrapped.rumor.created_at.as_u64();
 
                     // Persist the full message to disk
                     append_trade_message(
                         cube_name,
                         &session.order_id,
                         TradeMessage {
-                            timestamp: event_ts,
+                            timestamp: rumor_ts,
                             action: action.clone(),
                             payload_json: payload_json.clone(),
                         },

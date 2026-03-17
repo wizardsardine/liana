@@ -18,6 +18,8 @@ pub enum TradeStatus {
     WaitingPayment,
     WaitingBuyerInvoice,
     FiatSent,
+    SettledHoldInvoice,
+    PaymentFailed,
     Success,
     Canceled,
     CooperativelyCanceled,
@@ -33,9 +35,11 @@ impl TradeStatus {
             TradeStatus::WaitingPayment => "Waiting Payment",
             TradeStatus::WaitingBuyerInvoice => "Waiting Invoice",
             TradeStatus::FiatSent => "Fiat Sent",
-            TradeStatus::Success => "Completed",
+            TradeStatus::SettledHoldInvoice => "Paying Sats",
+            TradeStatus::PaymentFailed => "Payment Failed",
+            TradeStatus::Success => "Success",
             TradeStatus::Canceled => "Canceled",
-            TradeStatus::CooperativelyCanceled => "Cooperatively Canceled",
+            TradeStatus::CooperativelyCanceled => "Canceling",
             TradeStatus::Dispute => "Dispute",
             TradeStatus::Expired => "Expired",
         }
@@ -70,8 +74,10 @@ impl TradeRole {
 #[derive(Debug, Clone)]
 pub struct P2PTrade {
     pub id: String,
+    /// Buy or Sell from our perspective
     pub order_type: OrderType,
     pub status: TradeStatus,
+    /// Whether we created or took this order
     pub role: TradeRole,
     pub fiat_amount: f64,
     pub fiat_currency: String,
@@ -82,7 +88,10 @@ pub struct P2PTrade {
     pub created_at_ts: i64,
     pub created_at: String,
     pub time_ago: String,
+    /// Latest DM action from Mostro (e.g. "PayInvoice", "FiatSentOk")
     pub last_dm_action: Option<String>,
+    /// Timestamp when the current countdown phase started (PayInvoice, AddInvoice, etc.)
+    pub countdown_start_ts: Option<u64>,
 }
 
 impl P2PTrade {
@@ -109,12 +118,15 @@ pub fn trade_card<'a>(trade: &'a P2PTrade) -> Button<'a, view::Message> {
     };
 
     let status_badge_style = match trade.status {
-        TradeStatus::Active | TradeStatus::FiatSent => theme::pill::success as fn(&_) -> _,
+        TradeStatus::Active | TradeStatus::FiatSent | TradeStatus::SettledHoldInvoice => {
+            theme::pill::success as fn(&_) -> _
+        }
         TradeStatus::Success => theme::pill::primary as fn(&_) -> _,
         TradeStatus::Pending | TradeStatus::WaitingPayment | TradeStatus::WaitingBuyerInvoice => {
             theme::pill::simple as fn(&_) -> _
         }
-        TradeStatus::Canceled
+        TradeStatus::PaymentFailed
+        | TradeStatus::Canceled
         | TradeStatus::CooperativelyCanceled
         | TradeStatus::Dispute
         | TradeStatus::Expired => theme::pill::warning as fn(&_) -> _,
