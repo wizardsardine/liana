@@ -38,6 +38,7 @@ pub struct Text {
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub struct General {
     pub background: iced::Color,
+    pub menu_background: iced::Color,
     pub foreground: iced::Color,
     pub scrollable: iced::Color,
     pub accent: iced::Color,

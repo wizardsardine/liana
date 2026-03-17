@@ -1,10 +1,58 @@
+use iced::Color;
+
 use super::*;
+
+const BTN_PRIMARY_BG: Color = color::BUSINESS_BLUE;
+const BTN_PRIMARY_FG: Color = color::WHITE;
+const BTN_PRIMARY_PRESSED: Color = Color::from_rgb(
+    0x00 as f32 / 255.0,
+    0x77 as f32 / 255.0,
+    0xA0 as f32 / 255.0,
+);
+
+const BTN_TERTIARY_BG: Color = color::WHITE;
+const BTN_TERTIARY_FG: Color = color::BUSINESS_BLACK;
+const BTN_TERTIARY_PRESSED: Color = Color::from_rgb(
+    0xB4 as f32 / 255.0,
+    0xB4 as f32 / 255.0,
+    0xB4 as f32 / 255.0,
+);
+
+const BTN_DISABLED: Color = Color::from_rgb(
+    0xCB as f32 / 255.0,
+    0xCB as f32 / 255.0,
+    0xCB as f32 / 255.0,
+);
+fn btn_disabled() -> Option<ButtonPalette> {
+    Some(ButtonPalette {
+        background: BTN_DISABLED,
+        text: Color::from_rgb(
+            0xED as f32 / 255.0,
+            0xED as f32 / 255.0,
+            0xED as f32 / 255.0,
+        ),
+        border: BTN_DISABLED.into(),
+        shadow: Default::default(),
+    })
+}
+
+const BTN_SHADOW: Shadow = Shadow {
+    color: Color {
+        r: 0.0,
+        g: 0.0,
+        b: 0.0,
+        a: 0.25,
+    },
+    offset: iced::Vector { x: 0.0, y: 4.0 },
+    blur_radius: 4.0,
+};
 
 impl Palette {
     pub fn business() -> Self {
         Self {
             general: General {
                 background: color::LIGHT_BG,
+                menu_background: color::WHITE,
                 foreground: color::LIGHT_BG_SECONDARY,
                 scrollable: color::LIGHT_BORDER,
                 accent: color::BUSINESS_BLUE,
@@ -21,81 +69,66 @@ impl Palette {
                 border_width: 3.0,
                 primary: Button {
                     active: ButtonPalette {
-                        background: color::BUSINESS_BLUE,
-                        text: color::WHITE,
-                        border: color::BUSINESS_BLUE.into(),
+                        background: BTN_PRIMARY_BG,
+                        text: BTN_PRIMARY_FG,
+                        border: BTN_PRIMARY_BG.into(),
                         shadow: Default::default(),
                     },
                     hovered: ButtonPalette {
-                        background: color::BUSINESS_BLUE_DARK,
-                        text: color::WHITE,
-                        border: color::BUSINESS_BLUE_DARK.into(),
-                        shadow: Default::default(),
+                        background: BTN_PRIMARY_BG,
+                        text: BTN_PRIMARY_FG,
+                        border: BTN_PRIMARY_BG.into(),
+                        shadow: BTN_SHADOW,
                     },
                     pressed: Some(ButtonPalette {
-                        background: color::BUSINESS_BLUE_DARK,
-                        text: color::WHITE,
-                        border: color::BUSINESS_BLUE_DARK.into(),
-                        shadow: Default::default(),
+                        background: BTN_PRIMARY_PRESSED,
+                        text: BTN_PRIMARY_FG,
+                        border: BTN_PRIMARY_PRESSED.into(),
+                        shadow: BTN_SHADOW,
                     }),
-                    disabled: Some(ButtonPalette {
-                        background: color::LIGHT_BORDER_STRONG,
-                        text: color::WHITE,
-                        border: color::LIGHT_BORDER_STRONG.into(),
-                        shadow: Default::default(),
-                    }),
+                    disabled: btn_disabled(),
                 },
                 secondary: Button {
                     active: ButtonPalette {
-                        background: color::LIGHT_BLUE_TINT,
-                        text: color::DARK_TEXT_SECONDARY,
-                        border: color::LIGHT_BORDER.into(), // Neutral border, blue appears on hover
+                        background: color::TRANSPARENT,
+                        text: BTN_PRIMARY_BG,
+                        border: BTN_PRIMARY_BG.into(),
                         shadow: Default::default(),
                     },
                     hovered: ButtonPalette {
-                        background: color::LIGHT_BLUE_TINT, // Keep same background as active (like liana)
-                        text: color::BUSINESS_BLUE,
-                        border: color::BUSINESS_BLUE.into(),
-                        shadow: Default::default(),
+                        background: color::TRANSPARENT,
+                        text: BTN_PRIMARY_BG,
+                        border: BTN_PRIMARY_BG.into(),
+                        shadow: BTN_SHADOW,
                     },
                     pressed: Some(ButtonPalette {
-                        background: color::LIGHT_BLUE_TINT, // Keep same background
-                        text: color::BUSINESS_BLUE,
-                        border: color::BUSINESS_BLUE.into(),
-                        shadow: Default::default(),
+                        background: color::TRANSPARENT,
+                        text: BTN_PRIMARY_PRESSED,
+                        border: BTN_PRIMARY_PRESSED.into(),
+                        shadow: BTN_SHADOW,
                     }),
-                    disabled: Some(ButtonPalette {
-                        background: color::LIGHT_BG_TERTIARY,
-                        text: color::DARK_TEXT_TERTIARY,
-                        border: color::LIGHT_BORDER.into(),
-                        shadow: Default::default(),
-                    }),
+                    disabled: btn_disabled(),
                 },
                 tertiary: Button {
                     active: ButtonPalette {
-                        background: color::WHITE,
-                        text: color::BUSINESS_BLACK,
-                        border: color::WHITE.into(),
+                        background: BTN_TERTIARY_BG,
+                        text: BTN_TERTIARY_FG,
+                        border: BTN_TERTIARY_BG.into(),
                         shadow: Default::default(),
                     },
                     hovered: ButtonPalette {
-                        background: color::BUSINESS_BLUE_DARK,
-                        text: color::WHITE,
-                        border: color::BUSINESS_BLUE_DARK.into(),
-                        shadow: Default::default(),
+                        background: BTN_TERTIARY_BG,
+                        text: BTN_TERTIARY_FG,
+                        border: BTN_TERTIARY_BG.into(),
+                        shadow: BTN_SHADOW,
                     },
                     pressed: Some(ButtonPalette {
-                        background: color::BUSINESS_BLUE_DARK,
+                        background: BTN_TERTIARY_PRESSED,
                         text: color::WHITE,
-                        border: color::BUSINESS_BLUE_DARK.into(),
-                        shadow: Default::default(),
+                        border: BTN_TERTIARY_PRESSED.into(),
+                        shadow: BTN_SHADOW,
                     }),
-                    disabled: Some(ButtonPalette {
-                        background: color::LIGHT_BORDER_STRONG,
-                        text: color::WHITE,
-                        border: color::LIGHT_BORDER_STRONG.into(),
-                        shadow: Default::default(),
-                    }),
+                    disabled: btn_disabled(),
                 },
                 destructive: Button {
                     active: ButtonPalette {
@@ -108,20 +141,15 @@ impl Palette {
                         background: color::RED,
                         text: color::WHITE,
                         border: color::RED.into(),
-                        shadow: Default::default(),
+                        shadow: BTN_SHADOW,
                     },
                     pressed: Some(ButtonPalette {
                         background: color::RED,
                         text: color::WHITE,
                         border: color::RED.into(),
-                        shadow: Default::default(),
+                        shadow: BTN_SHADOW,
                     }),
-                    disabled: Some(ButtonPalette {
-                        background: color::LIGHT_BG_TERTIARY,
-                        text: color::RED,
-                        border: color::RED.into(),
-                        shadow: Default::default(),
-                    }),
+                    disabled: btn_disabled(),
                 },
                 transparent: Button {
                     active: ButtonPalette {
@@ -134,20 +162,15 @@ impl Palette {
                         background: color::TRANSPARENT,
                         text: color::BUSINESS_BLUE,
                         border: None,
-                        shadow: Default::default(),
+                        shadow: BTN_SHADOW,
                     },
                     pressed: Some(ButtonPalette {
                         background: color::TRANSPARENT,
                         text: color::BUSINESS_BLUE,
                         border: None,
-                        shadow: Default::default(),
+                        shadow: BTN_SHADOW,
                     }),
-                    disabled: Some(ButtonPalette {
-                        background: color::TRANSPARENT,
-                        text: color::DARK_TEXT_TERTIARY,
-                        border: None,
-                        shadow: Default::default(),
-                    }),
+                    disabled: btn_disabled(),
                 },
                 transparent_border: Button {
                     active: ButtonPalette {
@@ -160,20 +183,15 @@ impl Palette {
                         background: color::TRANSPARENT,
                         text: color::BUSINESS_BLUE,
                         border: color::BUSINESS_BLUE.into(),
-                        shadow: Default::default(),
+                        shadow: BTN_SHADOW,
                     },
                     pressed: Some(ButtonPalette {
                         background: color::TRANSPARENT,
                         text: color::BUSINESS_BLUE,
                         border: color::BUSINESS_BLUE.into(),
-                        shadow: Default::default(),
+                        shadow: BTN_SHADOW,
                     }),
-                    disabled: Some(ButtonPalette {
-                        background: color::TRANSPARENT,
-                        text: color::DARK_TEXT_TERTIARY,
-                        border: color::TRANSPARENT.into(),
-                        shadow: Default::default(),
-                    }),
+                    disabled: btn_disabled(),
                 },
                 container: Button {
                     active: ButtonPalette {
@@ -186,20 +204,15 @@ impl Palette {
                         background: color::TRANSPARENT,
                         text: color::DARK_TEXT_PRIMARY,
                         border: None,
-                        shadow: Default::default(),
+                        shadow: BTN_SHADOW,
                     },
                     pressed: Some(ButtonPalette {
                         background: color::TRANSPARENT,
                         text: color::DARK_TEXT_PRIMARY,
                         border: None,
-                        shadow: Default::default(),
+                        shadow: BTN_SHADOW,
                     }),
-                    disabled: Some(ButtonPalette {
-                        background: color::TRANSPARENT,
-                        text: color::DARK_TEXT_PRIMARY,
-                        border: None,
-                        shadow: Default::default(),
-                    }),
+                    disabled: btn_disabled(),
                 },
                 container_border: Button {
                     active: ButtonPalette {
@@ -212,46 +225,36 @@ impl Palette {
                         background: color::TRANSPARENT,
                         text: color::BUSINESS_BLUE,
                         border: color::BUSINESS_BLUE.into(),
-                        shadow: Default::default(),
+                        shadow: BTN_SHADOW,
                     },
                     pressed: Some(ButtonPalette {
                         background: color::TRANSPARENT,
                         text: color::BUSINESS_BLUE,
                         border: color::BUSINESS_BLUE.into(),
-                        shadow: Default::default(),
+                        shadow: BTN_SHADOW,
                     }),
-                    disabled: Some(ButtonPalette {
-                        background: color::TRANSPARENT,
-                        text: color::DARK_TEXT_TERTIARY,
-                        border: color::TRANSPARENT.into(),
-                        shadow: Default::default(),
-                    }),
+                    disabled: btn_disabled(),
                 },
                 menu: Button {
                     active: ButtonPalette {
-                        background: color::LIGHT_BG_SECONDARY,
+                        background: color::WHITE,
                         text: color::DARK_TEXT_PRIMARY,
-                        border: color::LIGHT_BG_SECONDARY.into(),
+                        border: color::WHITE.into(),
                         shadow: Default::default(),
                     },
                     hovered: ButtonPalette {
-                        background: color::LIGHT_BG_TERTIARY,
+                        background: color::WHITE,
                         text: color::DARK_TEXT_PRIMARY,
-                        border: color::LIGHT_BG_TERTIARY.into(),
-                        shadow: Default::default(),
+                        border: color::WHITE.into(),
+                        shadow: BTN_SHADOW,
                     },
                     pressed: Some(ButtonPalette {
                         background: color::BUSINESS_BLUE,
                         text: color::WHITE,
                         border: color::BUSINESS_BLUE.into(),
-                        shadow: Default::default(),
+                        shadow: BTN_SHADOW,
                     }),
-                    disabled: Some(ButtonPalette {
-                        background: color::LIGHT_BG_SECONDARY,
-                        text: color::DARK_TEXT_TERTIARY,
-                        border: color::LIGHT_BG_SECONDARY.into(),
-                        shadow: Default::default(),
-                    }),
+                    disabled: btn_disabled(),
                 },
                 tab: Button {
                     active: ButtonPalette {
@@ -264,20 +267,15 @@ impl Palette {
                         background: color::LIGHT_BG_SECONDARY,
                         text: color::BUSINESS_BLUE_DARK,
                         border: color::BUSINESS_BLUE_DARK.into(),
-                        shadow: Default::default(),
+                        shadow: BTN_SHADOW,
                     },
                     pressed: Some(ButtonPalette {
                         background: color::LIGHT_BG,
                         text: color::BUSINESS_BLUE_DARK,
                         border: color::BUSINESS_BLUE_DARK.into(),
-                        shadow: Default::default(),
+                        shadow: BTN_SHADOW,
                     }),
-                    disabled: Some(ButtonPalette {
-                        background: color::LIGHT_BG_TERTIARY,
-                        text: color::DARK_TEXT_TERTIARY,
-                        border: color::LIGHT_BORDER.into(),
-                        shadow: Default::default(),
-                    }),
+                    disabled: btn_disabled(),
                 },
                 link: Button {
                     active: ButtonPalette {
@@ -290,20 +288,15 @@ impl Palette {
                         background: color::TRANSPARENT,
                         text: color::BUSINESS_BLUE,
                         border: color::TRANSPARENT.into(),
-                        shadow: Default::default(),
+                        shadow: BTN_SHADOW,
                     },
                     pressed: Some(ButtonPalette {
                         background: color::TRANSPARENT,
                         text: color::BUSINESS_BLUE,
                         border: color::TRANSPARENT.into(),
-                        shadow: Default::default(),
+                        shadow: BTN_SHADOW,
                     }),
-                    disabled: Some(ButtonPalette {
-                        background: color::TRANSPARENT,
-                        text: color::DARK_TEXT_TERTIARY,
-                        border: color::TRANSPARENT.into(),
-                        shadow: Default::default(),
-                    }),
+                    disabled: btn_disabled(),
                 },
             },
             cards: Cards {

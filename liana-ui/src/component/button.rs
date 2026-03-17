@@ -1,24 +1,34 @@
 use super::text::{button_text, text};
-use crate::{theme, widget::*};
+use crate::{
+    font::{BOLD, MEDIUM},
+    theme,
+    widget::*,
+};
 use iced::{
     alignment::{Horizontal, Vertical},
     widget::{button, container, row},
 };
 
+const MENU_PADDING: [u16; 2] = [8, 12];
+const MENU_TEXT_SIZE: u16 = 22;
+const MENU_ICON_SIZE: u16 = 32;
+
 pub fn menu<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> Button<'a, T> {
-    Button::new(content_menu(icon.map(|i| i.style(theme::text::secondary)), t).padding(10))
-        .style(theme::button::menu)
+    Button::new(
+        content_menu(icon.map(|i| i.style(theme::text::secondary)), t, false).padding(MENU_PADDING),
+    )
+    .style(theme::button::menu)
 }
 
 pub fn menu_active<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> Button<'a, T> {
-    Button::new(content_menu(icon.map(|i| i.style(theme::text::secondary)), t).padding(10))
+    Button::new(content_menu(icon, t, true).padding(MENU_PADDING))
         .style(theme::button::menu_pressed)
 }
 
 pub fn menu_small<'a, T: 'a>(icon: Text<'a>) -> Button<'a, T> {
     Button::new(
-        container(icon.style(theme::text::secondary))
-            .padding(10)
+        container(icon.size(MENU_ICON_SIZE).style(theme::text::secondary))
+            .padding(MENU_PADDING)
             .align_x(Horizontal::Center),
     )
     .style(theme::button::menu)
@@ -26,17 +36,31 @@ pub fn menu_small<'a, T: 'a>(icon: Text<'a>) -> Button<'a, T> {
 
 pub fn menu_active_small<'a, T: 'a>(icon: Text<'a>) -> Button<'a, T> {
     Button::new(
-        container(icon.style(theme::text::secondary))
-            .padding(10)
+        container(icon.size(MENU_ICON_SIZE))
+            .padding(MENU_PADDING)
             .align_x(Horizontal::Center),
     )
     .style(theme::button::menu_pressed)
 }
 
-fn content_menu<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> Container<'a, T> {
+fn content_menu<'a, T: 'a>(
+    icon: Option<Text<'a>>,
+    t: &'static str,
+    active: bool,
+) -> Container<'a, T> {
+    let t = if active {
+        text(t).size(MENU_TEXT_SIZE).font(BOLD)
+    } else {
+        text(t).size(MENU_TEXT_SIZE).font(MEDIUM)
+    };
+
     match icon {
-        None => container(text(t)).padding(5),
-        Some(i) => container(row![i, text(t)].spacing(10).align_y(Vertical::Center)).padding(5),
+        None => container(t),
+        Some(i) => container(
+            row![i.size(MENU_ICON_SIZE), t]
+                .spacing(20)
+                .align_y(Vertical::Center),
+        ),
     }
 }
 

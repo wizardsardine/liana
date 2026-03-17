@@ -1,6 +1,10 @@
 use crate::{component::text::P1_SIZE, widget::*};
 use iced::{alignment, Font, Length};
 
+pub const ICON_SIZE_L: u16 = 32;
+pub const ICON_SIZE_M: u16 = 24;
+pub const ICON_SIZE_S: u16 = 16;
+
 const BOOTSTRAP_ICONS: Font = Font::with_name("bootstrap-icons");
 
 fn bootstrap_icon(unicode: char) -> Text<'static> {
