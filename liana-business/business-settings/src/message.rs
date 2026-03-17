@@ -1,10 +1,13 @@
 //! Message types for business settings UI.
 
+use crate::BackendCurrency;
+
 /// Settings section for navigation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Section {
     #[default]
     Wallet,
+    General,
     About,
 }
 
@@ -19,4 +22,10 @@ pub enum Msg {
 
     /// Register wallet on selected device.
     RegisterWallet,
+
+    /// Toggle fiat price display.
+    FiatEnable(bool),
+
+    /// Change fiat currency.
+    FiatCurrencyEdited(BackendCurrency),
 }

@@ -659,7 +659,7 @@ pub async fn check_membership(
         .await
         .map_err(|e| DeleteError::Connect(e.to_string()))?;
 
-    if let BackendState::WalletExists(client, _, _) = connect_with_credentials(
+    if let BackendState::WalletExists(client, _, _, _) = connect_with_credentials(
         AuthClient::new(
             service_config.auth_api_url,
             service_config.auth_api_public_key,

@@ -382,6 +382,29 @@ impl BackendWalletClient {
         Ok(wallet)
     }
 
+    pub async fn get_wallet_settings(&self) -> Result<api::UserSettings, DaemonError> {
+        self.inner
+            .request(
+                Method::GET,
+                &format!("/v1/wallets/{}/settings", self.wallet_uuid),
+                |r| r,
+            )
+            .await
+    }
+
+    pub async fn update_wallet_settings(
+        &self,
+        fiat_currency: api::FiatCurrency,
+    ) -> Result<api::UserSettings, DaemonError> {
+        self.inner
+            .request(
+                Method::PATCH,
+                &format!("/v1/wallets/{}/settings", self.wallet_uuid),
+                |r| r.json(&api::payload::UpdateSettings { fiat_currency }),
+            )
+            .await
+    }
+
     async fn list_psbts(&self, txids: &[Txid]) -> Result<api::ListPsbts, DaemonError> {
         let mut query = Vec::<(&str, String)>::new();
         if !txids.is_empty() {
@@ -1089,6 +1112,29 @@ impl Daemon for BackendWalletClient {
                 |r| r.json(&api::payload::CreateWalletInvitation { email }),
             )
             .await
+    }
+
+    async fn get_fiat_rates(&self) -> Result<HashMap<String, f64>, DaemonError> {
+        let res: api::NetworkInfo = self
+            .inner
+            .request(Method::GET, "/v1/network", |r| r)
+            .await?;
+        Ok(res.rates.into_iter().map(|(k, v)| (k, v as f64)).collect())
+    }
+
+    async fn update_wallet_settings(
+        &self,
+        fiat_currency: api::FiatCurrency,
+    ) -> Result<(), DaemonError> {
+        let _res: api::UserSettings = self
+            .inner
+            .request(
+                Method::PATCH,
+                &format!("/v1/wallets/{}/settings", self.wallet_uuid),
+                |r| r.json(&api::payload::UpdateSettings { fiat_currency }),
+            )
+            .await?;
+        Ok(())
     }
 
     async fn get_labels_bip329(&self, offset: u32, limit: u32) -> Result<Labels, DaemonError> {
