@@ -1,4 +1,5 @@
 use crate::{color, component::text::text, icon, theme, widget::*};
+use iced::{widget::button, Alignment};
 
 pub fn modal<'a, T: 'a, C: Into<Element<'a, T>>>(content: C) -> Container<'a, T> {
     Container::new(content)
@@ -47,4 +48,16 @@ pub fn error<'a, T: 'a>(message: &'static str, error: String) -> Container<'a, T
     )
     .padding(15)
     .style(theme::card::error)
+}
+
+pub fn clickable_card<'a, M>(content: Row<'a, M>, msg: Option<M>) -> Container<'a, M>
+where
+    M: Clone + 'a,
+{
+    Container::new(
+        button(content.align_y(Alignment::Center).padding(5))
+            .on_press_maybe(msg)
+            .style(theme::button::transparent_border),
+    )
+    .style(theme::card::simple)
 }
