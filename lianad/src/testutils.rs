@@ -5,9 +5,11 @@ use crate::{
         BlockInfo, Coin, CoinStatus, DatabaseConnection, DatabaseInterface, LabelItem, Wallet,
     },
     datadir::DataDirectory,
+    payjoin::db::SessionId,
     DaemonControl, DaemonHandle,
 };
 use liana::descriptors;
+use payjoin::OhttpKeys;
 
 use std::convert::TryInto;
 use std::{
@@ -160,6 +162,11 @@ struct DummyDbState {
     timestamp: u32,
     rescan_timestamp: Option<u32>,
     last_poll_timestamp: Option<u32>,
+    ohttp_keys: HashMap<String, (u32, OhttpKeys)>,
+    payjoin_receiver_sessions: HashMap<i64, (u32, String, Option<u32>)>,
+    payjoin_sessions_by_derivation: HashMap<u32, i64>,
+    payjoin_sessions_by_txid: HashMap<bitcoin::Txid, i64>,
+    receiver_session_events: HashMap<i64, Vec<Vec<u8>>>,
 }
 
 pub struct DummyDatabase {
@@ -195,6 +202,11 @@ impl DummyDatabase {
                 timestamp: now,
                 rescan_timestamp: None,
                 last_poll_timestamp: None,
+                ohttp_keys: HashMap::new(),
+                payjoin_receiver_sessions: HashMap::new(),
+                payjoin_sessions_by_derivation: HashMap::new(),
+                payjoin_sessions_by_txid: HashMap::new(),
+                receiver_session_events: HashMap::new(),
             })),
         }
     }
@@ -555,65 +567,115 @@ impl DatabaseConnection for DummyDatabase {
         todo!()
     }
 
-    fn payjoin_get_ohttp_keys(&mut self, _ohttp_relay: &str) -> Option<(u32, payjoin::OhttpKeys)> {
-        todo!()
+    fn payjoin_get_ohttp_keys(&mut self, ohttp_relay: &str) -> Option<(u32, OhttpKeys)> {
+        self.db.read().unwrap().ohttp_keys.get(ohttp_relay).cloned()
     }
 
-    fn payjoin_save_ohttp_keys(&mut self, _ohttp_relay: &str, _ohttp_keys: payjoin::OhttpKeys) {
-        todo!()
+    fn payjoin_save_ohttp_keys(&mut self, ohttp_relay: &str, ohttp_keys: OhttpKeys) {
+        self.db
+            .write()
+            .unwrap()
+            .ohttp_keys
+            .insert(ohttp_relay.to_string(), (0, ohttp_keys));
     }
 
     fn insert_input_seen_before(&mut self, _outpoints: &[bitcoin::OutPoint]) -> bool {
-        todo!()
+        false
     }
 
-    fn get_active_payjoin_sessions(&mut self) -> Vec<(crate::payjoin::db::SessionId, u32)> {
-        todo!()
+    fn get_active_payjoin_sessions(&mut self) -> Vec<(SessionId, u32)> {
+        Vec::new()
     }
 
-    fn save_receiver_session_event(
-        &mut self,
-        _session_id: &crate::payjoin::db::SessionId,
-        _event: Vec<u8>,
-    ) {
-        todo!()
+    fn save_receiver_session_event(&mut self, session_id: &SessionId, event: Vec<u8>) {
+        let mut db = self.db.write().unwrap();
+        let session_events = db.receiver_session_events.entry(session_id.0).or_default();
+        session_events.push(event);
     }
 
-    fn load_receiver_session_events(
-        &mut self,
-        _session_id: &crate::payjoin::db::SessionId,
-    ) -> Vec<Vec<u8>> {
-        todo!()
+    fn load_receiver_session_events(&mut self, session_id: &SessionId) -> Vec<Vec<u8>> {
+        self.db
+            .read()
+            .unwrap()
+            .receiver_session_events
+            .get(&session_id.0)
+            .cloned()
+            .unwrap_or_default()
     }
 
-    fn save_new_payjoin_receiver_session(&mut self, _derivation_index: u32, _bip21: &str) -> i64 {
-        todo!()
+    fn save_new_payjoin_receiver_session(&mut self, derivation_index: u32, bip21: &str) -> i64 {
+        let mut db = self.db.write().unwrap();
+        let session_id = (db.payjoin_receiver_sessions.len() + 1) as i64;
+        db.payjoin_receiver_sessions
+            .insert(session_id, (derivation_index, bip21.to_string(), None));
+        db.payjoin_sessions_by_derivation
+            .insert(derivation_index, session_id);
+        session_id
     }
 
-    fn get_payjoin_receiver_bip21(&mut self, _derivation_index: u32) -> Option<String> {
-        todo!()
+    fn get_payjoin_receiver_bip21(&mut self, derivation_index: u32) -> Option<String> {
+        self.db
+            .read()
+            .unwrap()
+            .payjoin_sessions_by_derivation
+            .get(&derivation_index)
+            .and_then(|session_id| {
+                self.db
+                    .read()
+                    .unwrap()
+                    .payjoin_receiver_sessions
+                    .get(session_id)
+                    .map(|(_, bip21, _)| bip21.clone())
+            })
     }
 
-    fn update_payjoin_receiver_bip21(&mut self, _derivation_index: u32, _bip21: &str) {
-        todo!()
+    fn update_payjoin_receiver_bip21(&mut self, derivation_index: u32, bip21: &str) {
+        let mut db = self.db.write().unwrap();
+        if let Some(session_id) = db
+            .payjoin_sessions_by_derivation
+            .get(&derivation_index)
+            .copied()
+        {
+            if let Some(session) = db.payjoin_receiver_sessions.get_mut(&session_id) {
+                session.1 = bip21.to_string();
+            }
+        }
     }
 
-    fn get_all_active_receiver_session_ids(&mut self) -> Vec<crate::payjoin::db::SessionId> {
-        todo!()
+    fn get_all_active_receiver_session_ids(&mut self) -> Vec<SessionId> {
+        self.db
+            .read()
+            .unwrap()
+            .payjoin_receiver_sessions
+            .iter()
+            .filter(|(_, (_, _, completed_at))| completed_at.is_none())
+            .map(|(id, _)| SessionId::new(*id))
+            .collect()
     }
 
-    fn update_receiver_session_completed_at(
-        &mut self,
-        _session_id: &crate::payjoin::db::SessionId,
-    ) {
-        todo!()
+    fn update_receiver_session_completed_at(&mut self, session_id: &SessionId) {
+        let mut db = self.db.write().unwrap();
+        if let Some(session) = db.payjoin_receiver_sessions.get_mut(&session_id.0) {
+            let now: u32 = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs()
+                .try_into()
+                .unwrap();
+            session.2 = Some(now);
+        }
     }
 
     fn get_payjoin_receiver_session_id_from_txid(
         &mut self,
-        _txid: &bitcoin::Txid,
-    ) -> Option<crate::payjoin::db::SessionId> {
-        todo!()
+        txid: &bitcoin::Txid,
+    ) -> Option<SessionId> {
+        self.db
+            .read()
+            .unwrap()
+            .payjoin_sessions_by_txid
+            .get(txid)
+            .map(|id| SessionId::new(*id))
     }
 }
 
