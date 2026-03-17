@@ -98,6 +98,7 @@ pub struct Cards {
     pub invalid: ContainerPalette,
     pub warning: ContainerPalette,
     pub warning_banner: ContainerPalette,
+    pub home_hint: ContainerPalette,
     pub error: ContainerPalette,
 }
 

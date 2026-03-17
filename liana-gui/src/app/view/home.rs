@@ -191,12 +191,12 @@ pub fn home_view<'a>(
                         .width(Length::Fill),
                     )
                     .push(
-                        button::primary(Some(icon::arrow_repeat()), "Refresh coins")
+                        button::tertiary(Some(icon::arrow_repeat()), "Refresh coins")
                             .on_press(Message::Menu(Menu::RefreshCoins(expiring_coins.to_owned()))),
                     ),
             )
             .padding(25)
-            .style(theme::card::invalid),
+            .style(theme::card::warning_banner),
         )
     };
     Column::new()

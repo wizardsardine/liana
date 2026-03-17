@@ -91,6 +91,10 @@ pub fn warning_banner(theme: &Theme) -> Style {
     card(&theme.colors.cards.warning_banner)
 }
 
+pub fn home_hint(theme: &Theme) -> Style {
+    card(&theme.colors.cards.home_hint)
+}
+
 pub fn error(theme: &Theme) -> Style {
     card(&theme.colors.cards.error)
 }

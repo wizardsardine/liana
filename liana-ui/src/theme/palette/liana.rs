@@ -369,6 +369,11 @@ impl Palette {
                     text: color::ORANGE.into(),
                     border: color::ORANGE.into(),
                 },
+                home_hint: ContainerPalette {
+                    background: color::TRANSPARENT,
+                    text: None,
+                    border: color::GREY_7.into(),
+                },
                 error: ContainerPalette {
                     background: color::LIGHT_BLACK,
                     text: color::RED.into(),

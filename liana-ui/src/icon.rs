@@ -87,6 +87,10 @@ pub fn warning_icon() -> Text<'static> {
     bootstrap_icon('\u{F33B}')
 }
 
+pub fn warning_fill_icon() -> Text<'static> {
+    bootstrap_icon('\u{F33A}')
+}
+
 pub fn chip_icon() -> Text<'static> {
     bootstrap_icon('\u{F2D6}')
 }

@@ -60,3 +60,14 @@ where
         .style(theme::button::clickable_card)
         .into()
 }
+
+pub fn home_hint<'a, T, M>(content: T) -> Element<'a, M>
+where
+    T: Into<Element<'a, M>>,
+    M: Clone + 'a,
+{
+    Container::new(content)
+        .padding(CARD_PADDING)
+        .style(theme::card::border)
+        .into()
+}
