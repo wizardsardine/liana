@@ -82,7 +82,7 @@ fn settings_section(
         .on_press(msg),
     )
     .width(Length::Fill)
-    .style(theme::card::simple)
+    .style(theme::card::button_simple)
 }
 
 fn export_section(
@@ -110,7 +110,7 @@ fn export_section(
         .on_press(msg),
     )
     .width(Length::Fill)
-    .style(theme::card::simple)
+    .style(theme::card::button_simple)
 }
 
 pub fn list(cache: &Cache, is_remote_backend: bool) -> Element<Message> {

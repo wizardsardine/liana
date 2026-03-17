@@ -163,6 +163,6 @@ fn spend_tx_list_view(i: usize, tx: &SpendTx) -> Element<'_, Message> {
         .on_press(Message::Select(i))
         .style(theme::button::transparent_border),
     )
-    .style(theme::card::simple)
+    .style(theme::card::button_simple)
     .into()
 }

@@ -302,7 +302,7 @@ pub fn menu_entry(content: Element<'_, Msg>, message: Option<Msg>) -> Element<'_
         .padding(15)
         .style(theme::button::container_border),
     )
-    .style(theme::card::simple)
+    .style(theme::card::button_simple)
     .align_x(Alignment::Center)
     .align_y(Alignment::Center)
     .width(MENU_ENTRY_WIDTH)
@@ -324,7 +324,7 @@ pub fn card_entry(content: Element<'_, Msg>, message: Option<Msg>, width: f32) -
         .padding(0)
         .style(theme::button::container_border),
     )
-    .style(theme::card::simple)
+    .style(theme::card::button_simple)
     .width(Length::Fixed(width))
     .into()
 }

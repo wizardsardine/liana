@@ -22,7 +22,7 @@ fn account_card(content: Element<'_, Msg>, message: Option<Msg>) -> Element<'_, 
         .padding(15)
         .style(theme::button::container_border),
     )
-    .style(theme::card::simple)
+    .style(theme::card::button_simple)
     .align_x(Alignment::Center)
     .align_y(Alignment::Center)
     .width(500)

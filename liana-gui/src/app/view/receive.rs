@@ -155,7 +155,7 @@ pub fn receive<'a>(
                     .width(Length::Fill)
                     .style(theme::button::transparent_border),
                 )
-                .style(theme::card::simple),
+                .style(theme::card::button_simple),
             ),
         )
         .push_maybe(show_prev_addresses.then_some(Row::new().spacing(10).push(

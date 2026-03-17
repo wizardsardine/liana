@@ -5,6 +5,8 @@ use super::button::BUTTON_RADIUS;
 use super::palette::ContainerPalette;
 use super::Theme;
 
+pub const CARD_RADIUS: f32 = 16.0;
+
 pub const CARD_SHADOW: Shadow = Shadow {
     color: Color {
         r: 0.0,
@@ -22,7 +24,7 @@ fn card(palette: &ContainerPalette) -> Style {
         text_color: palette.text,
         border: if let Some(color) = palette.border {
             Border {
-                radius: 25.0.into(),
+                radius: CARD_RADIUS.into(),
                 width: 1.0,
                 color,
             }
@@ -36,7 +38,7 @@ fn card(palette: &ContainerPalette) -> Style {
 }
 
 fn card_with_shadow(palette: &ContainerPalette, btn: bool) -> Style {
-    let radius = if btn { BUTTON_RADIUS } else { 25.0 }.into();
+    let radius = if btn { BUTTON_RADIUS } else { CARD_RADIUS }.into();
     Style {
         background: Some(Background::Color(palette.background)),
         text_color: palette.text,
