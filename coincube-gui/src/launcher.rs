@@ -774,7 +774,7 @@ fn create_cube_form<'a>(
     cube_name: &coincube_ui::component::form::Value<String>,
     pin: &'a pin_input::PinInput,
     pin_confirm: &'a pin_input::PinInput,
-    error: &Option<String>,
+    error: &'a Option<String>,
     creating_cube: bool,
     recover_liquid_wallet: bool,
 ) -> Element<'a, ViewMessage> {
@@ -879,7 +879,7 @@ fn create_cube_form<'a>(
         .into()
 }
 
-fn cubes_list_item<'a>(cube: &CubeSettings, i: usize) -> Element<'a, ViewMessage> {
+fn cubes_list_item<'a>(cube: &'a CubeSettings, i: usize) -> Element<'a, ViewMessage> {
     Container::new(
         Row::new()
             .align_y(Alignment::Center)
@@ -1313,9 +1313,9 @@ impl DeleteCubeModal {
         };
 
         let help_text_2 = match self.internal_bitcoind {
-            Some(true) => Some("(The Liana-managed Bitcoin node for this network will not be affected by this action.)"),
+            Some(true) => Some("(The COINCUBE-managed Bitcoin node for this network will not be affected by this action.)"),
             Some(false) => None,
-            None if has_vault => Some("(If you are using a Liana-managed Bitcoin node, it will not be affected by this action.)"),
+            None if has_vault => Some("(If you are using a COINCUBE-managed Bitcoin node, it will not be affected by this action.)"),
             _ => None,
         };
         let help_text_3 = "WARNING: This cannot be undone.";

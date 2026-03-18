@@ -210,9 +210,6 @@ pub fn rpcserver_setup(socket_path: &path::Path) -> Result<net::UnixListener, io
 mod tests {
     use super::*;
     use crate::jsonrpc::rpc::{Params, ReqId};
-    use crate::testutils::DummyBitcoind;
-    use crate::testutils::DummyCoincube;
-    use crate::testutils::DummyDatabase;
 
     use std::{env, fs, process};
 
@@ -402,7 +399,10 @@ mod tests {
     #[cfg(not(target_os = "macos"))]
     #[test]
     fn server_sanity_check() {
-        let ms = DummyCoincube::new_server(DummyBitcoind::new(), DummyDatabase::new());
+        let ms = crate::testutils::DummyCoincube::new_server(
+            crate::testutils::DummyBitcoind::new(),
+            crate::testutils::DummyDatabase::new(),
+        );
         let socket_path: path::PathBuf = [
             ms.tmp_dir.as_path(),
             path::Path::new("d"),

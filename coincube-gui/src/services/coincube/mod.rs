@@ -50,6 +50,57 @@ impl std::fmt::Display for CoincubeError {
 
 impl std::error::Error for CoincubeError {}
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct DownloadStats {
+    pub total: u32,
+    pub breakdown: std::collections::HashMap<String, u32>,
+    pub last_updated: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct TodayStats {
+    pub count: u32,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct TimeseriesPoint {
+    pub date: String,
+    pub count: u32,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct TimeseriesResponse {
+    pub points: Vec<TimeseriesPoint>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StatsPeriod {
+    Day,
+    Week,
+    Month,
+    Year,
+}
+
+impl StatsPeriod {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Day => "day",
+            Self::Week => "week",
+            Self::Month => "month",
+            Self::Year => "year",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Day => "Day",
+            Self::Week => "Week",
+            Self::Month => "Month",
+            Self::Year => "Year",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SaveQuoteRequest<'a, T: Serialize> {

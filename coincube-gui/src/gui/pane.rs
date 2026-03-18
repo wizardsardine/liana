@@ -159,7 +159,7 @@ impl Pane {
                 Into::<Element<ViewMessage>>::into(
                     Button::new(if title.len() < 20 {
                         Row::new().push(p1_regular(title)).push(p1_regular(
-                            &"                     ".to_string()[..21 - title.len()],
+                            "                     "[..21 - title.len()].to_string(),
                         ))
                     } else {
                         Row::new()
@@ -200,7 +200,9 @@ impl Pane {
                 .style(theme::button::tab)
                 .on_press(ViewMessage::AddTab),
         );
-        Into::<Element<ViewMessage>>::into(menu.wrap()).map(Message::View)
+
+        let menu: Element<ViewMessage> = menu.wrap().into();
+        menu.map(Message::View)
     }
 
     pub fn view(&self) -> Element<Message> {

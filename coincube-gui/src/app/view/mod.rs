@@ -68,6 +68,7 @@ fn menu_bar_highlight<'a, T: 'a>() -> Container<'a, T> {
         .style(theme::container::custom(color::ORANGE))
 }
 
+// TODO: Rework sidebar UI and implementation, use buttons without rounded borders
 pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<'a, Message> {
     // Top-level Home button
     let home_button = if *menu == Menu::Home {
@@ -736,7 +737,7 @@ pub fn error_toast_overlay<'a, I: Iterator<Item = (usize, &'a str)>>(
 ) -> coincube_ui::widget::Element<'a, Message> {
     use coincube_ui::{color, component::text, icon::cross_icon};
 
-    let toast = |id: usize, content: &str| {
+    let toast = |id: usize, content: &'a str| {
         const WIDGET_HEIGHT: u32 = 80;
         iced::widget::row![
             container(text::p1_bold(content).color(color::WHITE))

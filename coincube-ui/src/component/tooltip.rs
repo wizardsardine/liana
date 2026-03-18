@@ -1,6 +1,6 @@
 use crate::{icon, theme, widget::*};
 
-pub fn tooltip<T: 'static>(help: &'static str) -> Container<'static, T> {
+pub fn tooltip<'a, T: 'a>(help: &'a str) -> Container<'a, T> {
     Container::new(
         iced::widget::tooltip::Tooltip::new(
             icon::tooltip_icon(),

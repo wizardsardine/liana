@@ -206,7 +206,7 @@ fn verify_hash(bytes: &[u8]) -> bool {
 }
 
 /// Install bitcoind by verifying the download hash and unpacking in the specified directory.
-fn install_bitcoind(install_dir: &PathBuf, bytes: &[u8]) -> Result<(), InstallBitcoindError> {
+pub fn install_bitcoind(install_dir: &PathBuf, bytes: &[u8]) -> Result<(), InstallBitcoindError> {
     if !verify_hash(bytes) {
         return Err(InstallBitcoindError::HashMismatch);
     };
@@ -214,7 +214,7 @@ fn install_bitcoind(install_dir: &PathBuf, bytes: &[u8]) -> Result<(), InstallBi
 }
 
 /// RPC address for internal bitcoind.
-fn internal_bitcoind_address(rpc_port: u16) -> SocketAddr {
+pub fn internal_bitcoind_address(rpc_port: u16) -> SocketAddr {
     SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), rpc_port)
 }
 
@@ -288,6 +288,8 @@ pub fn port_is_valid(port: &u16) -> bool {
 pub struct SelectBitcoindTypeStep {
     use_external: bool,
     use_connect: bool,
+    install_node: bool,
+    show_advanced: bool,
     network: Network,
 }
 
@@ -307,7 +309,9 @@ impl SelectBitcoindTypeStep {
     pub fn new() -> Self {
         Self {
             use_external: true,
-            use_connect: false,
+            use_connect: true,
+            install_node: true,
+            show_advanced: false,
             network: Network::Bitcoin,
         }
     }
@@ -316,38 +320,78 @@ impl SelectBitcoindTypeStep {
 impl Step for SelectBitcoindTypeStep {
     fn load_context(&mut self, ctx: &Context) {
         self.network = ctx.network;
+        // Expand advanced section by default on non-mainnet networks.
+        if ctx.network != Network::Bitcoin {
+            self.show_advanced = true;
+        }
     }
 
     fn skip(&self, ctx: &Context) -> bool {
         ctx.remote_backend.is_some()
     }
+
     fn update(&mut self, _hws: &mut HardwareWallets, message: Message) -> Task<Message> {
         if let Message::SelectBitcoindType(msg) = message {
             match msg {
+                message::SelectBitcoindTypeMsg::ContinueWithConnect => {
+                    self.use_connect = true;
+                    self.use_external = !self.install_node;
+                    return Task::perform(async {}, |_| Message::Next);
+                }
+                message::SelectBitcoindTypeMsg::ToggleInstallNode => {
+                    self.install_node = !self.install_node;
+                }
+                message::SelectBitcoindTypeMsg::ToggleAdvanced => {
+                    self.show_advanced = !self.show_advanced;
+                }
                 message::SelectBitcoindTypeMsg::UseExternal(selected) => {
                     self.use_external = selected;
                     self.use_connect = false;
+                    return Task::perform(async {}, |_| Message::Next);
                 }
                 message::SelectBitcoindTypeMsg::UseConnect => {
                     self.use_external = true;
                     self.use_connect = true;
+                    self.install_node = false;
+                    return Task::perform(async {}, |_| Message::Next);
                 }
             };
-            return Task::perform(async {}, |_| Message::Next);
         };
         Task::none()
     }
 
     fn apply(&mut self, ctx: &mut Context) -> bool {
-        if !self.use_external {
-            if ctx.internal_bitcoind_config.is_none() {
-                ctx.bitcoin_backend = None; // Ensures internal bitcoind can be restarted in case user has switched selection.
+        if self.use_connect {
+            let install_node = self.install_node && !self.use_external;
+            ctx.use_coincube_connect = true;
+            ctx.install_node_alongside_connect = install_node;
+            ctx.bitcoind_is_external = !install_node;
+            if install_node {
+                // Keep any existing internal_bitcoind_config so the step can restart if needed.
+                if ctx.internal_bitcoind_config.is_none() {
+                    ctx.bitcoin_backend = None;
+                }
+            } else {
+                ctx.internal_bitcoind_config = None;
+                ctx.pending_bitcoind_config = None;
+                ctx.internal_bitcoind = None;
             }
-        } else {
+        } else if self.use_external {
+            ctx.use_coincube_connect = false;
+            ctx.install_node_alongside_connect = false;
+            ctx.bitcoind_is_external = true;
             ctx.internal_bitcoind_config = None;
+            ctx.pending_bitcoind_config = None;
+            ctx.internal_bitcoind = None;
+        } else {
+            ctx.use_coincube_connect = false;
+            ctx.install_node_alongside_connect = false;
+            ctx.bitcoind_is_external = false;
+            ctx.pending_bitcoind_config = None;
+            if ctx.internal_bitcoind_config.is_none() {
+                ctx.bitcoin_backend = None;
+            }
         }
-        ctx.bitcoind_is_external = self.use_external;
-        ctx.use_coincube_connect = self.use_connect;
         true
     }
 
@@ -357,7 +401,13 @@ impl Step for SelectBitcoindTypeStep {
         progress: (usize, usize),
         _email: Option<&str>,
     ) -> Element<Message> {
-        view::select_bitcoind_type(progress, self.network != Network::Regtest)
+        view::select_bitcoind_type(
+            progress,
+            self.network,
+            self.install_node,
+            self.show_advanced,
+            PRUNE_DEFAULT,
+        )
     }
 }
 

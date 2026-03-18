@@ -837,7 +837,7 @@ pub fn final_check_page<'a>(
 
     if let Some(desc) = description {
         content = content.push(
-            Container::new(text(desc).size(22).bold())
+            Container::new(text(desc.to_string()).size(22).bold())
                 .width(Length::Fill)
                 .align_x(Alignment::Center),
         );
@@ -1113,7 +1113,7 @@ pub fn final_check_page<'a>(
             Row::new()
                 .push(text("Comment:").size(16))
                 .push(Space::new().width(Length::Fill))
-                .push(text(&comment).size(16).bold())
+                .push(text(comment).size(16).bold())
                 .width(Length::Fill)
                 .align_y(Alignment::Center),
         );

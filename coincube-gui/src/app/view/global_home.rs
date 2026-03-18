@@ -573,8 +573,8 @@ fn wallet_card<'a>(
 }
 
 fn transfer_direction_card<'a>(
-    title: &str,
-    description: &str,
+    title: &'a str,
+    description: &'a str,
     direction: TransferDirection,
     is_selected: bool,
 ) -> Element<'a, Message> {
@@ -684,7 +684,7 @@ fn select_transfer_direction_view<'a>(
 }
 
 fn balance_summary_card<'a>(
-    wallet_name: &str,
+    wallet_name: &'a str,
     is_liquid: bool,
     balance: &Amount,
     fiat_converter: Option<FiatAmountConverter>,
