@@ -142,6 +142,36 @@ struct CountryResponse {
 }
 
 impl CoincubeClient {
+    pub async fn fetch_download_stats(&self) -> Result<super::DownloadStats, super::CoincubeError> {
+        let url = format!("{}/api/v1/downloads", self.base_url);
+        let res = self.client.get(&url).send().await?;
+        let res = res.check_success().await?;
+        Ok(res.json().await?)
+    }
+
+    pub async fn fetch_today_stats(&self) -> Result<super::TodayStats, super::CoincubeError> {
+        let url = format!("{}/api/v1/downloads/today", self.base_url);
+        let res = self.client.get(&url).send().await?;
+        let res = res.check_success().await?;
+        Ok(res.json().await?)
+    }
+
+    pub async fn fetch_timeseries(
+        &self,
+        period: super::StatsPeriod,
+    ) -> Result<super::TimeseriesResponse, super::CoincubeError> {
+        let url = format!(
+            "{}/api/v1/downloads/timeseries?period={}",
+            self.base_url,
+            period.as_str()
+        );
+        let res = self.client.get(&url).send().await?;
+        let res = res.check_success().await?;
+        Ok(res.json().await?)
+    }
+}
+
+impl CoincubeClient {
     /// Detects the user's country and returns (country_name, iso_code)
     pub async fn locate(&self) -> Result<&'static Country, CoincubeError> {
         // allow users (and developers) to override detected ISO_CODE

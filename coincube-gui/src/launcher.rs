@@ -1313,9 +1313,9 @@ impl DeleteCubeModal {
         };
 
         let help_text_2 = match self.internal_bitcoind {
-            Some(true) => Some("(The Liana-managed Bitcoin node for this network will not be affected by this action.)"),
+            Some(true) => Some("(The COINCUBE-managed Bitcoin node for this network will not be affected by this action.)"),
             Some(false) => None,
-            None if has_vault => Some("(If you are using a Liana-managed Bitcoin node, it will not be affected by this action.)"),
+            None if has_vault => Some("(If you are using a COINCUBE-managed Bitcoin node, it will not be affected by this action.)"),
             _ => None,
         };
         let help_text_3 = "WARNING: This cannot be undone.";

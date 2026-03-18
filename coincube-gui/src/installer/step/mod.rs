@@ -4,7 +4,7 @@ pub mod import_descriptor;
 mod backend;
 mod coincube_connect;
 mod mnemonic;
-mod node;
+pub(crate) mod node;
 mod share_xpubs;
 mod wallet_alias;
 
