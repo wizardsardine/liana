@@ -24,14 +24,19 @@ use iced::{
     Alignment, Length,
 };
 use liana_ui::{
-    component::{button, text},
+    component::{
+        button::{self, icon_btn},
+        card::clickable_card,
+        text,
+    },
     icon, theme,
     widget::*,
 };
 use uuid::Uuid;
 
 pub const INSTALLER_STEPS: usize = 5;
-pub const MENU_ENTRY_WIDTH: u16 = 500;
+pub const MENU_ENTRY_WIDTH: u16 = 600;
+pub const ACCOUNT_ENTRY_WIDTH: u16 = MENU_ENTRY_WIDTH - 80;
 pub const MENU_ENTRY_HEIGHT: u16 = 80;
 
 /// Format last edit information as "Edited by [You|email] [relative_time]".
@@ -289,42 +294,19 @@ pub fn layout_with_scrollable_list<'a>(
     .into()
 }
 
-pub fn menu_entry(content: Element<'_, Msg>, message: Option<Msg>) -> Element<'_, Msg> {
-    Container::new(
-        Button::new(
-            container(content)
-                .align_y(Alignment::Center)
-                .align_x(Alignment::Center)
-                .width(Length::Fill)
-                .height(Length::Fill),
-        )
-        .on_press_maybe(message)
-        .padding(15)
-        .style(theme::button::container_border),
-    )
-    .style(theme::card::button_simple)
-    .align_x(Alignment::Center)
-    .align_y(Alignment::Center)
-    .width(MENU_ENTRY_WIDTH)
-    .height(MENU_ENTRY_HEIGHT)
-    .into()
+// NOTE: content MUST have width and height to Length::Fill
+pub fn menu_entry(content: Row<'_, Msg>, message: Option<Msg>) -> Container<'_, Msg> {
+    let content = content.width(Length::Fill).height(Length::Fill);
+    let card = clickable_card(content, message);
+    container(card)
+        .width(MENU_ENTRY_WIDTH)
+        .height(MENU_ENTRY_HEIGHT)
 }
 
-/// Create a card with grey background, shadow, and hover-interactive border.
-/// This is the unified card style for key cards, path cards, and xpub cards.
-pub fn card_entry(content: Element<'_, Msg>, message: Option<Msg>, width: f32) -> Element<'_, Msg> {
-    Container::new(
-        Button::new(
-            container(content)
-                .align_y(Alignment::Center)
-                .width(Length::Fill)
-                .padding(15),
-        )
-        .on_press_maybe(message)
-        .padding(0)
-        .style(theme::button::container_border),
-    )
-    .style(theme::card::button_simple)
-    .width(Length::Fixed(width))
-    .into()
+fn account_entry(content: Row<'_, Msg>, message: Option<Msg>) -> Container<'_, Msg> {
+    menu_entry(content, message).width(ACCOUNT_ENTRY_WIDTH)
+}
+
+fn delete_btn(message: Option<Msg>) -> Button<'static, Msg> {
+    icon_btn(icon::trash_icon(), message)
 }

@@ -189,7 +189,7 @@ fn key_card(
     kind: Option<async_hwi::DeviceKind>,
     device_connected: bool,
     alias: String,
-) -> Element<'static, Msg> {
+) -> Container<'static, Msg> {
     let fg = text::p1_medium(format!("#{fingerprint}"));
     let fg_row = if let Some(device) = kind {
         row![text::p1_bold(device_kind(device)), fg].spacing(5)
@@ -211,14 +211,12 @@ fn key_card(
         .is_some()
         .then_some(Msg::RegistrationSelectDevice(fingerprint));
 
-    let content = Container::new(
-        Row::new()
-            .push(left)
-            .push(Space::with_width(Length::Fill))
-            .push(right)
-            .push(Space::with_width(Length::Fill))
-            .align_y(Alignment::Center),
-    )
-    .into();
+    let content = Row::new()
+        .push(left)
+        .push(Space::with_width(Length::Fill))
+        .push(right)
+        .push(Space::with_width(Length::Fill))
+        .align_y(Alignment::Center)
+        .height(Length::Fill);
     menu_entry(content, message)
 }

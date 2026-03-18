@@ -5,72 +5,20 @@ use crate::{
     state::{Msg, State},
 };
 use iced::{
-    widget::{
-        button::{Status, Style},
-        Space,
-    },
-    Alignment, Background, Border, Length,
+    widget::{row, Space},
+    Alignment, Length,
 };
 use liana_connect::ws_business::{self, UserRole};
-use liana_ui::{color, component::text, icon, theme, theme::Theme, widget::*};
+use liana_ui::{component::text, icon, theme, widget::*};
 
-use super::{card_entry, format_last_edit_info, layout_with_scrollable_list};
-
-// Card width constant (matching path cards)
-const KEY_CARD_WIDTH: f32 = 600.0;
-
-/// Custom button style for delete button: circular with grey background and shadow
-pub fn delete_button_style(_theme: &Theme, status: Status) -> Style {
-    use iced::{Color, Shadow, Vector};
-
-    let background = color::LIGHT_BG_SECONDARY;
-    let border_active = color::BUSINESS_BLUE_DARK;
-    let shadow = Shadow {
-        color: Color::from_rgba(0.0, 0.0, 0.0, 0.15),
-        offset: Vector::new(0.0, 2.0),
-        blur_radius: 8.0,
-    };
-
-    match status {
-        Status::Active => Style {
-            background: Some(Background::Color(background)),
-            text_color: color::DARK_TEXT_SECONDARY,
-            border: Border {
-                radius: 50.0.into(),
-                width: 1.0,
-                color: color::TRANSPARENT,
-            },
-            shadow,
-        },
-        Status::Hovered | Status::Pressed => Style {
-            background: Some(Background::Color(background)),
-            text_color: color::BUSINESS_BLUE_DARK,
-            border: Border {
-                radius: 50.0.into(),
-                width: 1.0,
-                color: border_active,
-            },
-            shadow,
-        },
-        Status::Disabled => Style {
-            background: Some(Background::Color(background)),
-            text_color: color::DARK_TEXT_TERTIARY,
-            border: Border {
-                radius: 50.0.into(),
-                width: 1.0,
-                color: color::TRANSPARENT,
-            },
-            shadow,
-        },
-    }
-}
+use super::{delete_btn, format_last_edit_info, layout_with_scrollable_list, menu_entry};
 
 /// Create a key card displaying key information.
 fn key_card(
     key_id: u8,
     key: &ws_business::Key,
     last_edit_info: Option<String>,
-) -> Element<'static, Msg> {
+) -> Container<'static, Msg> {
     const BADGE_WIDTH: f32 = 100.0;
 
     // Identity (optional - display email or other identity)
@@ -107,13 +55,15 @@ fn key_card(
     let last_edit =
         last_edit_info.map(|info| text::caption(&info).style(liana_ui::theme::text::secondary));
 
-    let content = Column::new()
+    let content = row![Column::new()
         .spacing(5)
         .push(header_row)
         .push_maybe(description)
-        .push_maybe(last_edit);
+        .push_maybe(last_edit)]
+    .width(Length::Fill)
+    .height(Length::Fill);
 
-    card_entry(content.into(), Some(Msg::KeyEdit(key_id)), KEY_CARD_WIDTH)
+    menu_entry(content, Some(Msg::KeyEdit(key_id)))
 }
 
 pub fn keys_view(state: &State) -> Element<'_, Msg> {
@@ -181,16 +131,7 @@ fn keys_visualization(state: &State) -> Element<'static, Msg> {
                 &current_user_email_lower,
             );
 
-            let delete_button = Button::new(
-                Container::new(icon::trash_icon())
-                    .width(Length::Fixed(20.0))
-                    .height(Length::Fixed(20.0))
-                    .center_x(Length::Fixed(20.0))
-                    .center_y(Length::Fixed(20.0)),
-            )
-            .padding(10)
-            .on_press(Msg::KeyDelete(*key_id))
-            .style(delete_button_style);
+            let delete_button = delete_btn(Some(Msg::KeyDelete(*key_id)));
 
             Row::new()
                 .spacing(15)
@@ -202,9 +143,12 @@ fn keys_visualization(state: &State) -> Element<'static, Msg> {
         .collect();
 
     // "Add a key" card
-    let add_key_content = text::p1_medium("+ Add a key").style(liana_ui::theme::text::secondary);
+    let add_key_content =
+        row![text::p1_medium("+ Add a key").style(liana_ui::theme::text::secondary)]
+            .width(Length::Fill)
+            .height(Length::Fill);
 
-    let add_key_card = card_entry(add_key_content.into(), Some(Msg::KeyAdd), KEY_CARD_WIDTH);
+    let add_key_card = menu_entry(add_key_content, Some(Msg::KeyAdd));
 
     // Build the column with all elements
     let mut column = Column::new()

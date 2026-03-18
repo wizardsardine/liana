@@ -1,12 +1,12 @@
 use crate::{
     backend::Backend,
     state::{message::Msg, State},
-    views::{card_entry, format_last_edit_info},
+    views::{format_last_edit_info, menu_entry},
 };
 use iced::{
     widget::{
         button::{Status, Style},
-        Space,
+        row, Space,
     },
     Alignment, Background, Border, Length,
 };
@@ -65,8 +65,6 @@ fn delete_button_style(_theme: &Theme, status: Status) -> Style {
 // Colors for paths
 const PRIMARY_COLOR: &str = "#00BFFF"; // Business Blue
 
-// Card width constants
-const PATH_CARD_WIDTH: f32 = 600.0;
 // r_shape icon width that precedes path cards (adds visual offset for "Add recovery" button alignment)
 const R_SHAPE_WIDTH: f32 = 60.0;
 
@@ -220,7 +218,7 @@ fn path_card(
     path_index: Option<usize>,
     is_editable: bool,
     last_edit_info: Option<String>,
-) -> Element<'static, Msg> {
+) -> Container<'static, Msg> {
     // Get key aliases
     let key_aliases: Vec<String> = path
         .key_ids
@@ -254,11 +252,13 @@ fn path_card(
     let last_edit_info =
         last_edit_info.map(|info| text::caption(info).style(liana_ui::theme::text::secondary));
 
-    let content = Column::new()
+    let content = row![Column::new()
         .push(text::h3(keys_text).style(theme::text::primary))
         .push(text::p2_medium(timelock_text).style(theme::text::primary))
         .push_maybe(last_edit_info)
-        .spacing(5);
+        .spacing(5)]
+    .width(Length::Fill)
+    .height(Length::Fill);
 
     // Use card_entry with optional message for editable vs read-only
     let message = if is_editable {
@@ -267,7 +267,7 @@ fn path_card(
         None
     };
 
-    card_entry(content.into(), message, PATH_CARD_WIDTH)
+    menu_entry(content, message)
 }
 
 pub fn template_visualization(state: &State) -> Element<'static, Msg> {
@@ -368,13 +368,11 @@ pub fn template_visualization(state: &State) -> Element<'static, Msg> {
     // "Add a recovery path" card - only show if editable (WS Admin)
     if is_editable {
         let add_path_content =
-            text::p1_medium("+ Add a recovery path").style(liana_ui::theme::text::secondary);
+            row![text::p1_medium("+ Add a recovery path").style(liana_ui::theme::text::secondary)]
+                .width(Length::Fill)
+                .height(Length::Fill);
 
-        let add_path_card = card_entry(
-            add_path_content.into(),
-            Some(Msg::TemplateNewPathModal),
-            PATH_CARD_WIDTH,
-        );
+        let add_path_card = menu_entry(add_path_content, Some(Msg::TemplateNewPathModal));
 
         // Spacer aligns with r_shape icons above (R_SHAPE_WIDTH) + row spacing (15)
         let add_path_row = Row::new()

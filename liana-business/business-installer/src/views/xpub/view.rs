@@ -1,7 +1,7 @@
 use crate::{
     backend::Backend,
     state::{Msg, State},
-    views::{card_entry, format_last_edit_info, layout_with_scrollable_list},
+    views::{format_last_edit_info, layout_with_scrollable_list, menu_entry, MENU_ENTRY_WIDTH},
 };
 use iced::{
     widget::{row, Space},
@@ -9,9 +9,6 @@ use iced::{
 };
 use liana_connect::ws_business::{self, UserRole};
 use liana_ui::{component::text, icon, theme, widget::*};
-
-// Card width constant (matching keys view)
-const KEY_CARD_WIDTH: f32 = 600.0;
 
 /// Create a status badge for xpub population status
 fn xpub_status_badge(has_xpub: bool) -> Element<'static, Msg> {
@@ -45,7 +42,7 @@ fn xpub_key_card(
     key_id: u8,
     key: &ws_business::Key,
     last_edit_info: Option<String>,
-) -> Element<'static, Msg> {
+) -> Container<'static, Msg> {
     // First row: |<icon>|<alias>|<identity>|<spacer>|<status_badge>
     let identity_str = key.identity.to_string();
     let header_row = Row::new()
@@ -72,13 +69,11 @@ fn xpub_key_card(
         .push(description)
         .push(key_type)
         .push_maybe(edit_info)
+        .width(Length::Fill)
+        .height(Length::Fill)
         .spacing(5);
 
-    card_entry(
-        content.into(),
-        Some(Msg::XpubSelectKey(key_id)),
-        KEY_CARD_WIDTH,
-    )
+    menu_entry(row![content], Some(Msg::XpubSelectKey(key_id)))
 }
 
 pub fn xpub_view(state: &State) -> Element<'_, Msg> {
@@ -179,7 +174,7 @@ pub fn xpub_view(state: &State) -> Element<'_, Msg> {
                 text::h3("Your keys:").style(theme::text::primary),
                 Space::with_width(Length::Fill)
             ]
-            .width(KEY_CARD_WIDTH),
+            .width(MENU_ENTRY_WIDTH),
         );
         // Always show key cards so users can edit/reset xpubs
         for (key_id, key) in owned_keys {
@@ -201,7 +196,7 @@ pub fn xpub_view(state: &State) -> Element<'_, Msg> {
                 text::h3("Other participants' keys:").style(theme::text::primary),
                 Space::with_width(Length::Fill)
             ]
-            .width(KEY_CARD_WIDTH),
+            .width(MENU_ENTRY_WIDTH),
         );
         // Always show key cards so users can edit/reset xpubs
         for (key_id, key) in non_owned_keys {

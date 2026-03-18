@@ -80,7 +80,7 @@ pub fn org_card<'a>(
     count: usize,
     id: Uuid,
     last_edit_info: Option<String>,
-) -> Element<'a, Msg> {
+) -> Container<'a, Msg> {
     let wallets = match count {
         0 => "".to_string(),
         1 => "(1 wallet)".to_string(),
@@ -103,12 +103,18 @@ pub fn org_card<'a>(
 
     let message = Some(Msg::OrgSelected(id));
 
-    let content = row![content, Space::with_width(Length::Fill)];
-    menu_entry(content.into(), message)
+    let content = row![content, Space::with_width(Length::Fill)]
+        .width(Length::Fill)
+        .width(Length::Fill);
+    menu_entry(content, message)
 }
 
-pub fn no_org_card() -> Element<'static, Msg> {
-    let content = text::h5_regular("Contact WizardSardine to create an account.").into();
+pub fn no_org_card() -> Container<'static, Msg> {
+    let content = row![text::h5_regular(
+        "Contact WizardSardine to create an account."
+    )]
+    .width(Length::Fill)
+    .height(Length::Fill);
     menu_entry(content, None)
 }
 
