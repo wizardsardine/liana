@@ -25,16 +25,46 @@ pub fn install_stats_section<'a>(
     loading: bool,
     error: Option<&'a str>,
 ) -> Element<'a, Message> {
-    let mut col = Column::new()
-        .spacing(20)
+    let refresh_msg = Message::Settings(SettingsMessage::InstallStats(
+        InstallStatsViewMessage::Refresh,
+    ));
+
+    let header_row = Row::new()
+        .align_y(Alignment::Center)
         .push(super::header(
             "Download Stats",
             SettingsMessage::InstallStatsSection,
         ))
+        .push(Space::new().width(Length::Fill))
+        .push(
+            Button::new(text("Refresh").size(13).bold())
+                .padding([6, 16])
+                .style(theme::button::transparent_border)
+                .on_press_maybe(if loading {
+                    None
+                } else {
+                    Some(refresh_msg.clone())
+                }),
+        );
+
+    let mut col = Column::new()
+        .spacing(20)
+        .push(header_row)
         .width(Length::Fill);
 
     if let Some(err) = error {
-        col = col.push(card::warning(err.to_string()).width(Length::Fill));
+        col = col.push(
+            Row::new()
+                .spacing(10)
+                .align_y(Alignment::Center)
+                .push(card::warning(err.to_string()).width(Length::Fill))
+                .push(
+                    Button::new(text("Retry").size(13).bold())
+                        .padding([6, 16])
+                        .style(theme::button::transparent_border)
+                        .on_press(refresh_msg),
+                ),
+        );
     }
 
     col = col.push(downloads_card(download_stats, today_count, loading));
@@ -60,11 +90,12 @@ fn downloads_card<'a>(
 
     let inner = if let Some(s) = stats {
         let total = s.total;
-        let pct = if DOWNLOAD_GOAL > 0 {
-            (total as f64 / DOWNLOAD_GOAL as f64).clamp(0.0, 1.0) as f32
+        let raw_pct = if DOWNLOAD_GOAL > 0 {
+            total as f64 / DOWNLOAD_GOAL as f64
         } else {
             0.0
         };
+        let bar_pct = (raw_pct as f32).clamp(0.0, 1.0);
         inner
             .push(text(format_count(total)).size(38).bold())
             .push(
@@ -73,10 +104,10 @@ fn downloads_card<'a>(
                     .color(color::GREY_2),
             )
             .push(Space::new().height(Length::Fixed(4.0)))
-            .push(ProgressBar::new(0.0..=1.0, pct))
+            .push(ProgressBar::new(0.0..=1.0, bar_pct))
             .push(
                 Row::new().push(Space::new().width(Length::Fill)).push(
-                    text(format!("{:.2}% of goal", pct * 100.0))
+                    text(format!("{:.2}% of goal", raw_pct * 100.0))
                         .size(12)
                         .color(color::GREY_2),
                 ),

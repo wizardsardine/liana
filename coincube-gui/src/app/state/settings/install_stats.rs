@@ -145,13 +145,13 @@ impl State for InstallStatsState {
                 }
             }
             Message::InstallStats(InstallStatsMessage::TimeseriesLoaded(period, res)) => {
+                // Ignore stale responses before mutating any loading state
+                if period != self.period {
+                    return Task::none();
+                }
                 self.pending_responses = self.pending_responses.saturating_sub(1);
                 if self.pending_responses == 0 {
                     self.loading = false;
-                }
-                // Ignore stale responses from a previously-selected period
-                if period != self.period {
-                    return Task::none();
                 }
                 match res {
                     Ok(points) => self.timeseries = Some(points),
