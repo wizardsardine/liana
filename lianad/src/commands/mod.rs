@@ -1006,7 +1006,20 @@ impl DaemonControl {
         for index in 0..spend_psbt.inputs.len() {
             match spend_psbt.finalize_inp_mut(&self.secp, index) {
                 Ok(_) => log::debug!("Finalizing input at: {}", index),
-                Err(e) => log::error!("Not finalizing input at: {} | {}", index, e),
+                Err(e) => {
+                    // If the input is already finalized (e.g. a payjoin sender input that
+                    // arrived with final_script_witness already set), ignore the error.
+                    // Otherwise, the transaction can't be broadcast — return an error.
+                    let input = &spend_psbt.inputs[index];
+                    if input.final_script_witness.is_none() && input.final_script_sig.is_none() {
+                        return Err(CommandError::SpendFinalization(e.to_string()));
+                    }
+                    log::debug!(
+                        "Input at index {} already finalized, skipping: {}",
+                        index,
+                        e
+                    );
+                }
             }
         }
 
