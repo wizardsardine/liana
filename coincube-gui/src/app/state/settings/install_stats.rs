@@ -19,8 +19,10 @@ pub struct InstallStatsState {
     pub timeseries: Option<Vec<TimeseriesPoint>>,
     pub period: StatsPeriod,
     pub loading: bool,
-    /// Tracks how many fetch_all responses are still pending.
+    /// Tracks how many fetch responses are still pending for the current generation.
     pending_responses: u8,
+    /// Monotonically increasing counter; responses from older generations are ignored.
+    fetch_gen: u64,
     pub error: Option<String>,
 }
 
@@ -34,6 +36,7 @@ impl Default for InstallStatsState {
             period: StatsPeriod::Week,
             loading: false,
             pending_responses: 0,
+            fetch_gen: 0,
             error: None,
         }
     }
@@ -44,6 +47,7 @@ impl InstallStatsState {
         let client = self.client.clone();
         let client2 = self.client.clone();
         let client3 = self.client.clone();
+        let gen = self.fetch_gen;
         let period = self.period;
 
         Task::batch(vec![
@@ -54,7 +58,9 @@ impl InstallStatsState {
                         .await
                         .map_err(|e| e.to_string())
                 },
-                |res| Message::InstallStats(InstallStatsMessage::DownloadStatsLoaded(res)),
+                move |res| {
+                    Message::InstallStats(InstallStatsMessage::DownloadStatsLoaded(gen, res))
+                },
             ),
             Task::perform(
                 async move {
@@ -64,7 +70,7 @@ impl InstallStatsState {
                         .map(|s| s.count)
                         .map_err(|e| e.to_string())
                 },
-                |res| Message::InstallStats(InstallStatsMessage::TodayStatsLoaded(res)),
+                move |res| Message::InstallStats(InstallStatsMessage::TodayStatsLoaded(gen, res)),
             ),
             Task::perform(
                 async move {
@@ -74,9 +80,7 @@ impl InstallStatsState {
                         .map(|r| r.points)
                         .map_err(|e| e.to_string())
                 },
-                move |res| {
-                    Message::InstallStats(InstallStatsMessage::TimeseriesLoaded(period, res))
-                },
+                move |res| Message::InstallStats(InstallStatsMessage::TimeseriesLoaded(gen, res)),
             ),
         ])
     }
@@ -84,6 +88,7 @@ impl InstallStatsState {
     fn fetch_timeseries(&self) -> Task<Message> {
         let client = self.client.clone();
         let period = self.period;
+        let gen = self.fetch_gen;
         Task::perform(
             async move {
                 client
@@ -92,7 +97,7 @@ impl InstallStatsState {
                     .map(|r| r.points)
                     .map_err(|e| e.to_string())
             },
-            move |res| Message::InstallStats(InstallStatsMessage::TimeseriesLoaded(period, res)),
+            move |res| Message::InstallStats(InstallStatsMessage::TimeseriesLoaded(gen, res)),
         )
     }
 }
@@ -124,7 +129,10 @@ impl State for InstallStatsState {
         message: Message,
     ) -> Task<Message> {
         match message {
-            Message::InstallStats(InstallStatsMessage::DownloadStatsLoaded(res)) => {
+            Message::InstallStats(InstallStatsMessage::DownloadStatsLoaded(gen, res)) => {
+                if gen != self.fetch_gen {
+                    return Task::none();
+                }
                 self.pending_responses = self.pending_responses.saturating_sub(1);
                 if self.pending_responses == 0 {
                     self.loading = false;
@@ -134,7 +142,10 @@ impl State for InstallStatsState {
                     Err(e) => self.error = Some(e),
                 }
             }
-            Message::InstallStats(InstallStatsMessage::TodayStatsLoaded(res)) => {
+            Message::InstallStats(InstallStatsMessage::TodayStatsLoaded(gen, res)) => {
+                if gen != self.fetch_gen {
+                    return Task::none();
+                }
                 self.pending_responses = self.pending_responses.saturating_sub(1);
                 if self.pending_responses == 0 {
                     self.loading = false;
@@ -144,9 +155,8 @@ impl State for InstallStatsState {
                     Err(e) => self.error = Some(e),
                 }
             }
-            Message::InstallStats(InstallStatsMessage::TimeseriesLoaded(period, res)) => {
-                // Ignore stale responses before mutating any loading state
-                if period != self.period {
+            Message::InstallStats(InstallStatsMessage::TimeseriesLoaded(gen, res)) => {
+                if gen != self.fetch_gen {
                     return Task::none();
                 }
                 self.pending_responses = self.pending_responses.saturating_sub(1);
@@ -166,6 +176,7 @@ impl State for InstallStatsState {
                     self.timeseries = None;
                     self.error = None;
                     self.loading = true;
+                    self.fetch_gen += 1;
                     self.pending_responses = 1;
                     return self.fetch_timeseries();
                 }
@@ -178,6 +189,7 @@ impl State for InstallStatsState {
                 self.timeseries = None;
                 self.error = None;
                 self.loading = true;
+                self.fetch_gen += 1;
                 self.pending_responses = 3;
                 return self.fetch_all();
             }
@@ -193,6 +205,7 @@ impl State for InstallStatsState {
     ) -> Task<Message> {
         self.error = None;
         self.loading = true;
+        self.fetch_gen += 1;
         self.pending_responses = 3;
         self.fetch_all()
     }
