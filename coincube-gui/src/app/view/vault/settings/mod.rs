@@ -1392,8 +1392,8 @@ pub fn connect_login_panel<'a>(
         }
     }
 
-    if let Some(ref e) = error {
-        col = col.push(text(e.as_str()).style(theme::text::warning));
+    if let Some(e) = error {
+        col = col.push(text(e).style(theme::text::warning));
     }
 
     card::simple(Container::new(col).padding(15).width(Length::Fill)).into()
