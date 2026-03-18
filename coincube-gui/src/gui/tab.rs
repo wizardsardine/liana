@@ -1003,6 +1003,7 @@ pub fn create_app_with_remote_backend(
             node_bitcoind_last_log: None,
             vault_expanded: false,
             liquid_expanded: false,
+            usdt_expanded: false,
             has_vault: true,
         },
         Arc::new(

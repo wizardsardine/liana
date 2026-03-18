@@ -16,11 +16,34 @@ use iced::{
     Alignment, Length,
 };
 
+use crate::app::breez::assets::{format_usdt_display, USDT_PRECISION};
 use crate::app::menu::Menu;
 use crate::app::view::message::{FeeratePriority, Message};
 use crate::app::view::FiatAmountConverter;
 use crate::export::ImportExportMessage;
 use crate::utils::{format_time_ago, format_timestamp};
+
+/// Returns `Some(formatted_usdt_string)` when the payment is a USDt asset payment.
+fn usdt_amount_str(payment: &Payment, usdt_id: &str) -> Option<String> {
+    if let PaymentDetails::Liquid {
+        asset_id,
+        asset_info,
+        ..
+    } = &payment.details
+    {
+        if !usdt_id.is_empty() && asset_id == usdt_id {
+            let display = if let Some(info) = asset_info {
+                format_usdt_display(
+                    (info.amount * 10_f64.powi(USDT_PRECISION as i32)).round() as u64
+                )
+            } else {
+                format_usdt_display(payment.amount_sat)
+            };
+            return Some(format!("{} USDt", display));
+        }
+    }
+    None
+}
 
 pub fn liquid_transactions_view<'a>(
     payments: &'a [Payment],
@@ -29,6 +52,7 @@ pub fn liquid_transactions_view<'a>(
     fiat_converter: Option<FiatAmountConverter>,
     _loading: bool,
     bitcoin_unit: coincube_ui::component::amount::BitcoinDisplayUnit,
+    usdt_id: &'a str,
 ) -> Element<'a, Message> {
     let mut content = Column::new().spacing(20).width(Length::Fill);
 
@@ -85,7 +109,13 @@ pub fn liquid_transactions_view<'a>(
                 .push(payments.iter().enumerate().fold(
                     Column::new().spacing(10),
                     |col, (i, payment)| {
-                        col.push(transaction_row(i, payment, fiat_converter, bitcoin_unit))
+                        col.push(transaction_row(
+                            i,
+                            payment,
+                            fiat_converter,
+                            bitcoin_unit,
+                            usdt_id,
+                        ))
                     },
                 )),
         );
@@ -114,34 +144,37 @@ fn transaction_row<'a>(
     payment: &'a Payment,
     fiat_converter: Option<FiatAmountConverter>,
     bitcoin_unit: coincube_ui::component::amount::BitcoinDisplayUnit,
+    usdt_id: &str,
 ) -> Element<'a, Message> {
     let is_receive = matches!(payment.payment_type, PaymentType::Receive);
+    let usdt_str = usdt_amount_str(payment, usdt_id);
 
-    // Extract description from payment details
-    let description = match &payment.details {
-        PaymentDetails::Lightning {
-            payer_note,
-            description,
-            ..
-        } => payer_note
-            .as_ref()
-            .filter(|s| !s.is_empty())
-            .unwrap_or(description),
-        PaymentDetails::Liquid {
-            payer_note,
-            description,
-            ..
-        } => payer_note
-            .as_ref()
-            .filter(|s| !s.is_empty())
-            .unwrap_or(description),
-        PaymentDetails::Bitcoin { description, .. } => description,
+    // Extract description — label USDt payments explicitly
+    let is_usdt = usdt_str.is_some();
+    let description: &str = if is_usdt {
+        "USDt Transfer"
+    } else {
+        match &payment.details {
+            PaymentDetails::Lightning {
+                payer_note,
+                description,
+                ..
+            } => payer_note
+                .as_ref()
+                .filter(|s| !s.is_empty())
+                .unwrap_or(description),
+            PaymentDetails::Liquid {
+                payer_note,
+                description,
+                ..
+            } => payer_note
+                .as_ref()
+                .filter(|s| !s.is_empty())
+                .unwrap_or(description),
+            PaymentDetails::Bitcoin { description, .. } => description,
+        }
     };
 
-    let mut btc_amount = Amount::from_sat(payment.amount_sat);
-    if !is_receive {
-        btc_amount += Amount::from_sat(payment.fees_sat);
-    }
     let time_ago = format_time_ago(payment.timestamp.into());
 
     let direction = if is_receive {
@@ -154,6 +187,20 @@ fn transaction_row<'a>(
         PaymentDetails::Lightning { .. } => TransactionType::Lightning,
         PaymentDetails::Liquid { .. } | PaymentDetails::Bitcoin { .. } => TransactionType::Bitcoin,
     };
+
+    if let Some(ref usdt_display) = usdt_str {
+        let item = TransactionListItem::new(direction, &Amount::ZERO, bitcoin_unit)
+            .with_label(description.to_string())
+            .with_time_ago(time_ago)
+            .with_type(tx_type)
+            .with_amount_override(usdt_display.clone());
+        return item.view(Message::Select(i)).into();
+    }
+
+    let mut btc_amount = Amount::from_sat(payment.amount_sat);
+    if !is_receive {
+        btc_amount += Amount::from_sat(payment.fees_sat);
+    }
 
     let mut item = TransactionListItem::new(direction, &btc_amount, bitcoin_unit)
         .with_label(description.to_string())
@@ -201,8 +248,10 @@ pub fn transaction_detail_view<'a>(
     payment: &'a Payment,
     fiat_converter: Option<FiatAmountConverter>,
     bitcoin_unit: coincube_ui::component::amount::BitcoinDisplayUnit,
+    usdt_id: &str,
 ) -> Element<'a, Message> {
     let is_receive = matches!(payment.payment_type, PaymentType::Receive);
+    let usdt_str = usdt_amount_str(payment, usdt_id);
     let btc_amount = Amount::from_sat(payment.amount_sat);
     let fees_sat = Amount::from_sat(payment.fees_sat);
     let mut total_amount = btc_amount;
@@ -215,26 +264,164 @@ pub fn transaction_detail_view<'a>(
     let date_text =
         format_timestamp(payment.timestamp as u64).unwrap_or_else(|| "Unknown".to_string());
 
-    // Extract description from payment details
-    let description = match &payment.details {
-        PaymentDetails::Lightning {
-            payer_note,
-            description,
-            ..
-        } => payer_note
-            .as_ref()
-            .filter(|s| !s.is_empty())
-            .unwrap_or(description),
-        PaymentDetails::Liquid {
-            payer_note,
-            description,
-            ..
-        } => payer_note
-            .as_ref()
-            .filter(|s| !s.is_empty())
-            .unwrap_or(description),
-        PaymentDetails::Bitcoin { description, .. } => description,
+    // Extract description — label USDt payments explicitly
+    let description: &str = if usdt_str.is_some() {
+        "USDt Transfer"
+    } else {
+        match &payment.details {
+            PaymentDetails::Lightning {
+                payer_note,
+                description,
+                ..
+            } => payer_note
+                .as_ref()
+                .filter(|s| !s.is_empty())
+                .unwrap_or(description),
+            PaymentDetails::Liquid {
+                payer_note,
+                description,
+                ..
+            } => payer_note
+                .as_ref()
+                .filter(|s| !s.is_empty())
+                .unwrap_or(description),
+            PaymentDetails::Bitcoin { description, .. } => description,
+        }
     };
+
+    let title = if is_receive {
+        "Incoming payment"
+    } else {
+        "Outgoing payment"
+    };
+
+    if let Some(ref usdt_display) = usdt_str {
+        // USDt detail view: show USDt amount + L-BTC fees
+        let usdt_num = match &payment.details {
+            PaymentDetails::Liquid { asset_info, .. } => {
+                if let Some(info) = asset_info {
+                    format_usdt_display(
+                        (info.amount * 10_f64.powi(USDT_PRECISION as i32)).round() as u64
+                    )
+                } else {
+                    format_usdt_display(payment.amount_sat)
+                }
+            }
+            _ => format_usdt_display(payment.amount_sat),
+        };
+        let amount_row = if is_receive {
+            Row::new()
+                .spacing(10)
+                .align_y(Alignment::Center)
+                .push(text(usdt_num).size(H1_SIZE).bold())
+                .push(text("USDt").size(H1_SIZE).color(coincube_ui::color::GREY_3))
+        } else {
+            Row::new()
+                .spacing(5)
+                .align_y(Alignment::Center)
+                .push(text("-").size(H1_SIZE))
+                .push(
+                    Row::new()
+                        .spacing(10)
+                        .align_y(Alignment::Center)
+                        .push(text(usdt_num).size(H1_SIZE).bold())
+                        .push(text("USDt").size(H1_SIZE).color(coincube_ui::color::GREY_3)),
+                )
+        };
+        return Column::new()
+            .spacing(20)
+            .push(Container::new(h3(title)).width(Length::Fill))
+            .push(Column::new().push(p1_regular(description)).spacing(10))
+            .push(
+                Column::new()
+                    .spacing(20)
+                    .push(Column::new().push(Container::new(amount_row))),
+            )
+            .push(card::simple(
+                Column::new()
+                    .push(
+                        Row::new()
+                            .push(
+                                Column::new()
+                                    .width(Length::FillPortion(1))
+                                    .push(text("Date").bold()),
+                            )
+                            .push(
+                                Column::new()
+                                    .width(Length::FillPortion(2))
+                                    .push(text(date_text)),
+                            )
+                            .spacing(20),
+                    )
+                    .push(
+                        Row::new()
+                            .push(
+                                Column::new()
+                                    .width(Length::FillPortion(1))
+                                    .push(text("Status").bold()),
+                            )
+                            .push(Column::new().width(Length::FillPortion(2)).push(
+                                match payment.status {
+                                    PaymentState::Complete => {
+                                        text("Complete").style(theme::text::success)
+                                    }
+                                    PaymentState::Pending => {
+                                        text("Pending").style(theme::text::secondary)
+                                    }
+                                    PaymentState::Created => {
+                                        text("Created").style(theme::text::secondary)
+                                    }
+                                    PaymentState::Failed => {
+                                        text("Failed").style(theme::text::destructive)
+                                    }
+                                    PaymentState::TimedOut => {
+                                        text("Timed Out").style(theme::text::destructive)
+                                    }
+                                    PaymentState::Refundable => {
+                                        text("Refundable").style(theme::text::destructive)
+                                    }
+                                    PaymentState::RefundPending => {
+                                        text("Refund Pending").style(theme::text::secondary)
+                                    }
+                                    PaymentState::WaitingFeeAcceptance => {
+                                        text("Waiting Fee Acceptance").style(theme::text::secondary)
+                                    }
+                                },
+                            ))
+                            .spacing(20),
+                    )
+                    .push(
+                        Row::new()
+                            .push(
+                                Column::new()
+                                    .width(Length::FillPortion(1))
+                                    .push(text("Asset Amount").bold()),
+                            )
+                            .push(
+                                Column::new()
+                                    .width(Length::FillPortion(2))
+                                    .push(text(usdt_display.clone())),
+                            )
+                            .spacing(20),
+                    )
+                    .push(
+                        Row::new()
+                            .push(
+                                Column::new()
+                                    .width(Length::FillPortion(1))
+                                    .push(text("Fees (L-BTC)").bold()),
+                            )
+                            .push(
+                                Column::new().width(Length::FillPortion(2)).push(text(
+                                    fees_sat.to_formatted_string_with_unit(bitcoin_unit),
+                                )),
+                            )
+                            .spacing(20),
+                    )
+                    .spacing(15),
+            ))
+            .into();
+    }
 
     Column::new()
         .spacing(20)

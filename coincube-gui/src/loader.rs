@@ -567,6 +567,7 @@ pub async fn load_application(
         node_bitcoind_last_log: None,
         vault_expanded: false,
         liquid_expanded: false,
+        usdt_expanded: false,
         has_vault: true,
     };
 

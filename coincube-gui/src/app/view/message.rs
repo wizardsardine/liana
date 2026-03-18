@@ -96,6 +96,8 @@ pub enum Message {
     PreselectPayment(Payment),
     ShowError(String),
     DismissToast(usize),
+    UsdtOverview(UsdtOverviewMessage),
+    ToggleUsdt,
 }
 
 impl Close for Message {
@@ -294,8 +296,8 @@ pub enum FiatMessage {
 
 #[derive(Debug, Clone)]
 pub enum LiquidOverviewMessage {
-    Send,
-    Receive,
+    SendLbtc,
+    ReceiveLbtc,
     History,
     SelectTransaction(usize),
     DataLoaded {
@@ -307,7 +309,22 @@ pub enum LiquidOverviewMessage {
 }
 
 #[derive(Debug, Clone)]
+pub enum UsdtOverviewMessage {
+    SendUsdt,
+    ReceiveUsdt,
+    History,
+    SelectTransaction(usize),
+    DataLoaded {
+        usdt_balance: u64,
+        recent_payment: Vec<Payment>,
+    },
+    Error(String),
+    RefreshRequested,
+}
+
+#[derive(Debug, Clone)]
 pub enum LiquidSendMessage {
+    PresetAsset(crate::app::state::liquid::send::SendAsset),
     InputEdited(String),
     InputValidated(Option<InputType>),
     Send,
@@ -315,6 +332,7 @@ pub enum LiquidSendMessage {
     SelectTransaction(usize),
     DataLoaded {
         balance: Amount,
+        usdt_balance: u64,
         recent_payment: Vec<Payment>,
     },
     Error(String),
@@ -349,6 +367,8 @@ pub enum SendPopupMessage {
     FiatClose,
     Done,
     Close,
+    ToggleSendAsset,
+    UsdtAmountEdited(String),
 }
 
 #[derive(Debug, Clone)]
@@ -359,6 +379,7 @@ pub enum LiquidReceiveMessage {
     GenerateAddress,
     AddressGenerated(ReceiveMethod, Result<String, String>),
     AmountInput(String),
+    UsdtAmountInput(String),
     DescriptionInput(String),
     Error(String),
     ClearError,
@@ -371,6 +392,7 @@ pub enum ReceiveMethod {
     Lightning,
     Liquid,
     OnChain,
+    Usdt,
 }
 
 #[derive(Debug, Clone)]
@@ -412,6 +434,8 @@ pub enum HomeMessage {
     PreviousStep,
     Error(String),
     LiquidBalanceUpdated(Amount),
+    UsdtBalanceUpdated(u64),
+    UsdtBalanceFetchFailed,
     OnChainLimitsFetched {
         send: (u64, u64),    // (min_sat, max_sat)
         receive: (u64, u64), // (min_sat, max_sat)
@@ -439,4 +463,10 @@ pub enum HomeMessage {
         swap_id: String,
     },
     PendingTransferAnimationTick,
+    PendingAmountsUpdated {
+        liquid_send_sats: u64,
+        usdt_send_sats: u64,
+        liquid_receive_sats: u64,
+        usdt_receive_sats: u64,
+    },
 }

@@ -2,6 +2,7 @@ pub mod buysell;
 mod global_home;
 pub mod liquid;
 pub mod settings;
+pub mod usdt;
 pub mod vault;
 
 use std::sync::Arc;
@@ -25,6 +26,10 @@ pub use liquid::receive::LiquidReceive;
 pub use liquid::send::LiquidSend;
 pub use liquid::settings::{BackupWalletState, LiquidSettings, LiquidSettingsFlowState};
 pub use liquid::transactions::LiquidTransactions;
+pub use usdt::overview::UsdtOverview;
+pub use usdt::receive::UsdtReceive;
+pub use usdt::send::UsdtSend;
+pub use usdt::transactions::UsdtTransactions;
 pub use vault::coins::CoinsPanel;
 pub use vault::label::LabelsEdited;
 pub use vault::overview::VaultOverview;

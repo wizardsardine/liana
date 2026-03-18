@@ -69,6 +69,8 @@ impl Labelled for ReceiveAddressInfo {
 pub struct GlobalHome {
     breez_client: Arc<BreezClient>,
     liquid_balance: Amount,
+    usdt_balance: u64,
+    usdt_balance_error: bool,
     wallet: Option<Arc<Wallet>>,
     balance_masked: bool,
     transfer_direction: Option<TransferDirection>,
@@ -89,6 +91,10 @@ pub struct GlobalHome {
     pending_vault_incoming: Option<PendingIncomingTransfer>,
     pending_vault_incoming_swap_id: Option<String>,
     pending_transfer_animation_phase: f32,
+    pending_liquid_send_sats: u64,
+    pending_usdt_send_sats: u64,
+    pending_liquid_receive_sats: u64,
+    pending_usdt_receive_sats: u64,
     datadir_path: CoincubeDirectory,
     network: coincube_core::miniscript::bitcoin::Network,
     cube_id: String,
@@ -105,6 +111,8 @@ impl GlobalHome {
         Self {
             wallet: Some(wallet),
             liquid_balance: Amount::ZERO,
+            usdt_balance: 0,
+            usdt_balance_error: false,
             breez_client,
             balance_masked: false,
             transfer_direction: None,
@@ -125,6 +133,10 @@ impl GlobalHome {
             pending_vault_incoming: None,
             pending_vault_incoming_swap_id: None,
             pending_transfer_animation_phase: 0.0,
+            pending_liquid_send_sats: 0,
+            pending_usdt_send_sats: 0,
+            pending_liquid_receive_sats: 0,
+            pending_usdt_receive_sats: 0,
             datadir_path,
             network,
             cube_id,
@@ -140,6 +152,8 @@ impl GlobalHome {
         Self {
             wallet: None,
             liquid_balance: Amount::from_sat(0),
+            usdt_balance: 0,
+            usdt_balance_error: false,
             breez_client,
             balance_masked: false,
             transfer_direction: None,
@@ -160,6 +174,10 @@ impl GlobalHome {
             pending_vault_incoming: None,
             pending_vault_incoming_swap_id: None,
             pending_transfer_animation_phase: 0.0,
+            pending_liquid_send_sats: 0,
+            pending_usdt_send_sats: 0,
+            pending_liquid_receive_sats: 0,
+            pending_usdt_receive_sats: 0,
             datadir_path,
             network,
             cube_id,
@@ -175,7 +193,28 @@ impl State for GlobalHome {
             .filter(|coin| coin.spend_info.is_none())
             .fold(Amount::from_sat(0), |acc, coin| acc + coin.amount);
 
+        let vault_pending_receive_sats = cache
+            .coins()
+            .iter()
+            .filter(|coin| coin.spend_info.is_none() && !crate::daemon::model::coin_is_owned(coin))
+            .fold(Amount::ZERO, |acc, coin| acc + coin.amount)
+            .to_sat();
+
+        let vault_pending_send_sats = cache
+            .coins()
+            .iter()
+            .filter(|coin| {
+                coin.spend_info
+                    .as_ref()
+                    .map(|si| si.height.is_none())
+                    .unwrap_or(false)
+            })
+            .fold(Amount::ZERO, |acc, coin| acc + coin.amount)
+            .to_sat();
+
         let liquid_balance = self.liquid_balance;
+        let usdt_balance = self.usdt_balance;
+        let usdt_balance_error = self.usdt_balance_error;
 
         // Fiat price is cube-level, not wallet-level, so get it directly from cache
         let fiat_converter: Option<view::FiatAmountConverter> =
@@ -186,6 +225,8 @@ impl State for GlobalHome {
             cache,
             view::global_home::global_home_view(GlobalViewConfig {
                 liquid_balance,
+                usdt_balance,
+                usdt_balance_error,
                 vault_balance,
                 fiat_converter,
                 balance_masked: self.balance_masked,
@@ -208,6 +249,12 @@ impl State for GlobalHome {
                 is_tx_signed: self.transfer_signed,
                 prepare_onchain_send_response: self.prepare_onchain_send_response.as_ref(),
                 spend_tx_fees: self.spend_tx_fees,
+                pending_liquid_send_sats: self.pending_liquid_send_sats,
+                pending_usdt_send_sats: self.pending_usdt_send_sats,
+                pending_liquid_receive_sats: self.pending_liquid_receive_sats,
+                pending_usdt_receive_sats: self.pending_usdt_receive_sats,
+                vault_pending_send_sats,
+                vault_pending_receive_sats,
                 pending_vault_incoming: self.pending_vault_incoming,
                 pending_animation_phase: self.pending_transfer_animation_phase,
             }),
@@ -641,8 +688,29 @@ impl State for GlobalHome {
                         self.is_sending = false;
                         Task::done(Message::View(view::Message::ShowError(err)))
                     }
+                    HomeMessage::PendingAmountsUpdated {
+                        liquid_send_sats,
+                        usdt_send_sats,
+                        liquid_receive_sats,
+                        usdt_receive_sats,
+                    } => {
+                        self.pending_liquid_send_sats = liquid_send_sats;
+                        self.pending_usdt_send_sats = usdt_send_sats;
+                        self.pending_liquid_receive_sats = liquid_receive_sats;
+                        self.pending_usdt_receive_sats = usdt_receive_sats;
+                        Task::none()
+                    }
                     HomeMessage::LiquidBalanceUpdated(liquid_balance) => {
                         self.liquid_balance = liquid_balance;
+                        Task::none()
+                    }
+                    HomeMessage::UsdtBalanceUpdated(usdt_balance) => {
+                        self.usdt_balance = usdt_balance;
+                        self.usdt_balance_error = false;
+                        Task::none()
+                    }
+                    HomeMessage::UsdtBalanceFetchFailed => {
+                        self.usdt_balance_error = true;
                         Task::none()
                     }
                     HomeMessage::OnChainLimitsFetched { send, receive } => {
@@ -979,6 +1047,8 @@ impl State for GlobalHome {
         self.wallet = wallet;
         Task::batch(vec![
             self.load_liquid_balance(),
+            self.load_usdt_balance(),
+            self.load_pending_sends(),
             self.restore_pending_liquid_to_vault_transfer(),
         ])
     }
@@ -1014,6 +1084,120 @@ impl GlobalHome {
                 )))
             }
         })
+    }
+
+    fn load_pending_sends(&self) -> Task<Message> {
+        use crate::app::breez::assets::{asset_kind_for_id, AssetKind, USDT_PRECISION};
+        let breez_client = self.breez_client.clone();
+        let network = self.network;
+        Task::perform(
+            async move {
+                match breez_client.list_payments(Some(20)).await {
+                    Ok(payments) => {
+                        let mut liquid_send_sats: u64 = 0;
+                        let mut usdt_send_sats: u64 = 0;
+                        let mut liquid_receive_sats: u64 = 0;
+                        let mut usdt_receive_sats: u64 = 0;
+                        for payment in &payments {
+                            if !matches!(payment.status, PaymentState::Pending) {
+                                continue;
+                            }
+                            let is_send = matches!(
+                                payment.payment_type,
+                                breez_sdk_liquid::prelude::PaymentType::Send
+                            );
+                            match &payment.details {
+                                PaymentDetails::Liquid {
+                                    asset_id,
+                                    asset_info,
+                                    ..
+                                } => {
+                                    if asset_kind_for_id(asset_id, network) == Some(AssetKind::Usdt)
+                                    {
+                                        let minor = asset_info
+                                            .as_ref()
+                                            .map(|ai| {
+                                                (ai.amount * 10_f64.powi(USDT_PRECISION as i32))
+                                                    .round()
+                                                    as u64
+                                            })
+                                            .unwrap_or(payment.amount_sat);
+                                        if is_send {
+                                            usdt_send_sats = usdt_send_sats.saturating_add(minor);
+                                        } else {
+                                            usdt_receive_sats =
+                                                usdt_receive_sats.saturating_add(minor);
+                                        }
+                                    } else if is_send {
+                                        liquid_send_sats = liquid_send_sats
+                                            .saturating_add(payment.amount_sat + payment.fees_sat);
+                                    } else {
+                                        liquid_receive_sats =
+                                            liquid_receive_sats.saturating_add(payment.amount_sat);
+                                    }
+                                }
+                                _ => {
+                                    if is_send {
+                                        liquid_send_sats = liquid_send_sats
+                                            .saturating_add(payment.amount_sat + payment.fees_sat);
+                                    } else {
+                                        liquid_receive_sats =
+                                            liquid_receive_sats.saturating_add(payment.amount_sat);
+                                    }
+                                }
+                            }
+                        }
+                        (
+                            liquid_send_sats,
+                            usdt_send_sats,
+                            liquid_receive_sats,
+                            usdt_receive_sats,
+                        )
+                    }
+                    Err(_) => (0, 0, 0, 0),
+                }
+            },
+            |(liquid_send_sats, usdt_send_sats, liquid_receive_sats, usdt_receive_sats)| {
+                Message::View(view::Message::Home(HomeMessage::PendingAmountsUpdated {
+                    liquid_send_sats,
+                    usdt_send_sats,
+                    liquid_receive_sats,
+                    usdt_receive_sats,
+                }))
+            },
+        )
+    }
+
+    fn load_usdt_balance(&self) -> Task<Message> {
+        use crate::app::breez::assets::{asset_kind_for_id, AssetKind};
+        let breez_client = self.breez_client.clone();
+        let network = self.network;
+        Task::perform(
+            async move {
+                breez_client.info().await.map(|info| {
+                    info.wallet_info
+                        .asset_balances
+                        .iter()
+                        .find_map(|ab| {
+                            if asset_kind_for_id(&ab.asset_id, network) == Some(AssetKind::Usdt) {
+                                Some(ab.balance_sat)
+                            } else {
+                                None
+                            }
+                        })
+                        .unwrap_or(0)
+                })
+            },
+            |result| match result {
+                Ok(usdt_balance) => Message::View(view::Message::Home(
+                    HomeMessage::UsdtBalanceUpdated(usdt_balance),
+                )),
+                Err(e) => {
+                    tracing::error!("USDt balance fetch failed: {:?}", e);
+                    Message::View(view::Message::Home(HomeMessage::UsdtBalanceFetchFailed))
+                }
+            },
+        )
     }
 
     fn persist_pending_liquid_to_vault_transfer(
