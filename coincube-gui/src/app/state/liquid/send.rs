@@ -1068,6 +1068,7 @@ impl State for LiquidSend {
                         if let Some(prepare_response) = self.prepare_response.clone() {
                             let breez_client = self.breez_client.clone();
                             let comment = self.comment.clone();
+                            let use_asset_fees = matches!(self.send_asset, SendAsset::Usdt);
 
                             return Task::perform(
                                 async move {
@@ -1076,7 +1077,7 @@ impl State for LiquidSend {
                                             &breez_sdk_liquid::prelude::SendPaymentRequest {
                                                 prepare_response,
                                                 payer_note: comment,
-                                                use_asset_fees: None,
+                                                use_asset_fees: Some(use_asset_fees),
                                             },
                                         )
                                         .await
