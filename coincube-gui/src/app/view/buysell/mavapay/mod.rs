@@ -179,14 +179,15 @@ impl MavapayState {
                         let breez_client = self.breez_client.clone();
                         let amount =
                             Some(breez_sdk_liquid::bitcoin::Amount::from_sat(self.sat_amount));
+                        let description = format!(
+                            "Coincube-Buysell Mavapay Purchase: {} SATS",
+                            self.sat_amount
+                        );
 
                         let task = iced::Task::perform(
                             async move {
                                 match breez_client
-                                    .receive_invoice(
-                                        amount,
-                                        Some("Coincube-Buysell Mavapay Invoice".into()),
-                                    )
+                                    .receive_invoice(amount, Some(description))
                                     .await
                                 {
                                     Ok(res) => Ok(res.destination),

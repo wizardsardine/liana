@@ -1811,13 +1811,21 @@ pub fn internal_node_setup_panel<'a>(
                 ),
         );
     } else if downloading {
-        let label = format!(
-            "Downloading Bitcoin Core… {:.0}%",
-            download_progress.min(99.9)
+        col = col.push(
+            Column::new()
+                .spacing(10)
+                .push(
+                    text(format!(
+                        "Downloading Bitcoin Core… {:.0}%",
+                        download_progress.min(99.9)
+                    ))
+                    .size(14),
+                )
+                .push(coincube_ui::widget::ProgressBar::new(
+                    0.0..=100.0,
+                    download_progress,
+                )),
         );
-        col = col.push(Column::new().spacing(10).push(text(&label).size(14)).push(
-            coincube_ui::widget::ProgressBar::new(0.0..=100.0, download_progress),
-        ));
     } else if installing {
         col = col.push(
             text("Installing and starting Bitcoin Core…")
