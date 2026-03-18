@@ -135,7 +135,7 @@ impl State {
             Msg::ConflictDismiss => self.on_conflict_dismiss(),
 
             // Logout
-            Msg::Logout => return self.on_logout(),
+            Msg::Disconnect => return self.on_logout(),
 
             // No-op: just triggers a view refresh
             Msg::Update => {}

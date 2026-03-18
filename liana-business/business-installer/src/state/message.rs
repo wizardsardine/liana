@@ -11,7 +11,7 @@ pub enum Msg {
     LoginSendToken,            // Send login token to email
     LoginResendToken,          // Resend login token
     LoginSendAuthCode,         // Submit auth code for verification
-    Logout,                    // Log out current user
+    Disconnect,                    // Log out current user
 
     // Account selection (cached token login)
     AccountSelectConnect(String), // Connect with cached account by email

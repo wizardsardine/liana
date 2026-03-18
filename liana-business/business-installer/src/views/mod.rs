@@ -82,112 +82,35 @@ fn breadcrumb_header<'a>(segments: &[String]) -> Element<'a, Msg> {
     row.into()
 }
 
-pub fn layout<'a>(
-    progress: (usize, usize),
-    email: Option<&'a str>,
-    role_badge: Option<&'static str>, // Show role badge before email (e.g., "Manager" for WS Admin)
-    breadcrumb: &[String],
-    content: impl Into<Element<'a, Msg>>,
-    padding_left: bool,
-    previous_message: Option<Msg>,
-) -> Element<'a, Msg> {
-    // Build the left button
-    // If previous_message is provided, show "Previous" button
-    // Otherwise, if authenticated show "Logout", else show disabled "Previous"
-    let left_button = if let Some(msg) = previous_message {
-        button::transparent(Some(icon::previous_icon()), "Previous").on_press(msg)
-    } else if email.is_some() {
-        button::transparent(Some(icon::previous_icon()), "Logout").on_press(Msg::Logout)
-    } else {
-        button::transparent(Some(icon::previous_icon()), "Previous")
-    };
-
-    // Build the top-right row with optional role badge and email
-    let mut email_row = Row::new()
-        .push(Space::with_width(Length::Fill))
-        .spacing(10)
-        .align_y(Alignment::Center);
-
-    // Add role badge if provided (shown before email)
-    if let Some(role) = role_badge {
-        email_row = email_row.push(
-            Container::new(text::caption(role))
-                .padding([4, 12])
-                .style(theme::pill::simple),
-        );
-    }
-
-    // Add email if provided
-    if let Some(e) = email {
-        email_row = email_row
-            .push(Container::new(text::p1_medium(e).style(theme::text::accent)).padding(20));
-    }
-    let header = Row::new()
-        .align_y(Alignment::Center)
-        .push(Container::new(left_button).center_x(Length::FillPortion(2)))
-        .push(Container::new(breadcrumb_header(breadcrumb)).width(Length::FillPortion(8)))
-        .push_maybe(if progress.1 > 0 {
-            Some(
-                Container::new(text::text(format!("{} | {}", progress.0, progress.1)))
-                    .center_x(Length::FillPortion(2)),
-            )
-        } else {
-            None
-        });
-    let content = Row::new()
-        .push(Space::with_width(Length::FillPortion(2)))
-        .push(
-            Container::new(
-                Column::new()
-                    .push(Space::with_height(Length::Fixed(100.0)))
-                    .push(content),
-            )
-            .width(Length::FillPortion(if padding_left { 8 } else { 10 })),
-        )
-        .push_maybe(if padding_left {
-            Some(Space::with_width(Length::FillPortion(2)))
-        } else {
-            None
-        });
-    Container::new(scrollable(
-        Column::new()
-            .width(Length::Fill)
-            .push(email_row)
-            .push(Space::with_height(EMAIL_HEADER_SPACER + 60))
-            .push(header)
-            .push(content),
-    ))
-    .center_x(Length::Fill)
-    .height(Length::Fill)
-    .width(Length::Fill)
-    .style(theme::container::background)
-    .into()
+enum LayoutContent<'a> {
+    Scrollable(Element<'a, Msg>),
+    ScrollableList {
+        header: Element<'a, Msg>,
+        list: Element<'a, Msg>,
+        footer: Option<Element<'a, Msg>>,
+    },
 }
 
-/// Layout variant with fixed header content and a scrollable list section.
-/// The header_content stays fixed at top, only the list_content scrolls.
-/// An optional footer_content can be placed below the scrollable area.
-#[allow(clippy::too_many_arguments)]
-pub fn layout_with_scrollable_list<'a>(
+fn layout_inner<'a>(
     progress: (usize, usize),
     email: Option<&'a str>,
     role_badge: Option<&'static str>,
     breadcrumb: &[String],
-    header_content: impl Into<Element<'a, Msg>>,
-    list_content: impl Into<Element<'a, Msg>>,
-    footer_content: Option<Element<'a, Msg>>,
+    content: LayoutContent<'a>,
     padding_left: bool,
     previous_message: Option<Msg>,
 ) -> Element<'a, Msg> {
-    // Build the left button (hidden when not logged in and no previous view)
+    let icn = Some(icon::previous_icon());
     let has_left_button = previous_message.is_some() || email.is_some();
-    let left_button = if let Some(msg) = previous_message {
-        button::transparent(Some(icon::previous_icon()), "Previous").on_press(msg)
+    let (txt, msg) = if let Some(msg) = previous_message {
+        ("Previous", Some(msg))
     } else if email.is_some() {
-        button::transparent(Some(icon::previous_icon()), "Logout").on_press(Msg::Logout)
+        ("Disconnect", Some(Msg::Disconnect))
     } else {
-        button::transparent(Some(icon::previous_icon()), "Previous")
+        ("Previous", None)
     };
+
+    let left_button = button::flat(icn, txt).on_press_maybe(msg);
 
     // Build the top-right row with optional role badge and email
     let mut email_row = Row::new()
@@ -227,71 +150,138 @@ pub fn layout_with_scrollable_list<'a>(
             None
         });
 
-    // Fixed header content area (title, search, filters)
-    let header_area = Row::new()
-        .push(Space::with_width(Length::FillPortion(2)))
-        .push(
-            Container::new(header_content).width(Length::FillPortion(if padding_left {
-                8
-            } else {
-                10
-            })),
-        )
-        .push_maybe(if padding_left {
+    let fill_portion = if padding_left { 8 } else { 10 };
+    let right_spacer = || -> Option<Space> {
+        if padding_left {
             Some(Space::with_width(Length::FillPortion(2)))
         } else {
             None
-        });
+        }
+    };
 
-    // Scrollable list area
-    let list_area = Row::new()
-        .push(Space::with_width(Length::FillPortion(2)))
-        .push(
-            Container::new(scrollable(list_content).height(Length::Fill))
-                .width(Length::FillPortion(if padding_left { 8 } else { 10 }))
-                .align_x(Alignment::Center),
-        )
-        .push_maybe(if padding_left {
-            Some(Space::with_width(Length::FillPortion(2)))
-        } else {
-            None
-        })
-        .height(Length::Fill);
+    match content {
+        LayoutContent::Scrollable(inner) => {
+            let content_row = Row::new()
+                .push(Space::with_width(Length::FillPortion(2)))
+                .push(
+                    Container::new(
+                        Column::new()
+                            .push(Space::with_height(Length::Fixed(100.0)))
+                            .push(inner),
+                    )
+                    .width(Length::FillPortion(fill_portion)),
+                )
+                .push_maybe(right_spacer());
 
-    // Optional footer area (fixed at bottom, outside scrollable)
-    let footer_area: Option<Row<'a, Msg>> = footer_content.map(|content| {
-        Row::new()
-            .push(Space::with_width(Length::FillPortion(2)))
-            .push(
-                Container::new(content).width(Length::FillPortion(if padding_left {
-                    8
-                } else {
-                    10
-                })),
-            )
-            .push_maybe(if padding_left {
-                Some(Space::with_width(Length::FillPortion(2)))
-            } else {
-                None
-            })
-    });
-
-    Container::new(
-        Column::new()
-            .width(Length::Fill)
+            Container::new(scrollable(
+                Column::new()
+                    .width(Length::Fill)
+                    .push(email_row)
+                    .push(Space::with_height(EMAIL_HEADER_SPACER))
+                    .push(header)
+                    .push(content_row),
+            ))
+            .center_x(Length::Fill)
             .height(Length::Fill)
-            .push(email_row)
-            .push(Space::with_height(EMAIL_HEADER_SPACER))
-            .push(header)
-            .push(header_area)
-            .push(list_area)
-            .push_maybe(footer_area),
+            .width(Length::Fill)
+            .style(theme::container::background)
+            .into()
+        }
+        LayoutContent::ScrollableList {
+            header: header_content,
+            list,
+            footer,
+        } => {
+            let header_area = Row::new()
+                .push(Space::with_width(Length::FillPortion(2)))
+                .push(Container::new(header_content).width(Length::FillPortion(fill_portion)))
+                .push_maybe(right_spacer());
+
+            let list_area = Row::new()
+                .push(Space::with_width(Length::FillPortion(2)))
+                .push(
+                    Container::new(scrollable(list).height(Length::Fill))
+                        .width(Length::FillPortion(fill_portion))
+                        .align_x(Alignment::Center),
+                )
+                .push_maybe(right_spacer())
+                .height(Length::Fill);
+
+            let footer_area: Option<Row<'a, Msg>> = footer.map(|f| {
+                Row::new()
+                    .push(Space::with_width(Length::FillPortion(2)))
+                    .push(Container::new(f).width(Length::FillPortion(fill_portion)))
+                    .push_maybe(right_spacer())
+            });
+
+            Container::new(
+                Column::new()
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .push(email_row)
+                    .push(Space::with_height(EMAIL_HEADER_SPACER))
+                    .push(header)
+                    .push(header_area)
+                    .push(list_area)
+                    .push_maybe(footer_area),
+            )
+            .center_x(Length::Fill)
+            .height(Length::Fill)
+            .width(Length::Fill)
+            .style(theme::container::background)
+            .into()
+        }
+    }
+}
+
+pub fn layout<'a>(
+    progress: (usize, usize),
+    email: Option<&'a str>,
+    role_badge: Option<&'static str>,
+    breadcrumb: &[String],
+    content: impl Into<Element<'a, Msg>>,
+    padding_left: bool,
+    previous_message: Option<Msg>,
+) -> Element<'a, Msg> {
+    layout_inner(
+        progress,
+        email,
+        role_badge,
+        breadcrumb,
+        LayoutContent::Scrollable(content.into()),
+        padding_left,
+        previous_message,
     )
-    .center_x(Length::Fill)
-    .height(Length::Fill)
-    .width(Length::Fill)
-    .style(theme::container::background)
-    .into()
+}
+
+/// Layout variant with fixed header content and a scrollable list section.
+/// The header_content stays fixed at top, only the list_content scrolls.
+/// An optional footer_content can be placed below the scrollable area.
+#[allow(clippy::too_many_arguments)]
+pub fn layout_with_scrollable_list<'a>(
+    progress: (usize, usize),
+    email: Option<&'a str>,
+    role_badge: Option<&'static str>,
+    breadcrumb: &[String],
+    header_content: impl Into<Element<'a, Msg>>,
+    list_content: impl Into<Element<'a, Msg>>,
+    footer_content: Option<Element<'a, Msg>>,
+    padding_left: bool,
+    previous_message: Option<Msg>,
+) -> Element<'a, Msg> {
+    layout_inner(
+        progress,
+        email,
+        role_badge,
+        breadcrumb,
+        LayoutContent::ScrollableList {
+            header: header_content.into(),
+            list: list_content.into(),
+            footer: footer_content,
+        },
+        padding_left,
+        previous_message,
+    )
 }
 
 // NOTE: content MUST have width and height to Length::Fill
