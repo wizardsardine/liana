@@ -314,3 +314,7 @@ pub fn invoice_icon<'a>() -> Text<'a> {
 pub fn pen_icon<'a>() -> Text<'a> {
     bootstrap_icon('\u{F4CA}')
 }
+
+pub fn graph_icon() -> Text<'static> {
+    bootstrap_icon('\u{F3F2}')
+}

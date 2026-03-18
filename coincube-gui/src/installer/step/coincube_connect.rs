@@ -74,10 +74,21 @@ impl Step for CoincubeConnectStep {
 
     fn apply(&mut self, ctx: &mut Context) -> bool {
         if let Some(token) = &self.jwt {
-            ctx.bitcoin_backend = Some(BitcoinBackend::Esplora(EsploraConfig {
+            let esplora = EsploraConfig {
                 addr: super::super::connect_url(ctx.network),
                 token: Some(token.clone()),
-            }));
+            };
+            if ctx.install_node_alongside_connect {
+                // Connect-first: promote Connect to active backend and move the
+                // Bitcoind config (set by InternalBitcoindStep) to pending so
+                // the app can switch to it once IBD completes.
+                if let Some(BitcoinBackend::Bitcoind(bitcoind_cfg)) = ctx.bitcoin_backend.take() {
+                    ctx.pending_bitcoind_config = Some(bitcoind_cfg);
+                }
+                ctx.bitcoin_backend = Some(BitcoinBackend::Esplora(esplora));
+            } else {
+                ctx.bitcoin_backend = Some(BitcoinBackend::Esplora(esplora));
+            }
             true
         } else {
             false

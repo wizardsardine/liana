@@ -1393,131 +1393,63 @@ pub fn define_coincube_connect<'a>(
 
 pub fn select_bitcoind_type<'a>(
     progress: (usize, usize),
-    connect_supported: bool,
+    network: bitcoin::Network,
+    install_node: bool,
+    show_advanced: bool,
+    prune_default_mb: u32,
 ) -> Element<'a, Message> {
-    let connect_header = connect_supported.then(|| {
-        Container::new(
-            Column::new()
-                .spacing(20)
-                .width(Length::Fixed(250.0))
-                .push(text("COINCUBE | Connect").bold()),
-        )
-        .padding(20)
-    });
-
-    let connect_description = connect_supported.then(|| {
-        Container::new(
-            Column::new()
-                .spacing(20)
-                .width(Length::Fixed(250.0))
-                .align_x(Alignment::Start)
-                .push(text(
-                    "Use the COINCUBE | Connect service to access \
-                    our Esplora. No local node required.",
-                )),
-        )
-        .padding(20)
-    });
-
-    let connect_button = connect_supported.then(|| {
-        Container::new(
-            Column::new()
-                .spacing(20)
-                .width(Length::Fixed(250.0))
-                .align_x(Alignment::Center)
-                .push(
-                    button::secondary(None, "Select")
-                        .width(Length::Fixed(250.0))
-                        .on_press(Message::SelectBitcoindType(
-                            message::SelectBitcoindTypeMsg::UseConnect,
-                        )),
-                ),
-        )
-        .padding(20)
-    });
-
-    let header_row = {
-        let mut row = Row::new()
-            .align_y(Alignment::Start)
+    let content: Column<'a, Message> = if network == bitcoin::Network::Regtest {
+        // Regtest: offer only the two node-based options inline.
+        let header_row = Row::new()
             .spacing(20)
+            .align_y(Alignment::Start)
             .push(
                 Container::new(
                     Column::new()
-                        .spacing(20)
-                        .width(Length::Fixed(250.0))
+                        .spacing(10)
+                        .width(Length::Fixed(300.0))
                         .push(text("I already have a node").bold()),
                 )
                 .padding(20),
             )
             .push(
                 Container::new(
-                    Column::new().spacing(20).width(Length::Fixed(250.0)).push(
+                    Column::new()
+                        .spacing(10)
+                        .width(Length::Fixed(300.0))
+                        .push(text("Install a node locally").bold()),
+                )
+                .padding(20),
+            );
+        let description_row =
+            Row::new()
+                .spacing(20)
+                .align_y(Alignment::Start)
+                .push(
+                    Container::new(Column::new().spacing(10).width(Length::Fixed(300.0)).push(
                         text(
-                            "I want Coincube to automatically install \
-                                a Bitcoin node on my device",
-                        )
-                        .bold(),
-                    ),
+                            "Select this option if you already have a Bitcoin node \
+                            running locally or remotely. Coincube will connect to it.",
+                        ),
+                    ))
+                    .padding(20),
                 )
-                .padding(20),
-            );
-        if let Some(col) = connect_header {
-            row = row.push(col);
-        }
-        row
-    };
-
-    let description_row = {
-        let mut row = Row::new()
-            .align_y(Alignment::Start)
+                .push(
+                    Container::new(Column::new().spacing(10).width(Length::Fixed(300.0)).push(
+                        text(
+                            "Coincube will install a pruned node on your computer. \
+                            No local node required beforehand.",
+                        ),
+                    ))
+                    .padding(20),
+                );
+        let button_row = Row::new()
             .spacing(20)
-            .push(
-                Container::new(
-                    Column::new()
-                        .spacing(20)
-                        .width(Length::Fixed(250.0))
-                        .align_x(Alignment::Start)
-                        .push(text(
-                            "Select this option if you already have \
-                            a Bitcoin node running locally or remotely. \
-                            Coincube will connect to it.",
-                        )),
-                )
-                .padding(20),
-            )
-            .push(
-                Container::new(
-                    Column::new()
-                        .spacing(20)
-                        .width(Length::Fixed(250.0))
-                        .align_x(Alignment::Start)
-                        .push(text(
-                            "Coincube will install a pruned node \
-                            on your computer. You won't need to do anything \
-                            except have some disk space available \
-                            (~30GB required on mainnet) and \
-                            wait for the initial synchronization with the \
-                            network (it can take some days depending on \
-                            your internet connection speed).",
-                        )),
-                )
-                .padding(20),
-            );
-        if let Some(col) = connect_description {
-            row = row.push(col);
-        }
-        row
-    };
-
-    let button_row = {
-        let mut row = Row::new()
             .align_y(Alignment::End)
-            .spacing(20)
             .push(
                 Container::new(
                     Column::new()
-                        .spacing(20)
-                        .width(Length::Fixed(250.0))
+                        .width(Length::Fixed(300.0))
                         .align_x(Alignment::Center)
                         .push(
                             button::secondary(None, "Select")
@@ -1532,8 +1464,7 @@ pub fn select_bitcoind_type<'a>(
             .push(
                 Container::new(
                     Column::new()
-                        .spacing(20)
-                        .width(Length::Fixed(250.0))
+                        .width(Length::Fixed(300.0))
                         .align_x(Alignment::Center)
                         .push(
                             button::secondary(None, "Select")
@@ -1545,20 +1476,193 @@ pub fn select_bitcoind_type<'a>(
                 )
                 .padding(20),
             );
-        if let Some(col) = connect_button {
-            row = row.push(col);
+        Column::new()
+            .spacing(10)
+            .push(header_row)
+            .push(description_row)
+            .push(button_row)
+    } else {
+        // Non-regtest: opinionated default card (Connect + optional node) plus a
+        // collapsible Advanced section for power users.
+        let node_description = if install_node {
+            let disk_gb = (prune_default_mb as f64 / 1024.0).round() as u32;
+            format!(
+                "Coincube will download and configure a pruned Bitcoin node \
+                (~{} GB of disk space required). \
+                Once synced, your Vault will automatically switch to your local node.",
+                disk_gb
+            )
+        } else {
+            "Your Vault will use COINCUBE | Connect as its only Bitcoin backend.".to_string()
+        };
+
+        let default_card = Container::new(
+            Column::new()
+                .spacing(20)
+                .max_width(620)
+                .push(text("Start with COINCUBE | Connect").bold())
+                .push(text(
+                    "Your Vault will use our hosted Esplora server immediately. \
+                    No setup required.",
+                ))
+                .push(
+                    checkbox(install_node)
+                        .label("Also install a Bitcoin node on my device")
+                        .on_toggle(|_| {
+                            Message::SelectBitcoindType(
+                                message::SelectBitcoindTypeMsg::ToggleInstallNode,
+                            )
+                        }),
+                )
+                .push(text(node_description))
+                .push(
+                    button::primary(None, "Continue").on_press(Message::SelectBitcoindType(
+                        message::SelectBitcoindTypeMsg::ContinueWithConnect,
+                    )),
+                ),
+        )
+        .padding(30);
+
+        let toggle_label = if show_advanced {
+            "▾  Advanced options"
+        } else {
+            "▸  Advanced options"
+        };
+        let advanced_toggle = button::transparent(None, toggle_label).on_press(
+            Message::SelectBitcoindType(message::SelectBitcoindTypeMsg::ToggleAdvanced),
+        );
+
+        let mut col = Column::new()
+            .spacing(30)
+            .push(default_card)
+            .push(advanced_toggle);
+
+        if show_advanced {
+            let adv_header_row = Row::new()
+                .spacing(20)
+                .align_y(Alignment::Start)
+                .push(
+                    Container::new(
+                        Column::new()
+                            .spacing(10)
+                            .width(Length::Fixed(220.0))
+                            .push(text("I already have a node").bold()),
+                    )
+                    .padding(20),
+                )
+                .push(
+                    Container::new(
+                        Column::new()
+                            .spacing(10)
+                            .width(Length::Fixed(220.0))
+                            .push(text("Install a node only").bold()),
+                    )
+                    .padding(20),
+                )
+                .push(
+                    Container::new(
+                        Column::new()
+                            .spacing(10)
+                            .width(Length::Fixed(220.0))
+                            .push(text("COINCUBE | Connect only").bold()),
+                    )
+                    .padding(20),
+                );
+
+            let adv_desc_row = Row::new()
+                .spacing(20)
+                .align_y(Alignment::Start)
+                .push(
+                    Container::new(Column::new().spacing(10).width(Length::Fixed(220.0)).push(
+                        text(
+                            "Select this option if you already have a Bitcoin node \
+                                running locally or remotely. Coincube will connect to it.",
+                        ),
+                    ))
+                    .padding(20),
+                )
+                .push(
+                    Container::new(Column::new().spacing(10).width(Length::Fixed(220.0)).push(
+                        text(
+                            "Coincube installs a pruned node on your computer \
+                                without COINCUBE | Connect as a fallback.",
+                        ),
+                    ))
+                    .padding(20),
+                )
+                .push(
+                    Container::new(Column::new().spacing(10).width(Length::Fixed(220.0)).push(
+                        text(
+                            "Use COINCUBE | Connect to access our Esplora. \
+                                No local node required.",
+                        ),
+                    ))
+                    .padding(20),
+                );
+
+            let adv_button_row = Row::new()
+                .spacing(20)
+                .align_y(Alignment::End)
+                .push(
+                    Container::new(
+                        Column::new()
+                            .width(Length::Fixed(220.0))
+                            .align_x(Alignment::Center)
+                            .push(
+                                button::secondary(None, "Select")
+                                    .width(Length::Fixed(200.0))
+                                    .on_press(Message::SelectBitcoindType(
+                                        message::SelectBitcoindTypeMsg::UseExternal(true),
+                                    )),
+                            ),
+                    )
+                    .padding(20),
+                )
+                .push(
+                    Container::new(
+                        Column::new()
+                            .width(Length::Fixed(220.0))
+                            .align_x(Alignment::Center)
+                            .push(
+                                button::secondary(None, "Select")
+                                    .width(Length::Fixed(200.0))
+                                    .on_press(Message::SelectBitcoindType(
+                                        message::SelectBitcoindTypeMsg::UseExternal(false),
+                                    )),
+                            ),
+                    )
+                    .padding(20),
+                )
+                .push(
+                    Container::new(
+                        Column::new()
+                            .width(Length::Fixed(220.0))
+                            .align_x(Alignment::Center)
+                            .push(
+                                button::secondary(None, "Select")
+                                    .width(Length::Fixed(200.0))
+                                    .on_press(Message::SelectBitcoindType(
+                                        message::SelectBitcoindTypeMsg::UseConnect,
+                                    )),
+                            ),
+                    )
+                    .padding(20),
+                );
+
+            col = col
+                .push(adv_header_row)
+                .push(adv_desc_row)
+                .push(adv_button_row);
         }
-        row
+
+        col
     };
 
     layout(
         progress,
         None,
         "Bitcoin node management",
-        Column::new()
-            .push(header_row)
-            .push(description_row)
-            .push(button_row),
+        content,
         true,
         Some(Message::Previous),
     )

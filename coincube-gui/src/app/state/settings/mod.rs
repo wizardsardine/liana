@@ -1,5 +1,6 @@
 mod about;
 mod general;
+mod install_stats;
 
 use std::sync::Arc;
 
@@ -9,6 +10,7 @@ use coincube_ui::widget::Element;
 
 use about::AboutSettingsState;
 use general::GeneralSettingsState;
+use install_stats::InstallStatsState;
 
 use crate::{
     app::{
@@ -69,6 +71,13 @@ impl State for SettingsState {
             }
             Message::View(view::Message::Settings(view::SettingsMessage::AboutSection)) => {
                 self.setting = Some(AboutSettingsState::default().into());
+                self.setting
+                    .as_mut()
+                    .map(|s| s.reload(daemon, None))
+                    .unwrap_or_else(Task::none)
+            }
+            Message::View(view::Message::Settings(view::SettingsMessage::InstallStatsSection)) => {
+                self.setting = Some(InstallStatsState::default().into());
                 self.setting
                     .as_mut()
                     .map(|s| s.reload(daemon, None))

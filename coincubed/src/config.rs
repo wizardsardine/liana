@@ -200,6 +200,16 @@ pub struct Config {
     /// Settings specific to the Bitcoin backend.
     #[serde(flatten)]
     pub bitcoin_backend: Option<BitcoinBackend>,
+    /// Optional Esplora (Connect) config used as a fallback when the active
+    /// Bitcoind backend becomes unreachable.  Set at the moment the local node
+    /// is promoted to primary; cleared if Connect is re-activated.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub fallback_esplora: Option<EsploraConfig>,
+    /// Local Bitcoind config that will become the primary backend once IBD
+    /// completes.  Written by the installer when `install_node_alongside_connect`
+    /// is true (Connect is primary until then); cleared after the switch.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub pending_bitcoind: Option<BitcoindConfig>,
 }
 
 impl Config {
@@ -217,6 +227,8 @@ impl Config {
             main_descriptor,
             data_directory: Some(data_directory.path().to_path_buf()),
             data_dir: None,
+            fallback_esplora: None,
+            pending_bitcoind: None,
         }
     }
 
