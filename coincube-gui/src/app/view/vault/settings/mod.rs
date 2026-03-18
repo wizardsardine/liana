@@ -1458,8 +1458,8 @@ pub fn node_backend_status<'a>(
         );
     }
 
-    if let Some(ref w) = warning {
-        col = col.push(text(w.as_str()).style(theme::text::warning));
+    if let Some(w) = warning {
+        col = col.push(text(w).style(theme::text::warning));
     }
 
     let mut btn_row = Row::new().spacing(10);
