@@ -23,6 +23,12 @@ impl CoincubeClient {
         #[cfg(not(debug_assertions))]
         let base_url = env!("COINCUBE_API_URL");
 
+        log::info!(
+            "Coincube Base URL: {}, Release = {}",
+            base_url,
+            cfg!(not(debug_assertions))
+        );
+
         Self {
             client: reqwest::ClientBuilder::new()
                 .timeout(std::time::Duration::from_secs(20))
