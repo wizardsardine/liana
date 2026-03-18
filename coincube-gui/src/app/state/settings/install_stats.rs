@@ -80,7 +80,9 @@ impl InstallStatsState {
                         .map(|r| r.points)
                         .map_err(|e| e.to_string())
                 },
-                move |res| Message::InstallStats(InstallStatsMessage::TimeseriesLoaded(gen, res)),
+                move |res| {
+                    Message::InstallStats(InstallStatsMessage::TimeseriesLoaded(gen, period, res))
+                },
             ),
         ])
     }
@@ -97,7 +99,9 @@ impl InstallStatsState {
                     .map(|r| r.points)
                     .map_err(|e| e.to_string())
             },
-            move |res| Message::InstallStats(InstallStatsMessage::TimeseriesLoaded(gen, res)),
+            move |res| {
+                Message::InstallStats(InstallStatsMessage::TimeseriesLoaded(gen, period, res))
+            },
         )
     }
 }
@@ -155,8 +159,12 @@ impl State for InstallStatsState {
                     Err(e) => self.error = Some(e),
                 }
             }
-            Message::InstallStats(InstallStatsMessage::TimeseriesLoaded(gen, res)) => {
-                if gen != self.fetch_gen {
+            Message::InstallStats(InstallStatsMessage::TimeseriesLoaded(gen, period, res)) => {
+                // Reject if from an old batch OR an old period (period change
+                // doesn't bump fetch_gen so download/today responses stay valid,
+                // but the superseded timeseries slot is silently recycled by
+                // the new request — no pending_responses adjustment needed).
+                if gen != self.fetch_gen || period != self.period {
                     return Task::none();
                 }
                 self.pending_responses = self.pending_responses.saturating_sub(1);
@@ -176,8 +184,10 @@ impl State for InstallStatsState {
                     self.timeseries = None;
                     self.error = None;
                     self.loading = true;
-                    self.fetch_gen += 1;
-                    self.pending_responses = 1;
+                    // Don't bump fetch_gen — in-flight download/today responses
+                    // are still valid. The old timeseries response will be
+                    // rejected by the period check without decrementing
+                    // pending_responses, and the new request recycles that slot.
                     return self.fetch_timeseries();
                 }
             }

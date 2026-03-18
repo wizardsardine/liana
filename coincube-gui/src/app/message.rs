@@ -101,7 +101,11 @@ pub enum InstallStatsMessage {
     /// u64 is the fetch generation — handlers ignore stale responses.
     DownloadStatsLoaded(u64, Result<DownloadStats, String>),
     TodayStatsLoaded(u64, Result<u32, String>),
-    TimeseriesLoaded(u64, Result<Vec<TimeseriesPoint>, String>),
+    TimeseriesLoaded(
+        u64,
+        crate::services::coincube::StatsPeriod,
+        Result<Vec<TimeseriesPoint>, String>,
+    ),
 }
 
 impl From<ImportExportMessage> for Message {
