@@ -774,7 +774,7 @@ fn create_cube_form<'a>(
     cube_name: &coincube_ui::component::form::Value<String>,
     pin: &'a pin_input::PinInput,
     pin_confirm: &'a pin_input::PinInput,
-    error: &Option<String>,
+    error: &'a Option<String>,
     creating_cube: bool,
     recover_liquid_wallet: bool,
 ) -> Element<'a, ViewMessage> {
@@ -879,7 +879,7 @@ fn create_cube_form<'a>(
         .into()
 }
 
-fn cubes_list_item<'a>(cube: &CubeSettings, i: usize) -> Element<'a, ViewMessage> {
+fn cubes_list_item<'a>(cube: &'a CubeSettings, i: usize) -> Element<'a, ViewMessage> {
     Container::new(
         Row::new()
             .align_y(Alignment::Center)

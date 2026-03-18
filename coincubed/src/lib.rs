@@ -809,6 +809,7 @@ mod tests {
     // framework.
     #[test]
     fn daemon_startup() {
+        // TODO: startup might stall, in that scenario the test should fail after a set amount of time
         let tmp_dir = tmp_dir();
         fs::create_dir_all(&tmp_dir).unwrap();
         let data_dir: path::PathBuf = [tmp_dir.as_path(), path::Path::new("datadir")]

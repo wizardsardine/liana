@@ -23,8 +23,18 @@ impl CoincubeClient {
         #[cfg(not(debug_assertions))]
         let base_url = env!("COINCUBE_API_URL");
 
+        log::info!(
+            "Coincube Base URL: {}, Release = {}",
+            base_url,
+            cfg!(not(debug_assertions))
+        );
+
         Self {
-            client: Self::build_client(base_url, None),
+            client: reqwest::ClientBuilder::new()
+                .timeout(std::time::Duration::from_secs(20))
+                .https_only(true)
+                .build()
+                .unwrap(),
             base_url,
         }
     }
@@ -37,32 +47,12 @@ impl CoincubeClient {
             reqwest::header::HeaderValue::from_str(&format!("Bearer {}", token)).unwrap(),
         );
 
-        self.client = Self::build_client(self.base_url, Some(headers));
-    }
-
-    fn build_client(
-        base_url: &str,
-        headers: Option<reqwest::header::HeaderMap>,
-    ) -> reqwest::Client {
-        #[cfg(debug_assertions)]
-        let https_only = base_url.starts_with("https");
-
-        #[cfg(not(debug_assertions))]
-        let https_only = true;
-
-        let mut builder = reqwest::ClientBuilder::new()
-            .timeout(std::time::Duration::from_secs(if cfg!(debug_assertions) {
-                30
-            } else {
-                5
-            }))
-            .https_only(https_only);
-
-        if let Some(h) = headers {
-            builder = builder.default_headers(h);
-        }
-
-        builder.build().unwrap()
+        self.client = reqwest::ClientBuilder::new()
+            .timeout(std::time::Duration::from_secs(20))
+            .https_only(true)
+            .default_headers(headers)
+            .build()
+            .unwrap();
     }
 
     /// Save a Mavapay quote to coincube-api

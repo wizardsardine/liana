@@ -7,7 +7,6 @@ use iced::{alignment, Alignment, Length};
 
 use coincube_ui::component::text::{p1_bold, p2_regular, H3_SIZE};
 use std::borrow::Cow;
-use std::fmt::Display;
 use std::str::FromStr;
 
 use coincube_ui::{
@@ -135,7 +134,7 @@ pub fn path(
 pub fn uneditable_defined_key<'a>(
     alias: &'a str,
     color: iced::Color,
-    title: impl Into<Cow<'a, str>> + std::fmt::Display,
+    title: impl Into<Cow<'a, str>>,
     warning: Option<&'static str>,
 ) -> Element<'a, message::DefineKey> {
     card::simple(
@@ -151,7 +150,7 @@ pub fn uneditable_defined_key<'a>(
                     .push(
                         Row::new()
                             .spacing(10)
-                            .push(p1_regular(title).style(theme::text::secondary))
+                            .push(p1_regular(title.into()).style(theme::text::secondary))
                             .push(p1_bold(alias)),
                     )
                     .push(warning.map(|w| p2_regular(w).style(theme::text::error))),
@@ -168,7 +167,7 @@ pub fn uneditable_defined_key<'a>(
 pub fn defined_key<'a>(
     alias: &'a str,
     color: iced::Color,
-    title: impl Display,
+    title: String,
     warning: Option<&'static str>,
     fixed: bool,
 ) -> Element<'a, message::DefineKey> {
@@ -185,7 +184,7 @@ pub fn defined_key<'a>(
                     .push(
                         Row::new()
                             .spacing(10)
-                            .push(p1_regular(format!("{}", title)).style(theme::text::secondary))
+                            .push(p1_regular(title).style(theme::text::secondary))
                             .push(p1_bold(alias)),
                     )
                     .push(warning.map(|w| p2_regular(w).style(theme::text::error))),
@@ -215,7 +214,7 @@ pub fn defined_key<'a>(
 
 pub fn undefined_key<'a>(
     color: iced::Color,
-    title: impl Into<Cow<'a, str>> + std::fmt::Display,
+    title: impl Into<Cow<'a, str>>,
     liquid: bool,
     fixed: bool,
 ) -> Element<'a, message::DefineKey> {
@@ -229,7 +228,7 @@ pub fn undefined_key<'a>(
                 Column::new()
                     .width(Length::Fill)
                     .spacing(5)
-                    .push(p1_bold(title)),
+                    .push(p1_bold(title.into())),
             )
             .push(if liquid {
                 Some(

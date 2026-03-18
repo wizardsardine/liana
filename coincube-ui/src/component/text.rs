@@ -1,6 +1,5 @@
 use crate::{font, theme::Theme};
 use iced::advanced::text::Shaping;
-use std::fmt::Display;
 
 pub const H1_SIZE: u32 = 40;
 pub const H2_SIZE: u32 = 29;
@@ -11,119 +10,147 @@ pub const P1_SIZE: u32 = 16;
 pub const P2_SIZE: u32 = 14;
 pub const CAPTION_SIZE: u32 = 12;
 
-pub fn h1<'a>(content: impl Display) -> iced::widget::Text<'a, Theme> {
-    iced::widget::text!("{}", content)
+pub fn h1<'a>(content: impl iced::widget::text::IntoFragment<'a>) -> iced::widget::Text<'a, Theme> {
+    iced::widget::text(content)
         .shaping(Shaping::Advanced)
         .font(font::BOLD)
         .size(H1_SIZE)
 }
 
-pub fn h2<'a>(content: impl Display) -> iced::widget::Text<'a, Theme> {
-    iced::widget::text!("{}", content)
+pub fn h2<'a>(content: impl iced::widget::text::IntoFragment<'a>) -> iced::widget::Text<'a, Theme> {
+    iced::widget::text(content)
         .shaping(Shaping::Advanced)
         .font(font::BOLD)
         .size(H2_SIZE)
 }
 
-pub fn h3<'a>(content: impl Display) -> iced::widget::Text<'a, Theme> {
-    iced::widget::text!("{}", content)
+pub fn h3<'a>(content: impl iced::widget::text::IntoFragment<'a>) -> iced::widget::Text<'a, Theme> {
+    iced::widget::text(content)
         .shaping(Shaping::Advanced)
         .font(font::REGULAR)
         .size(H3_SIZE)
 }
 
-pub fn h3_bold<'a>(content: impl Display) -> iced::widget::Text<'a, Theme> {
-    iced::widget::text!("{}", content)
+pub fn h3_bold<'a>(
+    content: impl iced::widget::text::IntoFragment<'a>,
+) -> iced::widget::Text<'a, Theme> {
+    iced::widget::text(content)
         .shaping(Shaping::Advanced)
         .font(font::BOLD)
         .size(H3_SIZE)
 }
 
-pub fn h4_bold<'a>(content: impl Display) -> iced::widget::Text<'a, Theme> {
-    iced::widget::text!("{}", content)
+pub fn h4_bold<'a>(
+    content: impl iced::widget::text::IntoFragment<'a>,
+) -> iced::widget::Text<'a, Theme> {
+    iced::widget::text(content)
         .shaping(Shaping::Advanced)
         .font(font::BOLD)
         .size(H4_SIZE)
 }
 
-pub fn h4_regular<'a>(content: impl Display) -> iced::widget::Text<'a, Theme> {
-    iced::widget::text!("{}", content)
+pub fn h4_regular<'a>(
+    content: impl iced::widget::text::IntoFragment<'a>,
+) -> iced::widget::Text<'a, Theme> {
+    iced::widget::text(content)
         .shaping(Shaping::Advanced)
         .font(font::REGULAR)
         .size(H4_SIZE)
 }
 
-pub fn h5_medium<'a>(content: impl Display) -> iced::widget::Text<'a, Theme> {
-    iced::widget::text!("{}", content)
+pub fn h5_medium<'a>(
+    content: impl iced::widget::text::IntoFragment<'a>,
+) -> iced::widget::Text<'a, Theme> {
+    iced::widget::text(content)
         .shaping(Shaping::Advanced)
         .font(font::MEDIUM)
         .size(H5_SIZE)
 }
 
-pub fn h5_regular<'a>(content: impl Display) -> iced::widget::Text<'a, Theme> {
-    iced::widget::text!("{}", content)
+pub fn h5_regular<'a>(
+    content: impl iced::widget::text::IntoFragment<'a>,
+) -> iced::widget::Text<'a, Theme> {
+    iced::widget::text(content)
         .shaping(Shaping::Advanced)
         .font(font::REGULAR)
         .size(H5_SIZE)
 }
 
-pub fn p1_italic<'a>(content: impl Display) -> iced::widget::Text<'a, Theme> {
-    iced::widget::text!("{}", content)
+pub fn p1_italic<'a>(
+    content: impl iced::widget::text::IntoFragment<'a>,
+) -> iced::widget::Text<'a, Theme> {
+    iced::widget::text(content)
         .shaping(Shaping::Advanced)
         .font(font::ITALIC)
         .size(P1_SIZE)
 }
 
-pub fn p1_bold<'a>(content: impl Display) -> iced::widget::Text<'a, Theme> {
-    iced::widget::text!("{}", content)
+pub fn p1_bold<'a>(
+    content: impl iced::widget::text::IntoFragment<'a>,
+) -> iced::widget::Text<'a, Theme> {
+    iced::widget::text(content)
         .shaping(Shaping::Advanced)
         .font(font::BOLD)
         .size(P1_SIZE)
 }
 
-pub fn p1_medium<'a>(content: impl Display) -> iced::widget::Text<'a, Theme> {
-    iced::widget::text!("{}", content)
+pub fn p1_medium<'a>(
+    content: impl iced::widget::text::IntoFragment<'a>,
+) -> iced::widget::Text<'a, Theme> {
+    iced::widget::text(content)
         .shaping(Shaping::Advanced)
         .font(font::MEDIUM)
         .size(P1_SIZE)
 }
 
-pub fn p1_regular<'a>(content: impl Display) -> iced::widget::Text<'a, Theme> {
-    iced::widget::text!("{}", content)
+pub fn p1_regular<'a>(
+    content: impl iced::widget::text::IntoFragment<'a>,
+) -> iced::widget::Text<'a, Theme> {
+    iced::widget::text(content)
         .shaping(Shaping::Advanced)
         .font(font::REGULAR)
         .size(P1_SIZE)
 }
 
-pub fn p2_medium<'a>(content: impl Display) -> iced::widget::Text<'a, Theme> {
-    iced::widget::text!("{}", content)
+pub fn p2_medium<'a>(
+    content: impl iced::widget::text::IntoFragment<'a>,
+) -> iced::widget::Text<'a, Theme> {
+    iced::widget::text(content)
         .shaping(Shaping::Advanced)
         .font(font::MEDIUM)
         .size(P2_SIZE)
 }
 
-pub fn p2_bold<'a>(content: impl Display) -> iced::widget::Text<'a, Theme> {
-    iced::widget::text!("{}", content)
+pub fn p2_bold<'a>(
+    content: impl iced::widget::text::IntoFragment<'a>,
+) -> iced::widget::Text<'a, Theme> {
+    iced::widget::text(content)
         .shaping(Shaping::Advanced)
         .font(font::BOLD)
         .size(P2_SIZE)
 }
 
-pub fn p2_regular<'a>(content: impl Display) -> iced::widget::Text<'a, Theme> {
-    iced::widget::text!("{}", content)
+pub fn p2_regular<'a>(
+    content: impl iced::widget::text::IntoFragment<'a>,
+) -> iced::widget::Text<'a, Theme> {
+    iced::widget::text(content)
         .shaping(Shaping::Advanced)
         .font(font::REGULAR)
         .size(P2_SIZE)
 }
 
-pub fn caption<'a>(content: impl Display) -> iced::widget::Text<'a, Theme> {
-    iced::widget::text!("{}", content)
+pub fn caption<'a>(
+    content: impl iced::widget::text::IntoFragment<'a>,
+) -> iced::widget::Text<'a, Theme> {
+    iced::widget::text(content)
         .shaping(Shaping::Advanced)
         .font(font::REGULAR)
         .size(CAPTION_SIZE)
 }
 
-pub fn text<'a>(content: impl Display) -> iced::widget::Text<'a, Theme> {
+pub fn text<'a>(
+    content: impl iced::widget::text::IntoFragment<'a>,
+) -> iced::widget::Text<'a, Theme> {
     p1_regular(content)
 }
 

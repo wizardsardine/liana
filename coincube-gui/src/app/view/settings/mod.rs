@@ -12,7 +12,7 @@ use crate::app::cache::Cache;
 use crate::app::menu::Menu;
 use crate::app::view::{dashboard, message::*};
 
-pub fn header(title: &str, msg: SettingsMessage) -> Element<'static, Message> {
+pub fn header<'a>(title: &'a str, msg: SettingsMessage) -> Element<'a, Message> {
     Row::new()
         .spacing(10)
         .align_y(Alignment::Center)
@@ -32,11 +32,11 @@ pub fn header(title: &str, msg: SettingsMessage) -> Element<'static, Message> {
         .into()
 }
 
-fn settings_section(
-    title: &str,
+fn settings_section<'a>(
+    title: &'a str,
     icon: coincube_ui::widget::Text<'static>,
     msg: Message,
-) -> Container<'static, Message> {
+) -> Container<'a, Message> {
     Container::new(
         Button::new(
             Row::new()

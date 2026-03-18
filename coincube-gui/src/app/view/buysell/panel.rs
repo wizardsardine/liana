@@ -16,7 +16,7 @@ use crate::app::view::{BuySellMessage, Message as ViewMessage};
 
 use crate::services::coincube::*;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Copy, Clone, PartialEq)]
 pub enum BuyOrSell {
     Sell,
     Buy,
