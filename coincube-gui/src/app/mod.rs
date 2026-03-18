@@ -1055,6 +1055,11 @@ impl App {
                     self.cache.node_bitcoind_last_log = Some(line);
                 }
             }
+            Message::InstallStats(_) => {
+                if let Some(panel) = self.panels.current_mut() {
+                    return panel.update(self.daemon.clone(), &self.cache, message);
+                }
+            }
             Message::SetInternalBitcoind(bitcoind) => {
                 self.internal_bitcoind = Some(bitcoind);
             }

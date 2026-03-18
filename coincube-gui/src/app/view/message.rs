@@ -175,6 +175,14 @@ pub enum SettingsMessage {
     DisplayUnitChanged(BitcoinDisplayUnit),
     Fiat(FiatMessage),
     NodeSettings(NodeSettingsMessage),
+    InstallStatsSection,
+    InstallStats(InstallStatsViewMessage),
+}
+
+#[derive(Debug, Clone)]
+pub enum InstallStatsViewMessage {
+    PeriodChanged(crate::services::coincube::StatsPeriod),
+    Refresh,
 }
 
 #[derive(Debug, Clone)]

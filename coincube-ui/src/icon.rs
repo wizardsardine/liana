@@ -310,3 +310,7 @@ pub fn chain_icon() -> Text<'static> {
 pub fn invoice_icon() -> Text<'static> {
     bootstrap_icon('\u{F86F}')
 }
+
+pub fn graph_icon() -> Text<'static> {
+    bootstrap_icon('\u{F480}')
+}

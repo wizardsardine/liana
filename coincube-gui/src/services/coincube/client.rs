@@ -24,11 +24,7 @@ impl CoincubeClient {
         let base_url = env!("COINCUBE_API_URL");
 
         Self {
-            client: reqwest::ClientBuilder::new()
-                .timeout(std::time::Duration::from_secs(5))
-                .https_only(true)
-                .build()
-                .unwrap(),
+            client: Self::build_client(base_url, None),
             base_url,
         }
     }
@@ -41,12 +37,32 @@ impl CoincubeClient {
             reqwest::header::HeaderValue::from_str(&format!("Bearer {}", token)).unwrap(),
         );
 
-        self.client = reqwest::ClientBuilder::new()
-            .timeout(std::time::Duration::from_secs(5))
-            .https_only(true)
-            .default_headers(headers)
-            .build()
-            .unwrap();
+        self.client = Self::build_client(self.base_url, Some(headers));
+    }
+
+    fn build_client(
+        base_url: &str,
+        headers: Option<reqwest::header::HeaderMap>,
+    ) -> reqwest::Client {
+        #[cfg(debug_assertions)]
+        let https_only = base_url.starts_with("https");
+
+        #[cfg(not(debug_assertions))]
+        let https_only = true;
+
+        let mut builder = reqwest::ClientBuilder::new()
+            .timeout(std::time::Duration::from_secs(if cfg!(debug_assertions) {
+                30
+            } else {
+                5
+            }))
+            .https_only(https_only);
+
+        if let Some(h) = headers {
+            builder = builder.default_headers(h);
+        }
+
+        builder.build().unwrap()
     }
 
     /// Save a Mavapay quote to coincube-api
@@ -139,6 +155,36 @@ impl CoincubeClient {
 #[serde(rename_all = "camelCase")]
 struct CountryResponse {
     iso_code: String,
+}
+
+impl CoincubeClient {
+    pub async fn fetch_download_stats(&self) -> Result<super::DownloadStats, super::CoincubeError> {
+        let url = format!("{}/api/v1/downloads", self.base_url);
+        let res = self.client.get(&url).send().await?;
+        let res = res.check_success().await?;
+        Ok(res.json().await?)
+    }
+
+    pub async fn fetch_today_stats(&self) -> Result<super::TodayStats, super::CoincubeError> {
+        let url = format!("{}/api/v1/downloads/today", self.base_url);
+        let res = self.client.get(&url).send().await?;
+        let res = res.check_success().await?;
+        Ok(res.json().await?)
+    }
+
+    pub async fn fetch_timeseries(
+        &self,
+        period: super::StatsPeriod,
+    ) -> Result<super::TimeseriesResponse, super::CoincubeError> {
+        let url = format!(
+            "{}/api/v1/downloads/timeseries?period={}",
+            self.base_url,
+            period.as_str()
+        );
+        let res = self.client.get(&url).send().await?;
+        let res = res.check_success().await?;
+        Ok(res.json().await?)
+    }
 }
 
 impl CoincubeClient {
