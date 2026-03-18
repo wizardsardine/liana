@@ -79,7 +79,7 @@ pub fn list<'a>(menu: &'a Menu, cache: &'a Cache) -> Element<'a, Message> {
                 Message::Settings(SettingsMessage::AboutSection),
             ))
             .push(settings_section(
-                "Install Stats",
+                "Download Stats",
                 icon::graph_icon(),
                 Message::Settings(SettingsMessage::InstallStatsSection),
             )),

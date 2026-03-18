@@ -12,8 +12,9 @@ use crate::app::view::dashboard;
 use crate::app::view::message::*;
 use crate::services::coincube::{DownloadStats, StatsPeriod, TimeseriesPoint};
 
-const INSTALL_GOAL: u32 = 1_000_000;
+const DOWNLOAD_GOAL: u32 = 1_000_000;
 
+#[allow(clippy::too_many_arguments)]
 pub fn install_stats_section<'a>(
     menu: &'a Menu,
     cache: &'a cache::Cache,
@@ -27,7 +28,7 @@ pub fn install_stats_section<'a>(
     let mut col = Column::new()
         .spacing(20)
         .push(super::header(
-            "Install Stats",
+            "Download Stats",
             SettingsMessage::InstallStatsSection,
         ))
         .width(Length::Fill);
@@ -47,44 +48,47 @@ fn downloads_card<'a>(
     today_count: Option<u32>,
     loading: bool,
 ) -> Element<'a, Message> {
-    let total = stats.map(|s| s.total).unwrap_or(0);
-    let pct = if INSTALL_GOAL > 0 {
-        (total as f64 / INSTALL_GOAL as f64).clamp(0.0, 1.0) as f32
-    } else {
-        0.0
-    };
-    let pct_label = format!("{:.2}% of goal", pct * 100.0);
-    let total_label = format_count(total);
-    let goal_label = format!("of {} installs", format_count(INSTALL_GOAL));
-
     let today_label = match today_count {
-        Some(n) => format!("+{} users today", n),
+        Some(n) => format!("+{} downloads today", n),
         None if loading => "Loading…".to_string(),
         None => "—".to_string(),
     };
 
-    let progress_bar = ProgressBar::new(0.0..=1.0, pct);
-
     let inner = Column::new()
         .spacing(8)
-        .push(text("TODAY").size(11).color(color::GREY_2))
-        .push(
-            text(if loading && stats.is_none() {
-                "—".to_string()
-            } else {
-                total_label
-            })
-            .size(38)
-            .bold(),
+        .push(text("TOTAL DOWNLOADS").size(11).color(color::GREY_2));
+
+    let inner = if let Some(s) = stats {
+        let total = s.total;
+        let pct = if DOWNLOAD_GOAL > 0 {
+            (total as f64 / DOWNLOAD_GOAL as f64).clamp(0.0, 1.0) as f32
+        } else {
+            0.0
+        };
+        inner
+            .push(text(format_count(total)).size(38).bold())
+            .push(
+                text(format!("of {} downloads", format_count(DOWNLOAD_GOAL)))
+                    .size(13)
+                    .color(color::GREY_2),
+            )
+            .push(Space::new().height(Length::Fixed(4.0)))
+            .push(ProgressBar::new(0.0..=1.0, pct))
+            .push(
+                Row::new().push(Space::new().width(Length::Fill)).push(
+                    text(format!("{:.2}% of goal", pct * 100.0))
+                        .size(12)
+                        .color(color::GREY_2),
+                ),
+            )
+    } else {
+        inner.push(
+            text(if loading { "Loading…" } else { "—" })
+                .size(38)
+                .bold()
+                .color(color::GREY_2),
         )
-        .push(text(goal_label).size(13).color(color::GREY_2))
-        .push(Space::new().height(Length::Fixed(4.0)))
-        .push(progress_bar)
-        .push(
-            Row::new()
-                .push(Space::new().width(Length::Fill))
-                .push(text(pct_label).size(12).color(color::GREY_2)),
-        );
+    };
 
     let today_row = Row::new()
         .align_y(Alignment::Center)
@@ -232,7 +236,7 @@ impl canvas::Program<Message, coincube_ui::theme::Theme> for LineChart {
                 Stroke::default().with_color(grid_color).with_width(1.0),
             );
 
-            let val = max_val - (step as u64 * range as u64 / 4) as u32;
+            let val = max_val.saturating_sub((step as u64 * range as u64 / 4) as u32);
             let label = format_count(val);
             frame.fill_text(canvas::Text {
                 content: label,
@@ -299,7 +303,7 @@ fn short_date_label(date: &str) -> String {
             "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
         ];
         if let Ok(m) = parts[1].parse::<usize>() {
-            if m >= 1 && m <= 12 {
+            if (1..=12).contains(&m) {
                 return format!(
                     "{} {}",
                     month_names[m - 1],

@@ -100,7 +100,10 @@ pub enum Message {
 pub enum InstallStatsMessage {
     DownloadStatsLoaded(Result<DownloadStats, String>),
     TodayStatsLoaded(Result<u32, String>),
-    TimeseriesLoaded(Result<Vec<TimeseriesPoint>, String>),
+    TimeseriesLoaded(
+        crate::services::coincube::StatsPeriod,
+        Result<Vec<TimeseriesPoint>, String>,
+    ),
 }
 
 impl From<ImportExportMessage> for Message {

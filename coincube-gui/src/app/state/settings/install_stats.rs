@@ -19,6 +19,8 @@ pub struct InstallStatsState {
     pub timeseries: Option<Vec<TimeseriesPoint>>,
     pub period: StatsPeriod,
     pub loading: bool,
+    /// Tracks how many fetch_all responses are still pending.
+    pending_responses: u8,
     pub error: Option<String>,
 }
 
@@ -31,6 +33,7 @@ impl Default for InstallStatsState {
             timeseries: None,
             period: StatsPeriod::Week,
             loading: false,
+            pending_responses: 0,
             error: None,
         }
     }
@@ -71,7 +74,9 @@ impl InstallStatsState {
                         .map(|r| r.points)
                         .map_err(|e| e.to_string())
                 },
-                |res| Message::InstallStats(InstallStatsMessage::TimeseriesLoaded(res)),
+                move |res| {
+                    Message::InstallStats(InstallStatsMessage::TimeseriesLoaded(period, res))
+                },
             ),
         ])
     }
@@ -87,7 +92,7 @@ impl InstallStatsState {
                     .map(|r| r.points)
                     .map_err(|e| e.to_string())
             },
-            |res| Message::InstallStats(InstallStatsMessage::TimeseriesLoaded(res)),
+            move |res| Message::InstallStats(InstallStatsMessage::TimeseriesLoaded(period, res)),
         )
     }
 }
@@ -119,16 +124,35 @@ impl State for InstallStatsState {
         message: Message,
     ) -> Task<Message> {
         match message {
-            Message::InstallStats(InstallStatsMessage::DownloadStatsLoaded(res)) => match res {
-                Ok(stats) => self.download_stats = Some(stats),
-                Err(e) => self.error = Some(e),
-            },
-            Message::InstallStats(InstallStatsMessage::TodayStatsLoaded(res)) => match res {
-                Ok(count) => self.today_count = Some(count),
-                Err(e) => self.error = Some(e),
-            },
-            Message::InstallStats(InstallStatsMessage::TimeseriesLoaded(res)) => {
-                self.loading = false;
+            Message::InstallStats(InstallStatsMessage::DownloadStatsLoaded(res)) => {
+                self.pending_responses = self.pending_responses.saturating_sub(1);
+                if self.pending_responses == 0 {
+                    self.loading = false;
+                }
+                match res {
+                    Ok(stats) => self.download_stats = Some(stats),
+                    Err(e) => self.error = Some(e),
+                }
+            }
+            Message::InstallStats(InstallStatsMessage::TodayStatsLoaded(res)) => {
+                self.pending_responses = self.pending_responses.saturating_sub(1);
+                if self.pending_responses == 0 {
+                    self.loading = false;
+                }
+                match res {
+                    Ok(count) => self.today_count = Some(count),
+                    Err(e) => self.error = Some(e),
+                }
+            }
+            Message::InstallStats(InstallStatsMessage::TimeseriesLoaded(period, res)) => {
+                self.pending_responses = self.pending_responses.saturating_sub(1);
+                if self.pending_responses == 0 {
+                    self.loading = false;
+                }
+                // Ignore stale responses from a previously-selected period
+                if period != self.period {
+                    return Task::none();
+                }
                 match res {
                     Ok(points) => self.timeseries = Some(points),
                     Err(e) => self.error = Some(e),
@@ -140,7 +164,9 @@ impl State for InstallStatsState {
                 if self.period != period {
                     self.period = period;
                     self.timeseries = None;
+                    self.error = None;
                     self.loading = true;
+                    self.pending_responses = 1;
                     return self.fetch_timeseries();
                 }
             }
@@ -150,7 +176,9 @@ impl State for InstallStatsState {
                 self.download_stats = None;
                 self.today_count = None;
                 self.timeseries = None;
+                self.error = None;
                 self.loading = true;
+                self.pending_responses = 3;
                 return self.fetch_all();
             }
             _ => {}
@@ -163,7 +191,9 @@ impl State for InstallStatsState {
         _daemon: Option<Arc<dyn Daemon + Sync + Send>>,
         _wallet: Option<Arc<Wallet>>,
     ) -> Task<Message> {
+        self.error = None;
         self.loading = true;
+        self.pending_responses = 3;
         self.fetch_all()
     }
 }
