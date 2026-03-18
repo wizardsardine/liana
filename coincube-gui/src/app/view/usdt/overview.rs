@@ -264,7 +264,7 @@ pub fn usdt_overview_view<'a>(
 
     if let Some(err) = error {
         content = content.push(
-            Container::new(text(err).size(14).color(color::RED))
+            Container::new(text(err.to_string()).size(14).color(color::RED))
                 .padding(10)
                 .style(theme::card::invalid)
                 .width(Length::Fill)

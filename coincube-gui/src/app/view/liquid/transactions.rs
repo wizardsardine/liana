@@ -313,7 +313,7 @@ pub fn transaction_detail_view<'a>(
             Row::new()
                 .spacing(10)
                 .align_y(Alignment::Center)
-                .push(text(&usdt_num).size(H1_SIZE).bold())
+                .push(text(usdt_num).size(H1_SIZE).bold())
                 .push(text("USDt").size(H1_SIZE).color(coincube_ui::color::GREY_3))
         } else {
             Row::new()
@@ -324,7 +324,7 @@ pub fn transaction_detail_view<'a>(
                     Row::new()
                         .spacing(10)
                         .align_y(Alignment::Center)
-                        .push(text(&usdt_num).size(H1_SIZE).bold())
+                        .push(text(usdt_num).size(H1_SIZE).bold())
                         .push(text("USDt").size(H1_SIZE).color(coincube_ui::color::GREY_3)),
                 )
         };

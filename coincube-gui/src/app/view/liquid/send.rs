@@ -933,7 +933,7 @@ pub fn final_check_page<'a>(
                 Row::new()
                     .push(text("Comment:").size(16))
                     .push(Space::new().width(Length::Fill))
-                    .push(text(&comment).size(16).bold())
+                    .push(text(comment.clone()).size(16).bold())
                     .width(Length::Fill)
                     .align_y(Alignment::Center),
             );
@@ -1206,7 +1206,7 @@ pub fn sent_page<'a>(
                 .push(
                     Row::new()
                         .spacing(5)
-                        .push(text(&sent_amount_str).size(20).color(color::ORANGE).font(
+                        .push(text(sent_amount_str).size(20).color(color::ORANGE).font(
                             iced::Font {
                                 style: iced::font::Style::Italic,
                                 ..Default::default()
