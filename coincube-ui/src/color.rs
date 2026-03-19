@@ -11,10 +11,10 @@ pub const GREY_2: Color = iced::color!(0xCCCCCC);
 pub const GREY_1: Color = iced::color!(0xE6E6E6);
 
 // Toast color palette
-pub const GREEN_TOAST: Color = iced::color!(0x3E8E5B);  // Success/Info toast green
-pub const DARK_ORANGE: Color = iced::color!(0xD4770E);  // Warning toast orange
-pub const LIGHT_ORANGE: Color = iced::color!(0xFFB347); // Info toast light orange
-pub const RED_ERROR: Color = iced::color!(0xE24E1B);    // Error toast red
+pub const GREEN_TOAST: Color = iced::color!(0x2D6A4F);  // Success toast dark green (6.39:1 with white)
+pub const DARK_ORANGE: Color = iced::color!(0xB55600);  // Warning toast darker orange (4.89:1 with white)
+pub const LIGHT_ORANGE: Color = iced::color!(0xD35400); // Info toast darker orange (4.9:1 with white)
+pub const RED_ERROR: Color = iced::color!(0xC0392B);    // Error toast darker red (5.44:1 with white)
 pub const GREY_6_DARKER: Color = iced::color!(0x161716); // Darker grey for Debug/Trace hover
 pub const GREY_4_DARKER: Color = iced::color!(0x353535); // Darker grey for Debug/Trace hover
 pub const GREY_3_DARKER: Color = iced::color!(0x5A5A5A); // Darker grey for Debug/Trace hover
