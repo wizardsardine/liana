@@ -630,12 +630,22 @@ impl BorderWalletReconstructionState {
     }
 }
 
-/// Zeroize recovery phrase words when the reconstruction state is dropped.
+/// Zeroize all secret-bearing buffers when the reconstruction state is dropped.
+///
+/// This covers the recovery phrase words, the checksum word, the grid
+/// (a deterministic permutation of BIP39 words derived from the phrase),
+/// and the pattern (cell selections that reconstruct the mnemonic).
 impl Drop for BorderWalletReconstructionState {
     fn drop(&mut self) {
         for word in &mut self.phrase_words {
             word.value.zeroize();
         }
+        if let Some(ref mut cw) = self.checksum_word {
+            cw.zeroize();
+        }
+        self.checksum_word = None;
+        self.grid = None;
+        self.pattern.clear();
     }
 }
 
@@ -677,6 +687,14 @@ impl SignModal {
 
     pub fn is_signing(&self) -> bool {
         !self.signing.is_empty()
+    }
+}
+
+/// Ensure any in-progress Border Wallet reconstruction state is dropped
+/// (triggering its own `Drop` zeroization) when the sign modal goes away.
+impl Drop for SignModal {
+    fn drop(&mut self) {
+        self.border_wallet_recon = None;
     }
 }
 
