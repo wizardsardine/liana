@@ -487,7 +487,10 @@ pub fn amount_input_model<'a>(config: AmountInputConfig<'a>) -> Element<'a, Liqu
                 SendAsset::Btc => "L-BTC",
                 SendAsset::Usdt => "USDt",
             };
-            format!("Paying with {} → Receiver gets {} (swap)", paying_with, receiving)
+            format!(
+                "Paying with {} → Receiver gets {} (swap)",
+                paying_with, receiving
+            )
         } else {
             let asset_name = match config.send_asset {
                 SendAsset::Btc => "L-BTC",
@@ -496,31 +499,34 @@ pub fn amount_input_model<'a>(config: AmountInputConfig<'a>) -> Element<'a, Liqu
             format!("Paying with {}", asset_name)
         };
 
-        let swap_toggle = iced_button(
-            Container::new(
-                Row::new()
-                    .spacing(6)
-                    .align_y(Alignment::Center)
-                    .push(icon::left_right_icon().size(14).style(|_| iced::widget::text::Style {
-                        color: Some(color::ORANGE),
-                    }))
-                    .push(text(toggle_label).size(13).color(color::ORANGE)),
+        let swap_toggle =
+            iced_button(
+                Container::new(
+                    Row::new()
+                        .spacing(6)
+                        .align_y(Alignment::Center)
+                        .push(icon::left_right_icon().size(14).style(|_| {
+                            iced::widget::text::Style {
+                                color: Some(color::ORANGE),
+                            }
+                        }))
+                        .push(text(toggle_label).size(13).color(color::ORANGE)),
+                )
+                .padding([4, 12]),
             )
-            .padding([4, 12]),
-        )
-        .on_press(LiquidSendMessage::PopupMessage(
-            view::SendPopupMessage::ToggleSendAsset,
-        ))
-        .style(|_, _| iced::widget::button::Style {
-            background: Some(Background::Color(iced::Color::TRANSPARENT)),
-            text_color: color::ORANGE,
-            border: iced::Border {
-                color: color::ORANGE,
-                width: 1.0,
-                radius: 15.0.into(),
-            },
-            ..Default::default()
-        });
+            .on_press(LiquidSendMessage::PopupMessage(
+                view::SendPopupMessage::ToggleSendAsset,
+            ))
+            .style(|_, _| iced::widget::button::Style {
+                background: Some(Background::Color(iced::Color::TRANSPARENT)),
+                text_color: color::ORANGE,
+                border: iced::Border {
+                    color: color::ORANGE,
+                    width: 1.0,
+                    radius: 15.0.into(),
+                },
+                ..Default::default()
+            });
 
         content = content.push(
             Container::new(swap_toggle)
@@ -653,12 +659,22 @@ pub fn amount_input_model<'a>(config: AmountInputConfig<'a>) -> Element<'a, Liqu
 
     content = content.push(comment_section);
 
-    let is_next_enabled = match config.send_asset {
-        SendAsset::Usdt if matches!(config.input_type, Some(InputType::LiquidAddress { .. })) => {
-            config.usdt_amount_input.valid && !config.usdt_amount_input.value.trim().is_empty()
-        }
-        _ => config.amount.valid && !config.amount.value.trim().is_empty(),
+    // Check that the paying asset has sufficient balance
+    let paying_asset = config.from_asset.unwrap_or(config.send_asset);
+    let has_balance = match paying_asset {
+        SendAsset::Usdt => config.usdt_balance > 0,
+        SendAsset::Btc => config.btc_balance.to_sat() > 0,
     };
+
+    let is_next_enabled = has_balance
+        && match config.send_asset {
+            SendAsset::Usdt
+                if matches!(config.input_type, Some(InputType::LiquidAddress { .. })) =>
+            {
+                config.usdt_amount_input.valid && !config.usdt_amount_input.value.trim().is_empty()
+            }
+            _ => config.amount.valid && !config.amount.value.trim().is_empty(),
+        };
 
     let next_button = button::primary(None, "Next").width(Length::Fill);
     let next_button = if !is_next_enabled {

@@ -575,14 +575,12 @@ impl State for LiquidSend {
                         if let Some(amount_sat) = address.amount_sat {
                             if self.send_asset == SendAsset::Btc {
                                 self.amount = Amount::from_sat(amount_sat);
-                                self.amount_input.value = if matches!(
-                                    cache.bitcoin_unit,
-                                    BitcoinDisplayUnit::BTC
-                                ) {
-                                    Amount::from_sat(amount_sat).to_btc().to_string()
-                                } else {
-                                    amount_sat.to_string()
-                                };
+                                self.amount_input.value =
+                                    if matches!(cache.bitcoin_unit, BitcoinDisplayUnit::BTC) {
+                                        Amount::from_sat(amount_sat).to_btc().to_string()
+                                    } else {
+                                        amount_sat.to_string()
+                                    };
                                 self.amount_input.valid = true;
                             }
                         }
@@ -613,9 +611,13 @@ impl State for LiquidSend {
                         ) {
                             self.amount = amount;
                             let amount_sats = amount.to_sat();
+                            let is_cross_asset =
+                                self.from_asset.is_some_and(|fa| fa != self.send_asset);
 
-                            // Check balance first
-                            if amount > self.btc_balance {
+                            // Skip balance check in cross-asset mode — the receiver amount
+                            // is in a different denomination than the paying asset; the SDK
+                            // validates actual balance during prepare.
+                            if !is_cross_asset && amount > self.btc_balance {
                                 self.amount_input.valid = false;
                                 self.amount_input.warning = Some("Insufficient balance");
                             }
@@ -1010,17 +1012,16 @@ impl State for LiquidSend {
                                         SendAsset::Btc => AssetKind::Lbtc,
                                         SendAsset::Usdt => AssetKind::Usdt,
                                     };
-                                    let from_asset_id =
-                                        match from_kind.asset_id(network) {
-                                            Some(id) => id.to_string(),
-                                            None => {
-                                                self.error = Some(format!(
-                                                    "{} not available on this network",
-                                                    from_kind.ticker()
-                                                ));
-                                                return Task::none();
-                                            }
-                                        };
+                                    let from_asset_id = match from_kind.asset_id(network) {
+                                        Some(id) => id.to_string(),
+                                        None => {
+                                            self.error = Some(format!(
+                                                "{} not available on this network",
+                                                from_kind.ticker()
+                                            ));
+                                            return Task::none();
+                                        }
+                                    };
                                     let amount_sat = self.amount.to_sat();
                                     let breez_client = self.breez_client.clone();
                                     return Task::perform(
@@ -1035,7 +1036,8 @@ impl State for LiquidSend {
                                                 )
                                                 .await
                                         },
-                                        |result| match result {
+                                        |result| {
+                                            match result {
                                             Ok(prepare_response) => {
                                                 Message::View(view::Message::LiquidSend(
                                                     view::LiquidSendMessage::PrepareResponseReceived(
@@ -1049,6 +1051,7 @@ impl State for LiquidSend {
                                                     e
                                                 )),
                                             )),
+                                        }
                                         },
                                     );
                                 }
@@ -1151,8 +1154,15 @@ impl State for LiquidSend {
                                 SendAsset::Usdt => SendAsset::Btc,
                             };
                             if self.from_asset.is_some() {
-                                // Already in cross-asset mode — toggle back to same-asset
-                                self.from_asset = None;
+                                // Already in cross-asset mode — toggle back to same-asset.
+                                // On usdt_only screen: if send_asset was forced to Btc by URI,
+                                // we can't go back to same-asset Btc send — block the toggle.
+                                if self.usdt_only && self.send_asset != SendAsset::Usdt {
+                                    // Can't disable cross-asset on usdt_only screen when URI
+                                    // requires a non-USDt asset — ignore toggle
+                                } else {
+                                    self.from_asset = None;
+                                }
                             } else {
                                 // Enable cross-asset: pay with the opposite asset
                                 self.from_asset = Some(opposite);
@@ -1186,11 +1196,16 @@ impl State for LiquidSend {
                         } else if let Some(base_units) =
                             parse_asset_to_minor_units(trimmed, USDT_PRECISION)
                         {
+                            let is_cross_asset =
+                                self.from_asset.is_some_and(|fa| fa != self.send_asset);
+
                             if base_units == 0 {
                                 self.usdt_amount_input.valid = false;
                                 self.usdt_amount_input.warning =
                                     Some("Amount must be greater than zero");
-                            } else if base_units > self.usdt_balance {
+                            } else if !is_cross_asset && base_units > self.usdt_balance {
+                                // Skip balance check in cross-asset mode — receiver amount
+                                // denomination differs from paying asset; SDK validates during prepare.
                                 self.usdt_amount_input.valid = false;
                                 self.usdt_amount_input.warning = Some("Insufficient USDt balance");
                             } else {
@@ -1232,11 +1247,14 @@ impl State for LiquidSend {
                         if let Some(prepare_response) = self.prepare_response.clone() {
                             let breez_client = self.breez_client.clone();
                             let comment = self.comment.clone();
-                            // For cross-asset swaps, fee asset depends on what we're paying with
-                            let use_asset_fees = match self.from_asset {
-                                Some(SendAsset::Btc) => false,
-                                Some(SendAsset::Usdt) => true,
-                                None => matches!(self.send_asset, SendAsset::Usdt),
+                            // Cross-asset swaps cannot use asset fees per SDK constraint.
+                            // Only same-asset USDt sends can pay fees in USDt.
+                            let is_cross_asset =
+                                self.from_asset.is_some_and(|fa| fa != self.send_asset);
+                            let use_asset_fees = if is_cross_asset {
+                                false
+                            } else {
+                                matches!(self.send_asset, SendAsset::Usdt)
                             };
 
                             return Task::perform(

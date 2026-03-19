@@ -348,13 +348,15 @@ impl BreezClient {
         from_asset_id: Option<&str>,
     ) -> Result<breez::PrepareSendResponse, BreezError> {
         let receiver_amount = safe_base_units_to_f64(amount, precision)?;
+        // Cross-asset swaps (from_asset != to_asset) cannot use asset fees per SDK constraint
+        let is_cross_asset = from_asset_id.is_some_and(|from| from != to_asset_id);
         self.get_sdk()?
             .prepare_send_payment(&breez::PrepareSendRequest {
                 destination,
                 amount: Some(breez::PayAmount::Asset {
                     to_asset: to_asset_id.to_string(),
                     receiver_amount,
-                    estimate_asset_fees: Some(true),
+                    estimate_asset_fees: if is_cross_asset { None } else { Some(true) },
                     from_asset: from_asset_id.map(|s| s.to_string()),
                 }),
                 disable_mrh: None,
