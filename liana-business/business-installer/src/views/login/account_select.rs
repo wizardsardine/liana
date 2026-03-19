@@ -1,14 +1,18 @@
 use crate::{
     state::{Msg, State},
-    views::{
-        account_entry, delete_btn, layout_with_scrollable_list, INSTALLER_STEPS, MENU_ENTRY_HEIGHT,
-    },
+    views::{account_entry, delete_btn, layout_with_scrollable_list, INSTALLER_STEPS},
 };
 use iced::{
-    widget::{container, row, Space},
+    widget::{row, Space},
     Alignment, Length,
 };
-use liana_ui::{component::text, theme::card::warning, widget::*};
+use liana_ui::{
+    component::{
+        button::{btn_secondary, BtnWidth},
+        text,
+    },
+    widget::*,
+};
 
 pub fn account_select_view(state: &State) -> Element<'_, Msg> {
     let accounts = &state.views.login.account_select.accounts;
@@ -72,15 +76,11 @@ pub fn account_select_view(state: &State) -> Element<'_, Msg> {
         let delete_btn = delete_btn(delete_msg);
 
         // Row with account card and delete button
-        let account_row = container(
-            Row::new()
-                .spacing(15)
-                .align_y(Alignment::Center)
-                .push(account_card_element)
-                .push(delete_btn),
-        )
-        .style(warning)
-        .height(MENU_ENTRY_HEIGHT);
+        let account_row = Row::new()
+            .spacing(15)
+            .align_y(Alignment::Center)
+            .push(account_card_element)
+            .push(delete_btn);
 
         list_content = list_content.push(account_row);
     }
@@ -89,8 +89,12 @@ pub fn account_select_view(state: &State) -> Element<'_, Msg> {
     list_content = list_content.push(Space::with_height(20));
 
     // "Connect with another email" button
-    let new_email = liana_ui::component::button::secondary(None, "Connect with another email")
-        .on_press(Msg::AccountSelectNewEmail);
+    let new_email = btn_secondary(
+        None,
+        "Connect with another email",
+        BtnWidth::XXL,
+        Some(Msg::AccountSelectNewEmail),
+    );
 
     // Wrap in a container to maintain alignment with account rows
     let new_email_row = Row::new()

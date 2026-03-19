@@ -7,7 +7,10 @@ use iced::{
     Length,
 };
 use liana_ui::{
-    component::{button, form, text},
+    component::{
+        button::{btn_primary, BtnWidth},
+        form, text,
+    },
     theme,
     widget::*,
 };
@@ -29,8 +32,12 @@ pub fn login_email_view(state: &State) -> Element<'_, Msg> {
     .padding(10);
     let form = Container::new(form).width(Length::Fill);
 
-    let btn = button::primary(None, "Send token")
-        .on_press_maybe((state.views.login.email.can_send()).then_some(Msg::LoginSendToken));
+    let btn = btn_primary(
+        None,
+        "Send token",
+        BtnWidth::L,
+        can_submit.then_some(Msg::LoginSendToken),
+    );
 
     let liana_business = row![
         Space::with_width(Length::Fill),

@@ -7,7 +7,10 @@ use iced::{
     Length,
 };
 use liana_ui::{
-    component::{button, form, text},
+    component::{
+        button::{btn_secondary, BtnWidth},
+        form, text,
+    },
     icon, theme,
     widget::*,
 };
@@ -23,10 +26,17 @@ pub fn login_code_view(state: &State) -> Element<'_, Msg> {
     .padding(10);
     let form = Container::new(form).width(Length::Fill);
 
-    let btn_previous = button::secondary(Some(icon::previous_icon()), " Change Email")
-        .on_press_maybe((!state.views.login.code.can_send()).then_some(Msg::NavigateBack));
+    let btn_previous = btn_secondary(
+        Some(icon::previous_icon()),
+        " Change Email",
+        BtnWidth::XL,
+        (!state.views.login.code.can_send()).then_some(Msg::NavigateBack),
+    );
 
-    let btn_resend_token = button::secondary(None, "Resend token").on_press_maybe(
+    let btn_resend_token = btn_secondary(
+        None,
+        "Resend token",
+        BtnWidth::XL,
         state
             .views
             .login
