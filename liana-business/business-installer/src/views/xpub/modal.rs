@@ -11,13 +11,15 @@ use iced::{
 use liana_gui::hw::{is_compatible_with_tapminiscript, min_taproot_version, UnsupportedReason};
 use liana_ui::{
     component::{
-        button, card, form, hw, modal,
+        button, form, hw,
+        modal::{self, modal_view, none_fn, ModalWidth},
         text::{self, p1_bold},
         tooltip,
     },
     icon, theme,
     widget::*,
 };
+
 use miniscript::bitcoin::bip32::ChildNumber;
 
 type FnMsg = fn() -> Msg;
@@ -42,12 +44,6 @@ pub fn xpub_modal_view(state: &State) -> Option<Element<'_, Msg>> {
 
 /// Render the Select view - shows device list and other options
 fn select_view<'a>(state: &'a State, modal_state: &'a XpubEntryModalState) -> Element<'a, Msg> {
-    let header = modal::header(
-        Some(format!("Select key source - {}", modal_state.key_alias)),
-        None::<FnMsg>,
-        Some(|| Msg::XpubCancelModal),
-    );
-
     // Show current xpub status if one exists
     let xpub_status = modal_state.current_xpub.is_some().then_some(
         Container::new(
@@ -98,8 +94,7 @@ fn select_view<'a>(state: &'a State, modal_state: &'a XpubEntryModalState) -> El
             .push(input_value)
     });
 
-    let content = Column::new()
-        .push(header)
+    let body = Column::new()
         .push_maybe(xpub_status)
         .push(hw_section(state))
         .push_maybe(input_display)
@@ -113,20 +108,19 @@ fn select_view<'a>(state: &'a State, modal_state: &'a XpubEntryModalState) -> El
         .push_maybe(validation_error)
         .push(footer_buttons(modal_state))
         .spacing(15)
-        .align_x(Alignment::Center)
-        .width(modal::MODAL_WIDTH);
+        .align_x(Alignment::Center);
 
-    card::modal(content).into()
+    modal_view(
+        Some(format!("Select key source - {}", modal_state.key_alias)),
+        None::<FnMsg>,
+        Some(|| Msg::XpubCancelModal),
+        ModalWidth::L,
+        body,
+    )
 }
 
 /// Render the Details view - shows account picker and fetch status
 fn details_view(modal_state: &XpubEntryModalState) -> Element<'_, Msg> {
-    let header = modal::header(
-        Some(modal_state.key_alias.clone()),
-        Some(|| Msg::XpubDeviceBack),
-        Some(|| Msg::XpubCancelModal),
-    );
-
     // Account selection picker
     let accounts: Vec<_> = (0..10)
         .map(|i| ChildNumber::from_hardened_idx(i).expect("hardcoded"))
@@ -221,8 +215,7 @@ fn details_view(modal_state: &XpubEntryModalState) -> Element<'_, Msg> {
             .width(Length::Fill)
     });
 
-    let content = Column::new()
-        .push(header)
+    let body = Column::new()
         .push_maybe(fetching_label)
         .push_maybe(error)
         .push_maybe(xpub)
@@ -230,11 +223,15 @@ fn details_view(modal_state: &XpubEntryModalState) -> Element<'_, Msg> {
         .push(account_label)
         .push(account)
         .push(btn_row)
-        .spacing(15)
-        .padding(20.0)
-        .width(Length::Fixed(450.0));
+        .spacing(15);
 
-    card::modal(content).into()
+    modal_view(
+        Some(modal_state.key_alias.clone()),
+        Some(|| Msg::XpubDeviceBack),
+        Some(|| Msg::XpubCancelModal),
+        ModalWidth::M,
+        body,
+    )
 }
 
 /// Format account for display (e.g., "Account #0")
@@ -361,7 +358,7 @@ fn device_card(data: DeviceRenderData) -> Element<'static, Msg> {
                 None,
                 None,
                 Some(message),
-                None::<fn() -> Msg>,
+                none_fn(),
             )
         }
     }

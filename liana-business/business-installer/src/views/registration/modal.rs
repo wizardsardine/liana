@@ -3,9 +3,13 @@ use crate::state::{
     views::registration::{RegistrationModalState, RegistrationModalStep},
     State,
 };
-use iced::{Alignment, Length};
+use iced::Alignment;
 use liana_ui::{
-    component::{button, card, text},
+    component::{
+        button::{self, btn_cancel},
+        modal::{modal_view, none_fn, ModalWidth},
+        text,
+    },
     theme,
     widget::*,
 };
@@ -20,16 +24,13 @@ pub fn registration_modal_view(state: &State) -> Option<Element<'_, Msg>> {
         RegistrationModalStep::Error => error_view(modal_state),
     };
 
-    Some(card::modal(content).into())
+    Some(content)
 }
 
 fn registering_view(_modal_state: &RegistrationModalState) -> Element<'_, Msg> {
-    Column::new()
-        .spacing(20)
-        .padding(20)
-        .width(Length::Fixed(400.0))
+    let body = Column::new()
+        .spacing(15)
         .align_x(Alignment::Center)
-        .push(text::h3("Registering Wallet"))
         .push(
             text::p1_medium("Please confirm on your device...")
                 .style(theme::text::secondary)
@@ -38,9 +39,17 @@ fn registering_view(_modal_state: &RegistrationModalState) -> Element<'_, Msg> {
         .push(
             Row::new()
                 .spacing(10)
-                .push(button::secondary(None, "Cancel").on_press(Msg::RegistrationCancelModal)),
+                .push(btn_cancel(Some(Msg::RegistrationCancelModal))),
         )
-        .into()
+        .align_x(Alignment::Center);
+
+    modal_view(
+        Some("Registering Wallet".to_string()),
+        none_fn(),
+        none_fn(),
+        ModalWidth::S,
+        body,
+    )
 }
 
 fn error_view(modal_state: &RegistrationModalState) -> Element<'_, Msg> {
@@ -49,12 +58,9 @@ fn error_view(modal_state: &RegistrationModalState) -> Element<'_, Msg> {
         .as_deref()
         .unwrap_or("Unknown error occurred");
 
-    Column::new()
-        .spacing(20)
-        .padding(20)
-        .width(Length::Fixed(400.0))
+    let body = Column::new()
+        .spacing(15)
         .align_x(Alignment::Center)
-        .push(text::h3("Registration Failed"))
         .push(
             text::p1_medium(error_msg)
                 .style(theme::text::warning)
@@ -65,17 +71,21 @@ fn error_view(modal_state: &RegistrationModalState) -> Element<'_, Msg> {
                 .spacing(10)
                 .push(button::secondary(None, "Cancel").on_press(Msg::RegistrationCancelModal))
                 .push(button::primary(None, "Retry").on_press(Msg::RegistrationRetry)),
-        )
-        .into()
+        );
+
+    modal_view(
+        Some("Registration Failed".to_string()),
+        none_fn(),
+        none_fn(),
+        ModalWidth::S,
+        body,
+    )
 }
 
 fn confirm_coldcard_view(_modal_state: &RegistrationModalState) -> Element<'_, Msg> {
-    Column::new()
-        .spacing(20)
-        .padding(20)
-        .width(Length::Fixed(400.0))
+    let body = Column::new()
+        .spacing(15)
         .align_x(Alignment::Center)
-        .push(text::h3("Confirm Registration"))
         .push(
             text::p1_medium(
                 "Please confirm on your Coldcard that the wallet registration completed successfully.",
@@ -92,6 +102,13 @@ fn confirm_coldcard_view(_modal_state: &RegistrationModalState) -> Element<'_, M
                 .spacing(10)
                 .push(button::secondary(None, "No").on_press(Msg::RegistrationConfirmNo))
                 .push(button::primary(None, "Yes").on_press(Msg::RegistrationConfirmYes)),
-        )
-        .into()
+        );
+
+    modal_view(
+        Some("Confirm Registration".to_string()),
+        none_fn(),
+        none_fn(),
+        ModalWidth::S,
+        body,
+    )
 }
