@@ -1703,16 +1703,22 @@ impl App {
         // Overlay toast at bottom if present
         match self.errors.is_empty() {
             true => content,
-            false => iced::widget::Stack::new()
-                .push(content)
-                .push(
-                     view::toast_overlay(
-                        self.errors.iter().map(|(id, _, level, msg)| (*id, *level, msg.as_str())),
-                        &ui_theme::Theme::default(),
+            false => {
+                // Snapshot and sort by error ID (oldest first for chronological order)
+                let mut error_snapshot: Vec<_> = self.errors.iter().collect();
+                error_snapshot.sort_by(|a, b| a.0.cmp(&b.0)); // Sort by usize id (first element)
+                
+                iced::widget::Stack::new()
+                    .push(content)
+                    .push(
+                        view::toast_overlay(
+                            error_snapshot.iter().map(|(id, _, level, msg)| (*id, *level, msg.as_str())),
+                            &ui_theme::Theme::default(),
+                        )
+                        .map(Message::View),
                     )
-                    .map(Message::View),
-                )
-                .into(),
+                    .into()
+            }
         }
     }
 
