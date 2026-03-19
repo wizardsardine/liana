@@ -2,7 +2,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use coincube_core::miniscript::bitcoin::{Amount, Denomination};
-use coincube_ui::component::{form, toast};
+use coincube_ui::component::form;
 use coincube_ui::widget::*;
 use iced::{clipboard, widget::qr_code, Subscription, Task};
 
@@ -22,7 +22,6 @@ pub struct LiquidReceive {
     onchain_address: Option<String>,
     onchain_qr_data: Option<qr_code::Data>,
     loading: bool,
-    toast: Option<String>,
     amount_input: form::Value<String>,
     description_input: String,
     lightning_receive_limits: Option<(u64, u64)>, // (min_sat, max_sat)
@@ -42,7 +41,6 @@ impl LiquidReceive {
             onchain_address: None,
             onchain_qr_data: None,
             loading: false,
-            toast: None,
             amount_input: form::Value::default(),
             description_input: String::new(),
             lightning_receive_limits: None,
@@ -98,14 +96,8 @@ impl State for LiquidReceive {
 
         let content = view::dashboard(menu, cache, receive_view);
 
-        // Add toast notification for clipboard copy
-        let toasts = if let Some(message) = &self.toast {
-            vec![view::simple_toast(message).into()]
-        } else {
-            vec![]
-        };
-
-        toast::Manager::new(content, toasts).into()
+        // Use global toast overlay instead of local toast
+        content
     }
 
     fn update(
@@ -119,7 +111,6 @@ impl State for LiquidReceive {
                 LiquidReceiveMessage::ToggleMethod(method) => {
                     if self.receive_method != method {
                         self.receive_method = method.clone();
-                        self.toast = None;
                     }
                     return self.fetch_limits();
                 }
@@ -134,7 +125,7 @@ impl State for LiquidReceive {
                             address.to_string()
                         };
 
-                        self.toast = Some(match self.receive_method {
+                        let message = match self.receive_method {
                             ReceiveMethod::Lightning => {
                                 "Copied Lightning Address to clipboard".to_string()
                             }
@@ -144,22 +135,16 @@ impl State for LiquidReceive {
                             ReceiveMethod::OnChain => {
                                 "Copied Bitcoin Address to clipboard".to_string()
                             }
-                        });
+                        };
 
-                        // Auto-dismiss toast after 3 seconds
-                        let clear_toast_task = Task::future(async {
-                            tokio::time::sleep(Duration::from_secs(3)).await;
-                            Message::View(view::Message::LiquidReceive(
-                                LiquidReceiveMessage::ClearToast,
-                            ))
-                        });
+                        // Use global toast overlay
+                        let toast_task = Task::done(Message::View(view::Message::ShowToast(
+                            log::Level::Info,
+                            message,
+                        )));
 
-                        return Task::batch([clipboard::write(address_copy), clear_toast_task]);
+                        return Task::batch([clipboard::write(address_copy), toast_task]);
                     }
-                    return Task::none();
-                }
-                LiquidReceiveMessage::ClearToast => {
-                    self.toast = None;
                     return Task::none();
                 }
                 LiquidReceiveMessage::AmountInput(value) => {

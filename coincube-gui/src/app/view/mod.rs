@@ -42,6 +42,19 @@ pub fn simple_toast(message: &str) -> Container<Message> {
         .max_width(400.0)
 }
 
+/// Generic toast notification with specified level
+pub fn toast_with_level(message: &str, level: log::Level) -> Container<Message> {
+    container(text::p2_regular(message))
+        .padding(15)
+        .style(match level {
+            log::Level::Info => theme::notification::info,
+            log::Level::Warn => theme::notification::warning,
+            log::Level::Error => theme::notification::error,
+            log::Level::Debug | log::Level::Trace => theme::notification::success,
+        })
+        .max_width(400.0)
+}
+
 fn menu_bar_highlight<'a, T: 'a>() -> Container<'a, T> {
     Container::new(Space::new().width(Length::Fixed(5.0)))
         .height(Length::Fixed(50.0))
@@ -601,27 +614,44 @@ pub fn placeholder<'a, T: Into<Element<'a, Message>>>(
         .into()
 }
 
-pub fn error_toast_overlay<'a, I: Iterator<Item = (usize, &'a str)>>(
+pub fn toast_overlay<'a, I: Iterator<Item = (usize, log::Level, &'a str)>>(
     iter: I,
 ) -> coincube_ui::widget::Element<'a, Message> {
     use coincube_ui::{color, component::text, icon::cross_icon};
 
-    let toast = |id: usize, content: &str| {
+    // Color mapping for toast levels
+    let toast = |id: usize, level: log::Level, content: &str| {
         const WIDGET_HEIGHT: u32 = 80;
+        
+        let (bg_color, border_color, text_color) = match level {
+            log::Level::Error => (color::RED_ERROR, color::RED_ERROR, color::WHITE),
+            log::Level::Warn => (color::DARK_ORANGE, color::DARK_ORANGE, color::WHITE),
+            log::Level::Info => (color::LIGHT_ORANGE, color::LIGHT_ORANGE, color::WHITE),
+            log::Level::Debug => (color::GREY_6, color::GREY_4, color::WHITE),
+            log::Level::Trace => (color::GREY_5, color::GREY_3, color::WHITE),
+        };
+
+        let bg = iced::Background::Color(bg_color);
+        let border = iced::Border {
+            width: 1.0,
+            color: border_color,
+            radius: 25.0.into(),
+        };
+
         iced::widget::row![
-            container(text::p1_bold(content).color(color::WHITE))
+            container(text::p1_bold(content).color(text_color))
                 .width(600)
                 .height(WIDGET_HEIGHT)
                 .padding(15)
                 .align_y(iced::Alignment::Center)
-                .style(|_| {
+                .style(move |_| {
                     iced::widget::container::Style::default()
-                        .background(iced::Color::BLACK)
-                        .border(iced::Border::default().width(1).color(color::RED))
+                        .background(bg)
+                        .border(border)
                 }),
             iced::widget::Button::new(
                 cross_icon()
-                    .color(color::BLACK)
+                    .color(text_color)
                     .size(36)
                     .align_x(iced::Alignment::Center)
                     .align_y(iced::Alignment::Center)
@@ -629,7 +659,16 @@ pub fn error_toast_overlay<'a, I: Iterator<Item = (usize, &'a str)>>(
             )
             .height(WIDGET_HEIGHT)
             .width(60)
-            .style(|_, _| iced::widget::button::Style::default().with_background(color::RED))
+            .style(move |_, _| {
+                let hover_bg = match level {
+                    log::Level::Error => color::RED_ERROR,
+                    log::Level::Warn => color::DARK_ORANGE,
+                    log::Level::Info => color::LIGHT_ORANGE,
+                    log::Level::Debug => color::GREY_4,
+                    log::Level::Trace => color::GREY_3,
+                };
+                iced::widget::button::Style::default().with_background(hover_bg)
+            })
             .on_press(Message::DismissToast(id))
         ]
     };
@@ -639,7 +678,7 @@ pub fn error_toast_overlay<'a, I: Iterator<Item = (usize, &'a str)>>(
         iced::widget::Space::new().width(190.0),
         // center toasts horizontally
         iced::widget::Space::new().width(iced::Length::Fill),
-        iced::widget::Column::from_iter(iter.map(|(id, content)| toast(id, content).into()))
+        iced::widget::Column::from_iter(iter.map(|(id, level, content)| toast(id, level, content).into()))
             .spacing(10),
         iced::widget::Space::new().width(iced::Length::Fill),
     ];

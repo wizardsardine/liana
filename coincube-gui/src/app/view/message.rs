@@ -47,7 +47,6 @@ pub trait Close {
 #[derive(Debug, Clone)]
 pub enum VaultReceiveMessage {
     Copy(String),
-    ClearToast,
 }
 
 #[derive(Debug, Clone)]
@@ -95,6 +94,7 @@ pub enum Message {
     LiquidSettings(LiquidSettingsMessage),
     PreselectPayment(Payment),
     ShowError(String),
+    ShowToast(log::Level, String),
     DismissToast(usize),
 }
 
@@ -348,7 +348,6 @@ pub enum SendPopupMessage {
 pub enum LiquidReceiveMessage {
     ToggleMethod(ReceiveMethod),
     Copy,
-    ClearToast,
     GenerateAddress,
     AddressGenerated(ReceiveMethod, Result<String, String>),
     AmountInput(String),

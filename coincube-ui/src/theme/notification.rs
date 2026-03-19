@@ -34,3 +34,11 @@ pub fn error(theme: &Theme) -> Style {
 pub fn success(theme: &Theme) -> Style {
     notification(&theme.colors.notifications.success)
 }
+
+pub fn warning(theme: &Theme) -> Style {
+    notification(&theme.colors.notifications.warning)
+}
+
+pub fn info(theme: &Theme) -> Style {
+    notification(&theme.colors.notifications.info)
+}

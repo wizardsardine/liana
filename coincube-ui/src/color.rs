@@ -13,10 +13,17 @@ pub const GREY_3: Color = iced::color!(0x717171);
 pub const GREY_2: Color = iced::color!(0xCCCCCC);
 pub const GREY_1: Color = iced::color!(0xE6E6E6);
 
+// Toast color palette
+pub const GREEN_TOAST: Color = iced::color!(0x3E8E5B);  // Success/Info toast green
+pub const DARK_ORANGE: Color = iced::color!(0xD4770E);  // Warning toast orange
+pub const LIGHT_ORANGE: Color = iced::color!(0xFFB347); // Info toast light orange
+pub const RED_ERROR: Color = iced::color!(0xE24E1B);    // Error toast red
+
+// Legacy colors (keep for backward compatibility)
+pub const RED: Color = iced::color!(0xE24E1B);
+
 pub const GREEN: Color = iced::color!(0x00FF66);
 pub const TRANSPARENT_GREEN: Color = iced::color!(0x00FF66, 0.3);
-
-pub const RED: Color = iced::color!(0xE24E1B);
 
 pub const ORANGE: Color = iced::color!(0xF7931B);
 pub const TRANSPARENT_ORANGE: Color = iced::color!(0xF7931B, 0.3);

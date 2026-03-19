@@ -1040,6 +1040,11 @@ impl App {
                 self.errors.retain(|(i, ..)| *i != id);
             }
             Message::View(view::Message::ShowError(msg)) => {
+                // Redirect ShowError to ShowToast with Error level
+                return self.update(Message::View(view::Message::ShowToast(log::Level::Error, msg)));
+            }
+            Message::View(view::Message::ShowToast(_level, msg)) => {
+                // Show toast with specified level
                 self.errors
                     .push((self.current_error_id, std::time::Instant::now(), msg));
                 self.current_error_id += 1;
@@ -1629,14 +1634,14 @@ impl App {
             view.map(Message::View)
         };
 
-        // Overlay error toast at bottom if present
+        // Overlay toast at bottom if present
         match self.errors.is_empty() {
             true => content,
             false => iced::widget::Stack::new()
                 .push(content)
                 .push(
-                    view::error_toast_overlay(
-                        self.errors.iter().map(|(id, _, msg)| (*id, msg.as_str())),
+                    view::toast_overlay(
+                        self.errors.iter().map(|(id, _, msg)| (*id, log::Level::Error, msg.as_str())),
                     )
                     .map(Message::View),
                 )
