@@ -552,23 +552,33 @@ impl State for LiquidSend {
                                     }
                                 }
                                 None => {
-                                    // Unknown asset_id — clear URI lock
+                                    // Unknown asset_id — clear URI lock and restore default asset
                                     self.uri_asset = None;
                                     self.from_asset = None;
+                                    self.send_asset = if self.usdt_only {
+                                        SendAsset::Usdt
+                                    } else {
+                                        SendAsset::Btc
+                                    };
                                 }
                             }
                         } else {
-                            // No asset_id in URI — clear URI lock
+                            // No asset_id in URI — clear URI lock and restore default asset
                             self.uri_asset = None;
                             self.from_asset = None;
+                            self.send_asset = if self.usdt_only {
+                                SendAsset::Usdt
+                            } else {
+                                SendAsset::Btc
+                            };
                         }
 
                         // Pre-fill amount from URI if present
                         if let Some(amount) = address.amount {
                             if self.send_asset == SendAsset::Usdt {
-                                // amount is f64 in the asset's display units
-                                self.usdt_amount_input.value = format!("{:.2}", amount);
-                                self.usdt_amount_input.valid = true;
+                                // Preserve full precision from URI (up to 8 decimals)
+                                self.usdt_amount_input.value = amount.to_string();
+                                self.usdt_amount_input.valid = amount > 0.0;
                             }
                             // For BTC, amount_sat may be more reliable
                         }
@@ -585,9 +595,14 @@ impl State for LiquidSend {
                             }
                         }
                     } else {
-                        // Not a LiquidAddress — clear URI asset state
+                        // Not a LiquidAddress — clear URI asset state and restore default
                         self.uri_asset = None;
                         self.from_asset = None;
+                        self.send_asset = if self.usdt_only {
+                            SendAsset::Usdt
+                        } else {
+                            SendAsset::Btc
+                        };
                     }
                 }
                 view::LiquidSendMessage::PopupMessage(SendPopupMessage::AmountEdited(v)) => {
@@ -730,6 +745,7 @@ impl State for LiquidSend {
                 view::LiquidSendMessage::PopupMessage(SendPopupMessage::FiatInputEdited(
                     fiat_input,
                 )) => {
+                    let is_cross_asset = self.from_asset.is_some_and(|fa| fa != self.send_asset);
                     if let LiquidSendFlowState::Main {
                         modal:
                             Modal::FiatInput {
@@ -756,8 +772,9 @@ impl State for LiquidSend {
                                     if let Ok(btc_amount) = converter.convert_to_btc(&fiat_amount) {
                                         let amount_sats = btc_amount.to_sat();
 
-                                        // Validate against balance and limits
-                                        if btc_amount > self.btc_balance {
+                                        // Skip balance check in cross-asset mode — receiver
+                                        // amount denomination differs from paying asset.
+                                        if !is_cross_asset && btc_amount > self.btc_balance {
                                             current_input.valid = false;
                                             current_input.warning = Some("Insufficient balance");
                                         } else if let Some((min_sat, max_sat)) =
@@ -825,6 +842,7 @@ impl State for LiquidSend {
                     }
                 }
                 view::LiquidSendMessage::PopupMessage(SendPopupMessage::FiatDone) => {
+                    let is_cross_asset = self.from_asset.is_some_and(|fa| fa != self.send_asset);
                     if let LiquidSendFlowState::Main {
                         modal:
                             Modal::FiatInput {
@@ -855,8 +873,12 @@ impl State for LiquidSend {
                                         };
                                         let amount_sats = btc_amount.to_sat();
 
-                                        // Validate the converted BTC amount
-                                        let (valid, warning) = if btc_amount > self.btc_balance {
+                                        // Validate the converted BTC amount.
+                                        // Skip balance check in cross-asset mode — receiver
+                                        // amount denomination differs from paying asset.
+                                        let (valid, warning) = if !is_cross_asset
+                                            && btc_amount > self.btc_balance
+                                        {
                                             (false, Some("Amount exceeds available balance"))
                                         } else {
                                             let limits = if matches!(
