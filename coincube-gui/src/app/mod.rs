@@ -19,7 +19,7 @@ use tokio::runtime::Handle;
 use tracing::{error, info, warn};
 
 pub use coincube_core::miniscript::bitcoin;
-use coincube_ui::{component::network_banner, widget::Element};
+use coincube_ui::{component::network_banner, widget::Element, theme as ui_theme};
 pub use coincubed::{
     commands::CoinStatus,
     config::{BitcoindRpcAuth, Config as DaemonConfig},
@@ -1706,8 +1706,9 @@ impl App {
             false => iced::widget::Stack::new()
                 .push(content)
                 .push(
-                    view::toast_overlay(
+                     view::toast_overlay(
                         self.errors.iter().map(|(id, _, level, msg)| (*id, *level, msg.as_str())),
+                        &ui_theme::Theme::default(),
                     )
                     .map(Message::View),
                 )

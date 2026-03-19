@@ -734,22 +734,20 @@ pub fn placeholder<'a, T: Into<Element<'a, Message>>>(
 
 pub fn toast_overlay<'a, I: Iterator<Item = (usize, log::Level, &'a str)>>(
     iter: I,
+    theme: &coincube_ui::theme::Theme,
 ) -> coincube_ui::widget::Element<'a, Message> {
-    use coincube_ui::{color, component::text, icon::cross_icon};
+    use coincube_ui::{color, component::text, icon::cross_icon, theme::notification};
 
-    // Color mapping for toast levels
-    // Using dark text for better contrast across all backgrounds
+    // Color mapping for toast levels using the theme
     let toast = |id: usize, level: log::Level, content: &'a str| {
         let content_owned = content.to_string();
         const WIDGET_HEIGHT: u32 = 80;
         
-        let (bg_color, border_color, text_color) = match level {
-            log::Level::Error => (color::RED_ERROR, color::RED_ERROR, color::WHITE),
-            log::Level::Warn => (color::DARK_ORANGE, color::DARK_ORANGE, color::WHITE),
-            log::Level::Info => (color::LIGHT_ORANGE, color::LIGHT_ORANGE, color::DARK_ORANGE),
-            log::Level::Debug => (color::GREY_6, color::GREY_4, color::DARK_ORANGE),
-            log::Level::Trace => (color::GREY_5, color::GREY_3, color::DARK_ORANGE),
-        };
+        // Use theme palette for the toast background
+        let palette = notification::palette_for_level(&level, theme);
+        let bg_color = palette.background;
+        let border_color = palette.border.unwrap_or(palette.background);
+        let text_color = palette.text.unwrap_or(color::WHITE);
 
         let bg = iced::Background::Color(bg_color);
         let border = iced::Border {
@@ -780,12 +778,13 @@ pub fn toast_overlay<'a, I: Iterator<Item = (usize, log::Level, &'a str)>>(
             .height(WIDGET_HEIGHT)
             .width(60)
             .style(move |_, _| {
+                // For hover, use a darker variant of the background
                 let hover_bg = match level {
                     log::Level::Error => color::RED_ERROR,
                     log::Level::Warn => color::DARK_ORANGE,
                     log::Level::Info => color::LIGHT_ORANGE,
-                    log::Level::Debug => color::GREY_4,
-                    log::Level::Trace => color::GREY_3,
+                    log::Level::Debug => color::GREY_4_DARKER,
+                    log::Level::Trace => color::GREY_3_DARKER,
                 };
                 iced::widget::button::Style::default().with_background(hover_bg)
             })
