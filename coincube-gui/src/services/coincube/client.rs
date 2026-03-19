@@ -23,9 +23,15 @@ impl CoincubeClient {
         #[cfg(not(debug_assertions))]
         let base_url = env!("COINCUBE_API_URL");
 
+        log::info!(
+            "Coincube Base URL: {}, Release = {}",
+            base_url,
+            cfg!(not(debug_assertions))
+        );
+
         Self {
             client: reqwest::ClientBuilder::new()
-                .timeout(std::time::Duration::from_secs(5))
+                .timeout(std::time::Duration::from_secs(20))
                 .https_only(true)
                 .build()
                 .unwrap(),
@@ -42,7 +48,7 @@ impl CoincubeClient {
         );
 
         self.client = reqwest::ClientBuilder::new()
-            .timeout(std::time::Duration::from_secs(5))
+            .timeout(std::time::Duration::from_secs(20))
             .https_only(true)
             .default_headers(headers)
             .build()
@@ -139,6 +145,36 @@ impl CoincubeClient {
 #[serde(rename_all = "camelCase")]
 struct CountryResponse {
     iso_code: String,
+}
+
+impl CoincubeClient {
+    pub async fn fetch_download_stats(&self) -> Result<super::DownloadStats, super::CoincubeError> {
+        let url = format!("{}/api/v1/downloads", self.base_url);
+        let res = self.client.get(&url).send().await?;
+        let res = res.check_success().await?;
+        Ok(res.json().await?)
+    }
+
+    pub async fn fetch_today_stats(&self) -> Result<super::TodayStats, super::CoincubeError> {
+        let url = format!("{}/api/v1/downloads/today", self.base_url);
+        let res = self.client.get(&url).send().await?;
+        let res = res.check_success().await?;
+        Ok(res.json().await?)
+    }
+
+    pub async fn fetch_timeseries(
+        &self,
+        period: super::StatsPeriod,
+    ) -> Result<super::TimeseriesResponse, super::CoincubeError> {
+        let url = format!(
+            "{}/api/v1/downloads/timeseries?period={}",
+            self.base_url,
+            period.as_str()
+        );
+        let res = self.client.get(&url).send().await?;
+        let res = res.check_success().await?;
+        Ok(res.json().await?)
+    }
 }
 
 impl CoincubeClient {

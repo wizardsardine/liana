@@ -109,7 +109,7 @@ pub fn custom_template<'a>(
                                 defined_key(
                                     &key.name,
                                     color::ORANGE,
-                                    "Primary key",
+                                    "Primary key".to_string(),
                                     if use_taproot && !key.source.is_compatible_taproot() {
                                         Some("This device does not support Taproot")
                                     } else {
@@ -154,7 +154,7 @@ pub fn custom_template<'a>(
                                         defined_key(
                                             &key.name,
                                             color::ORANGE,
-                                            "Recovery key",
+                                            "Recovery key".to_string(),
                                             if use_taproot && !key.source.is_compatible_taproot() {
                                                 Some("This device does not support Taproot")
                                             } else {
@@ -227,7 +227,7 @@ pub fn custom_template<'a>(
                                 defined_key(
                                     &key.name,
                                     color::WHITE,
-                                    "Safety Net key",
+                                    "Safety Net key".to_string(),
                                     if use_taproot && !key.source.is_compatible_taproot() {
                                         Some("This key source does not support Taproot")
                                     } else {

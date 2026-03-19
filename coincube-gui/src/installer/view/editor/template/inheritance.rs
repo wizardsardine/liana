@@ -117,7 +117,7 @@ pub fn inheritance_template<'a>(
                         defined_key(
                             &key.name,
                             color::ORANGE,
-                            "Primary key",
+                            "Primary key".to_string(),
                             if use_taproot && !key.source.is_compatible_taproot() {
                                 Some("This device does not support Taproot")
                             } else {
@@ -144,7 +144,7 @@ pub fn inheritance_template<'a>(
                         defined_key(
                             &key.name,
                             color::WHITE,
-                            "Inheritance key",
+                            "Inheritance key".to_string(),
                             if use_taproot && !key.source.is_compatible_taproot() {
                                 Some("This device does not support Taproot")
                             } else {

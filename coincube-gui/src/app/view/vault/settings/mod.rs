@@ -41,7 +41,7 @@ use crate::{
     },
 };
 
-fn header(title: &str, msg: SettingsMessage) -> Row<'static, Message> {
+fn header<'a>(title: &'a str, msg: SettingsMessage) -> Row<'a, Message> {
     Row::new()
         .spacing(10)
         .align_y(Alignment::Center)
@@ -58,12 +58,12 @@ fn header(title: &str, msg: SettingsMessage) -> Row<'static, Message> {
         )
 }
 
-fn settings_section(
-    title: &str,
+fn settings_section<'a>(
+    title: &'a str,
     tool_tip: Option<&'static str>,
     icon: coincube_ui::widget::Text<'static>,
     msg: Message,
-) -> Container<'static, Message> {
+) -> Container<'a, Message> {
     let tt = tool_tip.map(tooltip);
     Container::new(
         Button::new(
@@ -84,12 +84,12 @@ fn settings_section(
     .style(theme::card::simple)
 }
 
-fn export_section(
-    title: &str,
-    description: &str,
+fn export_section<'a>(
+    title: &'a str,
+    description: &'a str,
     icon: coincube_ui::widget::Text<'static>,
     msg: Message,
-) -> Container<'static, Message> {
+) -> Container<'a, Message> {
     Container::new(
         Button::new(
             Row::new()
@@ -158,7 +158,7 @@ pub fn list<'a>(menu: &'a Menu, cache: &'a Cache, is_remote_backend: bool) -> El
     )
 }
 
-pub fn link<'a>(url: &str, link_text: &'static str) -> Element<'a, Message> {
+pub fn link<'a>(url: &'a str, link_text: &'static str) -> Element<'a, Message> {
     iced_tooltip::Tooltip::new(
         button::link(Some(icon::link_icon()), link_text)
             .on_press(Message::OpenUrl(url.to_string())),
@@ -1392,8 +1392,8 @@ pub fn connect_login_panel<'a>(
         }
     }
 
-    if let Some(ref e) = error {
-        col = col.push(text(e.as_str()).style(theme::text::warning));
+    if let Some(e) = error {
+        col = col.push(text(e).style(theme::text::warning));
     }
 
     card::simple(Container::new(col).padding(15).width(Length::Fill)).into()
@@ -1458,8 +1458,8 @@ pub fn node_backend_status<'a>(
         );
     }
 
-    if let Some(ref w) = warning {
-        col = col.push(text(w.as_str()).style(theme::text::warning));
+    if let Some(w) = warning {
+        col = col.push(text(w).style(theme::text::warning));
     }
 
     let mut btn_row = Row::new().spacing(10);
@@ -1811,13 +1811,21 @@ pub fn internal_node_setup_panel<'a>(
                 ),
         );
     } else if downloading {
-        let label = format!(
-            "Downloading Bitcoin Core… {:.0}%",
-            download_progress.min(99.9)
+        col = col.push(
+            Column::new()
+                .spacing(10)
+                .push(
+                    text(format!(
+                        "Downloading Bitcoin Core… {:.0}%",
+                        download_progress.min(99.9)
+                    ))
+                    .size(14),
+                )
+                .push(coincube_ui::widget::ProgressBar::new(
+                    0.0..=100.0,
+                    download_progress,
+                )),
         );
-        col = col.push(Column::new().spacing(10).push(text(&label).size(14)).push(
-            coincube_ui::widget::ProgressBar::new(0.0..=100.0, download_progress),
-        ));
     } else if installing {
         col = col.push(
             text("Installing and starting Bitcoin Core…")

@@ -63,7 +63,7 @@ impl BreezConfig {
             external_input_parsers: None,
             use_default_external_input_parsers: true,
             onchain_fee_rate_leeway_sat: None, // Use default
-            asset_metadata: None,
+            asset_metadata: None,              // USDt is already a built-in default in the SDK DB
             sideswap_api_key: None,
             use_magic_routing_hints: true,
             // Increased from 10 to 60 seconds to reduce API rate limiting

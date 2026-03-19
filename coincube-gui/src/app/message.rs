@@ -20,9 +20,12 @@ use crate::{
     export::ImportExportMessage,
     hw::HardwareWalletMessage,
     node::bitcoind::Bitcoind,
-    services::fiat::{
-        api::{ListCurrenciesResult, PriceApiError},
-        PriceSource,
+    services::{
+        coincube::{DownloadStats, TimeseriesPoint},
+        fiat::{
+            api::{ListCurrenciesResult, PriceApiError},
+            PriceSource,
+        },
     },
 };
 
@@ -90,6 +93,19 @@ pub enum Message {
     /// Latest UpdateTip/blockheaders line streamed from the pending internal
     /// bitcoind's debug.log.  `None` means no matching line found yet.
     PendingBitcoindLog(Option<String>),
+    InstallStats(InstallStatsMessage),
+}
+
+#[derive(Debug)]
+pub enum InstallStatsMessage {
+    /// u64 is the fetch generation — handlers ignore stale responses.
+    DownloadStatsLoaded(u64, Result<DownloadStats, String>),
+    TodayStatsLoaded(u64, Result<u32, String>),
+    TimeseriesLoaded(
+        u64,
+        crate::services::coincube::StatsPeriod,
+        Result<Vec<TimeseriesPoint>, String>,
+    ),
 }
 
 impl From<ImportExportMessage> for Message {

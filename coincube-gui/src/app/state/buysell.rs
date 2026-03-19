@@ -86,25 +86,6 @@ impl State for BuySellPanel {
                 }
             }
 
-            // TODO: Use array of steps, similar to MeldState
-            view::BuySellMessage::BackToAddressView => {
-                // Extract buy_or_sell from Mavapay state and go back to ModeSelect
-                let buy_or_sell = match &self.step {
-                    BuySellFlowState::Mavapay(mavapay_state) => match mavapay_state {
-                        view::buysell::MavapayState::Transaction { buy_or_sell, .. } => {
-                            Some(buy_or_sell.clone())
-                        }
-                        view::buysell::MavapayState::Checkout { buy_or_sell, .. } => {
-                            Some(buy_or_sell.clone())
-                        }
-                        _ => None,
-                    },
-                    _ => None,
-                };
-
-                self.step = BuySellFlowState::ModeSelect { buy_or_sell };
-            }
-
             // login states
             view::BuySellMessage::RefreshLogin { refresh_token } => {
                 let client = self.coincube_client.clone();
@@ -192,8 +173,6 @@ impl State for BuySellPanel {
 
             // ip-geolocation logic
             view::BuySellMessage::CountryDetected(result) => {
-                // TODO: state/region detection for select countries
-
                 let country = match result {
                     Ok(country) => country,
                     Err(err) => {
@@ -240,25 +219,62 @@ impl State for BuySellPanel {
                         log::info!("[BUYSELL] Starting under Mavapay for {}", country);
 
                         // initialize buysell under Mavapay
-                        self.step = BuySellFlowState::Mavapay(MavapayState::Transaction {
+                        self.step = BuySellFlowState::Mavapay(MavapayState::new(
                             buy_or_sell,
-                            country,
-                            sat_amount: 6000,
-                            transfer_speed: OnchainTransferSpeed::Fast,
-                            ln_invoice: None,
-                            banks: None,
-                            selected_bank: None,
-                            btc_price: None,
-                            sending_quote: false,
-                        });
+                            match buy_or_sell {
+                                BuyOrSell::Sell => {
+                                    // initialize default beneficiary
+                                    let beneficiary = match country.code {
+                                        "KE" => Beneficiary::KES(KenyanBeneficiary::PayToPhone {
+                                            account_name: "".to_string(),
+                                            phone_number: "+254700000000".to_string(),
+                                        }),
+                                        "ZA" => Beneficiary::ZAR {
+                                            name: "".to_string(),
+                                            bank_name: "".to_string(),
+                                            bank_account_number: "".to_string(),
+                                        },
+                                        "NG" => Beneficiary::NGN {
+                                            bank_account_name: None,
+                                            bank_account_number: "".to_string(),
+                                            bank_code: "".to_string(),
+                                            bank_name: "".to_string(),
+                                        },
+                                        iso => unreachable!(
+                                            "Country ({}) not supported by Mavapay",
+                                            iso
+                                        ),
+                                    };
 
-                        if country.code != "KE" {
+                                    MavapayFlowStep::SellInputForm {
+                                        banks: None,
+                                        beneficiary,
+                                        sending_quote: false,
+                                        liquid_balance: None,
+                                    }
+                                }
+                                BuyOrSell::Buy => MavapayFlowStep::BuyInputFrom {
+                                    getting_invoice: false,
+                                    sending_quote: false,
+                                    ln_invoice: None,
+                                },
+                            },
+                            country,
+                            self.breez_client.clone(),
+                        ));
+
+                        if matches!(buy_or_sell, panel::BuyOrSell::Sell) {
                             return iced::Task::batch([
                                 iced::Task::done(Message::View(view::Message::BuySell(
                                     view::BuySellMessage::Mavapay(MavapayMessage::GetBanks),
                                 ))),
                                 iced::Task::done(Message::View(view::Message::BuySell(
                                     view::BuySellMessage::Mavapay(MavapayMessage::GetPrice),
+                                ))),
+                                iced::Task::done(Message::View(view::Message::BuySell(
+                                    view::BuySellMessage::Mavapay(
+                                        MavapayMessage::GetLiquidWalletBalance,
+                                    ),
                                 ))),
                             ]);
                         } else {
@@ -284,7 +300,7 @@ impl State for BuySellPanel {
                 }
             }
             view::BuySellMessage::ViewHistory => {
-                let Some(country) = self.detected_country.as_ref() else {
+                let Some(country) = self.detected_country else {
                     unreachable!(
                         "Unable to view history, country detection|selection was unsuccessful"
                     );
@@ -294,32 +310,43 @@ impl State for BuySellPanel {
                     true => {
                         log::info!("Starting history view under Mavapay");
 
-                        self.step = BuySellFlowState::Mavapay(MavapayState::History {
-                            loading: true,
-                            transactions: None,
-                        });
+                        self.step = BuySellFlowState::Mavapay(MavapayState::new(
+                            panel::BuyOrSell::Buy,
+                            MavapayFlowStep::History {
+                                loading: true,
+                                transactions: None,
+                            },
+                            country,
+                            self.breez_client.clone(),
+                        ));
 
                         return iced::Task::done(Message::View(view::Message::BuySell(
                             view::BuySellMessage::Mavapay(MavapayMessage::FetchTransactions),
                         )));
                     }
-                    false => {
-                        // TODO: Implement order history for `meld`
-                        log::info!("Starting history view under Meld for {}", country);
-                    }
+                    // TODO: Implement order history for `meld`
+                    false => log::warn!("Meld Transactions History View for {}", country),
                 }
             }
             view::BuySellMessage::SessionError(description, error) => {
                 // unblock UI retry buttons in step-specific flows
                 if let BuySellFlowState::Mavapay(m) = &mut self.step {
-                    match m {
-                        MavapayState::Transaction { sending_quote, .. } => {
+                    match m.steps.last_mut() {
+                        Some(MavapayFlowStep::BuyInputFrom {
+                            getting_invoice,
+                            sending_quote,
+                            ..
+                        }) => {
+                            *sending_quote = false;
+                            *getting_invoice = false;
+                        }
+                        Some(MavapayFlowStep::SellInputForm { sending_quote, .. }) => {
                             *sending_quote = false;
                         }
-                        MavapayState::History { loading, .. } => {
+                        Some(MavapayFlowStep::History { loading, .. }) => {
                             *loading = false;
                         }
-                        MavapayState::OrderDetail { loading, .. } => {
+                        Some(MavapayFlowStep::OrderDetail { loading, .. }) => {
                             *loading = false;
                         }
                         _ => {}
@@ -562,9 +589,7 @@ impl State for BuySellPanel {
                         }
                     },
                     (BuySellFlowState::Mavapay(state), view::BuySellMessage::Mavapay(msg)) => {
-                        if let Some(task) =
-                            state.update(msg, &self.coincube_client, &self.breez_client)
-                        {
+                        if let Some(task) = state.update(msg, &self.coincube_client) {
                             return task.map(Message::View);
                         };
                     }
@@ -654,7 +679,9 @@ impl State for BuySellPanel {
                 iced::Subscription::batch(subs)
             }
             // periodically re-fetch the price of BTC
-            BuySellFlowState::Mavapay(MavapayState::Transaction { .. }) => {
+            BuySellFlowState::Mavapay(m)
+                if matches!(m.steps.last(), Some(MavapayFlowStep::BuyInputFrom { .. })) =>
+            {
                 iced::time::every(std::time::Duration::from_secs(30)).map(|_| {
                     Message::View(view::Message::BuySell(view::BuySellMessage::Mavapay(
                         MavapayMessage::GetPrice,
@@ -662,21 +689,24 @@ impl State for BuySellPanel {
                 })
             }
             // SSE stream for transaction status updates during checkout
-            BuySellFlowState::Mavapay(MavapayState::Checkout {
-                stream_order_id: Some(order_id),
-                ..
-            }) => {
-                if let Some(login) = &self.login {
-                    MavapayClient(&self.coincube_client)
-                        .transaction_subscription(order_id.clone(), login.token.clone())
-                        .map(|msg| {
-                            Message::View(view::Message::BuySell(view::BuySellMessage::Mavapay(
-                                msg,
-                            )))
-                        })
-                } else {
-                    iced::Subscription::none()
-                }
+            BuySellFlowState::Mavapay(m) => {
+                if let Some(MavapayFlowStep::Checkout {
+                    stream_order_id: Some(order_id),
+                    ..
+                }) = m.steps.last()
+                {
+                    if let Some(login) = &self.login {
+                        return MavapayClient(&self.coincube_client)
+                            .transaction_subscription(order_id.clone(), login.token.clone())
+                            .map(|msg| {
+                                Message::View(view::Message::BuySell(
+                                    view::BuySellMessage::Mavapay(msg),
+                                ))
+                            });
+                    };
+                };
+
+                iced::Subscription::none()
             }
             BuySellFlowState::OtpVerification { cooldown, .. } if *cooldown > 0 => {
                 iced::time::every(std::time::Duration::from_secs(1)).map(|_| {

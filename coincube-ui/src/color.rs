@@ -1,8 +1,5 @@
 use iced::Color;
 
-pub const WHITE: Color = iced::Color::WHITE;
-pub const TRANSPARENT: Color = iced::Color::TRANSPARENT;
-
 pub const BLACK: Color = iced::Color::BLACK;
 pub const LIGHT_BLACK: Color = iced::color!(0x161716);
 pub const GREY_7: Color = iced::color!(0x3F3F3F);
@@ -18,6 +15,9 @@ pub const GREEN_TOAST: Color = iced::color!(0x3E8E5B);  // Success/Info toast gr
 pub const DARK_ORANGE: Color = iced::color!(0xD4770E);  // Warning toast orange
 pub const LIGHT_ORANGE: Color = iced::color!(0xFFB347); // Info toast light orange
 pub const RED_ERROR: Color = iced::color!(0xE24E1B);    // Error toast red
+
+pub const WHITE: Color = iced::Color::WHITE;
+pub const TRANSPARENT: Color = iced::Color::TRANSPARENT;
 
 // Legacy colors (keep for backward compatibility)
 pub const RED: Color = iced::color!(0xE24E1B);
