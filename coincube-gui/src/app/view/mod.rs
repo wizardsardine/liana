@@ -44,19 +44,6 @@ pub fn simple_toast(message: &str) -> Container<Message> {
         .max_width(400.0)
 }
 
-<<<<<<< feature/toast-levels
-/// Generic toast notification with specified level
-pub fn toast_with_level(message: &str, level: log::Level) -> Container<Message> {
-    container(text::p2_regular(message))
-        .padding(15)
-        .style(match level {
-            log::Level::Info => theme::notification::info,
-            log::Level::Warn => theme::notification::warning,
-            log::Level::Error => theme::notification::error,
-            log::Level::Debug | log::Level::Trace => theme::notification::success,
-        })
-        .max_width(400.0)
-=======
 /// Wraps `content` in the shared balance card style used across wallet overview and send screens
 /// (GREY_6 background, orange border, rounded corners — matching the Liquid Overview header).
 pub fn balance_header_card<'a, Msg: 'a>(content: impl Into<Element<'a, Msg>>) -> Element<'a, Msg> {
@@ -73,7 +60,6 @@ pub fn balance_header_card<'a, Msg: 'a>(content: impl Into<Element<'a, Msg>>) ->
             ..Default::default()
         })
         .into()
->>>>>>> master
 }
 
 fn menu_bar_highlight<'a, T: 'a>() -> Container<'a, T> {
@@ -751,13 +737,10 @@ pub fn toast_overlay<'a, I: Iterator<Item = (usize, log::Level, &'a str)>>(
 ) -> coincube_ui::widget::Element<'a, Message> {
     use coincube_ui::{color, component::text, icon::cross_icon};
 
-<<<<<<< feature/toast-levels
     // Color mapping for toast levels
     // Using dark text for better contrast across all backgrounds
-    let toast = |id: usize, level: log::Level, content: &str| {
-=======
-    let toast = |id: usize, content: &'a str| {
->>>>>>> master
+    let toast = |id: usize, level: log::Level, content: &'a str| {
+        let content_owned = content.to_string();
         const WIDGET_HEIGHT: u32 = 80;
         
         let (bg_color, border_color, text_color) = match level {
@@ -776,7 +759,7 @@ pub fn toast_overlay<'a, I: Iterator<Item = (usize, log::Level, &'a str)>>(
         };
 
         iced::widget::row![
-            container(text::p1_bold(content).color(text_color))
+            container(text::p1_bold(content_owned).color(text_color))
                 .width(600)
                 .height(WIDGET_HEIGHT)
                 .padding(15)

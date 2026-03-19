@@ -119,11 +119,7 @@ impl State for LiquidReceive {
                 LiquidReceiveMessage::ToggleMethod(method) => {
                     if self.receive_method != method {
                         self.receive_method = method.clone();
-<<<<<<< feature/toast-levels
-=======
-                        self.toast = None;
                         self.error = None;
->>>>>>> master
                     }
                     return self.fetch_limits();
                 }
@@ -148,12 +144,8 @@ impl State for LiquidReceive {
                             ReceiveMethod::OnChain => {
                                 "Copied Bitcoin Address to clipboard".to_string()
                             }
-<<<<<<< feature/toast-levels
-                        };
-=======
                             ReceiveMethod::Usdt => "Copied USDt Address to clipboard".to_string(),
-                        });
->>>>>>> master
+                        };
 
                         // Use global toast overlay
                         let toast_task = Task::done(Message::View(view::Message::ShowToast(
@@ -400,13 +392,8 @@ impl LiquidReceive {
 
         let content = view::dashboard(menu, cache, receive_view);
 
-        let toasts = if let Some(message) = &self.toast {
-            vec![view::simple_toast(message).into()]
-        } else {
-            vec![]
-        };
-
-        coincube_ui::component::toast::Manager::new(content, toasts).into()
+        // Use global toast overlay instead of local toast
+        content
     }
 
     fn current_address(&self) -> Option<&String> {
