@@ -86,6 +86,10 @@ pub fn alert<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> Button<'a, T
     Button::new(content(icon, button_text(t))).style(theme::button::destructive)
 }
 
+pub fn destructive<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> Button<'a, T> {
+    Button::new(content(icon, button_text(t))).style(theme::button::destructive)
+}
+
 pub fn primary<'a, T: 'a>(icon: Option<Text<'a>>, t: &'static str) -> Button<'a, T> {
     Button::new(content(icon, button_text(t))).style(theme::button::primary)
 }
@@ -130,21 +134,26 @@ fn content<'a, T: 'a>(icon: Option<Text<'a>>, text: Text<'a>) -> Container<'a, T
 /// Button width presets.
 #[derive(Debug, Clone, Copy)]
 pub enum BtnWidth {
-    /// Short labels (Save, OK, Retry)
+    /// Short labels (Save, OK, Retry, Skip)
     S = 100,
-    /// Standard labels (Cancel, Clear, Delete)
+    /// Standard labels (Cancel, Clear, Unlock)
     M = 120,
-    /// Longer labels (Keep my changes)
+    /// Longer labels (Keep my changes, Send token)
     L = 160,
+    /// Long labels (Send for approval, Approve Template, Manage Keys)
+    XL = 200,
+    /// Very long labels (Connect with another email)
+    XXL = 260,
 }
 
 /// Primary button with preset width.
 pub fn btn_primary<'a, T: Clone + 'a>(
+    icon: Option<Text<'a>>,
     label: &'static str,
     width: BtnWidth,
     msg: Option<T>,
 ) -> Button<'a, T> {
-    let mut btn = primary(None, label).width(Length::Fixed(width as u16 as f32));
+    let mut btn = primary(icon, label).width(Length::Fixed(width as u16 as f32));
     if let Some(m) = msg {
         btn = btn.on_press(m);
     }
@@ -153,15 +162,79 @@ pub fn btn_primary<'a, T: Clone + 'a>(
 
 /// Secondary button with preset width.
 pub fn btn_secondary<'a, T: Clone + 'a>(
+    icon: Option<Text<'a>>,
     label: &'static str,
     width: BtnWidth,
     msg: Option<T>,
 ) -> Button<'a, T> {
-    let mut btn = secondary(None, label).width(Length::Fixed(width as u16 as f32));
+    let mut btn = secondary(icon, label).width(Length::Fixed(width as u16 as f32));
     if let Some(m) = msg {
         btn = btn.on_press(m);
     }
     btn
+}
+
+/// Destructive button with preset width.
+pub fn btn_destructive<'a, T: Clone + 'a>(
+    icon: Option<Text<'a>>,
+    label: &'static str,
+    width: BtnWidth,
+    msg: Option<T>,
+) -> Button<'a, T> {
+    let mut btn = destructive(icon, label).width(Length::Fixed(width as u16 as f32));
+    if let Some(m) = msg {
+        btn = btn.on_press(m);
+    }
+    btn
+}
+
+/// Flat button with preset width.
+pub fn btn_flat<'a, T: Clone + 'a>(
+    icon: Option<Text<'a>>,
+    label: &'static str,
+    width: BtnWidth,
+    msg: Option<T>,
+) -> Button<'a, T> {
+    let mut btn = flat(icon, label).width(Length::Fixed(width as u16 as f32));
+    if let Some(m) = msg {
+        btn = btn.on_press(m);
+    }
+    btn
+}
+
+/// Save button: primary. Width M.
+pub fn btn_save<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
+    btn_primary(None, "Save", BtnWidth::M, msg)
+}
+
+/// Cancel button: destructive. Width M.
+pub fn btn_cancel<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
+    btn_destructive(None, "Cancel", BtnWidth::M, msg)
+}
+
+/// OK button: primary. Width M.
+pub fn btn_ok<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
+    btn_primary(None, "OK", BtnWidth::M, msg)
+}
+
+/// Clear button: secondary. Width M.
+pub fn btn_clear<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
+    btn_secondary(None, "Clear", BtnWidth::M, msg)
+}
+
+/// Retry button: secondary. Width M.
+pub fn btn_retry<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
+    btn_secondary(None, "Retry", BtnWidth::M, msg)
+}
+
+/// Yes button: primary. Width S.
+pub fn btn_yes<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
+    btn_primary(None, "Yes", BtnWidth::S, msg)
+}
+
+/// No button: secondary. Width S.
+pub fn btn_no<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
+    btn_secondary(None, "No", BtnWidth::S, msg)
 }
 
 pub fn icon_btn<'a, T: 'a + Clone>(icon: Text<'a>, message: Option<T>) -> Button<'a, T> {
