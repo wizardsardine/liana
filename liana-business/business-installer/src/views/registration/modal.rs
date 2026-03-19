@@ -6,7 +6,7 @@ use crate::state::{
 use iced::Alignment;
 use liana_ui::{
     component::{
-        button::{self, btn_cancel},
+        button::{btn_cancel, btn_no, btn_retry, btn_yes},
         modal::{modal_view, none_fn, ModalWidth},
         text,
     },
@@ -69,8 +69,8 @@ fn error_view(modal_state: &RegistrationModalState) -> Element<'_, Msg> {
         .push(
             Row::new()
                 .spacing(10)
-                .push(button::secondary(None, "Cancel").on_press(Msg::RegistrationCancelModal))
-                .push(button::primary(None, "Retry").on_press(Msg::RegistrationRetry)),
+                .push(btn_cancel(Some(Msg::RegistrationCancelModal)))
+                .push(btn_retry(Some(Msg::RegistrationRetry))),
         );
 
     modal_view(
@@ -100,8 +100,8 @@ fn confirm_coldcard_view(_modal_state: &RegistrationModalState) -> Element<'_, M
         .push(
             Row::new()
                 .spacing(10)
-                .push(button::secondary(None, "No").on_press(Msg::RegistrationConfirmNo))
-                .push(button::primary(None, "Yes").on_press(Msg::RegistrationConfirmYes)),
+                .push(btn_no(Some(Msg::RegistrationConfirmNo)))
+                .push(btn_yes(Some(Msg::RegistrationConfirmYes))),
         );
 
     modal_view(

@@ -11,7 +11,8 @@ use iced::{
 };
 use liana_ui::{
     component::{
-        button, form,
+        button::{btn_cancel, btn_save},
+        form,
         modal::{modal_view, none_fn, ModalWidth},
         text,
     },
@@ -257,22 +258,12 @@ pub fn edit_path_modal_view<'a>(
     let has_keys = !modal_state.selected_key_ids.is_empty();
     let can_save = has_keys && threshold_valid && (modal_state.is_primary || timelock_valid);
 
-    let save_button = if can_save {
-        button::primary(None, "Save")
-            .on_press(Msg::TemplateSavePath)
-            .width(Length::Fixed(120.0))
-    } else {
-        button::secondary(None, "Save").width(Length::Fixed(120.0))
-    };
+    let save_button = btn_save(can_save.then_some(Msg::TemplateSavePath));
 
     let footer = Row::new()
         .spacing(10)
         .push(Space::with_width(Length::Fill))
-        .push(
-            button::secondary(None, "Cancel")
-                .on_press(Msg::TemplateCancelPathModal)
-                .width(Length::Fixed(120.0)),
-        )
+        .push(btn_cancel(Some(Msg::TemplateCancelPathModal)))
         .push(save_button);
 
     let body = Column::new()

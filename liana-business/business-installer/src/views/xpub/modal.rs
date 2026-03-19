@@ -11,7 +11,8 @@ use iced::{
 use liana_gui::hw::{is_compatible_with_tapminiscript, min_taproot_version, UnsupportedReason};
 use liana_ui::{
     component::{
-        button, form, hw,
+        button::{btn_cancel, btn_clear, btn_retry, btn_save},
+        form, hw,
         modal::{self, modal_view, none_fn, ModalWidth},
         text::{self, p1_bold},
         tooltip,
@@ -21,8 +22,6 @@ use liana_ui::{
 };
 
 use miniscript::bitcoin::bip32::ChildNumber;
-
-type FnMsg = fn() -> Msg;
 
 /// Capitalize the first letter of a string
 fn capitalize_first(s: &str) -> String {
@@ -112,7 +111,7 @@ fn select_view<'a>(state: &'a State, modal_state: &'a XpubEntryModalState) -> El
 
     modal_view(
         Some(format!("Select key source - {}", modal_state.key_alias)),
-        None::<FnMsg>,
+        none_fn(),
         Some(|| Msg::XpubCancelModal),
         ModalWidth::L,
         body,
@@ -169,11 +168,7 @@ fn details_view(modal_state: &XpubEntryModalState) -> Element<'_, Msg> {
 
         // Retry button (only if there was an error)
         if modal_state.fetch_error.is_some() {
-            btn_row = btn_row.push(
-                button::secondary(None, "Retry")
-                    .on_press(Msg::XpubRetry)
-                    .width(Length::Fixed(100.0)),
-            );
+            btn_row = btn_row.push(btn_retry(Some(Msg::XpubRetry)));
         }
 
         btn_row = btn_row.push(Space::with_width(Length::Fill));
@@ -181,14 +176,7 @@ fn details_view(modal_state: &XpubEntryModalState) -> Element<'_, Msg> {
         // Save button (enabled only if we have a valid xpub)
         let can_save =
             modal_state.validate().is_ok() && modal_state.has_changes() && !modal_state.processing;
-        let save_button = if can_save {
-            button::primary(None, "Save")
-                .on_press(Msg::XpubSave)
-                .width(Length::Fixed(100.0))
-        } else {
-            button::secondary(None, "Save").width(Length::Fixed(100.0))
-        };
-        btn_row = btn_row.push(save_button);
+        btn_row = btn_row.push(btn_save(can_save.then_some(Msg::XpubSave)));
         btn_row
     };
 
@@ -484,28 +472,14 @@ fn other_options(modal_state: &XpubEntryModalState, is_wallet_manager: bool) -> 
 /// Render the footer action buttons (Select step only)
 fn footer_buttons(modal_state: &XpubEntryModalState) -> Element<'_, Msg> {
     // Cancel button (always enabled)
-    let cancel_button = button::secondary(None, "Cancel")
-        .on_press(Msg::XpubCancelModal)
-        .width(Length::Fixed(120.0));
+    let cancel_button = btn_cancel(Some(Msg::XpubCancelModal));
 
     // Clear button (enabled only if there's a current xpub)
-    let clear_button = if modal_state.current_xpub.is_some() {
-        button::secondary(None, "Clear")
-            .on_press(Msg::XpubClear)
-            .width(Length::Fixed(120.0))
-    } else {
-        button::secondary(None, "Clear").width(Length::Fixed(120.0))
-    };
+    let clear_button = btn_clear(modal_state.current_xpub.is_some().then_some(Msg::XpubClear));
 
     // Save button (enabled only if validation passes and there are changes)
     let can_save = modal_state.validate().is_ok() && modal_state.has_changes();
-    let save_button = if can_save {
-        button::primary(None, "Save")
-            .on_press(Msg::XpubSave)
-            .width(Length::Fixed(120.0))
-    } else {
-        button::secondary(None, "Save").width(Length::Fixed(120.0))
-    };
+    let save_button = btn_save(can_save.then_some(Msg::XpubSave));
 
     let buttons = Row::new()
         .spacing(10)
