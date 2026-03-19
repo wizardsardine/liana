@@ -753,6 +753,7 @@ pub fn toast_overlay<'a, I: Iterator<Item = (usize, log::Level, &'a str)>>(
 
 <<<<<<< feature/toast-levels
     // Color mapping for toast levels
+    // Using dark text for better contrast across all backgrounds
     let toast = |id: usize, level: log::Level, content: &str| {
 =======
     let toast = |id: usize, content: &'a str| {
@@ -762,9 +763,9 @@ pub fn toast_overlay<'a, I: Iterator<Item = (usize, log::Level, &'a str)>>(
         let (bg_color, border_color, text_color) = match level {
             log::Level::Error => (color::RED_ERROR, color::RED_ERROR, color::WHITE),
             log::Level::Warn => (color::DARK_ORANGE, color::DARK_ORANGE, color::WHITE),
-            log::Level::Info => (color::LIGHT_ORANGE, color::LIGHT_ORANGE, color::WHITE),
-            log::Level::Debug => (color::GREY_6, color::GREY_4, color::WHITE),
-            log::Level::Trace => (color::GREY_5, color::GREY_3, color::WHITE),
+            log::Level::Info => (color::LIGHT_ORANGE, color::LIGHT_ORANGE, color::DARK_ORANGE),
+            log::Level::Debug => (color::GREY_6, color::GREY_4, color::DARK_ORANGE),
+            log::Level::Trace => (color::GREY_5, color::GREY_3, color::DARK_ORANGE),
         };
 
         let bg = iced::Background::Color(bg_color);

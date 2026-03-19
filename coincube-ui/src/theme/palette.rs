@@ -529,7 +529,7 @@ impl std::default::Default for Palette {
                 },
                 info: ContainerPalette {
                     background: color::LIGHT_ORANGE,
-                    text: color::WHITE.into(),
+                    text: color::DARK_ORANGE.into(),
                     border: Some(color::LIGHT_ORANGE),
                 },
             },
