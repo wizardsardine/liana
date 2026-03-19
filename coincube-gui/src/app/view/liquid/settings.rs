@@ -13,7 +13,7 @@ use crate::app::state::{BackupWalletState, LiquidSettingsFlowState};
 use crate::app::view::message::{BackupWalletMessage, Message};
 use crate::app::view::LiquidSettingsMessage;
 
-fn header(title: &str) -> Element<'static, Message> {
+fn header<'a>(title: &'a str) -> Element<'a, Message> {
     Row::new()
         .spacing(10)
         .align_y(Alignment::Center)
@@ -553,16 +553,16 @@ pub enum CapsuleState {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn settings_section(
-    title: &str,
-    subtitle: &str,
-    icon: coincube_ui::widget::Text<'static>,
-    right_icon: coincube_ui::widget::Text<'static>,
+fn settings_section<'a>(
+    title: &'a str,
+    subtitle: &'a str,
+    icon: coincube_ui::widget::Text<'a>,
+    right_icon: coincube_ui::widget::Text<'a>,
     capsule_state: CapsuleState,
-    capsule_icon: coincube_ui::widget::Text<'static>,
-    capsule_text: &str,
+    capsule_icon: coincube_ui::widget::Text<'a>,
+    capsule_text: &'a str,
     msg: Message,
-) -> Container<'static, Message> {
+) -> Container<'a, Message> {
     Container::new(
         Button::new(
             Row::new()

@@ -169,6 +169,11 @@ pub enum DefineNode {
 
 #[derive(Debug, Clone)]
 pub enum SelectBitcoindTypeMsg {
+    // Default card
+    ContinueWithConnect,
+    ToggleInstallNode,
+    ToggleAdvanced,
+    // Advanced options
     UseExternal(bool),
     UseConnect,
 }

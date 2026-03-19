@@ -147,9 +147,10 @@ pub(crate) fn input_form_ux<'a>(
         })
         .font(iced::font::Font::MONOSPACE);
 
-    let validation_messages_ui = || {
+    let validation_messages_is_empty = validation_messages.is_empty();
+    let validation_messages_ui = move || {
         validation_messages
-            .iter()
+            .into_iter()
             .map(|msg| widget::container(text::p2_medium(msg)))
             .fold(
                 widget::column![]
@@ -184,9 +185,9 @@ pub(crate) fn input_form_ux<'a>(
         ]
         .height(iced::Length::Shrink),
         widget::Space::new().height(10),
-        (!validation_messages.is_empty()).then(validation_messages_ui),
+        (!validation_messages_is_empty).then(validation_messages_ui),
         // submit
-        validation_messages.is_empty().then_some(
+        validation_messages_is_empty.then_some(
             button::primary(
                 Some(icon::enter_box_icon()),
                 match amount_is_crypto {
@@ -417,7 +418,7 @@ pub(crate) fn address_selection_ux<'a>(
     match deposit_address {
         None => address_picker(),
         // allows user to verify an address and proceed with the UX flow
-        Some((address, qr_code_data)) => card::simple(
+        Some((address, qr_code_data)) => widget::container(
             widget::column![
                 widget::column![
                     text::caption(match was_picked_from_existing_addresses {
@@ -516,6 +517,7 @@ pub(crate) fn address_selection_ux<'a>(
             ]
             .spacing(10),
         )
+        .padding(10)
         .height(iced::Length::Shrink)
         .width(800)
         .style(|_| {
@@ -540,7 +542,7 @@ pub(crate) fn quote_selection_ux<'a>(
     buy_or_sell: &'a view::buysell::BuyOrSell,
 ) -> coincube_ui::widget::Element<'a, view::Message> {
     // simple card UI displaying quote details
-    let quote_display = |quote: &Quote, selected: bool, idx: usize| {
+    let quote_display = |quote: &'a Quote, selected: bool, idx: usize| {
         let card = widget::container(
             widget::row![
                 widget::Space::new().width(30),
@@ -688,7 +690,7 @@ pub(crate) fn region_selection_ux<'a>(
     selected: Option<usize>,
     filter: &'a str,
 ) -> coincube_ui::widget::Element<'a, view::Message> {
-    let region_card = |region: &MeldRegion, is_selected: bool, idx: usize| {
+    let region_card = |region: &'a MeldRegion, is_selected: bool, idx: usize| {
         let card = widget::container(
             widget::row![
                 widget::Space::new().width(30),

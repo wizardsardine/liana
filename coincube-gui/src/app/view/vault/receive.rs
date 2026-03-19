@@ -56,7 +56,11 @@ pub fn address_card<'a>(
                             scrollable(
                                 Column::new()
                                     .push(Space::new().height(Length::Fixed(10.0)))
-                                    .push(p2_regular(address).small().style(theme::text::secondary))
+                                    .push(
+                                        p2_regular(address.to_string())
+                                            .small()
+                                            .style(theme::text::secondary),
+                                    )
                                     // Space between the address and the scrollbar
                                     .push(Space::new().height(Length::Fixed(10.0))),
                             )

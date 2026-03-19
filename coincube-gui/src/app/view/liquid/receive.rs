@@ -15,6 +15,7 @@ use iced::{
 };
 
 use crate::app::{
+    breez::assets::{parse_asset_to_minor_units, USDT_PRECISION},
     settings::unit::BitcoinDisplayUnit,
     view::{LiquidReceiveMessage, ReceiveMethod},
 };
@@ -26,6 +27,7 @@ pub fn liquid_receive_view<'a>(
     qr_data: Option<&'a qr_code::Data>,
     loading: bool,
     amount_input: &'a form::Value<String>,
+    usdt_amount_input: &'a form::Value<String>,
     description_input: &'a str,
     bitcoin_unit: BitcoinDisplayUnit,
     error: Option<&'a String>,
@@ -40,19 +42,24 @@ pub fn liquid_receive_view<'a>(
 
     content = content.push(method_toggle(receive_method));
 
-    // Show input fields only for Lightning
-    if *receive_method == ReceiveMethod::Lightning {
-        content = content.push(input_fields(
-            amount_input,
-            description_input,
-            bitcoin_unit,
-            lightning_limits,
-            loading,
-        ));
-    } else {
-        // For on-chain, only show generate button if no address is displayed
-        if address.is_none() && !loading {
-            content = content.push(generate_button());
+    match receive_method {
+        ReceiveMethod::Lightning => {
+            content = content.push(input_fields(
+                amount_input,
+                description_input,
+                bitcoin_unit,
+                lightning_limits,
+                loading,
+            ));
+        }
+        ReceiveMethod::Usdt => {
+            content = content.push(usdt_input_fields(usdt_amount_input, loading));
+        }
+        _ => {
+            // Liquid / OnChain: only show generate button if no address is displayed
+            if address.is_none() && !loading {
+                content = content.push(generate_button());
+            }
         }
     }
 
@@ -101,7 +108,7 @@ pub fn liquid_receive_view<'a>(
         );
 
         // Add generate new address button for on-chain
-        if *receive_method == ReceiveMethod::OnChain {
+        if *receive_method == ReceiveMethod::OnChain || *receive_method == ReceiveMethod::Usdt {
             content = content.push(
                 Container::new(
                     button::secondary(None, "Generate New Address")
@@ -455,6 +462,50 @@ fn input_fields<'a>(
     .into()
 }
 
+fn usdt_input_fields<'a>(
+    usdt_amount_input: &'a form::Value<String>,
+    loading: bool,
+) -> Element<'a, LiquidReceiveMessage> {
+    let amount_field = Column::new()
+        .spacing(5)
+        .push(
+            text("Amount (USDt) — Optional")
+                .size(14)
+                .style(theme::text::secondary),
+        )
+        .push(
+            TextInput::new("e.g. 1.50", &usdt_amount_input.value)
+                .on_input(LiquidReceiveMessage::UsdtAmountInput)
+                .padding(12)
+                .width(Length::Fill),
+        )
+        .push(
+            text("Leave empty to generate an amountless address")
+                .size(12)
+                .style(theme::text::secondary),
+        );
+
+    let is_valid = usdt_amount_input.value.trim().is_empty()
+        || parse_asset_to_minor_units(usdt_amount_input.value.trim(), USDT_PRECISION)
+            .is_some_and(|units| units > 0);
+
+    let generate_btn = button::primary(None, "Generate USDt Address")
+        .on_press_maybe((is_valid && !loading).then_some(LiquidReceiveMessage::GenerateAddress))
+        .width(Length::Fill)
+        .padding(5);
+
+    Container::new(
+        Column::new()
+            .spacing(15)
+            .max_width(500)
+            .push(amount_field)
+            .push(generate_btn),
+    )
+    .width(Length::Fill)
+    .center_x(Length::Fill)
+    .into()
+}
+
 fn generate_button<'a>() -> Element<'a, LiquidReceiveMessage> {
     Container::new(
         button::primary(None, "Generate Address")
@@ -485,6 +536,14 @@ fn action_buttons<'a>(
     if *receive_method == ReceiveMethod::Liquid {
         column = column.push(
             text("Share this address to receive L-BTC from any Liquid wallet")
+                .size(13)
+                .style(theme::text::secondary),
+        );
+    }
+
+    if *receive_method == ReceiveMethod::Usdt {
+        column = column.push(
+            text("Share this address to receive USDt (Liquid Tether) from any Liquid wallet")
                 .size(13)
                 .style(theme::text::secondary),
         );
@@ -555,4 +614,100 @@ fn action_buttons<'a>(
     }
 
     column.into()
+}
+
+/// Standalone USDt receive view — no tab bar, only USDt address generation.
+pub fn usdt_only_receive_view<'a>(
+    address: Option<&'a String>,
+    qr_data: Option<&'a qr_code::Data>,
+    loading: bool,
+    usdt_amount_input: &'a form::Value<String>,
+    error: Option<&'a String>,
+) -> Element<'a, LiquidReceiveMessage> {
+    let mut content = Column::new()
+        .spacing(40)
+        .width(Length::Fill)
+        .align_x(Alignment::Center)
+        .padding(40);
+
+    if address.is_none() || loading {
+        content = content.push(usdt_input_fields(usdt_amount_input, loading));
+    }
+
+    if loading {
+        content = content.push(crate::loading::loading_indicator(Some(
+            "Generating Address",
+        )));
+    } else if let (Some(addr), Some(qr)) = (address, qr_data) {
+        content = content.push(
+            Column::new()
+                .spacing(30)
+                .align_x(Alignment::Center)
+                .push(
+                    Container::new(QRCode::<theme::Theme>::new(qr).cell_size(8))
+                        .padding(30)
+                        .style(theme::card::simple),
+                )
+                .push(
+                    Container::new(
+                        text(addr)
+                            .size(12)
+                            .style(theme::text::secondary)
+                            .wrapping(iced::widget::text::Wrapping::Glyph),
+                    )
+                    .width(Length::Fill)
+                    .max_width(600)
+                    .padding(10)
+                    .center_x(Length::Fill),
+                )
+                .push(
+                    Column::new()
+                        .spacing(15)
+                        .align_x(Alignment::Center)
+                        .push(Row::new().spacing(15).push(
+                            button::primary(Some(icon::clipboard_icon()), "Copy")
+                                .on_press(LiquidReceiveMessage::Copy)
+                                .width(Length::Fixed(150.0))
+                                .padding(15),
+                        ))
+                        .push(
+                            text("Share this address to receive USDt (Liquid Tether) from any Liquid wallet")
+                                .size(13)
+                                .style(theme::text::secondary),
+                        ),
+                )
+                .push(
+                    Container::new(
+                        button::secondary(None, "Generate New Address")
+                            .on_press(LiquidReceiveMessage::GenerateAddress)
+                            .width(Length::Fixed(200.0))
+                            .padding(10),
+                    )
+                    .width(Length::Fill)
+                    .center_x(Length::Fill)
+                    .padding(10),
+                ),
+        );
+    }
+
+    if let Some(err) = error {
+        Column::new()
+            .push(
+                Container::new(
+                    Container::new(text(err).size(14).color(color::RED))
+                        .padding(10)
+                        .center_x(Length::Fill)
+                        .style(theme::card::error)
+                        .width(Length::Fill)
+                        .max_width(800),
+                )
+                .width(Length::Fill)
+                .padding([20, 40])
+                .align_x(Alignment::Center),
+            )
+            .push(content)
+            .into()
+    } else {
+        content.into()
+    }
 }

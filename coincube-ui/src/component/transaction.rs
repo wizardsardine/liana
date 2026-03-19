@@ -40,6 +40,7 @@ pub struct TransactionListItem<'a, T> {
     amount: &'a Amount,
     bitcoin_unit: BitcoinDisplayUnit,
     fiat_amount: Option<String>,
+    amount_override: Option<String>,
     custom_status: Option<Element<'static, T>>,
 }
 
@@ -59,6 +60,7 @@ impl<'a, T> TransactionListItem<'a, T> {
             amount,
             bitcoin_unit,
             fiat_amount: None,
+            amount_override: None,
             custom_status: None,
         }
     }
@@ -95,6 +97,12 @@ impl<'a, T> TransactionListItem<'a, T> {
 
     pub fn with_fiat_amount(mut self, fiat_amount: String) -> Self {
         self.fiat_amount = Some(fiat_amount);
+        self
+    }
+
+    /// Replace the primary amount display with a plain string (e.g. "5.00 USDt").
+    pub fn with_amount_override(mut self, s: String) -> Self {
+        self.amount_override = Some(s);
         self
     }
 
@@ -192,13 +200,23 @@ impl<'a, T> TransactionListItem<'a, T> {
                 TransactionDirection::SelfTransfer => ("", color::WHITE),
             };
 
-            amount_column = amount_column.push(
-                Row::new()
-                    .spacing(5)
-                    .push(text::p1_regular(amount_sign).color(sign_color))
-                    .push(amount::amount_with_unit(self.amount, self.bitcoin_unit))
-                    .align_y(Alignment::Center),
-            );
+            if let Some(ref override_str) = self.amount_override {
+                amount_column = amount_column.push(
+                    Row::new()
+                        .spacing(5)
+                        .push(text::p1_regular(amount_sign).color(sign_color))
+                        .push(text::p1_regular(override_str.clone()).color(sign_color))
+                        .align_y(Alignment::Center),
+                );
+            } else {
+                amount_column = amount_column.push(
+                    Row::new()
+                        .spacing(5)
+                        .push(text::p1_regular(amount_sign).color(sign_color))
+                        .push(amount::amount_with_unit(self.amount, self.bitcoin_unit))
+                        .align_y(Alignment::Center),
+                );
+            }
         }
 
         if let Some(fiat) = self.fiat_amount {

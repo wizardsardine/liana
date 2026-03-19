@@ -10,7 +10,7 @@ use std::fmt::Display;
 
 pub fn locked_hardware_wallet<'a, T: 'a, K: Display>(
     kind: K,
-    pairing_code: Option<impl Into<Cow<'a, str>> + Display>,
+    pairing_code: Option<impl Into<Cow<'a, str>>>,
 ) -> Container<'a, T> {
     Container::new(
         column(vec![
@@ -24,7 +24,7 @@ pub fn locked_hardware_wallet<'a, T: 'a, K: Display>(
                         ""
                     }
                 )))
-                .push(pairing_code.map(|a| text::p1_bold(a)))
+                .push(pairing_code.map(|a| text::p1_bold(a.into())))
                 .into(),
             Row::new()
                 .spacing(5)
@@ -40,13 +40,13 @@ pub fn supported_hardware_wallet<'a, T: 'a, K: Display, V: Display, F: Display>(
     kind: K,
     version: Option<V>,
     fingerprint: F,
-    alias: Option<impl Into<Cow<'a, str>> + Display>,
+    alias: Option<impl Into<Cow<'a, str>>>,
 ) -> Container<'a, T> {
     Container::new(
         column(vec![
             Row::new()
                 .spacing(5)
-                .push(alias.map(|a| text::p1_bold(a)))
+                .push(alias.map(|a| text::p1_bold(a.into())))
                 .push(text::p1_regular(format!("#{}", fingerprint)))
                 .into(),
             Row::new()
@@ -89,7 +89,7 @@ pub fn supported_hardware_wallet_with_account<
     kind: K,
     version: Option<V>,
     fingerprint: Fingerprint,
-    alias: Option<impl Into<Cow<'a, str>> + Display>,
+    alias: Option<impl Into<Cow<'a, str>>>,
     account: Option<ChildNumber>,
     edit_account: bool,
 ) -> Container<'a, M> {
@@ -113,7 +113,7 @@ pub fn supported_hardware_wallet_with_account<
     };
     let display_account = account.and_then(|a| {
         if !edit_account {
-            Some(text::p1_bold(a))
+            Some(text::p1_bold(a.to_string()))
         } else {
             None
         }
@@ -121,7 +121,7 @@ pub fn supported_hardware_wallet_with_account<
     let key = column(vec![
         Row::new()
             .spacing(5)
-            .push(alias.map(|a| text::p1_bold(a)))
+            .push(alias.map(|a| text::p1_bold(a.into())))
             .push(text::p1_regular(format!("#{}", fingerprint)))
             .into(),
         Row::new()
@@ -146,7 +146,7 @@ pub fn warning_hardware_wallet<'a, T: 'static, K: Display, V: Display, F: Displa
     kind: K,
     version: Option<V>,
     fingerprint: F,
-    alias: Option<impl Into<Cow<'a, str>> + Display>,
+    alias: Option<impl Into<Cow<'a, str>>>,
     warning: &'a str,
 ) -> Container<'a, T> {
     container(
@@ -154,7 +154,7 @@ pub fn warning_hardware_wallet<'a, T: 'static, K: Display, V: Display, F: Displa
             column(vec![
                 Row::new()
                     .spacing(5)
-                    .push(alias.map(|a| text::p1_bold(a)))
+                    .push(alias.map(|a| text::p1_bold(a.into())))
                     .push(text::p1_regular(format!("#{}", fingerprint)))
                     .into(),
                 Row::new()
@@ -256,14 +256,14 @@ pub fn processing_hardware_wallet<'a, T: 'a, K: Display, V: Display, F: Display>
     kind: K,
     version: Option<V>,
     fingerprint: F,
-    alias: Option<impl Into<Cow<'a, str>> + Display>,
+    alias: Option<impl Into<Cow<'a, str>>>,
 ) -> Container<'a, T> {
     container(
         row(vec![
             column(vec![
                 Row::new()
                     .spacing(5)
-                    .push(alias.map(|a| text::p1_bold(a)))
+                    .push(alias.map(|a| text::p1_bold(a.into())))
                     .push(text::p1_regular(format!("#{}", fingerprint)))
                     .into(),
                 Row::new()
@@ -284,30 +284,25 @@ pub fn processing_hardware_wallet<'a, T: 'a, K: Display, V: Display, F: Display>
     .padding(10)
 }
 
-pub fn selected_hardware_wallet<'a, T: 'static, K: Display, V: Display, F: Display>(
+pub fn selected_hardware_wallet<'a, T: 'a, K: Display, V: Display, F: Display>(
     kind: K,
     version: Option<V>,
     fingerprint: F,
-    alias: Option<impl Into<Cow<'a, str>> + Display>,
-    warning: Option<&'static str>,
+    alias: Option<impl Into<Cow<'a, str>>>,
+    warning: Option<&'a str>,
     account: Option<ChildNumber>,
     display_account: bool,
 ) -> Container<'a, T> {
-    let account = account.unwrap_or(ChildNumber::from_hardened_idx(0).expect("hardcoded"));
-    let index = match account {
+    let index = match account.unwrap_or(ChildNumber::from_hardened_idx(0).unwrap()) {
         ChildNumber::Hardened { index } => index,
         ChildNumber::Normal { .. } => unreachable!(),
     };
-    let account = if display_account {
-        Some(format!("Account #{index}"))
-    } else {
-        None
-    };
+    let account = display_account.then(|| format!("Account #{index}"));
 
-    let key = column(vec![
+    let key: iced::widget::Column<'a, T, theme::Theme> = column(vec![
         Row::new()
             .spacing(5)
-            .push(alias.map(|a| text::p1_bold(a)))
+            .push(alias.map(|a| text::p1_bold(a.into())))
             .push(text::p1_regular(format!("#{}", fingerprint)))
             .into(),
         Row::new()
@@ -316,6 +311,7 @@ pub fn selected_hardware_wallet<'a, T: 'static, K: Display, V: Display, F: Displ
             .push(version.map(|v| text::caption(v.to_string())))
             .into(),
     ]);
+
     container(
         Row::new()
             .push(key)
@@ -340,14 +336,14 @@ pub fn sign_success_hardware_wallet<'a, T: 'a, K: Display, V: Display, F: Displa
     kind: K,
     version: Option<V>,
     fingerprint: F,
-    alias: Option<impl Into<Cow<'a, str>> + Display>,
+    alias: Option<impl Into<Cow<'a, str>>>,
 ) -> Container<'a, T> {
     container(
         row(vec![
             column(vec![
                 Row::new()
                     .spacing(5)
-                    .push(alias.map(|a| text::p1_bold(a)))
+                    .push(alias.map(|a| text::p1_bold(a.into())))
                     .push(text::p1_regular(format!("#{}", fingerprint)))
                     .into(),
                 Row::new()
@@ -375,14 +371,14 @@ pub fn registration_success_hardware_wallet<'a, T: 'a, K: Display, V: Display, F
     kind: K,
     version: Option<V>,
     fingerprint: F,
-    alias: Option<impl Into<Cow<'a, str>> + Display>,
+    alias: Option<impl Into<Cow<'a, str>>>,
 ) -> Container<'a, T> {
     container(
         row(vec![
             column(vec![
                 Row::new()
                     .spacing(5)
-                    .push(alias.map(|a| text::p1_bold(a)))
+                    .push(alias.map(|a| text::p1_bold(a.into())))
                     .push(text::p1_regular(format!("#{}", fingerprint)))
                     .into(),
                 Row::new()
@@ -503,14 +499,14 @@ pub fn unsupported_version_hardware_wallet<'a, T: 'static, K: Display, V: Displa
 
 pub fn sign_success_hot_signer<'a, T: 'a, F: Display>(
     fingerprint: F,
-    alias: Option<impl Into<Cow<'a, str>> + Display>,
+    alias: Option<impl Into<Cow<'a, str>>>,
 ) -> Container<'a, T> {
     container(
         row(vec![
             column(vec![
                 Row::new()
                     .spacing(5)
-                    .push(alias.map(|a| text::p1_bold(a)))
+                    .push(alias.map(|a| text::p1_bold(a.into())))
                     .push(text::p1_regular(format!("#{}", fingerprint)))
                     .into(),
                 Row::new()
@@ -535,14 +531,14 @@ pub fn sign_success_hot_signer<'a, T: 'a, F: Display>(
 
 pub fn selected_hot_signer<'a, T: 'a, F: Display>(
     fingerprint: F,
-    alias: Option<impl Into<Cow<'a, str>> + Display>,
+    alias: Option<impl Into<Cow<'a, str>>>,
 ) -> Container<'a, T> {
     container(
         row(vec![
             column(vec![
                 Row::new()
                     .spacing(5)
-                    .push(alias.map(|a| text::p1_bold(a)))
+                    .push(alias.map(|a| text::p1_bold(a.into())))
                     .push(text::p1_regular(format!("#{}", fingerprint)))
                     .into(),
                 Row::new()
@@ -564,13 +560,13 @@ pub fn selected_hot_signer<'a, T: 'a, F: Display>(
 
 pub fn unselected_hot_signer<'a, T: 'a, F: Display>(
     fingerprint: F,
-    alias: Option<impl Into<Cow<'a, str>> + Display>,
+    alias: Option<impl Into<Cow<'a, str>>>,
 ) -> Container<'a, T> {
     Container::new(
         column(vec![
             Row::new()
                 .spacing(5)
-                .push(alias.map(|a| text::p1_bold(a)))
+                .push(alias.map(|a| text::p1_bold(a.into())))
                 .push(text::p1_regular(format!("#{}", fingerprint)))
                 .into(),
             Row::new()
@@ -588,7 +584,7 @@ pub fn unselected_hot_signer<'a, T: 'a, F: Display>(
 
 pub fn hot_signer<'a, T: 'a, F: Display>(
     fingerprint: F,
-    alias: Option<impl Into<Cow<'a, str>> + Display>,
+    alias: Option<impl Into<Cow<'a, str>>>,
     can_sign: bool,
 ) -> Container<'a, T> {
     Container::new(
@@ -596,7 +592,7 @@ pub fn hot_signer<'a, T: 'a, F: Display>(
             .push(column(vec![
                 Row::new()
                     .spacing(5)
-                    .push(alias.map(|a| text::p1_bold(a)))
+                    .push(alias.map(|a| text::p1_bold(a.into())))
                     .push(text::p1_regular(format!("#{}", fingerprint)))
                     .into(),
                 Row::new()
@@ -684,7 +680,7 @@ pub fn sign_success_border_wallet<'a, T: 'a, F: Display>(
 
 pub fn selected_provider_key<'a, T: 'a, F: Display>(
     fingerprint: F,
-    alias: impl Into<Cow<'a, str>> + Display,
+    alias: impl Into<Cow<'a, str>>,
     key_kind: impl Into<Cow<'a, str>> + Display,
     token: impl Into<Cow<'a, str>> + Display,
 ) -> Container<'a, T> {
@@ -693,7 +689,7 @@ pub fn selected_provider_key<'a, T: 'a, F: Display>(
             column(vec![
                 Row::new()
                     .spacing(5)
-                    .push(text::p1_bold(alias))
+                    .push(text::p1_bold(alias.into()))
                     .push(text::p1_regular(format!("#{}", fingerprint)))
                     .into(),
                 Row::new()
@@ -712,7 +708,7 @@ pub fn selected_provider_key<'a, T: 'a, F: Display>(
 
 pub fn unselected_provider_key<'a, T: 'a, F: Display>(
     fingerprint: F,
-    alias: impl Into<Cow<'a, str>> + Display,
+    alias: impl Into<Cow<'a, str>>,
     key_kind: impl Into<Cow<'a, str>> + Display,
     token: impl Into<Cow<'a, str>> + Display,
 ) -> Container<'a, T> {
@@ -720,7 +716,7 @@ pub fn unselected_provider_key<'a, T: 'a, F: Display>(
         row(vec![column(vec![
             Row::new()
                 .spacing(5)
-                .push(text::p1_bold(alias))
+                .push(text::p1_bold(alias.into()))
                 .push(text::p1_regular(format!("#{}", fingerprint)))
                 .into(),
             Row::new()

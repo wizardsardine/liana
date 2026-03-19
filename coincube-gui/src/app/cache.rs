@@ -19,6 +19,15 @@ use std::time::Instant;
 #[derive(Debug, Clone)]
 pub struct Cache {
     pub datadir_path: CoincubeDirectory,
+    /// IBD progress (0.0–1.0) of the pending local Bitcoind, polled via its
+    /// RPC.  `None` when no local node is pending.
+    pub node_bitcoind_sync_progress: Option<f64>,
+    /// Whether the pending local Bitcoind is currently in initial block download.
+    /// `None` when no local node is pending.
+    pub node_bitcoind_ibd: Option<bool>,
+    /// Latest UpdateTip/blockheaders line from the pending internal bitcoind's
+    /// debug.log.  `None` until the first line is received.
+    pub node_bitcoind_last_log: Option<String>,
     pub network: Network,
     /// The `last_poll_timestamp` when starting the application.
     pub last_poll_at_startup: Option<u32>,
@@ -30,6 +39,8 @@ pub struct Cache {
     pub vault_expanded: bool,
     /// UI state: whether the Liquid submenu is expanded
     pub liquid_expanded: bool,
+    /// UI state: whether the USDt submenu is expanded
+    pub usdt_expanded: bool,
     /// Whether this cube has a vault wallet configured
     pub has_vault: bool,
 }
@@ -39,6 +50,9 @@ impl std::default::Default for Cache {
     fn default() -> Self {
         Self {
             datadir_path: CoincubeDirectory::new(std::path::PathBuf::new()),
+            node_bitcoind_sync_progress: None,
+            node_bitcoind_ibd: None,
+            node_bitcoind_last_log: None,
             network: Network::Bitcoin,
             last_poll_at_startup: None,
             daemon_cache: DaemonCache::default(),
@@ -46,6 +60,7 @@ impl std::default::Default for Cache {
             bitcoin_unit: BitcoinDisplayUnit::default(),
             vault_expanded: true,
             liquid_expanded: false,
+            usdt_expanded: false,
             has_vault: false,
         }
     }

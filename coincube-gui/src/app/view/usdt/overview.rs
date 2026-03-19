@@ -3,7 +3,7 @@ use coincube_core::miniscript::bitcoin::Amount;
 use coincube_ui::{
     color,
     component::{
-        amount::*,
+        amount::BitcoinDisplayUnit,
         button,
         text::*,
         transaction::{TransactionDirection, TransactionListItem, TransactionType},
@@ -17,23 +17,21 @@ use iced::{
     Alignment, Background, Length,
 };
 
-use crate::app::view::{liquid::RecentTransaction, FiatAmountConverter, LiquidOverviewMessage};
+use crate::app::breez::assets::format_usdt_display;
+use crate::app::view::{liquid::RecentTransaction, UsdtOverviewMessage};
 
-pub fn liquid_overview_view<'a>(
-    btc_balance: Amount,
-    fiat_converter: Option<FiatAmountConverter>,
+pub fn usdt_overview_view<'a>(
+    usdt_balance: u64,
     recent_transaction: &[RecentTransaction],
     error: Option<&'a str>,
-    bitcoin_unit: BitcoinDisplayUnit,
-) -> Element<'a, LiquidOverviewMessage> {
+    _bitcoin_unit: BitcoinDisplayUnit,
+) -> Element<'a, UsdtOverviewMessage> {
     let mut content = Column::new().spacing(20);
-
-    let btc_fiat = fiat_converter.as_ref().map(|c| c.convert(btc_balance));
 
     let pending_outgoing_sats: u64 = recent_transaction
         .iter()
         .filter(|t| !t.is_incoming && matches!(t.status, PaymentState::Pending))
-        .map(|t| (t.amount + t.fees_sat).to_sat())
+        .map(|t| t.amount.to_sat())
         .sum();
 
     let pending_incoming_sats: u64 = recent_transaction
@@ -45,30 +43,32 @@ pub fn liquid_overview_view<'a>(
     // ── Balance header ────────────────────────────────────────────────────────
     let balance_inner = Column::new()
         .spacing(4)
-        .push(amount_with_size_and_unit(
-            &btc_balance,
-            H2_SIZE,
-            bitcoin_unit,
-        ))
-        .push_maybe(btc_fiat.map(|fiat| -> Element<'_, LiquidOverviewMessage> {
-            text(format!("~{} {}", fiat.to_rounded_string(), fiat.currency()))
+        .push(
+            Row::new()
+                .spacing(10)
+                .align_y(Alignment::Center)
+                .push(text(format_usdt_display(usdt_balance)).size(H2_SIZE).bold())
+                .push(text("USDt").size(H2_SIZE).color(color::GREY_3)),
+        )
+        .push(
+            text("Liquid Network")
                 .size(P1_SIZE)
-                .style(theme::text::secondary)
-                .into()
-        }))
+                .style(theme::text::secondary),
+        )
         .push_maybe(if pending_outgoing_sats > 0 {
             Some(
                 Row::new()
                     .spacing(6)
                     .align_y(Alignment::Center)
                     .push(icon::warning_icon().size(12).style(theme::text::secondary))
-                    .push(text("-").size(P2_SIZE).style(theme::text::secondary))
-                    .push(amount_with_size_and_unit(
-                        &Amount::from_sat(pending_outgoing_sats),
-                        P2_SIZE,
-                        bitcoin_unit,
-                    ))
-                    .push(text("pending").size(P2_SIZE).style(theme::text::secondary)),
+                    .push(
+                        text(format!(
+                            "-{} USDt pending",
+                            format_usdt_display(pending_outgoing_sats)
+                        ))
+                        .size(P2_SIZE)
+                        .style(theme::text::secondary),
+                    ),
             )
         } else {
             None
@@ -79,13 +79,14 @@ pub fn liquid_overview_view<'a>(
                     .spacing(6)
                     .align_y(Alignment::Center)
                     .push(icon::warning_icon().size(12).style(theme::text::secondary))
-                    .push(text("+").size(P2_SIZE).style(theme::text::secondary))
-                    .push(amount_with_size_and_unit(
-                        &Amount::from_sat(pending_incoming_sats),
-                        P2_SIZE,
-                        bitcoin_unit,
-                    ))
-                    .push(text("pending").size(P2_SIZE).style(theme::text::secondary)),
+                    .push(
+                        text(format!(
+                            "+{} USDt pending",
+                            format_usdt_display(pending_incoming_sats)
+                        ))
+                        .size(P2_SIZE)
+                        .style(theme::text::secondary),
+                    ),
             )
         } else {
             None
@@ -100,7 +101,7 @@ pub fn liquid_overview_view<'a>(
         .spacing(8)
         .push(
             button::primary(None, "Send")
-                .on_press(LiquidOverviewMessage::SendLbtc)
+                .on_press(UsdtOverviewMessage::SendUsdt)
                 .width(Length::Fixed(120.0)),
         )
         .push(
@@ -109,7 +110,7 @@ pub fn liquid_overview_view<'a>(
                     .padding([8, 16])
                     .center_x(Length::Fill),
             )
-            .on_press(LiquidOverviewMessage::ReceiveLbtc)
+            .on_press(UsdtOverviewMessage::ReceiveUsdt)
             .width(Length::Fixed(120.0))
             .style(|_, _| iced::widget::button::Style {
                 background: Some(Background::Color(iced::Color::TRANSPARENT)),
@@ -142,7 +143,6 @@ pub fn liquid_overview_view<'a>(
     });
 
     content = content.push(header_card);
-
     content = content.push(Column::new().spacing(10).push(h4_bold("Last transactions")));
 
     if !recent_transaction.is_empty() {
@@ -160,21 +160,16 @@ pub fn liquid_overview_view<'a>(
                 }
             };
 
-            let fiat_str = tx
-                .fiat_amount
-                .as_ref()
-                .map(|fiat| format!("~{} {}", fiat.to_rounded_string(), fiat.currency()));
+            // All transactions here are USDt
+            let usdt_str = format!("{} USDt", format_usdt_display(tx.amount.to_sat()));
+            let display_amount = Amount::ZERO;
 
-            let display_amount = if tx.is_incoming {
-                tx.amount
-            } else {
-                tx.amount + tx.fees_sat
-            };
-
-            let mut item = TransactionListItem::new(direction, &display_amount, bitcoin_unit)
-                .with_type(tx_type)
-                .with_label(tx.description.clone())
-                .with_time_ago(tx.time_ago.clone());
+            let mut item =
+                TransactionListItem::new(direction, &display_amount, BitcoinDisplayUnit::default())
+                    .with_type(tx_type)
+                    .with_label(tx.description.clone())
+                    .with_time_ago(tx.time_ago.clone())
+                    .with_amount_override(usdt_str);
 
             if matches!(tx.status, PaymentState::Pending) {
                 let (bg, fg) = (color::GREY_3, color::BLACK);
@@ -205,17 +200,13 @@ pub fn liquid_overview_view<'a>(
                 item = item.with_custom_status(pending_badge.into());
             }
 
-            if let Some(fiat) = fiat_str {
-                item = item.with_fiat_amount(fiat);
-            }
-
-            content = content.push(item.view(LiquidOverviewMessage::SelectTransaction(idx)));
+            content = content.push(item.view(UsdtOverviewMessage::SelectTransaction(idx)));
         }
     } else {
         content = content.push(placeholder(
             receipt_icon().size(80),
-            "No transactions yet",
-            "Your transaction history will appear here once you send or receive coins.",
+            "No USDt transactions yet",
+            "Your USDt transaction history will appear here once you send or receive USDt.",
         ));
     }
 
@@ -258,7 +249,7 @@ pub fn liquid_overview_view<'a>(
             },
             ..Default::default()
         })
-        .on_press(LiquidOverviewMessage::History)
+        .on_press(UsdtOverviewMessage::History)
     };
 
     if !recent_transaction.is_empty() {
@@ -280,15 +271,14 @@ pub fn liquid_overview_view<'a>(
                 .max_width(800),
         );
     }
-
     content.into()
 }
 
-pub fn placeholder<'a, T: Into<Element<'a, LiquidOverviewMessage>>>(
+fn placeholder<'a, T: Into<Element<'a, UsdtOverviewMessage>>>(
     icon: T,
     title: &'a str,
     subtitle: &'a str,
-) -> Element<'a, LiquidOverviewMessage> {
+) -> Element<'a, UsdtOverviewMessage> {
     let content = Column::new()
         .push(icon)
         .push(text(title).style(theme::text::secondary).bold())

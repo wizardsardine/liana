@@ -31,11 +31,45 @@ impl<'client> MavapayClient<'client> {
         }
     }
 
+    pub async fn ngn_customer_inquiry(
+        &self,
+        bank_account_number: &str,
+        bank_code: &str,
+    ) -> MavapayApiResult<NgnCustomerDetails> {
+        let url = format!(
+            "{}/api/v1/mavapay/quotes/validate-ngn-account",
+            self.0.base_url
+        );
+        let res: Result<_, CoincubeError> = async {
+            let body = serde_json::json!({
+                "bankAccountNumber": bank_account_number,
+                "bankCode": bank_code,
+            });
+
+            let response = self
+                .0
+                .client
+                .request(Method::POST, &url)
+                .json(&body)
+                .send()
+                .await?;
+
+            let response = response.check_success().await?;
+            Ok(response.json().await?)
+        }
+        .await;
+
+        match res {
+            Ok(res) => res,
+            Err(err) => err.into(),
+        }
+    }
+
     pub async fn create_quote(
         &self,
         request: GetQuoteRequest,
     ) -> MavapayApiResult<GetQuoteResponse> {
-        let url = format!("{}/api/v1/mavapay/proxy/onchain/quote", self.0.base_url);
+        let url = format!("{}/api/v1/mavapay/create/quote", self.0.base_url);
         let res: Result<_, CoincubeError> = async {
             let response = self
                 .0

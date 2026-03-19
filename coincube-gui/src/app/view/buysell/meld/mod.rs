@@ -117,7 +117,7 @@ impl MeldState {
         network: bitcoin::Network,
     ) -> (MeldState, iced::Task<view::Message>) {
         let state = MeldState {
-            buy_or_sell: buy_or_sell.clone(),
+            buy_or_sell,
             country,
             sse_retries: 0,
             webview_manager: iced_wry::IcedWebviewManager::new(),
@@ -549,13 +549,13 @@ impl MeldState {
 
                 let client = client.clone();
 
-                let buy_or_sell = self.buy_or_sell.clone();
+                let buy_or_sell = self.buy_or_sell;
                 let country = self.country;
                 let state_code = self.get_region().map(|r| r.region_code.clone());
 
                 let task = iced::Task::perform(
                     async move {
-                        let req = match buy_or_sell.clone() {
+                        let req = match buy_or_sell {
                             BuyOrSell::Sell => meld::api::GetQuotesRequest {
                                 session_type: meld::api::SessionType::Sell,
                                 country_code: country.code,
@@ -688,7 +688,7 @@ impl MeldState {
                 // setup request
                 let coincube_client = client.clone();
                 let country = self.country;
-                let buy_or_sell = self.buy_or_sell.clone();
+                let buy_or_sell = self.buy_or_sell;
 
                 let deposit_address = self.get_deposit_address();
                 let region_code = self.get_region().map(|r| r.region_code.clone());

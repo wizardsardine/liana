@@ -4,6 +4,7 @@ pub mod buysell;
 pub mod global_home;
 pub mod liquid;
 pub mod settings;
+pub mod usdt;
 
 pub mod vault;
 
@@ -11,6 +12,7 @@ use std::iter::FromIterator;
 
 pub use liquid::*;
 pub use message::*;
+pub use usdt::*;
 pub use vault::fiat::FiatAmountConverter;
 pub use vault::warning::warn;
 
@@ -25,7 +27,7 @@ use coincube_ui::{
     icon::{
         bitcoin_icon, coins_icon, cross_icon, cube_icon, down_icon, home_icon, lightning_icon,
         plus_icon, receipt_icon, receive_icon, recovery_icon, send_icon, settings_icon, up_icon,
-        vault_icon,
+        usd_icon, vault_icon,
     },
     image::*,
     theme,
@@ -42,12 +44,31 @@ pub fn simple_toast(message: &str) -> Container<Message> {
         .max_width(400.0)
 }
 
+/// Wraps `content` in the shared balance card style used across wallet overview and send screens
+/// (GREY_6 background, orange border, rounded corners — matching the Liquid Overview header).
+pub fn balance_header_card<'a, Msg: 'a>(content: impl Into<Element<'a, Msg>>) -> Element<'a, Msg> {
+    container(content)
+        .padding(20)
+        .width(Length::Fill)
+        .style(|_| container::Style {
+            background: Some(iced::Background::Color(color::GREY_6)),
+            border: iced::Border {
+                color: color::ORANGE,
+                width: 0.2,
+                radius: 25.0.into(),
+            },
+            ..Default::default()
+        })
+        .into()
+}
+
 fn menu_bar_highlight<'a, T: 'a>() -> Container<'a, T> {
     Container::new(Space::new().width(Length::Fixed(5.0)))
         .height(Length::Fixed(50.0))
         .style(theme::container::custom(color::ORANGE))
 }
 
+// TODO: Rework sidebar UI and implementation, use buttons without rounded borders
 pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<'a, Message> {
     // Top-level Home button
     let home_button = if *menu == Menu::Home {
@@ -228,6 +249,116 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<
             .push(liquid_receive_button)
             .push(liquid_transactions_button)
             .push(liquid_settings_button);
+    }
+
+    // ── USDt nav group ──────────────────────────────────────────────────────
+    let is_usdt_expanded = cache.usdt_expanded;
+
+    let usdt_chevron = if is_usdt_expanded {
+        up_icon()
+    } else {
+        down_icon()
+    };
+    let usdt_button = Button::new(
+        Row::new()
+            .spacing(10)
+            .align_y(iced::alignment::Vertical::Center)
+            .push(usd_icon().style(theme::text::secondary))
+            .push(text("USDt").size(15))
+            .push(Space::new().width(Length::Fill))
+            .push(usdt_chevron.style(theme::text::secondary))
+            .padding(10),
+    )
+    .width(iced::Length::Fill)
+    .style(theme::button::menu)
+    .on_press(Message::ToggleUsdt);
+
+    menu_column = menu_column.push(usdt_button);
+
+    if is_usdt_expanded {
+        use crate::app::menu::UsdtSubMenu;
+
+        let usdt_overview_button = if matches!(menu, Menu::Usdt(UsdtSubMenu::Overview)) {
+            row!(
+                Space::new().width(Length::Fixed(20.0)),
+                button::menu_active(Some(home_icon()), "Overview")
+                    .on_press(Message::Reload)
+                    .width(iced::Length::Fill),
+                menu_bar_highlight()
+            )
+            .width(Length::Fill)
+        } else {
+            row!(
+                Space::new().width(Length::Fixed(20.0)),
+                button::menu(Some(home_icon()), "Overview")
+                    .on_press(Message::Menu(Menu::Usdt(UsdtSubMenu::Overview)))
+                    .width(iced::Length::Fill),
+            )
+            .width(Length::Fill)
+        };
+
+        let usdt_send_button = if matches!(menu, Menu::Usdt(UsdtSubMenu::Send)) {
+            row!(
+                Space::new().width(Length::Fixed(20.0)),
+                button::menu_active(Some(send_icon()), "Send")
+                    .on_press(Message::Reload)
+                    .width(iced::Length::Fill),
+                menu_bar_highlight()
+            )
+            .width(Length::Fill)
+        } else {
+            row!(
+                Space::new().width(Length::Fixed(20.0)),
+                button::menu(Some(send_icon()), "Send")
+                    .on_press(Message::Menu(Menu::Usdt(UsdtSubMenu::Send)))
+                    .width(iced::Length::Fill),
+            )
+            .width(Length::Fill)
+        };
+
+        let usdt_receive_button = if matches!(menu, Menu::Usdt(UsdtSubMenu::Receive)) {
+            row!(
+                Space::new().width(Length::Fixed(20.0)),
+                button::menu_active(Some(receive_icon()), "Receive")
+                    .on_press(Message::Reload)
+                    .width(iced::Length::Fill),
+                menu_bar_highlight()
+            )
+            .width(Length::Fill)
+        } else {
+            row!(
+                Space::new().width(Length::Fixed(20.0)),
+                button::menu(Some(receive_icon()), "Receive")
+                    .on_press(Message::Menu(Menu::Usdt(UsdtSubMenu::Receive)))
+                    .width(iced::Length::Fill),
+            )
+            .width(Length::Fill)
+        };
+
+        let usdt_transactions_button = if matches!(menu, Menu::Usdt(UsdtSubMenu::Transactions(_))) {
+            row!(
+                Space::new().width(Length::Fixed(20.0)),
+                button::menu_active(Some(receipt_icon()), "Transactions")
+                    .on_press(Message::Reload)
+                    .width(iced::Length::Fill),
+                menu_bar_highlight()
+            )
+            .width(Length::Fill)
+        } else {
+            row!(
+                Space::new().width(Length::Fixed(20.0)),
+                button::menu(Some(receipt_icon()), "Transactions")
+                    .on_press(Message::Menu(Menu::Usdt(UsdtSubMenu::Transactions(None))))
+                    .width(iced::Length::Fill),
+            )
+            .width(Length::Fill)
+        };
+
+        menu_column = menu_column
+            .push(usdt_overview_button)
+            .push(usdt_send_button)
+            .push(usdt_receive_button)
+            .push(usdt_transactions_button);
     }
 
     // Check if Vault submenu is expanded from cache
@@ -606,7 +737,7 @@ pub fn error_toast_overlay<'a, I: Iterator<Item = (usize, &'a str)>>(
 ) -> coincube_ui::widget::Element<'a, Message> {
     use coincube_ui::{color, component::text, icon::cross_icon};
 
-    let toast = |id: usize, content: &str| {
+    let toast = |id: usize, content: &'a str| {
         const WIDGET_HEIGHT: u32 = 80;
         iced::widget::row![
             container(text::p1_bold(content).color(color::WHITE))
