@@ -4,8 +4,10 @@ use iced::{
         button::{Status, Style},
         column, container, row, Space,
     },
-    Length,
+    Length, Padding,
 };
+
+use iced::widget::Container;
 
 use crate::{
     color,
@@ -20,11 +22,90 @@ use crate::{
 
 use crate::widget::{Button, Column, Element, Row, Text};
 
-pub const MODAL_WIDTH: u16 = 650;
 pub const BTN_W: u16 = 500;
 pub const BTN_H: u16 = 40;
 pub const V_SPACING: u16 = 10;
 pub const H_SPACING: u16 = 5;
+const MODAL_PADDING: f32 = 20.0;
+const MODAL_SPACING: u16 = 15;
+
+/// Modal width presets.
+#[derive(Debug, Clone, Copy)]
+pub enum ModalWidth {
+    /// Small modals (confirmations, simple dialogs)
+    S = 400,
+    /// Medium modals (forms, editors)
+    M = 500,
+    /// Large modals (device selection, complex forms)
+    L = 650,
+}
+
+/// Keep backward compat for code referencing MODAL_WIDTH.
+pub const MODAL_WIDTH: u16 = ModalWidth::L as u16;
+
+/// Shorthand for `None::<fn() -> T>` used in modal_view back/close params.
+pub fn none_fn<T>() -> Option<fn() -> T> {
+    None
+}
+
+/// Type alias for the container style function used by modal views.
+pub type ContainerStyle = fn(&Theme) -> iced::widget::container::Style;
+
+/// Standard modal wrapper: card theme + header + content with consistent
+/// padding, spacing, and width.
+pub fn modal_view<'a, Message, Back, Close, C>(
+    title: Option<String>,
+    back_message: Option<Back>,
+    close_message: Option<Close>,
+    width: ModalWidth,
+    content: C,
+) -> Element<'a, Message>
+where
+    Back: 'static + Fn() -> Message,
+    Close: 'static + Fn() -> Message,
+    Message: Clone + 'static,
+    C: Into<Element<'a, Message>>,
+{
+    modal_view_with_theme(
+        title,
+        back_message,
+        close_message,
+        width,
+        content,
+        theme::card::modal,
+    )
+}
+
+/// Like [`modal_view`] but accepts a custom container style.
+pub fn modal_view_with_theme<'a, Message, Back, Close, C>(
+    title: Option<String>,
+    back_message: Option<Back>,
+    close_message: Option<Close>,
+    width: ModalWidth,
+    content: C,
+    style: ContainerStyle,
+) -> Element<'a, Message>
+where
+    Back: 'static + Fn() -> Message,
+    Close: 'static + Fn() -> Message,
+    Message: Clone + 'static,
+    C: Into<Element<'a, Message>>,
+{
+    let col = Column::new()
+        .push(header(title, back_message, close_message))
+        .push(content)
+        .spacing(MODAL_SPACING)
+        .padding(MODAL_PADDING)
+        .width(width as u16);
+
+    let padding = Padding {
+        top: 0.0,
+        right: MODAL_PADDING,
+        bottom: MODAL_PADDING,
+        left: MODAL_PADDING,
+    };
+    Container::new(col).padding(padding).style(style).into()
+}
 
 pub fn widget_style(theme: &Theme, status: Status) -> Style {
     theme::button::secondary(theme, status)
@@ -43,8 +124,12 @@ where
     let back = back_message
         .map(|m| button::transparent(Some(icon::arrow_back().size(25)), "").on_press(m()));
     let title = label.map(text::h3);
-    let close = close_message
-        .map(|m| button::transparent(Some(icon::cross_icon().size(40)), "").on_press(m()));
+    let close = close_message.map(|m| {
+        Button::new(icon::cross_icon().size(40))
+            .padding(0)
+            .style(theme::button::transparent)
+            .on_press(m())
+    });
     Row::new()
         .push_maybe(back)
         .push_maybe(title)

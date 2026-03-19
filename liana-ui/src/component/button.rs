@@ -127,6 +127,43 @@ fn content<'a, T: 'a>(icon: Option<Text<'a>>, text: Text<'a>) -> Container<'a, T
     }
 }
 
+/// Button width presets.
+#[derive(Debug, Clone, Copy)]
+pub enum BtnWidth {
+    /// Short labels (Save, OK, Retry)
+    S = 100,
+    /// Standard labels (Cancel, Clear, Delete)
+    M = 120,
+    /// Longer labels (Keep my changes)
+    L = 160,
+}
+
+/// Primary button with preset width.
+pub fn btn_primary<'a, T: Clone + 'a>(
+    label: &'static str,
+    width: BtnWidth,
+    msg: Option<T>,
+) -> Button<'a, T> {
+    let mut btn = primary(None, label).width(Length::Fixed(width as u16 as f32));
+    if let Some(m) = msg {
+        btn = btn.on_press(m);
+    }
+    btn
+}
+
+/// Secondary button with preset width.
+pub fn btn_secondary<'a, T: Clone + 'a>(
+    label: &'static str,
+    width: BtnWidth,
+    msg: Option<T>,
+) -> Button<'a, T> {
+    let mut btn = secondary(None, label).width(Length::Fixed(width as u16 as f32));
+    if let Some(m) = msg {
+        btn = btn.on_press(m);
+    }
+    btn
+}
+
 pub fn icon_btn<'a, T: 'a + Clone>(icon: Text<'a>, message: Option<T>) -> Button<'a, T> {
     let inner = ICON_BTN_SIZE - 2.0 * ICON_BTN_PADDING;
     Button::new(
