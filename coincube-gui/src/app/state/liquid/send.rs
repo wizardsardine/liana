@@ -274,11 +274,15 @@ impl State for LiquidSend {
                     let value_owned = value.clone();
                     // TODO: Add some kind of debouncing mechanism here, so that we don't call breez
                     // API again and again
+                    let value_for_callback = value.clone();
                     let validate_input = Task::perform(
                         async move { breez.validate_input(value_owned).await },
-                        |input| {
+                        move |input| {
                             Message::View(view::Message::LiquidSend(
-                                view::LiquidSendMessage::InputValidated(input),
+                                view::LiquidSendMessage::InputValidated(
+                                    value_for_callback.clone(),
+                                    input,
+                                ),
                             ))
                         },
                     );
@@ -527,8 +531,8 @@ impl State for LiquidSend {
                 view::LiquidSendMessage::Error(err) => {
                     self.error = Some(err.to_string());
                     self.is_sending = false; // Reset sending flag on error
-                    // When a modal is open, the error toast renders inside the modal
-                    // overlay (above the backdrop). Otherwise use the global toast.
+                                             // When a modal is open, the error toast renders inside the modal
+                                             // overlay (above the backdrop). Otherwise use the global toast.
                     let modal_open = matches!(
                         self.flow_state,
                         LiquidSendFlowState::Main {
@@ -544,7 +548,12 @@ impl State for LiquidSend {
                 view::LiquidSendMessage::ClearError => {
                     self.error = None;
                 }
-                view::LiquidSendMessage::InputValidated(input_type) => {
+                view::LiquidSendMessage::InputValidated(original_input, input_type) => {
+                    // Discard stale async validation results — the user may have
+                    // edited the input while validation was in-flight.
+                    if *original_input != self.input.value {
+                        return Task::none();
+                    }
                     self.input.valid = input_type.is_some();
                     self.input_type = input_type.clone();
 
@@ -561,8 +570,16 @@ impl State for LiquidSend {
                                         AssetKind::Lbtc => SendAsset::Btc,
                                     };
                                     // On usdt_only screen with L-BTC URI: auto-enable
-                                    // cross-asset (pay from USDt, receiver gets L-BTC)
-                                    if self.usdt_only && target_asset == SendAsset::Btc {
+                                    // cross-asset (pay from USDt, receiver gets L-BTC).
+                                    // Only on mainnet where SideSwap is available.
+                                    let cross_asset_supported = matches!(
+                                        network,
+                                        breez_sdk_liquid::bitcoin::Network::Bitcoin
+                                    );
+                                    if self.usdt_only
+                                        && target_asset == SendAsset::Btc
+                                        && cross_asset_supported
+                                    {
                                         self.send_asset = SendAsset::Btc;
                                         self.from_asset = Some(SendAsset::Usdt);
                                     } else {
@@ -570,38 +587,45 @@ impl State for LiquidSend {
                                     }
                                 }
                                 None => {
-                                    // Unknown asset_id — clear URI lock and restore default asset
+                                    // Unknown asset_id — only reset send_asset if we're
+                                    // clearing a previously set URI lock. Otherwise preserve
+                                    // the user's current asset selection.
+                                    if self.uri_asset.is_some() {
+                                        self.send_asset = if self.usdt_only {
+                                            SendAsset::Usdt
+                                        } else {
+                                            SendAsset::Btc
+                                        };
+                                    }
                                     self.uri_asset = None;
                                     self.from_asset = None;
-                                    self.send_asset = if self.usdt_only {
-                                        SendAsset::Usdt
-                                    } else {
-                                        SendAsset::Btc
-                                    };
                                 }
                             }
                         } else {
-                            // No asset_id in URI — clear URI lock and restore default asset
+                            // No asset_id in URI — only reset send_asset if we're
+                            // clearing a previously set URI lock.
+                            if self.uri_asset.is_some() {
+                                self.send_asset = if self.usdt_only {
+                                    SendAsset::Usdt
+                                } else {
+                                    SendAsset::Btc
+                                };
+                            }
                             self.uri_asset = None;
                             self.from_asset = None;
-                            self.send_asset = if self.usdt_only {
-                                SendAsset::Usdt
-                            } else {
-                                SendAsset::Btc
-                            };
                         }
 
-                        // Pre-fill amount from URI if present
-                        if let Some(amount) = address.amount {
-                            if self.send_asset == SendAsset::Usdt {
-                                // Preserve full precision from URI (up to 8 decimals)
+                        // Pre-fill amount from URI if present, or clear stale values
+                        if self.send_asset == SendAsset::Usdt {
+                            if let Some(amount) = address.amount {
                                 self.usdt_amount_input.value = amount.to_string();
                                 self.usdt_amount_input.valid = amount > 0.0;
+                            } else {
+                                self.usdt_amount_input = form::Value::default();
                             }
-                            // For BTC, amount_sat may be more reliable
                         }
-                        if let Some(amount_sat) = address.amount_sat {
-                            if self.send_asset == SendAsset::Btc {
+                        if self.send_asset == SendAsset::Btc {
+                            if let Some(amount_sat) = address.amount_sat {
                                 self.amount = Amount::from_sat(amount_sat);
                                 self.amount_input.value =
                                     if matches!(cache.bitcoin_unit, BitcoinDisplayUnit::BTC) {
@@ -610,6 +634,9 @@ impl State for LiquidSend {
                                         amount_sat.to_string()
                                     };
                                 self.amount_input.valid = true;
+                            } else {
+                                self.amount = Amount::ZERO;
+                                self.amount_input = form::Value::default();
                             }
                         }
                     } else {
@@ -980,14 +1007,25 @@ impl State for LiquidSend {
                                     }
                                 };
                                 // Resolve from_asset for cross-asset swap
-                                let from_asset_id: Option<String> =
-                                    self.from_asset.and_then(|fa| {
+                                let from_asset_id: Option<String> = match self.from_asset {
+                                    Some(fa) => {
                                         let kind = match fa {
                                             SendAsset::Btc => AssetKind::Lbtc,
                                             SendAsset::Usdt => AssetKind::Usdt,
                                         };
-                                        kind.asset_id(network).map(|s| s.to_string())
-                                    });
+                                        match kind.asset_id(network) {
+                                            Some(id) => Some(id.to_string()),
+                                            None => {
+                                                self.error = Some(format!(
+                                                    "{} not available on this network",
+                                                    kind.ticker()
+                                                ));
+                                                return Task::none();
+                                            }
+                                        }
+                                    }
+                                    None => None,
+                                };
                                 let destination = match input_type {
                                     InputType::LiquidAddress { address } => address.address.clone(),
                                     _ => unreachable!(),

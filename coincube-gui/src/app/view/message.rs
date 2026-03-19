@@ -326,7 +326,8 @@ pub enum UsdtOverviewMessage {
 pub enum LiquidSendMessage {
     PresetAsset(crate::app::state::liquid::send::SendAsset),
     InputEdited(String),
-    InputValidated(Option<InputType>),
+    /// Carries (original_input, validation_result) so stale async results are discarded.
+    InputValidated(String, Option<InputType>),
     Send,
     History,
     SelectTransaction(usize),

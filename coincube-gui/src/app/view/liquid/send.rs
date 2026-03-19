@@ -466,7 +466,12 @@ pub fn amount_input_model<'a>(config: AmountInputConfig<'a>) -> Element<'a, Liqu
                 .style(|_| {
                     iced::widget::container::Style::default()
                         .background(iced::Color::from_rgb(0.3, 0.05, 0.05))
-                        .border(iced::Border::default().width(1).color(color::RED).rounded(8))
+                        .border(
+                            iced::Border::default()
+                                .width(1)
+                                .color(color::RED)
+                                .rounded(8),
+                        )
                 }),
         );
     }
@@ -496,8 +501,7 @@ pub fn amount_input_model<'a>(config: AmountInputConfig<'a>) -> Element<'a, Liqu
     content = content.push(header);
 
     // Cross-asset swap indicator and toggle (SideSwap, mainnet only)
-    if config.cross_asset_supported && (config.uri_asset.is_some() || config.from_asset.is_some())
-    {
+    if config.cross_asset_supported && (config.uri_asset.is_some() || config.from_asset.is_some()) {
         let is_cross_asset = config.from_asset.is_some();
         let toggle_label = if is_cross_asset {
             let paying_with = match config.from_asset.unwrap() {
