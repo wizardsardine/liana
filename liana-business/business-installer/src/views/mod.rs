@@ -25,7 +25,7 @@ use iced::{
 };
 use liana_ui::{
     component::{
-        button::{self, icon_btn},
+        button::{btn_flat, icon_btn, BtnWidth},
         card::clickable_card,
         text,
     },
@@ -38,6 +38,7 @@ pub const INSTALLER_STEPS: usize = 5;
 pub const MENU_ENTRY_WIDTH: u16 = 600;
 pub const ACCOUNT_ENTRY_WIDTH: u16 = MENU_ENTRY_WIDTH - 80;
 pub const MENU_ENTRY_HEIGHT: u16 = 80;
+const EMAIL_ROW_HEIGHT: u16 = 56;
 
 /// Format last edit information as "Edited by [You|email] [relative_time]".
 /// Returns None if `last_edited` is None.
@@ -110,7 +111,7 @@ fn layout_inner<'a>(
         ("Previous", None)
     };
 
-    let left_button = button::flat(icn, txt).on_press_maybe(msg);
+    let left_button = btn_flat(icn, txt, BtnWidth::L, msg);
 
     // Build the top-right row with optional role badge and email
     let mut email_row = Row::new()
@@ -129,9 +130,12 @@ fn layout_inner<'a>(
     if let Some(e) = email {
         email_row = email_row
             .push(Container::new(text::p1_medium(e).style(theme::text::accent)).padding(20));
+    } else {
+        email_row = email_row.push(Space::with_height(EMAIL_ROW_HEIGHT));
     }
 
     let header = Row::new()
+        .height(EMAIL_ROW_HEIGHT)
         .align_y(Alignment::Center)
         .push(if has_left_button {
             Container::new(left_button)

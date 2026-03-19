@@ -123,19 +123,23 @@ pub fn xpub_view(state: &State) -> Element<'_, Msg> {
         } else {
             "Your keys are set."
         };
-        Row::new()
-            .spacing(10)
-            .align_y(Alignment::Center)
-            .push(icon::clock_icon())
-            .push(
-                Column::new()
-                    .spacing(5)
-                    .push(text::p1_bold(keys_set_msg))
-                    .push(text::p1_medium(
-                        "Once the other participants complete their key setup, you'll be able to access the wallet.",
-                    ).style(theme::text::primary)),
-            )
-            .into()
+        Container::new(
+            Row::new()
+                .spacing(10)
+                .align_y(Alignment::Center)
+                .push(icon::clock_icon())
+                .push(
+                    Column::new()
+                        .spacing(5)
+                        .push(text::p1_bold(keys_set_msg))
+                        .push(text::p1_medium(
+                            "Once the other participants complete their key setup, you'll be able to access the wallet.",
+                        ).style(theme::text::primary)),
+                ),
+        )
+        .align_x(Alignment::Center)
+        .width(Length::Fill)
+        .into()
     } else {
         text::p1_medium(
             "Select a key to complete its setup. Keys can be set up by each key manager individually, or by the wallet manager on their behalf. You can connect a hardware device (recommended) or manually add an extended public key (xpub).",
