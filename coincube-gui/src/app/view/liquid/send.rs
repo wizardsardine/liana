@@ -20,7 +20,7 @@ use iced::{
     Alignment, Background, Length,
 };
 
-use crate::app::breez::assets::format_usdt_display;
+use crate::app::breez::assets::{format_usdt_display, AssetKind};
 use crate::app::menu::Menu;
 use crate::app::state::liquid::send::{LiquidSendFlowState, Modal, SendAsset};
 use crate::app::view::{
@@ -38,6 +38,8 @@ pub struct LiquidSendFlowConfig<'a> {
     pub amount_input: &'a form::Value<String>,
     pub usdt_amount_input: &'a form::Value<String>,
     pub send_asset: SendAsset,
+    pub from_asset: Option<SendAsset>,
+    pub uri_asset: Option<AssetKind>,
     pub usdt_asset_id: &'a str,
     pub comment: String,
     pub description: Option<&'a str>,
@@ -78,6 +80,8 @@ pub fn liquid_send_with_flow<'a>(config: LiquidSendFlowConfig<'a>) -> Element<'a
                         amount: config.amount_input,
                         usdt_amount_input: config.usdt_amount_input,
                         send_asset: config.send_asset,
+                        from_asset: config.from_asset,
+                        uri_asset: config.uri_asset,
                         usdt_balance: config.usdt_balance,
                         comment: config.comment,
                         has_fiat_converter: config.fiat_converter.is_some(),
@@ -131,6 +135,7 @@ pub fn liquid_send_with_flow<'a>(config: LiquidSendFlowConfig<'a>) -> Element<'a
                 config.prepare_onchain_response,
                 config.send_asset,
                 config.usdt_amount_input.value.trim(),
+                config.from_asset,
             )
             .map(Message::LiquidSend);
             view::dashboard(config.menu, config.cache, content)
@@ -426,6 +431,8 @@ pub struct AmountInputConfig<'a> {
     pub amount: &'a form::Value<String>,
     pub usdt_amount_input: &'a form::Value<String>,
     pub send_asset: SendAsset,
+    pub from_asset: Option<SendAsset>,
+    pub uri_asset: Option<AssetKind>,
     pub usdt_balance: u64,
     pub comment: String,
     pub has_fiat_converter: bool,
@@ -444,7 +451,9 @@ pub fn amount_input_model<'a>(config: AmountInputConfig<'a>) -> Element<'a, Liqu
         .width(Length::Fixed(500.0))
         .align_x(Alignment::Center);
 
-    let balance_text = match config.send_asset {
+    // Show balance of the asset being paid from (from_asset if cross-asset, else send_asset)
+    let paying_asset = config.from_asset.unwrap_or(config.send_asset);
+    let balance_text = match paying_asset {
         SendAsset::Usdt => format!("{} USDt", format_usdt_display(config.usdt_balance)),
         SendAsset::Btc => format!(
             "{} {}",
@@ -465,6 +474,60 @@ pub fn amount_input_model<'a>(config: AmountInputConfig<'a>) -> Element<'a, Liqu
         .align_y(Alignment::Center);
 
     content = content.push(header);
+
+    // Cross-asset swap indicator and toggle
+    if config.uri_asset.is_some() || config.from_asset.is_some() {
+        let is_cross_asset = config.from_asset.is_some();
+        let toggle_label = if is_cross_asset {
+            let paying_with = match config.from_asset.unwrap() {
+                SendAsset::Btc => "L-BTC",
+                SendAsset::Usdt => "USDt",
+            };
+            let receiving = match config.send_asset {
+                SendAsset::Btc => "L-BTC",
+                SendAsset::Usdt => "USDt",
+            };
+            format!("Paying with {} → Receiver gets {} (swap)", paying_with, receiving)
+        } else {
+            let asset_name = match config.send_asset {
+                SendAsset::Btc => "L-BTC",
+                SendAsset::Usdt => "USDt",
+            };
+            format!("Paying with {}", asset_name)
+        };
+
+        let swap_toggle = iced_button(
+            Container::new(
+                Row::new()
+                    .spacing(6)
+                    .align_y(Alignment::Center)
+                    .push(icon::left_right_icon().size(14).style(|_| iced::widget::text::Style {
+                        color: Some(color::ORANGE),
+                    }))
+                    .push(text(toggle_label).size(13).color(color::ORANGE)),
+            )
+            .padding([4, 12]),
+        )
+        .on_press(LiquidSendMessage::PopupMessage(
+            view::SendPopupMessage::ToggleSendAsset,
+        ))
+        .style(|_, _| iced::widget::button::Style {
+            background: Some(Background::Color(iced::Color::TRANSPARENT)),
+            text_color: color::ORANGE,
+            border: iced::Border {
+                color: color::ORANGE,
+                width: 1.0,
+                radius: 15.0.into(),
+            },
+            ..Default::default()
+        });
+
+        content = content.push(
+            Container::new(swap_toggle)
+                .width(Length::Fill)
+                .center_x(Length::Fill),
+        );
+    }
 
     if let Some(desc) = config.description {
         content = content.push(
@@ -816,6 +879,7 @@ pub fn final_check_page<'a>(
     prepare_onchain_response: Option<&'a breez_sdk_liquid::prelude::PreparePayOnchainResponse>,
     send_asset: SendAsset,
     usdt_send_amount: &'a str,
+    from_asset: Option<SendAsset>,
 ) -> Element<'a, LiquidSendMessage> {
     let header = Row::new()
         .push(
@@ -841,6 +905,33 @@ pub fn final_check_page<'a>(
                 .width(Length::Fill)
                 .align_x(Alignment::Center),
         );
+    }
+
+    // Cross-asset swap indicator
+    if let Some(fa) = from_asset {
+        if fa != send_asset {
+            let paying_with = match fa {
+                SendAsset::Btc => "L-BTC",
+                SendAsset::Usdt => "USDt",
+            };
+            let receiving = match send_asset {
+                SendAsset::Btc => "L-BTC",
+                SendAsset::Usdt => "USDt",
+            };
+            content = content.push(
+                Container::new(
+                    text(format!(
+                        "Cross-asset swap: paying with {} → receiver gets {}",
+                        paying_with, receiving
+                    ))
+                    .size(14)
+                    .color(color::ORANGE),
+                )
+                .padding([6, 12])
+                .width(Length::Fill)
+                .center_x(Length::Fill),
+            );
+        }
     }
 
     content = content.push(Space::new().height(Length::Fixed(2.0)));
