@@ -53,6 +53,8 @@ pub struct LiquidSendFlowConfig<'a> {
     pub onchain_limits: Option<(u64, u64)>,
     pub bitcoin_unit: BitcoinDisplayUnit,
     pub prepare_onchain_response: Option<&'a breez_sdk_liquid::prelude::PreparePayOnchainResponse>,
+    pub error: Option<&'a str>,
+    pub cross_asset_supported: bool,
 }
 
 pub fn liquid_send_with_flow<'a>(config: LiquidSendFlowConfig<'a>) -> Element<'a, Message> {
@@ -91,6 +93,8 @@ pub fn liquid_send_with_flow<'a>(config: LiquidSendFlowConfig<'a>) -> Element<'a
                         onchain_limits: config.onchain_limits,
                         input_type: config.input_type,
                         bitcoin_unit: config.bitcoin_unit,
+                        error: config.error,
+                        cross_asset_supported: config.cross_asset_supported,
                     })
                     .map(Message::LiquidSend);
                     coincube_ui::widget::modal::Modal::new(content, modal_content)
@@ -442,6 +446,8 @@ pub struct AmountInputConfig<'a> {
     pub onchain_limits: Option<(u64, u64)>,
     pub input_type: &'a Option<InputType>,
     pub bitcoin_unit: BitcoinDisplayUnit,
+    pub error: Option<&'a str>,
+    pub cross_asset_supported: bool,
 }
 
 pub fn amount_input_model<'a>(config: AmountInputConfig<'a>) -> Element<'a, LiquidSendMessage> {
@@ -450,6 +456,20 @@ pub fn amount_input_model<'a>(config: AmountInputConfig<'a>) -> Element<'a, Liqu
         .padding(30)
         .width(Length::Fixed(500.0))
         .align_x(Alignment::Center);
+
+    // Show inline error banner if present
+    if let Some(err) = config.error {
+        content = content.push(
+            container(p1_regular(err).color(color::WHITE))
+                .width(Length::Fill)
+                .padding(12)
+                .style(|_| {
+                    iced::widget::container::Style::default()
+                        .background(iced::Color::from_rgb(0.3, 0.05, 0.05))
+                        .border(iced::Border::default().width(1).color(color::RED).rounded(8))
+                }),
+        );
+    }
 
     // Show balance of the asset being paid from (from_asset if cross-asset, else send_asset)
     let paying_asset = config.from_asset.unwrap_or(config.send_asset);
@@ -475,8 +495,9 @@ pub fn amount_input_model<'a>(config: AmountInputConfig<'a>) -> Element<'a, Liqu
 
     content = content.push(header);
 
-    // Cross-asset swap indicator and toggle
-    if config.uri_asset.is_some() || config.from_asset.is_some() {
+    // Cross-asset swap indicator and toggle (SideSwap, mainnet only)
+    if config.cross_asset_supported && (config.uri_asset.is_some() || config.from_asset.is_some())
+    {
         let is_cross_asset = config.from_asset.is_some();
         let toggle_label = if is_cross_asset {
             let paying_with = match config.from_asset.unwrap() {
