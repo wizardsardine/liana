@@ -135,10 +135,11 @@ fn save_data(cube_name: &str, data: &MostroData) -> Result<(), String> {
 pub fn append_trade_message(cube_name: &str, order_id: &str, msg: TradeMessage) {
     let mut data = load_data(cube_name);
     if let Some(session) = data.trades.iter_mut().find(|t| t.order_id == order_id) {
-        let is_dup = session
-            .messages
-            .iter()
-            .any(|m| m.timestamp == msg.timestamp && m.action == msg.action);
+        let is_dup = session.messages.iter().any(|m| {
+            m.timestamp == msg.timestamp
+                && m.action == msg.action
+                && m.payload_json == msg.payload_json
+        });
         if !is_dup {
             session.messages.push(msg);
             session.messages.sort_by_key(|m| m.timestamp);
