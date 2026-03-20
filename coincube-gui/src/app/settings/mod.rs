@@ -338,11 +338,7 @@ impl WalletSettings {
     pub fn border_wallet_fingerprints(&self) -> HashSet<Fingerprint> {
         self.keys
             .iter()
-            .filter(|k| {
-                k.is_border_wallet
-                    || k.name == "Border Wallet"
-                    || k.name == "Border Wallet Safety Net"
-            })
+            .filter(|k| k.is_border_wallet)
             .map(|k| k.master_fingerprint)
             .collect()
     }
