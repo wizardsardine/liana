@@ -721,7 +721,6 @@ impl BitcoinD {
             bitcoin::Network::Testnet4 => "testnet4",
             bitcoin::Network::Regtest => "regtest",
             bitcoin::Network::Signet => "signet",
-            _ => "Unknown network, undefined at the time of writing",
         };
         if bitcoind_net != bip70_net {
             return Err(BitcoindError::NetworkMismatch(
@@ -1227,6 +1226,21 @@ impl BitcoinD {
                         .and_then(|s| bitcoin::Txid::from_str(s).ok())
                         .expect("Must be a valid txid if present")
                 })
+            })
+            .collect()
+    }
+
+    /// Test whether raw transactions would be accepted by the mempool.
+    pub fn test_mempool_accept(&self, rawtxs: Vec<String>) -> Vec<bool> {
+        let hex_txs: Json = rawtxs.into_iter().map(|tx| serde_json::json!(tx)).collect();
+        self.make_node_request("testmempoolaccept", params!(hex_txs))
+            .as_array()
+            .expect("Always returns an array")
+            .iter()
+            .map(|e| {
+                e.get("allowed")
+                    .and_then(|v| v.as_bool())
+                    .expect("Each result must have an 'allowed' boolean")
             })
             .collect()
     }

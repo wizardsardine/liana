@@ -67,6 +67,9 @@ pub enum Message {
     BroadcastModal(Result<HashSet<Txid>, Error>),
     RbfModal(Box<HistoryTransaction>, bool, Result<HashSet<Txid>, Error>),
     Export(ImportExportMessage),
+    ReceivePayjoin(Result<(Address, ChildNumber, Option<String>), Error>),
+    PayjoinInitiated(Result<String, Error>),
+    ActivePayjoinSessions(Result<Vec<u32>, Error>),
 }
 
 impl From<ImportExportMessage> for Message {

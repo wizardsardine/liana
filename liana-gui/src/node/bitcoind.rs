@@ -138,7 +138,6 @@ pub fn bitcoind_network_dir(network: &Network) -> Option<String> {
         Network::Testnet4 => "testnet4",
         Network::Regtest => "regtest",
         Network::Signet => "signet",
-        _ => panic!("Directory required for this network is unknown."),
     };
     Some(dir.to_string())
 }
