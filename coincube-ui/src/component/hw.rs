@@ -616,7 +616,7 @@ pub fn hot_signer<'a, T: 'a, F: Display>(
 
 pub fn border_wallet_signer<'a, T: 'a, F: Display>(
     fingerprint: F,
-    alias: Option<impl Into<Cow<'a, str>> + Display>,
+    alias: Option<impl Into<Cow<'a, str>> + Display + iced::widget::text::IntoFragment<'a>>,
     can_sign: bool,
 ) -> Container<'a, T> {
     Container::new(
@@ -648,7 +648,7 @@ pub fn border_wallet_signer<'a, T: 'a, F: Display>(
 
 pub fn sign_success_border_wallet<'a, T: 'a, F: Display>(
     fingerprint: F,
-    alias: Option<impl Into<Cow<'a, str>> + Display>,
+    alias: Option<impl Into<Cow<'a, str>> + Display + iced::widget::text::IntoFragment<'a>>,
 ) -> Container<'a, T> {
     container(
         row(vec![
