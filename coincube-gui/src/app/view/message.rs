@@ -480,4 +480,12 @@ pub enum P2PMessage {
     },
     // Timer tick for trade detail countdown
     TradeTimerTick,
+    // Chat
+    OpenChat,
+    CloseChat,
+    ChatInputEdited(String),
+    SendChatMessage,
+    ChatMessageSent(Result<(), String>),
+    ToggleChatTradeInfo,
+    ToggleChatUserInfo,
 }
