@@ -29,10 +29,7 @@ use crate::{
         bitcoind::{Bitcoind, ConfigField, RpcAuthType},
         electrum, NodeType,
     },
-    services::{
-        self,
-        connect::client::{auth::AuthClient, backend::api},
-    },
+    services::connect::client::{auth::AuthClient, backend::api},
 };
 
 #[derive(Debug, Clone)]
@@ -65,7 +62,7 @@ pub enum Message {
     MnemonicWord(usize, String),
     ImportMnemonic(bool),
     RedeemNextKey,
-    KeyRedeemed(ProviderKey, Result<(), services::keys::Error>),
+    KeyRedeemed(ProviderKey, Result<(), liana_connect::keys::Error>),
     AllKeysRedeemed,
     BackupDescriptor,
     ExportEncryptedDescriptor(Result<Box<LianaDescriptor>, encrypted_backup::Error>),

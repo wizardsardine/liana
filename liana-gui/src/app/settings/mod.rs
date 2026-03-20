@@ -28,10 +28,7 @@ use crate::{
     backup::{Key, KeyRole, KeyType},
     dir::{LianaDirectory, NetworkDirectory},
     hw::HardwareWalletConfig,
-    services::{
-        self,
-        connect::client::backend::{self, api, BackendWalletClient},
-    },
+    services::connect::client::backend::{self, api, BackendWalletClient},
     utils::serde::ok_or_none,
 };
 
@@ -450,8 +447,8 @@ impl From<backend::api::Provider> for Provider {
     }
 }
 
-impl From<services::keys::api::Provider> for Provider {
-    fn from(provider: services::keys::api::Provider) -> Self {
+impl From<liana_connect::keys::api::Provider> for Provider {
+    fn from(provider: liana_connect::keys::api::Provider) -> Self {
         Self {
             uuid: provider.uuid,
             name: provider.name,

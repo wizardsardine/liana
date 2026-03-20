@@ -27,6 +27,7 @@ pub use wallet_alias::WalletAlias;
 use std::collections::HashMap;
 
 use iced::{Subscription, Task};
+use liana::miniscript::bitcoin::Network;
 
 use liana_ui::widget::*;
 
@@ -36,7 +37,7 @@ use crate::{
     hw::HardwareWallets,
     installer::{context::Context, message::Message, view},
     node::bitcoind::Bitcoind,
-    services,
+    services::connect::client::BackendType,
 };
 
 pub trait Step {
@@ -72,8 +73,9 @@ pub struct Final {
     internal_bitcoind: Option<Bitcoind>,
     warning: Option<String>,
     wallet_settings: Option<WalletSettings>,
-    key_redemptions: HashMap<ProviderKey, Option<Result<(), services::keys::Error>>>,
+    key_redemptions: HashMap<ProviderKey, Option<Result<(), liana_connect::keys::Error>>>,
     backup: Option<Backup>,
+    network: Network,
 }
 
 impl Final {
@@ -85,6 +87,7 @@ impl Final {
             wallet_settings: None,
             key_redemptions: HashMap::new(),
             backup: None,
+            network: Network::Bitcoin,
         }
     }
 }
@@ -99,6 +102,7 @@ impl Step for Final {
     fn load_context(&mut self, ctx: &Context) {
         self.internal_bitcoind.clone_from(&ctx.internal_bitcoind);
         self.backup.clone_from(&ctx.backup);
+        self.network = ctx.bitcoin_config.network;
         self.key_redemptions = ctx
             .keys
             .values()
@@ -116,7 +120,12 @@ impl Step for Final {
         match message {
             Message::RedeemNextKey => {
                 if let Some((pk, _)) = self.key_redemptions.iter().find(|(_, v)| v.is_none()) {
-                    let client = services::keys::Client::new();
+                    let ua = BackendType::LianaConnect.user_agent();
+                    let url = (self.network != Network::Bitcoin)
+                        .then(|| std::env::var("LIANA_KEYS_SIGNET_API_URL").ok())
+                        .flatten();
+                    let client =
+                        liana_connect::keys::Client::new_with_optional_url(url.as_deref(), &ua);
                     let pk = pk.clone();
                     return Task::perform(
                         async move { (pk.clone(), client.redeem_key(pk.uuid, pk.token).await) },

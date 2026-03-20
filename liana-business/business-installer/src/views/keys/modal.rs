@@ -60,13 +60,12 @@ pub fn edit_key_modal_view<'a>(
         None
     };
 
-    // Alias input - validate (must not be empty)
-    // No warning if empty, but Save button will be disabled
+    // Alias input
     let alias_valid = state.views.keys.is_alias_valid();
     let alias_value = form::Value {
         value: modal_state.alias.clone(),
-        warning: None, // No warning displayed for empty field
-        valid: alias_valid || modal_state.alias.trim().is_empty(), // Don't show red border if empty
+        warning: None,
+        valid: alias_valid || modal_state.alias.trim().is_empty(),
     };
     let alias_input = Column::new()
         .spacing(5)
@@ -92,32 +91,7 @@ pub fn edit_key_modal_view<'a>(
             Message::KeyUpdateDescr,
         ));
 
-    // Email input - validate (same as login flow)
-    // No warning if empty, but Save button will be disabled
-    // Only show warning if not empty but invalid format
-    let is_empty = modal_state.email.trim().is_empty();
-    let email_valid = state.views.keys.is_email_valid();
-    let email_value = form::Value {
-        value: modal_state.email.clone(),
-        warning: if is_empty {
-            None // No warning for empty field
-        } else if !email_valid {
-            Some("Invalid email!") // Only show warning if not empty but invalid
-        } else {
-            None
-        },
-        valid: email_valid || is_empty, // Don't show red border if empty
-    };
-    let email_input = Column::new()
-        .spacing(5)
-        .push(text::p1_medium("Email Address of the Key Manager").style(theme::text::primary))
-        .push(form::Form::new(
-            "Enter email address",
-            &email_value,
-            Message::KeyUpdateEmail,
-        ));
-
-    // Key type picker
+    // Key type picker (placed before identity input)
     let key_types: &[ws_business::KeyType] = &[
         ws_business::KeyType::Internal,
         ws_business::KeyType::External,
@@ -143,8 +117,71 @@ pub fn edit_key_modal_view<'a>(
         .width(Length::Fill),
     );
 
-    // Footer - Cancel and Save buttons (aligned right)
-    // Save button is disabled if alias or email is invalid
+    // Identity input — conditional on key type
+    let uses_token = matches!(
+        modal_state.key_type,
+        ws_business::KeyType::Cosigner | ws_business::KeyType::SafetyNet
+    );
+
+    let email_input: Option<Element<'a, Message>> = if !uses_token {
+        let is_empty = modal_state.email.trim().is_empty();
+        let email_valid = state.views.keys.is_email_valid();
+        let email_value = form::Value {
+            value: modal_state.email.clone(),
+            warning: if is_empty {
+                None
+            } else if !email_valid {
+                Some("Invalid email!")
+            } else {
+                None
+            },
+            valid: email_valid || is_empty,
+        };
+        Some(
+            Column::new()
+                .spacing(5)
+                .push(
+                    text::p1_medium("Email Address of the Key Manager").style(theme::text::primary),
+                )
+                .push(form::Form::new(
+                    "Enter email address",
+                    &email_value,
+                    Message::KeyUpdateEmail,
+                ))
+                .into(),
+        )
+    } else {
+        None
+    };
+
+    let token_input: Option<Element<'a, Message>> = if uses_token {
+        let is_empty = modal_state.token.trim().is_empty();
+        let token_valid = state.views.keys.is_token_format_valid();
+        let token_value = form::Value {
+            value: modal_state.token.clone(),
+            warning: if is_empty {
+                None
+            } else {
+                modal_state.token_warning
+            },
+            valid: (token_valid && modal_state.token_warning.is_none()) || is_empty,
+        };
+        Some(
+            Column::new()
+                .spacing(5)
+                .push(text::p1_medium("Token").style(theme::text::primary))
+                .push(form::Form::new(
+                    "Enter token (e.g., 42-absent-cake-eagle)",
+                    &token_value,
+                    Message::KeyUpdateToken,
+                ))
+                .into(),
+        )
+    } else {
+        None
+    };
+
+    // Footer
     let can_save = state.views.keys.can_save();
     let save_button = if can_save {
         button::primary(None, "Save")
@@ -168,8 +205,9 @@ pub fn edit_key_modal_view<'a>(
         .push_maybe(last_edit_info)
         .push(alias_input)
         .push(description_input)
-        .push(email_input)
         .push(key_type_picker)
+        .push_maybe(email_input)
+        .push_maybe(token_input)
         .push(footer)
         .spacing(15)
         .padding(20.0)

@@ -4,9 +4,8 @@ use liana::miniscript::{
     descriptor::DescriptorPublicKey,
 };
 
-use crate::{
-    app::settings::ProviderKey, hw::is_compatible_with_tapminiscript, services::keys::api::KeyKind,
-};
+use crate::{app::settings::ProviderKey, hw::is_compatible_with_tapminiscript};
+use liana_connect::keys::api::KeyKind;
 
 /// Whether to enable cosigner keys on all paths (excluding safety net paths).
 const ENABLE_COSIGNER_KEYS: bool = false;
