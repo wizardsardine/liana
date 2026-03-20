@@ -19,7 +19,7 @@ use tokio::runtime::Handle;
 use tracing::{error, info, warn};
 
 pub use coincube_core::miniscript::bitcoin;
-use coincube_ui::{component::network_banner, widget::Element, theme as ui_theme};
+use coincube_ui::{component::network_banner, theme as ui_theme, widget::Element};
 pub use coincubed::{
     commands::CoinStatus,
     config::{BitcoindRpcAuth, Config as DaemonConfig},
@@ -1075,7 +1075,10 @@ impl App {
             }
             Message::View(view::Message::ShowError(msg)) => {
                 // Redirect ShowError to ShowToast with Error level
-                return self.update(Message::View(view::Message::ShowToast(log::Level::Error, msg)));
+                return self.update(Message::View(view::Message::ShowToast(
+                    log::Level::Error,
+                    msg,
+                )));
             }
             Message::View(view::Message::ShowToast(level, msg)) => {
                 // Show toast with specified level
@@ -1707,13 +1710,16 @@ impl App {
                 // Snapshot and sort by error ID (oldest first for chronological order)
                 let mut error_snapshot: Vec<_> = self.errors.iter().collect();
                 error_snapshot.sort_by(|a, b| a.0.cmp(&b.0)); // Sort by usize id (first element)
-                
+
+                let theme = ui_theme::Theme::default();
                 iced::widget::Stack::new()
                     .push(content)
                     .push(
                         view::toast_overlay(
-                            error_snapshot.iter().map(|(id, _, level, msg)| (*id, *level, msg.as_str())),
-                            &ui_theme::Theme::default(),
+                            error_snapshot
+                                .iter()
+                                .map(|(id, _, level, msg)| (*id, *level, msg.as_str())),
+                            &theme,
                         )
                         .map(Message::View),
                     )

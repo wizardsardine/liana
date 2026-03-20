@@ -88,7 +88,7 @@ impl VaultReceivePanel {
             selected: HashSet::new(),
             labels_edited: LabelsEdited::default(),
             modal: Modal::None,
-    warning: None,
+            warning: None,
             processing: false,
         }
     }

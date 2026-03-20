@@ -49,7 +49,7 @@ pub fn palette_for_level<'a>(level: &log::Level, theme: &'a Theme) -> &'a Contai
         log::Level::Error => &theme.colors.notifications.error,
         log::Level::Warn => &theme.colors.notifications.warning,
         log::Level::Info => &theme.colors.notifications.info,
-        log::Level::Debug => &theme.colors.notifications.info, // Same as info
-        log::Level::Trace => &theme.colors.notifications.info, // Same as info
+        log::Level::Debug => &theme.colors.notifications.debug,
+        log::Level::Trace => &theme.colors.notifications.debug,
     }
 }

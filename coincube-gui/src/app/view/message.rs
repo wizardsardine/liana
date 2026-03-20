@@ -179,6 +179,7 @@ pub enum SettingsMessage {
     NodeSettings(NodeSettingsMessage),
     InstallStatsSection,
     InstallStats(InstallStatsViewMessage),
+    TestToast(log::Level),
 }
 
 #[derive(Debug, Clone)]

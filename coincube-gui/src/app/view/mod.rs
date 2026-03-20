@@ -742,7 +742,7 @@ pub fn toast_overlay<'a, I: Iterator<Item = (usize, log::Level, &'a str)>>(
     let toast = |id: usize, level: log::Level, content: &'a str| {
         let content_owned = content.to_string();
         const WIDGET_HEIGHT: u32 = 80;
-        
+
         // Use theme palette for the toast background
         let palette = notification::palette_for_level(&level, theme);
         let bg_color = palette.background;
@@ -756,17 +756,12 @@ pub fn toast_overlay<'a, I: Iterator<Item = (usize, log::Level, &'a str)>>(
             radius: 25.0.into(),
         };
 
-        iced::widget::row![
+        let inner = iced::widget::row![
             container(text::p1_bold(content_owned).color(text_color))
                 .width(600)
                 .height(WIDGET_HEIGHT)
                 .padding(15)
-                .align_y(iced::Alignment::Center)
-                .style(move |_| {
-                    iced::widget::container::Style::default()
-                        .background(bg)
-                        .border(border)
-                }),
+                .align_y(iced::Alignment::Center),
             iced::widget::Button::new(
                 cross_icon()
                     .color(text_color)
@@ -777,19 +772,29 @@ pub fn toast_overlay<'a, I: Iterator<Item = (usize, log::Level, &'a str)>>(
             )
             .height(WIDGET_HEIGHT)
             .width(60)
-            .style(move |_, _| {
-                // For hover, use a darker variant of the background
-                let hover_bg = match level {
-                    log::Level::Error => color::RED_ERROR,
-                    log::Level::Warn => color::DARK_ORANGE,
-                    log::Level::Info => color::LIGHT_ORANGE,
-                    log::Level::Debug => color::GREY_4_DARKER,
-                    log::Level::Trace => color::GREY_3_DARKER,
-                };
-                iced::widget::button::Style::default().with_background(hover_bg)
+            .style(move |_, status| {
+                let base = iced::widget::button::Style::default();
+                match status {
+                    iced::widget::button::Status::Hovered => base.with_background(iced::Color {
+                        a: 0.2,
+                        ..color::BLACK
+                    }),
+                    _ => base,
+                }
             })
             .on_press(Message::DismissToast(id))
-        ]
+        ];
+
+        // Wrap the entire row in a single styled container so the close
+        // button sits inside the rounded rectangle. clip(true) ensures
+        // the hover highlight respects the border radius.
+        container(inner)
+            .style(move |_| {
+                iced::widget::container::Style::default()
+                    .background(bg)
+                    .border(border)
+            })
+            .clip(true)
     };
 
     let centered = iced::widget::row![
@@ -797,8 +802,10 @@ pub fn toast_overlay<'a, I: Iterator<Item = (usize, log::Level, &'a str)>>(
         iced::widget::Space::new().width(190.0),
         // center toasts horizontally
         iced::widget::Space::new().width(iced::Length::Fill),
-        iced::widget::Column::from_iter(iter.map(|(id, level, content)| toast(id, level, content).into()))
-            .spacing(10),
+        iced::widget::Column::from_iter(
+            iter.map(|(id, level, content)| toast(id, level, content).into())
+        )
+        .spacing(10),
         iced::widget::Space::new().width(iced::Length::Fill),
     ];
 

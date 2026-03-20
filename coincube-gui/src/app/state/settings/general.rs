@@ -129,12 +129,16 @@ impl GeneralSettingsState {
 
 impl State for GeneralSettingsState {
     fn view<'a>(&'a self, menu: &'a Menu, cache: &'a Cache) -> Element<'a, view::Message> {
+        use crate::app::settings::global::GlobalSettings;
+        let developer_mode =
+            GlobalSettings::load_developer_mode(&GlobalSettings::path(&cache.datadir_path));
         crate::app::view::settings::general::general_section(
             menu,
             cache,
             &self.new_price_setting,
             &self.new_unit_setting,
             &self.currencies,
+            developer_mode,
         )
     }
 
@@ -349,6 +353,19 @@ impl State for GeneralSettingsState {
                         }
                     },
                 );
+            }
+            Message::View(view::Message::Settings(view::SettingsMessage::TestToast(level))) => {
+                let label = match level {
+                    log::Level::Error => "Error",
+                    log::Level::Warn => "Warn",
+                    log::Level::Info => "Info",
+                    log::Level::Debug => "Debug",
+                    log::Level::Trace => "Trace",
+                };
+                Task::done(Message::View(view::Message::ShowToast(
+                    level,
+                    format!("Test {} toast", label),
+                )))
             }
             _ => Task::none(),
         }
