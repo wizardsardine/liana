@@ -185,16 +185,28 @@ fn extract_counterparty_pubkey(
     }
 }
 
-/// Get the latest DM action for a trade from its message history.
+/// Get the latest protocol DM action for a trade from its message history.
+/// Skips non-protocol chat entries (e.g. "SendDm") so that P2P chat
+/// messages do not affect protocol state detection.
 pub fn latest_dm_action(session: &TradeSession) -> Option<&str> {
-    session.messages.last().map(|m| m.action.as_str())
+    session
+        .messages
+        .iter()
+        .rev()
+        .find(|m| m.action != "SendDm")
+        .map(|m| m.action.as_str())
 }
 
 /// Find the timestamp of the DM that started the current countdown phase.
 /// For WaitingBuyerInvoice status → find the AddInvoice/WaitingBuyerInvoice message
 /// For WaitingPayment status → find the PayInvoice/WaitingSellerToPay message
 pub fn countdown_start_timestamp(session: &TradeSession) -> Option<u64> {
-    let last_action = session.messages.last().map(|m| m.action.as_str())?;
+    let last_action = session
+        .messages
+        .iter()
+        .rev()
+        .find(|m| m.action != "SendDm")
+        .map(|m| m.action.as_str())?;
 
     let target_actions: &[&str] = match last_action {
         "AddInvoice" | "WaitingBuyerInvoice" => &["AddInvoice", "WaitingBuyerInvoice"],
