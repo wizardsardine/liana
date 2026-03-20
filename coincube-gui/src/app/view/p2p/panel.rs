@@ -112,6 +112,16 @@ fn extract_chat_text(payload_json: &str) -> String {
     payload_json.to_string()
 }
 
+/// Data for a chat message whose send is in-flight.
+struct PendingChatMessage {
+    order_id: String,
+    cube_name: String,
+    payload: String,
+    timestamp: u64,
+    /// Original input text, restored on send failure.
+    original_text: String,
+}
+
 pub struct P2PPanel {
     wallet: Option<Arc<Wallet>>,
     mnemonic: String,
@@ -156,6 +166,10 @@ pub struct P2PPanel {
     // Chat
     show_chat: bool,
     chat_input: form::Value<String>,
+    /// Holds the data for a chat message that is currently being sent.
+    /// On success the message is appended to the transcript; on error the
+    /// input text is restored and no phantom entry is created.
+    pending_chat_message: Option<PendingChatMessage>,
     chat_show_trade_info: bool,
     chat_show_user_info: bool,
     // Mostro settings
@@ -209,6 +223,7 @@ impl P2PPanel {
             pending_payment_invoice: None,
             show_chat: false,
             chat_input: Default::default(),
+            pending_chat_message: None,
             chat_show_trade_info: false,
             chat_show_user_info: false,
             mostro_config: load_mostro_config(),
@@ -3148,21 +3163,19 @@ impl State for P2PPanel {
                         .map(|w| w.name.clone())
                         .unwrap_or_else(|| "default".to_string());
 
-                    // Persist own message immediately for instant UI feedback
+                    // Build payload but defer persisting until send succeeds
                     let payload = serde_json::to_string(&Some(
                         mostro_core::message::Payload::TextMessage(text.clone()),
                     ))
                     .unwrap_or_default();
-                    super::mostro::append_trade_message(
-                        &cube_name,
-                        order_id,
-                        super::mostro::TradeMessage {
-                            timestamp: chrono::Utc::now().timestamp() as u64,
-                            action: "SendDm".to_string(),
-                            payload_json: payload,
-                            is_own: true,
-                        },
-                    );
+
+                    self.pending_chat_message = Some(PendingChatMessage {
+                        order_id: order_id.clone(),
+                        cube_name: cube_name.clone(),
+                        payload,
+                        timestamp: chrono::Utc::now().timestamp() as u64,
+                        original_text: text.clone(),
+                    });
 
                     self.chat_input = Default::default();
 
@@ -3181,11 +3194,28 @@ impl State for P2PPanel {
                 }
             }
             P2PMessage::ChatMessageSent(result) => {
-                if let Err(e) = result {
-                    return Task::done(Message::View(view::Message::ShowError(format!(
-                        "Chat send failed: {}",
-                        e
-                    ))));
+                if let Some(pending) = self.pending_chat_message.take() {
+                    match result {
+                        Ok(()) => {
+                            super::mostro::append_trade_message(
+                                &pending.cube_name,
+                                &pending.order_id,
+                                super::mostro::TradeMessage {
+                                    timestamp: pending.timestamp,
+                                    action: "SendDm".to_string(),
+                                    payload_json: pending.payload,
+                                    is_own: true,
+                                },
+                            );
+                        }
+                        Err(e) => {
+                            // Restore input so the user can retry
+                            self.chat_input.value = pending.original_text;
+                            return Task::done(Message::View(view::Message::ShowError(
+                                format!("Chat send failed: {}", e),
+                            )));
+                        }
+                    }
                 }
             }
             // Timer tick — no-op; re-render happens automatically
