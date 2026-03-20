@@ -3211,9 +3211,10 @@ impl State for P2PPanel {
                         Err(e) => {
                             // Restore input so the user can retry
                             self.chat_input.value = pending.original_text;
-                            return Task::done(Message::View(view::Message::ShowError(
-                                format!("Chat send failed: {}", e),
-                            )));
+                            return Task::done(Message::View(view::Message::ShowError(format!(
+                                "Chat send failed: {}",
+                                e
+                            ))));
                         }
                     }
                 }
