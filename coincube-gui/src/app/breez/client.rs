@@ -301,6 +301,32 @@ impl BreezClient {
         .map_err(|e| BreezError::Sdk(e.to_string()))
     }
 
+    /// Get (or create) the node's BOLT12 offer string.
+    /// The SDK caches offers by description, so using a consistent description
+    /// ensures the same offer is reused across calls.
+    pub async fn receive_bolt12_offer(&self) -> Result<String, BreezError> {
+        let sdk = self.get_sdk()?;
+        let prepare = sdk
+            .prepare_receive_payment(&breez::PrepareReceiveRequest {
+                payment_method: breez::PaymentMethod::Bolt12Offer,
+                amount: None,
+            })
+            .await
+            .map_err(|e| BreezError::Sdk(e.to_string()))?;
+
+        let response = sdk
+            .receive_payment(&breez::ReceivePaymentRequest {
+                prepare_response: prepare,
+                description: Some("coincube".to_string()),
+                payer_note: None,
+                description_hash: None,
+            })
+            .await
+            .map_err(|e| BreezError::Sdk(e.to_string()))?;
+
+        Ok(response.destination)
+    }
+
     /// Generate a Liquid address for receiving USDt (or any Liquid asset).
     /// `amount` is in base units (e.g. 100_000_000 = 1 USDt); pass `None` for amountless.
     /// `precision` is the asset's decimal precision (8 for USDt).

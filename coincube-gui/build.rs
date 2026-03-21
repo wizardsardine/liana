@@ -1,6 +1,9 @@
 use dotenvy::dotenv;
 
 fn main() {
+    // Re-run this build script whenever .env changes so rustc-env vars stay current
+    println!("cargo:rerun-if-changed=../.env");
+
     // Load the .env file from the project root for all build profiles
     if dotenv().is_ok() {
         let env = dotenvy::dotenv_iter();

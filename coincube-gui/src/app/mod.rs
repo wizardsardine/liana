@@ -158,7 +158,7 @@ impl Panels {
             create_spend: None,
             vault_settings: None,
             buy_sell: None,
-            connect: ConnectPanel::new(),
+            connect: ConnectPanel::new(breez_client.clone()),
         }
     }
 
@@ -281,12 +281,12 @@ impl Panels {
                 internal_bitcoind.is_some(),
                 config.clone(),
             )),
+            connect: ConnectPanel::new(breez_client.clone()),
             buy_sell: Some(crate::app::view::buysell::BuySellPanel::new(
                 cache.network,
                 wallet,
                 breez_client,
             )),
-            connect: ConnectPanel::new(),
         }
     }
 

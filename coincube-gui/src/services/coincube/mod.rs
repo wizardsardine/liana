@@ -200,6 +200,7 @@ pub struct VerifiedDevice {
     pub device_name: Option<String>,
     pub created_at: String,
     pub last_used_at: Option<String>,
+    #[serde(default)]
     pub is_current: bool,
 }
 
@@ -211,6 +212,47 @@ pub struct LoginActivity {
     pub user_agent: Option<String>,
     pub created_at: String,
     pub success: bool,
+}
+
+/// Generic wrapper for API responses: `{ "success": true, "data": T }`
+#[derive(Debug, Clone, Deserialize)]
+pub struct ApiResponse<T> {
+    pub data: T,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LightningAddress {
+    pub lightning_address: Option<String>,
+    pub bolt12_offer: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CheckUsernameResponse {
+    pub available: bool,
+    pub username: String,
+    /// Set when the API returns an error (e.g. reserved/invalid username)
+    #[serde(default)]
+    pub error_message: Option<String>,
+}
+
+/// Error response shape: `{ "success": false, "error": { "code": "...", "message": "..." } }`
+#[derive(Debug, Clone, Deserialize)]
+pub struct ApiErrorResponse {
+    pub error: ApiErrorDetail,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ApiErrorDetail {
+    pub code: String,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClaimLightningAddressRequest {
+    pub username: String,
+    pub bolt12_offer: String,
 }
 
 pub fn get_countries() -> &'static [Country] {

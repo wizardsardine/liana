@@ -448,6 +448,18 @@ pub enum ConnectMessage {
     VerifyOtp,
     VerifiedDevicesLoaded(Vec<crate::services::coincube::VerifiedDevice>),
     LoginActivityLoaded(Vec<crate::services::coincube::LoginActivity>),
+    // Lightning Address
+    LnUsernameChanged(String),
+    CheckLnUsername,
+    LnUsernameChecked {
+        available: bool,
+        error_message: Option<String>,
+        version: u32,
+    },
+    ClaimLightningAddress,
+    LightningAddressClaimed(crate::services::coincube::LightningAddress),
+    LightningAddressLoaded(Option<crate::services::coincube::LightningAddress>),
+    CopyToClipboard(String),
     Error(String),
 }
 

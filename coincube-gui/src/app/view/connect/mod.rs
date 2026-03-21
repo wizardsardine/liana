@@ -43,6 +43,7 @@ pub fn connect_panel<'a>(state: &'a ConnectPanel) -> Element<'a, ConnectMessage>
 
         ConnectFlowStep::Dashboard => match &state.active_sub {
             ConnectSubMenu::Overview => overview_ux(state),
+            ConnectSubMenu::LightningAddress => lightning_address_ux(state),
             ConnectSubMenu::PlanBilling => plan_billing_ux(state),
             ConnectSubMenu::Security => security_ux(state),
             ConnectSubMenu::Duress => duress_ux(),
@@ -50,11 +51,18 @@ pub fn connect_panel<'a>(state: &'a ConnectPanel) -> Element<'a, ConnectMessage>
         },
     };
 
+    let is_auth_step = !matches!(state.step, ConnectFlowStep::Dashboard);
+    let col_align = if is_auth_step {
+        Alignment::Center
+    } else {
+        Alignment::Start
+    };
+
     let mut col = Column::new()
         .push(header)
         .push(iced::widget::Space::new().height(Length::Fixed(20.0)))
         .spacing(0)
-        .align_x(Alignment::Start)
+        .align_x(col_align)
         .width(Length::Fill);
 
     if let Some(e) = state.error.as_deref() {
@@ -516,6 +524,152 @@ fn security_ux<'a>(state: &'a ConnectPanel) -> Element<'a, ConnectMessage> {
             .style(|_| card_style())
             .width(Length::Fill),
         )
+        .spacing(0)
+        .width(Length::Fill)
+        .into()
+}
+
+fn lightning_address_ux<'a>(state: &'a ConnectPanel) -> Element<'a, ConnectMessage> {
+    let has_address = state
+        .lightning_address
+        .as_ref()
+        .and_then(|la| la.lightning_address.as_deref())
+        .is_some();
+
+    let card_content: Element<ConnectMessage> = if has_address {
+        // Display the claimed address
+        let address = state
+            .lightning_address
+            .as_ref()
+            .and_then(|la| la.lightning_address.clone())
+            .unwrap_or_default();
+
+        container(
+            Column::new()
+                .push(text::p1_bold("Your Lightning Address").color(color::WHITE))
+                .push(iced::widget::Space::new().height(Length::Fixed(12.0)))
+                .push(
+                    container(
+                        Row::new()
+                            .push(text::h3(address.clone()).color(color::ORANGE))
+                            .push(iced::widget::Space::new().width(Length::Fill))
+                            .push(
+                                button::secondary(Some(clipboard_icon()), "Copy")
+                                    .on_press(ConnectMessage::CopyToClipboard(address)),
+                            )
+                            .align_y(Alignment::Center),
+                    )
+                    .padding(16)
+                    .style(|_| container::Style {
+                        background: Some(iced::Background::Color(color::GREY_7)),
+                        border: iced::Border {
+                            color: color::ORANGE,
+                            width: 0.5,
+                            radius: 12.0.into(),
+                        },
+                        ..Default::default()
+                    })
+                    .width(Length::Fill),
+                )
+                .push(iced::widget::Space::new().height(Length::Fixed(8.0)))
+                .push(
+                    text::p2_regular(
+                        "Anyone can send you bitcoin using this address. \
+                         It works with any wallet that supports BOLT12 / BIP353.",
+                    )
+                    .color(color::GREY_3),
+                )
+                .padding(20)
+                .spacing(2),
+        )
+        .style(|_| card_style())
+        .width(Length::Fill)
+        .into()
+    } else {
+        // Claim form
+        let username = &state.ln_username_input;
+        let is_valid = state.ln_username_error.is_none() && !username.is_empty();
+        let is_available = state.ln_username_available == Some(true);
+        let can_claim = is_valid && is_available && !state.ln_claiming;
+
+        // Status indicator
+        let status: Element<ConnectMessage> = if state.ln_checking {
+            text::p2_regular("Checking…").color(color::GREY_3).into()
+        } else if let Some(err) = &state.ln_username_error {
+            text::p2_regular(err.as_str()).color(color::RED).into()
+        } else if state.ln_username_available == Some(true) {
+            text::p2_regular("✓ Available").color(color::GREEN).into()
+        } else if username.is_empty() {
+            text::p2_regular("Choose a username for your Lightning Address")
+                .color(color::GREY_3)
+                .into()
+        } else {
+            // Waiting for debounce
+            text::p2_regular(" ").into()
+        };
+
+        let claim_button: Element<ConnectMessage> = if state.ln_claiming {
+            iced::widget::button(
+                container(text::p1_regular("Claiming…").color(color::GREY_3))
+                    .center_x(Length::Fill)
+                    .center_y(Length::Fill),
+            )
+            .width(Length::Fill)
+            .height(Length::Fixed(44.0))
+            .style(theme::button::primary)
+            .into()
+        } else {
+            button::primary(None, "Claim Lightning Address")
+                .on_press_maybe(can_claim.then_some(ConnectMessage::ClaimLightningAddress))
+                .width(Length::Fill)
+                .into()
+        };
+
+        container(
+            Column::new()
+                .push(text::p1_bold("Claim Your Lightning Address").color(color::WHITE))
+                .push(iced::widget::Space::new().height(Length::Fixed(4.0)))
+                .push(
+                    text::p2_regular(
+                        "Get a free Lightning Address to receive bitcoin from anyone.",
+                    )
+                    .color(color::GREY_3),
+                )
+                .push(iced::widget::Space::new().height(Length::Fixed(16.0)))
+                .push(
+                    Row::new()
+                        .push(
+                            TextInput::new("satoshi", username)
+                                .on_input(ConnectMessage::LnUsernameChanged)
+                                .on_submit_maybe(
+                                    can_claim.then_some(ConnectMessage::ClaimLightningAddress),
+                                )
+                                .size(16)
+                                .padding(15),
+                        )
+                        .push(
+                            container(text::p1_regular("@coincube.io").color(color::GREY_3))
+                                .padding(15)
+                                .center_y(Length::Fixed(50.0)),
+                        )
+                        .align_y(Alignment::Center),
+                )
+                .push(iced::widget::Space::new().height(Length::Fixed(6.0)))
+                .push(status)
+                .push(iced::widget::Space::new().height(Length::Fixed(12.0)))
+                .push(claim_button)
+                .padding(20)
+                .spacing(2),
+        )
+        .style(|_| card_style())
+        .width(Length::Fill)
+        .into()
+    };
+
+    Column::new()
+        .push(text::h4_bold("Lightning Address").color(color::WHITE))
+        .push(iced::widget::Space::new().height(Length::Fixed(15.0)))
+        .push(card_content)
         .spacing(0)
         .width(Length::Fill)
         .into()

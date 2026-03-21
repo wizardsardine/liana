@@ -17,11 +17,7 @@ impl Default for CoincubeClient {
 
 impl CoincubeClient {
     pub fn new() -> Self {
-        #[cfg(debug_assertions)]
-        let base_url = "https://dev-api.coincube.io";
-
-        #[cfg(not(debug_assertions))]
-        let base_url = env!("COINCUBE_API_URL");
+        let base_url = option_env!("COINCUBE_API_URL").unwrap_or("https://dev-api.coincube.io");
 
         log::info!(
             "Coincube Base URL: {}, Release = {}",
@@ -29,10 +25,12 @@ impl CoincubeClient {
             cfg!(not(debug_assertions))
         );
 
+        let https_only = !base_url.starts_with("http://");
+
         Self {
             client: reqwest::ClientBuilder::new()
                 .timeout(std::time::Duration::from_secs(20))
-                .https_only(true)
+                .https_only(https_only)
                 .build()
                 .unwrap(),
             base_url,
@@ -47,9 +45,10 @@ impl CoincubeClient {
             reqwest::header::HeaderValue::from_str(&format!("Bearer {}", token)).unwrap(),
         );
 
+        let https_only = !self.base_url.starts_with("http://");
         self.client = reqwest::ClientBuilder::new()
             .timeout(std::time::Duration::from_secs(20))
-            .https_only(true)
+            .https_only(https_only)
             .default_headers(headers)
             .build()
             .unwrap();
@@ -204,6 +203,57 @@ impl CoincubeClient {
         let res = self.client.get(&url).send().await?;
         let res = res.check_success().await?;
         Ok(res.json().await?)
+    }
+
+    pub async fn get_lightning_address(&self) -> Result<super::LightningAddress, CoincubeError> {
+        let url = format!("{}/api/v1/connect/lightning-address", self.base_url);
+        let res = self.client.get(&url).send().await?;
+        let res = res.check_success().await?;
+        let resp: super::ApiResponse<super::LightningAddress> = res.json().await?;
+        Ok(resp.data)
+    }
+
+    pub async fn check_lightning_address(
+        &self,
+        username: &str,
+    ) -> Result<super::CheckUsernameResponse, CoincubeError> {
+        let url = format!(
+            "{}/api/v1/connect/lightning-address/check?username={}",
+            self.base_url, username
+        );
+        let res = self.client.get(&url).send().await?;
+        // The API returns error HTTP status for invalid/reserved usernames.
+        // Parse the body in all cases to extract structured info.
+        let status = res.status();
+        let body = res.text().await.map_err(|e| CoincubeError::Network(e))?;
+
+        if status.is_success() {
+            let resp: super::ApiResponse<super::CheckUsernameResponse> =
+                serde_json::from_str(&body)?;
+            Ok(resp.data)
+        } else {
+            // Try to extract the error message from the JSON body
+            if let Ok(err_resp) = serde_json::from_str::<super::ApiErrorResponse>(&body) {
+                Ok(super::CheckUsernameResponse {
+                    available: false,
+                    username: username.to_string(),
+                    error_message: Some(err_resp.error.message),
+                })
+            } else {
+                Err(CoincubeError::Api(body))
+            }
+        }
+    }
+
+    pub async fn claim_lightning_address(
+        &self,
+        req: super::ClaimLightningAddressRequest,
+    ) -> Result<super::LightningAddress, CoincubeError> {
+        let url = format!("{}/api/v1/connect/lightning-address", self.base_url);
+        let res = self.client.post(&url).json(&req).send().await?;
+        let res = res.check_success().await?;
+        let resp: super::ApiResponse<super::LightningAddress> = res.json().await?;
+        Ok(resp.data)
     }
 }
 

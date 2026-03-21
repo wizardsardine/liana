@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use crate::{
     app::{
+        breez::BreezClient,
         cache::Cache,
         menu::{ConnectSubMenu, Menu},
         message::Message,
@@ -10,8 +11,8 @@ use crate::{
     },
     daemon::Daemon,
     services::coincube::{
-        CoincubeClient, ConnectPlan, LoginActivity, LoginResponse, OtpRequest, OtpVerifyRequest,
-        User, VerifiedDevice,
+        ClaimLightningAddressRequest, CoincubeClient, ConnectPlan, LightningAddress, LoginActivity,
+        LoginResponse, OtpRequest, OtpVerifyRequest, User, VerifiedDevice,
     },
 };
 
@@ -53,10 +54,19 @@ pub struct ConnectPanel {
     pub verified_devices: Option<Vec<VerifiedDevice>>,
     pub login_activity: Option<Vec<LoginActivity>>,
     pub error: Option<String>,
+    // Lightning Address
+    pub lightning_address: Option<LightningAddress>,
+    pub ln_username_input: String,
+    pub ln_username_available: Option<bool>,
+    pub ln_username_error: Option<String>,
+    pub ln_claiming: bool,
+    pub ln_checking: bool,
+    ln_check_version: u32,
+    breez_client: Arc<BreezClient>,
 }
 
 impl ConnectPanel {
-    pub fn new() -> Self {
+    pub fn new(breez_client: Arc<BreezClient>) -> Self {
         ConnectPanel {
             step: ConnectFlowStep::CheckingSession,
             active_sub: ConnectSubMenu::Overview,
@@ -66,6 +76,14 @@ impl ConnectPanel {
             verified_devices: None,
             login_activity: None,
             error: None,
+            lightning_address: None,
+            ln_username_input: String::new(),
+            ln_username_available: None,
+            ln_username_error: None,
+            ln_claiming: false,
+            ln_checking: false,
+            ln_check_version: 0,
+            breez_client,
         }
     }
 
@@ -137,12 +155,6 @@ impl ConnectPanel {
     }
 }
 
-impl Default for ConnectPanel {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl State for ConnectPanel {
     fn view<'a>(
         &'a self,
@@ -211,6 +223,16 @@ impl State for ConnectPanel {
                 self.plan = plan;
                 self.step = ConnectFlowStep::Dashboard;
                 self.error = None;
+                // Fetch lightning address in background
+                let client = self.client.clone();
+                return iced::Task::perform(
+                    async move { client.get_lightning_address().await.ok() },
+                    |ln_addr| {
+                        Message::View(view::Message::Connect(
+                            ConnectMessage::LightningAddressLoaded(ln_addr),
+                        ))
+                    },
+                );
             }
 
             ConnectMessage::LogOut => {
@@ -218,6 +240,12 @@ impl State for ConnectPanel {
                 self.plan = None;
                 self.verified_devices = None;
                 self.login_activity = None;
+                self.lightning_address = None;
+                self.ln_username_input.clear();
+                self.ln_username_available = None;
+                self.ln_username_error = None;
+                self.ln_claiming = false;
+                self.ln_checking = false;
                 self.clear_keyring_session();
                 self.client = CoincubeClient::new();
                 self.step = ConnectFlowStep::Login {
@@ -368,9 +396,122 @@ impl State for ConnectPanel {
                 self.login_activity = Some(activity);
             }
 
+            // --- Lightning Address ---
+            ConnectMessage::LightningAddressLoaded(ln_addr) => {
+                self.lightning_address = ln_addr;
+            }
+
+            ConnectMessage::LnUsernameChanged(input) => {
+                self.ln_username_input = input.to_lowercase();
+                self.ln_username_available = None;
+                self.ln_username_error = None;
+
+                // Client-side validation
+                if let Some(err) = validate_ln_username(&self.ln_username_input) {
+                    self.ln_username_error = Some(err);
+                    return iced::Task::none();
+                }
+
+                // Debounced availability check
+                self.ln_check_version += 1;
+                let version = self.ln_check_version;
+                let client = self.client.clone();
+                let username = self.ln_username_input.clone();
+                self.ln_checking = true;
+                return iced::Task::perform(
+                    async move {
+                        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                        let res = client.check_lightning_address(&username).await;
+                        (res, version)
+                    },
+                    move |(res, v)| match res {
+                        Ok(check) => Message::View(view::Message::Connect(
+                            ConnectMessage::LnUsernameChecked {
+                                available: check.available,
+                                error_message: check.error_message,
+                                version: v,
+                            },
+                        )),
+                        Err(e) => Message::View(view::Message::Connect(ConnectMessage::Error(
+                            e.to_string(),
+                        ))),
+                    },
+                );
+            }
+
+            ConnectMessage::CheckLnUsername => {
+                // Manual check trigger (not currently used, debounce handles it)
+            }
+
+            ConnectMessage::LnUsernameChecked {
+                available,
+                error_message,
+                version,
+            } => {
+                // Discard stale results
+                if version == self.ln_check_version {
+                    self.ln_checking = false;
+                    self.ln_username_available = Some(available);
+                    if !available {
+                        self.ln_username_error =
+                            Some(error_message.unwrap_or_else(|| "Username is taken".to_string()));
+                    }
+                }
+            }
+
+            ConnectMessage::ClaimLightningAddress => {
+                if self.ln_claiming {
+                    return iced::Task::none();
+                }
+                self.ln_claiming = true;
+                self.error = None;
+                let username = self.ln_username_input.clone();
+                let client = self.client.clone();
+                let breez = self.breez_client.clone();
+                return iced::Task::perform(
+                    async move {
+                        // First get the BOLT12 offer from Breez SDK
+                        let bolt12_offer = breez
+                            .receive_bolt12_offer()
+                            .await
+                            .map_err(|e| e.to_string())?;
+                        // Then claim the address via API
+                        client
+                            .claim_lightning_address(ClaimLightningAddressRequest {
+                                username,
+                                bolt12_offer,
+                            })
+                            .await
+                            .map_err(|e| e.to_string())
+                    },
+                    |res| match res {
+                        Ok(ln_addr) => Message::View(view::Message::Connect(
+                            ConnectMessage::LightningAddressClaimed(ln_addr),
+                        )),
+                        Err(e) => Message::View(view::Message::Connect(ConnectMessage::Error(
+                            e.to_string(),
+                        ))),
+                    },
+                );
+            }
+
+            ConnectMessage::LightningAddressClaimed(ln_addr) => {
+                self.ln_claiming = false;
+                self.lightning_address = Some(ln_addr);
+                self.ln_username_input.clear();
+                self.ln_username_available = None;
+                self.ln_username_error = None;
+            }
+
+            ConnectMessage::CopyToClipboard(text) => {
+                return iced::clipboard::write(text);
+            }
+
             ConnectMessage::Error(e) => {
                 log::error!("[CONNECT] Error: {}", e);
                 self.error = Some(e);
+                self.ln_claiming = false;
+                self.ln_checking = false;
                 // Reset loading state
                 match &mut self.step {
                     ConnectFlowStep::Login { loading, .. } => *loading = false,
@@ -383,6 +524,40 @@ impl State for ConnectPanel {
 
         iced::Task::none()
     }
+}
+
+/// Validate a lightning address username client-side.
+/// Returns `Some(error_message)` if invalid, `None` if valid.
+fn validate_ln_username(username: &str) -> Option<String> {
+    if username.is_empty() {
+        return Some("Username is required".to_string());
+    }
+    if username.len() < 3 {
+        return Some("Username must be at least 3 characters".to_string());
+    }
+    if username.len() > 64 {
+        return Some("Username must be at most 64 characters".to_string());
+    }
+    if !username.chars().next().unwrap().is_ascii_alphanumeric() {
+        return Some("Must start with a letter or number".to_string());
+    }
+    if !username.chars().last().unwrap().is_ascii_alphanumeric() {
+        return Some("Must end with a letter or number".to_string());
+    }
+    let special = ['.', '_', '-'];
+    for c in username.chars() {
+        if !c.is_ascii_alphanumeric() && !special.contains(&c) {
+            return Some(format!("Invalid character: '{}'", c));
+        }
+    }
+    // No consecutive special characters
+    let chars: Vec<char> = username.chars().collect();
+    for w in chars.windows(2) {
+        if special.contains(&w[0]) && special.contains(&w[1]) {
+            return Some("No consecutive special characters allowed".to_string());
+        }
+    }
+    None
 }
 
 /// Load Security tab data (verified devices + login activity).

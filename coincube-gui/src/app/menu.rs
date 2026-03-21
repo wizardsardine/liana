@@ -14,6 +14,7 @@ pub enum Menu {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConnectSubMenu {
     Overview,
+    LightningAddress,
     PlanBilling,
     Security,
     Duress,
