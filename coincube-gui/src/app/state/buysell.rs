@@ -18,6 +18,14 @@ const KEYRING_SERVICE_NAME: &str = if cfg!(debug_assertions) {
     "io.coincube.Vault"
 };
 
+const CONNECT_KEYRING_SERVICE: &str = if cfg!(debug_assertions) {
+    "dev.coincube.Connect"
+} else {
+    "io.coincube.Connect"
+};
+
+const CONNECT_KEYRING_USER: &str = "global_session";
+
 impl State for BuySellPanel {
     fn view<'a>(
         &'a self,
@@ -48,14 +56,29 @@ impl State for BuySellPanel {
                 };
 
                 if self.login.as_ref().is_none() {
+                    // 1. Try the shared Connect global keyring first
+                    let connect_session =
+                        keyring::Entry::new(CONNECT_KEYRING_SERVICE, CONNECT_KEYRING_USER)
+                            .ok()
+                            .and_then(|e| e.get_secret().ok())
+                            .and_then(|b| serde_json::from_slice::<LoginResponse>(&b).ok());
+
+                    if let Some(l) = connect_session {
+                        log::trace!("[BUYSELL] Found shared Connect session in keyring");
+                        return iced::Task::done(Message::View(view::Message::BuySell(
+                            view::BuySellMessage::RefreshLogin {
+                                refresh_token: l.refresh_token,
+                            },
+                        )));
+                    }
+
+                    // 2. Fall back to the legacy wallet-scoped keyring
                     match keyring::Entry::new(KEYRING_SERVICE_NAME, &self.wallet.name) {
                         Ok(entry) => {
                             if let Ok(user_data) = entry.get_secret() {
                                 match serde_json::from_slice::<LoginResponse>(&user_data) {
                                     Ok(l) => {
                                         log::trace!("Found login credentials in OS keyring");
-
-                                        // check if token is valid
                                         return iced::Task::done(Message::View(
                                             view::Message::BuySell(
                                                 view::BuySellMessage::RefreshLogin {
@@ -109,14 +132,23 @@ impl State for BuySellPanel {
                 .map(|msg| Message::View(view::Message::BuySell(msg)));
             }
             view::BuySellMessage::SetLoginState(login) => {
-                // update token in OS keyring
+                let bytes = serde_json::to_vec(&login).unwrap();
+
+                // write to the shared Connect global keyring
+                match keyring::Entry::new(CONNECT_KEYRING_SERVICE, CONNECT_KEYRING_USER) {
+                    Ok(entry) => {
+                        let _ = entry.delete_credential();
+                        if let Err(e) = entry.set_secret(&bytes) {
+                            log::error!("[BUYSELL] Unable to write shared Connect keyring: {e}");
+                        }
+                    }
+                    Err(e) => log::error!("[BUYSELL] Connect keyring inaccessible: {e}"),
+                };
+
+                // also write to the legacy wallet-scoped keyring
                 match keyring::Entry::new(KEYRING_SERVICE_NAME, &self.wallet.name) {
                     Ok(entry) => {
-                        if let Err(e) = entry.delete_credential() {
-                            log::warn!("Unable to clear previous entry from keyring: {e}");
-                        };
-
-                        let bytes = serde_json::to_vec(&login).unwrap();
+                        let _ = entry.delete_credential();
                         if let Err(e) = entry.set_secret(&bytes) {
                             log::error!("Unable to store user data in keyring: {e}");
                         };
@@ -138,7 +170,14 @@ impl State for BuySellPanel {
             view::BuySellMessage::LogOut => {
                 self.login = None;
 
-                // clear keyring credentials
+                // clear shared Connect global keyring
+                if let Ok(entry) =
+                    keyring::Entry::new(CONNECT_KEYRING_SERVICE, CONNECT_KEYRING_USER)
+                {
+                    let _ = entry.delete_credential();
+                }
+
+                // clear legacy wallet-scoped keyring
                 if let Ok(entry) = keyring::Entry::new(KEYRING_SERVICE_NAME, &self.wallet.name) {
                     if let Err(e) = entry.delete_credential() {
                         log::error!("[BUYSELL] Unable to delete credentials from OS keyring: {e:?}")

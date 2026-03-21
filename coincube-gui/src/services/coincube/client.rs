@@ -178,6 +178,36 @@ impl CoincubeClient {
 }
 
 impl CoincubeClient {
+    pub async fn get_user(&self) -> Result<super::User, CoincubeError> {
+        let url = format!("{}/api/v1/user", self.base_url);
+        let res = self.client.get(&url).send().await?;
+        let res = res.check_success().await?;
+        Ok(res.json().await?)
+    }
+
+    pub async fn get_connect_plan(&self) -> Result<super::ConnectPlan, CoincubeError> {
+        let url = format!("{}/api/v1/connect/plan", self.base_url);
+        let res = self.client.get(&url).send().await?;
+        let res = res.check_success().await?;
+        Ok(res.json().await?)
+    }
+
+    pub async fn get_verified_devices(&self) -> Result<Vec<super::VerifiedDevice>, CoincubeError> {
+        let url = format!("{}/api/v1/verified-device/", self.base_url);
+        let res = self.client.get(&url).send().await?;
+        let res = res.check_success().await?;
+        Ok(res.json().await?)
+    }
+
+    pub async fn get_login_activity(&self) -> Result<Vec<super::LoginActivity>, CoincubeError> {
+        let url = format!("{}/api/v1/login-activity/", self.base_url);
+        let res = self.client.get(&url).send().await?;
+        let res = res.check_success().await?;
+        Ok(res.json().await?)
+    }
+}
+
+impl CoincubeClient {
     /// Detects the user's country and returns (country_name, iso_code)
     pub async fn locate(&self) -> Result<&'static Country, CoincubeError> {
         // allow users (and developers) to override detected ISO_CODE

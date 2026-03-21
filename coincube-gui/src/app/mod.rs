@@ -29,9 +29,9 @@ pub use config::Config;
 pub use message::Message;
 
 use state::{
-    CoinsPanel, CreateSpendPanel, GlobalHome, LiquidOverview, LiquidReceive, LiquidSend,
-    LiquidSettings, LiquidTransactions, PsbtsPanel, State, UsdtOverview, UsdtReceive, UsdtSend,
-    UsdtTransactions, VaultOverview, VaultReceivePanel, VaultTransactionsPanel,
+    CoinsPanel, ConnectPanel, CreateSpendPanel, GlobalHome, LiquidOverview, LiquidReceive,
+    LiquidSend, LiquidSettings, LiquidTransactions, PsbtsPanel, State, UsdtOverview, UsdtReceive,
+    UsdtSend, UsdtTransactions, VaultOverview, VaultReceivePanel, VaultTransactionsPanel,
 };
 use wallet::{sync_status, SyncStatus};
 
@@ -61,6 +61,7 @@ struct Panels {
     vault_expanded: bool,
     liquid_expanded: bool,
     usdt_expanded: bool,
+    connect_expanded: bool,
     // Always available panels
     global_home: GlobalHome,
     liquid_overview: LiquidOverview,
@@ -84,6 +85,7 @@ struct Panels {
     vault_settings: Option<VaultSettingsState>,
     // remaining panels
     buy_sell: Option<crate::app::view::buysell::BuySellPanel>,
+    connect: ConnectPanel,
 }
 
 impl Panels {
@@ -102,6 +104,7 @@ impl Panels {
             vault_expanded: false,
             liquid_expanded: false,
             usdt_expanded: false,
+            connect_expanded: false,
             // Liquid panels always available (use BreezClient, not Vault wallet)
             global_home: if let Some(w) = &wallet {
                 GlobalHome::new(
@@ -155,6 +158,7 @@ impl Panels {
             create_spend: None,
             vault_settings: None,
             buy_sell: None,
+            connect: ConnectPanel::new(),
         }
     }
 
@@ -182,6 +186,7 @@ impl Panels {
             vault_expanded: false,
             liquid_expanded: false,
             usdt_expanded: false,
+            connect_expanded: false,
             global_home: GlobalHome::new(
                 wallet.clone(),
                 breez_client.clone(),
@@ -281,6 +286,7 @@ impl Panels {
                 wallet,
                 breez_client,
             )),
+            connect: ConnectPanel::new(),
         }
     }
 
@@ -409,6 +415,7 @@ impl Panels {
                 }
             },
             Menu::BuySell => self.buy_sell.as_ref().map(|v| v as &dyn State),
+            Menu::Connect(_) => Some(&self.connect as &dyn State),
             Menu::Settings(_) => Some(&self.global_settings as &dyn State),
         }
     }
@@ -458,6 +465,7 @@ impl Panels {
                 }
             },
             Menu::BuySell => self.buy_sell.as_mut().map(|v| v as &mut dyn State),
+            Menu::Connect(_) => Some(&mut self.connect as &mut dyn State),
             Menu::Settings(_) => Some(&mut self.global_settings as &mut dyn State),
         }
     }
@@ -854,6 +862,16 @@ impl App {
                         }
                         _ => {}
                     }
+                }
+            }
+            menu::Menu::Connect(submenu) => {
+                self.panels.connect.active_sub = submenu.clone();
+                // Load Security data on demand
+                if matches!(submenu, menu::ConnectSubMenu::Security) {
+                    let security_task =
+                        crate::app::state::connect::load_security_data(&self.panels.connect.client);
+                    self.panels.current = menu;
+                    return security_task;
                 }
             }
             menu::Menu::Liquid(_submenu) => {
@@ -1408,6 +1426,30 @@ impl App {
                     self.panels.vault_expanded = false;
                     self.cache.vault_expanded = false;
                 }
+            }
+            Message::View(view::Message::ToggleConnect) => {
+                self.panels.connect_expanded = !self.panels.connect_expanded;
+                self.cache.connect_expanded = self.panels.connect_expanded;
+                // When expanding, navigate to the Connect panel unless already
+                // on a Connect sub-page while authenticated.
+                let already_on_connect = self.cache.connect_authenticated
+                    && matches!(self.panels.current, Menu::Connect(_));
+                if self.panels.connect_expanded && !already_on_connect {
+                    return self.set_current_panel(Menu::Connect(
+                        crate::app::menu::ConnectSubMenu::Overview,
+                    ));
+                }
+            }
+            msg @ Message::View(view::Message::Connect(_)) => {
+                let task = self
+                    .panels
+                    .connect
+                    .update(self.daemon.clone(), &self.cache, msg);
+                self.cache.connect_authenticated = matches!(
+                    self.panels.connect.step,
+                    crate::app::state::connect::ConnectFlowStep::Dashboard
+                );
+                return task;
             }
             Message::View(view::Message::OpenUrl(url)) => {
                 if let Err(e) = open::that_detached(&url) {

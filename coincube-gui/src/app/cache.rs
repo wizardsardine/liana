@@ -41,6 +41,10 @@ pub struct Cache {
     pub liquid_expanded: bool,
     /// UI state: whether the USDt submenu is expanded
     pub usdt_expanded: bool,
+    /// UI state: whether the Connect submenu is expanded
+    pub connect_expanded: bool,
+    /// Whether the Connect user is authenticated (Dashboard step reached)
+    pub connect_authenticated: bool,
     /// Whether this cube has a vault wallet configured
     pub has_vault: bool,
 }
@@ -61,6 +65,8 @@ impl std::default::Default for Cache {
             vault_expanded: true,
             liquid_expanded: false,
             usdt_expanded: false,
+            connect_expanded: false,
+            connect_authenticated: false,
             has_vault: false,
         }
     }

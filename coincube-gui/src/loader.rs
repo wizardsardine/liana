@@ -568,6 +568,8 @@ pub async fn load_application(
         vault_expanded: false,
         liquid_expanded: false,
         usdt_expanded: false,
+        connect_expanded: false,
+        connect_authenticated: false,
         has_vault: true,
     };
 

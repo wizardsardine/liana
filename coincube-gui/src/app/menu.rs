@@ -7,7 +7,17 @@ pub enum Menu {
     Usdt(UsdtSubMenu),
     Vault(VaultSubMenu),
     BuySell,
+    Connect(ConnectSubMenu),
     Settings(SettingsSubMenu),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConnectSubMenu {
+    Overview,
+    PlanBilling,
+    Security,
+    Duress,
+    Invites,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -98,6 +98,8 @@ pub enum Message {
     DismissToast(usize),
     UsdtOverview(UsdtOverviewMessage),
     ToggleUsdt,
+    Connect(ConnectMessage),
+    ToggleConnect,
 }
 
 impl Close for Message {
@@ -423,6 +425,30 @@ impl From<SettingsMessage> for Message {
     fn from(value: SettingsMessage) -> Self {
         Message::Settings(value)
     }
+}
+
+#[derive(Debug, Clone)]
+pub enum ConnectMessage {
+    Init,
+    RefreshSession {
+        refresh_token: String,
+    },
+    SetSession(crate::services::coincube::LoginResponse),
+    SessionLoaded {
+        user: crate::services::coincube::User,
+        plan: Option<crate::services::coincube::ConnectPlan>,
+    },
+    LogOut,
+    EmailChanged(String),
+    SubmitLogin,
+    SubmitRegistration,
+    CreateAccount,
+    OtpChanged(String),
+    OtpCooldownTick,
+    VerifyOtp,
+    VerifiedDevicesLoaded(Vec<crate::services::coincube::VerifiedDevice>),
+    LoginActivityLoaded(Vec<crate::services::coincube::LoginActivity>),
+    Error(String),
 }
 
 #[derive(Debug, Clone)]

@@ -1,6 +1,7 @@
 mod message;
 
 pub mod buysell;
+pub mod connect;
 pub mod global_home;
 pub mod liquid;
 pub mod settings;
@@ -587,6 +588,154 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<
     }
 
     menu_column = menu_column.push(has_vault.then_some(buy_sell_button));
+
+    // ── Connect nav group ────────────────────────────────────────────────────
+    let is_connect_expanded = cache.connect_expanded;
+    let is_connect_authenticated = cache.connect_authenticated;
+
+    let connect_button: Element<Message> = if is_connect_authenticated {
+        let connect_chevron = if is_connect_expanded {
+            up_icon()
+        } else {
+            down_icon()
+        };
+        Button::new(
+            Row::new()
+                .spacing(10)
+                .align_y(iced::alignment::Vertical::Center)
+                .push(coins_icon().style(theme::text::secondary))
+                .push(text("Connect").size(15))
+                .push(Space::new().width(Length::Fill))
+                .push(connect_chevron.style(theme::text::secondary))
+                .padding(10),
+        )
+        .width(iced::Length::Fill)
+        .style(theme::button::menu)
+        .on_press(Message::ToggleConnect)
+        .into()
+    } else if matches!(menu, Menu::Connect(_)) {
+        row!(
+            button::menu_active(Some(coins_icon()), "Connect")
+                .on_press(Message::Reload)
+                .width(iced::Length::Fill),
+            menu_bar_highlight(),
+        )
+        .width(Length::Fill)
+        .into()
+    } else {
+        row!(button::menu(Some(coins_icon()), "Connect")
+            .on_press(Message::ToggleConnect)
+            .width(iced::Length::Fill),)
+        .into()
+    };
+
+    menu_column = menu_column.push(connect_button);
+
+    if is_connect_expanded && is_connect_authenticated {
+        use crate::app::menu::ConnectSubMenu;
+
+        let connect_overview_button = if matches!(menu, Menu::Connect(ConnectSubMenu::Overview)) {
+            row!(
+                Space::new().width(Length::Fixed(20.0)),
+                button::menu_active(Some(home_icon()), "Overview")
+                    .on_press(Message::Reload)
+                    .width(iced::Length::Fill),
+                menu_bar_highlight()
+            )
+            .width(Length::Fill)
+        } else {
+            row!(
+                Space::new().width(Length::Fixed(20.0)),
+                button::menu(Some(home_icon()), "Overview")
+                    .on_press(Message::Menu(Menu::Connect(ConnectSubMenu::Overview)))
+                    .width(iced::Length::Fill),
+            )
+            .width(Length::Fill)
+        };
+
+        let connect_plan_button = if matches!(menu, Menu::Connect(ConnectSubMenu::PlanBilling)) {
+            row!(
+                Space::new().width(Length::Fixed(20.0)),
+                button::menu_active(Some(receipt_icon()), "Plan & Billing")
+                    .on_press(Message::Reload)
+                    .width(iced::Length::Fill),
+                menu_bar_highlight()
+            )
+            .width(Length::Fill)
+        } else {
+            row!(
+                Space::new().width(Length::Fixed(20.0)),
+                button::menu(Some(receipt_icon()), "Plan & Billing")
+                    .on_press(Message::Menu(Menu::Connect(ConnectSubMenu::PlanBilling)))
+                    .width(iced::Length::Fill),
+            )
+            .width(Length::Fill)
+        };
+
+        let connect_security_button = if matches!(menu, Menu::Connect(ConnectSubMenu::Security)) {
+            row!(
+                Space::new().width(Length::Fixed(20.0)),
+                button::menu_active(Some(settings_icon()), "Security")
+                    .on_press(Message::Reload)
+                    .width(iced::Length::Fill),
+                menu_bar_highlight()
+            )
+            .width(Length::Fill)
+        } else {
+            row!(
+                Space::new().width(Length::Fixed(20.0)),
+                button::menu(Some(settings_icon()), "Security")
+                    .on_press(Message::Menu(Menu::Connect(ConnectSubMenu::Security)))
+                    .width(iced::Length::Fill),
+            )
+            .width(Length::Fill)
+        };
+
+        let connect_duress_button = if matches!(menu, Menu::Connect(ConnectSubMenu::Duress)) {
+            row!(
+                Space::new().width(Length::Fixed(20.0)),
+                button::menu_active(Some(vault_icon()), "Duress")
+                    .on_press(Message::Reload)
+                    .width(iced::Length::Fill),
+                menu_bar_highlight()
+            )
+            .width(Length::Fill)
+        } else {
+            row!(
+                Space::new().width(Length::Fixed(20.0)),
+                button::menu(Some(vault_icon()), "Duress")
+                    .on_press(Message::Menu(Menu::Connect(ConnectSubMenu::Duress)))
+                    .width(iced::Length::Fill),
+            )
+            .width(Length::Fill)
+        };
+
+        let connect_invites_button = if matches!(menu, Menu::Connect(ConnectSubMenu::Invites)) {
+            row!(
+                Space::new().width(Length::Fixed(20.0)),
+                button::menu_active(Some(plus_icon()), "Invites")
+                    .on_press(Message::Reload)
+                    .width(iced::Length::Fill),
+                menu_bar_highlight()
+            )
+            .width(Length::Fill)
+        } else {
+            row!(
+                Space::new().width(Length::Fixed(20.0)),
+                button::menu(Some(plus_icon()), "Invites")
+                    .on_press(Message::Menu(Menu::Connect(ConnectSubMenu::Invites)))
+                    .width(iced::Length::Fill),
+            )
+            .width(Length::Fill)
+        };
+
+        menu_column = menu_column
+            .push(connect_overview_button)
+            .push(connect_plan_button)
+            .push(connect_security_button)
+            .push(connect_duress_button)
+            .push(connect_invites_button);
+    }
 
     // Global Settings button (always visible at bottom of main menu)
     let global_settings_button = if matches!(menu, Menu::Settings(_)) {

@@ -167,6 +167,52 @@ pub struct Currency {
     pub symbol: &'static str,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PlanTier {
+    Free,
+    Pro,
+    Legacy,
+}
+
+impl std::fmt::Display for PlanTier {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PlanTier::Free => write!(f, "Free"),
+            PlanTier::Pro => write!(f, "Pro"),
+            PlanTier::Legacy => write!(f, "Legacy"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectPlan {
+    pub tier: PlanTier,
+    pub paid_until: Option<String>,
+    pub status: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VerifiedDevice {
+    pub id: u32,
+    pub device_name: Option<String>,
+    pub created_at: String,
+    pub last_used_at: Option<String>,
+    pub is_current: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LoginActivity {
+    pub id: u32,
+    pub ip_address: Option<String>,
+    pub user_agent: Option<String>,
+    pub created_at: String,
+    pub success: bool,
+}
+
 pub fn get_countries() -> &'static [Country] {
     static COUNTRIES_JSON: &str = include_str!("../countries.json");
     static COUNTRIES: std::sync::OnceLock<Vec<Country>> = std::sync::OnceLock::new();
