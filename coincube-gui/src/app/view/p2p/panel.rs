@@ -72,17 +72,6 @@ fn chat_bubble_peer(theme: &coincube_ui::theme::Theme) -> iced::widget::containe
     }
 }
 
-/// Subtle divider line between trade info section and chat messages.
-fn chat_divider(_theme: &coincube_ui::theme::Theme) -> iced::widget::container::Style {
-    iced::widget::container::Style {
-        border: iced::Border {
-            width: 0.0,
-            ..Default::default()
-        },
-        ..Default::default()
-    }
-}
-
 /// Info row style (card-like background for the trade info section in chat).
 fn chat_info_card(theme: &coincube_ui::theme::Theme) -> iced::widget::container::Style {
     iced::widget::container::Style {
@@ -99,11 +88,10 @@ fn chat_info_card(theme: &coincube_ui::theme::Theme) -> iced::widget::container:
 /// Extract the text content from a SendDm payload JSON.
 fn extract_chat_text(payload_json: &str) -> String {
     // Payload is serialized as e.g. {"TextMessage":"hello"}
-    if let Ok(payload) = serde_json::from_str::<Option<mostro_core::message::Payload>>(payload_json)
+    if let Ok(Some(mostro_core::message::Payload::TextMessage(text))) =
+        serde_json::from_str::<Option<mostro_core::message::Payload>>(payload_json)
     {
-        if let Some(mostro_core::message::Payload::TextMessage(text)) = payload {
-            return text;
-        }
+        return text;
     }
     // Fallback: try to parse as a simple JSON string value
     if let Ok(text) = serde_json::from_str::<String>(payload_json) {
@@ -977,12 +965,12 @@ impl P2PPanel {
                 .spacing(8),
                 detail_row(
                     "Amount",
-                    &format!("{:.2} {}", trade.fiat_amount, trade.fiat_currency)
+                    format!("{:.2} {}", trade.fiat_amount, trade.fiat_currency)
                 ),
                 if trade.is_fixed_price() {
-                    detail_row("Sats", &format!("{}", trade.sats_amount.unwrap_or(0)))
+                    detail_row("Sats", format!("{}", trade.sats_amount.unwrap_or(0)))
                 } else {
-                    detail_row("Price", &format!("Market {}", trade.premium_text()))
+                    detail_row("Price", format!("Market {}", trade.premium_text()))
                 },
                 if !trade.payment_method.is_empty() {
                     detail_row("Payment", &trade.payment_method)

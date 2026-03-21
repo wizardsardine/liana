@@ -221,7 +221,7 @@ pub fn countdown_start_timestamp(session: &TradeSession) -> Option<u64> {
         .iter()
         .rev()
         .filter(|m| target_actions.contains(&m.action.as_str()) && m.timestamp > 0)
-        .last()
+        .next_back()
         .map(|m| m.timestamp)
 }
 
@@ -229,7 +229,7 @@ pub fn countdown_start_timestamp(session: &TradeSession) -> Option<u64> {
 /// 1. Send RestoreSession → get order IDs + trade indices
 /// 2. Send Orders request → get full order details
 /// 3. Send LastTradeIndex → get the correct last index
-/// Returns the number of trades recovered.
+///    Returns the number of trades recovered.
 pub async fn restore_trades(
     cube_name: &str,
     mnemonic: &str,
@@ -393,10 +393,10 @@ pub async fn restore_trades(
         let trade_keys = derive_trade_keys(mnemonic, *trade_index).ok();
         let our_pubkey = trade_keys.as_ref().map(|k| k.public_key().to_hex());
         let role = if let (Some(d), Some(ref pk)) = (details, &our_pubkey) {
-            if d.buyer_trade_pubkey.as_deref() == Some(pk) {
-                "taker" // We're the buyer, likely took a sell order
-            } else if d.seller_trade_pubkey.as_deref() == Some(pk) {
-                "taker" // We're the seller, likely took a buy order
+            if d.buyer_trade_pubkey.as_deref() == Some(pk)
+                || d.seller_trade_pubkey.as_deref() == Some(pk)
+            {
+                "taker"
             } else {
                 "creator"
             }
@@ -453,7 +453,7 @@ pub async fn restore_trades(
 
     let count = sessions.len();
     let data = MostroData {
-        last_trade_index: last_trade_index,
+        last_trade_index,
         trades: sessions,
     };
     save_data(cube_name, &data)?;
