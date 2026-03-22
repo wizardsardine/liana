@@ -1611,9 +1611,25 @@ impl P2PPanel {
             }
 
             // --- Cancel / Dispute footer buttons ---
-            // Hide after sats are released (too late to cancel/dispute meaningfully)
-            let past_release = matches!(dm_action, Some("Released" | "Release" | "PaymentFailed"));
-            if !loading && !past_release {
+            // Hide once the trade is complete or past release
+            let trade_complete = matches!(
+                dm_action,
+                Some(
+                    "Released"
+                        | "Release"
+                        | "HoldInvoicePaymentSettled"
+                        | "PurchaseCompleted"
+                        | "Rate"
+                        | "RateReceived"
+                        | "AdminSettled"
+                        | "AdminCanceled"
+                        | "CooperativeCancelAccepted"
+                )
+            ) || matches!(
+                trade.status,
+                TradeStatus::Success | TradeStatus::Canceled | TradeStatus::CooperativelyCanceled
+            );
+            if !loading && !trade_complete {
                 if cancel_initiated_by_peer {
                     actions = actions.push(
                         row![
@@ -1682,16 +1698,14 @@ impl P2PPanel {
         }
 
         // ── Contact button ──
-        // Show contact/chat button for Active+ states (after buyer invoice accepted)
+        // Show contact/chat button for active trades only (not completed/canceled)
         let chat_available = matches!(
             trade.status,
             TradeStatus::Active
                 | TradeStatus::FiatSent
                 | TradeStatus::SettledHoldInvoice
-                | TradeStatus::Success
                 | TradeStatus::CooperativelyCanceled
                 | TradeStatus::Dispute
-                | TradeStatus::Expired
                 | TradeStatus::PaymentFailed
         );
 
