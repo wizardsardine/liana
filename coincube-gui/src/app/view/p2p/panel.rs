@@ -1923,6 +1923,13 @@ impl P2PPanel {
             .filter(|m| m.action == "SendDm")
             .collect();
 
+        // Nicknames for chat bubbles
+        let peer_nick = trade
+            .counterparty_pubkey
+            .as_deref()
+            .map(super::mostro::nickname_from_pubkey)
+            .unwrap_or_else(|| "Peer".to_string());
+
         // ── Accordion tab buttons (Trade Information / User Information) ──
         let trade_info_btn = if self.chat_show_trade_info {
             button::primary(Some(icon::receipt_icon()), "Trade Information")
@@ -2032,11 +2039,16 @@ impl P2PPanel {
         let user_info_panel: Element<'_, view::Message> = if self.chat_show_user_info {
             let identity =
                 super::mostro::get_chat_identity_info(&cube_name, &self.mnemonic, &trade.id);
+            let cp_nickname = identity
+                .counterparty_nickname
+                .as_deref()
+                .unwrap_or("Unknown");
             let cp_pubkey_full = identity
                 .counterparty_pubkey
                 .as_deref()
                 .unwrap_or("Unknown")
                 .to_string();
+            let our_nickname = identity.our_nickname.as_deref().unwrap_or("Unknown");
             let our_pubkey_full = identity
                 .our_trade_pubkey
                 .as_deref()
@@ -2054,8 +2066,9 @@ impl P2PPanel {
                     row![
                         icon::person_icon().style(theme::text::secondary),
                         column![
-                            p2_regular("Peer Public Key").style(theme::text::secondary),
-                            p2_bold(cp_pubkey_full),
+                            p2_regular("Peer").style(theme::text::secondary),
+                            p1_bold(cp_nickname),
+                            caption(cp_pubkey_full).style(theme::text::secondary),
                         ]
                         .spacing(2),
                     ]
@@ -2065,8 +2078,9 @@ impl P2PPanel {
                     row![
                         icon::key_icon().style(theme::text::secondary),
                         column![
-                            p2_regular("Your Trade Key").style(theme::text::secondary),
-                            p2_bold(our_pubkey_full),
+                            p2_regular("You").style(theme::text::secondary),
+                            p1_bold(our_nickname),
+                            caption(our_pubkey_full).style(theme::text::secondary),
                         ]
                         .spacing(2),
                     ]
@@ -2139,6 +2153,9 @@ impl P2PPanel {
                 if msg.is_own {
                     msg_col = msg_col.push(
                         column![
+                            container(caption("You").style(theme::text::secondary))
+                                .width(Length::Fill)
+                                .align_right(Length::Fill),
                             row![
                                 Space::new().width(Length::FillPortion(3)),
                                 container(p1_regular(text))
@@ -2155,6 +2172,7 @@ impl P2PPanel {
                 } else {
                     msg_col = msg_col.push(
                         column![
+                            caption(peer_nick.as_str()).style(theme::text::primary),
                             row![
                                 container(p1_regular(text))
                                     .padding([10, 16])
@@ -2587,6 +2605,11 @@ impl State for P2PPanel {
                                     OrderType::Buy => "BUY",
                                     OrderType::Sell => "SELL",
                                 };
+                                let peer_nick = trade
+                                    .counterparty_pubkey
+                                    .as_deref()
+                                    .map(super::mostro::nickname_from_pubkey)
+                                    .unwrap_or_else(|| "Peer".to_string());
 
                                 // Header bar
                                 let header = container(
@@ -2595,7 +2618,7 @@ impl State for P2PPanel {
                                             .on_press(view::Message::P2P(P2PMessage::CloseChat)),
                                         Space::new().width(Length::Fill),
                                         column![
-                                            p1_bold("Chat"),
+                                            p1_bold(peer_nick),
                                             p2_regular(format!(
                                                 "{} Order {}",
                                                 trade_type_label, order_short

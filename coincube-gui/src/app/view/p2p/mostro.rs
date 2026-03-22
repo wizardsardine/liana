@@ -1440,8 +1440,206 @@ pub fn get_trade_messages(cube_name: &str, order_id: &str) -> Vec<TradeMessage> 
 /// Chat identity info for the user information panel.
 pub struct ChatIdentityInfo {
     pub counterparty_pubkey: Option<String>,
+    pub counterparty_nickname: Option<String>,
     pub our_trade_pubkey: Option<String>,
+    pub our_nickname: Option<String>,
     pub shared_key: Option<String>,
+}
+
+// ── Deterministic nickname generation ──
+
+const ADJECTIVES: &[&str] = &[
+    "shadowy",
+    "orange",
+    "nonCustodial",
+    "trustless",
+    "unbanked",
+    "atomic",
+    "magic",
+    "hidden",
+    "incognito",
+    "anonymous",
+    "encrypted",
+    "ghostly",
+    "silent",
+    "masked",
+    "stealthy",
+    "free",
+    "nostalgic",
+    "ephemeral",
+    "sovereign",
+    "unstoppable",
+    "private",
+    "censorshipResistant",
+    "hush",
+    "defiant",
+    "subversive",
+    "fiery",
+    "subzero",
+    "burning",
+    "cosmic",
+    "mighty",
+    "whispering",
+    "cyber",
+    "rusty",
+    "nihilistic",
+    "dark",
+    "wicked",
+    "spicy",
+    "noKYC",
+    "discreet",
+    "loose",
+    "boosted",
+    "starving",
+    "hungry",
+    "orwellian",
+    "bullish",
+    "bearish",
+]; // 46 items
+
+const NOUNS: &[&str] = &[
+    "wizard",
+    "pirate",
+    "zap",
+    "node",
+    "invoice",
+    "nipster",
+    "nomad",
+    "sats",
+    "bull",
+    "bear",
+    "whale",
+    "frog",
+    "gorilla",
+    "nostrich",
+    "halFinney",
+    "hodlonaut",
+    "satoshi",
+    "nakamoto",
+    "samurai",
+    "sparrow",
+    "crusader",
+    "tinkerer",
+    "nostr",
+    "pleb",
+    "warrior",
+    "ecdsa",
+    "monkey",
+    "wolf",
+    "renegade",
+    "minotaur",
+    "phoenix",
+    "dragon",
+    "fiatjaf",
+    "roasbeef",
+    "berlin",
+    "tokyo",
+    "buenosAires",
+    "caracas",
+    "havana",
+    "miami",
+    "prague",
+    "amsterdam",
+    "lugano",
+    "seoul",
+    "bitcoinBeach",
+    "carnivore",
+    "ape",
+    "honeyBadger",
+    "lnp2pBot",
+    "lunaticoin",
+    "jorgeValenzuela",
+    "javyBastard",
+    "loreOrtiz",
+    "manuFerrari",
+    "pablof7z",
+    "btcAndres",
+    "laCrypta",
+    "niftynei",
+    "gloriaZhao",
+    "stupidrisks",
+    "dolcheVillarreal",
+    "furszy",
+    "sergi",
+    "jarolRod",
+    "pieterWuille",
+    "edwardSnowden",
+    "libreriaDeSatoshi",
+    "alexGladstein",
+    "bitkoYinowsky",
+    "alfreMancera",
+    "faixaPreta",
+    "laVecinaDeArriba",
+    "mempool",
+    "pana",
+    "chamo",
+    "catire",
+    "arepa",
+    "cachapa",
+    "tequeño",
+    "hallaca",
+    "roraima",
+    "canaima",
+    "turpial",
+    "araguaney",
+    "cunaguaro",
+    "chiguire",
+    "mamarracho",
+    "cambur",
+]; // 90 items
+
+/// Compute `big_hex_number % modulus` without needing a BigInt library.
+/// Processes the hex string digit-by-digit using modular arithmetic.
+fn hex_mod(hex: &str, modulus: usize) -> usize {
+    let mut result: usize = 0;
+    for ch in hex.chars() {
+        let digit = match ch.to_ascii_lowercase() {
+            '0'..='9' => ch as usize - '0' as usize,
+            'a'..='f' => ch as usize - 'a' as usize + 10,
+            _ => continue,
+        };
+        result = (result * 16 + digit) % modulus;
+    }
+    result
+}
+
+/// Compute `big_hex_number / divisor % modulus` without needing a BigInt library.
+/// First divides the big number by `divisor`, then takes modulo.
+fn hex_div_mod(hex: &str, divisor: usize, modulus: usize) -> usize {
+    // To compute (N / divisor) % modulus, we process hex digits and track
+    // both the running quotient-mod and the running remainder of the division.
+    let mut remainder: usize = 0;
+    let mut quotient_mod: usize = 0;
+    for ch in hex.chars() {
+        let digit = match ch.to_ascii_lowercase() {
+            '0'..='9' => ch as usize - '0' as usize,
+            'a'..='f' => ch as usize - 'a' as usize + 10,
+            _ => continue,
+        };
+        // N_so_far = old_N * 16 + digit
+        // N_so_far / divisor = (old_N * 16 + digit) / divisor
+        let combined = remainder * 16 + digit;
+        let q_digit = combined / divisor;
+        remainder = combined % divisor;
+        quotient_mod = (quotient_mod * 16 + q_digit) % modulus;
+    }
+    quotient_mod
+}
+
+/// Generate a deterministic human-readable nickname from a hex public key.
+/// Matches the Mostro mobile app's `deterministicHandleFromHexKey` exactly:
+/// parses the full hex key as a BigInt, picks adjective and noun via modulo.
+pub fn nickname_from_pubkey(hex_key: &str) -> String {
+    if hex_key.is_empty() {
+        return "unknown".to_string();
+    }
+    let clean: String = hex_key.chars().filter(|c| c.is_ascii_hexdigit()).collect();
+    if clean.is_empty() {
+        return "unknown".to_string();
+    }
+    let adj_idx = hex_mod(&clean, ADJECTIVES.len());
+    let noun_idx = hex_div_mod(&clean, ADJECTIVES.len(), NOUNS.len());
+    format!("{}-{}", ADJECTIVES[adj_idx], NOUNS[noun_idx])
 }
 
 pub fn get_chat_identity_info(cube_name: &str, mnemonic: &str, order_id: &str) -> ChatIdentityInfo {
@@ -1450,13 +1648,20 @@ pub fn get_chat_identity_info(cube_name: &str, mnemonic: &str, order_id: &str) -
     let Some(session) = session else {
         return ChatIdentityInfo {
             counterparty_pubkey: None,
+            counterparty_nickname: None,
             our_trade_pubkey: None,
+            our_nickname: None,
             shared_key: None,
         };
     };
     let our_trade_pubkey = derive_trade_keys(mnemonic, session.trade_index)
         .ok()
         .map(|k| k.public_key().to_hex());
+    let our_nickname = our_trade_pubkey.as_deref().map(nickname_from_pubkey);
+    let counterparty_nickname = session
+        .counterparty_trade_pubkey
+        .as_deref()
+        .map(nickname_from_pubkey);
     let shared_key = session
         .counterparty_trade_pubkey
         .as_deref()
@@ -1469,7 +1674,9 @@ pub fn get_chat_identity_info(cube_name: &str, mnemonic: &str, order_id: &str) -
         .map(|sk| sk.public_key().to_hex());
     ChatIdentityInfo {
         counterparty_pubkey: session.counterparty_trade_pubkey.clone(),
+        counterparty_nickname,
         our_trade_pubkey,
+        our_nickname,
         shared_key,
     }
 }
@@ -1767,6 +1974,7 @@ async fn fetch_user_trades(
                 time_ago: format_time_ago(*event_ts),
                 last_dm_action: latest_dm_action(session).map(String::from),
                 countdown_start_ts: countdown_start_timestamp(session),
+                counterparty_pubkey: session.counterparty_trade_pubkey.clone(),
             });
         } else {
             // Not found on relay — fallback from saved session
@@ -1828,6 +2036,7 @@ fn trade_from_session(session: &TradeSession) -> P2PTrade {
         time_ago: format_time_ago(session.created_at as u64),
         last_dm_action: latest_dm_action(session).map(String::from),
         countdown_start_ts: countdown_start_timestamp(session),
+        counterparty_pubkey: session.counterparty_trade_pubkey.clone(),
     }
 }
 
