@@ -1876,9 +1876,11 @@ fn mostro_stream(
 
             // Initial fetch of node info
             let info = fetch_mostro_info(&client, mostro_pk).await;
-            if !info.fiat_currencies.is_empty() {
+            {
                 let msg = Message::View(view::Message::P2P(P2PMessage::MostroNodeInfoReceived {
                     currencies: info.fiat_currencies,
+                    min_order_sats: info.min_order_amount,
+                    max_order_sats: info.max_order_amount,
                 }));
                 let _ = output.send(msg).await;
             }

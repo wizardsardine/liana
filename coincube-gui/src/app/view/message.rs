@@ -446,6 +446,8 @@ pub enum P2PMessage {
     MostroSelectActiveNode(String),
     MostroNodeInfoReceived {
         currencies: Vec<String>,
+        min_order_sats: Option<i64>,
+        max_order_sats: Option<i64>,
     },
     ConfirmOrder,
     CancelConfirmation,

@@ -7,7 +7,7 @@ use coincube_ui::{
     widget::*,
 };
 use iced::{
-    widget::{column, combo_box, container, qr_code, row, Space},
+    widget::{column, combo_box, container, qr_code, row, slider, Space},
     Alignment, Length, Subscription, Task,
 };
 
@@ -28,6 +28,31 @@ use super::components::{
     BuySellFilter, OrderType, P2POrder, P2PTrade, PricingMode, TradeFilter, FIAT_CURRENCIES,
 };
 use super::config::{load_mostro_config, save_mostro_config, MostroConfig, MostroNode};
+
+/// Per-field validation warnings for the order creation form.
+#[derive(Default)]
+struct FormValidation {
+    amount: Option<&'static str>,
+    max_amount: Option<&'static str>,
+    sats: Option<&'static str>,
+    /// Owned string for dynamic range messages (includes node limits).
+    sats_range: Option<String>,
+    premium: Option<&'static str>,
+    payment: Option<&'static str>,
+    /// True when node limits haven't been fetched yet (market price only).
+    node_limits_missing: bool,
+}
+
+impl FormValidation {
+    fn has_errors(&self) -> bool {
+        self.amount.is_some()
+            || self.max_amount.is_some()
+            || self.sats.is_some()
+            || self.sats_range.is_some()
+            || self.premium.is_some()
+            || self.payment.is_some()
+    }
+}
 
 /// Returns true if this DM action starts a countdown timer.
 fn is_countdown_action(action: &str) -> bool {
@@ -114,8 +139,10 @@ struct PendingChatMessage {
 pub struct P2PPanel {
     wallet: Option<Arc<Wallet>>,
     mnemonic: String,
-    // Node currencies (fetched from info event, empty = use fallback)
+    // Node info (fetched from info event)
     node_currencies: Vec<String>,
+    node_min_order_sats: Option<i64>,
+    node_max_order_sats: Option<i64>,
     // Order book state
     orders: Vec<P2POrder>,
     /// Order IDs we created locally — used to ensure is_mine stays true even
@@ -177,6 +204,8 @@ impl P2PPanel {
             wallet,
             mnemonic,
             node_currencies: Vec::new(),
+            node_min_order_sats: None,
+            node_max_order_sats: None,
             orders: Vec::new(),
             my_created_order_ids: HashSet::new(),
             buy_sell_filter: BuySellFilter::Sell,
@@ -369,6 +398,111 @@ impl P2PPanel {
         !self.create_min_amount.value.is_empty() && !self.create_max_amount.value.is_empty()
     }
 
+    /// Validate the create-order form and return per-field warnings.
+    fn validate_order_form(&self) -> FormValidation {
+        let is_range = self.is_range_order();
+        let effective_pricing_fixed = !is_range && self.create_pricing_mode == PricingMode::Fixed;
+
+        let mut v = FormValidation::default();
+
+        // Maximum reasonable fiat amount (no real P2P trade exceeds this in any currency)
+        const MAX_FIAT: i64 = 999_999_999;
+
+        // --- Amount (fiat — must be a positive integer, matching Mostro's i64 field) ---
+        let min_amt: Option<i64> = self.create_min_amount.value.parse::<i64>().ok();
+        if self.create_min_amount.value.is_empty() {
+            v.amount = Some("Amount is required");
+        } else if min_amt.is_none() {
+            v.amount = Some("Enter a whole number");
+        } else if min_amt.unwrap_or(0) <= 0 {
+            v.amount = Some("Amount must be greater than 0");
+        } else if min_amt.unwrap_or(0) > MAX_FIAT {
+            v.amount = Some("Amount is too large");
+        }
+
+        // --- Max amount (range — must be a positive integer greater than min) ---
+        if is_range {
+            let max_amt: Option<i64> = self.create_max_amount.value.parse::<i64>().ok();
+            if max_amt.is_none() {
+                v.max_amount = Some("Enter a whole number");
+            } else if max_amt.unwrap_or(0) <= 0 {
+                v.max_amount = Some("Max must be greater than 0");
+            } else if max_amt.unwrap_or(0) > MAX_FIAT {
+                v.max_amount = Some("Max amount is too large");
+            } else if let (Some(min), Some(max)) = (min_amt, max_amt) {
+                if max <= min {
+                    v.max_amount = Some("Max must be greater than min");
+                }
+            }
+        }
+
+        // --- Sats amount (fixed price — validated against node limits) ---
+        if effective_pricing_fixed {
+            let node_min = self.node_min_order_sats;
+            let node_max = self.node_max_order_sats;
+
+            if self.create_sats_amount.value.is_empty() {
+                v.sats = Some("Sats amount is required for fixed price");
+            } else if let Ok(sats) = self.create_sats_amount.value.parse::<i64>() {
+                if sats <= 0 {
+                    v.sats = Some("Sats must be greater than 0");
+                } else if node_min.is_none() || node_max.is_none() {
+                    // Node limits not loaded — block until we know the range
+                    v.sats = Some("Waiting for node limits...");
+                } else {
+                    if let Some(min) = node_min {
+                        if sats < min {
+                            v.sats_range = Some(format!(
+                                "Below minimum ({} sats)",
+                                super::components::format_with_separators(min as u64),
+                            ));
+                        }
+                    }
+                    if v.sats_range.is_none() {
+                        if let Some(max) = node_max {
+                            if sats > max {
+                                v.sats_range = Some(format!(
+                                    "Above maximum ({} sats)",
+                                    super::components::format_with_separators(max as u64),
+                                ));
+                            }
+                        }
+                    }
+                }
+            } else {
+                v.sats = Some("Enter a valid number");
+            }
+        }
+
+        // --- Market price: warn if node limits not loaded ---
+        if !effective_pricing_fixed
+            && (self.node_min_order_sats.is_none() || self.node_max_order_sats.is_none())
+            && !self.create_min_amount.value.is_empty()
+        {
+            v.node_limits_missing = true;
+        }
+
+        // --- Premium ---
+        if !effective_pricing_fixed && !self.create_premium.value.is_empty() {
+            if let Ok(p) = self.create_premium.value.parse::<i64>() {
+                if p < -100 || p > 100 {
+                    v.premium = Some("Premium must be between -100 and 100");
+                }
+            } else {
+                v.premium = Some("Enter a valid number");
+            }
+        }
+
+        // --- Payment methods ---
+        let has_payment = !self.create_payment_methods.is_empty()
+            || !self.create_custom_payment_method.value.trim().is_empty();
+        if !has_payment {
+            v.payment = Some("Select at least one payment method");
+        }
+
+        v
+    }
+
     /// Build a `TradeActionData` for the selected trade, dispatch the given async
     /// action, and route the result to `TradeActionResult`.
     fn perform_trade_action<F, Fut>(&mut self, invoice: Option<String>, action: F) -> Task<Message>
@@ -495,6 +629,9 @@ impl P2PPanel {
             &self.create_pricing_mode
         };
 
+        // Form validation (computed each render — only show after user has typed something)
+        let v = self.validate_order_form();
+
         // Order type toggle
         let buy_btn = if self.create_order_type == OrderType::Buy {
             button::primary(None, "Buy")
@@ -568,28 +705,49 @@ impl P2PPanel {
             OrderType::Sell => "Enter amount you want to receive",
         };
 
-        let amount_card = card::simple(
-            column![
-                p2_regular(amount_label).style(theme::text::secondary),
-                row![
-                    icon::coins_icon().style(theme::text::success),
-                    form::Form::new_amount_numeric("Amount", &self.create_min_amount, |v| {
-                        view::Message::P2P(P2PMessage::MinAmountEdited(v))
-                    })
-                    .padding(10),
-                    form::Form::new_amount_numeric(
-                        "Max (optional)",
-                        &self.create_max_amount,
-                        |v| { view::Message::P2P(P2PMessage::MaxAmountEdited(v)) }
-                    )
-                    .padding(10),
-                ]
-                .spacing(8)
-                .align_y(iced::alignment::Vertical::Center),
+        let mut amount_col = column![
+            p2_regular(amount_label).style(theme::text::secondary),
+            row![
+                icon::coins_icon().style(theme::text::success),
+                form::Form::new_amount_sats("Amount", &self.create_min_amount, |v| {
+                    view::Message::P2P(P2PMessage::MinAmountEdited(v))
+                })
+                .padding(10),
+                form::Form::new_amount_sats("Max (optional)", &self.create_max_amount, |v| {
+                    view::Message::P2P(P2PMessage::MaxAmountEdited(v))
+                })
+                .padding(10),
             ]
-            .spacing(12),
-        )
-        .width(Length::Fill);
+            .spacing(8)
+            .align_y(iced::alignment::Vertical::Center),
+        ]
+        .spacing(12);
+        // Show amount warning (only after user started typing to avoid initial noise)
+        if let Some(warn) = v.amount {
+            if !self.create_min_amount.value.is_empty() {
+                amount_col = amount_col.push(caption(warn).style(theme::text::warning));
+            }
+        }
+        if let Some(warn) = v.max_amount {
+            amount_col = amount_col.push(caption(warn).style(theme::text::warning));
+        }
+        // Show node order limits as a hint, or a warning if not loaded
+        if let (Some(min), Some(max)) = (self.node_min_order_sats, self.node_max_order_sats) {
+            amount_col = amount_col.push(
+                caption(format!(
+                    "Node accepts orders between {} and {} sats",
+                    super::components::format_with_separators(min as u64),
+                    super::components::format_with_separators(max as u64),
+                ))
+                .style(theme::text::secondary),
+            );
+        } else if v.node_limits_missing {
+            amount_col = amount_col.push(
+                caption("Node limits not loaded — order may be rejected")
+                    .style(theme::text::warning),
+            );
+        }
+        let amount_card = card::simple(amount_col).width(Length::Fill);
 
         // Payment method card
         let pm_combo = combo_box(
@@ -625,29 +783,30 @@ impl P2PPanel {
             .into()
         };
 
-        let payment_card = card::simple(
-            column![
-                p2_regular("Payment methods for").style(theme::text::secondary),
-                row![icon::card_icon().style(theme::text::success), pm_combo,]
-                    .spacing(12)
-                    .align_y(iced::alignment::Vertical::Center),
-                pm_tags,
-                form::Form::new_trimmed(
-                    "Enter custom payment method",
-                    &self.create_custom_payment_method,
-                    |v| { view::Message::P2P(P2PMessage::CustomPaymentMethodEdited(v)) }
-                )
-                .padding(10),
-                if self.create_custom_payment_method.value.is_empty() {
-                    button::secondary(None, "Add Custom")
-                } else {
-                    button::secondary(None, "Add Custom")
-                        .on_press(view::Message::P2P(P2PMessage::AddCustomPaymentMethod))
-                },
-            ]
-            .spacing(12),
-        )
-        .width(Length::Fill);
+        let mut payment_col = column![
+            p2_regular("Payment methods for").style(theme::text::secondary),
+            row![icon::card_icon().style(theme::text::success), pm_combo,]
+                .spacing(12)
+                .align_y(iced::alignment::Vertical::Center),
+            pm_tags,
+            form::Form::new_trimmed(
+                "Enter custom payment method",
+                &self.create_custom_payment_method,
+                |v| { view::Message::P2P(P2PMessage::CustomPaymentMethodEdited(v)) }
+            )
+            .padding(10),
+            if self.create_custom_payment_method.value.is_empty() {
+                button::secondary(None, "Add Custom")
+            } else {
+                button::secondary(None, "Add Custom")
+                    .on_press(view::Message::P2P(P2PMessage::AddCustomPaymentMethod))
+            },
+        ]
+        .spacing(12);
+        if let Some(warn) = v.payment {
+            payment_col = payment_col.push(caption(warn).style(theme::text::warning));
+        }
+        let payment_card = card::simple(payment_col).width(Length::Fill);
 
         // Price type card
         let market_btn = if *effective_pricing_mode == PricingMode::Market {
@@ -685,48 +844,81 @@ impl P2PPanel {
         .width(Length::Fill);
 
         // Pricing-mode-dependent field card
-        let pricing_card: Element<'a, view::Message> =
-            if *effective_pricing_mode == PricingMode::Fixed {
-                card::simple(
-                    column![
-                        p2_regular("Sats Amount").style(theme::text::secondary),
-                        row![
-                            icon::bitcoin_icon().style(theme::text::success),
-                            form::Form::new_amount_sats(
-                                "Enter sats amount",
-                                &self.create_sats_amount,
-                                |v| { view::Message::P2P(P2PMessage::SatsAmountEdited(v)) }
-                            )
-                            .padding(10),
-                        ]
-                        .spacing(12)
-                        .align_y(iced::alignment::Vertical::Center),
-                    ]
-                    .spacing(12),
-                )
-                .width(Length::Fill)
-                .into()
+        let pricing_card: Element<'a, view::Message> = if *effective_pricing_mode
+            == PricingMode::Fixed
+        {
+            let mut sats_col = column![
+                p2_regular("Sats Amount").style(theme::text::secondary),
+                row![
+                    icon::bitcoin_icon().style(theme::text::success),
+                    form::Form::new_amount_sats(
+                        "Enter sats amount",
+                        &self.create_sats_amount,
+                        |v| { view::Message::P2P(P2PMessage::SatsAmountEdited(v)) }
+                    )
+                    .padding(10),
+                ]
+                .spacing(12)
+                .align_y(iced::alignment::Vertical::Center),
+            ]
+            .spacing(12);
+            // Show sats warnings (range warnings only after user started typing)
+            if let Some(warn) = v.sats {
+                if !self.create_sats_amount.value.is_empty() {
+                    sats_col = sats_col.push(caption(warn).style(theme::text::warning));
+                }
+            } else if let Some(ref warn) = v.sats_range {
+                sats_col = sats_col.push(caption(warn.as_str()).style(theme::text::warning));
+            }
+            // Show node limits hint
+            if let (Some(min), Some(max)) = (self.node_min_order_sats, self.node_max_order_sats) {
+                sats_col = sats_col.push(
+                    caption(format!(
+                        "Allowed: {} - {} sats",
+                        super::components::format_with_separators(min as u64),
+                        super::components::format_with_separators(max as u64),
+                    ))
+                    .style(theme::text::secondary),
+                );
+            }
+            card::simple(sats_col).width(Length::Fill).into()
+        } else {
+            let premium_val: f32 = self.create_premium.value.parse::<f32>().unwrap_or(0.0);
+            // Dynamic slider range: expand beyond ±10 if the current value is outside
+            let slider_min: f32 = (-10.0f32).min(premium_val).max(-100.0);
+            let slider_max: f32 = (10.0f32).max(premium_val).min(100.0);
+            let premium_int = premium_val as i64;
+            let premium_label = if premium_int > 0 {
+                format!("+{}%", premium_int)
             } else {
-                card::simple(
-                    column![
-                        p2_regular("Premium (%)").style(theme::text::secondary),
-                        row![
-                            icon::coins_icon().style(theme::text::success),
-                            form::Form::new_amount_numeric(
-                                "Enter premium percentage",
-                                &self.create_premium,
-                                |v| { view::Message::P2P(P2PMessage::PremiumEdited(v)) }
-                            )
-                            .padding(10),
-                        ]
-                        .spacing(12)
-                        .align_y(iced::alignment::Vertical::Center),
-                    ]
-                    .spacing(12),
-                )
-                .width(Length::Fill)
-                .into()
+                format!("{}%", premium_int)
             };
+
+            let mut premium_col = column![
+                p2_regular("Premium").style(theme::text::secondary),
+                row![
+                    icon::coins_icon().style(theme::text::success),
+                    form::Form::new_trimmed("e.g. 5 or -3", &self.create_premium, |v| {
+                        view::Message::P2P(P2PMessage::PremiumEdited(v))
+                    })
+                    .padding(10),
+                    p1_bold(premium_label),
+                ]
+                .spacing(12)
+                .align_y(iced::alignment::Vertical::Center),
+                slider(slider_min..=slider_max, premium_val, |v: f32| {
+                    view::Message::P2P(P2PMessage::PremiumEdited((v as i64).to_string()))
+                })
+                .step(1.0),
+            ]
+            .spacing(12);
+            if !self.create_premium.value.is_empty() {
+                if let Some(warn) = v.premium {
+                    premium_col = premium_col.push(caption(warn).style(theme::text::warning));
+                }
+            }
+            card::simple(premium_col).width(Length::Fill).into()
+        };
 
         // Lightning address card (Buy orders only)
         let lightning_address_card: Element<'a, view::Message> =
@@ -762,21 +954,9 @@ impl P2PPanel {
             column![].into()
         };
 
-        // Submit: validate all required fields parse correctly
-        let has_amount = self.create_min_amount.value.parse::<f64>().is_ok();
-        let has_payment_method = !self.create_payment_methods.is_empty()
-            || !self.create_custom_payment_method.value.is_empty();
-        let pricing_valid = if is_range {
-            // Range orders require max_amount
-            self.create_max_amount.value.parse::<f64>().is_ok()
-        } else if *effective_pricing_mode == PricingMode::Fixed {
-            // Fixed pricing requires sats amount
-            self.create_sats_amount.value.parse::<u64>().is_ok()
-        } else {
-            true
-        };
+        // Submit: use form validation
         let can_submit =
-            has_amount && has_payment_method && pricing_valid && !self.order_submitting;
+            !v.has_errors() && !self.order_submitting && !self.create_min_amount.value.is_empty();
 
         let submit_btn = if self.order_submitting {
             button::primary(None, "Submit").width(Length::Fill)
@@ -2622,7 +2802,13 @@ impl State for P2PPanel {
                 self.rebuild_payment_method_combo();
             }
             P2PMessage::SatsAmountEdited(v) => self.create_sats_amount.value = v,
-            P2PMessage::PremiumEdited(v) => self.create_premium.value = v,
+            P2PMessage::PremiumEdited(v) => {
+                // Allow empty, minus sign, or valid integers in -100..100 range
+                let trimmed = v.trim();
+                if trimmed.is_empty() || trimmed == "-" || trimmed.parse::<i64>().is_ok() {
+                    self.create_premium.value = v;
+                }
+            }
             P2PMessage::PaymentMethodSelected(v) => {
                 if !self.create_payment_methods.contains(&v) {
                     self.create_payment_methods.push(v);
@@ -2661,6 +2847,10 @@ impl State for P2PPanel {
             }
             P2PMessage::ExpiryDaysEdited(_) => {}
             P2PMessage::SubmitOrder => {
+                // Double-check validation before showing confirmation
+                if self.validate_order_form().has_errors() {
+                    return Task::none();
+                }
                 self.order_submit_error = None;
                 self.confirming_order = true;
             }
@@ -2668,6 +2858,11 @@ impl State for P2PPanel {
                 self.confirming_order = false;
             }
             P2PMessage::ConfirmOrder => {
+                // Final validation gate before sending to network
+                if self.validate_order_form().has_errors() {
+                    self.confirming_order = false;
+                    return Task::none();
+                }
                 self.confirming_order = false;
                 self.order_submitting = true;
                 self.order_submit_error = None;
@@ -2679,9 +2874,17 @@ impl State for P2PPanel {
                 });
             }
             P2PMessage::ClearForm => self.clear_create_form(),
-            P2PMessage::MostroNodeInfoReceived { currencies } => {
-                self.node_currencies = currencies;
-                self.rebuild_currency_combo();
+            P2PMessage::MostroNodeInfoReceived {
+                currencies,
+                min_order_sats,
+                max_order_sats,
+            } => {
+                if !currencies.is_empty() {
+                    self.node_currencies = currencies;
+                    self.rebuild_currency_combo();
+                }
+                self.node_min_order_sats = min_order_sats;
+                self.node_max_order_sats = max_order_sats;
             }
             P2PMessage::MostroOrdersReceived(mut orders) => {
                 // Patch is_mine for orders we created locally (handles race where
