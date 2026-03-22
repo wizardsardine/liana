@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use coincube_ui::{
@@ -117,6 +118,9 @@ pub struct P2PPanel {
     node_currencies: Vec<String>,
     // Order book state
     orders: Vec<P2POrder>,
+    /// Order IDs we created locally — used to ensure is_mine stays true even
+    /// if the subscription delivers the event before the session is persisted.
+    my_created_order_ids: HashSet<String>,
     buy_sell_filter: BuySellFilter,
     selected_order: Option<String>,
     // Trades state
@@ -174,6 +178,7 @@ impl P2PPanel {
             mnemonic,
             node_currencies: Vec::new(),
             orders: Vec::new(),
+            my_created_order_ids: HashSet::new(),
             buy_sell_filter: BuySellFilter::Sell,
             selected_order: None,
             trades: Vec::new(),
@@ -1833,39 +1838,21 @@ impl P2PPanel {
         let user_info_panel: Element<'_, view::Message> = if self.chat_show_user_info {
             let identity =
                 super::mostro::get_chat_identity_info(&cube_name, &self.mnemonic, &trade.id);
-            let cp_pubkey_short = identity
+            let cp_pubkey_full = identity
                 .counterparty_pubkey
                 .as_deref()
-                .map(|pk| {
-                    if pk.len() > 16 {
-                        format!("{}...{}", &pk[..8], &pk[pk.len() - 8..])
-                    } else {
-                        pk.to_string()
-                    }
-                })
-                .unwrap_or_else(|| "Unknown".to_string());
-            let our_pubkey_short = identity
+                .unwrap_or("Unknown")
+                .to_string();
+            let our_pubkey_full = identity
                 .our_trade_pubkey
                 .as_deref()
-                .map(|pk| {
-                    if pk.len() > 16 {
-                        format!("{}...{}", &pk[..8], &pk[pk.len() - 8..])
-                    } else {
-                        pk.to_string()
-                    }
-                })
-                .unwrap_or_else(|| "Unknown".to_string());
-            let shared_key_short = identity
+                .unwrap_or("Unknown")
+                .to_string();
+            let shared_key_full = identity
                 .shared_key
                 .as_deref()
-                .map(|pk| {
-                    if pk.len() > 16 {
-                        format!("{}...{}", &pk[..8], &pk[pk.len() - 8..])
-                    } else {
-                        pk.to_string()
-                    }
-                })
-                .unwrap_or_else(|| "Not available".to_string());
+                .unwrap_or("Not available")
+                .to_string();
 
             container(
                 column![
@@ -1874,7 +1861,7 @@ impl P2PPanel {
                         icon::person_icon().style(theme::text::secondary),
                         column![
                             p2_regular("Peer Public Key").style(theme::text::secondary),
-                            p2_bold(cp_pubkey_short),
+                            p2_bold(cp_pubkey_full),
                         ]
                         .spacing(2),
                     ]
@@ -1885,7 +1872,7 @@ impl P2PPanel {
                         icon::key_icon().style(theme::text::secondary),
                         column![
                             p2_regular("Your Trade Key").style(theme::text::secondary),
-                            p2_bold(our_pubkey_short),
+                            p2_bold(our_pubkey_full),
                         ]
                         .spacing(2),
                     ]
@@ -1896,7 +1883,7 @@ impl P2PPanel {
                         icon::lock_icon().style(theme::text::secondary),
                         column![
                             p2_regular("Shared Key").style(theme::text::secondary),
-                            p2_bold(shared_key_short),
+                            p2_bold(shared_key_full),
                         ]
                         .spacing(2),
                     ]
@@ -2682,7 +2669,16 @@ impl State for P2PPanel {
                 self.node_currencies = currencies;
                 self.rebuild_currency_combo();
             }
-            P2PMessage::MostroOrdersReceived(orders) => self.orders = orders,
+            P2PMessage::MostroOrdersReceived(mut orders) => {
+                // Patch is_mine for orders we created locally (handles race where
+                // the subscription delivers the event before the session is persisted)
+                for order in &mut orders {
+                    if self.my_created_order_ids.contains(&order.id) {
+                        order.is_mine = true;
+                    }
+                }
+                self.orders = orders;
+            }
             P2PMessage::MostroTradesReceived(trades) => self.trades = trades,
             P2PMessage::BuySellFilterChanged(filter) => self.buy_sell_filter = filter,
             P2PMessage::TradeFilterChanged(filter) => {
@@ -2759,6 +2755,12 @@ impl State for P2PPanel {
                     Ok(resp) => {
                         let super::mostro::OrderSubmitResponse::Success { order_id } = resp;
                         tracing::info!("Order created: {}", order_id);
+                        // Track this order ID so we always mark it as ours, even if
+                        // the subscription delivered the event before the session was saved.
+                        self.my_created_order_ids.insert(order_id.clone());
+                        if let Some(order) = self.orders.iter_mut().find(|o| o.id == order_id) {
+                            order.is_mine = true;
+                        }
                         self.clear_create_form();
                         return Task::done(Message::View(view::Message::ShowSuccess(format!(
                             "Order created successfully ({})",

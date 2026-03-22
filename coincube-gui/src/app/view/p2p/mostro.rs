@@ -13,7 +13,7 @@ use super::components::{OrderType, P2POrder, P2PTrade};
 use crate::app::view::message::P2PMessage;
 use crate::app::{message::Message, view};
 
-const FETCH_INTERVAL_SECS: u64 = 10;
+const FETCH_INTERVAL_SECS: u64 = 60; // Fallback polling; primary updates via subscription
 const ORDER_LOOKBACK_SECS: u64 = 48 * 3600; // 48 hours, same as mobile
 const MOSTRO_INFO_EVENT_KIND: u16 = 38385;
 
@@ -1626,55 +1626,40 @@ fn format_time_ago(timestamp: u64) -> String {
     }
 }
 
-/// Fetch orders from the Mostro relay. Returns parsed pending orders.
-async fn fetch_mostro_orders(
-    client: &Client,
-    mostro_pubkey: PublicKey,
-    cube_name: &str,
-) -> Vec<P2POrder> {
-    if !has_connected_relay(client).await {
-        return Vec::new();
-    }
-    let since = Timestamp::from(chrono::Utc::now().timestamp() as u64 - ORDER_LOOKBACK_SECS);
-    let filter = Filter::new()
-        .author(mostro_pubkey)
-        .kind(Kind::Custom(38383))
-        .since(since);
-
-    let events = match client.fetch_events(filter, Duration::from_secs(15)).await {
-        Ok(events) => events,
-        Err(e) => {
-            tracing::error!("Failed to fetch Mostro events: {}", e);
-            return Vec::new();
-        }
+/// Process a single kind-38383 order event and update the in-memory cache.
+/// Returns true if the cache was modified (caller should emit updated order list).
+fn process_order_event(
+    event: &nostr_sdk::Event,
+    order_cache: &mut BTreeMap<String, (u64, mostro_core::order::SmallOrder, RatingInfo)>,
+) -> bool {
+    let (order, rating) = order_from_tags(&event.tags);
+    let order_id = match &order.id {
+        Some(id) => id.to_string(),
+        None => return false,
     };
 
-    // Deduplicate by order ID, keeping the latest event per UUID.
-    let mut latest_events: BTreeMap<String, (u64, mostro_core::order::SmallOrder, RatingInfo)> =
-        BTreeMap::new();
+    let created_at = event.created_at.as_u64();
 
-    for event in events.iter() {
-        let (order, rating) = order_from_tags(&event.tags);
-
-        // Only keep pending orders
-        if order.status != Some(mostro_core::order::Status::Pending) {
-            continue;
-        }
-
-        let order_id = match &order.id {
-            Some(id) => id.to_string(),
-            None => continue,
-        };
-
-        let created_at = event.created_at.as_u64();
-        match latest_events.get(&order_id) {
-            Some((existing_ts, _, _)) if *existing_ts >= created_at => {}
-            _ => {
-                latest_events.insert(order_id, (created_at, order, rating));
-            }
-        }
+    // Non-pending orders: remove from cache (order was taken/canceled/etc)
+    if order.status != Some(mostro_core::order::Status::Pending) {
+        return order_cache.remove(&order_id).is_some();
     }
 
+    // Only update if this event is newer
+    if let Some((existing_ts, _, _)) = order_cache.get(&order_id) {
+        if *existing_ts >= created_at {
+            return false;
+        }
+    }
+    order_cache.insert(order_id, (created_at, order, rating));
+    true
+}
+
+/// Build a Vec<P2POrder> from the in-memory order cache.
+fn orders_from_cache(
+    order_cache: &BTreeMap<String, (u64, mostro_core::order::SmallOrder, RatingInfo)>,
+    cube_name: &str,
+) -> Vec<P2POrder> {
     let sessions = load_data(cube_name).trades;
     let my_order_ids: HashSet<&str> = sessions
         .iter()
@@ -1682,10 +1667,10 @@ async fn fetch_mostro_orders(
         .map(|s| s.order_id.as_str())
         .collect();
 
-    let mut orders: Vec<P2POrder> = latest_events
-        .into_values()
+    let mut orders: Vec<P2POrder> = order_cache
+        .values()
         .filter_map(|(created_at, order, rating)| {
-            let mut p2p = small_order_to_p2p_order(&order, &rating, created_at)?;
+            let mut p2p = small_order_to_p2p_order(order, rating, *created_at)?;
             p2p.is_mine = my_order_ids.contains(p2p.id.as_str());
             Some(p2p)
         })
@@ -1916,6 +1901,23 @@ fn mostro_stream(
                 }
             }
 
+            // Subscribe to order book events (kind 38383) for real-time updates
+            let order_since =
+                Timestamp::from(chrono::Utc::now().timestamp() as u64 - ORDER_LOOKBACK_SECS);
+            let order_filter = Filter::new()
+                .author(mostro_pk)
+                .kind(Kind::Custom(38383))
+                .since(order_since);
+            if let Err(e) = client.subscribe(order_filter, None).await {
+                tracing::warn!("Failed to subscribe to order events: {e}");
+            }
+
+            // In-memory cache of the latest order events, keyed by order UUID
+            let mut order_cache: BTreeMap<
+                String,
+                (u64, mostro_core::order::SmallOrder, RatingInfo),
+            > = BTreeMap::new();
+
             // Initial subscription + historical DM catch-up (silent)
             update_dm_subscriptions(
                 &client,
@@ -1936,8 +1938,23 @@ fn mostro_stream(
             )
             .await;
 
-            // Initial order/trade fetch
-            let orders = fetch_mostro_orders(&client, mostro_pk, &cube_name).await;
+            // Initial order fetch — populates cache + emits to UI
+            {
+                let since =
+                    Timestamp::from(chrono::Utc::now().timestamp() as u64 - ORDER_LOOKBACK_SECS);
+                let filter = Filter::new()
+                    .author(mostro_pk)
+                    .kind(Kind::Custom(38383))
+                    .since(since);
+                if has_connected_relay(&client).await {
+                    if let Ok(events) = client.fetch_events(filter, Duration::from_secs(15)).await {
+                        for event in events.iter() {
+                            process_order_event(&event, &mut order_cache);
+                        }
+                    }
+                }
+            }
+            let orders = orders_from_cache(&order_cache, &cube_name);
             let _ = output
                 .send(Message::View(view::Message::P2P(
                     P2PMessage::MostroOrdersReceived(orders),
@@ -1950,20 +1967,32 @@ fn mostro_stream(
                 )))
                 .await;
 
-            // Real-time loop: listen for DM notifications + periodic order/trade fetch
+            // Real-time loop: listen for order + DM notifications, periodic trade fetch
             let mut notifications = client.notifications();
             loop {
                 let deadline =
                     tokio::time::Instant::now() + Duration::from_secs(FETCH_INTERVAL_SECS);
-                // Process real-time DM notifications until the fetch timer fires
+                // Process real-time notifications until the periodic timer fires
                 loop {
                     tokio::select! {
                         result = notifications.recv() => {
                             if let Ok(RelayPoolNotification::Event { event, .. }) = result {
-                                if event.kind == nostr_sdk::Kind::GiftWrap
+                                // Real-time order book updates (kind 38383)
+                                if event.kind == nostr_sdk::Kind::Custom(38383) {
+                                    if process_order_event(&event, &mut order_cache) {
+                                        let orders = orders_from_cache(&order_cache, &cube_name);
+                                        let _ = output
+                                            .send(Message::View(view::Message::P2P(
+                                                P2PMessage::MostroOrdersReceived(orders),
+                                            )))
+                                            .await;
+                                    }
+                                }
+                                // Real-time DM notifications (kind 1059 gift wrap)
+                                else if event.kind == nostr_sdk::Kind::GiftWrap
                                     && !seen_dm_event_ids.contains(&event.id)
                                 {
-                                    process_dm_event(
+                                    let new_cp = process_dm_event(
                                         &event,
                                         &cube_name,
                                         &mnemonic,
@@ -1972,6 +2001,17 @@ fn mostro_stream(
                                         &mut output,
                                     )
                                     .await;
+                                    // New counterparty discovered — immediately subscribe
+                                    // to the shared chat key for real-time P2P messages.
+                                    if new_cp {
+                                        update_dm_subscriptions(
+                                            &client,
+                                            &cube_name,
+                                            &mnemonic,
+                                            &mut subscribed_trade_pubkeys,
+                                        )
+                                        .await;
+                                    }
                                 }
                             }
                         }
@@ -1997,7 +2037,22 @@ fn mostro_stream(
                 )
                 .await;
 
-                let orders = fetch_mostro_orders(&client, mostro_pk, &cube_name).await;
+                // Fallback: refresh order cache from a full fetch
+                if has_connected_relay(&client).await {
+                    let since = Timestamp::from(
+                        chrono::Utc::now().timestamp() as u64 - ORDER_LOOKBACK_SECS,
+                    );
+                    let filter = Filter::new()
+                        .author(mostro_pk)
+                        .kind(Kind::Custom(38383))
+                        .since(since);
+                    if let Ok(events) = client.fetch_events(filter, Duration::from_secs(15)).await {
+                        for event in events.iter() {
+                            process_order_event(&event, &mut order_cache);
+                        }
+                    }
+                }
+                let orders = orders_from_cache(&order_cache, &cube_name);
                 let _ = output
                     .send(Message::View(view::Message::P2P(
                         P2PMessage::MostroOrdersReceived(orders),
@@ -2276,6 +2331,8 @@ async fn process_dm_notifications(
 }
 
 /// Process a single incoming DM event in real-time (never silent).
+/// Returns true if a new counterparty pubkey was discovered (caller should
+/// update DM subscriptions to pick up the shared chat key).
 async fn process_dm_event(
     event: &nostr_sdk::Event,
     cube_name: &str,
@@ -2283,7 +2340,7 @@ async fn process_dm_event(
     mostro_pubkey: PublicKey,
     seen_event_ids: &mut HashSet<nostr_sdk::EventId>,
     output: &mut iced::futures::channel::mpsc::Sender<Message>,
-) {
+) -> bool {
     let sessions = load_data(cube_name).trades;
     let session_keys: Vec<(TradeSession, Keys)> = sessions
         .iter()
@@ -2293,6 +2350,8 @@ async fn process_dm_event(
                 .map(|k| (s.clone(), k))
         })
         .collect();
+
+    let mut new_counterparty = false;
 
     for (session, keys) in &session_keys {
         let our_trade_hex = keys.public_key().to_hex();
@@ -2335,11 +2394,15 @@ async fn process_dm_event(
                     seen_event_ids.insert(event.id);
 
                     if inner.action == mostro_core::message::Action::CantDo {
-                        return;
+                        return false;
                     }
 
                     if let Some(mostro_core::message::Payload::Order(ref order)) = inner.payload {
                         if let Some(cp_pk) = extract_counterparty_pubkey(order, &our_trade_hex) {
+                            // Check if this is actually new
+                            if session.counterparty_trade_pubkey.as_deref() != Some(&cp_pk) {
+                                new_counterparty = true;
+                            }
                             set_counterparty_pubkey(cube_name, &session.order_id, &cp_pk);
                         }
                     }
@@ -2363,7 +2426,7 @@ async fn process_dm_event(
                     }));
                     let _ = output.send(update_msg).await;
                 }
-                return;
+                return new_counterparty;
             }
         }
 
@@ -2413,9 +2476,10 @@ async fn process_dm_event(
                         payload_json,
                     }));
                     let _ = output.send(update_msg).await;
-                    return;
+                    return false;
                 }
             }
         }
     }
+    false
 }
