@@ -2472,6 +2472,7 @@ impl State for P2PPanel {
                                     container(order_detail(order, take_state))
                                         .padding([0, 20])
                                         .width(Length::Fill),
+                                    Space::new().height(Length::Fixed(40.0)),
                                 ]
                                 .spacing(16)
                                 .width(Length::FillPortion(8))
@@ -2555,6 +2556,7 @@ impl State for P2PPanel {
                                     .padding([0, 20]),
                                 )
                             },
+                            Space::new().height(Length::Fixed(40.0)),
                         ]
                         .spacing(16),
                     );
@@ -2650,6 +2652,7 @@ impl State for P2PPanel {
                                     container(self.trade_detail_view(trade))
                                         .padding([0, 20])
                                         .width(Length::Fill),
+                                    Space::new().height(Length::Fixed(40.0)),
                                 ]
                                 .spacing(16),
                             );
@@ -2692,6 +2695,7 @@ impl State for P2PPanel {
                                         .padding([0, 20]),
                                 )
                             },
+                            Space::new().height(Length::Fixed(40.0)),
                         ]
                         .spacing(16),
                     )
@@ -2714,6 +2718,7 @@ impl State for P2PPanel {
                             container(self.create_order_view())
                                 .padding([0, 20])
                                 .width(Length::Fill),
+                            Space::new().height(Length::Fixed(40.0)),
                         ]
                         .spacing(16),
                     );
@@ -2744,6 +2749,7 @@ impl State for P2PPanel {
                         container(self.mostro_settings_view())
                             .padding([0, 20])
                             .width(Length::Fill),
+                        Space::new().height(Length::Fixed(40.0)),
                     ]
                     .spacing(16),
                 ),
