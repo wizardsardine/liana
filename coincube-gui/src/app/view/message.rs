@@ -461,6 +461,47 @@ pub enum ConnectMessage {
     LightningAddressLoaded(Option<crate::services::coincube::LightningAddress>),
     CopyToClipboard(String),
     Error(String),
+    // Avatar
+    Avatar(AvatarMessage),
+}
+
+#[derive(Debug, Clone)]
+pub enum AvatarMessage {
+    /// Enter the Avatar sub-menu — triggers GET /avatar load.
+    Enter,
+    /// Result of GET /api/v1/connect/avatar.
+    Loaded(Result<crate::services::coincube::GetAvatarData, String>),
+    /// Navigate to a specific avatar flow step.
+    SetStep(crate::app::state::connect::AvatarFlowStep),
+    // Questionnaire field changes
+    GenderChanged(crate::services::coincube::AvatarGender),
+    ArchetypeChanged(crate::services::coincube::AvatarArchetype),
+    AgeFeelChanged(crate::services::coincube::AvatarAgeFeel),
+    DemeanorChanged(crate::services::coincube::AvatarDemeanor),
+    ArmorStyleChanged(crate::services::coincube::AvatarArmorStyle),
+    AccentMotifChanged(crate::services::coincube::AvatarAccentMotif),
+    LaserEyesToggled(bool),
+    /// Submit the questionnaire — triggers POST /avatar/generate.
+    Generate,
+    /// Result of POST /api/v1/connect/avatar/generate.
+    GenerateComplete(Result<crate::services::coincube::AvatarGenerateData, String>),
+    /// User picks a variant from the gallery.
+    SelectVariant(u64),
+    /// Result of POST /api/v1/connect/avatar/select.
+    VariantSelected(Result<crate::services::coincube::AvatarSelectData, String>),
+    /// Result of GET /api/v1/connect/avatar/regenerations.
+    RegenerationsLoaded(Result<crate::services::coincube::RegenerationData, String>),
+    /// PNG bytes fetched for a variant.
+    ImageLoaded {
+        variant_id: u64,
+        result: Result<Vec<u8>, String>,
+    },
+    /// Retry after a generation error.
+    Retry,
+    /// User pressed Download — save active variant PNG to disk.
+    DownloadAvatar,
+    /// No-op — used as a return message for tasks that don't need state changes.
+    Noop,
 }
 
 #[derive(Debug, Clone)]

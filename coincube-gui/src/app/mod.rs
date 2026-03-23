@@ -873,6 +873,15 @@ impl App {
                     self.panels.current = menu;
                     return security_task;
                 }
+                // Trigger avatar load on demand
+                if matches!(submenu, menu::ConnectSubMenu::Avatar) {
+                    self.panels.current = menu;
+                    return iced::Task::done(Message::View(crate::app::view::Message::Connect(
+                        crate::app::view::ConnectMessage::Avatar(
+                            crate::app::view::AvatarMessage::Enter,
+                        ),
+                    )));
+                }
             }
             menu::Menu::Liquid(_submenu) => {
                 // Liquid transaction preselection is handled via PreselectPayment message

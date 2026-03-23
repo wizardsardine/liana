@@ -675,6 +675,25 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<
                 .width(Length::Fill)
             };
 
+        let connect_avatar_button = if matches!(menu, Menu::Connect(ConnectSubMenu::Avatar)) {
+            row!(
+                Space::new().width(Length::Fixed(20.0)),
+                button::menu_active(Some(coins_icon()), "Avatar")
+                    .on_press(Message::Reload)
+                    .width(iced::Length::Fill),
+                menu_bar_highlight()
+            )
+            .width(Length::Fill)
+        } else {
+            row!(
+                Space::new().width(Length::Fixed(20.0)),
+                button::menu(Some(coins_icon()), "Avatar")
+                    .on_press(Message::Menu(Menu::Connect(ConnectSubMenu::Avatar)))
+                    .width(iced::Length::Fill),
+            )
+            .width(Length::Fill)
+        };
+
         let connect_plan_button = if matches!(menu, Menu::Connect(ConnectSubMenu::PlanBilling)) {
             row!(
                 Space::new().width(Length::Fixed(20.0)),
@@ -754,6 +773,7 @@ pub fn sidebar<'a>(menu: &Menu, cache: &'a Cache, has_vault: bool) -> Container<
         menu_column = menu_column
             .push(connect_overview_button)
             .push(connect_ln_address_button)
+            .push(connect_avatar_button)
             .push(connect_plan_button)
             .push(connect_security_button)
             .push(connect_duress_button)

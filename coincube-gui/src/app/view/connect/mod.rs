@@ -10,10 +10,13 @@ use iced::{widget::container, Alignment, Length};
 use crate::{
     app::{
         menu::ConnectSubMenu,
-        state::connect::{ConnectFlowStep, ConnectPanel},
-        view::ConnectMessage,
+        state::connect::{AvatarFlowStep, ConnectFlowStep, ConnectPanel},
+        view::{AvatarMessage, ConnectMessage},
     },
-    services::coincube::PlanTier,
+    services::coincube::{
+        AvatarAccentMotif, AvatarAgeFeel, AvatarArchetype, AvatarArmorStyle, AvatarDemeanor,
+        AvatarGender, PlanTier,
+    },
 };
 
 pub fn connect_panel<'a>(state: &'a ConnectPanel) -> Element<'a, ConnectMessage> {
@@ -44,6 +47,7 @@ pub fn connect_panel<'a>(state: &'a ConnectPanel) -> Element<'a, ConnectMessage>
         ConnectFlowStep::Dashboard => match &state.active_sub {
             ConnectSubMenu::Overview => overview_ux(state),
             ConnectSubMenu::LightningAddress => lightning_address_ux(state),
+            ConnectSubMenu::Avatar => avatar_ux(state),
             ConnectSubMenu::PlanBilling => plan_billing_ux(state),
             ConnectSubMenu::Security => security_ux(state),
             ConnectSubMenu::Duress => duress_ux(),
@@ -316,7 +320,7 @@ fn overview_ux<'a>(state: &'a ConnectPanel) -> Element<'a, ConnectMessage> {
                     )
                     .push(iced::widget::Space::new().height(Length::Fixed(20.0)))
                     .push(
-                        button::secondary(Some(cross_icon()), "Sign Out")
+                        button::secondary( None,"Sign Out")
                             .on_press(ConnectMessage::LogOut),
                     )
                     .padding(20)
@@ -480,8 +484,9 @@ fn security_ux<'a>(state: &'a ConnectPanel) -> Element<'a, ConnectMessage> {
         Some(activity) => {
             let mut col = Column::new().spacing(6);
             for a in activity.iter().take(10) {
-                let status = if a.success { "✓" } else { "✗" };
-                let status_color = if a.success { color::ORANGE } else { color::RED };
+                let ok = a.success.unwrap_or(false);
+                let status = if ok { "✓" } else { "✗" };
+                let status_color = if ok { color::ORANGE } else { color::RED };
                 let ip = a.ip_address.as_deref().unwrap_or("unknown").to_string();
                 col = col.push(
                     Row::new()
@@ -704,6 +709,503 @@ fn duress_ux<'a>() -> Element<'a, ConnectMessage> {
         .spacing(0)
         .width(Length::Fill)
         .into()
+}
+
+fn avatar_ux<'a>(state: &'a ConnectPanel) -> Element<'a, ConnectMessage> {
+    let title = Row::new()
+        .push(text::h4_bold("Avatar").color(color::WHITE))
+        .push(iced::widget::Space::new().width(Length::Fill))
+        .align_y(Alignment::Center);
+
+    let body: Element<ConnectMessage> = match &state.avatar_step {
+        AvatarFlowStep::Idle | AvatarFlowStep::Questionnaire => avatar_questionnaire_ux(state),
+        AvatarFlowStep::Generating => container(
+            Column::new()
+                .push(text::p1_bold("Forging your identity…").color(color::ORANGE))
+                .push(iced::widget::Space::new().height(Length::Fixed(8.0)))
+                .push(
+                    text::p2_regular(
+                        "Generating your sumi-e avatar. This may take up to 30 seconds.",
+                    )
+                    .color(color::GREY_3),
+                )
+                .padding(24)
+                .spacing(4),
+        )
+        .style(|_| card_style())
+        .width(Length::Fill)
+        .into(),
+
+        AvatarFlowStep::Reveal | AvatarFlowStep::Settings => avatar_settings_ux(state),
+    };
+
+    if let Some(err) = state.avatar_error.as_deref() {
+        return Column::new()
+            .push(title)
+            .push(iced::widget::Space::new().height(Length::Fixed(15.0)))
+            .push(
+                container(
+                    Column::new()
+                        .push(text::p1_bold("Generation Failed").color(color::RED))
+                        .push(iced::widget::Space::new().height(Length::Fixed(8.0)))
+                        .push(text::p2_regular(err).color(color::GREY_3))
+                        .push(iced::widget::Space::new().height(Length::Fixed(16.0)))
+                        .push(
+                            button::primary(None, "Try Again")
+                                .on_press(ConnectMessage::Avatar(AvatarMessage::Retry)),
+                        )
+                        .padding(16)
+                        .spacing(4),
+                )
+                .style(|_| card_style())
+                .width(Length::Fill),
+            )
+            .spacing(0)
+            .width(Length::Fill)
+            .into();
+    }
+
+    Column::new()
+        .push(title)
+        .push(iced::widget::Space::new().height(Length::Fixed(15.0)))
+        .push(body)
+        .spacing(0)
+        .width(Length::Fill)
+        .into()
+}
+
+fn avatar_questionnaire_ux<'a>(state: &'a ConnectPanel) -> Element<'a, ConnectMessage> {
+    let draft = &state.avatar_draft;
+
+    let gender_row = Row::new()
+        .push(
+            text::p2_regular("Gender")
+                .color(color::GREY_3)
+                .width(Length::Fixed(110.0)),
+        )
+        .push(
+            if draft.gender == AvatarGender::Man {
+                button::primary(None, "Man")
+            } else {
+                button::secondary(None, "Man")
+            }
+            .on_press(ConnectMessage::Avatar(AvatarMessage::GenderChanged(
+                AvatarGender::Man,
+            ))),
+        )
+        .push(iced::widget::Space::new().width(Length::Fixed(8.0)))
+        .push(
+            if draft.gender == AvatarGender::Woman {
+                button::primary(None, "Woman")
+            } else {
+                button::secondary(None, "Woman")
+            }
+            .on_press(ConnectMessage::Avatar(AvatarMessage::GenderChanged(
+                AvatarGender::Woman,
+            ))),
+        )
+        .align_y(Alignment::Center);
+
+    let archetype_row = Row::new()
+        .push(
+            text::p2_regular("Archetype")
+                .color(color::GREY_3)
+                .width(Length::Fixed(110.0)),
+        )
+        .push(
+            if draft.archetype == AvatarArchetype::Ronin {
+                button::primary(None, "Ronin")
+            } else {
+                button::secondary(None, "Ronin")
+            }
+            .on_press(ConnectMessage::Avatar(AvatarMessage::ArchetypeChanged(
+                AvatarArchetype::Ronin,
+            ))),
+        )
+        .push(iced::widget::Space::new().width(Length::Fixed(8.0)))
+        .push(
+            if draft.archetype == AvatarArchetype::Samurai {
+                button::primary(None, "Samurai")
+            } else {
+                button::secondary(None, "Samurai")
+            }
+            .on_press(ConnectMessage::Avatar(AvatarMessage::ArchetypeChanged(
+                AvatarArchetype::Samurai,
+            ))),
+        )
+        .push(iced::widget::Space::new().width(Length::Fixed(8.0)))
+        .push(
+            if draft.archetype == AvatarArchetype::Shogun {
+                button::primary(None, "Shogun")
+            } else {
+                button::secondary(None, "Shogun")
+            }
+            .on_press(ConnectMessage::Avatar(AvatarMessage::ArchetypeChanged(
+                AvatarArchetype::Shogun,
+            ))),
+        )
+        .align_y(Alignment::Center);
+
+    let age_row = Row::new()
+        .push(
+            text::p2_regular("Age Feel")
+                .color(color::GREY_3)
+                .width(Length::Fixed(110.0)),
+        )
+        .push(
+            if draft.age_feel == AvatarAgeFeel::Young {
+                button::primary(None, "Young")
+            } else {
+                button::secondary(None, "Young")
+            }
+            .on_press(ConnectMessage::Avatar(AvatarMessage::AgeFeelChanged(
+                AvatarAgeFeel::Young,
+            ))),
+        )
+        .push(iced::widget::Space::new().width(Length::Fixed(8.0)))
+        .push(
+            if draft.age_feel == AvatarAgeFeel::Mature {
+                button::primary(None, "Mature")
+            } else {
+                button::secondary(None, "Mature")
+            }
+            .on_press(ConnectMessage::Avatar(AvatarMessage::AgeFeelChanged(
+                AvatarAgeFeel::Mature,
+            ))),
+        )
+        .push(iced::widget::Space::new().width(Length::Fixed(8.0)))
+        .push(
+            if draft.age_feel == AvatarAgeFeel::Elder {
+                button::primary(None, "Elder")
+            } else {
+                button::secondary(None, "Elder")
+            }
+            .on_press(ConnectMessage::Avatar(AvatarMessage::AgeFeelChanged(
+                AvatarAgeFeel::Elder,
+            ))),
+        )
+        .align_y(Alignment::Center);
+
+    let demeanor_row = Row::new()
+        .push(
+            text::p2_regular("Demeanor")
+                .color(color::GREY_3)
+                .width(Length::Fixed(110.0)),
+        )
+        .push(
+            if draft.demeanor == AvatarDemeanor::Calm {
+                button::primary(None, "Calm")
+            } else {
+                button::secondary(None, "Calm")
+            }
+            .on_press(ConnectMessage::Avatar(AvatarMessage::DemeanorChanged(
+                AvatarDemeanor::Calm,
+            ))),
+        )
+        .push(iced::widget::Space::new().width(Length::Fixed(8.0)))
+        .push(
+            if draft.demeanor == AvatarDemeanor::Fierce {
+                button::primary(None, "Fierce")
+            } else {
+                button::secondary(None, "Fierce")
+            }
+            .on_press(ConnectMessage::Avatar(AvatarMessage::DemeanorChanged(
+                AvatarDemeanor::Fierce,
+            ))),
+        )
+        .push(iced::widget::Space::new().width(Length::Fixed(8.0)))
+        .push(
+            if draft.demeanor == AvatarDemeanor::Mysterious {
+                button::primary(None, "Mysterious")
+            } else {
+                button::secondary(None, "Mysterious")
+            }
+            .on_press(ConnectMessage::Avatar(AvatarMessage::DemeanorChanged(
+                AvatarDemeanor::Mysterious,
+            ))),
+        )
+        .align_y(Alignment::Center);
+
+    let armor_row = Row::new()
+        .push(
+            text::p2_regular("Armor")
+                .color(color::GREY_3)
+                .width(Length::Fixed(110.0)),
+        )
+        .push(
+            if draft.armor_style == AvatarArmorStyle::Light {
+                button::primary(None, "Light")
+            } else {
+                button::secondary(None, "Light")
+            }
+            .on_press(ConnectMessage::Avatar(AvatarMessage::ArmorStyleChanged(
+                AvatarArmorStyle::Light,
+            ))),
+        )
+        .push(iced::widget::Space::new().width(Length::Fixed(8.0)))
+        .push(
+            if draft.armor_style == AvatarArmorStyle::Standard {
+                button::primary(None, "Standard")
+            } else {
+                button::secondary(None, "Standard")
+            }
+            .on_press(ConnectMessage::Avatar(AvatarMessage::ArmorStyleChanged(
+                AvatarArmorStyle::Standard,
+            ))),
+        )
+        .push(iced::widget::Space::new().width(Length::Fixed(8.0)))
+        .push(
+            if draft.armor_style == AvatarArmorStyle::Heavy {
+                button::primary(None, "Heavy")
+            } else {
+                button::secondary(None, "Heavy")
+            }
+            .on_press(ConnectMessage::Avatar(AvatarMessage::ArmorStyleChanged(
+                AvatarArmorStyle::Heavy,
+            ))),
+        )
+        .align_y(Alignment::Center);
+
+    let motif_row = Row::new()
+        .push(
+            text::p2_regular("Accent")
+                .color(color::GREY_3)
+                .width(Length::Fixed(110.0)),
+        )
+        .push(
+            if draft.accent_motif == AvatarAccentMotif::OrangeSun {
+                button::primary(None, "Sun")
+            } else {
+                button::secondary(None, "Sun")
+            }
+            .on_press(ConnectMessage::Avatar(AvatarMessage::AccentMotifChanged(
+                AvatarAccentMotif::OrangeSun,
+            ))),
+        )
+        .push(iced::widget::Space::new().width(Length::Fixed(8.0)))
+        .push(
+            if draft.accent_motif == AvatarAccentMotif::Splatter {
+                button::primary(None, "Splatter")
+            } else {
+                button::secondary(None, "Splatter")
+            }
+            .on_press(ConnectMessage::Avatar(AvatarMessage::AccentMotifChanged(
+                AvatarAccentMotif::Splatter,
+            ))),
+        )
+        .push(iced::widget::Space::new().width(Length::Fixed(8.0)))
+        .push(
+            if draft.accent_motif == AvatarAccentMotif::Seal {
+                button::primary(None, "Seal")
+            } else {
+                button::secondary(None, "Seal")
+            }
+            .on_press(ConnectMessage::Avatar(AvatarMessage::AccentMotifChanged(
+                AvatarAccentMotif::Seal,
+            ))),
+        )
+        .push(iced::widget::Space::new().width(Length::Fixed(8.0)))
+        .push(
+            if draft.accent_motif == AvatarAccentMotif::Calligraphy {
+                button::primary(None, "Calligraphy")
+            } else {
+                button::secondary(None, "Calligraphy")
+            }
+            .on_press(ConnectMessage::Avatar(AvatarMessage::AccentMotifChanged(
+                AvatarAccentMotif::Calligraphy,
+            ))),
+        )
+        .align_y(Alignment::Center);
+
+    let laser_row = Row::new()
+        .push(
+            text::p2_regular("Laser Eyes")
+                .color(color::GREY_3)
+                .width(Length::Fixed(110.0)),
+        )
+        .push(
+            if draft.laser_eyes {
+                button::primary(None, "On")
+            } else {
+                button::secondary(None, "Off")
+            }
+            .on_press(ConnectMessage::Avatar(AvatarMessage::LaserEyesToggled(
+                !draft.laser_eyes,
+            ))),
+        )
+        .align_y(Alignment::Center);
+
+    let has_ln = state.lightning_address.is_some();
+    let generate_btn = if has_ln {
+        button::primary(None, "Generate Avatar")
+            .on_press(ConnectMessage::Avatar(AvatarMessage::Generate))
+    } else {
+        button::primary(None, "Set Lightning Address First")
+    };
+
+    container(
+        Column::new()
+            .push(text::p1_bold("Choose Your Traits").color(color::WHITE))
+            .push(iced::widget::Space::new().height(Length::Fixed(4.0)))
+            .push(text::p2_regular("Your selections, combined with a hash of your Lightning address, create your unique avatar.").color(color::GREY_3))
+            .push(iced::widget::Space::new().height(Length::Fixed(16.0)))
+            .push(gender_row)
+            .push(iced::widget::Space::new().height(Length::Fixed(10.0)))
+            .push(archetype_row)
+            .push(iced::widget::Space::new().height(Length::Fixed(10.0)))
+            .push(age_row)
+            .push(iced::widget::Space::new().height(Length::Fixed(10.0)))
+            .push(demeanor_row)
+            .push(iced::widget::Space::new().height(Length::Fixed(10.0)))
+            .push(armor_row)
+            .push(iced::widget::Space::new().height(Length::Fixed(10.0)))
+            .push(motif_row)
+            .push(iced::widget::Space::new().height(Length::Fixed(10.0)))
+            .push(laser_row)
+            .push(iced::widget::Space::new().height(Length::Fixed(20.0)))
+            .push(generate_btn)
+            .padding(16)
+            .spacing(0),
+    )
+    .style(|_| card_style())
+    .width(Length::Fill)
+    .into()
+}
+
+fn avatar_settings_ux<'a>(state: &'a ConnectPanel) -> Element<'a, ConnectMessage> {
+    let Some(ref data) = state.avatar_data else {
+        return container(text::p2_regular("Loading avatar data…").color(color::GREY_3))
+            .padding(16)
+            .style(|_| card_style())
+            .width(Length::Fill)
+            .into();
+    };
+
+    let active_url = data.active_avatar_url.as_deref().unwrap_or("");
+
+    // Active avatar image
+    let active_id = data
+        .variants
+        .iter()
+        .find(|v| active_url.ends_with(&v.id.to_string()))
+        .map(|v| v.id);
+
+    let image_widget: Element<ConnectMessage> = if let Some(id) = active_id {
+        if let Some((_, handle)) = state.avatar_image_cache.get(&id) {
+            iced::widget::image(handle.clone())
+                .width(Length::Fixed(200.0))
+                .height(Length::Fixed(200.0))
+                .into()
+        } else {
+            text::p2_regular("Loading image…")
+                .color(color::GREY_3)
+                .into()
+        }
+    } else {
+        text::p2_regular("No active variant")
+            .color(color::GREY_3)
+            .into()
+    };
+
+    let archetype_upper: String = data
+        .identity
+        .as_ref()
+        .map(|i| i.archetype.as_str().to_uppercase())
+        .unwrap_or_default();
+
+    let regen_remaining = data.regenerations_remaining;
+    let regen_text: String = if regen_remaining == -1 {
+        "Regenerations: Unlimited".to_string()
+    } else {
+        format!("Regenerations remaining: {}", regen_remaining)
+    };
+
+    // Variant thumbnails row
+    let variant_row: Element<ConnectMessage> = if data.variants.len() > 1 {
+        let mut row = Row::new().spacing(8);
+        for v in &data.variants {
+            let is_active = active_url.ends_with(&v.id.to_string());
+            let vid = v.id;
+            let thumb: Element<ConnectMessage> =
+                if let Some((_, handle)) = state.avatar_image_cache.get(&vid) {
+                    let img = iced::widget::image(handle.clone())
+                        .width(Length::Fixed(60.0))
+                        .height(Length::Fixed(60.0));
+                    if is_active {
+                        container(img)
+                            .style(|_| container::Style {
+                                border: iced::Border {
+                                    color: color::ORANGE,
+                                    width: 2.0,
+                                    radius: 4.0.into(),
+                                },
+                                ..Default::default()
+                            })
+                            .into()
+                    } else {
+                        iced::widget::button(img)
+                            .on_press(ConnectMessage::Avatar(AvatarMessage::SelectVariant(vid)))
+                            .style(|_, _| iced::widget::button::Style::default())
+                            .into()
+                    }
+                } else {
+                    iced::widget::button(
+                        container(text::p2_regular("…").color(color::GREY_3))
+                            .width(Length::Fixed(60.0))
+                            .height(Length::Fixed(60.0))
+                            .align_x(Alignment::Center)
+                            .align_y(Alignment::Center)
+                            .style(|_| card_style()),
+                    )
+                    .on_press(ConnectMessage::Avatar(AvatarMessage::SelectVariant(vid)))
+                    .style(|_, _| iced::widget::button::Style::default())
+                    .into()
+                };
+            row = row.push(thumb);
+        }
+        row.into()
+    } else {
+        iced::widget::Space::new().height(Length::Fixed(0.0)).into()
+    };
+
+    let regen_btn = if regen_remaining == 0 {
+        button::primary(None, "No Regenerations Remaining")
+    } else {
+        button::primary(None, "Regenerate Avatar").on_press(ConnectMessage::Avatar(
+            AvatarMessage::SetStep(AvatarFlowStep::Questionnaire),
+        ))
+    };
+
+    let download_btn = button::secondary(None, "Download PNG")
+        .on_press(ConnectMessage::Avatar(AvatarMessage::DownloadAvatar));
+
+    container(
+        Column::new()
+            .push(
+                Row::new()
+                    .push(image_widget)
+                    .push(iced::widget::Space::new().width(Length::Fixed(16.0)))
+                    .push(
+                        Column::new()
+                            .push(text::p1_bold(archetype_upper).color(color::ORANGE))
+                            .push(iced::widget::Space::new().height(Length::Fixed(4.0)))
+                            .push(text::p2_regular(regen_text).color(color::GREY_3))
+                            .push(iced::widget::Space::new().height(Length::Fixed(16.0)))
+                            .push(regen_btn)
+                            .push(iced::widget::Space::new().height(Length::Fixed(8.0)))
+                            .push(download_btn)
+                            .spacing(0),
+                    )
+                    .align_y(Alignment::Start),
+            )
+            .push(iced::widget::Space::new().height(Length::Fixed(16.0)))
+            .push(variant_row)
+            .padding(16)
+            .spacing(0),
+    )
+    .style(|_| card_style())
+    .width(Length::Fill)
+    .into()
 }
 
 fn invites_ux<'a>(state: &'a ConnectPanel) -> Element<'a, ConnectMessage> {

@@ -3,6 +3,18 @@ use serde::{Deserialize, Serialize};
 pub mod client;
 pub use client::CoincubeClient;
 
+/// Matches `{"success":false,"error":{"code":"...","message":"..."}}` error bodies
+/// returned by the coincube-api on non-2xx responses.
+#[derive(Debug, Deserialize)]
+struct ApiErrorBody {
+    message: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ApiErrorEnvelope {
+    error: ApiErrorBody,
+}
+
 #[derive(Debug)]
 pub enum CoincubeError {
     Network(reqwest::Error),
@@ -40,7 +52,13 @@ impl std::fmt::Display for CoincubeError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             CoincubeError::Network(msg) => write!(f, "Network error: {:?}", msg),
-            CoincubeError::Unsuccessful(e) => write!(f, "{}", e.text),
+            CoincubeError::Unsuccessful(e) => {
+                if let Ok(env) = serde_json::from_str::<ApiErrorEnvelope>(&e.text) {
+                    write!(f, "{}", env.error.message)
+                } else {
+                    write!(f, "{}", e.text)
+                }
+            }
             CoincubeError::Api(msg) => write!(f, "API error: {}", msg),
             CoincubeError::Parse(msg) => write!(f, "Parse error: {}", msg),
             CoincubeError::SseError(e) => write!(f, "SSE Error: {}", e),
@@ -211,7 +229,7 @@ pub struct LoginActivity {
     pub ip_address: Option<String>,
     pub user_agent: Option<String>,
     pub created_at: String,
-    pub success: bool,
+    pub success: Option<bool>,
 }
 
 /// Generic wrapper for API responses: `{ "success": true, "data": T }`
@@ -262,4 +280,212 @@ pub fn get_countries() -> &'static [Country] {
     COUNTRIES
         .get_or_init(|| serde_json::from_str(COUNTRIES_JSON).unwrap())
         .as_slice()
+}
+
+// =============================================================================
+// Avatar System Types
+// =============================================================================
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AvatarArchetype {
+    Ronin,
+    Samurai,
+    Shogun,
+}
+
+impl std::fmt::Display for AvatarArchetype {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AvatarArchetype::Ronin => write!(f, "Ronin"),
+            AvatarArchetype::Samurai => write!(f, "Samurai"),
+            AvatarArchetype::Shogun => write!(f, "Shogun"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AvatarGender {
+    Man,
+    Woman,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AvatarAgeFeel {
+    Young,
+    Mature,
+    Elder,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AvatarDemeanor {
+    Calm,
+    Fierce,
+    Mysterious,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AvatarArmorStyle {
+    Light,
+    Standard,
+    Heavy,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AvatarAccentMotif {
+    OrangeSun,
+    Splatter,
+    Seal,
+    Calligraphy,
+}
+
+/// User-selected questionnaire inputs. Serialized as the request body for
+/// POST /api/v1/connect/avatar/generate.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AvatarUserTraits {
+    pub gender: AvatarGender,
+    pub archetype: AvatarArchetype,
+    pub age_feel: AvatarAgeFeel,
+    pub demeanor: AvatarDemeanor,
+    pub armor_style: AvatarArmorStyle,
+    pub accent_motif: AvatarAccentMotif,
+    pub laser_eyes: bool,
+}
+
+impl Default for AvatarUserTraits {
+    fn default() -> Self {
+        Self {
+            gender: AvatarGender::Man,
+            archetype: AvatarArchetype::Ronin,
+            age_feel: AvatarAgeFeel::Mature,
+            demeanor: AvatarDemeanor::Mysterious,
+            armor_style: AvatarArmorStyle::Light,
+            accent_motif: AvatarAccentMotif::Calligraphy,
+            laser_eyes: false,
+        }
+    }
+}
+
+/// Traits derived deterministically from the Lightning address seed (read-only).
+#[derive(Debug, Clone, Deserialize)]
+pub struct AvatarDerivedTraits {
+    pub pose: String,
+    pub crop_style: String,
+    pub hat_style: String,
+    pub face_visibility: String,
+    pub eye_visibility: String,
+    pub weapon_mode: String,
+    pub shoulder_profile: String,
+    pub cloak_presence: String,
+    pub armor_wear: String,
+    pub enso_style: String,
+    pub ink_density: String,
+    pub brush_texture: String,
+    pub splash_intensity: String,
+    pub orange_placement: String,
+    pub ornament_level: String,
+}
+
+/// Human-readable prompt directives (read-only, server-side provenance).
+#[derive(Debug, Clone, Deserialize)]
+pub struct AvatarResolvedDirectives {
+    pub composition: String,
+    pub silhouette: String,
+    pub face_treatment: String,
+    pub armor_treatment: String,
+    pub mood: String,
+    pub orange_treatment: String,
+    pub ink_treatment: String,
+    pub eyes_treatment: String,
+    pub background: String,
+    pub archetype_flavor: String,
+}
+
+/// Full avatar identity object returned by the API and cached locally.
+#[derive(Debug, Clone, Deserialize)]
+pub struct AvatarIdentity {
+    pub version: u32,
+    pub seed_version: u32,
+    pub seed_hash: String,
+    pub lightning_address: String,
+    pub archetype: String,
+    pub user_traits: AvatarUserTraits,
+    pub derived_traits: AvatarDerivedTraits,
+    pub resolved_directives: AvatarResolvedDirectives,
+}
+
+/// A single generated variant. `id` is the stable database ID used for
+/// select and image-serve endpoints.
+#[derive(Debug, Clone, Deserialize)]
+pub struct AvatarVariant {
+    pub id: u64,
+    pub index: u32,
+    pub image_url: String,
+}
+
+/// Request body for POST /api/v1/connect/avatar/generate.
+/// Only user_traits is sent — lightning address and variant count are
+/// resolved server-side from the JWT.
+#[derive(Debug, Clone, Serialize)]
+pub struct AvatarGenerateRequest {
+    pub user_traits: AvatarUserTraits,
+}
+
+/// Data returned by POST /api/v1/connect/avatar/generate.
+#[derive(Debug, Clone, Deserialize)]
+pub struct AvatarGenerateData {
+    pub identity: AvatarIdentity,
+    pub variant: AvatarVariant,
+}
+
+/// Request body for POST /api/v1/connect/avatar/select.
+/// Only variant_id is sent — lightning address is resolved server-side.
+#[derive(Debug, Clone, Serialize)]
+pub struct AvatarSelectRequest {
+    pub variant_id: u64,
+}
+
+/// Data returned by POST /api/v1/connect/avatar/select.
+#[derive(Debug, Clone, Deserialize)]
+pub struct AvatarSelectData {
+    pub active_avatar_url: String,
+    pub variant_id: u64,
+}
+
+/// Data returned by GET /api/v1/connect/avatar.
+#[derive(Debug, Clone, Deserialize)]
+pub struct GetAvatarData {
+    pub has_avatar: bool,
+    #[serde(default)]
+    pub active_avatar_url: Option<String>,
+    pub identity: Option<AvatarIdentity>,
+    #[serde(default)]
+    pub variants: Vec<AvatarVariant>,
+    pub regenerations_remaining: i32,
+    #[serde(default)]
+    pub created_at: Option<String>,
+    #[serde(default)]
+    pub updated_at: Option<String>,
+}
+
+/// Data returned by GET /api/v1/connect/avatar/public/{lightning_address}.
+#[derive(Debug, Clone, Deserialize)]
+pub struct PublicAvatarData {
+    pub lightning_address: String,
+    pub avatar_url: String,
+    pub archetype: String,
+}
+
+/// Data returned by GET /api/v1/connect/avatar/regenerations.
+/// Plan tier is NOT included (op-sec).
+#[derive(Debug, Clone, Deserialize)]
+pub struct RegenerationData {
+    pub total_allowed: i32,
+    pub used: i32,
+    pub remaining: i32,
 }

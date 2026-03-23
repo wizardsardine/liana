@@ -1,5 +1,7 @@
 use std::sync::Arc;
 
+use std::collections::HashMap;
+
 use crate::{
     app::{
         breez::BreezClient,
@@ -7,12 +9,13 @@ use crate::{
         menu::{ConnectSubMenu, Menu},
         message::Message,
         state::State,
-        view::{self, ConnectMessage},
+        view::{self, AvatarMessage, ConnectMessage},
     },
     daemon::Daemon,
     services::coincube::{
-        ClaimLightningAddressRequest, CoincubeClient, ConnectPlan, LightningAddress, LoginActivity,
-        LoginResponse, OtpRequest, OtpVerifyRequest, User, VerifiedDevice,
+        AvatarGenerateRequest, AvatarSelectRequest, AvatarUserTraits, ClaimLightningAddressRequest,
+        CoincubeClient, ConnectPlan, LightningAddress, LoginActivity, LoginResponse, OtpRequest,
+        OtpVerifyRequest, User, VerifiedDevice,
     },
 };
 
@@ -23,6 +26,21 @@ const KEYRING_SERVICE_NAME: &str = if cfg!(debug_assertions) {
 };
 
 const KEYRING_USER_KEY: &str = "global_session";
+
+/// Sub-steps within the Avatar sub-menu (does not replace ConnectFlowStep).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AvatarFlowStep {
+    /// No avatar exists and the user hasn't started creation.
+    Idle,
+    /// Trait questionnaire is open.
+    Questionnaire,
+    /// Waiting for OpenAI response (~10–30s).
+    Generating,
+    /// Showing a freshly generated avatar.
+    Reveal,
+    /// Viewing / managing an existing avatar.
+    Settings,
+}
 
 #[derive(Debug)]
 pub enum ConnectFlowStep {
@@ -63,6 +81,13 @@ pub struct ConnectPanel {
     pub ln_checking: bool,
     ln_check_version: u32,
     breez_client: Arc<BreezClient>,
+    // Avatar
+    pub avatar_step: AvatarFlowStep,
+    pub avatar_data: Option<crate::services::coincube::GetAvatarData>,
+    pub avatar_generating: bool,
+    pub avatar_error: Option<String>,
+    pub avatar_image_cache: HashMap<u64, (Vec<u8>, iced::widget::image::Handle)>,
+    pub avatar_draft: AvatarUserTraits,
 }
 
 impl ConnectPanel {
@@ -84,6 +109,12 @@ impl ConnectPanel {
             ln_checking: false,
             ln_check_version: 0,
             breez_client,
+            avatar_step: AvatarFlowStep::Idle,
+            avatar_data: None,
+            avatar_generating: false,
+            avatar_error: None,
+            avatar_image_cache: HashMap::new(),
+            avatar_draft: AvatarUserTraits::default(),
         }
     }
 
@@ -520,6 +551,267 @@ impl State for ConnectPanel {
                     _ => {}
                 }
             }
+
+            ConnectMessage::Avatar(avatar_msg) => {
+                return self.update_avatar(avatar_msg);
+            }
+        }
+
+        iced::Task::none()
+    }
+}
+
+impl ConnectPanel {
+    fn update_avatar(&mut self, msg: AvatarMessage) -> iced::Task<Message> {
+        match msg {
+            AvatarMessage::Enter => {
+                self.avatar_error = None;
+                let client = self.client.clone();
+                return iced::Task::perform(async move { client.get_avatar().await }, |res| {
+                    Message::View(view::Message::Connect(ConnectMessage::Avatar(
+                        AvatarMessage::Loaded(res.map_err(|e| e.to_string())),
+                    )))
+                });
+            }
+
+            AvatarMessage::Loaded(result) => match result {
+                Ok(data) => {
+                    let has = data.has_avatar;
+                    let active_id = data
+                        .variants
+                        .iter()
+                        .find(|v| {
+                            data.active_avatar_url
+                                .as_deref()
+                                .map(|u| u.ends_with(&v.id.to_string()))
+                                .unwrap_or(false)
+                        })
+                        .map(|v| v.id);
+                    self.avatar_data = Some(data);
+                    if has {
+                        self.avatar_step = AvatarFlowStep::Settings;
+                        // Fetch image for the active variant
+                        if let Some(id) = active_id {
+                            if !self.avatar_image_cache.contains_key(&id) {
+                                let client = self.client.clone();
+                                return iced::Task::perform(
+                                    async move { client.fetch_avatar_image(id).await },
+                                    move |res| {
+                                        Message::View(view::Message::Connect(
+                                            ConnectMessage::Avatar(AvatarMessage::ImageLoaded {
+                                                variant_id: id,
+                                                result: res.map_err(|e| e.to_string()),
+                                            }),
+                                        ))
+                                    },
+                                );
+                            }
+                        }
+                    } else {
+                        self.avatar_step = AvatarFlowStep::Questionnaire;
+                    }
+                }
+                Err(e) => {
+                    log::error!("[AVATAR] Load error: {}", e);
+                    self.avatar_error = Some(e);
+                }
+            },
+
+            AvatarMessage::SetStep(step) => {
+                self.avatar_step = step;
+            }
+
+            AvatarMessage::GenderChanged(v) => self.avatar_draft.gender = v,
+            AvatarMessage::ArchetypeChanged(v) => self.avatar_draft.archetype = v,
+            AvatarMessage::AgeFeelChanged(v) => self.avatar_draft.age_feel = v,
+            AvatarMessage::DemeanorChanged(v) => self.avatar_draft.demeanor = v,
+            AvatarMessage::ArmorStyleChanged(v) => self.avatar_draft.armor_style = v,
+            AvatarMessage::AccentMotifChanged(v) => self.avatar_draft.accent_motif = v,
+            AvatarMessage::LaserEyesToggled(v) => self.avatar_draft.laser_eyes = v,
+
+            AvatarMessage::Generate => {
+                if self.avatar_generating {
+                    return iced::Task::none();
+                }
+                self.avatar_generating = true;
+                self.avatar_error = None;
+                self.avatar_step = AvatarFlowStep::Generating;
+                let client = self.client.clone();
+                let req = AvatarGenerateRequest {
+                    user_traits: self.avatar_draft.clone(),
+                };
+                return iced::Task::perform(
+                    async move { client.post_avatar_generate(req).await },
+                    |res| {
+                        Message::View(view::Message::Connect(ConnectMessage::Avatar(
+                            AvatarMessage::GenerateComplete(res.map_err(|e| e.to_string())),
+                        )))
+                    },
+                );
+            }
+
+            AvatarMessage::GenerateComplete(result) => {
+                self.avatar_generating = false;
+                match result {
+                    Ok(data) => {
+                        let variant_id = data.variant.id;
+                        // Update local avatar_data
+                        let new_variant = data.variant.clone();
+                        if let Some(ref mut ad) = self.avatar_data {
+                            ad.has_avatar = true;
+                            ad.active_avatar_url = Some(new_variant.image_url.clone());
+                            if !ad.variants.iter().any(|v| v.id == new_variant.id) {
+                                ad.variants.push(new_variant);
+                            }
+                            ad.identity = Some(data.identity);
+                        } else {
+                            self.avatar_data = Some(crate::services::coincube::GetAvatarData {
+                                has_avatar: true,
+                                active_avatar_url: Some(data.variant.image_url.clone()),
+                                identity: Some(data.identity),
+                                variants: vec![data.variant],
+                                regenerations_remaining: 0,
+                                created_at: None,
+                                updated_at: None,
+                            });
+                        }
+                        self.avatar_step = AvatarFlowStep::Reveal;
+                        // Prefill draft from the identity we just got
+                        if let Some(ref ad) = self.avatar_data {
+                            if let Some(ref identity) = ad.identity {
+                                self.avatar_draft = identity.user_traits.clone();
+                            }
+                        }
+                        // Fetch the image bytes
+                        let client = self.client.clone();
+                        return iced::Task::perform(
+                            async move { client.fetch_avatar_image(variant_id).await },
+                            move |res| {
+                                Message::View(view::Message::Connect(ConnectMessage::Avatar(
+                                    AvatarMessage::ImageLoaded {
+                                        variant_id,
+                                        result: res.map_err(|e| e.to_string()),
+                                    },
+                                )))
+                            },
+                        );
+                    }
+                    Err(e) => {
+                        log::error!("[AVATAR] Generate error: {}", e);
+                        self.avatar_error = Some(e);
+                        self.avatar_step = AvatarFlowStep::Questionnaire;
+                    }
+                }
+            }
+
+            AvatarMessage::SelectVariant(variant_id) => {
+                let client = self.client.clone();
+                return iced::Task::perform(
+                    async move {
+                        client
+                            .post_avatar_select(AvatarSelectRequest { variant_id })
+                            .await
+                    },
+                    |res| {
+                        Message::View(view::Message::Connect(ConnectMessage::Avatar(
+                            AvatarMessage::VariantSelected(res.map_err(|e| e.to_string())),
+                        )))
+                    },
+                );
+            }
+
+            AvatarMessage::VariantSelected(result) => match result {
+                Ok(data) => {
+                    if let Some(ref mut ad) = self.avatar_data {
+                        ad.active_avatar_url = Some(data.active_avatar_url);
+                    }
+                    // Fetch image if not already cached
+                    let variant_id = data.variant_id;
+                    if !self.avatar_image_cache.contains_key(&variant_id) {
+                        let client = self.client.clone();
+                        return iced::Task::perform(
+                            async move { client.fetch_avatar_image(variant_id).await },
+                            move |res| {
+                                Message::View(view::Message::Connect(ConnectMessage::Avatar(
+                                    AvatarMessage::ImageLoaded {
+                                        variant_id,
+                                        result: res.map_err(|e| e.to_string()),
+                                    },
+                                )))
+                            },
+                        );
+                    }
+                }
+                Err(e) => {
+                    log::error!("[AVATAR] Select error: {}", e);
+                    self.avatar_error = Some(e);
+                }
+            },
+
+            AvatarMessage::RegenerationsLoaded(result) => match result {
+                Ok(data) => {
+                    if let Some(ref mut ad) = self.avatar_data {
+                        ad.regenerations_remaining = data.remaining;
+                    }
+                }
+                Err(e) => {
+                    log::warn!("[AVATAR] Regenerations fetch error: {}", e);
+                }
+            },
+
+            AvatarMessage::ImageLoaded { variant_id, result } => match result {
+                Ok(bytes) => {
+                    let handle = iced::widget::image::Handle::from_bytes(bytes.clone());
+                    self.avatar_image_cache.insert(variant_id, (bytes, handle));
+                }
+                Err(e) => {
+                    log::warn!(
+                        "[AVATAR] Image load error for variant {}: {}",
+                        variant_id,
+                        e
+                    );
+                }
+            },
+
+            AvatarMessage::Retry => {
+                self.avatar_error = None;
+                self.avatar_step = AvatarFlowStep::Questionnaire;
+            }
+
+            AvatarMessage::DownloadAvatar => {
+                let active_id = self.avatar_data.as_ref().and_then(|d| {
+                    let url = d.active_avatar_url.as_deref().unwrap_or("");
+                    d.variants
+                        .iter()
+                        .find(|v| url.ends_with(&v.id.to_string()))
+                        .map(|v| v.id)
+                });
+                if let Some(id) = active_id {
+                    if let Some((bytes, _)) = self.avatar_image_cache.get(&id) {
+                        let bytes = bytes.clone();
+                        return iced::Task::perform(
+                            async move {
+                                if let Some(handle) = rfd::AsyncFileDialog::new()
+                                    .set_title("Save Avatar")
+                                    .set_file_name("coincube-avatar.png")
+                                    .add_filter("PNG Image", &["png"])
+                                    .save_file()
+                                    .await
+                                {
+                                    let _ = std::fs::write(handle.path(), &bytes);
+                                }
+                            },
+                            |()| {
+                                Message::View(view::Message::Connect(ConnectMessage::Avatar(
+                                    AvatarMessage::Noop,
+                                )))
+                            },
+                        );
+                    }
+                }
+            }
+
+            AvatarMessage::Noop => {}
         }
 
         iced::Task::none()

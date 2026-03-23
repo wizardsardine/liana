@@ -7,6 +7,7 @@ use crate::services::http::ResponseExt;
 pub struct CoincubeClient {
     pub client: Client,
     pub base_url: &'static str,
+    token: Option<String>,
 }
 
 impl Default for CoincubeClient {
@@ -34,11 +35,14 @@ impl CoincubeClient {
                 .build()
                 .unwrap(),
             base_url,
+            token: None,
         }
     }
 
     /// A JWT is needed for some authenticated endpoints, acquired after a user successfully logs in
     pub fn set_token(&mut self, token: &str) {
+        self.token = Some(token.to_string());
+
         let mut headers = reqwest::header::HeaderMap::new();
         headers.append(
             "Authorization",
@@ -254,6 +258,95 @@ impl CoincubeClient {
         let res = res.check_success().await?;
         let resp: super::ApiResponse<super::LightningAddress> = res.json().await?;
         Ok(resp.data)
+    }
+}
+
+impl CoincubeClient {
+    /// Builds an Authorization HeaderMap from the stored token.
+    fn auth_headers(&self) -> reqwest::header::HeaderMap {
+        let mut map = reqwest::header::HeaderMap::new();
+        if let Some(ref t) = self.token {
+            if let Ok(val) = reqwest::header::HeaderValue::from_str(&format!("Bearer {}", t)) {
+                map.insert("Authorization", val);
+            }
+        }
+        map
+    }
+
+    /// GET /api/v1/connect/avatar — load current avatar state.
+    pub async fn get_avatar(&self) -> Result<super::GetAvatarData, CoincubeError> {
+        let url = format!("{}/api/v1/connect/avatar", self.base_url);
+        let res = self.client.get(&url).send().await?;
+        let res = res.check_success().await?;
+        let resp: super::ApiResponse<super::GetAvatarData> = res.json().await?;
+        Ok(resp.data)
+    }
+
+    /// POST /api/v1/connect/avatar/generate — generate or regenerate avatar.
+    /// Uses a 120-second timeout because the call proxies through OpenAI (~10–30s).
+    pub async fn post_avatar_generate(
+        &self,
+        req: super::AvatarGenerateRequest,
+    ) -> Result<super::AvatarGenerateData, CoincubeError> {
+        let slow_client = reqwest::ClientBuilder::new()
+            .timeout(std::time::Duration::from_secs(120))
+            .https_only(!self.base_url.starts_with("http://"))
+            .default_headers(self.auth_headers())
+            .build()
+            .map_err(CoincubeError::Network)?;
+
+        let url = format!("{}/api/v1/connect/avatar/generate", self.base_url);
+        let res = slow_client.post(&url).json(&req).send().await?;
+        let res = res.check_success().await?;
+        let resp: super::ApiResponse<super::AvatarGenerateData> = res.json().await?;
+        Ok(resp.data)
+    }
+
+    /// POST /api/v1/connect/avatar/select — set active variant.
+    pub async fn post_avatar_select(
+        &self,
+        req: super::AvatarSelectRequest,
+    ) -> Result<super::AvatarSelectData, CoincubeError> {
+        let url = format!("{}/api/v1/connect/avatar/select", self.base_url);
+        let res = self.client.post(&url).json(&req).send().await?;
+        let res = res.check_success().await?;
+        let resp: super::ApiResponse<super::AvatarSelectData> = res.json().await?;
+        Ok(resp.data)
+    }
+
+    /// GET /api/v1/connect/avatar/regenerations — regeneration quota.
+    pub async fn get_avatar_regenerations(&self) -> Result<super::RegenerationData, CoincubeError> {
+        let url = format!("{}/api/v1/connect/avatar/regenerations", self.base_url);
+        let res = self.client.get(&url).send().await?;
+        let res = res.check_success().await?;
+        let resp: super::ApiResponse<super::RegenerationData> = res.json().await?;
+        Ok(resp.data)
+    }
+
+    /// GET /api/v1/connect/avatar/public/{lightning_address} — public avatar (no JWT).
+    pub async fn get_public_avatar(
+        &self,
+        lightning_address: &str,
+    ) -> Result<super::PublicAvatarData, CoincubeError> {
+        let url = format!(
+            "{}/api/v1/connect/avatar/public/{}",
+            self.base_url, lightning_address
+        );
+        let res = self.client.get(&url).send().await?;
+        let res = res.check_success().await?;
+        let resp: super::ApiResponse<super::PublicAvatarData> = res.json().await?;
+        Ok(resp.data)
+    }
+
+    /// GET /api/v1/connect/avatar/image/{id} — fetch raw PNG bytes (public, no JWT).
+    pub async fn fetch_avatar_image(&self, variant_id: u64) -> Result<Vec<u8>, CoincubeError> {
+        let url = format!(
+            "{}/api/v1/connect/avatar/image/{}",
+            self.base_url, variant_id
+        );
+        let res = reqwest::get(&url).await.map_err(CoincubeError::Network)?;
+        let res = res.check_success().await?;
+        Ok(res.bytes().await.map_err(CoincubeError::Network)?.to_vec())
     }
 }
 

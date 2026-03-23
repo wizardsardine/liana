@@ -37,6 +37,15 @@ impl CoincubeDirectory {
         path.push("bitcoind");
         BitcoindDirectory::new(path)
     }
+
+    /// Returns the disk-cache path for a generated avatar variant PNG.
+    /// Directory: `<CoincubeDirectory>/avatar/variant_{id}.png`
+    pub fn avatar_cache_path(&self, variant_id: u64) -> PathBuf {
+        let mut p = self.0.clone();
+        p.push("avatar");
+        p.push(format!("variant_{}.png", variant_id));
+        p
+    }
 }
 
 // Get the absolute path to the COINCUBE configuration folder.
