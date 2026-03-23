@@ -485,7 +485,7 @@ impl P2PPanel {
         // --- Premium ---
         if !effective_pricing_fixed && !self.create_premium.value.is_empty() {
             if let Ok(p) = self.create_premium.value.parse::<i64>() {
-                if p < -100 || p > 100 {
+                if !(-100..=100).contains(&p) {
                     v.premium = Some("Premium must be between -100 and 100");
                 }
             } else {
@@ -2194,7 +2194,8 @@ impl P2PPanel {
 
         // ── Input area ──
         let input_area: Element<'_, view::Message> = if chat_enabled {
-            let can_send = !self.chat_input.value.trim().is_empty();
+            let can_send =
+                !self.chat_input.value.trim().is_empty() && self.pending_chat_message.is_none();
             let send_btn = if can_send {
                 button::primary(Some(icon::send_icon()), "Send")
                     .on_press(p2p(P2PMessage::SendChatMessage))
@@ -2911,6 +2912,16 @@ impl State for P2PPanel {
                 if !currencies.is_empty() {
                     self.node_currencies = currencies;
                     self.rebuild_currency_combo();
+                    // Reset selected currency if no longer supported by this node
+                    if !self.node_currencies.contains(&self.create_fiat_currency) {
+                        self.create_fiat_currency = self
+                            .node_currencies
+                            .first()
+                            .cloned()
+                            .unwrap_or_else(|| "USD".to_string());
+                        self.create_payment_methods.clear();
+                        self.rebuild_payment_method_combo();
+                    }
                 }
                 self.node_min_order_sats = min_order_sats;
                 self.node_max_order_sats = max_order_sats;
@@ -3389,7 +3400,7 @@ impl State for P2PPanel {
             }
             P2PMessage::SendChatMessage => {
                 let text = self.chat_input.value.trim().to_string();
-                if text.is_empty() {
+                if text.is_empty() || self.pending_chat_message.is_some() {
                     return Task::none();
                 }
                 if let Some(ref order_id) = self.selected_trade {

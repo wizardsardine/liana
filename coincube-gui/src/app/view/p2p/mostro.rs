@@ -220,8 +220,7 @@ pub fn countdown_start_timestamp(session: &TradeSession) -> Option<u64> {
         .messages
         .iter()
         .rev()
-        .filter(|m| target_actions.contains(&m.action.as_str()) && m.timestamp > 0)
-        .next_back()
+        .rfind(|m| target_actions.contains(&m.action.as_str()) && m.timestamp > 0)
         .map(|m| m.timestamp)
 }
 
@@ -2160,7 +2159,7 @@ fn mostro_stream(
                 if has_connected_relay(&client).await {
                     if let Ok(events) = client.fetch_events(filter, Duration::from_secs(15)).await {
                         for event in events.iter() {
-                            process_order_event(&event, &mut order_cache);
+                            process_order_event(event, &mut order_cache);
                         }
                     }
                 }
@@ -2259,7 +2258,7 @@ fn mostro_stream(
                         .since(since);
                     if let Ok(events) = client.fetch_events(filter, Duration::from_secs(15)).await {
                         for event in events.iter() {
-                            process_order_event(&event, &mut order_cache);
+                            process_order_event(event, &mut order_cache);
                         }
                     }
                 }
@@ -2447,9 +2446,17 @@ async fn process_dm_notifications(
                             continue;
                         }
 
-                        // Extract counterparty trade pubkey from Order payloads
-                        if let Some(mostro_core::message::Payload::Order(ref order)) = inner.payload
-                        {
+                        // Extract counterparty trade pubkey from Order or PaymentRequest payloads
+                        let cp_order = match &inner.payload {
+                            Some(mostro_core::message::Payload::Order(ref order)) => Some(order),
+                            Some(mostro_core::message::Payload::PaymentRequest(
+                                Some(ref order),
+                                _,
+                                _,
+                            )) => Some(order),
+                            _ => None,
+                        };
+                        if let Some(order) = cp_order {
                             if let Some(cp_pk) = extract_counterparty_pubkey(order, &our_trade_hex)
                             {
                                 set_counterparty_pubkey(cube_name, &session.order_id, &cp_pk);
@@ -2608,7 +2615,16 @@ async fn process_dm_event(
                         return false;
                     }
 
-                    if let Some(mostro_core::message::Payload::Order(ref order)) = inner.payload {
+                    let cp_order = match &inner.payload {
+                        Some(mostro_core::message::Payload::Order(ref order)) => Some(order),
+                        Some(mostro_core::message::Payload::PaymentRequest(
+                            Some(ref order),
+                            _,
+                            _,
+                        )) => Some(order),
+                        _ => None,
+                    };
+                    if let Some(order) = cp_order {
                         if let Some(cp_pk) = extract_counterparty_pubkey(order, &our_trade_hex) {
                             // Check if this is actually new
                             if session.counterparty_trade_pubkey.as_deref() != Some(&cp_pk) {
