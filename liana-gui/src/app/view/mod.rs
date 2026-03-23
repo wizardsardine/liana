@@ -108,19 +108,23 @@ pub fn dashboard<'a, T: Into<Element<'a, Message>>>(
                 Column::new()
                     .push(warn(warning))
                     .push(
-                        Container::new(
-                            scrollable(row!(
-                                Space::with_width(Length::FillPortion(1)),
-                                column!(Space::with_height(Length::Fixed(150.0)), content)
-                                    .width(Length::FillPortion(8))
-                                    .max_width(1500),
-                                Space::with_width(Length::FillPortion(1)),
-                            ))
-                            .on_scroll(|w| Message::Scroll(w.absolute_offset().y)),
-                        )
-                        .center_x(Length::Fill)
-                        .style(theme::container::background)
-                        .height(Length::Fill),
+                        Container::new(column![
+                            Space::with_height(25),
+                            Container::new(
+                                scrollable(row!(
+                                    Space::with_width(Length::FillPortion(1)),
+                                    column!(Space::with_height(Length::Fixed(150.0)), content)
+                                        .width(Length::FillPortion(8))
+                                        .max_width(1500),
+                                    Space::with_width(Length::FillPortion(1)),
+                                ))
+                                .on_scroll(|w| Message::Scroll(w.absolute_offset().y)),
+                            )
+                            .center_x(Length::Fill)
+                            .style(theme::container::panel_background)
+                            .height(Length::Fill)
+                        ])
+                        .style(theme::container::sidebar),
                     )
                     .width(Length::Fill),
             )

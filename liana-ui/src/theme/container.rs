@@ -1,7 +1,9 @@
-use iced::widget::container::{transparent, Catalog, Style, StyleFn};
-use iced::Background;
-
 use super::Theme;
+use iced::{
+    border::Radius,
+    widget::container::{transparent, Catalog, Style, StyleFn},
+    Background, Border,
+};
 
 impl Catalog for Theme {
     type Class<'a> = StyleFn<'a, Self>;
@@ -18,6 +20,24 @@ impl Catalog for Theme {
 pub fn background(theme: &Theme) -> Style {
     Style {
         background: Some(Background::Color(theme.colors.general.background)),
+        ..Default::default()
+    }
+}
+
+pub fn panel_background(theme: &Theme) -> Style {
+    let bg_color = theme.colors.general.background;
+    Style {
+        background: Some(Background::Color(bg_color)),
+        border: Border {
+            color: bg_color,
+            width: 1.0,
+            radius: Radius {
+                top_left: 24.0,
+                top_right: 0.0,
+                bottom_right: 0.0,
+                bottom_left: 0.0,
+            },
+        },
         ..Default::default()
     }
 }
