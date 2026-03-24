@@ -679,16 +679,16 @@ impl Launcher {
                 }
                 self.active_section = section;
                 // If navigating to Connect and not yet initialized, trigger Init
-                if matches!(self.active_section, LauncherSection::Connect(_)) {
-                    if matches!(
+                if matches!(self.active_section, LauncherSection::Connect(_))
+                    && matches!(
                         self.connect_account.step,
                         crate::app::state::connect::ConnectFlowStep::CheckingSession
-                    ) {
-                        return map_connect_task(
-                            self.connect_account
-                                .update_message(ConnectAccountMessage::Init),
-                        );
-                    }
+                    )
+                {
+                    return map_connect_task(
+                        self.connect_account
+                            .update_message(ConnectAccountMessage::Init),
+                    );
                 }
                 Task::none()
             }
@@ -1020,13 +1020,13 @@ fn launcher_sidebar<'a>(launcher: &'a Launcher) -> Element<'a, Message> {
             let item = if is_active {
                 Row::new()
                     .push(Space::new().width(Length::Fixed(20.0)))
-                    .push(btn::menu_active(None, *label).width(Length::Fill))
+                    .push(btn::menu_active(None, label).width(Length::Fill))
                     .width(Length::Fill)
             } else {
                 Row::new()
                     .push(Space::new().width(Length::Fixed(20.0)))
                     .push(
-                        btn::menu(None, *label)
+                        btn::menu(None, label)
                             .on_press(msg(ViewMessage::GoToSection(LauncherSection::Connect(
                                 sub.clone(),
                             ))))

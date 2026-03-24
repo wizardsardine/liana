@@ -450,6 +450,7 @@ pub enum ConnectAccountMessage {
     OtpChanged(String),
     OtpCooldownTick,
     ResendOtp,
+    OtpResent,
     VerifyOtp,
     VerifiedDevicesLoaded(Vec<crate::services::coincube::VerifiedDevice>),
     LoginActivityLoaded(Vec<crate::services::coincube::LoginActivity>),

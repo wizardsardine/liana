@@ -346,13 +346,30 @@ impl ConnectAccountPanel {
                     },
                     |res| match res {
                         Ok(()) => Message::View(view::Message::ConnectAccount(
-                            ConnectAccountMessage::OtpChanged(String::new()),
+                            ConnectAccountMessage::OtpResent,
                         )),
                         Err(e) => Message::View(view::Message::ConnectAccount(
                             ConnectAccountMessage::Error(e.to_string()),
                         )),
                     },
                 );
+            }
+
+            ConnectAccountMessage::OtpResent => {
+                if let ConnectFlowStep::OtpVerification {
+                    otp,
+                    sending,
+                    cooldown,
+                    ..
+                } = &mut self.step
+                {
+                    *otp = String::new();
+                    *sending = false;
+                    *cooldown = 60;
+                    return iced::Task::done(Message::View(view::Message::ConnectAccount(
+                        ConnectAccountMessage::OtpCooldownTick,
+                    )));
+                }
             }
 
             ConnectAccountMessage::VerifyOtp => {

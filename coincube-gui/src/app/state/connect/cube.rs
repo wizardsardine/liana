@@ -146,6 +146,7 @@ impl ConnectCubePanel {
                 self.ln_username_input = input.to_lowercase();
                 self.ln_username_available = None;
                 self.ln_username_error = None;
+                self.ln_claim_error = None;
 
                 // Client-side validation
                 if let Some(err) = validate_ln_username(&self.ln_username_input) {
@@ -269,9 +270,15 @@ impl ConnectCubePanel {
 
             ConnectCubeMessage::Error(e) => {
                 log::error!("[CONNECT-CUBE] Error: {}", e);
-                self.ln_claim_error = Some(e);
-                self.ln_claiming = false;
-                self.ln_checking = false;
+                if self.ln_claiming {
+                    self.ln_claim_error = Some(e);
+                    self.ln_claiming = false;
+                } else if self.ln_checking {
+                    self.ln_username_error = Some(e);
+                    self.ln_checking = false;
+                } else {
+                    self.ln_claim_error = Some(e);
+                }
             }
 
             ConnectCubeMessage::Avatar(avatar_msg) => {

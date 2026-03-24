@@ -256,16 +256,14 @@ impl CoincubeClient {
             let resp: super::ApiResponse<super::CheckUsernameResponse> =
                 serde_json::from_str(&body)?;
             Ok(resp.data)
+        } else if let Ok(err_resp) = serde_json::from_str::<super::ApiErrorResponse>(&body) {
+            Ok(super::CheckUsernameResponse {
+                available: false,
+                username: username.to_string(),
+                error_message: Some(err_resp.error.message),
+            })
         } else {
-            if let Ok(err_resp) = serde_json::from_str::<super::ApiErrorResponse>(&body) {
-                Ok(super::CheckUsernameResponse {
-                    available: false,
-                    username: username.to_string(),
-                    error_message: Some(err_resp.error.message),
-                })
-            } else {
-                Err(CoincubeError::Api(body))
-            }
+            Err(CoincubeError::Api(body))
         }
     }
 

@@ -10,7 +10,7 @@ use crate::{
     app::{
         breez::BreezClient,
         cache::Cache,
-        menu::{ConnectSubMenu, Menu},
+        menu::Menu,
         message::Message,
         state::State,
         view::{self, ConnectAccountMessage},
@@ -31,14 +31,6 @@ pub enum AvatarFlowStep {
     Reveal,
     /// Viewing / managing an existing avatar.
     Settings,
-}
-
-/// Returns true if the given submenu is cube-specific (Lightning Address, Avatar).
-pub fn is_cube_submenu(sub: &ConnectSubMenu) -> bool {
-    matches!(
-        sub,
-        ConnectSubMenu::LightningAddress | ConnectSubMenu::Avatar
-    )
 }
 
 /// Wrapper that holds both the account-level and cube-level Connect panels.
