@@ -476,7 +476,7 @@ pub struct App {
     config: Arc<Config>,
     datadir: CoincubeDirectory,
     panels: Panels,
-    errors: std::collections::BinaryHeap<(usize, std::time::Instant, log::Level, String)>,
+    errors: Vec<(usize, std::time::Instant, log::Level, String)>,
     current_error_id: usize,
     /// True while a check_bitcoind_sync_progress probe is in flight; prevents
     /// multiple concurrent RPC calls from piling up across subscription ticks.
@@ -599,7 +599,7 @@ impl App {
                 cube_settings,
                 config: config_arc,
                 datadir: data_dir,
-                errors: std::collections::BinaryHeap::with_capacity(8),
+                errors: Vec::with_capacity(8),
                 current_error_id: 256,
                 bitcoind_sync_probe_in_progress: false,
             },
@@ -657,7 +657,7 @@ impl App {
                 cube_settings,
                 config: config_arc,
                 datadir,
-                errors: std::collections::BinaryHeap::with_capacity(8),
+                errors: Vec::with_capacity(8),
                 current_error_id: 256,
                 bitcoind_sync_probe_in_progress: false,
             },
@@ -1707,9 +1707,8 @@ impl App {
         match self.errors.is_empty() {
             true => content,
             false => {
-                // Snapshot and sort by error ID (oldest first for chronological order)
-                let mut error_snapshot: Vec<_> = self.errors.iter().collect();
-                error_snapshot.sort_by(|a, b| a.0.cmp(&b.0)); // Sort by usize id (first element)
+                // Errors are already in chronological order (Vec is append-only)
+                let error_snapshot: Vec<_> = self.errors.iter().collect();
 
                 let theme = ui_theme::Theme::default();
                 iced::widget::Stack::new()
