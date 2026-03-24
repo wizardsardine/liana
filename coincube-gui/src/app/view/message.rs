@@ -98,7 +98,8 @@ pub enum Message {
     DismissToast(usize),
     UsdtOverview(UsdtOverviewMessage),
     ToggleUsdt,
-    Connect(ConnectMessage),
+    ConnectAccount(ConnectAccountMessage),
+    ConnectCube(ConnectCubeMessage),
     ToggleConnect,
 }
 
@@ -427,8 +428,9 @@ impl From<SettingsMessage> for Message {
     }
 }
 
+/// Account-level Connect messages (login/session, plan, security, etc.).
 #[derive(Debug, Clone)]
-pub enum ConnectMessage {
+pub enum ConnectAccountMessage {
     Init,
     RefreshSession {
         refresh_token: String,
@@ -438,6 +440,8 @@ pub enum ConnectMessage {
         user: crate::services::coincube::User,
         plan: Option<crate::services::coincube::ConnectPlan>,
     },
+    PlanLoaded(Option<crate::services::coincube::ConnectPlan>, u64),
+    RefreshFailed(String),
     LogOut,
     EmailChanged(String),
     SubmitLogin,
@@ -445,10 +449,17 @@ pub enum ConnectMessage {
     CreateAccount,
     OtpChanged(String),
     OtpCooldownTick,
+    ResendOtp,
     VerifyOtp,
     VerifiedDevicesLoaded(Vec<crate::services::coincube::VerifiedDevice>),
     LoginActivityLoaded(Vec<crate::services::coincube::LoginActivity>),
-    // Lightning Address
+    CopyToClipboard(String),
+    Error(String),
+}
+
+/// Per-Cube Connect messages (Lightning Address, Avatar).
+#[derive(Debug, Clone)]
+pub enum ConnectCubeMessage {
     LnUsernameChanged(String),
     CheckLnUsername,
     LnUsernameChecked {
@@ -459,9 +470,10 @@ pub enum ConnectMessage {
     ClaimLightningAddress,
     LightningAddressClaimed(crate::services::coincube::LightningAddress),
     LightningAddressLoaded(Option<crate::services::coincube::LightningAddress>),
+    /// Result of registering the cube with the backend (POST /connect/cubes).
+    CubeRegistered(Result<crate::services::coincube::CubeResponse, String>),
     CopyToClipboard(String),
     Error(String),
-    // Avatar
     Avatar(AvatarMessage),
 }
 

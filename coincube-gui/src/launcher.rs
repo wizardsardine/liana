@@ -17,7 +17,13 @@ use crate::pin_input;
 use crate::{
     app::{
         self,
-        settings::{self, global::GlobalSettings, AuthConfig, CubeSettings, WalletSettings},
+        settings::{
+            self,
+            global::{AccountTier, GlobalSettings},
+            AuthConfig, CubeSettings, WalletSettings,
+        },
+        state::connect::ConnectAccountPanel,
+        view::ConnectAccountMessage,
     },
     delete::{delete_wallet, DeleteError},
     dir::{CoincubeDirectory, NetworkDirectory},
@@ -61,6 +67,15 @@ fn bip39_suggestions(prefix: &str, limit: usize) -> Vec<String> {
         .collect()
 }
 
+/// Which section is shown in the launcher's main content area.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LauncherSection {
+    /// Cube list (default)
+    Cubes,
+    /// Connect account-level sub-page
+    Connect(app::menu::ConnectSubMenu),
+}
+
 pub struct Launcher {
     state: State,
     displayed_networks: Vec<Network>,
@@ -73,9 +88,20 @@ pub struct Launcher {
     create_cube_pin_confirm: pin_input::PinInput,
     recover_liquid_wallet: bool,
     creating_cube: bool,
+    /// UUID pre-generated on the first creation attempt and reused on retries
+    /// so that each logical cube has a stable client-side identifier.
+    pending_cube_id: Option<uuid::Uuid>,
     recovery_words: [String; 12],
     recovery_active_index: Option<usize>,
     developer_mode: bool,
+    /// Connect account tier — controls how many Cubes can be created per network.
+    account_tier: AccountTier,
+    /// Account-level Connect panel (login, plan, security, etc.)
+    pub connect_account: ConnectAccountPanel,
+    /// Whether the Connect sidebar section is expanded
+    pub connect_expanded: bool,
+    /// Which section is currently displayed in the main content area
+    pub active_section: LauncherSection,
 }
 
 impl Launcher {
@@ -108,9 +134,16 @@ impl Launcher {
                 create_cube_pin_confirm: pin_input::PinInput::new(),
                 recover_liquid_wallet: false,
                 creating_cube: false,
+                pending_cube_id: None,
                 recovery_words: Default::default(),
                 recovery_active_index: None,
                 developer_mode,
+                account_tier: GlobalSettings::load_account_tier(&GlobalSettings::path(
+                    &datadir_path,
+                )),
+                connect_account: ConnectAccountPanel::new(),
+                connect_expanded: false,
+                active_section: LauncherSection::Cubes,
             },
             Task::perform(check_network_datadir(network_dir), Message::Checked),
         )
@@ -202,6 +235,24 @@ impl Launcher {
                     return Task::none();
                 }
 
+                // Enforce per-network Cube limit based on Connect account tier.
+                let cube_count = if let State::Cubes { cubes, .. } = &self.state {
+                    cubes.len()
+                } else {
+                    0
+                };
+                let limit = self.account_tier.cube_limit();
+                if cube_count >= limit {
+                    self.error = Some(format!(
+                        "Cube limit reached ({}/{}) for the {} plan. \
+                         Upgrade your Connect account to create more Cubes.",
+                        cube_count,
+                        limit,
+                        self.account_tier.display_name(),
+                    ));
+                    return Task::none();
+                }
+
                 // Validate PIN (always required)
                 if !self.create_cube_pin.is_complete() {
                     self.error = Some("Please enter all 4 PIN digits".to_string());
@@ -221,6 +272,10 @@ impl Launcher {
                 let cube_name = self.create_cube_name.value.trim().to_string();
                 let pin = self.create_cube_pin.value();
                 let datadir_path = self.datadir_path.clone();
+
+                // Pre-generate the UUID before the async task so that retries
+                // reuse the same identifier (idempotent creation).
+                let cube_id = *self.pending_cube_id.get_or_insert_with(uuid::Uuid::new_v4);
 
                 let without_recovery = Task::perform(
                     async move {
@@ -258,14 +313,20 @@ impl Launcher {
 
                         tracing::info!("Liquid wallet signer created and stored (encrypted with PIN) with fingerprint: {}", liquid_fingerprint);
 
-                        // Create Cube settings with Liquid wallet signer reference and PIN
-                        let cube = CubeSettings::new(cube_name, network)
+                        // Build Cube settings using the pre-generated, stable UUID.
+                        let cube = CubeSettings::new_with_id(cube_id, cube_name, network)
                             .with_liquid_signer(liquid_fingerprint)
                             .with_pin(&pin)
                             .map_err(|e| format!("Failed to hash PIN: {}", e))?;
 
-                        // Save Cube settings to settings file
+                        // Save Cube settings to settings file.
+                        // Idempotency: if a cube with this UUID was already persisted
+                        // (e.g. a previous attempt succeeded but the message was lost),
+                        // skip the insert and return the existing entry.
                         settings::update_settings_file(&network_dir, |mut settings| {
+                            if settings.cubes.iter().any(|c| c.id == cube.id) {
+                                return Some(settings);
+                            }
                             settings.cubes.push(cube.clone());
                             Some(settings)
                         })
@@ -293,6 +354,9 @@ impl Launcher {
                 self.creating_cube = false;
                 match res {
                     Ok(_cube) => {
+                        // UUID was consumed successfully — reset it so the next
+                        // cube creation starts with a fresh identifier.
+                        self.pending_cube_id = None;
                         // Clear any previous error state
                         self.error = None;
                         // Reset form fields
@@ -308,6 +372,7 @@ impl Launcher {
                         self.reload()
                     }
                     Err(e) => {
+                        // Retain pending_cube_id so a retry reuses the same UUID.
                         // Clear recovery words on error too
                         for word in &mut self.recovery_words {
                             word.clear();
@@ -518,10 +583,13 @@ impl Launcher {
                         let cube_name = self.create_cube_name.value.trim().to_string();
                         let pin = self.create_cube_pin.value();
                         let datadir_path = self.datadir_path.clone();
+                        // Reuse the UUID that was pre-generated when the user
+                        // first clicked "Create Cube" (recovery path).
+                        let cube_id = *self.pending_cube_id.get_or_insert_with(uuid::Uuid::new_v4);
 
                         Task::perform(
                             async move {
-                                // Generate Liquid wallet HotSigner
+                                // Restore Liquid wallet HotSigner from mnemonic
                                 let liquid_signer = HotSigner::from_mnemonic(network, mnemonic)
                                     .map_err(|e| {
                                         format!("Failed to restore from mnemonic: {}", e)
@@ -557,14 +625,18 @@ impl Launcher {
 
                                 tracing::info!("Liquid wallet signer created and stored (encrypted with PIN) with fingerprint: {}", liquid_fingerprint);
 
-                                // Create Cube settings with Liquid wallet signer reference and PIN
-                                let cube = CubeSettings::new(cube_name, network)
+                                // Build Cube settings using the pre-generated, stable UUID.
+                                let cube = CubeSettings::new_with_id(cube_id, cube_name, network)
                                     .with_liquid_signer(liquid_fingerprint)
                                     .with_pin(&pin)
                                     .map_err(|e| format!("Failed to hash PIN: {}", e))?;
 
-                                // Save Cube settings to settings file
+                                // Save Cube settings to settings file.
+                                // Idempotency: skip insert if UUID already exists.
                                 settings::update_settings_file(&network_dir, |mut settings| {
+                                    if settings.cubes.iter().any(|c| c.id == cube.id) {
+                                        return Some(settings);
+                                    }
                                     settings.cubes.push(cube.clone());
                                     Some(settings)
                                 })
@@ -600,6 +672,42 @@ impl Launcher {
                 self.reload()
             }
 
+            Message::View(ViewMessage::GoToSection(section)) => {
+                // Update the account panel's active_sub when navigating to a Connect submenu
+                if let LauncherSection::Connect(ref sub) = section {
+                    self.connect_account.active_sub = sub.clone();
+                }
+                self.active_section = section;
+                // If navigating to Connect and not yet initialized, trigger Init
+                if matches!(self.active_section, LauncherSection::Connect(_)) {
+                    if matches!(
+                        self.connect_account.step,
+                        crate::app::state::connect::ConnectFlowStep::CheckingSession
+                    ) {
+                        return map_connect_task(
+                            self.connect_account
+                                .update_message(ConnectAccountMessage::Init),
+                        );
+                    }
+                }
+                Task::none()
+            }
+
+            Message::View(ViewMessage::ToggleConnect) => {
+                self.connect_expanded = !self.connect_expanded;
+                Task::none()
+            }
+
+            Message::View(ViewMessage::ConnectAccount(msg)) => {
+                let was_authenticated = self.connect_account.is_authenticated();
+                let task = map_connect_task(self.connect_account.update_message(msg));
+                // Auto-expand Connect submenu after login
+                if !was_authenticated && self.connect_account.is_authenticated() {
+                    self.connect_expanded = true;
+                }
+                task
+            }
+
             _ => {
                 if let Some(modal) = &mut self.delete_cube_modal {
                     return modal.update(message);
@@ -612,32 +720,26 @@ impl Launcher {
     pub fn view(&self) -> Element<Message> {
         let content = Into::<Element<ViewMessage>>::into(scrollable(
             Column::new()
+                // Developer mode controls — right-aligned at top
                 .push(
                     Row::new()
-                        .spacing(20)
-                        .push(image::coincube_logotype().width(Length::Fixed(150.0)))
-                        .push(Space::new().width(Length::Fill))
-                        .push(if let State::Cubes { create_cube, .. } = &self.state {
-                            if *create_cube {
-                                Some(
-                                    button::secondary(
-                                        Some(icon::previous_icon()),
-                                        "Back to Cube list",
-                                    )
-                                    .on_press_maybe(
-                                        if self.creating_cube {
-                                            None
-                                        } else {
-                                            Some(ViewMessage::ShowCreateCube(false))
-                                        },
-                                    ),
-                                )
-                            } else {
-                                None
-                            }
+                        .push(if let State::Cubes {
+                            create_cube: true, ..
+                        } = &self.state
+                        {
+                            Some(
+                                button::secondary(Some(icon::previous_icon()), "Back to Cube list")
+                                    .on_press_maybe(if self.creating_cube {
+                                        None
+                                    } else {
+                                        Some(ViewMessage::ShowCreateCube(false))
+                                    }),
+                            )
                         } else {
                             None
                         })
+                        .push(Space::new().width(Length::Fill))
+                        .spacing(10)
                         .push(
                             Row::new()
                                 .spacing(10)
@@ -672,20 +774,18 @@ impl Launcher {
                             None
                         })
                         .align_y(Alignment::Center)
-                        .padding(100),
+                        .padding(iced::Padding::from([10, 0])),
                 )
                 .push(
                     Container::new(
                         Column::new()
                             .align_x(Alignment::Center)
-                            .spacing(30)
-                            .push({
-                                let c = if matches!(self.state, State::Cubes { .. }) {
-                                    "Welcome back"
-                                } else {
-                                    "Welcome"
-                                };
-                                text(c).size(50).bold()
+                            .spacing(20)
+                            // "Your Cubes" heading
+                            .push(if matches!(self.state, State::Cubes { create_cube: false, .. }) {
+                                Some(text("Your Cubes").size(24).bold())
+                            } else {
+                                None
                             })
                             .push({
                                 // Only show error at top if not in create cube form
@@ -723,17 +823,47 @@ impl Launcher {
                                                 Column::new().spacing(20),
                                                 |col, (i, cube)| col.push(cubes_list_item(cube, i)),
                                             );
-                                        col = col.push(
-                                            Column::new().push(
-                                                button::secondary(
-                                                    Some(icon::plus_icon()),
-                                                    "Create Cube",
-                                                )
-                                                .on_press(ViewMessage::ShowCreateCube(true))
-                                                .padding(10)
-                                                .width(Length::Fixed(500.0)),
-                                            ),
-                                        );
+                                        let at_limit =
+                                            cubes.len() >= self.account_tier.cube_limit();
+                                        if at_limit {
+                                            col = col.push(
+                                                Column::new()
+                                                    .spacing(8)
+                                                    .push(
+                                                        button::secondary(
+                                                            Some(icon::plus_icon()),
+                                                            "Create Cube",
+                                                        )
+                                                        .padding(10)
+                                                        .width(Length::Fixed(500.0)),
+                                                    )
+                                                    .push(
+                                                        Container::new(
+                                                            p1_regular(format!(
+                                                                "Cube limit reached ({}/{}) on the {} plan. \
+                                                                 Upgrade your Connect account to create more.",
+                                                                cubes.len(),
+                                                                self.account_tier.cube_limit(),
+                                                                self.account_tier.display_name(),
+                                                            ))
+                                                            .style(theme::text::secondary),
+                                                        )
+                                                        .max_width(500),
+                                                    ),
+                                            );
+                                        } else {
+                                            col = col.push(
+                                                Column::new().push(
+                                                    button::secondary(
+                                                        Some(icon::plus_icon()),
+                                                        "Create Cube",
+                                                    )
+                                                    .on_press(ViewMessage::ShowCreateCube(true))
+                                                    .padding(10)
+                                                    .width(Length::Fixed(500.0)),
+                                                ),
+                                            );
+                                        }
                                         col.into()
                                     }
                                 }
@@ -750,24 +880,193 @@ impl Launcher {
                     )
                     .center_x(Length::Fill),
                 )
-                .push(Space::new().height(Length::Fixed(100.0))),
+                .push(Space::new().height(Length::Fixed(40.0))),
         ))
         .map(Message::View);
-        let content = if self.network != Network::Bitcoin {
-            Column::with_children(vec![network_banner(self.network).into(), content]).into()
+
+        // If active section is Connect, show the account panel instead of cube list
+        let main_content: Element<Message> =
+            if let LauncherSection::Connect(_) = &self.active_section {
+                // Render Connect account panel view
+                let connect_view: Element<ConnectAccountMessage> =
+                    crate::app::view::connect::connect_account_panel(&self.connect_account);
+                connect_view.map(|msg| Message::View(ViewMessage::ConnectAccount(msg)))
+            } else {
+                content
+            };
+
+        // Build the sidebar
+        let sidebar = launcher_sidebar(self);
+
+        // Wrap sidebar + content in a Row
+        let layout: Element<Message> = Row::new()
+            .push(
+                Container::new(sidebar)
+                    .height(Length::Fill)
+                    .width(Length::Fixed(190.0))
+                    .style(coincube_ui::theme::container::foreground),
+            )
+            .push(
+                Container::new(scrollable(
+                    Row::new()
+                        .push(Space::new().width(Length::FillPortion(1)))
+                        .push(
+                            Column::new()
+                                .push(Space::new().height(Length::Fixed(30.0)))
+                                .push(main_content)
+                                .width(Length::FillPortion(8))
+                                .max_width(1500),
+                        )
+                        .push(Space::new().width(Length::FillPortion(1))),
+                ))
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .style(coincube_ui::theme::container::background),
+            )
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into();
+
+        let layout = if self.network != Network::Bitcoin {
+            Column::with_children(vec![network_banner(self.network).into(), layout]).into()
         } else {
-            content
+            layout
         };
         if let Some(modal) = &self.delete_cube_modal {
-            Modal::new(Container::new(content).height(Length::Fill), modal.view())
+            Modal::new(Container::new(layout).height(Length::Fill), modal.view())
                 .on_blur(Some(Message::View(ViewMessage::DeleteCube(
                     DeleteCubeMessage::CloseModal,
                 ))))
                 .into()
         } else {
-            content
+            layout
         }
     }
+}
+
+fn launcher_sidebar<'a>(launcher: &'a Launcher) -> Element<'a, Message> {
+    use coincube_ui::{color, component::button as btn, component::text as txt, icon as ic};
+
+    let msg = |vm: ViewMessage| -> Message { Message::View(vm) };
+
+    let is_cubes_active = matches!(launcher.active_section, LauncherSection::Cubes);
+    let cubes_button = if is_cubes_active {
+        Row::new()
+            .push(btn::menu_active(Some(ic::cube_icon()), "Cubes").width(Length::Fill))
+            .width(Length::Fill)
+    } else {
+        Row::new()
+            .push(
+                btn::menu(Some(ic::cube_icon()), "Cubes")
+                    .on_press(msg(ViewMessage::GoToSection(LauncherSection::Cubes)))
+                    .width(Length::Fill),
+            )
+            .width(Length::Fill)
+    };
+
+    let is_authenticated = launcher.connect_account.is_authenticated();
+
+    let mut col = Column::new()
+        .spacing(0)
+        .width(Length::Fill)
+        .push(
+            Container::new(image::coincube_logotype().width(Length::Fill))
+                .padding(10)
+                .align_x(Alignment::Center)
+                .width(Length::Fill),
+        )
+        .push(cubes_button);
+
+    if is_authenticated {
+        let connect_chevron = if launcher.connect_expanded {
+            ic::up_icon()
+        } else {
+            ic::down_icon()
+        };
+        let connect_button: Element<Message> = iced::widget::Button::new(
+            Row::new()
+                .spacing(10)
+                .align_y(iced::alignment::Vertical::Center)
+                .push(ic::coins_icon().style(coincube_ui::theme::text::secondary))
+                .push(
+                    coincube_ui::component::text::p1_regular("Connect")
+                        .style(coincube_ui::theme::text::secondary),
+                )
+                .push(Space::new().width(Length::Fill))
+                .push(connect_chevron.style(coincube_ui::theme::text::secondary))
+                .padding(10),
+        )
+        .width(Length::Fill)
+        .style(coincube_ui::theme::button::menu)
+        .on_press(msg(ViewMessage::ToggleConnect))
+        .into();
+        col = col.push(connect_button);
+    }
+
+    if launcher.connect_expanded && is_authenticated {
+        use app::menu::ConnectSubMenu;
+        let items: &[(&str, ConnectSubMenu)] = &[
+            ("Overview", ConnectSubMenu::Overview),
+            ("Plan & Billing", ConnectSubMenu::PlanBilling),
+            ("Security", ConnectSubMenu::Security),
+            ("Duress", ConnectSubMenu::Duress),
+            // Invites is per-Cube (key holders), not shown in launcher
+        ];
+        for (label, sub) in items {
+            let is_active = matches!(
+                &launcher.active_section,
+                LauncherSection::Connect(s) if *s == *sub
+            );
+            let item = if is_active {
+                Row::new()
+                    .push(Space::new().width(Length::Fixed(20.0)))
+                    .push(btn::menu_active(None, *label).width(Length::Fill))
+                    .width(Length::Fill)
+            } else {
+                Row::new()
+                    .push(Space::new().width(Length::Fixed(20.0)))
+                    .push(
+                        btn::menu(None, *label)
+                            .on_press(msg(ViewMessage::GoToSection(LauncherSection::Connect(
+                                sub.clone(),
+                            ))))
+                            .width(Length::Fill),
+                    )
+                    .width(Length::Fill)
+            };
+            col = col.push(item);
+        }
+    }
+
+    col = col.push(Space::new().height(Length::Fill));
+    if !is_authenticated {
+        col = col.push(
+            Container::new(
+                btn::primary(None, "Sign In")
+                    .on_press(msg(ViewMessage::GoToSection(LauncherSection::Connect(
+                        app::menu::ConnectSubMenu::Overview,
+                    ))))
+                    .width(Length::Fill),
+            )
+            .padding(10)
+            .width(Length::Fill),
+        );
+    } else if let Some(user) = &launcher.connect_account.user {
+        col = col.push(
+            Container::new(
+                txt::caption(&user.email)
+                    .color(color::GREY_3)
+                    .align_x(Alignment::Center),
+            )
+            .padding(10)
+            .width(Length::Fill)
+            .center_x(Length::Fill),
+        );
+    }
+
+    scrollable(col.height(Length::Fill))
+        .height(Length::Fill)
+        .into()
 }
 
 fn create_cube_form<'a>(
@@ -1103,6 +1402,20 @@ fn has_existing_wallet(data_dir: &CoincubeDirectory, network: Network) -> bool {
         .exists()
 }
 
+/// Map a `Task<app::message::Message>` (from ConnectAccountPanel) into a
+/// `Task<launcher::Message>` by extracting the ConnectAccountMessage.
+fn map_connect_task(task: Task<app::message::Message>) -> Task<Message> {
+    task.map(|app_msg| {
+        if let app::message::Message::View(app::view::Message::ConnectAccount(acct_msg)) = app_msg {
+            Message::View(ViewMessage::ConnectAccount(acct_msg))
+        } else {
+            // Shouldn't happen — ConnectAccountPanel only emits ConnectAccount messages
+            log::warn!("[LAUNCHER] Unexpected message from ConnectAccountPanel");
+            Message::View(ViewMessage::Check)
+        }
+    })
+}
+
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -1136,10 +1449,22 @@ pub enum ViewMessage {
     DeleteCube(DeleteCubeMessage),
     ToggleRecoveryCheckBox,
     ToggleDeveloperMode(bool),
-    RecoveryWordInput { index: usize, word: String },
-    SelectRecoverySuggestion { index: usize, word: String },
+    RecoveryWordInput {
+        index: usize,
+        word: String,
+    },
+    SelectRecoverySuggestion {
+        index: usize,
+        word: String,
+    },
     SubmitRecovery,
     CancelRecovery,
+    /// Navigate to a launcher section (Cubes or Connect submenu)
+    GoToSection(LauncherSection),
+    /// Toggle the Connect sidebar section expand/collapse
+    ToggleConnect,
+    /// Account-level Connect messages (login, plan, security, etc.)
+    ConnectAccount(ConnectAccountMessage),
 }
 
 #[derive(Debug, Clone)]

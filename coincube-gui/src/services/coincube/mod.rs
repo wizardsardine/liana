@@ -68,6 +68,20 @@ impl std::fmt::Display for CoincubeError {
 
 impl std::error::Error for CoincubeError {}
 
+impl CoincubeError {
+    /// Returns `true` when the error indicates that the credentials (token) are
+    /// definitively rejected by the server (401 Unauthorized / 403 Forbidden).
+    pub fn is_auth_error(&self) -> bool {
+        matches!(
+            self,
+            CoincubeError::Unsuccessful(crate::services::http::NotSuccessResponseInfo {
+                status_code: 401 | 403,
+                ..
+            })
+        )
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct DownloadStats {
     pub total: u32,
@@ -208,6 +222,27 @@ impl std::fmt::Display for PlanTier {
 pub struct ConnectPlan {
     pub tier: PlanTier,
     pub paid_until: Option<String>,
+    pub status: String,
+}
+
+/// Request body for POST /api/v1/connect/cubes
+#[derive(Debug, Clone, Serialize)]
+pub struct RegisterCubeRequest {
+    pub uuid: String,
+    pub name: String,
+    pub network: String,
+}
+
+/// Response from POST/GET /api/v1/connect/cubes/{id}
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CubeResponse {
+    pub id: u64,
+    pub uuid: String,
+    pub name: String,
+    pub network: String,
+    pub lightning_address: Option<String>,
+    pub bolt12_offer: Option<String>,
     pub status: String,
 }
 

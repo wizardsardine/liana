@@ -10,8 +10,10 @@ use iced::{widget::container, Alignment, Length};
 use crate::{
     app::{
         menu::ConnectSubMenu,
-        state::connect::{AvatarFlowStep, ConnectFlowStep, ConnectPanel},
-        view::{AvatarMessage, ConnectMessage},
+        state::connect::{
+            AvatarFlowStep, ConnectAccountPanel, ConnectCubePanel, ConnectFlowStep, ConnectPanel,
+        },
+        view::{AvatarMessage, ConnectAccountMessage, ConnectCubeMessage},
     },
     services::coincube::{
         AvatarAccentMotif, AvatarAgeFeel, AvatarArchetype, AvatarArmorStyle, AvatarDemeanor,
@@ -19,22 +21,35 @@ use crate::{
     },
 };
 
-pub fn connect_panel<'a>(state: &'a ConnectPanel) -> Element<'a, ConnectMessage> {
+/// Domain suffix displayed in the Lightning Address claim form.
+/// Must match the backend's `lightningAddressDomain` / `bip353Domain`.
+const LN_ADDRESS_DOMAIN: &str = "@coincube.io";
+
+use crate::app::view::Message as ViewMessage;
+
+pub fn connect_panel<'a>(state: &'a ConnectPanel) -> Element<'a, ViewMessage> {
+    let acct = &state.account;
+    let cube = &state.cube;
+
     let header = Row::new()
         .push(text::h4_bold("COIN").color(color::ORANGE))
         .push(text::h4_bold("CUBE").color(color::WHITE))
         .push(text::h5_regular(" | CONNECT").color(color::GREY_3))
         .align_y(Alignment::Center);
 
-    let body: Element<ConnectMessage> = match &state.step {
+    let body: Element<ViewMessage> = match &acct.step {
         ConnectFlowStep::CheckingSession => Column::new()
             .push(text::p1_regular("Loading…").color(color::GREY_3))
             .align_x(Alignment::Center)
             .into(),
 
-        ConnectFlowStep::Login { email, loading } => login_ux(email, *loading),
+        ConnectFlowStep::Login { email, loading } => {
+            login_ux(email, *loading).map(ViewMessage::ConnectAccount)
+        }
 
-        ConnectFlowStep::Register { email, loading } => register_ux(email, *loading),
+        ConnectFlowStep::Register { email, loading } => {
+            register_ux(email, *loading).map(ViewMessage::ConnectAccount)
+        }
 
         ConnectFlowStep::OtpVerification {
             email,
@@ -42,20 +57,22 @@ pub fn connect_panel<'a>(state: &'a ConnectPanel) -> Element<'a, ConnectMessage>
             sending,
             cooldown,
             ..
-        } => otp_ux(email, otp, *sending, *cooldown),
+        } => otp_ux(email, otp, *sending, *cooldown).map(ViewMessage::ConnectAccount),
 
-        ConnectFlowStep::Dashboard => match &state.active_sub {
-            ConnectSubMenu::Overview => overview_ux(state),
-            ConnectSubMenu::LightningAddress => lightning_address_ux(state),
-            ConnectSubMenu::Avatar => avatar_ux(state),
-            ConnectSubMenu::PlanBilling => plan_billing_ux(state),
-            ConnectSubMenu::Security => security_ux(state),
-            ConnectSubMenu::Duress => duress_ux(),
-            ConnectSubMenu::Invites => invites_ux(state),
+        ConnectFlowStep::Dashboard => match &acct.active_sub {
+            ConnectSubMenu::Overview => overview_ux(acct).map(ViewMessage::ConnectAccount),
+            ConnectSubMenu::LightningAddress => {
+                lightning_address_ux(cube).map(ViewMessage::ConnectCube)
+            }
+            ConnectSubMenu::Avatar => avatar_ux(cube).map(ViewMessage::ConnectCube),
+            ConnectSubMenu::PlanBilling => plan_billing_ux(acct).map(ViewMessage::ConnectAccount),
+            ConnectSubMenu::Security => security_ux(acct).map(ViewMessage::ConnectAccount),
+            ConnectSubMenu::Duress => duress_ux().map(ViewMessage::ConnectAccount),
+            ConnectSubMenu::Invites => invites_ux(acct).map(ViewMessage::ConnectAccount),
         },
     };
 
-    let is_auth_step = !matches!(state.step, ConnectFlowStep::Dashboard);
+    let is_auth_step = !matches!(acct.step, ConnectFlowStep::Dashboard);
     let col_align = if is_auth_step {
         Alignment::Center
     } else {
@@ -69,7 +86,80 @@ pub fn connect_panel<'a>(state: &'a ConnectPanel) -> Element<'a, ConnectMessage>
         .align_x(col_align)
         .width(Length::Fill);
 
-    if let Some(e) = state.error.as_deref() {
+    if let Some(e) = acct.error.as_deref() {
+        col = col.push(
+            container(text::p2_regular(e).color(color::RED))
+                .padding(8)
+                .style(|_| container::Style {
+                    background: Some(iced::Background::Color(color::GREY_6)),
+                    border: iced::Border {
+                        color: color::RED,
+                        width: 0.5,
+                        radius: 8.0.into(),
+                    },
+                    ..Default::default()
+                }),
+        );
+    }
+
+    col.push(body).into()
+}
+
+/// Renders account-level Connect views (used by the launcher).
+/// Returns Element<ConnectAccountMessage> (not ViewMessage) so the caller can map it.
+pub fn connect_account_panel<'a>(
+    acct: &'a ConnectAccountPanel,
+) -> Element<'a, ConnectAccountMessage> {
+    let header = Row::new()
+        .push(text::h4_bold("COIN").color(color::ORANGE))
+        .push(text::h4_bold("CUBE").color(color::WHITE))
+        .push(text::h5_regular(" | CONNECT").color(color::GREY_3))
+        .align_y(Alignment::Center);
+
+    let body: Element<ConnectAccountMessage> = match &acct.step {
+        ConnectFlowStep::CheckingSession => Column::new()
+            .push(text::p1_regular("Loading…").color(color::GREY_3))
+            .align_x(Alignment::Center)
+            .into(),
+        ConnectFlowStep::Login { email, loading } => login_ux(email, *loading),
+        ConnectFlowStep::Register { email, loading } => register_ux(email, *loading),
+        ConnectFlowStep::OtpVerification {
+            email,
+            otp,
+            sending,
+            cooldown,
+            ..
+        } => otp_ux(email, otp, *sending, *cooldown),
+        ConnectFlowStep::Dashboard => match &acct.active_sub {
+            ConnectSubMenu::Overview => overview_ux(acct),
+            ConnectSubMenu::PlanBilling => plan_billing_ux(acct),
+            ConnectSubMenu::Security => security_ux(acct),
+            ConnectSubMenu::Duress => duress_ux(),
+            // Cube-specific submenus shouldn't appear in the launcher
+            _ => Column::new()
+                .push(
+                    text::p1_regular("This feature is available inside a Cube.")
+                        .color(color::GREY_3),
+                )
+                .into(),
+        },
+    };
+
+    let is_auth_step = !matches!(acct.step, ConnectFlowStep::Dashboard);
+    let col_align = if is_auth_step {
+        Alignment::Center
+    } else {
+        Alignment::Start
+    };
+
+    let mut col = Column::new()
+        .push(header)
+        .push(iced::widget::Space::new().height(Length::Fixed(20.0)))
+        .spacing(0)
+        .align_x(col_align)
+        .width(Length::Fill);
+
+    if let Some(e) = acct.error.as_deref() {
         col = col.push(
             container(text::p2_regular(e).color(color::RED))
                 .padding(8)
@@ -100,10 +190,10 @@ fn card_style() -> container::Style {
     }
 }
 
-fn login_ux<'a>(email: &'a str, loading: bool) -> Element<'a, ConnectMessage> {
+fn login_ux<'a>(email: &'a str, loading: bool) -> Element<'a, ConnectAccountMessage> {
     let valid = email.contains('.') && email.contains('@') && email.len() >= 5;
 
-    let submit: Element<ConnectMessage> = if loading {
+    let submit: Element<ConnectAccountMessage> = if loading {
         iced::widget::button(
             container(text::p1_regular("Signing in…").color(color::GREY_3))
                 .center_x(Length::Fill)
@@ -115,7 +205,7 @@ fn login_ux<'a>(email: &'a str, loading: bool) -> Element<'a, ConnectMessage> {
         .into()
     } else {
         button::primary(None, "Continue")
-            .on_press_maybe(valid.then_some(ConnectMessage::SubmitLogin))
+            .on_press_maybe(valid.then_some(ConnectAccountMessage::SubmitLogin))
             .width(Length::Fill)
             .into()
     };
@@ -125,8 +215,8 @@ fn login_ux<'a>(email: &'a str, loading: bool) -> Element<'a, ConnectMessage> {
         .push(iced::widget::Space::new().height(Length::Fixed(30.0)))
         .push(
             TextInput::new("Email", email)
-                .on_input(ConnectMessage::EmailChanged)
-                .on_submit_maybe((!loading && valid).then_some(ConnectMessage::SubmitLogin))
+                .on_input(ConnectAccountMessage::EmailChanged)
+                .on_submit_maybe((!loading && valid).then_some(ConnectAccountMessage::SubmitLogin))
                 .size(16)
                 .padding(15),
         )
@@ -139,7 +229,7 @@ fn login_ux<'a>(email: &'a str, loading: bool) -> Element<'a, ConnectMessage> {
                     .padding(5),
             )
             .style(theme::button::link)
-            .on_press(ConnectMessage::CreateAccount),
+            .on_press(ConnectAccountMessage::CreateAccount),
         )
         .align_x(Alignment::Center)
         .spacing(2)
@@ -148,10 +238,10 @@ fn login_ux<'a>(email: &'a str, loading: bool) -> Element<'a, ConnectMessage> {
         .into()
 }
 
-fn register_ux<'a>(email: &'a str, loading: bool) -> Element<'a, ConnectMessage> {
+fn register_ux<'a>(email: &'a str, loading: bool) -> Element<'a, ConnectAccountMessage> {
     let valid = email.contains('.') && email.contains('@') && email.len() >= 5;
 
-    let submit: Element<ConnectMessage> = if loading {
+    let submit: Element<ConnectAccountMessage> = if loading {
         iced::widget::button(
             container(text::p1_regular("Signing up…").color(color::GREY_3))
                 .center_x(Length::Fill)
@@ -163,7 +253,7 @@ fn register_ux<'a>(email: &'a str, loading: bool) -> Element<'a, ConnectMessage>
         .into()
     } else {
         button::primary(None, "Continue")
-            .on_press_maybe(valid.then_some(ConnectMessage::SubmitRegistration))
+            .on_press_maybe(valid.then_some(ConnectAccountMessage::SubmitRegistration))
             .width(Length::Fill)
             .into()
     };
@@ -179,7 +269,7 @@ fn register_ux<'a>(email: &'a str, loading: bool) -> Element<'a, ConnectMessage>
                     .align_y(Alignment::Center),
             )
             .style(theme::button::transparent)
-            .on_press_maybe((!loading).then_some(ConnectMessage::LogOut)),
+            .on_press_maybe((!loading).then_some(ConnectAccountMessage::LogOut)),
         )
         .push(iced::widget::Space::new().height(Length::Fixed(10.0)))
         .push(text::h3("Create an Account").color(color::WHITE))
@@ -190,8 +280,10 @@ fn register_ux<'a>(email: &'a str, loading: bool) -> Element<'a, ConnectMessage>
         .push(iced::widget::Space::new().height(Length::Fixed(20.0)))
         .push(
             TextInput::new("Email", email)
-                .on_input(ConnectMessage::EmailChanged)
-                .on_submit_maybe((!loading && valid).then_some(ConnectMessage::SubmitRegistration))
+                .on_input(ConnectAccountMessage::EmailChanged)
+                .on_submit_maybe(
+                    (!loading && valid).then_some(ConnectAccountMessage::SubmitRegistration),
+                )
                 .size(16)
                 .padding(15),
         )
@@ -209,10 +301,10 @@ fn otp_ux<'a>(
     otp: &'a str,
     sending: bool,
     cooldown: u8,
-) -> Element<'a, ConnectMessage> {
+) -> Element<'a, ConnectAccountMessage> {
     let valid = otp.len() == 6;
 
-    let submit: Element<ConnectMessage> = if sending {
+    let submit: Element<ConnectAccountMessage> = if sending {
         iced::widget::button(
             container(text::p1_regular("Verifying…").color(color::GREY_3))
                 .center_x(Length::Fill)
@@ -224,7 +316,7 @@ fn otp_ux<'a>(
         .into()
     } else {
         button::primary(None, "Verify OTP")
-            .on_press_maybe(valid.then_some(ConnectMessage::VerifyOtp))
+            .on_press_maybe(valid.then_some(ConnectAccountMessage::VerifyOtp))
             .width(Length::Fill)
             .into()
     };
@@ -243,8 +335,8 @@ fn otp_ux<'a>(
         .push(iced::widget::Space::new().height(Length::Fixed(25.0)))
         .push(
             TextInput::new("6-digit code", otp)
-                .on_input(ConnectMessage::OtpChanged)
-                .on_submit_maybe((!sending && valid).then_some(ConnectMessage::VerifyOtp))
+                .on_input(ConnectAccountMessage::OtpChanged)
+                .on_submit_maybe((!sending && valid).then_some(ConnectAccountMessage::VerifyOtp))
                 .size(16)
                 .padding(15),
         )
@@ -261,7 +353,7 @@ fn otp_ux<'a>(
             .width(Length::Fill)
             .height(Length::Fixed(44.0))
             .style(theme::button::secondary)
-            .on_press_maybe(can_resend.then_some(ConnectMessage::SubmitLogin)),
+            .on_press_maybe(can_resend.then_some(ConnectAccountMessage::ResendOtp)),
         )
         .align_x(Alignment::Center)
         .spacing(2)
@@ -270,7 +362,7 @@ fn otp_ux<'a>(
         .into()
 }
 
-fn overview_ux<'a>(state: &'a ConnectPanel) -> Element<'a, ConnectMessage> {
+fn overview_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccountMessage> {
     let email = state.user.as_ref().map(|u| u.email.as_str()).unwrap_or("—");
     let verified = state
         .user
@@ -283,7 +375,7 @@ fn overview_ux<'a>(state: &'a ConnectPanel) -> Element<'a, ConnectMessage> {
         .map(|p| p.tier.to_string())
         .unwrap_or_else(|| "Free".to_string());
 
-    let verification_badge: Element<ConnectMessage> = if verified {
+    let verification_badge: Element<ConnectAccountMessage> = if verified {
         text::p2_regular("✓ Verified").color(color::ORANGE).into()
     } else {
         text::p2_regular("✗ Unverified").color(color::GREY_3).into()
@@ -320,8 +412,7 @@ fn overview_ux<'a>(state: &'a ConnectPanel) -> Element<'a, ConnectMessage> {
                     )
                     .push(iced::widget::Space::new().height(Length::Fixed(20.0)))
                     .push(
-                        button::secondary( None,"Sign Out")
-                            .on_press(ConnectMessage::LogOut),
+                        button::secondary(None, "Sign Out").on_press(ConnectAccountMessage::LogOut),
                     )
                     .padding(20)
                     .spacing(2),
@@ -350,7 +441,7 @@ fn plan_tier_color(tier: &PlanTier) -> iced::Color {
     }
 }
 
-fn plan_billing_ux<'a>(state: &'a ConnectPanel) -> Element<'a, ConnectMessage> {
+fn plan_billing_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccountMessage> {
     let current_tier = state
         .plan
         .as_ref()
@@ -361,7 +452,7 @@ fn plan_billing_ux<'a>(state: &'a ConnectPanel) -> Element<'a, ConnectMessage> {
                      tier: &PlanTier,
                      desc: &'static str,
                      price: &'static str|
-     -> Element<'a, ConnectMessage> {
+     -> Element<'a, ConnectAccountMessage> {
         let is_current = tier == current_tier;
         let badge_color = plan_tier_color(tier);
 
@@ -449,8 +540,8 @@ fn plan_billing_ux<'a>(state: &'a ConnectPanel) -> Element<'a, ConnectMessage> {
         .into()
 }
 
-fn security_ux<'a>(state: &'a ConnectPanel) -> Element<'a, ConnectMessage> {
-    let devices_section: Element<ConnectMessage> = match &state.verified_devices {
+fn security_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccountMessage> {
+    let devices_section: Element<ConnectAccountMessage> = match &state.verified_devices {
         None => text::p2_regular("Loading devices…")
             .color(color::GREY_3)
             .into(),
@@ -474,7 +565,7 @@ fn security_ux<'a>(state: &'a ConnectPanel) -> Element<'a, ConnectMessage> {
         }
     };
 
-    let activity_section: Element<ConnectMessage> = match &state.login_activity {
+    let activity_section: Element<ConnectAccountMessage> = match &state.login_activity {
         None => text::p2_regular("Loading activity…")
             .color(color::GREY_3)
             .into(),
@@ -534,14 +625,14 @@ fn security_ux<'a>(state: &'a ConnectPanel) -> Element<'a, ConnectMessage> {
         .into()
 }
 
-fn lightning_address_ux<'a>(state: &'a ConnectPanel) -> Element<'a, ConnectMessage> {
+fn lightning_address_ux<'a>(state: &'a ConnectCubePanel) -> Element<'a, ConnectCubeMessage> {
     let has_address = state
         .lightning_address
         .as_ref()
         .and_then(|la| la.lightning_address.as_deref())
         .is_some();
 
-    let card_content: Element<ConnectMessage> = if has_address {
+    let card_content: Element<ConnectCubeMessage> = if has_address {
         // Display the claimed address
         let address = state
             .lightning_address
@@ -560,7 +651,7 @@ fn lightning_address_ux<'a>(state: &'a ConnectPanel) -> Element<'a, ConnectMessa
                             .push(iced::widget::Space::new().width(Length::Fill))
                             .push(
                                 button::secondary(Some(clipboard_icon()), "Copy")
-                                    .on_press(ConnectMessage::CopyToClipboard(address)),
+                                    .on_press(ConnectCubeMessage::CopyToClipboard(address)),
                             )
                             .align_y(Alignment::Center),
                     )
@@ -598,7 +689,7 @@ fn lightning_address_ux<'a>(state: &'a ConnectPanel) -> Element<'a, ConnectMessa
         let can_claim = is_valid && is_available && !state.ln_claiming;
 
         // Status indicator
-        let status: Element<ConnectMessage> = if state.ln_checking {
+        let status: Element<ConnectCubeMessage> = if state.ln_checking {
             text::p2_regular("Checking…").color(color::GREY_3).into()
         } else if let Some(err) = &state.ln_username_error {
             text::p2_regular(err.as_str()).color(color::RED).into()
@@ -613,7 +704,7 @@ fn lightning_address_ux<'a>(state: &'a ConnectPanel) -> Element<'a, ConnectMessa
             text::p2_regular(" ").into()
         };
 
-        let claim_button: Element<ConnectMessage> = if state.ln_claiming {
+        let claim_button: Element<ConnectCubeMessage> = if state.ln_claiming {
             iced::widget::button(
                 container(text::p1_regular("Claiming…").color(color::GREY_3))
                     .center_x(Length::Fill)
@@ -625,7 +716,7 @@ fn lightning_address_ux<'a>(state: &'a ConnectPanel) -> Element<'a, ConnectMessa
             .into()
         } else {
             button::primary(None, "Claim Lightning Address")
-                .on_press_maybe(can_claim.then_some(ConnectMessage::ClaimLightningAddress))
+                .on_press_maybe(can_claim.then_some(ConnectCubeMessage::ClaimLightningAddress))
                 .width(Length::Fill)
                 .into()
         };
@@ -645,15 +736,15 @@ fn lightning_address_ux<'a>(state: &'a ConnectPanel) -> Element<'a, ConnectMessa
                     Row::new()
                         .push(
                             TextInput::new("satoshi", username)
-                                .on_input(ConnectMessage::LnUsernameChanged)
+                                .on_input(ConnectCubeMessage::LnUsernameChanged)
                                 .on_submit_maybe(
-                                    can_claim.then_some(ConnectMessage::ClaimLightningAddress),
+                                    can_claim.then_some(ConnectCubeMessage::ClaimLightningAddress),
                                 )
                                 .size(16)
                                 .padding(15),
                         )
                         .push(
-                            container(text::p1_regular("@coincube.io").color(color::GREY_3))
+                            container(text::p1_regular(LN_ADDRESS_DOMAIN).color(color::GREY_3))
                                 .padding(15)
                                 .center_y(Length::Fixed(50.0)),
                         )
@@ -663,6 +754,11 @@ fn lightning_address_ux<'a>(state: &'a ConnectPanel) -> Element<'a, ConnectMessa
                 .push(status)
                 .push(iced::widget::Space::new().height(Length::Fixed(12.0)))
                 .push(claim_button)
+                .push_maybe(state.ln_claim_error.as_deref().map(|err| {
+                    Column::new()
+                        .push(iced::widget::Space::new().height(Length::Fixed(8.0)))
+                        .push(text::p2_regular(err).color(color::RED))
+                }))
                 .padding(20)
                 .spacing(2),
         )
@@ -680,7 +776,7 @@ fn lightning_address_ux<'a>(state: &'a ConnectPanel) -> Element<'a, ConnectMessa
         .into()
 }
 
-fn duress_ux<'a>() -> Element<'a, ConnectMessage> {
+fn duress_ux<'a>() -> Element<'a, ConnectAccountMessage> {
     Column::new()
         .push(text::h4_bold("Duress Settings").color(color::WHITE))
         .push(iced::widget::Space::new().height(Length::Fixed(15.0)))
@@ -711,13 +807,13 @@ fn duress_ux<'a>() -> Element<'a, ConnectMessage> {
         .into()
 }
 
-fn avatar_ux<'a>(state: &'a ConnectPanel) -> Element<'a, ConnectMessage> {
+fn avatar_ux<'a>(state: &'a ConnectCubePanel) -> Element<'a, ConnectCubeMessage> {
     let title = Row::new()
         .push(text::h4_bold("Avatar").color(color::WHITE))
         .push(iced::widget::Space::new().width(Length::Fill))
         .align_y(Alignment::Center);
 
-    let body: Element<ConnectMessage> = match &state.avatar_step {
+    let body: Element<ConnectCubeMessage> = match &state.avatar_step {
         AvatarFlowStep::Idle | AvatarFlowStep::Questionnaire => avatar_questionnaire_ux(state),
         AvatarFlowStep::Generating => container(
             Column::new()
@@ -752,7 +848,7 @@ fn avatar_ux<'a>(state: &'a ConnectPanel) -> Element<'a, ConnectMessage> {
                         .push(iced::widget::Space::new().height(Length::Fixed(16.0)))
                         .push(
                             button::primary(None, "Try Again")
-                                .on_press(ConnectMessage::Avatar(AvatarMessage::Retry)),
+                                .on_press(ConnectCubeMessage::Avatar(AvatarMessage::Retry)),
                         )
                         .padding(16)
                         .spacing(4),
@@ -774,7 +870,7 @@ fn avatar_ux<'a>(state: &'a ConnectPanel) -> Element<'a, ConnectMessage> {
         .into()
 }
 
-fn avatar_questionnaire_ux<'a>(state: &'a ConnectPanel) -> Element<'a, ConnectMessage> {
+fn avatar_questionnaire_ux<'a>(state: &'a ConnectCubePanel) -> Element<'a, ConnectCubeMessage> {
     let draft = &state.avatar_draft;
 
     let gender_row = Row::new()
@@ -789,7 +885,7 @@ fn avatar_questionnaire_ux<'a>(state: &'a ConnectPanel) -> Element<'a, ConnectMe
             } else {
                 button::secondary(None, "Man")
             }
-            .on_press(ConnectMessage::Avatar(AvatarMessage::GenderChanged(
+            .on_press(ConnectCubeMessage::Avatar(AvatarMessage::GenderChanged(
                 AvatarGender::Man,
             ))),
         )
@@ -800,7 +896,7 @@ fn avatar_questionnaire_ux<'a>(state: &'a ConnectPanel) -> Element<'a, ConnectMe
             } else {
                 button::secondary(None, "Woman")
             }
-            .on_press(ConnectMessage::Avatar(AvatarMessage::GenderChanged(
+            .on_press(ConnectCubeMessage::Avatar(AvatarMessage::GenderChanged(
                 AvatarGender::Woman,
             ))),
         )
@@ -818,7 +914,7 @@ fn avatar_questionnaire_ux<'a>(state: &'a ConnectPanel) -> Element<'a, ConnectMe
             } else {
                 button::secondary(None, "Ronin")
             }
-            .on_press(ConnectMessage::Avatar(AvatarMessage::ArchetypeChanged(
+            .on_press(ConnectCubeMessage::Avatar(AvatarMessage::ArchetypeChanged(
                 AvatarArchetype::Ronin,
             ))),
         )
@@ -829,7 +925,7 @@ fn avatar_questionnaire_ux<'a>(state: &'a ConnectPanel) -> Element<'a, ConnectMe
             } else {
                 button::secondary(None, "Samurai")
             }
-            .on_press(ConnectMessage::Avatar(AvatarMessage::ArchetypeChanged(
+            .on_press(ConnectCubeMessage::Avatar(AvatarMessage::ArchetypeChanged(
                 AvatarArchetype::Samurai,
             ))),
         )
@@ -840,7 +936,7 @@ fn avatar_questionnaire_ux<'a>(state: &'a ConnectPanel) -> Element<'a, ConnectMe
             } else {
                 button::secondary(None, "Shogun")
             }
-            .on_press(ConnectMessage::Avatar(AvatarMessage::ArchetypeChanged(
+            .on_press(ConnectCubeMessage::Avatar(AvatarMessage::ArchetypeChanged(
                 AvatarArchetype::Shogun,
             ))),
         )
@@ -858,7 +954,7 @@ fn avatar_questionnaire_ux<'a>(state: &'a ConnectPanel) -> Element<'a, ConnectMe
             } else {
                 button::secondary(None, "Young")
             }
-            .on_press(ConnectMessage::Avatar(AvatarMessage::AgeFeelChanged(
+            .on_press(ConnectCubeMessage::Avatar(AvatarMessage::AgeFeelChanged(
                 AvatarAgeFeel::Young,
             ))),
         )
@@ -869,7 +965,7 @@ fn avatar_questionnaire_ux<'a>(state: &'a ConnectPanel) -> Element<'a, ConnectMe
             } else {
                 button::secondary(None, "Mature")
             }
-            .on_press(ConnectMessage::Avatar(AvatarMessage::AgeFeelChanged(
+            .on_press(ConnectCubeMessage::Avatar(AvatarMessage::AgeFeelChanged(
                 AvatarAgeFeel::Mature,
             ))),
         )
@@ -880,7 +976,7 @@ fn avatar_questionnaire_ux<'a>(state: &'a ConnectPanel) -> Element<'a, ConnectMe
             } else {
                 button::secondary(None, "Elder")
             }
-            .on_press(ConnectMessage::Avatar(AvatarMessage::AgeFeelChanged(
+            .on_press(ConnectCubeMessage::Avatar(AvatarMessage::AgeFeelChanged(
                 AvatarAgeFeel::Elder,
             ))),
         )
@@ -898,7 +994,7 @@ fn avatar_questionnaire_ux<'a>(state: &'a ConnectPanel) -> Element<'a, ConnectMe
             } else {
                 button::secondary(None, "Calm")
             }
-            .on_press(ConnectMessage::Avatar(AvatarMessage::DemeanorChanged(
+            .on_press(ConnectCubeMessage::Avatar(AvatarMessage::DemeanorChanged(
                 AvatarDemeanor::Calm,
             ))),
         )
@@ -909,7 +1005,7 @@ fn avatar_questionnaire_ux<'a>(state: &'a ConnectPanel) -> Element<'a, ConnectMe
             } else {
                 button::secondary(None, "Fierce")
             }
-            .on_press(ConnectMessage::Avatar(AvatarMessage::DemeanorChanged(
+            .on_press(ConnectCubeMessage::Avatar(AvatarMessage::DemeanorChanged(
                 AvatarDemeanor::Fierce,
             ))),
         )
@@ -920,7 +1016,7 @@ fn avatar_questionnaire_ux<'a>(state: &'a ConnectPanel) -> Element<'a, ConnectMe
             } else {
                 button::secondary(None, "Mysterious")
             }
-            .on_press(ConnectMessage::Avatar(AvatarMessage::DemeanorChanged(
+            .on_press(ConnectCubeMessage::Avatar(AvatarMessage::DemeanorChanged(
                 AvatarDemeanor::Mysterious,
             ))),
         )
@@ -938,9 +1034,9 @@ fn avatar_questionnaire_ux<'a>(state: &'a ConnectPanel) -> Element<'a, ConnectMe
             } else {
                 button::secondary(None, "Light")
             }
-            .on_press(ConnectMessage::Avatar(AvatarMessage::ArmorStyleChanged(
-                AvatarArmorStyle::Light,
-            ))),
+            .on_press(ConnectCubeMessage::Avatar(
+                AvatarMessage::ArmorStyleChanged(AvatarArmorStyle::Light),
+            )),
         )
         .push(iced::widget::Space::new().width(Length::Fixed(8.0)))
         .push(
@@ -949,9 +1045,9 @@ fn avatar_questionnaire_ux<'a>(state: &'a ConnectPanel) -> Element<'a, ConnectMe
             } else {
                 button::secondary(None, "Standard")
             }
-            .on_press(ConnectMessage::Avatar(AvatarMessage::ArmorStyleChanged(
-                AvatarArmorStyle::Standard,
-            ))),
+            .on_press(ConnectCubeMessage::Avatar(
+                AvatarMessage::ArmorStyleChanged(AvatarArmorStyle::Standard),
+            )),
         )
         .push(iced::widget::Space::new().width(Length::Fixed(8.0)))
         .push(
@@ -960,9 +1056,9 @@ fn avatar_questionnaire_ux<'a>(state: &'a ConnectPanel) -> Element<'a, ConnectMe
             } else {
                 button::secondary(None, "Heavy")
             }
-            .on_press(ConnectMessage::Avatar(AvatarMessage::ArmorStyleChanged(
-                AvatarArmorStyle::Heavy,
-            ))),
+            .on_press(ConnectCubeMessage::Avatar(
+                AvatarMessage::ArmorStyleChanged(AvatarArmorStyle::Heavy),
+            )),
         )
         .align_y(Alignment::Center);
 
@@ -978,9 +1074,9 @@ fn avatar_questionnaire_ux<'a>(state: &'a ConnectPanel) -> Element<'a, ConnectMe
             } else {
                 button::secondary(None, "Sun")
             }
-            .on_press(ConnectMessage::Avatar(AvatarMessage::AccentMotifChanged(
-                AvatarAccentMotif::OrangeSun,
-            ))),
+            .on_press(ConnectCubeMessage::Avatar(
+                AvatarMessage::AccentMotifChanged(AvatarAccentMotif::OrangeSun),
+            )),
         )
         .push(iced::widget::Space::new().width(Length::Fixed(8.0)))
         .push(
@@ -989,9 +1085,9 @@ fn avatar_questionnaire_ux<'a>(state: &'a ConnectPanel) -> Element<'a, ConnectMe
             } else {
                 button::secondary(None, "Splatter")
             }
-            .on_press(ConnectMessage::Avatar(AvatarMessage::AccentMotifChanged(
-                AvatarAccentMotif::Splatter,
-            ))),
+            .on_press(ConnectCubeMessage::Avatar(
+                AvatarMessage::AccentMotifChanged(AvatarAccentMotif::Splatter),
+            )),
         )
         .push(iced::widget::Space::new().width(Length::Fixed(8.0)))
         .push(
@@ -1000,9 +1096,9 @@ fn avatar_questionnaire_ux<'a>(state: &'a ConnectPanel) -> Element<'a, ConnectMe
             } else {
                 button::secondary(None, "Seal")
             }
-            .on_press(ConnectMessage::Avatar(AvatarMessage::AccentMotifChanged(
-                AvatarAccentMotif::Seal,
-            ))),
+            .on_press(ConnectCubeMessage::Avatar(
+                AvatarMessage::AccentMotifChanged(AvatarAccentMotif::Seal),
+            )),
         )
         .push(iced::widget::Space::new().width(Length::Fixed(8.0)))
         .push(
@@ -1011,9 +1107,9 @@ fn avatar_questionnaire_ux<'a>(state: &'a ConnectPanel) -> Element<'a, ConnectMe
             } else {
                 button::secondary(None, "Calligraphy")
             }
-            .on_press(ConnectMessage::Avatar(AvatarMessage::AccentMotifChanged(
-                AvatarAccentMotif::Calligraphy,
-            ))),
+            .on_press(ConnectCubeMessage::Avatar(
+                AvatarMessage::AccentMotifChanged(AvatarAccentMotif::Calligraphy),
+            )),
         )
         .align_y(Alignment::Center);
 
@@ -1029,7 +1125,7 @@ fn avatar_questionnaire_ux<'a>(state: &'a ConnectPanel) -> Element<'a, ConnectMe
             } else {
                 button::secondary(None, "Off")
             }
-            .on_press(ConnectMessage::Avatar(AvatarMessage::LaserEyesToggled(
+            .on_press(ConnectCubeMessage::Avatar(AvatarMessage::LaserEyesToggled(
                 !draft.laser_eyes,
             ))),
         )
@@ -1038,7 +1134,7 @@ fn avatar_questionnaire_ux<'a>(state: &'a ConnectPanel) -> Element<'a, ConnectMe
     let has_ln = state.lightning_address.is_some();
     let generate_btn = if has_ln {
         button::primary(None, "Generate Avatar")
-            .on_press(ConnectMessage::Avatar(AvatarMessage::Generate))
+            .on_press(ConnectCubeMessage::Avatar(AvatarMessage::Generate))
     } else {
         button::primary(None, "Set Lightning Address First")
     };
@@ -1072,7 +1168,7 @@ fn avatar_questionnaire_ux<'a>(state: &'a ConnectPanel) -> Element<'a, ConnectMe
     .into()
 }
 
-fn avatar_settings_ux<'a>(state: &'a ConnectPanel) -> Element<'a, ConnectMessage> {
+fn avatar_settings_ux<'a>(state: &'a ConnectCubePanel) -> Element<'a, ConnectCubeMessage> {
     let Some(ref data) = state.avatar_data else {
         return container(text::p2_regular("Loading avatar data…").color(color::GREY_3))
             .padding(16)
@@ -1090,7 +1186,7 @@ fn avatar_settings_ux<'a>(state: &'a ConnectPanel) -> Element<'a, ConnectMessage
         .find(|v| active_url.ends_with(&v.id.to_string()))
         .map(|v| v.id);
 
-    let image_widget: Element<ConnectMessage> = if let Some(id) = active_id {
+    let image_widget: Element<ConnectCubeMessage> = if let Some(id) = active_id {
         if let Some((_, handle)) = state.avatar_image_cache.get(&id) {
             iced::widget::image(handle.clone())
                 .width(Length::Fixed(200.0))
@@ -1121,12 +1217,12 @@ fn avatar_settings_ux<'a>(state: &'a ConnectPanel) -> Element<'a, ConnectMessage
     };
 
     // Variant thumbnails row
-    let variant_row: Element<ConnectMessage> = if data.variants.len() > 1 {
+    let variant_row: Element<ConnectCubeMessage> = if data.variants.len() > 1 {
         let mut row = Row::new().spacing(8);
         for v in &data.variants {
             let is_active = active_url.ends_with(&v.id.to_string());
             let vid = v.id;
-            let thumb: Element<ConnectMessage> =
+            let thumb: Element<ConnectCubeMessage> =
                 if let Some((_, handle)) = state.avatar_image_cache.get(&vid) {
                     let img = iced::widget::image(handle.clone())
                         .width(Length::Fixed(60.0))
@@ -1144,7 +1240,9 @@ fn avatar_settings_ux<'a>(state: &'a ConnectPanel) -> Element<'a, ConnectMessage
                             .into()
                     } else {
                         iced::widget::button(img)
-                            .on_press(ConnectMessage::Avatar(AvatarMessage::SelectVariant(vid)))
+                            .on_press(ConnectCubeMessage::Avatar(AvatarMessage::SelectVariant(
+                                vid,
+                            )))
                             .style(|_, _| iced::widget::button::Style::default())
                             .into()
                     }
@@ -1157,7 +1255,9 @@ fn avatar_settings_ux<'a>(state: &'a ConnectPanel) -> Element<'a, ConnectMessage
                             .align_y(Alignment::Center)
                             .style(|_| card_style()),
                     )
-                    .on_press(ConnectMessage::Avatar(AvatarMessage::SelectVariant(vid)))
+                    .on_press(ConnectCubeMessage::Avatar(AvatarMessage::SelectVariant(
+                        vid,
+                    )))
                     .style(|_, _| iced::widget::button::Style::default())
                     .into()
                 };
@@ -1171,13 +1271,13 @@ fn avatar_settings_ux<'a>(state: &'a ConnectPanel) -> Element<'a, ConnectMessage
     let regen_btn = if regen_remaining == 0 {
         button::primary(None, "No Regenerations Remaining")
     } else {
-        button::primary(None, "Regenerate Avatar").on_press(ConnectMessage::Avatar(
+        button::primary(None, "Regenerate Avatar").on_press(ConnectCubeMessage::Avatar(
             AvatarMessage::SetStep(AvatarFlowStep::Questionnaire),
         ))
     };
 
     let download_btn = button::secondary(None, "Download PNG")
-        .on_press(ConnectMessage::Avatar(AvatarMessage::DownloadAvatar));
+        .on_press(ConnectCubeMessage::Avatar(AvatarMessage::DownloadAvatar));
 
     container(
         Column::new()
@@ -1208,14 +1308,14 @@ fn avatar_settings_ux<'a>(state: &'a ConnectPanel) -> Element<'a, ConnectMessage
     .into()
 }
 
-fn invites_ux<'a>(state: &'a ConnectPanel) -> Element<'a, ConnectMessage> {
+fn invites_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccountMessage> {
     let is_legacy = state
         .plan
         .as_ref()
         .map(|p| p.tier == PlanTier::Legacy)
         .unwrap_or(false);
 
-    let card_content: Element<ConnectMessage> = if !is_legacy {
+    let card_content: Element<ConnectAccountMessage> = if !is_legacy {
         container(
             Column::new()
                 .push(text::p1_bold("Legacy Plan Required").color(color::WHITE))

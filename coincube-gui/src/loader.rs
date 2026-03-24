@@ -571,6 +571,7 @@ pub async fn load_application(
         connect_expanded: false,
         connect_authenticated: false,
         has_vault: true,
+        cube_name: config.cube_settings.name.clone(),
     };
 
     Ok((
