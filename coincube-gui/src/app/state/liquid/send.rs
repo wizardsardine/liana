@@ -420,9 +420,28 @@ impl State for LiquidSend {
                                         } else {
                                             amount_sat.to_string()
                                         };
-                                    self.amount = Amount::from_sat(amount_sat);
+                                    let amount = Amount::from_sat(amount_sat);
+                                    self.amount = amount;
                                     self.amount_input.value = amount_str;
-                                    self.amount_input.valid = true;
+                                    if amount > self.btc_balance {
+                                        self.amount_input.valid = false;
+                                        self.amount_input.warning = Some("Insufficient balance");
+                                    } else if let Some((min_sat, max_sat)) = self.lightning_limits {
+                                        if amount_sat < min_sat {
+                                            self.amount_input.valid = false;
+                                            self.amount_input.warning = Some("Below minimum limit");
+                                        } else if amount_sat > max_sat {
+                                            self.amount_input.valid = false;
+                                            self.amount_input.warning =
+                                                Some("Exceeds maximum limit");
+                                        } else {
+                                            self.amount_input.valid = true;
+                                            self.amount_input.warning = None;
+                                        }
+                                    } else {
+                                        self.amount_input.valid = true;
+                                        self.amount_input.warning = None;
+                                    }
                                 }
                                 format!(
                                     "Sending money to {}",
