@@ -15,7 +15,7 @@ use coincubed::commands::CoinStatus;
 use iced::Task;
 use zeroize::{Zeroize, Zeroizing};
 
-use coincube_ui::component::{form, toast};
+use coincube_ui::component::form;
 use coincube_ui::{widget::modal, widget::Element};
 
 use crate::daemon::model::LabelsLoader;

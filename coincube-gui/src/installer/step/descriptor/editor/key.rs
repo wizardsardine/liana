@@ -1214,7 +1214,7 @@ impl SelectKeySource {
         modal::button_entry(
             Some(icon::round_key_icon()),
             "Border Wallet",
-            Some("Derive a safety net key from a visual grid pattern"),
+            Some("Derive a key from a visual grid pattern"),
             None,
             Some(|| Self::route(SelectKeySourceMessage::SelectBorderWalletSafetyNet)),
         )
