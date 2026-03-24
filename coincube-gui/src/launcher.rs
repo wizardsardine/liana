@@ -728,6 +728,12 @@ impl Launcher {
                             crate::services::coincube::PlanTier::Pro => AccountTier::Pro,
                             crate::services::coincube::PlanTier::Legacy => AccountTier::Legacy,
                         });
+                if let Err(e) = GlobalSettings::update_account_tier(
+                    &GlobalSettings::path(&self.datadir_path),
+                    self.account_tier,
+                ) {
+                    log::error!("[LAUNCHER] Failed to persist account tier: {e}");
+                }
                 task
             }
 

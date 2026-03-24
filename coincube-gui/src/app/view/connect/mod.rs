@@ -755,9 +755,19 @@ fn lightning_address_ux<'a>(state: &'a ConnectCubePanel) -> Element<'a, ConnectC
                 .push(iced::widget::Space::new().height(Length::Fixed(12.0)))
                 .push(claim_button)
                 .push_maybe(state.ln_claim_error.as_deref().map(|err| {
-                    Column::new()
+                    let mut col = Column::new()
                         .push(iced::widget::Space::new().height(Length::Fixed(8.0)))
-                        .push(text::p2_regular(err).color(color::RED))
+                        .push(text::p2_regular(err).color(color::RED));
+                    if state.registration_error.is_some() {
+                        col = col
+                            .push(iced::widget::Space::new().height(Length::Fixed(8.0)))
+                            .push(
+                                button::primary(None, "Retry Connection")
+                                    .on_press(ConnectCubeMessage::RetryRegistration)
+                                    .width(Length::Fill),
+                            );
+                    }
+                    col
                 }))
                 .padding(20)
                 .spacing(2),
@@ -836,20 +846,26 @@ fn avatar_ux<'a>(state: &'a ConnectCubePanel) -> Element<'a, ConnectCubeMessage>
     };
 
     if let Some(err) = state.avatar_error.as_deref() {
+        let retry_button: Element<ConnectCubeMessage> = if state.registration_error.is_some() {
+            button::primary(None, "Retry Connection")
+                .on_press(ConnectCubeMessage::RetryRegistration)
+                .into()
+        } else {
+            button::primary(None, "Try Again")
+                .on_press(ConnectCubeMessage::Avatar(AvatarMessage::Retry))
+                .into()
+        };
         return Column::new()
             .push(title)
             .push(iced::widget::Space::new().height(Length::Fixed(15.0)))
             .push(
                 container(
                     Column::new()
-                        .push(text::p1_bold("Generation Failed").color(color::RED))
+                        .push(text::p1_bold("Error").color(color::RED))
                         .push(iced::widget::Space::new().height(Length::Fixed(8.0)))
                         .push(text::p2_regular(err).color(color::GREY_3))
                         .push(iced::widget::Space::new().height(Length::Fixed(16.0)))
-                        .push(
-                            button::primary(None, "Try Again")
-                                .on_press(ConnectCubeMessage::Avatar(AvatarMessage::Retry)),
-                        )
+                        .push(retry_button)
                         .padding(16)
                         .spacing(4),
                 )

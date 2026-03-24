@@ -10,13 +10,7 @@ use crate::{
     },
 };
 
-const KEYRING_SERVICE_NAME: &str = if cfg!(debug_assertions) {
-    "dev.coincube.Connect"
-} else {
-    "io.coincube.Connect"
-};
-
-const KEYRING_USER_KEY: &str = "global_session";
+use super::{CONNECT_KEYRING_SERVICE, CONNECT_KEYRING_USER};
 
 #[derive(Debug)]
 pub enum ConnectFlowStep {
@@ -86,7 +80,7 @@ impl ConnectAccountPanel {
     }
 
     fn load_session_from_keyring(&mut self) -> Option<LoginResponse> {
-        match keyring::Entry::new(KEYRING_SERVICE_NAME, KEYRING_USER_KEY) {
+        match keyring::Entry::new(CONNECT_KEYRING_SERVICE, CONNECT_KEYRING_USER) {
             Ok(entry) => match entry.get_secret() {
                 Ok(bytes) => match serde_json::from_slice::<LoginResponse>(&bytes) {
                     Ok(l) => Some(l),
@@ -105,7 +99,7 @@ impl ConnectAccountPanel {
     }
 
     fn save_session_to_keyring(&self, login: &LoginResponse) {
-        match keyring::Entry::new(KEYRING_SERVICE_NAME, KEYRING_USER_KEY) {
+        match keyring::Entry::new(CONNECT_KEYRING_SERVICE, CONNECT_KEYRING_USER) {
             Ok(entry) => {
                 let _ = entry.delete_credential();
                 if let Ok(bytes) = serde_json::to_vec(login) {
@@ -119,7 +113,7 @@ impl ConnectAccountPanel {
     }
 
     fn clear_keyring_session(&self) {
-        if let Ok(entry) = keyring::Entry::new(KEYRING_SERVICE_NAME, KEYRING_USER_KEY) {
+        if let Ok(entry) = keyring::Entry::new(CONNECT_KEYRING_SERVICE, CONNECT_KEYRING_USER) {
             let _ = entry.delete_credential();
         }
     }

@@ -5,7 +5,10 @@ use crate::{
         cache::Cache,
         menu::Menu,
         message::Message,
-        state::State,
+        state::{
+            connect::{CONNECT_KEYRING_SERVICE, CONNECT_KEYRING_USER},
+            State,
+        },
         view::{self, buysell::*},
     },
     daemon::Daemon,
@@ -17,14 +20,6 @@ const KEYRING_SERVICE_NAME: &str = if cfg!(debug_assertions) {
 } else {
     "io.coincube.Vault"
 };
-
-const CONNECT_KEYRING_SERVICE: &str = if cfg!(debug_assertions) {
-    "dev.coincube.Connect"
-} else {
-    "io.coincube.Connect"
-};
-
-const CONNECT_KEYRING_USER: &str = "global_session";
 
 impl State for BuySellPanel {
     fn view<'a>(

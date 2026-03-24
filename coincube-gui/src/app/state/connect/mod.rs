@@ -1,6 +1,14 @@
 pub mod account;
 pub mod cube;
 
+pub(crate) const CONNECT_KEYRING_SERVICE: &str = if cfg!(debug_assertions) {
+    "dev.coincube.Connect"
+} else {
+    "io.coincube.Connect"
+};
+
+pub(crate) const CONNECT_KEYRING_USER: &str = "global_session";
+
 pub use account::{ConnectAccountPanel, ConnectFlowStep};
 pub use cube::ConnectCubePanel;
 

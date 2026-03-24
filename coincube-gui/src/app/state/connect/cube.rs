@@ -29,6 +29,8 @@ pub struct ConnectCubePanel {
     /// The server-side numeric ID — set after registering with the backend.
     /// Used in API paths: /connect/cubes/{server_cube_id}/...
     pub server_cube_id: Option<u64>,
+    /// Set when the last cube registration attempt failed.
+    pub registration_error: Option<String>,
     // Lightning Address
     pub lightning_address: Option<LightningAddress>,
     pub ln_username_input: String,
@@ -63,6 +65,7 @@ impl ConnectCubePanel {
             cube_name,
             cube_network,
             server_cube_id: None,
+            registration_error: None,
             lightning_address: None,
             ln_username_input: String::new(),
             ln_username_available: None,
@@ -92,6 +95,7 @@ impl ConnectCubePanel {
     pub fn clear_client(&mut self) {
         self.client = None;
         self.server_cube_id = None;
+        self.registration_error = None;
         self.lightning_address = None;
         self.ln_username_input.clear();
         self.ln_username_available = None;
@@ -145,6 +149,7 @@ impl ConnectCubePanel {
                             cube_resp.id
                         );
                         self.server_cube_id = Some(cube_resp.id);
+                        self.registration_error = None;
                         // Store the lightning address from the backend (or clear if None)
                         if cube_resp.lightning_address.is_some() {
                             self.lightning_address = Some(LightningAddress {
@@ -157,6 +162,7 @@ impl ConnectCubePanel {
                     }
                     Err(e) => {
                         log::error!("[CONNECT-CUBE] Failed to register cube: {}", e);
+                        self.registration_error = Some(e);
                     }
                 }
             }
@@ -255,8 +261,12 @@ impl ConnectCubePanel {
                 self.ln_claim_error = None;
                 let username = self.ln_username_input.clone();
                 let Some(cube_id) = self.api_cube_id() else {
-                    log::warn!("[CONNECT-CUBE] No server cube ID yet");
                     self.ln_claiming = false;
+                    self.ln_claim_error = Some(
+                        self.registration_error
+                            .clone()
+                            .unwrap_or_else(|| "Cube registration pending".to_string()),
+                    );
                     return iced::Task::none();
                 };
                 let breez = self.breez_client.clone();
@@ -300,6 +310,11 @@ impl ConnectCubePanel {
                 self.ln_username_error = None;
             }
 
+            ConnectCubeMessage::RetryRegistration => {
+                self.registration_error = None;
+                return self.register_cube();
+            }
+
             ConnectCubeMessage::CopyToClipboard(text) => {
                 return iced::clipboard::write(text);
             }
@@ -336,6 +351,9 @@ impl ConnectCubePanel {
                     return iced::Task::none();
                 };
                 let Some(cid) = self.api_cube_id() else {
+                    if let Some(ref e) = self.registration_error {
+                        self.avatar_error = Some(e.clone());
+                    }
                     return iced::Task::none();
                 };
                 return iced::Task::perform(async move { client.get_avatar(&cid).await }, |res| {
@@ -414,6 +432,12 @@ impl ConnectCubePanel {
                     user_traits: self.avatar_draft.clone(),
                 };
                 let Some(cid) = self.api_cube_id() else {
+                    self.avatar_generating = false;
+                    self.avatar_error = Some(
+                        self.registration_error
+                            .clone()
+                            .unwrap_or_else(|| "Cube registration pending".to_string()),
+                    );
                     return iced::Task::none();
                 };
                 self.avatar_generating = true;
@@ -512,6 +536,11 @@ impl ConnectCubePanel {
                     return iced::Task::none();
                 };
                 let Some(cid) = self.api_cube_id() else {
+                    self.avatar_error = Some(
+                        self.registration_error
+                            .clone()
+                            .unwrap_or_else(|| "Cube registration pending".to_string()),
+                    );
                     return iced::Task::none();
                 };
                 return iced::Task::perform(
@@ -599,24 +628,33 @@ impl ConnectCubePanel {
                         let bytes = bytes.clone();
                         return iced::Task::perform(
                             async move {
-                                if let Some(handle) = rfd::AsyncFileDialog::new()
+                                let Some(handle) = rfd::AsyncFileDialog::new()
                                     .set_title("Save Avatar")
                                     .set_file_name("coincube-avatar.png")
                                     .add_filter("PNG Image", &["png"])
                                     .save_file()
                                     .await
-                                {
-                                    let _ = std::fs::write(handle.path(), &bytes);
-                                }
+                                else {
+                                    return Ok(());
+                                };
+                                std::fs::write(handle.path(), &bytes).map_err(|e| e.to_string())
                             },
-                            |()| {
-                                Message::View(view::Message::ConnectCube(
+                            |res| match res {
+                                Ok(()) => Message::View(view::Message::ConnectCube(
                                     ConnectCubeMessage::Avatar(AvatarMessage::Noop),
-                                ))
+                                )),
+                                Err(e) => Message::View(view::Message::ConnectCube(
+                                    ConnectCubeMessage::Avatar(AvatarMessage::SaveError(e)),
+                                )),
                             },
                         );
                     }
                 }
+            }
+
+            AvatarMessage::SaveError(e) => {
+                log::error!("[AVATAR] Failed to save avatar to disk: {}", e);
+                self.avatar_error = Some(e);
             }
 
             AvatarMessage::Noop => {}

@@ -3,6 +3,13 @@ use reqwest::{Client, Method};
 
 use crate::services::http::ResponseExt;
 
+#[cfg(not(debug_assertions))]
+const _: () = {
+    if option_env!("COINCUBE_API_URL").is_none() {
+        panic!("COINCUBE_API_URL must be set at build time for release builds");
+    }
+};
+
 #[derive(Debug, Clone)]
 pub struct CoincubeClient {
     pub client: Client,
@@ -18,7 +25,12 @@ impl Default for CoincubeClient {
 
 impl CoincubeClient {
     pub fn new() -> Self {
-        let base_url = option_env!("COINCUBE_API_URL").unwrap_or("https://dev-api.coincube.io");
+        let base_url = if cfg!(debug_assertions) {
+            option_env!("COINCUBE_API_URL").unwrap_or("https://dev-api.coincube.io")
+        } else {
+            option_env!("COINCUBE_API_URL")
+                .expect("COINCUBE_API_URL must be set at build time for release builds")
+        };
 
         log::info!(
             "Coincube Base URL: {}, Release = {}",

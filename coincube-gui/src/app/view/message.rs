@@ -477,6 +477,8 @@ pub enum ConnectCubeMessage {
     LightningAddressLoaded(Option<crate::services::coincube::LightningAddress>),
     /// Result of registering the cube with the backend (POST /connect/cubes).
     CubeRegistered(Result<crate::services::coincube::CubeResponse, String>),
+    /// Retry a previously failed cube registration.
+    RetryRegistration,
     CopyToClipboard(String),
     Error(String),
     Avatar(AvatarMessage),
@@ -517,6 +519,8 @@ pub enum AvatarMessage {
     Retry,
     /// User pressed Download — save active variant PNG to disk.
     DownloadAvatar,
+    /// File-save failed after the user picked a destination.
+    SaveError(String),
     /// No-op — used as a return message for tasks that don't need state changes.
     Noop,
 }
