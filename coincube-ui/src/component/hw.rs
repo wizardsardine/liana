@@ -614,6 +614,70 @@ pub fn hot_signer<'a, T: 'a, F: Display>(
     .padding(10)
 }
 
+pub fn border_wallet_signer<'a, T: 'a, F: Display>(
+    fingerprint: F,
+    alias: Option<impl Into<Cow<'a, str>> + Display + iced::widget::text::IntoFragment<'a>>,
+    can_sign: bool,
+) -> Container<'a, T> {
+    Container::new(
+        Row::new()
+            .push(column(vec![
+                Row::new()
+                    .spacing(5)
+                    .push(alias.map(|a| text::p1_bold(a)))
+                    .push(text::p1_regular(format!("#{}", fingerprint)))
+                    .into(),
+                Row::new()
+                    .spacing(5)
+                    .push(text::caption("Border Wallet"))
+                    .into(),
+            ]))
+            .push(Space::new().width(Length::Fixed(20.0)))
+            .push(if !can_sign {
+                Some(text::text(
+                    "This border wallet key is not part of this spending path.",
+                ))
+            } else {
+                None
+            })
+            .push(Space::new().width(Length::Fill))
+            .align_y(Vertical::Center),
+    )
+    .padding(10)
+}
+
+pub fn sign_success_border_wallet<'a, T: 'a, F: Display>(
+    fingerprint: F,
+    alias: Option<impl Into<Cow<'a, str>> + Display + iced::widget::text::IntoFragment<'a>>,
+) -> Container<'a, T> {
+    container(
+        row(vec![
+            column(vec![
+                Row::new()
+                    .spacing(5)
+                    .push(alias.map(|a| text::p1_bold(a)))
+                    .push(text::p1_regular(format!("#{}", fingerprint)))
+                    .into(),
+                Row::new()
+                    .spacing(5)
+                    .push(text::caption("Border Wallet"))
+                    .into(),
+            ])
+            .width(Length::Fill)
+            .into(),
+            row(vec![
+                text::p1_regular("Signed").color(color::GREEN).into(),
+                image::success_mark_icon().width(Length::Fixed(50.0)).into(),
+            ])
+            .align_y(Alignment::Center)
+            .spacing(5)
+            .into(),
+        ])
+        .align_y(Alignment::Center),
+    )
+    .padding(10)
+}
+
 pub fn selected_provider_key<'a, T: 'a, F: Display>(
     fingerprint: F,
     alias: impl Into<Cow<'a, str>>,

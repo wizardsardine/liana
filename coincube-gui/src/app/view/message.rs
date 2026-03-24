@@ -146,9 +146,42 @@ pub enum SpendTxMessage {
     Confirm,
     Cancel,
     SelectHotSigner,
+    SelectBorderWallet(Fingerprint),
+    BorderWalletRecon(BorderWalletReconMessage),
     EditPsbt,
     PsbtEdited(String),
     Next,
+}
+
+/// Messages for the Border Wallet reconstruction wizard within the signing flow.
+#[derive(Clone)]
+pub enum BorderWalletReconMessage {
+    PhraseWordEdited(usize, String),
+    Next,
+    Previous,
+    ToggleCell(u16, u8),
+    UndoLastCell,
+    ClearPattern,
+    Cancel,
+}
+
+// Manual Debug impl to redact recovery phrase words from logs.
+impl std::fmt::Debug for BorderWalletReconMessage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::PhraseWordEdited(idx, _) => f
+                .debug_tuple("PhraseWordEdited")
+                .field(idx)
+                .field(&"<redacted>")
+                .finish(),
+            Self::Next => write!(f, "Next"),
+            Self::Previous => write!(f, "Previous"),
+            Self::ToggleCell(r, c) => f.debug_tuple("ToggleCell").field(r).field(c).finish(),
+            Self::UndoLastCell => write!(f, "UndoLastCell"),
+            Self::ClearPattern => write!(f, "ClearPattern"),
+            Self::Cancel => write!(f, "Cancel"),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]

@@ -1,10 +1,12 @@
 use std::collections::{HashMap, HashSet};
 
 use iced::{
+    alignment::Horizontal,
     widget::{scrollable, tooltip, Space},
     Alignment, Length,
 };
 
+use coincube_core::border_wallet::{CellRef, WordGrid, PATTERN_LENGTH};
 use coincube_core::descriptors::CoincubeDescriptor;
 use coincube_core::{
     descriptors::{CoincubePolicy, PathInfo, PathSpendInfo},
@@ -15,7 +17,9 @@ use coincube_core::{
 };
 
 use coincube_ui::component::amount::BitcoinDisplayUnit;
+use coincube_ui::component::modal;
 use coincube_ui::{
+    color,
     component::{
         amount::*,
         badge, button, card,
@@ -31,6 +35,7 @@ use crate::{
     app::{
         cache::Cache,
         menu::{Menu, VaultSubMenu},
+        state::vault::psbt::{BorderWalletReconstructionState, ReconStep},
         view::{dashboard, message::*, vault::hw::hw_list_view, vault::label},
     },
     daemon::model::{Coin, SpendStatus, SpendTx},
@@ -1015,60 +1020,296 @@ pub fn sign_action<'a>(
     signed: &HashSet<Fingerprint>,
     signing: &HashSet<Fingerprint>,
     recovery_timelock: Option<u16>,
+    border_wallet_fingerprints: &'a HashSet<Fingerprint>,
+    keys_aliases: &'a HashMap<Fingerprint, String>,
 ) -> Element<'a, Message> {
+    let mut signers_col = Column::new()
+        .push(
+            text("Select signing device to sign with:")
+                .bold()
+                .width(Length::Fill),
+        )
+        .spacing(10)
+        .push(
+            hws.iter()
+                .enumerate()
+                .fold(Column::new().spacing(10), |col, (i, hw)| {
+                    let (signed, signing, can_sign) =
+                        hw.fingerprint().map_or((false, false, false), |f| {
+                            (
+                                signed.contains(&f),
+                                signing.contains(&f),
+                                descriptor.contains_fingerprint_in_path(f, recovery_timelock),
+                            )
+                        });
+                    col.push(hw_list_view(i, hw, signed, signing, can_sign))
+                }),
+        )
+        .push({
+            signer.map(|fingerprint| {
+                let can_sign =
+                    descriptor.contains_fingerprint_in_path(fingerprint, recovery_timelock);
+                let btn = Button::new(if signed.contains(&fingerprint) {
+                    hw::sign_success_hot_signer(fingerprint, signer_alias)
+                } else {
+                    hw::hot_signer(fingerprint, signer_alias, can_sign)
+                })
+                .padding(10)
+                .style(theme::button::secondary)
+                .width(Length::Fill);
+                if can_sign {
+                    btn.on_press(Message::Spend(SpendTxMessage::SelectHotSigner))
+                } else {
+                    btn
+                }
+            })
+        })
+        .width(Length::Fill);
+
+    // Add border wallet keys
+    for fg in border_wallet_fingerprints {
+        let can_sign = descriptor.contains_fingerprint_in_path(*fg, recovery_timelock);
+        let alias = keys_aliases.get(fg);
+        let btn = Button::new(if signed.contains(fg) {
+            hw::sign_success_border_wallet(*fg, alias)
+        } else {
+            hw::border_wallet_signer(*fg, alias, can_sign)
+        })
+        .padding(10)
+        .style(theme::button::secondary)
+        .width(Length::Fill);
+        signers_col = signers_col.push(if can_sign && !signed.contains(fg) {
+            btn.on_press(Message::Spend(SpendTxMessage::SelectBorderWallet(*fg)))
+        } else {
+            btn
+        });
+    }
+
     card::simple(
         Column::new()
-            .push(
-                Column::new()
-                    .push(
-                        text("Select signing device to sign with:")
-                            .bold()
-                            .width(Length::Fill),
-                    )
-                    .spacing(10)
-                    .push(
-                        hws.iter()
-                            .enumerate()
-                            .fold(Column::new().spacing(10), |col, (i, hw)| {
-                                let (signed, signing, can_sign) =
-                                    hw.fingerprint().map_or((false, false, false), |f| {
-                                        (
-                                            signed.contains(&f),
-                                            signing.contains(&f),
-                                            descriptor
-                                                .contains_fingerprint_in_path(f, recovery_timelock),
-                                        )
-                                    });
-                                col.push(hw_list_view(i, hw, signed, signing, can_sign))
-                            }),
-                    )
-                    .push({
-                        signer.map(|fingerprint| {
-                            let can_sign = descriptor
-                                .contains_fingerprint_in_path(fingerprint, recovery_timelock);
-                            let btn = Button::new(if signed.contains(&fingerprint) {
-                                hw::sign_success_hot_signer(fingerprint, signer_alias)
-                            } else {
-                                hw::hot_signer(fingerprint, signer_alias, can_sign)
-                            })
-                            .padding(10)
-                            .style(theme::button::secondary)
-                            .width(Length::Fill);
-                            if can_sign {
-                                btn.on_press(Message::Spend(SpendTxMessage::SelectHotSigner))
-                            } else {
-                                btn
-                            }
-                        })
-                    })
-                    .width(Length::Fill),
-            )
+            .push(signers_col)
             .spacing(20)
             .width(Length::Fill)
             .align_x(Alignment::Center),
     )
     .width(Length::Fixed(500.0))
     .into()
+}
+
+/// Render the Border Wallet reconstruction wizard within the signing modal.
+pub fn border_wallet_recon_view(recon: &BorderWalletReconstructionState) -> Element<'_, Message> {
+    match recon.step {
+        ReconStep::RecoveryPhrase => border_wallet_recon_phrase_view(recon),
+        ReconStep::Grid => border_wallet_recon_grid_view(recon),
+    }
+}
+
+fn border_wallet_recon_phrase_view(
+    recon: &BorderWalletReconstructionState,
+) -> Element<'_, Message> {
+    let header = modal::header(
+        Some("Reconstruct Border Wallet".to_string()),
+        None::<fn() -> Message>,
+        Some(|| {
+            Message::Spend(SpendTxMessage::BorderWalletRecon(
+                BorderWalletReconMessage::Cancel,
+            ))
+        }),
+    );
+
+    let mut word_rows = Column::new().spacing(6);
+    for chunk_start in (0..12).step_by(3) {
+        let mut row_widget = Row::new().spacing(8);
+        for i in chunk_start..std::cmp::min(chunk_start + 3, 12) {
+            let label = format!("{}.", i + 1);
+            let idx = i;
+            let input = TextInput::new(&format!("Word {}", i + 1), &recon.phrase_words[i].value)
+                .on_input(move |s| {
+                    Message::Spend(SpendTxMessage::BorderWalletRecon(
+                        BorderWalletReconMessage::PhraseWordEdited(idx, s),
+                    ))
+                })
+                .width(Length::Fill);
+            row_widget = row_widget.push(
+                Row::new()
+                    .push(text::text(label).width(25))
+                    .push(input)
+                    .spacing(4)
+                    .width(Length::Fill),
+            );
+        }
+        word_rows = word_rows.push(row_widget);
+    }
+
+    let error_text: Option<Element<Message>> = recon
+        .error
+        .as_ref()
+        .map(|e| p1_regular(e.as_str()).color(color::RED).into());
+
+    let cancel_btn = button::transparent(None, "Cancel").on_press(Message::Spend(
+        SpendTxMessage::BorderWalletRecon(BorderWalletReconMessage::Cancel),
+    ));
+
+    let next_btn = if recon.phrase_valid {
+        button::primary(None, "Next").on_press(Message::Spend(SpendTxMessage::BorderWalletRecon(
+            BorderWalletReconMessage::Next,
+        )))
+    } else {
+        button::primary(None, "Next")
+    }
+    .width(Length::Fill);
+
+    let mut col = Column::new()
+        .spacing(12)
+        .push(header)
+        .push(p1_regular(format!(
+            "Enter the 12-word recovery phrase for key #{}",
+            recon.target_fingerprint
+        )))
+        .push(word_rows);
+
+    if let Some(err) = error_text {
+        col = col.push(err);
+    }
+
+    col = col.push(Row::new().spacing(10).push(cancel_btn).push(next_btn));
+
+    Container::new(col.width(550))
+        .padding(20)
+        .style(theme::card::modal)
+        .into()
+}
+
+fn border_wallet_recon_grid_view(recon: &BorderWalletReconstructionState) -> Element<'_, Message> {
+    let header = modal::header(
+        Some("Select Pattern".to_string()),
+        None::<fn() -> Message>,
+        Some(|| {
+            Message::Spend(SpendTxMessage::BorderWalletRecon(
+                BorderWalletReconMessage::Cancel,
+            ))
+        }),
+    );
+
+    let back_btn =
+        button::transparent(Some(icon::previous_icon()), "Back").on_press(Message::Spend(
+            SpendTxMessage::BorderWalletRecon(BorderWalletReconMessage::Previous),
+        ));
+
+    let status = p1_bold(format!(
+        "Selected: {} / {} cells",
+        recon.pattern.len(),
+        PATTERN_LENGTH
+    ));
+
+    let undo_btn = if !recon.pattern.is_empty() {
+        button::secondary(None, "Undo").on_press(Message::Spend(SpendTxMessage::BorderWalletRecon(
+            BorderWalletReconMessage::UndoLastCell,
+        )))
+    } else {
+        button::secondary(None, "Undo")
+    };
+
+    let clear_btn = if !recon.pattern.is_empty() {
+        button::secondary(None, "Clear").on_press(Message::Spend(
+            SpendTxMessage::BorderWalletRecon(BorderWalletReconMessage::ClearPattern),
+        ))
+    } else {
+        button::secondary(None, "Clear")
+    };
+
+    let grid_content: Element<Message> = if let Some(grid) = &recon.grid {
+        let mut grid_col = Column::new().spacing(1);
+
+        for row_idx in 0..WordGrid::ROWS {
+            let mut row_widget = Row::new().spacing(1);
+            for col_idx in 0..WordGrid::COLS {
+                let word = grid.word_at(row_idx, col_idx).unwrap_or("???");
+                let prefix = &word[..std::cmp::min(4, word.len())];
+                let cell = CellRef::new(row_idx as u16, col_idx as u8);
+                let is_selected = recon.pattern.cells().contains(&cell);
+
+                let order_num = recon
+                    .pattern
+                    .cells()
+                    .iter()
+                    .position(|c| c == &cell)
+                    .map(|p| p + 1);
+
+                let label = if let Some(n) = order_num {
+                    format!("{}", n)
+                } else {
+                    prefix.to_string()
+                };
+
+                let cell_style = if is_selected {
+                    theme::button::primary
+                } else {
+                    theme::button::secondary
+                };
+
+                let r = row_idx as u16;
+                let c = col_idx as u8;
+                let cell_btn = Button::new(text::text(label).size(11).align_x(Horizontal::Center))
+                    .style(cell_style)
+                    .on_press(Message::Spend(SpendTxMessage::BorderWalletRecon(
+                        BorderWalletReconMessage::ToggleCell(r, c),
+                    )))
+                    .width(50)
+                    .height(28);
+
+                row_widget = row_widget.push(cell_btn);
+            }
+            grid_col = grid_col.push(row_widget);
+        }
+        scrollable(grid_col).height(400).into()
+    } else {
+        p1_regular("No grid available").into()
+    };
+
+    let error_text: Option<Element<Message>> = recon
+        .error
+        .as_ref()
+        .map(|e| p1_regular(e.as_str()).color(color::RED).into());
+
+    let next_btn = if recon.pattern.is_complete() {
+        button::primary(None, "Sign").on_press(Message::Spend(SpendTxMessage::BorderWalletRecon(
+            BorderWalletReconMessage::Next,
+        )))
+    } else {
+        button::primary(None, "Sign")
+    }
+    .width(Length::Fill);
+
+    let mut col = Column::new()
+        .spacing(10)
+        .push(header)
+        .push(p1_regular(
+            "Select 11 cells from the grid in order \u{2014} the same pattern you used during enrollment.",
+        ))
+        .push(
+            Row::new()
+                .spacing(10)
+                .push(status)
+                .push(undo_btn)
+                .push(clear_btn),
+        )
+        .push(grid_content);
+
+    if let Some(checksum) = &recon.checksum_word {
+        col = col.push(p1_bold(format!("Checksum word: \"{}\"", checksum)).color(color::GREEN));
+    }
+
+    if let Some(err) = error_text {
+        col = col.push(err);
+    }
+
+    col = col.push(Row::new().spacing(10).push(back_btn).push(next_btn));
+
+    Container::new(col.width(850))
+        .padding(20)
+        .style(theme::card::modal)
+        .into()
 }
 
 pub fn sign_action_toasts<'a>(

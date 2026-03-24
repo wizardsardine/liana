@@ -1601,6 +1601,7 @@ dependencies = [
  "tracing-subscriber",
  "uuid",
  "winresource",
+ "zeroize",
  "zip",
 ]
 

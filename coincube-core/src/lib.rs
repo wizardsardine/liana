@@ -1,3 +1,4 @@
+pub mod border_wallet;
 pub mod descriptors;
 pub mod random;
 pub mod signer;
